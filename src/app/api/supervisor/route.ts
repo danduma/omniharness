@@ -7,17 +7,71 @@ import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
+interface AttachmentInput {
+  kind?: string;
+  name?: string;
+  path?: string;
+}
+
+function quoteBlock(text: string) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => `> ${line}`)
+    .join('\n');
+}
+
+function formatAttachments(attachments: AttachmentInput[]) {
+  if (attachments.length === 0) return '';
+
+  const lines = attachments.map((attachment) => {
+    const parts = [
+      attachment.kind?.trim(),
+      attachment.name?.trim(),
+      attachment.path?.trim(),
+    ].filter(Boolean);
+
+    return parts.length > 0 ? `- ${parts.join(' | ')}` : '- attachment';
+  });
+
+  return `\nAttachments:\n\n${lines.join('\n')}\n`;
+}
+
+function createAdHocPlan(command: string, attachments: AttachmentInput[]) {
+  const adHocDir = path.resolve(process.cwd(), 'vibes', 'ad-hoc');
+  fs.mkdirSync(adHocDir, { recursive: true });
+
+  const filename = `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID()}.md`;
+  const relativePath = path.join('vibes', 'ad-hoc', filename);
+  const summary = command.replace(/\s+/g, ' ').trim();
+  const markdown = `# Ad Hoc Request
+
+Original command:
+
+${quoteBlock(command)}
+${formatAttachments(attachments)}
+
+## Checklist
+
+- [ ] ${summary}
+`;
+
+  fs.writeFileSync(path.resolve(process.cwd(), relativePath), markdown, 'utf-8');
+  return relativePath;
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { command } = await req.json();
-    if (!command.startsWith('implement ')) {
-      return NextResponse.json({ error: 'Command must start with "implement "' }, { status: 400 });
+    const body = await req.json();
+    const { command } = body as { command?: unknown };
+    const trimmedCommand = String(command ?? '').trim();
+    if (!trimmedCommand) {
+      return NextResponse.json({ error: 'Command cannot be empty' }, { status: 400 });
     }
 
-    const planPath = command.slice('implement '.length).trim();
-    if (!fs.existsSync(path.resolve(process.cwd(), planPath))) {
-      return NextResponse.json({ error: 'Plan file not found' }, { status: 404 });
-    }
+    const attachments = Array.isArray(body?.attachments)
+      ? (body.attachments as AttachmentInput[])
+      : [];
+    const planPath = createAdHocPlan(trimmedCommand, attachments);
 
     // Sync accounts
     const creditManager = new CreditManager();
@@ -45,7 +99,7 @@ export async function POST(req: NextRequest) {
       id: randomUUID(),
       runId,
       role: 'user',
-      content: command,
+      content: trimmedCommand,
       createdAt: new Date(),
     });
 
