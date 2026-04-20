@@ -17,8 +17,7 @@ import { nextRunState } from './runtime';
 import { createExecutionGraph } from '../workers/orchestrator';
 import { validateRun } from '../validation';
 import { classifyPermissionRequest } from '../permissions';
-
-const tokenjs = new TokenJS();
+import { configureSupervisorModel } from './model-config';
 
 export interface SupervisorOptions {
   planId: string;
@@ -43,6 +42,12 @@ export class Supervisor {
       envParams[s.key] = s.value;
       process.env[s.key] = s.value;
     });
+    const llmConfig = configureSupervisorModel(process.env, { extendModelList: () => undefined });
+    const tokenjs = new TokenJS({
+      apiKey: llmConfig.apiKey,
+      baseURL: llmConfig.baseURL,
+    });
+    configureSupervisorModel(process.env, tokenjs);
 
     const planRecord = await db.select().from(plans).where(eq(plans.id, this.planId)).get();
     if (!planRecord) {
@@ -141,8 +146,8 @@ export class Supervisor {
         }
       } else {
         const completion = await tokenjs.chat.completions.create({
-          provider: 'openai', // We can use openai or anthropic with TokenJS
-          model: 'gpt-4o',
+          provider: llmConfig.provider as never,
+          model: llmConfig.model as never,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           messages: this.messages as any,
           tools: buildSupervisorTools(),
