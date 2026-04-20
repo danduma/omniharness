@@ -1,4 +1,3 @@
-#!/usr/bin/env npx tsx
 import fs from 'fs';
 import path from 'path';
 import blessed from 'blessed';
@@ -11,7 +10,7 @@ import { BRIDGE_URL } from './src/server/bridge-client';
 
 const planPath = process.argv[2];
 if (!planPath) {
-  console.error('Usage: npx tsx omni-cli.ts <plan-path>');
+  console.error('Usage: pnpm exec tsx omni-cli.ts <plan-path>');
   process.exit(1);
 }
 
@@ -28,7 +27,7 @@ async function start() {
     if (!res.ok) throw new Error('Bridge not responding');
   } catch (err) {
     console.error(`Error: acp-bridge is not running at ${BRIDGE_URL}.`);
-    console.error(`Please start it first (e.g., in a sibling directory: cd ../acp-bridge && npm run daemon)`);
+    console.error(`Please start it first (e.g., in a sibling directory: cd ../acp-bridge && pnpm run daemon)`);
     process.exit(1);
   }
 

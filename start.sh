@@ -10,14 +10,14 @@ echo ""
 
 if [ "${MOCK_LLM:-false}" != "true" ]; then
     echo "[1/2] Starting acp-bridge on port $ACP_BRIDGE_PORT..."
-    (cd "$DIR/../acp-bridge" && npm run daemon) &
+    (cd "$DIR/../acp-bridge" && pnpm run daemon) &
     BRIDGE_PID=$!
 else
     echo "[1/2] MOCK_LLM=true, skipping acp-bridge startup."
 fi
 
 echo "[2/2] Starting OmniHarness Web UI..."
-(cd "$DIR" && npm run dev) &
+(cd "$DIR" && pnpm dev) &
 OMNI_PID=$!
 
 echo ""

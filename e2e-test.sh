@@ -2,4 +2,4 @@
 set -euo pipefail
 
 export MOCK_LLM=true
-npx playwright test
+pnpm test:e2e
