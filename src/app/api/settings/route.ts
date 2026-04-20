@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
+import { decryptSettingValue, encryptSettingValue } from "@/server/settings/crypto";
 
 export async function GET() {
   const allSettings = await db.select().from(settings);
-  const dict = Object.fromEntries(allSettings.map(s => [s.key, s.value]));
+  const dict = Object.fromEntries(allSettings.map(s => [s.key, decryptSettingValue(s.value)]));
   return NextResponse.json(dict);
 }
 
@@ -13,9 +14,10 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     for (const [key, value] of Object.entries(body)) {
       if (typeof value === "string") {
+        const encryptedValue = encryptSettingValue(value);
         await db.insert(settings)
-          .values({ key, value, updatedAt: new Date() })
-          .onConflictDoUpdate({ target: settings.key, set: { value, updatedAt: new Date() } });
+          .values({ key, value: encryptedValue, updatedAt: new Date() })
+          .onConflictDoUpdate({ target: settings.key, set: { value: encryptedValue, updatedAt: new Date() } });
       }
     }
     return NextResponse.json({ ok: true });
