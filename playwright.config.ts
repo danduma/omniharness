@@ -6,7 +6,7 @@ export default defineConfig({
     baseURL: "http://127.0.0.1:4010",
   },
   webServer: {
-    command: "MOCK_LLM=true PORT=4010 npm run dev",
+    command: "MOCK_LLM=true PORT=4010 pnpm dev",
     url: "http://127.0.0.1:4010",
     reuseExistingServer: true,
     timeout: 120000,

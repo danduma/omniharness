@@ -65,7 +65,7 @@ function deriveArtifactsFromTitle(title: string): ValidationArtifact[] {
   }
 
   if (/test/i.test(title)) {
-    return [{ type: "command", command: "npm test", expectedExitCode: 0 }];
+    return [{ type: "command", command: "pnpm test", expectedExitCode: 0 }];
   }
 
   return [];

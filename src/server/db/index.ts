@@ -8,6 +8,72 @@ const sqlite = new Database(dbPath);
 sqlite.pragma('foreign_keys = ON');
 
 sqlite.exec(`
+CREATE TABLE IF NOT EXISTS plans (
+  id text PRIMARY KEY NOT NULL,
+  path text NOT NULL,
+  status text NOT NULL,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS runs (
+  id text PRIMARY KEY NOT NULL,
+  plan_id text NOT NULL,
+  status text NOT NULL,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (plan_id) REFERENCES plans(id) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE IF NOT EXISTS workers (
+  id text PRIMARY KEY NOT NULL,
+  run_id text NOT NULL,
+  type text NOT NULL,
+  status text NOT NULL,
+  cwd text NOT NULL,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+  id text PRIMARY KEY NOT NULL,
+  run_id text NOT NULL,
+  role text NOT NULL,
+  content text NOT NULL,
+  worker_id text,
+  created_at integer NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action,
+  FOREIGN KEY (worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE IF NOT EXISTS accounts (
+  id text PRIMARY KEY NOT NULL,
+  provider text NOT NULL,
+  type text NOT NULL,
+  auth_ref text NOT NULL,
+  capacity integer,
+  reset_schedule text,
+  created_at integer NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS credit_events (
+  id text PRIMARY KEY NOT NULL,
+  account_id text NOT NULL,
+  worker_id text NOT NULL,
+  event_type text NOT NULL,
+  details text,
+  created_at integer NOT NULL,
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON UPDATE no action ON DELETE no action,
+  FOREIGN KEY (worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key text PRIMARY KEY NOT NULL,
+  value text NOT NULL,
+  updated_at integer NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS plan_items (
   id text PRIMARY KEY NOT NULL,
   plan_id text NOT NULL,

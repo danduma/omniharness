@@ -28,7 +28,7 @@ is_bridge_ready() {
 # Ensure node_modules exist
 if [ ! -d "$OMNI_DIR/node_modules" ]; then
     echo "📦 Installing OmniHarness dependencies..."
-    (cd "$OMNI_DIR" && npm install)
+    (cd "$OMNI_DIR" && pnpm install)
 fi
 
 # 1. Start acp-bridge if not running
@@ -37,9 +37,9 @@ if ! is_port_open "$BRIDGE_PORT"; then
     if [ -d "$BRIDGE_DIR" ]; then
         if [ ! -d "$BRIDGE_DIR/node_modules" ]; then
             echo "📦 Installing acp-bridge dependencies..."
-            (cd "$BRIDGE_DIR" && npm install)
+            (cd "$BRIDGE_DIR" && pnpm install)
         fi
-        (cd "$BRIDGE_DIR" && npm run daemon > "$OMNI_DIR/bridge.log" 2>&1) &
+        (cd "$BRIDGE_DIR" && pnpm run daemon > "$OMNI_DIR/bridge.log" 2>&1) &
         echo "   Bridge logs: $OMNI_DIR/bridge.log"
     else
         echo "❌ Error: acp-bridge directory not found at $BRIDGE_DIR"
@@ -50,7 +50,7 @@ fi
 # 2. Start Web UI if not running
 if ! is_port_open "$WEB_PORT"; then
     echo "🚀 Starting OmniHarness Web UI..."
-    (cd "$OMNI_DIR" && npm run dev > "$OMNI_DIR/web.log" 2>&1) &
+    (cd "$OMNI_DIR" && pnpm dev > "$OMNI_DIR/web.log" 2>&1) &
     echo "   Web UI logs: $OMNI_DIR/web.log"
 fi
 
@@ -80,5 +80,5 @@ if [ $# -eq 0 ]; then
     exit 0
 fi
 
-# Use npx tsx to run the cli
-npx tsx "$OMNI_DIR/omni-cli.ts" "$@"
+# Use pnpm exec tsx to run the cli
+pnpm exec tsx "$OMNI_DIR/omni-cli.ts" "$@"

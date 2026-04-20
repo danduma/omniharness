@@ -2,7 +2,9 @@
   "name": "tmp-app",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@9.6.0",
   "scripts": {
+    "preinstall": "node ./scripts/check-pnpm.mjs",
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
@@ -48,9 +50,10 @@
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",
     "eslint-config-next": "15.5.15",
-    "vitest": "^3.1.0",
-    "vite-tsconfig-paths": "^5.1.4",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "tsx": "^4.21.0",
+    "typescript": "^5",
+    "vite-tsconfig-paths": "^5.1.4",
+    "vitest": "^3.1.0"
   }
 }
