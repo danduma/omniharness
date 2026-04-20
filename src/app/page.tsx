@@ -10,6 +10,15 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/component
 import { Folder, Settings, Terminal as TerminalIcon, PanelRight, Plus, Search, Blocks, Clock, CheckCircle2, XCircle, Cpu, ArrowUp, FolderPlus, MoreHorizontal, Trash2 } from "lucide-react";
 import { FolderPickerDialog } from "@/components/FolderPickerDialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { ClarificationPanel } from "@/components/ClarificationPanel";
+import { PlanProgress } from "@/components/PlanProgress";
+import { ValidationSummary } from "@/components/ValidationSummary";
+
+type PlanRecord = { id: string; path: string };
+type RunRecord = { id: string; planId: string; status: string; createdAt: string };
+type PlanItemRecord = { id: string; planId: string; title: string; phase: string | null; status: string };
+type ClarificationRecord = { id: string; runId: string; question: string; answer: string | null; status: string };
+type ValidationRecord = { id: string; runId: string; status: string; summary: string | null; evidence: string | null };
 
 export default function Home() {
   const [command, setCommand] = useState("");
@@ -27,7 +36,11 @@ export default function Home() {
     runs: [],
     accounts: [],
     agents: [],
-    workers: []
+    workers: [],
+    planItems: [],
+    clarifications: [],
+    validationRuns: [],
+    executionEvents: [],
   });
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -64,6 +77,19 @@ export default function Home() {
       await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(apiKeys) });
     },
     onSuccess: () => setShowSettings(false)
+  });
+
+  const answerClarification = useMutation({
+    mutationFn: async ({ clarificationId, answer }: { clarificationId: string; answer: string }) => {
+      if (!selectedRunId) throw new Error("No run selected");
+      const res = await fetch(`/api/runs/${selectedRunId}/answer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clarificationId, answer }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
   });
 
   const runCommand = useMutation({
@@ -159,8 +185,18 @@ export default function Home() {
     ? state.workers.filter((w: { runId: string, id: string }) => w.runId === selectedRunId && state.agents.some((a: { name: string }) => a.name === w.id))
     : [];
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const activePlan = selectedRunId && state.runs && state.plans ? state.plans.find((p: any) => p.id === state.runs.find((r: any) => r.id === selectedRunId)?.planId) : null;
+  const runs = (state.runs || []) as RunRecord[];
+  const plans = (state.plans || []) as PlanRecord[];
+  const planItems = (state.planItems || []) as PlanItemRecord[];
+  const clarifications = (state.clarifications || []) as ClarificationRecord[];
+  const validationRuns = (state.validationRuns || []) as ValidationRecord[];
+
+  const activePlan = selectedRunId && runs.length && plans.length
+    ? plans.find((p) => p.id === runs.find((r) => r.id === selectedRunId)?.planId) ?? null
+    : null;
+  const activePlanItems = activePlan ? planItems.filter((item) => item.planId === activePlan.id) : [];
+  const selectedClarifications = selectedRunId ? clarifications.filter((item) => item.runId === selectedRunId) : [];
+  const selectedValidationRuns = selectedRunId ? validationRuns.filter((item) => item.runId === selectedRunId) : [];
 
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden text-foreground">
@@ -349,6 +385,21 @@ export default function Home() {
               )}
 
               {/* Inline Live Terminals for active conversation */}
+              <div className="grid gap-4 xl:grid-cols-3">
+                <div className="xl:col-span-1">
+                  <PlanProgress items={activePlanItems} />
+                </div>
+                <div className="xl:col-span-1">
+                  <ClarificationPanel
+                    clarifications={selectedClarifications}
+                    onAnswer={(clarificationId, answer) => answerClarification.mutate({ clarificationId, answer })}
+                  />
+                </div>
+                <div className="xl:col-span-1">
+                  <ValidationSummary validations={selectedValidationRuns} />
+                </div>
+              </div>
+
               {conversationWorkers.length > 0 && (
                 <div className="mt-8 pt-6 border-t border-border/50">
                   <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-4 pl-1">

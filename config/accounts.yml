@@ -1,0 +1,15 @@
+accounts:
+  - id: "claude-sub-1"
+    provider: "anthropic"
+    type: "subscription"
+    auth_ref: "CLAUDE_CODE_TOKEN_1"
+    capacity: 50
+    reset_schedule: "0 0 * * *"
+  - id: "claude-api-1"
+    provider: "anthropic"
+    type: "api"
+    auth_ref: "ANTHROPIC_API_KEY"
+  - id: "codex-api"
+    provider: "openai"
+    type: "api"
+    auth_ref: "OPENAI_API_KEY"
