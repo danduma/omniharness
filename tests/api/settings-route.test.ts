@@ -51,7 +51,7 @@ describe("/api/settings", () => {
     expect(payload.TEST_SUPERVISOR_MODEL).toBe("gemini-3.1-pro-preview");
   });
 
-  it("does not fail the whole response when an old encrypted value cannot be decrypted", async () => {
+  it("does not fail the whole response when an old encrypted secret cannot be decrypted", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     await db.insert(settings).values([
@@ -65,7 +65,7 @@ describe("/api/settings", () => {
 
     const payload = await response.json();
     expect(payload.TEST_SUPERVISOR_API_KEY).toBe("");
-    expect(payload.TEST_SUPERVISOR_MODEL).toBeUndefined();
+    expect(payload.TEST_SUPERVISOR_MODEL).toBe("enc:v1:invalid-payload");
     expect(payload.TEST_CREDIT_STRATEGY).toBe("swap_account");
 
     warnSpy.mockRestore();

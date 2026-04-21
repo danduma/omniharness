@@ -21,6 +21,10 @@ function resolveKeyPath() {
   return path.join(os.homedir(), ".omniharness", "settings.key");
 }
 
+export function getSettingsKeyPath() {
+  return resolveKeyPath();
+}
+
 function readOrCreateKey() {
   if (process.env.OMNIHARNESS_SETTINGS_KEY?.trim()) {
     return Buffer.from(process.env.OMNIHARNESS_SETTINGS_KEY.trim(), "base64");
@@ -68,7 +72,7 @@ export function decryptSettingValue(storedValue: string) {
     const tag = payload.subarray(IV_BYTES, IV_BYTES + 16);
     const ciphertext = payload.subarray(IV_BYTES + 16);
 
-    if (iv.length !== IV_BYTES || tag.length !== 16 || ciphertext.length === 0) {
+    if (iv.length !== IV_BYTES || tag.length !== 16) {
       throw new Error("Invalid encrypted settings payload.");
     }
 

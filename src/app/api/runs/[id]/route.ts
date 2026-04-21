@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
-import path from "path";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { cancelAgent } from "@/server/bridge-client";
 import { recoverRun } from "@/server/runs/recovery";
 import { stopRunObserver } from "@/server/supervisor/observer";
 import { cancelSupervisorWake } from "@/server/supervisor/wake";
+import { getAppDataPath } from "@/server/app-root";
 import {
   plans,
   runs,
@@ -137,7 +137,7 @@ export async function DELETE(
     await db.delete(plans).where(eq(plans.id, run.planId));
 
     if (plan?.path.startsWith("vibes/ad-hoc/")) {
-      const absolutePlanPath = path.resolve(process.cwd(), plan.path);
+      const absolutePlanPath = getAppDataPath(plan.path);
       if (fs.existsSync(absolutePlanPath)) {
         fs.rmSync(absolutePlanPath);
       }

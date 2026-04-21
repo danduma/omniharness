@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import fs from "fs";
-import path from "path";
 import { db } from "@/server/db";
+import { getAppDataPath } from "@/server/app-root";
 import { plans, runs, messages } from "@/server/db/schema";
 import { persistRunFailure } from "@/server/runs/failures";
 
@@ -49,7 +49,7 @@ describe("POST /api/supervisor", () => {
       }
     }
 
-    const adHocDir = path.resolve(process.cwd(), "vibes", "ad-hoc");
+    const adHocDir = getAppDataPath("vibes", "ad-hoc");
     if (fs.existsSync(adHocDir) && fs.readdirSync(adHocDir).length === 0) {
       fs.rmdirSync(adHocDir);
     }
@@ -79,7 +79,7 @@ describe("POST /api/supervisor", () => {
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
     expect(mockQueueConversationTitleGeneration).toHaveBeenCalledWith({ runId: payload.runId, command });
 
-    const adHocPlanPath = path.resolve(process.cwd(), insertedPlan!.path);
+    const adHocPlanPath = getAppDataPath(insertedPlan!.path);
     createdFiles.push(adHocPlanPath);
     expect(fs.existsSync(adHocPlanPath)).toBe(true);
     expect(fs.readFileSync(adHocPlanPath, "utf-8")).toContain(command);
@@ -101,7 +101,7 @@ describe("POST /api/supervisor", () => {
 
     expect(insertedPlan?.path).toMatch(/^vibes\/ad-hoc\/.+\.md$/);
     expect(insertedMessage?.content).toBe(command);
-    const adHocPlanPath = path.resolve(process.cwd(), insertedPlan!.path);
+    const adHocPlanPath = getAppDataPath(insertedPlan!.path);
     createdFiles.push(adHocPlanPath);
     expect(fs.readFileSync(adHocPlanPath, "utf-8")).toContain(command);
     expect(fs.readFileSync(adHocPlanPath, "utf-8")).toContain("Original command:");
@@ -147,7 +147,7 @@ describe("POST /api/supervisor", () => {
     const payload = await response.json();
     const insertedPlan = await db.select().from(plans).where(eq(plans.id, payload.planId)).get();
     const insertedMessage = await db.select().from(messages).where(eq(messages.runId, payload.runId)).get();
-    const adHocPlanPath = path.resolve(process.cwd(), insertedPlan!.path);
+    const adHocPlanPath = getAppDataPath(insertedPlan!.path);
 
     createdFiles.push(adHocPlanPath);
     expect(insertedPlan?.path).toMatch(/^vibes\/ad-hoc\/.+\.md$/);

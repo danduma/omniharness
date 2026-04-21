@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
+import { getAppDataPath } from "@/server/app-root";
 
 interface AttachmentInput {
   kind?: string;
@@ -46,15 +47,15 @@ This file stores the original request and any attached context for the superviso
 }
 
 export function createAdHocPlan(command: string, attachments: AttachmentInput[] = []) {
-  const adHocDir = path.resolve(process.cwd(), "vibes", "ad-hoc");
+  const adHocDir = getAppDataPath("vibes", "ad-hoc");
   fs.mkdirSync(adHocDir, { recursive: true });
 
   const filename = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID()}.md`;
   const relativePath = path.join("vibes", "ad-hoc", filename);
-  fs.writeFileSync(path.resolve(process.cwd(), relativePath), buildAdHocPlanMarkdown(command, attachments), "utf-8");
+  fs.writeFileSync(getAppDataPath(relativePath), buildAdHocPlanMarkdown(command, attachments), "utf-8");
   return relativePath;
 }
 
 export function rewriteAdHocPlan(relativePath: string, command: string, attachments: AttachmentInput[] = []) {
-  fs.writeFileSync(path.resolve(process.cwd(), relativePath), buildAdHocPlanMarkdown(command, attachments), "utf-8");
+  fs.writeFileSync(getAppDataPath(relativePath), buildAdHocPlanMarkdown(command, attachments), "utf-8");
 }

@@ -28,6 +28,15 @@ describe("settings crypto", () => {
     expect(decryptSettingValue(encrypted)).toBe("super-secret");
   });
 
+  it("round-trips empty secret values without treating them as corrupt", () => {
+    process.env.OMNIHARNESS_SETTINGS_KEY = Buffer.alloc(32, 5).toString("base64");
+
+    const encrypted = encryptSettingValue("");
+
+    expect(encrypted).toMatch(/^enc:v1:/);
+    expect(decryptSettingValue(encrypted)).toBe("");
+  });
+
   it("passes through legacy plaintext values unchanged when decrypting", () => {
     process.env.OMNIHARNESS_SETTINGS_KEY = Buffer.alloc(32, 9).toString("base64");
 

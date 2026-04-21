@@ -6,11 +6,15 @@ import { decryptSettingValue, encryptSettingValue, shouldEncryptSetting } from "
 export async function GET() {
   const allSettings = await db.select().from(settings);
   const dict = Object.fromEntries(allSettings.flatMap((setting) => {
+    if (!shouldEncryptSetting(setting.key)) {
+      return [[setting.key, setting.value]];
+    }
+
     try {
       return [[setting.key, decryptSettingValue(setting.value)]];
     } catch (error) {
       console.warn(`Unable to decrypt setting "${setting.key}":`, error);
-      return shouldEncryptSetting(setting.key) ? [[setting.key, ""]] : [];
+      return [[setting.key, ""]];
     }
   }));
   return NextResponse.json(dict);
