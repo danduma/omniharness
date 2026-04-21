@@ -5,7 +5,7 @@ describe("classifyWorkerHealth", () => {
   it("marks a worker stuck after prolonged silence", () => {
     expect(
       classifyWorkerHealth({
-        silenceMs: 120000,
+        silenceMs: 30000,
         repeatCount: 0,
         unresolvedItems: 1,
         stderr: "",

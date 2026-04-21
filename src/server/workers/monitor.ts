@@ -14,7 +14,7 @@ export function classifyWorkerHealth(input: WorkerHealthInput): WorkerHealth {
     return "cred-exhausted";
   }
 
-  if (input.silenceMs >= 90_000 && input.unresolvedItems > 0) {
+  if (input.silenceMs >= 30_000 && input.unresolvedItems > 0) {
     return "stuck";
   }
 

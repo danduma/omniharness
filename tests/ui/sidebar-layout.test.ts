@@ -26,3 +26,30 @@ test("settings render as a centered app modal with supervisor llm controls", () 
   expect(pageSource).toContain("SUPERVISOR_LLM_BASE_URL");
   expect(pageSource).toContain("SUPERVISOR_LLM_API_KEY");
 });
+
+test("header includes a persistent day night mode toggle beside the workers sidebar button", () => {
+  expect(pageSource).toContain('const [themeMode, setThemeMode] = useState<"day" | "night">("day")');
+  expect(pageSource).toContain('window.localStorage.getItem("omni-theme-mode")');
+  expect(pageSource).toContain('window.localStorage.setItem("omni-theme-mode", themeMode)');
+  expect(pageSource).toContain('document.documentElement.classList.toggle("dark", themeMode === "night")');
+  expect(pageSource).toContain('aria-label={themeMode === "night" ? "Switch to day mode" : "Switch to night mode"}');
+  expect(pageSource).toContain('setThemeMode((current) => (current === "day" ? "night" : "day"))');
+  expect(pageSource).toContain('themeMode === "night" ? <Sun');
+  expect(pageSource).toContain(': <Moon');
+  expect(pageSource).toContain('title="Toggle Global Workers"');
+  expect(pageSource).not.toContain(">Day<");
+  expect(pageSource).not.toContain(">Night<");
+});
+
+test("failed runs surface recovery UI in the header and conversation feed", () => {
+  expect(pageSource).toContain('selectedRun?.status === "failed"');
+  expect(pageSource).toContain("Retry latest");
+  expect(pageSource).toContain('msg.kind === "error"');
+  expect(pageSource).toContain("Run failed");
+});
+
+test("starting a project-scoped conversation keeps the composer empty", () => {
+  expect(pageSource).toContain('setDraftProjectPath(projectPath)');
+  expect(pageSource).toContain('placeholder={draftProjectPath ? `${draftProjectPath}/...`');
+  expect(pageSource).not.toContain('setCommand(`${projectPath}/`)');
+});

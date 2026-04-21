@@ -5,14 +5,20 @@ import fs from "fs";
 import path from "path";
 import { db } from "@/server/db";
 import { plans, runs, messages } from "@/server/db/schema";
+import { persistRunFailure } from "@/server/runs/failures";
 
-const mockRun = vi.fn().mockResolvedValue(undefined);
-const mockSyncAccounts = vi.fn().mockResolvedValue(undefined);
+const {
+  mockStartSupervisorRun,
+  mockSyncAccounts,
+  mockQueueConversationTitleGeneration,
+} = vi.hoisted(() => ({
+  mockStartSupervisorRun: vi.fn(),
+  mockSyncAccounts: vi.fn().mockResolvedValue(undefined),
+  mockQueueConversationTitleGeneration: vi.fn().mockResolvedValue(undefined),
+}));
 
-vi.mock("@/server/supervisor", () => ({
-  Supervisor: class MockSupervisor {
-    run = mockRun;
-  },
+vi.mock("@/server/supervisor/start", () => ({
+  startSupervisorRun: mockStartSupervisorRun,
 }));
 
 vi.mock("@/server/credits", () => ({
@@ -21,14 +27,19 @@ vi.mock("@/server/credits", () => ({
   },
 }));
 
+vi.mock("@/server/conversation-title", () => ({
+  queueConversationTitleGeneration: mockQueueConversationTitleGeneration,
+}));
+
 import { POST } from "@/app/api/supervisor/route";
 
 describe("POST /api/supervisor", () => {
   const createdFiles: string[] = [];
 
   beforeEach(() => {
-    mockRun.mockClear();
+    mockStartSupervisorRun.mockClear();
     mockSyncAccounts.mockClear();
+    mockQueueConversationTitleGeneration.mockClear();
   });
 
   afterEach(() => {
@@ -61,9 +72,12 @@ describe("POST /api/supervisor", () => {
 
     expect(insertedPlan?.path).toMatch(/^vibes\/ad-hoc\/.+\.md$/);
     expect(insertedRun?.planId).toBe(payload.planId);
+    expect(insertedRun?.title).toBe("New conversation");
+    expect(insertedRun?.projectPath).toBeNull();
     expect(insertedMessage?.content).toBe(command);
     expect(mockSyncAccounts).toHaveBeenCalledOnce();
-    expect(mockRun).toHaveBeenCalledOnce();
+    expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
+    expect(mockQueueConversationTitleGeneration).toHaveBeenCalledWith({ runId: payload.runId, command });
 
     const adHocPlanPath = path.resolve(process.cwd(), insertedPlan!.path);
     createdFiles.push(adHocPlanPath);
@@ -90,9 +104,28 @@ describe("POST /api/supervisor", () => {
     const adHocPlanPath = path.resolve(process.cwd(), insertedPlan!.path);
     createdFiles.push(adHocPlanPath);
     expect(fs.readFileSync(adHocPlanPath, "utf-8")).toContain(command);
-    expect(fs.readFileSync(adHocPlanPath, "utf-8")).toContain("- [ ] vibes/test-plan.md");
+    expect(fs.readFileSync(adHocPlanPath, "utf-8")).toContain("Original command:");
     expect(mockSyncAccounts).toHaveBeenCalledOnce();
-    expect(mockRun).toHaveBeenCalledOnce();
+    expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
+  });
+
+  it("stores the selected project path on the run for folder grouping", async () => {
+    const command = "fix the search layout";
+    const projectPath = "/Users/masterman/NLP/wikinuxt";
+    const request = new NextRequest("http://localhost/api/supervisor", {
+      method: "POST",
+      body: JSON.stringify({ command, projectPath }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    const insertedRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+
+    expect(insertedRun?.projectPath).toBe(projectPath);
+    expect(insertedRun?.title).toBe("New conversation");
+    expect(mockQueueConversationTitleGeneration).toHaveBeenCalledWith({ runId: payload.runId, command });
   });
 
   it("accepts optional attachment metadata alongside text input", async () => {
@@ -121,6 +154,31 @@ describe("POST /api/supervisor", () => {
     expect(insertedMessage?.content).toBe(command);
     expect(fs.readFileSync(adHocPlanPath, "utf-8")).toContain(command);
     expect(mockSyncAccounts).toHaveBeenCalledOnce();
-    expect(mockRun).toHaveBeenCalledOnce();
+    expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
+  });
+
+  it("persists a visible failure when the supervisor crashes after launch", async () => {
+    mockStartSupervisorRun.mockImplementationOnce((runId: string) => {
+      setTimeout(() => {
+        void persistRunFailure(runId, new Error("API key not valid"));
+      }, 0);
+    });
+
+    const request = new NextRequest("http://localhost/api/supervisor", {
+      method: "POST",
+      body: JSON.stringify({ command: "retry the failing run" }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const insertedRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+    const runMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
+
+    expect(insertedRun?.status).toBe("failed");
+    expect(runMessages.some((message) => message.content.includes("API key not valid"))).toBe(true);
   });
 });

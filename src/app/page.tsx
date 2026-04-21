@@ -7,12 +7,10 @@ import { Terminal } from "@/components/Terminal";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
-import { Folder, Settings, Terminal as TerminalIcon, PanelRight, Plus, Search, Blocks, Clock, CheckCircle2, XCircle, Cpu, ArrowUp, FolderPlus, MoreHorizontal, Trash2, LoaderCircle, Menu, Pencil } from "lucide-react";
+import { Folder, Settings, Terminal as TerminalIcon, PanelRight, Plus, Search, Blocks, Clock, CheckCircle2, XCircle, Cpu, ArrowUp, FolderPlus, MoreHorizontal, Trash2, LoaderCircle, Menu, Pencil, Sun, Moon, RotateCcw, GitBranch, AlertTriangle } from "lucide-react";
 import { FolderPickerDialog } from "@/components/FolderPickerDialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ClarificationPanel } from "@/components/ClarificationPanel";
-import { PlanProgress } from "@/components/PlanProgress";
-import { ValidationSummary } from "@/components/ValidationSummary";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { getRunLatestMessageTimestamp, isRunUnread } from "@/lib/conversation-state";
@@ -24,7 +22,14 @@ type PlanRecord = { id: string; path: string };
 type RunRecord = { id: string; planId: string; status: string; createdAt: string; projectPath: string | null; title: string | null };
 type PlanItemRecord = { id: string; planId: string; title: string; phase: string | null; status: string };
 type ClarificationRecord = { id: string; runId: string; question: string; answer: string | null; status: string };
-type ValidationRecord = { id: string; runId: string; status: string; summary: string | null; evidence: string | null };
+type MessageRecord = {
+  id: string;
+  runId: string;
+  role: string;
+  kind?: string | null;
+  content: string;
+  createdAt: string;
+};
 type ProjectFilesResponse = { root: string; files: string[] };
 
 type SidebarRun = { id: string; title: string; path: string; status: string; createdAt: string };
@@ -39,9 +44,6 @@ interface ConversationSidebarProps {
   readMarkers: Record<string, string>;
   showSettings: boolean;
   setShowSettings: React.Dispatch<React.SetStateAction<boolean>>;
-  apiKeys: Record<string, string>;
-  setApiKeys: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  saveSettings: { mutate: () => void; isPending: boolean };
   openFolderPicker: () => void;
   startNewPlan: () => void;
   beginConversationInProject: (projectPath: string) => void;
@@ -65,9 +67,6 @@ function ConversationSidebar({
   readMarkers,
   showSettings,
   setShowSettings,
-  apiKeys,
-  setApiKeys,
-  saveSettings,
   openFolderPicker,
   startNewPlan,
   beginConversationInProject,
@@ -260,6 +259,27 @@ interface WorkersSidebarProps {
   onClose?: () => void;
 }
 
+interface ThemeModeToggleProps {
+  themeMode: "day" | "night";
+  setThemeMode: React.Dispatch<React.SetStateAction<"day" | "night">>;
+}
+
+function ThemeModeToggle({ themeMode, setThemeMode }: ThemeModeToggleProps) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="h-8 w-8 text-muted-foreground hover:text-foreground"
+      aria-label={themeMode === "night" ? "Switch to day mode" : "Switch to night mode"}
+      title={themeMode === "night" ? "Switch to day mode" : "Switch to night mode"}
+      onClick={() => setThemeMode((current) => (current === "day" ? "night" : "day"))}
+    >
+      {themeMode === "night" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+    </Button>
+  );
+}
+
 function WorkersSidebar({ agents, onClose }: WorkersSidebarProps) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-muted/10">
@@ -303,6 +323,7 @@ function WorkersSidebar({ agents, onClose }: WorkersSidebarProps) {
 
 export default function Home() {
   const [command, setCommand] = useState("");
+  const [themeMode, setThemeMode] = useState<"day" | "night">("day");
   const [showSettings, setShowSettings] = useState(false);
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({
     OPENAI_API_KEY: '',
@@ -327,6 +348,8 @@ export default function Home() {
   const [readMarkers, setReadMarkers] = useState<Record<string, string>>({});
   const [renamingRunId, setRenamingRunId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingMessageValue, setEditingMessageValue] = useState("");
   
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [state, setState] = useState<any>({
@@ -396,6 +419,27 @@ export default function Home() {
 
     window.localStorage.setItem("omni-read-markers", JSON.stringify(readMarkers));
   }, [readMarkers]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const savedThemeMode = window.localStorage.getItem("omni-theme-mode");
+    if (savedThemeMode === "day" || savedThemeMode === "night") {
+      setThemeMode(savedThemeMode);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem("omni-theme-mode", themeMode);
+    document.documentElement.classList.toggle("dark", themeMode === "night");
+    document.documentElement.style.colorScheme = themeMode === "night" ? "dark" : "light";
+  }, [themeMode]);
 
   const saveSettings = useMutation({
     mutationFn: async () => {
@@ -481,6 +525,25 @@ export default function Home() {
     },
   });
 
+  const recoverRun = useMutation({
+    mutationFn: async ({ runId, action, targetMessageId, content }: { runId: string; action: "retry" | "edit" | "fork"; targetMessageId: string; content?: string }) => {
+      const res = await fetch(`/api/runs/${runId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, targetMessageId, content }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+    onSuccess: (data) => {
+      if (data.runId) {
+        setSelectedRunId(data.runId);
+      }
+      setEditingMessageId(null);
+      setEditingMessageValue("");
+    },
+  });
+
   const runCommand = useMutation({
     mutationFn: async (cmd: string) => {
       const res = await fetch("/api/supervisor", {
@@ -538,11 +601,11 @@ export default function Home() {
   const beginConversationInProject = (projectPath: string) => {
     setSelectedRunId(null);
     setDraftProjectPath(projectPath);
-    setCommand(`${projectPath}/`);
+    setCommand("");
     setMobileNavOpen(false);
     requestAnimationFrame(() => {
       commandInputRef.current?.focus();
-      commandInputRef.current?.select();
+      commandInputRef.current?.setSelectionRange(0, 0);
     });
   };
 
@@ -609,9 +672,7 @@ export default function Home() {
 
   const runs = (state.runs || []) as RunRecord[];
   const plans = (state.plans || []) as PlanRecord[];
-  const planItems = (state.planItems || []) as PlanItemRecord[];
   const clarifications = (state.clarifications || []) as ClarificationRecord[];
-  const validationRuns = (state.validationRuns || []) as ValidationRecord[];
   const currentProjectScope = resolveProjectScope({
     draftProjectPath,
     selectedRunId,
@@ -637,9 +698,12 @@ export default function Home() {
     ? plans.find((p) => p.id === runs.find((r) => r.id === selectedRunId)?.planId) ?? null
     : null;
   const selectedRun = selectedRunId ? runs.find((run) => run.id === selectedRunId) ?? null : null;
-  const activePlanItems = activePlan ? planItems.filter((item) => item.planId === activePlan.id) : [];
   const selectedClarifications = selectedRunId ? clarifications.filter((item) => item.runId === selectedRunId) : [];
-  const selectedValidationRuns = selectedRunId ? validationRuns.filter((item) => item.runId === selectedRunId) : [];
+  const latestUserCheckpoint = selectedRunId
+    ? [...((filteredMessages || []) as MessageRecord[])]
+        .filter((message) => message.role === "user")
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null
+    : null;
 
   useEffect(() => {
     if (!selectedRunId) {
@@ -693,6 +757,35 @@ export default function Home() {
     });
   };
 
+  const handleRetryMessage = (messageId: string) => {
+    if (!selectedRunId) return;
+    recoverRun.mutate({ runId: selectedRunId, action: "retry", targetMessageId: messageId });
+  };
+
+  const handleStartEditingMessage = (message: MessageRecord) => {
+    setEditingMessageId(message.id);
+    setEditingMessageValue(message.content);
+  };
+
+  const handleCancelEditingMessage = () => {
+    setEditingMessageId(null);
+    setEditingMessageValue("");
+  };
+
+  const handleSaveEditedMessage = (messageId: string) => {
+    if (!selectedRunId) return;
+    const content = editingMessageValue.trim();
+    if (!content) return;
+    recoverRun.mutate({ runId: selectedRunId, action: "edit", targetMessageId: messageId, content });
+  };
+
+  const handleForkMessage = (message: MessageRecord) => {
+    if (!selectedRunId) return;
+    const content = window.prompt("Fork with this prompt:", message.content)?.trim();
+    if (!content) return;
+    recoverRun.mutate({ runId: selectedRunId, action: "fork", targetMessageId: message.id, content });
+  };
+
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-background text-foreground lg:h-screen">
       <div className="relative z-30 hidden h-full w-[280px] shrink-0 overflow-hidden border-r border-border lg:flex">
@@ -705,9 +798,6 @@ export default function Home() {
           readMarkers={readMarkers}
           showSettings={showSettings}
           setShowSettings={setShowSettings}
-          apiKeys={apiKeys}
-          setApiKeys={setApiKeys}
-          saveSettings={saveSettings}
           openFolderPicker={() => setShowFolderPicker(true)}
           startNewPlan={handleStartNewPlan}
           beginConversationInProject={beginConversationInProject}
@@ -743,9 +833,6 @@ export default function Home() {
                   readMarkers={readMarkers}
                   showSettings={showSettings}
                   setShowSettings={setShowSettings}
-                  apiKeys={apiKeys}
-                  setApiKeys={setApiKeys}
-                  saveSettings={saveSettings}
                   openFolderPicker={() => setShowFolderPicker(true)}
                   startNewPlan={handleStartNewPlan}
                   beginConversationInProject={beginConversationInProject}
@@ -764,7 +851,19 @@ export default function Home() {
 
             {selectedRun ? (
               <div className="flex min-w-0 flex-col">
-                <span className="truncate font-semibold text-sm">{selectedRun.title || "New conversation"}</span>
+                <div className="flex items-center gap-2">
+                  <span className="truncate font-semibold text-sm">{selectedRun.title || "New conversation"}</span>
+                  {selectedRun?.status === "failed" ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-destructive">
+                      <AlertTriangle className="h-3 w-3" /> Failed
+                    </span>
+                  ) : null}
+                  {selectedRun?.status === "cancelling" ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                      Cancelling
+                    </span>
+                  ) : null}
+                </div>
                 <span className="max-w-[24rem] truncate text-xs text-muted-foreground" title={selectedRun.projectPath || activePlan?.path || undefined}>
                   {selectedRun.projectPath || activePlan?.path || "Ad hoc request"}
                 </span>
@@ -782,6 +881,17 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-2">
+            {selectedRun?.status === "failed" && latestUserCheckpoint ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleRetryMessage(latestUserCheckpoint.id)}
+                disabled={recoverRun.isPending}
+              >
+                <RotateCcw className="mr-2 h-4 w-4" /> Retry latest
+              </Button>
+            ) : null}
+            <ThemeModeToggle themeMode={themeMode} setThemeMode={setThemeMode} />
             <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-muted-foreground hover:text-foreground lg:inline-flex" title="Toggle Global Workers" onClick={() => setRightSidebarOpen(!rightSidebarOpen)}>
               <PanelRight className="h-4 w-4" />
             </Button>
@@ -803,20 +913,76 @@ export default function Home() {
           {selectedRunId ? (
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 pb-24 sm:gap-6 sm:p-6 sm:pb-20">
               {filteredMessages && filteredMessages.length > 0 ? (
-                /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-                filteredMessages.map((msg: any) => (
+                filteredMessages.map((msg: MessageRecord) => (
                   <div key={msg.id} className="group flex w-full flex-col text-sm">
-                    <div className="mb-1.5 flex items-center gap-2 px-1">
+                    <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
+                      <div className="flex items-center gap-2">
                       <span className={`text-xs font-semibold capitalize tracking-wider ${msg.role === "user" ? "text-primary" : (msg.role === "system" ? "text-muted-foreground" : "text-emerald-600")}`}>
                         {msg.role === "user" ? "You" : msg.role}
                       </span>
+                      {msg.kind === "error" ? (
+                        <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-destructive">
+                          Run failed
+                        </span>
+                      ) : null}
                       <span className="text-[10px] text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100">
                         {new Date(msg.createdAt).toLocaleTimeString()}
                       </span>
                     </div>
-                    <div className={`overflow-x-auto whitespace-pre-wrap rounded-xl border p-4 leading-relaxed ${msg.role === "user" ? "border-transparent bg-muted/30 text-foreground" : (msg.role === "system" ? "border-border/50 bg-background font-mono text-[11px] text-muted-foreground" : (msg.role === "worker" ? "border-[#333] bg-[#1e1e1e] font-mono text-[12px] text-emerald-400 shadow-sm" : "border-border bg-card"))}`}>
-                      {msg.content}
+                      {msg.role === "user" ? (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                            aria-label="Message actions"
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem disabled={recoverRun.isPending} onClick={() => handleRetryMessage(msg.id)}>
+                              <RotateCcw className="mr-2 h-4 w-4" /> Retry from here
+                            </DropdownMenuItem>
+                            <DropdownMenuItem disabled={recoverRun.isPending} onClick={() => handleStartEditingMessage(msg)}>
+                              <Pencil className="mr-2 h-4 w-4" /> Edit in place
+                            </DropdownMenuItem>
+                            <DropdownMenuItem disabled={recoverRun.isPending} onClick={() => handleForkMessage(msg)}>
+                              <GitBranch className="mr-2 h-4 w-4" /> Fork from here
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      ) : null}
                     </div>
+                    {editingMessageId === msg.id ? (
+                      <div className="rounded-xl border border-primary/30 bg-background p-3">
+                        <textarea
+                          value={editingMessageValue}
+                          onChange={(event) => setEditingMessageValue(event.target.value)}
+                          className="min-h-28 w-full resize-y rounded-lg border border-border bg-background p-3 text-sm outline-none focus:ring-1 focus:ring-primary/40"
+                        />
+                        <div className="mt-3 flex items-center justify-between gap-3">
+                          <p className="text-xs text-muted-foreground">This will truncate later history and rerun from this message.</p>
+                          <div className="flex gap-2">
+                            <Button type="button" variant="ghost" size="sm" onClick={handleCancelEditingMessage}>
+                              Cancel
+                            </Button>
+                            <Button type="button" size="sm" disabled={recoverRun.isPending || !editingMessageValue.trim()} onClick={() => handleSaveEditedMessage(msg.id)}>
+                              Save and rerun
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className={`overflow-x-auto whitespace-pre-wrap rounded-xl border p-4 leading-relaxed ${msg.kind === "error"
+                        ? "border-destructive/30 bg-destructive/5 text-destructive"
+                        : msg.role === "user"
+                          ? "border-transparent bg-muted/30 text-foreground"
+                          : msg.role === "system"
+                            ? "border-border/50 bg-background font-mono text-[11px] text-muted-foreground"
+                            : msg.role === "worker"
+                              ? "border-[#333] bg-[#1e1e1e] font-mono text-[12px] text-emerald-400 shadow-sm"
+                              : "border-border bg-card"}`}>
+                        {msg.content}
+                      </div>
+                    )}
                   </div>
                 ))
               ) : (
@@ -828,20 +994,14 @@ export default function Home() {
                 </div>
               )}
 
-              <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-                <div>
-                  <PlanProgress items={activePlanItems} />
-                </div>
-                <div>
+              {selectedClarifications.length > 0 && (
+                <div className="max-w-xl">
                   <ClarificationPanel
                     clarifications={selectedClarifications}
                     onAnswer={(clarificationId, answer) => answerClarification.mutate({ clarificationId, answer })}
                   />
                 </div>
-                <div className="lg:col-span-2 xl:col-span-1">
-                  <ValidationSummary validations={selectedValidationRuns} />
-                </div>
-              </div>
+              )}
 
               {conversationWorkers.length > 0 && (
                 <div className="mt-4 border-t border-border/50 pt-6 sm:mt-8">
