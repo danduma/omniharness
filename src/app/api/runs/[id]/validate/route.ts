@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { errorResponse } from "@/server/api-errors";
 import { validateRun } from "@/server/validation";
 
 export async function POST(
@@ -10,7 +11,10 @@ export async function POST(
     const result = await validateRun(runId);
     return NextResponse.json(result);
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return errorResponse(error, {
+      status: 500,
+      source: "Validation",
+      action: "Validate run",
+    });
   }
 }

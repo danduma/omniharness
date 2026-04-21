@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorResponse } from "@/server/api-errors";
 import { answerClarification } from "@/server/clarifications/store";
 import { resumeRunAfterClarification } from "@/server/clarifications/loop";
 
@@ -11,7 +12,11 @@ export async function POST(
     const { clarificationId, answer } = await req.json();
 
     if (typeof clarificationId !== "string" || typeof answer !== "string") {
-      return NextResponse.json({ error: "clarificationId and answer are required" }, { status: 400 });
+      return errorResponse("clarificationId and answer are required", {
+        status: 400,
+        source: "Clarifications",
+        action: "Answer clarification",
+      });
     }
 
     await answerClarification(clarificationId, answer);
@@ -19,7 +24,10 @@ export async function POST(
 
     return NextResponse.json({ ok: true, runId, ...resumeResult });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return errorResponse(error, {
+      status: 500,
+      source: "Clarifications",
+      action: "Answer clarification",
+    });
   }
 }

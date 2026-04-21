@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { db } from "@/server/db";
+import { settings } from "@/server/db/schema";
 
 const { mockIsSpawnableWorkerType } = vi.hoisted(() => ({
   mockIsSpawnableWorkerType: vi.fn(),
@@ -13,6 +15,7 @@ import { GET } from "@/app/api/agents/catalog/route";
 describe("GET /api/agents/catalog", () => {
   beforeEach(() => {
     mockIsSpawnableWorkerType.mockReset();
+    return db.delete(settings);
   });
 
   afterEach(() => {
@@ -50,6 +53,7 @@ describe("GET /api/agents/catalog", () => {
     const payload = await response.json();
     const codex = payload.workers.find((worker: { type: string }) => worker.type === "codex");
 
+    expect(payload.diagnostics).toEqual([]);
     expect(codex?.availability.status).toBe("ok");
     expect(codex?.availability.message).toBe("Ready to spawn.");
   });

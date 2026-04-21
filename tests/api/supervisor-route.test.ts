@@ -85,6 +85,23 @@ describe("POST /api/supervisor", () => {
     expect(fs.readFileSync(adHocPlanPath, "utf-8")).toContain(command);
   });
 
+  it("returns a structured frontend-safe error when the command is empty", async () => {
+    const request = new NextRequest("http://localhost/api/supervisor", {
+      method: "POST",
+      body: JSON.stringify({ command: "   " }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: expect.objectContaining({
+        source: "Supervisor",
+        action: "Start a run",
+        message: "Command cannot be empty",
+      }),
+    });
+  });
+
   it("treats a bare path string as text instead of resolving it as a plan path", async () => {
     const command = "vibes/test-plan.md";
     const request = new NextRequest("http://localhost/api/supervisor", {

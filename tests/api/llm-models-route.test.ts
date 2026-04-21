@@ -73,7 +73,11 @@ describe("POST /api/llm-models", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
-      error: "Model discovery is currently supported for Gemini only.",
+      error: expect.objectContaining({
+        source: "LLM Settings",
+        action: "Fetch available models",
+        message: "Model discovery is currently supported for Gemini only.",
+      }),
     });
   });
 });

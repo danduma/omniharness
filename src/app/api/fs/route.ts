@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { errorResponse } from "@/server/api-errors";
 
 export async function GET(req: NextRequest) {
   try {
@@ -31,7 +32,10 @@ export async function GET(req: NextRequest) {
       directories 
     });
   } catch (err: unknown) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: errorMessage }, { status: 400 });
+    return errorResponse(err, {
+      status: 400,
+      source: "Filesystem",
+      action: "Browse directories",
+    });
   }
 }

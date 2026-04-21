@@ -6,6 +6,7 @@ import { queueConversationTitleGeneration } from '@/server/conversation-title';
 import { createAdHocPlan } from '@/server/runs/ad-hoc-plan';
 import { startSupervisorRun } from '@/server/supervisor/start';
 import { parseAllowedWorkerTypes, normalizeWorkerType } from '@/server/supervisor/worker-types';
+import { errorResponse } from '@/server/api-errors';
 import { randomUUID } from 'crypto';
 interface AttachmentInput {
   kind?: string;
@@ -38,7 +39,11 @@ export async function POST(req: NextRequest) {
       ? body.projectPath.trim()
       : null;
     if (!trimmedCommand) {
-      return NextResponse.json({ error: 'Command cannot be empty' }, { status: 400 });
+      return errorResponse("Command cannot be empty", {
+        status: 400,
+        source: "Supervisor",
+        action: "Start a run",
+      });
     }
 
     const attachments = Array.isArray(body?.attachments)
@@ -91,7 +96,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true, planId, runId });
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return errorResponse(error, {
+      status: 500,
+      source: "Supervisor",
+      action: "Start a run",
+    });
   }
 }

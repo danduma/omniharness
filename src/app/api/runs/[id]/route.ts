@@ -3,6 +3,7 @@ import fs from "fs";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { cancelAgent } from "@/server/bridge-client";
+import { errorResponse } from "@/server/api-errors";
 import { recoverRun } from "@/server/runs/recovery";
 import { stopRunObserver } from "@/server/supervisor/observer";
 import { cancelSupervisorWake } from "@/server/supervisor/wake";
@@ -34,7 +35,11 @@ export async function PATCH(
     const title = normalizeTitle(body?.title);
 
     if (!title) {
-      return NextResponse.json({ error: "Title cannot be empty" }, { status: 400 });
+      return errorResponse("Title cannot be empty", {
+        status: 400,
+        source: "Runs",
+        action: "Rename conversation",
+      });
     }
 
     await db
@@ -44,8 +49,11 @@ export async function PATCH(
 
     return NextResponse.json({ ok: true, runId, title });
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return errorResponse(error, {
+      status: 500,
+      source: "Runs",
+      action: "Rename conversation",
+    });
   }
 }
 
@@ -61,11 +69,19 @@ export async function POST(
     const content = typeof body?.content === "string" ? body.content : undefined;
 
     if (action !== "retry" && action !== "edit" && action !== "fork") {
-      return NextResponse.json({ error: "Unsupported recovery action" }, { status: 400 });
+      return errorResponse("Unsupported recovery action", {
+        status: 400,
+        source: "Runs",
+        action: "Recover conversation",
+      });
     }
 
     if (!targetMessageId) {
-      return NextResponse.json({ error: "targetMessageId is required" }, { status: 400 });
+      return errorResponse("targetMessageId is required", {
+        status: 400,
+        source: "Runs",
+        action: "Recover conversation",
+      });
     }
 
     const result = await recoverRun({
@@ -83,7 +99,11 @@ export async function POST(
       : errorMessage.includes("not found")
         ? 404
         : 500;
-    return NextResponse.json({ error: errorMessage }, { status });
+    return errorResponse(error, {
+      status,
+      source: "Runs",
+      action: "Recover conversation",
+    });
   }
 }
 
@@ -95,7 +115,11 @@ export async function DELETE(
     const { id: runId } = await params;
     const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
     if (!run) {
-      return NextResponse.json({ error: "Run not found" }, { status: 404 });
+      return errorResponse("Run not found", {
+        status: 404,
+        source: "Runs",
+        action: "Delete conversation",
+      });
     }
 
     cancelSupervisorWake(runId);
@@ -145,7 +169,10 @@ export async function DELETE(
 
     return NextResponse.json({ ok: true, runId });
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return errorResponse(error, {
+      status: 500,
+      source: "Runs",
+      action: "Delete conversation",
+    });
   }
 }

@@ -25,6 +25,16 @@ export interface AgentRecord {
     sessionId?: string | null;
     options?: Array<{ optionId: string; kind: string; name: string }>;
   }>;
+  outputEntries?: Array<{
+    id: string;
+    type: "message" | "thought" | "tool_call" | "tool_call_update" | "permission";
+    text: string;
+    timestamp: string;
+    toolCallId?: string;
+    toolKind?: string;
+    status?: string;
+  }>;
+  renderedOutput?: string | null;
   lastText: string;
   currentText: string;
   stderrBuffer: string[];
@@ -118,6 +128,25 @@ function asPendingPermissions(value: unknown): AgentRecord["pendingPermissions"]
     .filter((item) => item.requestId >= 0 && item.requestedAt);
 }
 
+function asOutputEntries(value: unknown): NonNullable<AgentRecord["outputEntries"]> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+    .map((item) => ({
+      id: asString(item.id),
+      type: asString(item.type) as NonNullable<AgentRecord["outputEntries"]>[number]["type"],
+      text: asString(item.text),
+      timestamp: asString(item.timestamp),
+      toolCallId: asNullableString(item.toolCallId),
+      toolKind: asNullableString(item.toolKind),
+      status: asNullableString(item.status),
+    }))
+    .filter((item) => item.id && item.type && item.text);
+}
+
 export function normalizeAgentRecord(value: unknown): AgentRecord {
   const record = typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
   const contextUsage =
@@ -137,6 +166,8 @@ export function normalizeAgentRecord(value: unknown): AgentRecord {
     sessionMode: asNullableString(record.sessionMode),
     contextUsage,
     pendingPermissions: asPendingPermissions(record.pendingPermissions),
+    outputEntries: asOutputEntries(record.outputEntries),
+    renderedOutput: asNullableString(record.renderedOutput),
     lastText: asString(record.lastText),
     currentText: asString(record.currentText),
     stderrBuffer: asStringArray(record.stderrBuffer),

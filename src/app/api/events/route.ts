@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/server/db";
 import { messages, plans, runs, accounts, workers, clarifications, validationRuns, executionEvents } from "@/server/db/schema";
 import { BRIDGE_URL } from "@/server/bridge-client";
+import { buildAppError } from "@/server/api-errors";
 import { desc } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +15,7 @@ export async function GET(req: NextRequest) {
       const sendEvent = (event: string, data: any) => {
         try {
           controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
-        } catch (_e) {
+        } catch {
           // Stream might be closed
         }
       };
@@ -37,11 +38,25 @@ export async function GET(req: NextRequest) {
           const allExecutionEvents = await db.select().from(executionEvents).orderBy(desc(executionEvents.createdAt));
           
           let agentsData = [];
+          const frontendErrors = [];
           try {
             const res = await fetch(`${BRIDGE_URL}/agents`);
-            if (res.ok) agentsData = await res.json();
-          } catch (_e) {
-            // bridge might be down
+            if (res.ok) {
+              agentsData = await res.json();
+            } else {
+              frontendErrors.push(buildAppError(
+                `Bridge agent list request failed with status ${res.status}.`,
+                {
+                  source: "Bridge",
+                  action: "Stream live agent state",
+                },
+              ));
+            }
+          } catch (error) {
+            frontendErrors.push(buildAppError(error, {
+              source: "Bridge",
+              action: "Stream live agent state",
+            }));
           }
 
           sendEvent("update", {
@@ -54,9 +69,14 @@ export async function GET(req: NextRequest) {
             clarifications: allClarifications,
             validationRuns: allValidationRuns,
             executionEvents: allExecutionEvents,
+            frontendErrors,
           });
         } catch (e) {
           console.error("SSE Poll Error", e);
+          sendEvent("update_error", buildAppError(e, {
+            source: "Events",
+            action: "Stream live updates",
+          }));
         }
 
         // Wait before next poll

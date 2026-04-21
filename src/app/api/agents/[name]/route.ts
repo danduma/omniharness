@@ -3,6 +3,7 @@ import { getAgent } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { runs, workers } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
+import { errorResponse } from "@/server/api-errors";
 
 export async function GET(
   req: NextRequest,
@@ -14,14 +15,18 @@ export async function GET(
     const worker = await db.select().from(workers).where(eq(workers.id, name)).get();
     const run = worker ? await db.select().from(runs).where(eq(runs.id, worker.runId)).get() : null;
     const outputLog = worker?.outputLog ?? "";
+    const structuredOutput = typeof data.renderedOutput === "string" && data.renderedOutput.trim().length > 0
+      ? data.renderedOutput
+      : "";
     const liveText = data.currentText.length > 0
       ? data.currentText
       : "";
-    const displayText = liveText
-      ? outputLog
-        ? `${outputLog}${outputLog.endsWith("\n") || liveText.startsWith("\n") ? "" : "\n"}${liveText}`
+    const displayBase = structuredOutput || outputLog || data.lastText || "";
+    const displayText = liveText && !structuredOutput
+      ? displayBase
+        ? `${displayBase}${displayBase.endsWith("\n") || liveText.startsWith("\n") ? "" : "\n"}${liveText}`
         : liveText
-      : outputLog || data.lastText || "";
+      : displayBase;
     return NextResponse.json({
       ...data,
       lastError: run?.lastError ?? null,
@@ -29,7 +34,10 @@ export async function GET(
       displayText,
     });
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return errorResponse(error, {
+      status: 500,
+      source: "Bridge",
+      action: "Load worker details",
+    });
   }
 }
