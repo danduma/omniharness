@@ -10,7 +10,7 @@ const pageSource = fs.readFileSync(
 test("conversation rows expose rename and delete actions", () => {
   expect(pageSource).toContain('Rename conversation');
   expect(pageSource).toContain('Delete conversation');
-  expect(pageSource).toContain('fetch(`/api/runs/${runId}`, {');
+  expect(pageSource).toContain('requestJson(`/api/runs/${runId}`');
 });
 
 test("user messages expose retry, edit, and fork recovery controls", () => {
@@ -24,6 +24,13 @@ test("failed runs render a single persisted error in the conversation view", () 
   expect(pageSource).not.toContain("Execution failed");
   expect(pageSource).toContain('msg.kind === "error"');
   expect(pageSource).toContain("Run failed");
+});
+
+test("frontend transport and mutation errors render as explicit notices", () => {
+  expect(pageSource).toContain("const appErrors = useMemo");
+  expect(pageSource).toContain("<ErrorNotice");
+  expect(pageSource).toContain('source: "Events"');
+  expect(pageSource).toContain('action: "Start a run"');
 });
 
 test("dropdown menus size to fit action labels instead of the trigger width", () => {

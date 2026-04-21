@@ -13,6 +13,7 @@ import { FolderPickerDialog } from "@/components/FolderPickerDialog";
 import { FileAttachmentPickerDialog, type AttachmentItem } from "@/components/FileAttachmentPickerDialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ClarificationPanel } from "@/components/ClarificationPanel";
+import { type AppErrorDescriptor, appErrorKey, mergeAppErrors, normalizeAppError, requestJson } from "@/lib/app-errors";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { getRunLatestMessageTimestamp, isRunUnread } from "@/lib/conversation-state";
@@ -27,6 +28,8 @@ type RunRecord = {
   planId: string;
   status: string;
   createdAt: string;
+  failedAt?: string | null;
+  lastError?: string | null;
   projectPath: string | null;
   title: string | null;
   preferredWorkerType?: string | null;
@@ -97,6 +100,20 @@ type WorkerAvailability = {
   };
 };
 type WorkerCatalogResponse = { workers: WorkerAvailability[] };
+type SettingsResponse = { values: Record<string, string>; diagnostics?: AppErrorDescriptor[] };
+type EventStreamState = {
+  messages: MessageRecord[];
+  plans: PlanRecord[];
+  runs: RunRecord[];
+  accounts: unknown[];
+  agents: AgentSnapshot[];
+  workers: Array<{ id: string; runId: string; type: string; status: string }>;
+  planItems: PlanItemRecord[];
+  clarifications: ClarificationRecord[];
+  validationRuns: Array<{ runId: string }>;
+  executionEvents: ExecutionEventRecord[];
+  frontendErrors?: AppErrorDescriptor[];
+};
 type SettingsTab = "llm" | "workers";
 
 const WORKER_OPTIONS: Array<{ value: WorkerType; label: string }> = [
@@ -115,6 +132,47 @@ const EFFORT_OPTIONS = ["Low", "Medium", "High"];
 
 type SidebarRun = { id: string; title: string; path: string; status: string; createdAt: string };
 type SidebarGroup = { path: string; name: string; runs: SidebarRun[] };
+
+function buildInlineError(
+  error: unknown,
+  fallback: Partial<AppErrorDescriptor> = {},
+): AppErrorDescriptor {
+  return normalizeAppError(error, fallback);
+}
+
+function ErrorNotice({
+  error,
+}: {
+  error: AppErrorDescriptor;
+}) {
+  return (
+    <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm shadow-sm">
+      <div className="flex items-start gap-3">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+        <div className="min-w-0 flex-1">
+          <div>
+            <div className="font-semibold text-destructive">{error.action || error.source || "Error"}</div>
+            <div className="mt-1 whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-foreground">
+              {error.message}
+            </div>
+          </div>
+          {error.suggestion ? (
+            <div className="mt-2 text-xs leading-relaxed text-muted-foreground">{error.suggestion}</div>
+          ) : null}
+          {error.details?.length ? (
+            <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+              {error.details.map((detail) => (
+                <div key={detail} className="whitespace-pre-wrap break-words font-mono">
+                  {detail}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface ConversationSidebarProps {
   filteredProjects: SidebarGroup[];
@@ -173,6 +231,19 @@ function parseWorkerTypes(value: string | null | undefined): WorkerType[] {
   }
 }
 
+function parseProjectList(value: string | null | undefined) {
+  if (!value?.trim()) {
+    return [] as string[];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 function parseWorkerType(value: string | null | undefined): WorkerType | null {
   if (!value?.trim()) {
     return null;
@@ -216,42 +287,14 @@ function parseExecutionEventDetails(details: string | null | undefined) {
   }
 }
 
-function getExecutionEventSource(eventType: string) {
-  if ([
-    "worker_spawned",
-    "worker_prompted",
-    "worker_prompt_failed",
-    "worker_mode_changed",
-    "worker_permission_approved",
-    "worker_permission_denied",
-    "worker_cancelled",
-  ].includes(eventType)) {
-    return "Bridge";
-  }
-
-  if (["supervisor_wait", "clarification_requested"].includes(eventType)) {
-    return "Supervisor";
-  }
-
-  if ([
-    "worker_output_changed",
-    "worker_permission_requested",
-    "worker_idle",
-    "worker_error",
-    "worker_stopped",
-  ].includes(eventType)) {
-    return "Worker";
-  }
-
-  return "System";
-}
-
 function summarizeExecutionEvent(event: ExecutionEventRecord) {
   const details = parseExecutionEventDetails(event.details);
   const summary = typeof details.summary === "string" ? details.summary.trim() : "";
   const reason = typeof details.reason === "string" ? details.reason.trim() : "";
   const error = typeof details.error === "string" ? details.error.trim() : "";
   const seconds = typeof details.seconds === "number" ? details.seconds : null;
+  const mode = typeof details.mode === "string" ? details.mode.trim() : "";
+  const workerLabel = event.workerId || "worker";
 
   if (event.eventType === "supervisor_wait") {
     const waitReason = summary || reason || "Waiting before the next supervisor check";
@@ -259,11 +302,63 @@ function summarizeExecutionEvent(event: ExecutionEventRecord) {
   }
 
   if (event.eventType === "run_failed") {
-    return reason || summary || error || "Run failed";
+    return `Run failed${reason || summary || error ? `: ${reason || summary || error}` : ""}`;
+  }
+
+  if (event.eventType === "run_completed") {
+    return `Completed${summary ? `: ${summary}` : ""}`;
   }
 
   if (event.eventType === "worker_prompt_failed") {
-    return error ? `${summary || "Initial worker prompt failed"}: ${error}` : (summary || "Initial worker prompt failed");
+    return `Failed to send task to ${workerLabel}${error ? `: ${error}` : ""}`;
+  }
+
+  if (event.eventType === "worker_spawned") {
+    return `Started ${workerLabel}`;
+  }
+
+  if (event.eventType === "worker_prompted") {
+    return `Sent task to ${workerLabel}`;
+  }
+
+  if (event.eventType === "worker_mode_changed") {
+    return `Changed ${workerLabel} to ${mode || "requested"} mode`;
+  }
+
+  if (event.eventType === "worker_permission_requested") {
+    return `${workerLabel} requested permission`;
+  }
+
+  if (event.eventType === "worker_permission_approved") {
+    return `Approved permission for ${workerLabel}`;
+  }
+
+  if (event.eventType === "worker_permission_denied") {
+    return `Denied permission for ${workerLabel}`;
+  }
+
+  if (event.eventType === "worker_cancelled") {
+    return `Cancelled ${workerLabel}`;
+  }
+
+  if (event.eventType === "worker_output_changed") {
+    return `${workerLabel} produced new output`;
+  }
+
+  if (event.eventType === "worker_idle") {
+    return `${workerLabel} is waiting`;
+  }
+
+  if (event.eventType === "worker_error") {
+    return `${workerLabel} reported an error`;
+  }
+
+  if (event.eventType === "worker_stopped") {
+    return `${workerLabel} stopped`;
+  }
+
+  if (event.eventType === "clarification_requested") {
+    return `Waiting for your reply${summary ? `: ${summary}` : ""}`;
   }
 
   return summary || reason || error || event.eventType.replace(/_/g, " ");
@@ -275,6 +370,38 @@ function formatExecutionTimestamp(value: string) {
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+function describeAgentActivity(agent: AgentSnapshot) {
+  if ((agent.pendingPermissions?.length ?? 0) > 0) {
+    return `${agent.name}: waiting for permission`;
+  }
+
+  if (agent.state === "starting") {
+    return `${agent.name}: connecting to ACP bridge`;
+  }
+
+  if (agent.state === "working" && agent.currentText?.trim()) {
+    return `${agent.name}: ${summarizeThought(agent.currentText)}`;
+  }
+
+  if (agent.state === "working") {
+    return `${agent.name}: waiting for LLM API`;
+  }
+
+  if (agent.state === "error") {
+    return `${agent.name}: ${agent.lastError || agent.stopReason || "worker error"}`;
+  }
+
+  if (agent.state === "stopped") {
+    return `${agent.name}: stopped${agent.stopReason ? ` (${agent.stopReason})` : ""}`;
+  }
+
+  if (agent.state === "idle") {
+    return `${agent.name}: waiting for more work`;
+  }
+
+  return `${agent.name}: ${agent.state}`;
 }
 
 function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel: string) {
@@ -320,21 +447,17 @@ function LlmSettingsForm({
     enabled: provider === "gemini" && apiKey.trim().length > 0,
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
-      const response = await fetch("/api/llm-models", {
+      return requestJson<{ models: Array<{ id: string; label: string }> }>("/api/llm-models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider,
           apiKey,
         }),
+      }, {
+        source: "LLM Settings",
+        action: "Fetch available models",
       });
-
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(typeof payload.error === "string" ? payload.error : "Unable to fetch available models.");
-      }
-
-      return payload as { models: Array<{ id: string; label: string }> };
     },
   });
   const availableModels = useMemo(() => geminiModelsQuery.data?.models ?? [], [geminiModelsQuery.data?.models]);
@@ -922,8 +1045,7 @@ export default function Home() {
   const [selectedEffort, setSelectedEffort] = useState("High");
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [state, setState] = useState<any>({
+  const [state, setState] = useState<EventStreamState>({
     messages: [],
     plans: [],
     runs: [],
@@ -934,36 +1056,39 @@ export default function Home() {
     clarifications: [],
     validationRuns: [],
     executionEvents: [],
+    frontendErrors: [],
   });
+  const [runtimeErrors, setRuntimeErrors] = useState<AppErrorDescriptor[]>([]);
+  const [settingsDiagnostics, setSettingsDiagnostics] = useState<AppErrorDescriptor[]>([]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const commandInputRef = useRef<HTMLTextAreaElement>(null);
 
-  useQuery({
+  const settingsQuery = useQuery({
     queryKey: ["settings"],
     queryFn: async () => {
-      const res = await fetch("/api/settings");
-      if (!res.ok) return {};
-      const data = await res.json();
-      setApiKeys(prev => ({ ...prev, ...data }));
+      const data = await requestJson<SettingsResponse>("/api/settings", undefined, {
+        source: "Settings",
+        action: "Load saved settings",
+      });
+      setApiKeys(prev => ({ ...prev, ...(data.values || {}) }));
+      setSettingsDiagnostics(data.diagnostics ?? []);
       return data;
     },
   });
 
-  const workerCatalogQuery = useQuery<WorkerCatalogResponse>({
+  const workerCatalogQuery = useQuery<WorkerCatalogResponse & { diagnostics?: AppErrorDescriptor[] }>({
     queryKey: ["worker-catalog"],
     staleTime: 60_000,
     queryFn: async () => {
-      const response = await fetch("/api/agents/catalog");
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(typeof payload.error === "string" ? payload.error : "Unable to load worker catalog.");
-      }
-      return payload as WorkerCatalogResponse;
+      return requestJson<WorkerCatalogResponse & { diagnostics?: AppErrorDescriptor[] }>("/api/agents/catalog", undefined, {
+        source: "Bridge",
+        action: "Load worker availability",
+      });
     },
   });
 
-  const explicitProjects = apiKeys.PROJECTS ? JSON.parse(apiKeys.PROJECTS) : [];
+  const explicitProjects = useMemo(() => parseProjectList(apiKeys.PROJECTS), [apiKeys.PROJECTS]);
 
   useEffect(() => {
     const eventSource = new EventSource("/api/events");
@@ -971,10 +1096,44 @@ export default function Home() {
       try {
         const data = JSON.parse(e.data);
         setState(data);
+        setRuntimeErrors((current) => mergeAppErrors(
+          current.filter((error) => error.source !== "Events"),
+          (data.frontendErrors ?? []).map((error: unknown) => buildInlineError(error)),
+        ));
       } catch {
-        // ignore
+        setRuntimeErrors((current) => mergeAppErrors(current, [{
+          message: "The frontend received a malformed update payload from /api/events.",
+          source: "Events",
+          action: "Process live updates",
+          suggestion: "Inspect the events route response payload and server logs, then refresh the page after fixing the malformed data.",
+        }]));
       }
     });
+    eventSource.addEventListener("update_error", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        setRuntimeErrors((current) => mergeAppErrors(current, [
+          buildInlineError(data, {
+            source: "Events",
+            action: "Stream live updates",
+          }),
+        ]));
+      } catch {
+        setRuntimeErrors((current) => mergeAppErrors(current, [{
+          message: "The live event stream reported a malformed error payload.",
+          source: "Events",
+          action: "Stream live updates",
+        }]));
+      }
+    });
+    eventSource.onerror = () => {
+      setRuntimeErrors((current) => mergeAppErrors(current, [{
+        message: "The frontend lost its live connection to /api/events.",
+        source: "Events",
+        action: "Stream live updates",
+        suggestion: "Keep this page open while the app reconnects. If the error persists, refresh the page and inspect the server logs for the events route.",
+      }]));
+    };
 
     return () => {
       eventSource.close();
@@ -992,7 +1151,12 @@ export default function Home() {
         setReadMarkers(JSON.parse(saved));
       }
     } catch {
-      // ignore malformed local state
+      setRuntimeErrors((current) => mergeAppErrors(current, [{
+        message: "The saved read marker state in localStorage is malformed.",
+        source: "Frontend",
+        action: "Restore local conversation state",
+        suggestion: "Clear the omni-read-markers localStorage entry and reload the page if unread markers look wrong.",
+      }]));
     }
   }, []);
 
@@ -1008,6 +1172,12 @@ export default function Home() {
 
     const parsed = Number(saved);
     if (!Number.isFinite(parsed)) {
+      setRuntimeErrors((current) => mergeAppErrors(current, [{
+        message: "The saved worker sidebar width in localStorage is invalid.",
+        source: "Frontend",
+        action: "Restore local layout state",
+        suggestion: "Clear the omni-workers-sidebar-width localStorage entry and reload the page if the worker sidebar size looks wrong.",
+      }]));
       return;
     }
 
@@ -1019,7 +1189,15 @@ export default function Home() {
       return;
     }
 
-    window.localStorage.setItem("omni-read-markers", JSON.stringify(readMarkers));
+    try {
+      window.localStorage.setItem("omni-read-markers", JSON.stringify(readMarkers));
+    } catch {
+      setRuntimeErrors((current) => mergeAppErrors(current, [{
+        message: "Failed to persist read marker state to localStorage.",
+        source: "Frontend",
+        action: "Persist local conversation state",
+      }]));
+    }
   }, [readMarkers]);
 
   useEffect(() => {
@@ -1027,7 +1205,15 @@ export default function Home() {
       return;
     }
 
-    window.localStorage.setItem("omni-workers-sidebar-width", String(rightSidebarWidth));
+    try {
+      window.localStorage.setItem("omni-workers-sidebar-width", String(rightSidebarWidth));
+    } catch {
+      setRuntimeErrors((current) => mergeAppErrors(current, [{
+        message: "Failed to persist worker sidebar width to localStorage.",
+        source: "Frontend",
+        action: "Persist local layout state",
+      }]));
+    }
   }, [rightSidebarWidth]);
 
   useEffect(() => {
@@ -1084,40 +1270,57 @@ export default function Home() {
       return;
     }
 
-    window.localStorage.setItem("omni-theme-mode", themeMode);
+    try {
+      window.localStorage.setItem("omni-theme-mode", themeMode);
+    } catch {
+      setRuntimeErrors((current) => mergeAppErrors(current, [{
+        message: "Failed to persist theme mode to localStorage.",
+        source: "Frontend",
+        action: "Persist theme preference",
+      }]));
+    }
     document.documentElement.classList.toggle("dark", themeMode === "night");
     document.documentElement.style.colorScheme = themeMode === "night" ? "dark" : "light";
   }, [themeMode]);
 
   const saveSettings = useMutation({
     mutationFn: async () => {
-      await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(apiKeys) });
+      await requestJson<{ ok: true }>("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(apiKeys),
+      }, {
+        source: "Settings",
+        action: "Save settings",
+      });
     },
-    onSuccess: () => setShowSettings(false)
+    onSuccess: () => setShowSettings(false),
   });
 
   const answerClarification = useMutation({
     mutationFn: async ({ clarificationId, answer }: { clarificationId: string; answer: string }) => {
       if (!selectedRunId) throw new Error("No run selected");
-      const res = await fetch(`/api/runs/${selectedRunId}/answer`, {
+      return requestJson(`/api/runs/${selectedRunId}/answer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ clarificationId, answer }),
+      }, {
+        source: "Clarifications",
+        action: "Answer clarification",
       });
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
     },
   });
 
   const renameRun = useMutation({
     mutationFn: async ({ runId, title }: { runId: string; title: string }) => {
-      const res = await fetch(`/api/runs/${runId}`, {
+      return requestJson(`/api/runs/${runId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title }),
+      }, {
+        source: "Runs",
+        action: "Rename conversation",
       });
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
     },
     onSuccess: (_data, variables) => {
       setState((current: typeof state) => ({
@@ -1133,11 +1336,12 @@ export default function Home() {
 
   const deleteRun = useMutation({
     mutationFn: async ({ runId }: { runId: string }) => {
-      const res = await fetch(`/api/runs/${runId}`, {
+      return requestJson(`/api/runs/${runId}`, {
         method: "DELETE",
+      }, {
+        source: "Runs",
+        action: "Delete conversation",
       });
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
     },
     onSuccess: (_data, variables) => {
       const runToDelete = (state.runs || []).find((run: RunRecord) => run.id === variables.runId);
@@ -1175,13 +1379,14 @@ export default function Home() {
 
   const recoverRun = useMutation({
     mutationFn: async ({ runId, action, targetMessageId, content }: { runId: string; action: "retry" | "edit" | "fork"; targetMessageId: string; content?: string }) => {
-      const res = await fetch(`/api/runs/${runId}`, {
+      return requestJson<{ runId?: string }>(`/api/runs/${runId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, targetMessageId, content }),
+      }, {
+        source: "Runs",
+        action: "Recover conversation",
       });
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
     },
     onSuccess: (data) => {
       if (data.runId) {
@@ -1196,7 +1401,7 @@ export default function Home() {
     mutationFn: async (cmd: string) => {
       const isAutoWorkerSelection = selectedCliAgent === "auto";
       const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel);
-      const res = await fetch("/api/supervisor", {
+      return requestJson<{ runId?: string }>("/api/supervisor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1208,9 +1413,10 @@ export default function Home() {
           allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent],
           attachments: attachments.map(({ kind, name, path }) => ({ kind, name, path })),
         }),
+      }, {
+        source: "Supervisor",
+        action: "Start a run",
       });
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
     },
     onSuccess: (data) => {
       setCommand("");
@@ -1400,11 +1606,10 @@ export default function Home() {
     queries: conversationWorkers.map((worker: { id: string }) => ({
       queryKey: ["conversation-agent", worker.id],
       queryFn: async () => {
-        const response = await fetch(`/api/agents/${worker.id}`);
-        if (!response.ok) {
-          return null;
-        }
-        return response.json() as Promise<AgentSnapshot>;
+        return requestJson<AgentSnapshot>(`/api/agents/${worker.id}`, undefined, {
+          source: "Bridge",
+          action: `Load worker details for ${worker.id}`,
+        });
       },
       refetchInterval: 2000,
     })),
@@ -1450,40 +1655,187 @@ export default function Home() {
       .filter((thought): thought is { agentName: string; snippet: string; isLive: boolean } => Boolean(thought))
       .slice(0, 3);
   }, [conversationAgents]);
+  const selectedRunExecutionEvents = useMemo(() => (
+    ((state.executionEvents || []) as ExecutionEventRecord[])
+      .filter((event) => event.runId === selectedRunId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  ), [selectedRunId, state.executionEvents]);
+  const recentExecutionEvents = selectedRunExecutionEvents.slice(0, 6);
+  const latestExecutionEvent = selectedRunExecutionEvents[0] ?? null;
+  const agentQueryErrors = conversationAgentQueries
+    .flatMap((query, index) => query.error ? [buildInlineError(query.error, {
+      source: "Bridge",
+      action: `Load worker details for ${conversationWorkers[index]?.id ?? "worker"}`,
+    })] : []);
+  const pendingPermissionAgent = conversationAgents.find((agent) => (agent.pendingPermissions?.length ?? 0) > 0) ?? null;
+  const erroredAgent = conversationAgents.find((agent) => agent.state === "error" || Boolean(agent.lastError) || Boolean(agent.stopReason)) ?? null;
+  const latestWaitEvent = selectedRunExecutionEvents.find((event) => event.eventType === "supervisor_wait") ?? null;
+  const liveExecutionStatus = useMemo(() => {
+    if (selectedRun?.status === "failed") {
+      return {
+        label: "Bridge error",
+        detail: selectedRun.lastError || (latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The run failed."),
+        tone: "error" as const,
+      };
+    }
+
+    if (erroredAgent) {
+      return {
+        label: "Bridge error",
+        detail: erroredAgent.lastError || erroredAgent.stopReason || "A worker reported an error.",
+        tone: "error" as const,
+      };
+    }
+
+    if (pendingPermissionAgent) {
+      const requestCount = pendingPermissionAgent.pendingPermissions?.length ?? 0;
+      return {
+        label: "Awaiting permission",
+        detail: `${pendingPermissionAgent.name} is waiting on ${requestCount} permission ${requestCount === 1 ? "decision" : "decisions"}.`,
+        tone: "warning" as const,
+      };
+    }
+
+    if (selectedRun?.status === "awaiting_user") {
+      return {
+        label: "Awaiting input",
+        detail: "The supervisor asked for clarification before continuing.",
+        tone: "warning" as const,
+      };
+    }
+
+    if (latestWaitEvent && !conversationAgents.some((agent) => agent.state === "working")) {
+      const details = parseExecutionEventDetails(latestWaitEvent.details);
+      const seconds = typeof details.seconds === "number" ? details.seconds : null;
+      return {
+        label: seconds ? `Waiting ${seconds}s` : "Waiting",
+        detail: summarizeExecutionEvent(latestWaitEvent),
+        tone: "muted" as const,
+      };
+    }
+
+    if (conversationAgents.some((agent) => agent.state === "working" || Boolean(agent.currentText?.trim()))) {
+      return {
+        label: "Thinking",
+        detail: liveThoughts[0]?.snippet || "The worker is actively reasoning.",
+        tone: "active" as const,
+      };
+    }
+
+    if (selectedRun?.status === "done") {
+      return {
+        label: "Completed",
+        detail: latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The run finished.",
+        tone: "muted" as const,
+      };
+    }
+
+    return {
+      label: "Thinking",
+      detail: latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The supervisor is still checking the run.",
+      tone: "active" as const,
+    };
+  }, [conversationAgents, erroredAgent, latestExecutionEvent, latestWaitEvent, liveThoughts, pendingPermissionAgent, selectedRun]);
+  const executionDetailLines = useMemo(() => {
+    const lines: Array<{ text: string; createdAt?: string }> = [];
+
+    const pushLine = (text: string, createdAt?: string) => {
+      if (!text || lines.some((line) => line.text === text)) {
+        return;
+      }
+      lines.push({ text, createdAt });
+    };
+
+    if (conversationAgents.length === 0 && selectedRun?.status === "running") {
+      pushLine("Connecting to ACP bridge");
+    }
+
+    for (const agent of conversationAgents) {
+      pushLine(describeAgentActivity(agent));
+    }
+
+    for (const event of recentExecutionEvents) {
+      pushLine(summarizeExecutionEvent(event), event.createdAt);
+    }
+
+    if (agentQueryErrors.length > 0) {
+      for (const error of agentQueryErrors.slice(0, 2)) {
+        pushLine(error.message || "Failed to load worker details");
+      }
+    }
+
+    if (lines.length === 0 && selectedRun?.status === "failed" && selectedRun.lastError) {
+      pushLine(selectedRun.lastError);
+    }
+
+    return lines.slice(0, 6);
+  }, [agentQueryErrors, conversationAgents, recentExecutionEvents, selectedRun]);
   const isConversationThinking = selectedRun?.status === "running" || conversationAgents.some((agent) => agent.state === "working");
+  const showConversationExecution = Boolean(
+    selectedRun && (isConversationThinking || selectedRun.status === "failed" || selectedRunExecutionEvents.length > 0)
+  );
   const conversationThinking = (
     <div className="group flex w-full flex-col text-sm">
       <div className="mb-1.5 flex items-center gap-2 px-1">
-        <span className="text-xs font-semibold tracking-wide text-amber-600">
-          Thinking
+        <span
+          className={cn(
+            "text-xs font-semibold tracking-wide",
+            liveExecutionStatus.tone === "error"
+              ? "text-destructive"
+              : liveExecutionStatus.tone === "warning"
+                ? "text-amber-700"
+                : "text-amber-600",
+          )}
+        >
+          {liveExecutionStatus.label}
         </span>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1" aria-hidden={liveExecutionStatus.tone !== "active"}>
           {[0, 1, 2].map((index) => (
             <span
               key={index}
-              className="h-1.5 w-1.5 rounded-full bg-amber-500/80 animate-pulse"
+              className={cn(
+                "h-1.5 w-1.5 rounded-full",
+                liveExecutionStatus.tone === "error"
+                  ? "bg-destructive/70"
+                  : liveExecutionStatus.tone === "warning"
+                    ? "bg-amber-500/80"
+                    : "bg-amber-500/80 animate-pulse",
+              )}
               style={{ animationDelay: `${index * 180}ms` }}
             />
           ))}
         </div>
       </div>
+      {liveExecutionStatus.detail ? (
+        <p className="mb-2 px-1 text-xs leading-relaxed text-muted-foreground">{liveExecutionStatus.detail}</p>
+      ) : null}
       {liveThoughts.length > 0 ? (
-        <div className="overflow-hidden rounded-xl border border-amber-500/20 bg-gradient-to-r from-amber-500/5 via-background to-amber-500/10 p-4 shadow-sm">
-          <div className="space-y-2">
-            {liveThoughts.map((thought) => (
-              <div key={`${thought.agentName}:${thought.snippet}`} className="rounded-lg border border-border/60 bg-background/80 px-3 py-2">
-                <div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                  <span>{thought.agentName}</span>
-                  <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[9px] tracking-[0.14em] text-amber-700">
-                    {thought.isLive ? "Latest thought" : "Recent thought"}
-                  </span>
-                </div>
-                <p className="text-sm leading-relaxed text-foreground/85">{thought.snippet}</p>
-              </div>
-            ))}
-          </div>
+        <div className="mb-1 space-y-1 px-1">
+          {liveThoughts.map((thought) => (
+            <p key={`${thought.agentName}:${thought.snippet}`} className="text-xs leading-relaxed text-muted-foreground">
+              {thought.agentName}: {thought.snippet}
+            </p>
+          ))}
         </div>
       ) : null}
+      <Collapsible open={executionDetailsOpen} onOpenChange={setExecutionDetailsOpen}>
+        <CollapsibleTrigger className="mt-2 flex items-center gap-2 px-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
+          <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", executionDetailsOpen ? "rotate-180" : "")} />
+          <span>{executionDetailsOpen ? "Hide details" : "Show details"}</span>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="space-y-1 pt-2 pl-6">
+          {executionDetailLines.length > 0 ? executionDetailLines.map((line, index) => {
+            return (
+              <p key={`${line.text}-${index}`} className="text-xs leading-relaxed text-muted-foreground">
+                {line.createdAt ? `${formatExecutionTimestamp(line.createdAt)} ` : ""}
+                {line.text}
+              </p>
+            );
+          }) : (
+            <p className="text-xs leading-relaxed text-muted-foreground">No execution details yet.</p>
+          )}
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 
@@ -1498,11 +1850,10 @@ export default function Home() {
   const projectFilesQuery = useQuery<ProjectFilesResponse>({
     queryKey: ["project-files", currentProjectScope],
     queryFn: async () => {
-      const res = await fetch(`/api/fs/files?root=${encodeURIComponent(currentProjectScope || "")}`);
-      if (!res.ok) {
-        throw new Error("Failed to load project files");
-      }
-      return res.json();
+      return requestJson<ProjectFilesResponse>(`/api/fs/files?root=${encodeURIComponent(currentProjectScope || "")}`, undefined, {
+        source: "Filesystem",
+        action: "Load project files",
+      });
     },
     enabled: Boolean(currentProjectScope),
     staleTime: 60_000,
@@ -1517,6 +1868,67 @@ export default function Home() {
         .filter((message) => message.role === "user")
         .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null
     : null;
+  const appErrors = useMemo(() => {
+    const errors: AppErrorDescriptor[] = [];
+
+    errors.push(...(state.frontendErrors ?? []).map((error) => buildInlineError(error)));
+    errors.push(...runtimeErrors);
+    errors.push(...agentQueryErrors);
+
+    if (projectFilesQuery.error) {
+      errors.push(buildInlineError(projectFilesQuery.error, {
+        source: "Filesystem",
+        action: "Load project files",
+      }));
+    }
+
+    if (settingsQuery.error) {
+      errors.push(buildInlineError(settingsQuery.error, {
+        source: "Settings",
+        action: "Load saved settings",
+      }));
+    }
+
+    if (runCommand.error) {
+      errors.push(buildInlineError(runCommand.error, {
+        source: "Supervisor",
+        action: "Start a run",
+      }));
+    }
+
+    if (recoverRun.error) {
+      errors.push(buildInlineError(recoverRun.error, {
+        source: "Runs",
+        action: "Recover conversation",
+      }));
+    }
+
+    if (renameRun.error) {
+      errors.push(buildInlineError(renameRun.error, {
+        source: "Runs",
+        action: "Rename conversation",
+      }));
+    }
+
+    if (deleteRun.error) {
+      errors.push(buildInlineError(deleteRun.error, {
+        source: "Runs",
+        action: "Delete conversation",
+      }));
+    }
+
+    return mergeAppErrors([], errors);
+  }, [
+    agentQueryErrors,
+    deleteRun.error,
+    projectFilesQuery.error,
+    recoverRun.error,
+    renameRun.error,
+    runCommand.error,
+    settingsQuery.error,
+    runtimeErrors,
+    state.frontendErrors,
+  ]);
 
   useEffect(() => {
     if (selectedRun) {
@@ -1998,6 +2410,26 @@ export default function Home() {
         <ScrollArea className="min-h-0 flex-1" ref={scrollRef}>
           {selectedRunId ? (
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 pb-24 sm:gap-6 sm:p-6 sm:pb-20">
+              {appErrors.length > 0 ? (
+                <div className="space-y-3">
+                  {appErrors.map((error) => (
+                    <ErrorNotice key={appErrorKey(error)} error={error} />
+                  ))}
+                </div>
+              ) : null}
+              {selectedRun?.status === "failed" && selectedRun.lastError ? (
+                <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div className="min-w-0">
+                      <div className="font-semibold">Run failed</div>
+                      <div className="mt-1 whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-foreground">
+                        {selectedRun.lastError}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               {filteredMessages && filteredMessages.length > 0 ? (
                 filteredMessages.map((msg: MessageRecord) => (
                   <div key={msg.id} className="group flex w-full flex-col text-sm">
@@ -2080,13 +2512,17 @@ export default function Home() {
                 </div>
               )}
 
-              {isConversationThinking ? conversationThinking : null}
+              {showConversationExecution ? conversationThinking : null}
 
               {selectedClarifications.length > 0 && (
                 <div className="max-w-xl">
                   <ClarificationPanel
                     clarifications={selectedClarifications}
                     onAnswer={(clarificationId, answer) => answerClarification.mutate({ clarificationId, answer })}
+                    errorMessage={answerClarification.error ? buildInlineError(answerClarification.error, {
+                      source: "Clarifications",
+                      action: "Answer clarification",
+                    }).message : null}
                   />
                 </div>
               )}
@@ -2100,13 +2536,18 @@ export default function Home() {
                     {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                     {conversationWorkers.map((worker: any) => {
                       const agent = conversationAgents.find((item) => item.name === worker.id);
-                      const requestedModel = agent?.requestedModel || selectedRun?.preferredWorkerModel || "Unknown";
-                      const effectiveModel = agent?.effectiveModel || "Unknown";
-                      const requestedEffort = agent?.requestedEffort || selectedRun?.preferredWorkerEffort || "Unknown";
-                      const effectiveEffort = agent?.effectiveEffort || "Unknown";
+                      const activeModel = agent?.effectiveModel || agent?.requestedModel || selectedRun?.preferredWorkerModel || null;
+                      const activeEffort = agent?.effectiveEffort || agent?.requestedEffort || selectedRun?.preferredWorkerEffort || null;
                       const contextUsage = agent?.contextUsage?.fullnessPercent;
-                      const contextUsageLabel = typeof contextUsage === "number" ? `${Math.round(contextUsage)}% full` : "Unknown";
                       const pendingPermissions = agent?.pendingPermissions ?? [];
+                      const runtimeLabel = formatWorkerRuntime(agent?.type || worker.type);
+                      const details = [
+                        activeModel ? { label: "Model", value: activeModel } : null,
+                        activeEffort ? { label: "Effort", value: activeEffort } : null,
+                        typeof contextUsage === "number" ? { label: "Context usage", value: `${Math.round(contextUsage)}% full` } : null,
+                        agent?.lastError ? { label: "Last error", value: agent.lastError } : null,
+                      ].filter((detail): detail is { label: string; value: string } => Boolean(detail));
+
                       return (
                         <div key={worker.id} className="flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-sm">
                           <div className="flex items-center justify-between border-b border-border bg-muted/20 p-2.5">
@@ -2116,37 +2557,19 @@ export default function Home() {
                             <div className="flex items-center gap-2">
                               {pendingPermissions.length > 0 ? <PermissionWarning pendingPermissions={pendingPermissions} /> : null}
                               {agent?.state === "working" && <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />}
-                              <span className="text-[10px] font-bold uppercase text-muted-foreground">
-                                {agent?.type || worker.type}
-                              </span>
+                              {runtimeLabel ? <span className="text-[10px] font-bold uppercase text-muted-foreground">{runtimeLabel}</span> : null}
                             </div>
                           </div>
-                          <div className="grid gap-3 border-b border-border/60 bg-muted/10 p-3 sm:grid-cols-2">
-                            <div className="space-y-1 text-xs">
-                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Requested model</div>
-                              <div className="font-mono text-foreground">{requestedModel}</div>
+                          {details.length > 0 ? (
+                            <div className="grid gap-3 border-b border-border/60 bg-muted/10 p-3 sm:grid-cols-2">
+                              {details.map((detail) => (
+                                <div key={detail.label} className="space-y-1 text-xs">
+                                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{detail.label}</div>
+                                  <div className="break-all font-mono text-foreground">{detail.value}</div>
+                                </div>
+                              ))}
                             </div>
-                            <div className="space-y-1 text-xs">
-                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Effective model</div>
-                              <div className="font-mono text-foreground">{effectiveModel}</div>
-                            </div>
-                            <div className="space-y-1 text-xs">
-                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Requested effort</div>
-                              <div className="font-mono text-foreground">{requestedEffort}</div>
-                            </div>
-                            <div className="space-y-1 text-xs">
-                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Effective effort</div>
-                              <div className="font-mono text-foreground">{effectiveEffort}</div>
-                            </div>
-                            <div className="space-y-1 text-xs">
-                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Context usage</div>
-                              <div className="font-mono text-foreground">{contextUsageLabel}</div>
-                            </div>
-                            <div className="space-y-1 text-xs">
-                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Last error</div>
-                              <div className="break-all font-mono text-foreground">{agent?.lastError || "None"}</div>
-                            </div>
-                          </div>
+                          ) : null}
                           <div className="relative h-64 w-full bg-[#1e1e1e] sm:h-72">
                             <Terminal agentName={worker.id} />
                           </div>
@@ -2159,6 +2582,13 @@ export default function Home() {
             </div>
           ) : (
             <div className="mx-auto flex h-full w-full max-w-3xl flex-col items-center justify-center px-6 text-center">
+              {appErrors.length > 0 ? (
+                <div className="mb-6 w-full space-y-3 text-left">
+                  {appErrors.map((error) => (
+                    <ErrorNotice key={appErrorKey(error)} error={error} />
+                  ))}
+                </div>
+              ) : null}
               <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
                 <Blocks className="h-8 w-8 text-primary" />
               </div>
@@ -2391,12 +2821,40 @@ export default function Home() {
                 </label>
 
                 {workerCatalogQuery.isError ? (
-                  <p className="text-[11px] text-destructive">
-                    {workerCatalogQuery.error instanceof Error ? workerCatalogQuery.error.message : "Unable to load worker availability."}
-                  </p>
+                  <ErrorNotice
+                    error={buildInlineError(workerCatalogQuery.error, {
+                      source: "Bridge",
+                      action: "Load worker availability",
+                    })}
+                  />
                 ) : null}
               </div>
             )}
+
+            {settingsDiagnostics.length > 0 ? (
+              <div className="space-y-3">
+                {settingsDiagnostics.map((error) => (
+                  <ErrorNotice key={appErrorKey(error)} error={error} />
+                ))}
+              </div>
+            ) : null}
+
+            {workerCatalogQuery.data?.diagnostics?.length ? (
+              <div className="space-y-3">
+                {workerCatalogQuery.data.diagnostics.map((error) => (
+                  <ErrorNotice key={appErrorKey(error)} error={error} />
+                ))}
+              </div>
+            ) : null}
+
+            {saveSettings.error ? (
+              <ErrorNotice
+                error={buildInlineError(saveSettings.error, {
+                  source: "Settings",
+                  action: "Save settings",
+                })}
+              />
+            ) : null}
           </div>
 
           <DialogFooter>
