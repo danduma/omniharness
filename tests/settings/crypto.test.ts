@@ -2,7 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
-import { decryptSettingValue, encryptSettingValue } from "@/server/settings/crypto";
+import { decryptSettingValue, encryptSettingValue, shouldEncryptSetting } from "@/server/settings/crypto";
 
 describe("settings crypto", () => {
   const createdPaths: string[] = [];
@@ -45,5 +45,12 @@ describe("settings crypto", () => {
     expect(fs.existsSync(process.env.OMNIHARNESS_SETTINGS_KEY_PATH)).toBe(true);
     expect(decryptSettingValue(first)).toBe("hello");
     expect(decryptSettingValue(second)).toBe("world");
+  });
+
+  it("marks only secret settings for encryption", () => {
+    expect(shouldEncryptSetting("SUPERVISOR_LLM_API_KEY")).toBe(true);
+    expect(shouldEncryptSetting("GEMINI_API_KEY")).toBe(true);
+    expect(shouldEncryptSetting("SUPERVISOR_LLM_MODEL")).toBe(false);
+    expect(shouldEncryptSetting("CREDIT_STRATEGY")).toBe(false);
   });
 });

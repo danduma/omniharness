@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
-import { decryptSettingValue, encryptSettingValue } from "@/server/settings/crypto";
+import { decryptSettingValue, encryptSettingValue, shouldEncryptSetting } from "@/server/settings/crypto";
 
 export async function GET() {
   const allSettings = await db.select().from(settings);
-  const dict = Object.fromEntries(allSettings.map(s => [s.key, decryptSettingValue(s.value)]));
+  const dict = Object.fromEntries(allSettings.flatMap((setting) => {
+    try {
+      return [[setting.key, decryptSettingValue(setting.value)]];
+    } catch (error) {
+      console.warn(`Unable to decrypt setting "${setting.key}":`, error);
+      return shouldEncryptSetting(setting.key) ? [[setting.key, ""]] : [];
+    }
+  }));
   return NextResponse.json(dict);
 }
 
@@ -14,10 +21,10 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     for (const [key, value] of Object.entries(body)) {
       if (typeof value === "string") {
-        const encryptedValue = encryptSettingValue(value);
+        const storedValue = shouldEncryptSetting(key) ? encryptSettingValue(value) : value;
         await db.insert(settings)
-          .values({ key, value: encryptedValue, updatedAt: new Date() })
-          .onConflictDoUpdate({ target: settings.key, set: { value: encryptedValue, updatedAt: new Date() } });
+          .values({ key, value: storedValue, updatedAt: new Date() })
+          .onConflictDoUpdate({ target: settings.key, set: { value: storedValue, updatedAt: new Date() } });
       }
     }
     return NextResponse.json({ ok: true });
