@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import process from "process";
 import { acquireBridgeLock, releaseBridgeLock, resolveBridgeLockPath } from "../src/server/dev/bridge-lock";
-import { resolveBridgeDir, resolveBridgeUrl, shouldAutoStartBridge } from "../src/server/dev/managed-bridge";
+import { bridgeNeedsBuild, resolveBridgeDir, resolveBridgeUrl, shouldAutoStartBridge } from "../src/server/dev/managed-bridge";
 
 const repoRoot = process.cwd();
 const bridgeUrl = resolveBridgeUrl(process.env);
@@ -132,7 +132,7 @@ async function ensureManagedBridge() {
       await runSetupCommand(setupCommands[0].command, [...setupCommands[0].args], bridgeDir, setupCommands[0].label);
     }
 
-    if (!fs.existsSync(path.join(bridgeDir, "dist", "daemon.js"))) {
+    if (bridgeNeedsBuild(bridgeDir)) {
       await runSetupCommand(setupCommands[1].command, [...setupCommands[1].args], bridgeDir, setupCommands[1].label);
     }
 

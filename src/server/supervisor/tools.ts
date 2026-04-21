@@ -51,6 +51,7 @@ export function buildSupervisorTools(options?: { allowedWorkerTypes?: string[]; 
           properties: {
             workerId: { type: "string" },
             reason: { type: "string" },
+            optionId: { type: "string", description: "Explicit permission option id such as allow_always, allow_once, or reject_once when the bridge exposes one." },
           },
           required: ["workerId", "reason"],
         },
@@ -81,6 +82,7 @@ export function buildSupervisorTools(options?: { allowedWorkerTypes?: string[]; 
           properties: {
             workerId: { type: "string" },
             reason: { type: "string" },
+            optionId: { type: "string", description: "Explicit permission option id such as allow_always, allow_once, or reject_once when the bridge exposes one." },
           },
           required: ["workerId", "reason"],
         },
@@ -96,6 +98,7 @@ export function buildSupervisorTools(options?: { allowedWorkerTypes?: string[]; 
           properties: {
             workerId: { type: "string" },
             reason: { type: "string" },
+            optionId: { type: "string", description: "Explicit permission option id such as reject_once or reject_always when the bridge exposes one." },
           },
           required: ["workerId", "reason"],
         },

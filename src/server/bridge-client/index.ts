@@ -19,6 +19,12 @@ export interface AgentRecord {
     maxTokens?: number | null;
     fullnessPercent?: number | null;
   } | null;
+  pendingPermissions?: Array<{
+    requestId: number;
+    requestedAt: string;
+    sessionId?: string | null;
+    options?: Array<{ optionId: string; kind: string; name: string }>;
+  }>;
   lastText: string;
   currentText: string;
   stderrBuffer: string[];
@@ -59,6 +65,85 @@ function isBridgeConnectionRefused(error: unknown) {
   return details.includes("ECONNREFUSED") && (details.includes("127.0.0.1:7800") || details.includes("LOCALHOST:7800"));
 }
 
+function stripRepeatedActionPrefix(detail: string, action: string) {
+  const prefixPattern = new RegExp(`^(?:${action}\\s+failed:\\s*)+`, "i");
+  return detail.replace(prefixPattern, "").trimStart();
+}
+
+function asString(value: unknown, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+function asNullableString(value: unknown) {
+  return typeof value === "string" ? value : null;
+}
+
+function asStringArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function asPermissionOptions(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is { optionId?: unknown; kind?: unknown; name?: unknown } => typeof item === "object" && item !== null)
+    .map((item) => ({
+      optionId: asString(item.optionId),
+      kind: asString(item.kind),
+      name: asString(item.name),
+    }))
+    .filter((item) => item.optionId && item.kind && item.name);
+}
+
+function asPendingPermissions(value: unknown): AgentRecord["pendingPermissions"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is {
+      requestId?: unknown;
+      requestedAt?: unknown;
+      sessionId?: unknown;
+      options?: unknown;
+    } => typeof item === "object" && item !== null)
+    .map((item) => ({
+      requestId: typeof item.requestId === "number" ? item.requestId : -1,
+      requestedAt: asString(item.requestedAt),
+      sessionId: typeof item.sessionId === "string" ? item.sessionId : null,
+      options: asPermissionOptions(item.options),
+    }))
+    .filter((item) => item.requestId >= 0 && item.requestedAt);
+}
+
+export function normalizeAgentRecord(value: unknown): AgentRecord {
+  const record = typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
+  const contextUsage =
+    typeof record.contextUsage === "object" && record.contextUsage !== null
+      ? record.contextUsage as AgentRecord["contextUsage"]
+      : null;
+
+  return {
+    name: asString(record.name),
+    type: asString(record.type),
+    cwd: asString(record.cwd),
+    state: asString(record.state, "unknown"),
+    requestedModel: asNullableString(record.requestedModel),
+    effectiveModel: asNullableString(record.effectiveModel),
+    requestedEffort: asNullableString(record.requestedEffort),
+    effectiveEffort: asNullableString(record.effectiveEffort),
+    sessionMode: asNullableString(record.sessionMode),
+    contextUsage,
+    pendingPermissions: asPendingPermissions(record.pendingPermissions),
+    lastText: asString(record.lastText),
+    currentText: asString(record.currentText),
+    stderrBuffer: asStringArray(record.stderrBuffer),
+    stopReason: asNullableString(record.stopReason),
+  };
+}
+
 async function requestBridge<T>(path: string, init: RequestInit, action: string) {
   try {
     return await retrySupervisorRequest(async () => {
@@ -85,7 +170,10 @@ async function requestBridge<T>(path: string, init: RequestInit, action: string)
       );
     }
 
-    throw new Error(`${action} failed: ${describeError(error)}`);
+    const detail = describeError(error);
+    const normalizedDetail = stripRepeatedActionPrefix(detail, action);
+
+    throw new Error(`${action} failed: ${normalizedDetail}`);
   }
 }
 
@@ -122,7 +210,8 @@ export async function askAgent(name: string, prompt: string) {
 }
 
 export async function getAgent(name: string) {
-  return requestBridge<AgentRecord>(`/agents/${name}`, {}, "Get agent");
+  const agent = await requestBridge<unknown>(`/agents/${name}`, {}, "Get agent");
+  return normalizeAgentRecord(agent);
 }
 
 export async function cancelAgent(name: string) {
@@ -151,25 +240,25 @@ export async function getTask(taskId: string) {
   return requestBridge<TaskRecord>(`/tasks/${taskId}`, {}, "Get task");
 }
 
-export async function approvePermission(name: string) {
+export async function approvePermission(name: string, optionId?: string) {
   return requestBridge<unknown>(
     `/agents/${name}/approve`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify(optionId ? { optionId } : {}),
     },
     "Approve",
   );
 }
 
-export async function denyPermission(name: string) {
+export async function denyPermission(name: string, optionId?: string) {
   return requestBridge<unknown>(
     `/agents/${name}/deny`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify(optionId ? { optionId } : {}),
     },
     "Deny",
   );

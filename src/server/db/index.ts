@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS workers (
   type text NOT NULL,
   status text NOT NULL,
   cwd text NOT NULL,
+  output_log text NOT NULL DEFAULT '',
   created_at integer NOT NULL,
   updated_at integer NOT NULL,
   FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action
@@ -183,6 +184,13 @@ if (!runColumnNames.has("last_error")) {
 
 const messageColumns = sqlite.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>;
 const messageColumnNames = new Set(messageColumns.map((column) => column.name));
+
+const workerColumns = sqlite.prepare("PRAGMA table_info(workers)").all() as Array<{ name: string }>;
+const workerColumnNames = new Set(workerColumns.map((column) => column.name));
+
+if (!workerColumnNames.has("output_log")) {
+  sqlite.exec("ALTER TABLE workers ADD COLUMN output_log text NOT NULL DEFAULT '';");
+}
 
 if (!messageColumnNames.has("kind")) {
   sqlite.exec("ALTER TABLE messages ADD COLUMN kind text;");

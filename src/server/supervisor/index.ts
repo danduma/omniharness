@@ -12,7 +12,7 @@ import { buildSupervisorTurnContext } from "@/server/supervisor/context";
 import { parseSupervisorToolCall, SupervisorProtocolError } from "@/server/supervisor/protocol";
 import { retrySupervisorRequest } from "@/server/supervisor/retry";
 import { selectSpawnableWorkerType } from "@/server/supervisor/worker-availability";
-import { parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
+import { parseAllowedWorkerTypes, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
 
 export interface SupervisorOptions {
   runId: string;
@@ -51,6 +51,74 @@ function normalizeBridgeWorkerMode(value: unknown) {
   return normalized;
 }
 
+const WORKER_YOLO_MODE_SETTING = "WORKER_YOLO_MODE";
+
+function parseBooleanSettingValue(value: string | null | undefined, defaultValue: boolean) {
+  if (typeof value !== "string") {
+    return defaultValue;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return defaultValue;
+  }
+
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return defaultValue;
+}
+
+function resolveWorkerSpawnMode(requestedMode: unknown, yoloModeEnabled: boolean) {
+  const normalizedMode = normalizeBridgeWorkerMode(requestedMode);
+  if (normalizedMode) {
+    return normalizedMode;
+  }
+
+  return yoloModeEnabled ? "full-access" : undefined;
+}
+
+function buildWorkerSpawnSummary({
+  workerId,
+  workerType,
+  model,
+  effort,
+  mode,
+  purpose,
+  fallbackNote,
+}: {
+  workerId: string;
+  workerType: keyof typeof WORKER_TYPE_LABELS;
+  model?: string | null;
+  effort?: string | null;
+  mode?: string;
+  purpose?: string;
+  fallbackNote?: string;
+}) {
+  const details = [
+    `CLI: ${WORKER_TYPE_LABELS[workerType]}`,
+    `Worker: ${workerId}`,
+    `Model: ${model || "Default"}`,
+    `Effort: ${effort || "Default"}`,
+    `Mode: ${mode || "default"}`,
+  ];
+
+  if (purpose) {
+    details.push(`Purpose: ${purpose}.`);
+  }
+
+  if (fallbackNote) {
+    details.push(fallbackNote.trim());
+  }
+
+  return `Spawned worker. ${details.join(" | ")}`;
+}
+
 async function insertRunMessage(runId: string, role: string, content: string, kind?: string, workerId?: string) {
   await db.insert(dbMessages).values({
     id: randomUUID(),
@@ -80,6 +148,35 @@ async function insertExecutionEvent(
   });
 }
 
+function appendWorkerOutput(existingLog: string | null | undefined, nextChunk: string) {
+  if (!nextChunk) {
+    return existingLog ?? "";
+  }
+
+  if (!existingLog) {
+    return nextChunk;
+  }
+
+  const separator = existingLog.endsWith("\n") || nextChunk.startsWith("\n") ? "" : "\n";
+  return `${existingLog}${separator}${nextChunk}`;
+}
+
+async function persistWorkerOutput(workerId: string, output: string) {
+  if (!output) {
+    return;
+  }
+
+  const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+  if (!worker) {
+    return;
+  }
+
+  await db.update(workers).set({
+    outputLog: appendWorkerOutput(worker.outputLog, output),
+    updatedAt: new Date(),
+  }).where(eq(workers.id, workerId));
+}
+
 async function cancelRunWorkers(runId: string) {
   const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
   for (const worker of runWorkers) {
@@ -105,6 +202,7 @@ export class Supervisor {
   private async createModel() {
     const allSettings = await db.select().from(settings);
     const { env: envParams, decryptionFailures } = hydrateRuntimeEnvFromSettings(allSettings);
+    const settingValues = new Map(allSettings.map((setting) => [setting.key, setting.value]));
     Object.entries(envParams).forEach(([key, value]) => {
       process.env[key] = value;
     });
@@ -117,7 +215,12 @@ export class Supervisor {
     });
     configureSupervisorModel(process.env, tokenjs);
 
-    return { tokenjs, llmConfig, envParams };
+    return {
+      tokenjs,
+      llmConfig,
+      envParams,
+      yoloModeEnabled: parseBooleanSettingValue(settingValues.get(WORKER_YOLO_MODE_SETTING), true),
+    };
   }
 
   private async requestAction(tokenjs: TokenJS, llmConfig: ReturnType<typeof configureSupervisorModel>, heartbeatCount: number) {
@@ -164,7 +267,7 @@ export class Supervisor {
   }
 
   async run(): Promise<SupervisorRunResult> {
-    const { tokenjs, llmConfig, envParams } = await this.createModel();
+    const { tokenjs, llmConfig, envParams, yoloModeEnabled } = await this.createModel();
 
     await db.update(runs).set({
       status: "running",
@@ -194,9 +297,11 @@ export class Supervisor {
           const workerType = selectSpawnableWorkerType(requestedType, envParams, allowedWorkerTypes);
           const cwd = asString(action.args.cwd, "cwd");
           const prompt = asString(action.args.prompt, "prompt");
-          const mode = normalizeBridgeWorkerMode(action.args.mode);
+          const mode = resolveWorkerSpawnMode(action.args.mode, yoloModeEnabled);
           const purpose = typeof action.args.purpose === "string" ? action.args.purpose.trim() : "";
           const workerId = `worker-${Date.now()}`;
+          const preferredModel = run?.preferredWorkerModel ?? null;
+          const preferredEffort = run?.preferredWorkerEffort ?? null;
 
           await bridge.spawnAgent({
             type: workerType.type,
@@ -204,8 +309,8 @@ export class Supervisor {
             name: workerId,
             ...(mode ? { mode } : {}),
             env: envParams,
-            ...(run?.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
-            ...(run?.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+            ...(preferredModel ? { model: preferredModel } : {}),
+            ...(preferredEffort ? { effort: preferredEffort } : {}),
           });
 
           await db.insert(workers).values({
@@ -214,30 +319,43 @@ export class Supervisor {
             type: workerType.type,
             status: "starting",
             cwd,
+            outputLog: "",
             createdAt: new Date(),
             updatedAt: new Date(),
           });
 
+          const fallbackNote =
+            workerType.type !== workerType.requestedType
+              ? `Fallback: requested ${workerType.requestedType}, used ${workerType.type} because ${workerType.fallbackReason}.`
+              : "";
+          const spawnSummary = buildWorkerSpawnSummary({
+            workerId,
+            workerType: workerType.type,
+            model: preferredModel,
+            effort: preferredEffort,
+            mode,
+            purpose,
+            fallbackNote,
+          });
           await insertExecutionEvent(this.runId, "worker_spawned", {
-            summary: `Spawned ${workerType.type} worker ${workerId}`,
+            summary: spawnSummary,
             purpose,
             mode,
+            model: preferredModel,
+            effort: preferredEffort,
             requestedType: workerType.requestedType,
             fallbackReason: workerType.fallbackReason,
           }, workerId);
-          const fallbackNote =
-            workerType.type !== workerType.requestedType
-              ? ` Requested ${workerType.requestedType}, used ${workerType.type} because ${workerType.fallbackReason}.`
-              : "";
           await insertRunMessage(
             this.runId,
             "system",
-            `Spawned ${workerType.type} worker ${workerId}.${purpose ? ` Purpose: ${purpose}.` : ""}${fallbackNote}`,
+            spawnSummary,
             "supervisor_action",
           );
 
           try {
             const response = await bridge.askAgent(workerId, prompt);
+            await persistWorkerOutput(workerId, response.response);
 
             await db.update(workers).set({
               status: purpose ? `${response.state}: ${purpose}` : response.state,
@@ -271,6 +389,7 @@ export class Supervisor {
           const workerId = asString(action.args.workerId, "workerId");
           const prompt = asString(action.args.prompt, "prompt");
           const response = await bridge.askAgent(workerId, prompt);
+          await persistWorkerOutput(workerId, response.response);
 
           await db.update(workers).set({
             status: response.state,
@@ -313,24 +432,44 @@ export class Supervisor {
         case "worker_approve": {
           const workerId = asString(action.args.workerId, "workerId");
           const reason = asString(action.args.reason, "reason");
-          await bridge.approvePermission(workerId);
+          const optionId =
+            typeof action.args.optionId === "string" && action.args.optionId.trim().length > 0
+              ? action.args.optionId.trim()
+              : undefined;
+          await bridge.approvePermission(workerId, optionId);
           await insertExecutionEvent(this.runId, "worker_permission_approved", {
             summary: `Approved permission for ${workerId}`,
             reason,
+            optionId,
           }, workerId);
-          await insertRunMessage(this.runId, "system", `Approved permission for ${workerId}: ${reason}`, "supervisor_action");
+          await insertRunMessage(
+            this.runId,
+            "system",
+            `Approved permission for ${workerId}: ${reason}${optionId ? ` (option: ${optionId})` : ""}`,
+            "supervisor_action",
+          );
           return { state: "wait", delayMs: 1_000 };
         }
 
         case "worker_deny": {
           const workerId = asString(action.args.workerId, "workerId");
           const reason = asString(action.args.reason, "reason");
-          await bridge.denyPermission(workerId);
+          const optionId =
+            typeof action.args.optionId === "string" && action.args.optionId.trim().length > 0
+              ? action.args.optionId.trim()
+              : undefined;
+          await bridge.denyPermission(workerId, optionId);
           await insertExecutionEvent(this.runId, "worker_permission_denied", {
             summary: `Denied permission for ${workerId}`,
             reason,
+            optionId,
           }, workerId);
-          await insertRunMessage(this.runId, "system", `Denied permission for ${workerId}: ${reason}`, "supervisor_action");
+          await insertRunMessage(
+            this.runId,
+            "system",
+            `Denied permission for ${workerId}: ${reason}${optionId ? ` (option: ${optionId})` : ""}`,
+            "supervisor_action",
+          );
           return { state: "wait", delayMs: 1_000 };
         }
 

@@ -14,6 +14,16 @@ export interface WorkerObservation {
   status: string;
   purpose: string | null;
   silenceMs: number;
+  requestedModel?: string | null;
+  effectiveModel?: string | null;
+  requestedEffort?: string | null;
+  effectiveEffort?: string | null;
+  pendingPermissions?: Array<{
+    requestId: number;
+    requestedAt: string;
+    sessionId?: string | null;
+    options?: Array<{ optionId: string; kind: string; name: string }>;
+  }>;
   currentText: string;
   lastText: string;
   stderrTail: string;
@@ -75,6 +85,11 @@ export async function buildSupervisorTurnContext(runId: string): Promise<Supervi
       status: agent.state,
       purpose: null,
       silenceMs,
+      requestedModel: agent.requestedModel ?? null,
+      effectiveModel: agent.effectiveModel ?? null,
+      requestedEffort: agent.requestedEffort ?? null,
+      effectiveEffort: agent.effectiveEffort ?? null,
+      pendingPermissions: agent.pendingPermissions ?? [],
       currentText: truncate(agent.currentText || "", 2000),
       lastText: truncate(agent.lastText || "", 2000),
       stderrTail: truncate(agent.stderrBuffer.slice(-20).join("\n"), 1000),

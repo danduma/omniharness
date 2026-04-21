@@ -57,6 +57,23 @@ describe("bridge client", () => {
     );
   });
 
+  it("does not duplicate the action prefix when the bridge already returned one", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "Spawn failed: ANTHROPIC_API_KEY is not set." }), {
+        status: 400,
+        statusText: "Bad Request",
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { spawnAgent } = await import("@/server/bridge-client");
+
+    await expect(spawnAgent({ type: "claude-code", cwd: "/tmp", name: "worker-1" })).rejects.toThrow(
+      /^Spawn failed: ANTHROPIC_API_KEY is not set\.$/i,
+    );
+  });
+
   it("passes requested model and effort through when spawning a worker", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ name: "worker-1", state: "idle" }), {
