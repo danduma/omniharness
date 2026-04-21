@@ -5,7 +5,8 @@
   "packageManager": "pnpm@9.6.0",
   "scripts": {
     "preinstall": "node ./scripts/check-pnpm.mjs",
-    "dev": "next dev --turbopack",
+    "dev": "pnpm exec tsx scripts/dev.ts",
+    "dev:web": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "eslint",
@@ -14,7 +15,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@base-ui/react": "^1.4.0",
+    "@base-ui/react": "^1.4.1",
     "@tanstack/react-query": "^5.99.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",

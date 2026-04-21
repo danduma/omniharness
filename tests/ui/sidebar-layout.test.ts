@@ -13,10 +13,13 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('min-h-0 flex-1 overflow-hidden');
   expect(pageSource).toContain('mt-auto shrink-0 border-t border-border/60 bg-background/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-background/80');
   expect(pageSource).toContain('ml-3 group flex min-w-0 cursor-pointer gap-2 overflow-hidden rounded-lg border px-3 py-1.5 text-sm transition-colors');
+  expect(pageSource).toContain('flex w-4 shrink-0 items-center justify-center');
+  expect(pageSource).not.toContain('flex w-4 shrink-0 items-start justify-center pt-0.5');
   expect(pageSource).toContain('min-w-0 flex items-center justify-between gap-2');
 });
 
 test("settings render as a centered app modal with supervisor llm controls", () => {
+  expect(pageSource).toContain('import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox"');
   expect(pageSource).toContain('import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"');
   expect(pageSource).toContain('<Dialog open={showSettings} onOpenChange={setShowSettings}>');
   expect(pageSource).toContain('className="sm:max-w-xl"');
@@ -34,7 +37,9 @@ test("settings render as a centered app modal with supervisor llm controls", () 
   expect(pageSource).toContain("SUPERVISOR_FALLBACK_LLM_API_KEY");
   expect(pageSource).toContain("/api/llm-models");
   expect(pageSource).toContain('enabled: provider === "gemini" && apiKey.trim().length > 0');
-  expect(pageSource).toContain("Gemini model ids load automatically from the API key");
+  expect(pageSource).toContain("<Combobox");
+  expect(pageSource).toContain("Search Gemini models");
+  expect(pageSource).toContain("Gemini model ids load automatically from the API key and appear in a searchable dropdown.");
 });
 
 test("header includes a persistent day night mode toggle beside the workers sidebar button", () => {

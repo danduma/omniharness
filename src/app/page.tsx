@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Terminal } from "@/components/Terminal";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
+import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { Folder, Settings, Terminal as TerminalIcon, PanelRight, Plus, Search, Blocks, Clock, CheckCircle2, XCircle, Cpu, ArrowUp, FolderPlus, MoreHorizontal, Trash2, LoaderCircle, Menu, Pencil, Sun, Moon, RotateCcw, GitBranch, AlertTriangle, ChevronDown, X } from "lucide-react";
 import { FolderPickerDialog } from "@/components/FolderPickerDialog";
@@ -119,7 +120,6 @@ function LlmSettingsForm({
     },
   });
   const availableModels = useMemo(() => geminiModelsQuery.data?.models ?? [], [geminiModelsQuery.data?.models]);
-  const hasKnownGeminiModel = availableModels.some((model) => model.id === currentModel);
 
   useEffect(() => {
     if (provider !== "gemini") {
@@ -164,25 +164,50 @@ function LlmSettingsForm({
             Model
           </label>
           {provider === "gemini" ? (
-            <select
-              id={modelKey}
-              className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
-              value={currentModel}
-              onChange={(e) => setApiKeys((previous) => ({ ...previous, [modelKey]: e.target.value }))}
+            <Combobox
+              items={availableModels}
+              value={availableModels.find((model) => model.id === currentModel) ?? null}
+              itemToStringValue={(model) => model.label}
+              onValueChange={(model) => {
+                setApiKeys((previous) => ({
+                  ...previous,
+                  [modelKey]: model?.id ?? "",
+                }));
+              }}
               disabled={!apiKey.trim() || geminiModelsQuery.isPending}
             >
-              {!apiKey.trim() ? <option value="">Enter API key first</option> : null}
-              {apiKey.trim() && geminiModelsQuery.isPending ? <option value="">Loading models...</option> : null}
-              {apiKey.trim() && !geminiModelsQuery.isPending && !availableModels.length ? (
-                <option value="">No Gemini models available</option>
-              ) : null}
-              {currentModel && !hasKnownGeminiModel ? <option value={currentModel}>{currentModel}</option> : null}
-              {availableModels.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.label}
-                </option>
-              ))}
-            </select>
+              <ComboboxInput
+                id={modelKey}
+                aria-label="Model"
+                placeholder={
+                  !apiKey.trim()
+                    ? "Enter API key first"
+                    : geminiModelsQuery.isPending
+                      ? "Loading models..."
+                      : "Search Gemini models"
+                }
+                className="w-full"
+              />
+              <ComboboxContent className="w-[var(--anchor-width)]">
+                <ComboboxEmpty>
+                  {!apiKey.trim()
+                    ? "Enter API key first"
+                    : geminiModelsQuery.isPending
+                      ? "Loading models..."
+                      : "No Gemini models available"}
+                </ComboboxEmpty>
+                <ComboboxList>
+                  {(model) => (
+                    <ComboboxItem key={model.id} value={model}>
+                      <div className="flex min-w-0 flex-col">
+                        <span className="truncate">{model.label}</span>
+                        <span className="truncate text-[11px] text-muted-foreground">{model.id}</span>
+                      </div>
+                    </ComboboxItem>
+                  )}
+                </ComboboxList>
+              </ComboboxContent>
+            </Combobox>
           ) : (
             <Input
               id={modelKey}
@@ -194,7 +219,7 @@ function LlmSettingsForm({
           )}
           {provider === "gemini" ? (
             <p className="text-[11px] text-muted-foreground">
-              Gemini model ids load automatically from the API key and refresh when the credential changes.
+              Gemini model ids load automatically from the API key and appear in a searchable dropdown.
             </p>
           ) : null}
           {geminiModelsQuery.isError ? (
@@ -331,7 +356,7 @@ function ConversationSidebar({
                           : "border-transparent text-muted-foreground hover:bg-muted/80"
                       }`}
                     >
-                      <div className="flex w-4 shrink-0 items-start justify-center pt-0.5">
+                      <div className="flex w-4 shrink-0 items-center justify-center">
                         {run.status === "running" ? (
                           <LoaderCircle className="h-3.5 w-3.5 animate-spin text-blue-500" />
                         ) : null}

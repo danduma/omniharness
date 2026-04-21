@@ -1,4 +1,6 @@
-export const BRIDGE_URL = 'http://127.0.0.1:7800';
+import { retrySupervisorRequest } from "@/server/supervisor/retry";
+
+export const BRIDGE_URL = process.env.OMNIHARNESS_BRIDGE_URL?.trim() || "http://127.0.0.1:7800";
 
 export interface AgentRecord {
   name: string;
@@ -18,82 +20,140 @@ export interface TaskRecord {
   subtasks: unknown[];
 }
 
+function describeError(error: unknown, seen = new Set<unknown>()): string {
+  if (error == null) {
+    return "Unknown error";
+  }
+
+  if (seen.has(error)) {
+    return "[circular cause]";
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (error instanceof Error) {
+    seen.add(error);
+    const cause = "cause" in error ? describeError((error as Error & { cause?: unknown }).cause, seen) : "";
+    return cause && cause !== error.message ? `${error.message} (caused by: ${cause})` : error.message;
+  }
+
+  return String(error);
+}
+
+function isBridgeConnectionRefused(error: unknown) {
+  const details = describeError(error).toUpperCase();
+  return details.includes("ECONNREFUSED") && (details.includes("127.0.0.1:7800") || details.includes("LOCALHOST:7800"));
+}
+
+async function requestBridge<T>(path: string, init: RequestInit, action: string) {
+  try {
+    return await retrySupervisorRequest(async () => {
+      const res = await fetch(`${BRIDGE_URL}${path}`, init);
+      if (!res.ok) {
+        throw Object.assign(new Error(`${action} failed: ${res.status} ${res.statusText}`), { status: res.status });
+      }
+      return res.json() as Promise<T>;
+    });
+  } catch (error) {
+    if (isBridgeConnectionRefused(error)) {
+      throw new Error(
+        `ACP bridge is not running at ${BRIDGE_URL}. Start it first ` +
+        `(for example: cd ../acp-bridge && pnpm run daemon). Original error: ${describeError(error)}`,
+      );
+    }
+
+    throw new Error(`${action} failed: ${describeError(error)}`);
+  }
+}
+
 export async function spawnAgent(params: { type: string; cwd: string; name: string; mode?: string; env?: Record<string, string> }) {
-  const res = await fetch(`${BRIDGE_URL}/agents`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  });
-  if (!res.ok) throw new Error(`Spawn failed: ${res.statusText}`);
-  return res.json() as Promise<AgentRecord>;
+  return requestBridge<AgentRecord>(
+    "/agents",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    },
+    "Spawn",
+  );
 }
 
 export async function askAgent(name: string, prompt: string) {
-  const res = await fetch(`${BRIDGE_URL}/agents/${name}/ask`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt }),
-  });
-  if (!res.ok) throw new Error(`Ask failed: ${res.statusText}`);
-  return res.json() as Promise<{ response: string; state: string }>;
+  return requestBridge<{ response: string; state: string }>(
+    `/agents/${name}/ask`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    },
+    "Ask",
+  );
 }
 
 export async function getAgent(name: string) {
-  const res = await fetch(`${BRIDGE_URL}/agents/${name}`);
-  if (!res.ok) throw new Error(`Get agent failed: ${res.statusText}`);
-  return res.json() as Promise<AgentRecord>;
+  return requestBridge<AgentRecord>(`/agents/${name}`, {}, "Get agent");
 }
 
 export async function cancelAgent(name: string) {
-  const res = await fetch(`${BRIDGE_URL}/agents/${name}`, {
-    method: 'DELETE',
-  });
-  if (!res.ok) throw new Error(`Cancel failed: ${res.statusText}`);
-  return res.json();
+  return requestBridge<unknown>(
+    `/agents/${name}`,
+    {
+      method: "DELETE",
+    },
+    "Cancel",
+  );
 }
 
 export async function createTask(body: { name: string, subtasks: unknown[] }) {
-  const res = await fetch(`${BRIDGE_URL}/tasks`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`Create task failed: ${res.statusText}`);
-  return res.json() as Promise<TaskRecord>;
+  return requestBridge<TaskRecord>(
+    "/tasks",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    "Create task",
+  );
 }
 
 export async function getTask(taskId: string) {
-  const res = await fetch(`${BRIDGE_URL}/tasks/${taskId}`);
-  if (!res.ok) throw new Error(`Get task failed: ${res.statusText}`);
-  return res.json() as Promise<TaskRecord>;
+  return requestBridge<TaskRecord>(`/tasks/${taskId}`, {}, "Get task");
 }
 
 export async function approvePermission(name: string) {
-  const res = await fetch(`${BRIDGE_URL}/agents/${name}/approve`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
-  });
-  if (!res.ok) throw new Error(`Approve failed: ${res.statusText}`);
-  return res.json();
+  return requestBridge<unknown>(
+    `/agents/${name}/approve`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    },
+    "Approve",
+  );
 }
 
 export async function denyPermission(name: string) {
-  const res = await fetch(`${BRIDGE_URL}/agents/${name}/deny`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
-  });
-  if (!res.ok) throw new Error(`Deny failed: ${res.statusText}`);
-  return res.json();
+  return requestBridge<unknown>(
+    `/agents/${name}/deny`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    },
+    "Deny",
+  );
 }
 
 export async function setWorkerMode(name: string, mode: string) {
-  const res = await fetch(`${BRIDGE_URL}/agents/${name}/mode`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode }),
-  });
-  if (!res.ok) throw new Error(`Set mode failed: ${res.statusText}`);
-  return res.json();
+  return requestBridge<unknown>(
+    `/agents/${name}/mode`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    },
+    "Set mode",
+  );
 }

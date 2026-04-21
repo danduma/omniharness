@@ -1,0 +1,42 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+describe("bridge client", () => {
+  const originalFetch = global.fetch;
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    warnSpy.mockClear();
+  });
+
+  it("retries transient bridge failures and succeeds on a later attempt", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ name: "worker-1", state: "idle" }), { status: 200 }));
+    global.fetch = fetchMock as typeof fetch;
+
+    const { spawnAgent } = await import("@/server/bridge-client");
+    const result = await spawnAgent({ type: "codex", cwd: "/tmp", name: "worker-1" });
+
+    expect(result).toEqual({ name: "worker-1", state: "idle" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces a clear daemon message when the local bridge is down", async () => {
+    const refused = new TypeError(
+      "fetch failed",
+      { cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:7800"), { code: "ECONNREFUSED" }) },
+    );
+    const fetchMock = vi.fn().mockRejectedValue(refused);
+    global.fetch = fetchMock as typeof fetch;
+
+    const { askAgent } = await import("@/server/bridge-client");
+
+    await expect(askAgent("worker-1", "hello")).rejects.toThrow(/ACP bridge is not running at http:\/\/127\.0\.0\.1:7800/i);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
