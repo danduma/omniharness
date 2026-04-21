@@ -38,6 +38,19 @@ function asNumber(value: unknown, field: string) {
   return value;
 }
 
+function normalizeBridgeWorkerMode(value: unknown) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  if (!normalized || normalized === "auto") {
+    return undefined;
+  }
+
+  return normalized;
+}
+
 async function insertRunMessage(runId: string, role: string, content: string, kind?: string, workerId?: string) {
   await db.insert(dbMessages).values({
     id: randomUUID(),
@@ -181,7 +194,7 @@ export class Supervisor {
           const workerType = selectSpawnableWorkerType(requestedType, envParams, allowedWorkerTypes);
           const cwd = asString(action.args.cwd, "cwd");
           const prompt = asString(action.args.prompt, "prompt");
-          const mode = typeof action.args.mode === "string" ? action.args.mode : "auto";
+          const mode = normalizeBridgeWorkerMode(action.args.mode);
           const purpose = typeof action.args.purpose === "string" ? action.args.purpose.trim() : "";
           const workerId = `worker-${Date.now()}`;
 
@@ -189,16 +202,15 @@ export class Supervisor {
             type: workerType.type,
             cwd,
             name: workerId,
-            mode,
+            ...(mode ? { mode } : {}),
             env: envParams,
           });
-          const response = await bridge.askAgent(workerId, prompt);
 
           await db.insert(workers).values({
             id: workerId,
             runId: this.runId,
             type: workerType.type,
-            status: purpose ? `${response.state}: ${purpose}` : response.state,
+            status: "starting",
             cwd,
             createdAt: new Date(),
             updatedAt: new Date(),
@@ -221,7 +233,35 @@ export class Supervisor {
             `Spawned ${workerType.type} worker ${workerId}.${purpose ? ` Purpose: ${purpose}.` : ""}${fallbackNote}`,
             "supervisor_action",
           );
-          await insertRunMessage(this.runId, "worker", `Prompted ${workerId}:\n${prompt}\n\nInitial response:\n${response.response}`.slice(0, 4000), "worker_output", workerId);
+
+          try {
+            const response = await bridge.askAgent(workerId, prompt);
+
+            await db.update(workers).set({
+              status: purpose ? `${response.state}: ${purpose}` : response.state,
+              updatedAt: new Date(),
+            }).where(eq(workers.id, workerId));
+
+            await insertRunMessage(
+              this.runId,
+              "worker",
+              `Prompted ${workerId}:\n${prompt}\n\nInitial response:\n${response.response}`.slice(0, 4000),
+              "worker_output",
+              workerId,
+            );
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            await db.update(workers).set({
+              status: "error",
+              updatedAt: new Date(),
+            }).where(eq(workers.id, workerId));
+            await insertExecutionEvent(this.runId, "worker_prompt_failed", {
+              summary: `Initial prompt failed for ${workerId}`,
+              error: errorMessage,
+            }, workerId);
+            throw error;
+          }
+
           return { state: "wait", delayMs: 5_000 };
         }
 

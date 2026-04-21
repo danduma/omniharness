@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Terminal } from "@/components/Terminal";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -1035,14 +1035,34 @@ export default function Home() {
       w.runId === selectedRunId && state.agents.some((a: AgentSnapshot) => a.name === w.id)
     ));
   }, [selectedRunId, state.workers, state.agents]);
+  const conversationAgentQueries = useQueries({
+    queries: conversationWorkers.map((worker: { id: string }) => ({
+      queryKey: ["conversation-agent", worker.id],
+      queryFn: async () => {
+        const response = await fetch(`/api/agents/${worker.id}`);
+        if (!response.ok) {
+          return null;
+        }
+        return response.json() as Promise<AgentSnapshot>;
+      },
+      refetchInterval: 2000,
+    })),
+  });
   const conversationAgents = useMemo(() => {
+    const detailedAgents = conversationAgentQueries
+      .map((query) => query.data)
+      .filter((agent): agent is AgentSnapshot => Boolean(agent));
+    if (detailedAgents.length > 0) {
+      return detailedAgents;
+    }
+
     if (!conversationWorkers.length || !state.agents?.length) {
       return [] as AgentSnapshot[];
     }
 
     const workerIds = new Set(conversationWorkers.map((worker: { id: string }) => worker.id));
     return (state.agents as AgentSnapshot[]).filter((agent) => workerIds.has(agent.name));
-  }, [conversationWorkers, state.agents]);
+  }, [conversationAgentQueries, conversationWorkers, state.agents]);
   const liveThoughts = useMemo(() => {
     const seen = new Set<string>();
 
@@ -1086,8 +1106,8 @@ export default function Home() {
           ))}
         </div>
       </div>
-      <div className="overflow-hidden rounded-xl border border-amber-500/20 bg-gradient-to-r from-amber-500/5 via-background to-amber-500/10 p-4 shadow-sm">
-        {liveThoughts.length > 0 ? (
+      {liveThoughts.length > 0 ? (
+        <div className="overflow-hidden rounded-xl border border-amber-500/20 bg-gradient-to-r from-amber-500/5 via-background to-amber-500/10 p-4 shadow-sm">
           <div className="space-y-2">
             {liveThoughts.map((thought) => (
               <div key={`${thought.agentName}:${thought.snippet}`} className="rounded-lg border border-border/60 bg-background/80 px-3 py-2">
@@ -1101,8 +1121,8 @@ export default function Home() {
               </div>
             ))}
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 
