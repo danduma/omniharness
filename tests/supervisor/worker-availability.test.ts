@@ -47,6 +47,23 @@ describe("selectSpawnableWorkerType", () => {
     });
   });
 
+  it("accepts codex when the binary is available even without OPENAI_API_KEY", async () => {
+    mockExecFileSync.mockImplementation((command: string, args: string[]) => {
+      if (args[0] === "codex") {
+        return Buffer.from("");
+      }
+      throw new Error("not found");
+    });
+
+    const { selectSpawnableWorkerType } = await import("@/server/supervisor/worker-availability");
+
+    expect(selectSpawnableWorkerType("codex", {})).toEqual({
+      type: "codex",
+      requestedType: "codex",
+      fallbackReason: null,
+    });
+  });
+
   it("throws an actionable error when nothing spawnable is available", async () => {
     mockExecFileSync.mockImplementation(() => {
       throw new Error("not found");

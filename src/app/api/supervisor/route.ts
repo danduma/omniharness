@@ -21,6 +21,12 @@ export async function POST(req: NextRequest) {
     const preferredWorkerType = typeof body?.preferredWorkerType === "string" && body.preferredWorkerType.trim()
       ? normalizeWorkerType(body.preferredWorkerType)
       : null;
+    const preferredWorkerModel = typeof body?.preferredWorkerModel === "string" && body.preferredWorkerModel.trim()
+      ? body.preferredWorkerModel.trim()
+      : null;
+    const preferredWorkerEffort = typeof body?.preferredWorkerEffort === "string" && body.preferredWorkerEffort.trim()
+      ? body.preferredWorkerEffort.trim().toLowerCase()
+      : null;
     const allowedWorkerTypes = parseAllowedWorkerTypes(
       Array.isArray(body?.allowedWorkerTypes)
         ? JSON.stringify(body.allowedWorkerTypes)
@@ -60,6 +66,8 @@ export async function POST(req: NextRequest) {
       projectPath,
       title: 'New conversation',
       preferredWorkerType,
+      preferredWorkerModel,
+      preferredWorkerEffort,
       allowedWorkerTypes: JSON.stringify(allowedWorkerTypes),
       status: 'running',
       createdAt: new Date(),

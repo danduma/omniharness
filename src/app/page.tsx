@@ -30,6 +30,8 @@ type RunRecord = {
   projectPath: string | null;
   title: string | null;
   preferredWorkerType?: string | null;
+  preferredWorkerModel?: string | null;
+  preferredWorkerEffort?: string | null;
   allowedWorkerTypes?: string | null;
 };
 type PlanItemRecord = { id: string; planId: string; title: string; phase: string | null; status: string };
@@ -47,6 +49,25 @@ type AgentSnapshot = {
   type?: string;
   cwd?: string;
   state: string;
+  requestedModel?: string | null;
+  effectiveModel?: string | null;
+  requestedEffort?: string | null;
+  effectiveEffort?: string | null;
+  sessionMode?: string | null;
+  sessionId?: string | null;
+  protocolVersion?: string | number | null;
+  lastError?: string | null;
+  recentStderr?: string[];
+  pendingPermissions?: Array<{ requestId: number; requestedAt: string; sessionId?: string | null; options?: Array<{ optionId: string; kind: string; name: string }> }>;
+  createdAt?: string;
+  updatedAt?: string;
+  contextUsage?: {
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+    totalTokens?: number | null;
+    maxTokens?: number | null;
+    fullnessPercent?: number | null;
+  } | null;
   lastText?: string;
   currentText?: string;
   stderrBuffer?: string[];
@@ -148,6 +169,22 @@ function parseWorkerType(value: string | null | undefined): WorkerType | null {
 
 function summarizeThought(text: string) {
   return text.replace(/\s+/g, " ").trim().slice(0, 220);
+}
+
+function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel: string) {
+  if (workerType === "opencode") {
+    if (selectedModel === "GPT-5.4") return "openai/gpt-5.4";
+    if (selectedModel === "GPT-5.4 Mini") return "openai/gpt-5.4-mini";
+    if (selectedModel === "Claude Sonnet 4") return "anthropic/claude-sonnet-4";
+  }
+
+  if (workerType === "codex") {
+    if (selectedModel === "GPT-5.4") return "gpt-5.4";
+    if (selectedModel === "GPT-5.4 Mini") return "gpt-5.4-mini";
+    if (selectedModel === "Claude Sonnet 4") return "claude-sonnet-4";
+  }
+
+  return selectedModel;
 }
 
 function LlmSettingsForm({
@@ -573,8 +610,8 @@ function WorkersSidebar({ agents, onClose }: WorkersSidebarProps) {
           {agents.length > 0 ? (
             agents.map((agent) => (
               <div key={agent.name} className="flex flex-col overflow-hidden rounded-lg border border-border bg-background shadow-sm">
-                <div className="flex items-center justify-between border-b border-border bg-muted/30 p-2">
-                  <span className="mr-2 truncate font-mono text-xs font-semibold" title={agent.name}>{agent.name}</span>
+                <div className="flex items-start justify-between gap-2 border-b border-border bg-muted/30 p-2">
+                  <span className="min-w-0 flex-1 break-all font-mono text-xs font-semibold leading-4" title={agent.name}>{agent.name}</span>
                   <span className="text-[9px] font-bold uppercase text-muted-foreground">
                     {agent.state}
                   </span>
@@ -843,6 +880,7 @@ export default function Home() {
 
   const runCommand = useMutation({
     mutationFn: async (cmd: string) => {
+      const resolvedSelectedModel = resolveSelectedWorkerModel(selectedCliAgent, selectedModel);
       const res = await fetch("/api/supervisor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -850,6 +888,8 @@ export default function Home() {
           command: cmd,
           projectPath: currentProjectScope,
           preferredWorkerType: selectedCliAgent,
+          preferredWorkerModel: resolvedSelectedModel,
+          preferredWorkerEffort: selectedEffort.toLowerCase(),
           allowedWorkerTypes: activeAllowedWorkerTypes,
           attachments: attachments.map(({ kind, name, path }) => ({ kind, name, path })),
         }),
@@ -971,7 +1011,10 @@ export default function Home() {
   const plans = (state.plans || []) as PlanRecord[];
   const clarifications = (state.clarifications || []) as ClarificationRecord[];
   const selectedRun = selectedRunId ? runs.find((run) => run.id === selectedRunId) ?? null : null;
-  const catalogWorkers = workerCatalogQuery.data?.workers ?? [];
+  const catalogWorkers = useMemo(
+    () => workerCatalogQuery.data?.workers ?? [],
+    [workerCatalogQuery.data?.workers],
+  );
   const availableWorkerTypes = useMemo(
     () => catalogWorkers
       .filter((worker) => worker.availability.status === "ok")
@@ -1093,7 +1136,7 @@ export default function Home() {
   const conversationThinking = (
     <div className="group flex w-full flex-col text-sm">
       <div className="mb-1.5 flex items-center gap-2 px-1">
-        <span className="text-xs font-semibold uppercase tracking-wider text-amber-600">
+        <span className="text-xs font-semibold tracking-wide text-amber-600">
           Thinking
         </span>
         <div className="flex items-center gap-1">
@@ -1326,7 +1369,7 @@ export default function Home() {
             </div>
           </div>
         )}
-        <div className="rounded-[1.5rem] border border-transparent bg-muted/80 px-4 pb-2 pt-3 shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] transition-colors focus-within:bg-muted/90 dark:bg-[#2f2f2f] dark:focus-within:bg-[#343434] sm:px-5 sm:pb-2.5 sm:pt-4">
+        <div className="rounded-[1.5rem] border border-transparent bg-muted/80 px-4 pb-0.5 pt-3 shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] transition-colors focus-within:bg-muted/90 dark:bg-[#2f2f2f] dark:focus-within:bg-[#343434] sm:px-5 sm:pb-1 sm:pt-4">
           <textarea
             ref={commandInputRef}
             value={command}
@@ -1374,8 +1417,8 @@ export default function Home() {
             }}
             placeholder="Ask Omni anything. @ to refer to files"
             disabled={runCommand.isPending}
-            rows={2}
-            className="min-h-[72px] w-full resize-none bg-transparent text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/80"
+            rows={1}
+            className="min-h-[56px] w-full resize-none bg-transparent text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/80"
           />
 
           {attachments.length > 0 ? (
@@ -1399,7 +1442,7 @@ export default function Home() {
             </div>
           ) : null}
 
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
             <div className="flex items-center gap-2">
               <Button
                 type="button"
@@ -1457,7 +1500,7 @@ export default function Home() {
                 type="submit"
                 size="icon"
                 disabled={runCommand.isPending || !command.trim()}
-                className="h-12 w-12 rounded-full bg-foreground text-background transition-all hover:bg-foreground/90 disabled:bg-foreground/50"
+                className="h-10 w-10 rounded-full bg-foreground text-background transition-all hover:bg-foreground/90 disabled:bg-foreground/50"
               >
                 {runCommand.isPending ? (
                   <LoaderCircle className="h-5 w-5 animate-spin" />
@@ -1729,6 +1772,13 @@ export default function Home() {
                     {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                     {conversationWorkers.map((worker: any) => {
                       const agent = conversationAgents.find((item) => item.name === worker.id);
+                      const requestedModel = agent?.requestedModel || selectedRun?.preferredWorkerModel || "Unknown";
+                      const effectiveModel = agent?.effectiveModel || "Unknown";
+                      const requestedEffort = agent?.requestedEffort || selectedRun?.preferredWorkerEffort || "Unknown";
+                      const effectiveEffort = agent?.effectiveEffort || "Unknown";
+                      const contextUsage = agent?.contextUsage?.fullnessPercent;
+                      const contextUsageLabel = typeof contextUsage === "number" ? `${Math.round(contextUsage)}% full` : "Unknown";
+                      const pendingPermissions = agent?.pendingPermissions?.length ?? 0;
                       return (
                         <div key={worker.id} className="flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-sm">
                           <div className="flex items-center justify-between border-b border-border bg-muted/20 p-2.5">
@@ -1740,6 +1790,40 @@ export default function Home() {
                               <span className="text-[10px] font-bold uppercase text-muted-foreground">
                                 {agent?.type || worker.type}
                               </span>
+                            </div>
+                          </div>
+                          <div className="grid gap-3 border-b border-border/60 bg-muted/10 p-3 sm:grid-cols-2">
+                            <div className="space-y-1 text-xs">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Requested model</div>
+                              <div className="font-mono text-foreground">{requestedModel}</div>
+                            </div>
+                            <div className="space-y-1 text-xs">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Effective model</div>
+                              <div className="font-mono text-foreground">{effectiveModel}</div>
+                            </div>
+                            <div className="space-y-1 text-xs">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Requested effort</div>
+                              <div className="font-mono text-foreground">{requestedEffort}</div>
+                            </div>
+                            <div className="space-y-1 text-xs">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Effective effort</div>
+                              <div className="font-mono text-foreground">{effectiveEffort}</div>
+                            </div>
+                            <div className="space-y-1 text-xs">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Context usage</div>
+                              <div className="font-mono text-foreground">{contextUsageLabel}</div>
+                            </div>
+                            <div className="space-y-1 text-xs">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Pending permissions</div>
+                              <div className="font-mono text-foreground">{pendingPermissions}</div>
+                            </div>
+                            <div className="space-y-1 text-xs">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Session ID</div>
+                              <div className="break-all font-mono text-foreground">{agent?.sessionId || "Unknown"}</div>
+                            </div>
+                            <div className="space-y-1 text-xs">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Last error</div>
+                              <div className="break-all font-mono text-foreground">{agent?.lastError || "None"}</div>
                             </div>
                           </div>
                           <div className="relative h-64 w-full bg-[#1e1e1e] sm:h-72">
@@ -1873,7 +1957,7 @@ export default function Home() {
                         !isAvailable && "opacity-70",
                       )}
                     >
-                      <div className="flex min-w-0 items-start gap-3">
+                      <div className="flex min-w-0 flex-1 items-start gap-3">
                         <input
                           type="checkbox"
                           className="mt-0.5 h-4 w-4 rounded border-border"
@@ -1883,12 +1967,12 @@ export default function Home() {
                         />
                         <div className="min-w-0 space-y-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-sm font-medium">{worker.label}</span>
+                            <span className="text-sm font-medium break-words">{worker.label}</span>
                             <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em]", availabilityTone)}>
                               {worker.availability.status}
                             </span>
                           </div>
-                          <p className="text-xs text-muted-foreground">
+                          <p className="text-xs break-words text-muted-foreground">
                             {worker.availability.message || (isAvailable ? "Ready to spawn from the bridge." : "Unavailable right now.")}
                           </p>
                         </div>

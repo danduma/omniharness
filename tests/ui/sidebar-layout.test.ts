@@ -16,6 +16,13 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('flex w-4 shrink-0 items-center justify-center');
   expect(pageSource).not.toContain('flex w-4 shrink-0 items-start justify-center pt-0.5');
   expect(pageSource).toContain('min-w-0 flex items-center justify-between gap-2');
+  expect(pageSource).toContain('className="flex items-start justify-between gap-2 border-b border-border bg-muted/30 p-2"');
+  expect(pageSource).toContain('className="min-w-0 flex-1 break-all font-mono text-xs font-semibold leading-4"');
+  expect(pageSource).toContain("Requested model");
+  expect(pageSource).toContain("Effective model");
+  expect(pageSource).toContain("Context usage");
+  expect(pageSource).toContain("Pending permissions");
+  expect(pageSource).toContain("Session ID");
 });
 
 test("settings render as a centered app modal with supervisor llm controls", () => {
@@ -46,6 +53,9 @@ test("settings render as a centered app modal with supervisor llm controls", () 
   expect(pageSource).toContain("Only currently available bridge workers can be enabled for new conversations.");
   expect(pageSource).toContain("WORKER_ALLOWED_TYPES");
   expect(pageSource).toContain("WORKER_DEFAULT_TYPE");
+  expect(pageSource).toContain('className="flex min-w-0 flex-1 items-start gap-3"');
+  expect(pageSource).toContain('className="text-sm font-medium break-words"');
+  expect(pageSource).toContain('className="text-xs break-words text-muted-foreground"');
 });
 
 test("header includes a persistent day night mode toggle beside the workers sidebar button", () => {

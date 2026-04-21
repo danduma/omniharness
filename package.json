@@ -7,6 +7,7 @@
     "preinstall": "node ./scripts/check-pnpm.mjs",
     "dev": "pnpm exec tsx scripts/dev.ts",
     "dev:web": "next dev --turbopack",
+    "setup:agents": "./scripts/install-agent-acp.sh",
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "eslint",

@@ -136,6 +136,8 @@ describe("POST /api/supervisor", () => {
         command,
         preferredWorkerType: "Codex",
         allowedWorkerTypes: ["codex", "opencode"],
+        preferredWorkerModel: "openai/gpt-5.4",
+        preferredWorkerEffort: "high",
       }),
     });
 
@@ -147,6 +149,8 @@ describe("POST /api/supervisor", () => {
 
     expect(insertedRun?.preferredWorkerType).toBe("codex");
     expect(insertedRun?.allowedWorkerTypes).toBe(JSON.stringify(["codex", "opencode"]));
+    expect(insertedRun?.preferredWorkerModel).toBe("openai/gpt-5.4");
+    expect(insertedRun?.preferredWorkerEffort).toBe("high");
   });
 
   it("accepts optional attachment metadata alongside text input", async () => {

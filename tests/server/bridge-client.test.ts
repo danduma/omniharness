@@ -56,4 +56,27 @@ describe("bridge client", () => {
       /Spawn failed: claude-code binary not found on PATH/i,
     );
   });
+
+  it("passes requested model and effort through when spawning a worker", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ name: "worker-1", state: "idle" }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { spawnAgent } = await import("@/server/bridge-client");
+    await spawnAgent({
+      type: "opencode",
+      cwd: "/tmp",
+      name: "worker-1",
+      model: "openai/gpt-5.4",
+      effort: "high",
+    });
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    expect(init?.body).toContain('"model":"openai/gpt-5.4"');
+    expect(init?.body).toContain('"effort":"high"');
+  });
 });

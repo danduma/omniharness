@@ -30,9 +30,15 @@ export function Terminal({ agentName }: TerminalProps) {
     xtermRef.current = term;
 
     const handleResize = () => fitAddon.fit();
+    const resizeObserver = new ResizeObserver(() => {
+      fitAddon.fit();
+    });
+
+    resizeObserver.observe(terminalRef.current);
     window.addEventListener("resize", handleResize);
 
     return () => {
+      resizeObserver.disconnect();
       window.removeEventListener("resize", handleResize);
       term.dispose();
     };

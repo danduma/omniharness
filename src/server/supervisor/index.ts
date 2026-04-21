@@ -204,6 +204,8 @@ export class Supervisor {
             name: workerId,
             ...(mode ? { mode } : {}),
             env: envParams,
+            ...(run?.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+            ...(run?.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
           });
 
           await db.insert(workers).values({
