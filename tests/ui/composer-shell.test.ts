@@ -8,7 +8,7 @@ const pageSource = fs.readFileSync(
 );
 
 test("composer uses a filled textarea shell with inline cli agent, model, and effort controls", () => {
-  expect(pageSource).toContain('const [selectedCliAgent, setSelectedCliAgent] = useState<WorkerType>("codex")');
+  expect(pageSource).toContain('const [selectedCliAgent, setSelectedCliAgent] = useState<ComposerWorkerOption>("auto")');
   expect(pageSource).toContain('const [selectedModel, setSelectedModel] = useState("GPT-5.4")');
   expect(pageSource).toContain('const [selectedEffort, setSelectedEffort] = useState("High")');
   expect(pageSource).toContain("rounded-[1.5rem] border border-transparent bg-muted/80");
@@ -17,6 +17,8 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain("rows={1}");
   expect(pageSource).toContain("appearance-none border-0 bg-transparent");
   expect(pageSource).toContain("const WORKER_OPTIONS: Array<{ value: WorkerType; label: string }> = [");
+  expect(pageSource).toContain('const COMPOSER_WORKER_OPTIONS: Array<{ value: ComposerWorkerOption; label: string }> = [');
+  expect(pageSource).toContain('{ value: "auto", label: "Auto" }');
   expect(pageSource).toContain('{ value: "codex", label: "Codex" }');
   expect(pageSource).toContain('{ value: "claude", label: "Claude Code" }');
   expect(pageSource).toContain('const MODEL_OPTIONS = ["GPT-5.4", "GPT-5.4 Mini", "Claude Sonnet 4"]');
@@ -24,12 +26,13 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('className="h-10 w-10 rounded-full bg-foreground text-background transition-all hover:bg-foreground/90 disabled:bg-foreground/50"');
 });
 
-test("composer submits the selected preferred worker together with the allowed worker list", () => {
-  expect(pageSource).toContain("preferredWorkerType: selectedCliAgent");
-  expect(pageSource).toContain("const resolvedSelectedModel = resolveSelectedWorkerModel(selectedCliAgent, selectedModel)");
+test("composer supports auto agent selection while pinning explicit agent choices", () => {
+  expect(pageSource).toContain('const isAutoWorkerSelection = selectedCliAgent === "auto"');
+  expect(pageSource).toContain("preferredWorkerType: isAutoWorkerSelection ? null : selectedCliAgent");
+  expect(pageSource).toContain("const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel)");
   expect(pageSource).toContain("preferredWorkerModel: resolvedSelectedModel");
   expect(pageSource).toContain("preferredWorkerEffort: selectedEffort.toLowerCase()");
-  expect(pageSource).toContain("allowedWorkerTypes: activeAllowedWorkerTypes");
+  expect(pageSource).toContain("allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent]");
   expect(pageSource).toContain("composerWorkerOptions.map((agent) => (");
 });
 

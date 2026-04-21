@@ -31,6 +31,12 @@ export interface DerivedWorkerEvent {
 
 const observerIntervals = new Map<string, ReturnType<typeof setInterval>>();
 const observerState = new Map<string, WorkerObserverState>();
+const FATAL_STDERR_PATTERNS = [
+  /ACP write error:/i,
+  /\bEPIPE\b/i,
+  /\bECONNRESET\b/i,
+  /\bERR_STREAM_DESTROYED\b/i,
+];
 
 function stateKey(runId: string, workerId: string) {
   return `${runId}:${workerId}`;
@@ -44,6 +50,14 @@ function snapshotFingerprint(snapshot: WorkerBridgeSnapshot) {
     stopReason: snapshot.stopReason,
     stderrTail: snapshot.stderrBuffer.slice(-10),
   });
+}
+
+function getFatalBridgeStderr(stderrBuffer: string[]) {
+  const fatalLine = [...stderrBuffer]
+    .reverse()
+    .find((line) => FATAL_STDERR_PATTERNS.some((pattern) => pattern.test(line)));
+
+  return fatalLine?.trim() || null;
 }
 
 export function deriveWorkerEvents(args: {
@@ -159,6 +173,13 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
     });
 
     observerState.set(key, nextState);
+
+    const fatalBridgeError = getFatalBridgeStderr(snapshot.stderrBuffer);
+    if (fatalBridgeError) {
+      stopRunObserver(runId);
+      await persistRunFailure(runId, new Error(fatalBridgeError));
+      return;
+    }
 
     const activityEvent = events.find((event) => event.updatesActivity);
     await db.update(workers).set({

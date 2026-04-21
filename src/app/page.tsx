@@ -75,6 +75,7 @@ type AgentSnapshot = {
 };
 type ProjectFilesResponse = { root: string; files: string[] };
 type WorkerType = "codex" | "claude" | "gemini" | "opencode";
+type ComposerWorkerOption = WorkerType | "auto";
 type WorkerAvailability = {
   type: WorkerType;
   label: string;
@@ -87,12 +88,17 @@ type WorkerAvailability = {
   };
 };
 type WorkerCatalogResponse = { workers: WorkerAvailability[] };
+type SettingsTab = "llm" | "workers";
 
 const WORKER_OPTIONS: Array<{ value: WorkerType; label: string }> = [
   { value: "codex", label: "Codex" },
   { value: "claude", label: "Claude Code" },
   { value: "gemini", label: "Gemini" },
   { value: "opencode", label: "OpenCode" },
+] as const;
+const COMPOSER_WORKER_OPTIONS: Array<{ value: ComposerWorkerOption; label: string }> = [
+  { value: "auto", label: "Auto" },
+  ...WORKER_OPTIONS,
 ] as const;
 const DEFAULT_ALLOWED_WORKER_TYPES = JSON.stringify(WORKER_OPTIONS.map((option) => option.value));
 const MODEL_OPTIONS = ["GPT-5.4", "GPT-5.4 Mini", "Claude Sonnet 4"];
@@ -567,7 +573,7 @@ function ConversationSidebar({
 }
 
 interface WorkersSidebarProps {
-  agents: Array<{ name: string; state: string }>;
+  agents: AgentSnapshot[];
   onClose?: () => void;
 }
 
@@ -594,10 +600,10 @@ function ThemeModeToggle({ themeMode, setThemeMode }: ThemeModeToggleProps) {
 
 function WorkersSidebar({ agents, onClose }: WorkersSidebarProps) {
   return (
-    <div className="flex h-full min-h-0 flex-col bg-muted/10">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-col bg-muted/10">
       <div className="flex items-center justify-between border-b p-4">
         <h3 className="flex items-center gap-2 text-sm font-semibold">
-          <Cpu className="h-4 w-4" /> Global Workers
+          <Cpu className="h-4 w-4" /> Conversation Workers
         </h3>
         {onClose && (
           <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" onClick={onClose}>
@@ -606,7 +612,7 @@ function WorkersSidebar({ agents, onClose }: WorkersSidebarProps) {
         )}
       </div>
       <ScrollArea className="flex-1 p-4">
-        <div className="space-y-4">
+        <div className={cn(agents.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col")}>
           {agents.length > 0 ? (
             agents.map((agent) => (
               <div key={agent.name} className="flex flex-col overflow-hidden rounded-lg border border-border bg-background shadow-sm">
@@ -622,9 +628,9 @@ function WorkersSidebar({ agents, onClose }: WorkersSidebarProps) {
               </div>
             ))
           ) : (
-            <div className="flex h-32 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground">
+            <div className="flex h-full min-h-[16rem] flex-1 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground">
               <TerminalIcon className="mb-2 h-6 w-6 opacity-30" />
-              No workers running.
+              No workers running for this conversation.
             </div>
           )}
         </div>
@@ -637,6 +643,7 @@ export default function Home() {
   const [command, setCommand] = useState("");
   const [themeMode, setThemeMode] = useState<"day" | "night">("day");
   const [showSettings, setShowSettings] = useState(false);
+  const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTab>("llm");
   const [activeLlmProfileTab, setActiveLlmProfileTab] = useState<LlmProfileTab>("supervisor");
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({
     SUPERVISOR_LLM_PROVIDER: 'gemini',
@@ -656,6 +663,8 @@ export default function Home() {
   const [showAttachmentPicker, setShowAttachmentPicker] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
+  const [rightSidebarWidth, setRightSidebarWidth] = useState(420);
+  const [isResizingRightSidebar, setIsResizingRightSidebar] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileWorkersOpen, setMobileWorkersOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -667,7 +676,7 @@ export default function Home() {
   const [renameValue, setRenameValue] = useState("");
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingMessageValue, setEditingMessageValue] = useState("");
-  const [selectedCliAgent, setSelectedCliAgent] = useState<WorkerType>("codex");
+  const [selectedCliAgent, setSelectedCliAgent] = useState<ComposerWorkerOption>("auto");
   const [selectedModel, setSelectedModel] = useState("GPT-5.4");
   const [selectedEffort, setSelectedEffort] = useState("High");
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
@@ -751,8 +760,72 @@ export default function Home() {
       return;
     }
 
+    const saved = window.localStorage.getItem("omni-workers-sidebar-width");
+    if (!saved) {
+      return;
+    }
+
+    const parsed = Number(saved);
+    if (!Number.isFinite(parsed)) {
+      return;
+    }
+
+    setRightSidebarWidth(Math.min(720, Math.max(320, parsed)));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
     window.localStorage.setItem("omni-read-markers", JSON.stringify(readMarkers));
   }, [readMarkers]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem("omni-workers-sidebar-width", String(rightSidebarWidth));
+  }, [rightSidebarWidth]);
+
+  useEffect(() => {
+    if (!selectedRunId) {
+      setRightSidebarOpen(false);
+      setMobileWorkersOpen(false);
+    }
+  }, [selectedRunId]);
+
+  useEffect(() => {
+    if (!isResizingRightSidebar || typeof window === "undefined") {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const nextWidth = window.innerWidth - event.clientX;
+      setRightSidebarWidth(Math.min(720, Math.max(320, nextWidth)));
+    };
+    const stopResizing = () => {
+      setIsResizingRightSidebar(false);
+    };
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResizing);
+    window.addEventListener("pointercancel", stopResizing);
+
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResizing);
+      window.removeEventListener("pointercancel", stopResizing);
+    };
+  }, [isResizingRightSidebar]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -880,17 +953,18 @@ export default function Home() {
 
   const runCommand = useMutation({
     mutationFn: async (cmd: string) => {
-      const resolvedSelectedModel = resolveSelectedWorkerModel(selectedCliAgent, selectedModel);
+      const isAutoWorkerSelection = selectedCliAgent === "auto";
+      const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel);
       const res = await fetch("/api/supervisor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           command: cmd,
           projectPath: currentProjectScope,
-          preferredWorkerType: selectedCliAgent,
+          preferredWorkerType: isAutoWorkerSelection ? null : selectedCliAgent,
           preferredWorkerModel: resolvedSelectedModel,
           preferredWorkerEffort: selectedEffort.toLowerCase(),
-          allowedWorkerTypes: activeAllowedWorkerTypes,
+          allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent],
           attachments: attachments.map(({ kind, name, path }) => ({ kind, name, path })),
         }),
       });
@@ -1041,7 +1115,7 @@ export default function Home() {
   }, [availableWorkerTypes, configuredAllowedWorkerTypes, selectedRun, selectedRunAllowedWorkerTypes]);
   const composerWorkerOptions = useMemo(() => {
     const allowedSet = new Set(activeAllowedWorkerTypes);
-    return WORKER_OPTIONS.filter((option) => allowedSet.has(option.value));
+    return COMPOSER_WORKER_OPTIONS.filter((option) => option.value === "auto" || allowedSet.has(option.value));
   }, [activeAllowedWorkerTypes]);
   const settingsWorkers = useMemo(() => {
     if (catalogWorkers.length > 0) {
@@ -1203,21 +1277,17 @@ export default function Home() {
   useEffect(() => {
     if (selectedRun) {
       const preferredFromRun = parseWorkerType(selectedRun.preferredWorkerType);
-      const nextSelected = preferredFromRun && activeAllowedWorkerTypes.includes(preferredFromRun)
+      const nextSelected: ComposerWorkerOption = preferredFromRun && activeAllowedWorkerTypes.includes(preferredFromRun)
         ? preferredFromRun
-        : activeAllowedWorkerTypes[0];
+        : "auto";
       if (nextSelected && nextSelected !== selectedCliAgent) {
         setSelectedCliAgent(nextSelected);
       }
       return;
     }
 
-    const preferredFromSettings = parseWorkerType(apiKeys.WORKER_DEFAULT_TYPE);
-    const nextSelected = preferredFromSettings && activeAllowedWorkerTypes.includes(preferredFromSettings)
-      ? preferredFromSettings
-      : activeAllowedWorkerTypes[0];
-    if (nextSelected && nextSelected !== selectedCliAgent) {
-      setSelectedCliAgent(nextSelected);
+    if (selectedCliAgent !== "auto") {
+      setSelectedCliAgent("auto");
     }
   }, [activeAllowedWorkerTypes, apiKeys.WORKER_DEFAULT_TYPE, selectedCliAgent, selectedRun]);
 
@@ -1460,7 +1530,7 @@ export default function Home() {
               <div className="relative">
                 <select
                   value={selectedCliAgent}
-                  onChange={(event) => setSelectedCliAgent(event.target.value as WorkerType)}
+                  onChange={(event) => setSelectedCliAgent(event.target.value as ComposerWorkerOption)}
                   className="h-9 appearance-none border-0 bg-transparent pl-3 pr-8 text-sm text-muted-foreground outline-none transition-colors hover:text-foreground"
                 >
                   {composerWorkerOptions.map((agent) => (
@@ -1542,6 +1612,11 @@ export default function Home() {
     const content = window.prompt("Fork with this prompt:", message.content)?.trim();
     if (!content) return;
     recoverRun.mutate({ runId: selectedRunId, action: "fork", targetMessageId: message.id, content });
+  };
+
+  const handleRightSidebarResizeStart = (event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    setIsResizingRightSidebar(true);
   };
 
   return (
@@ -1650,26 +1725,42 @@ export default function Home() {
               </Button>
             ) : null}
             <ThemeModeToggle themeMode={themeMode} setThemeMode={setThemeMode} />
-            <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-muted-foreground hover:text-foreground lg:inline-flex" title="Toggle Global Workers" onClick={() => setRightSidebarOpen(!rightSidebarOpen)}>
-              <PanelRight className="h-4 w-4" />
-            </Button>
-            <Sheet open={mobileWorkersOpen} onOpenChange={setMobileWorkersOpen}>
-              <Button variant="ghost" size="icon" className="h-8 w-8 lg:hidden" aria-label="Open workers" onClick={() => setMobileWorkersOpen(true)}>
-                <PanelRight className="h-4 w-4" />
-              </Button>
-              <SheetContent side="right" className="w-[min(22rem,calc(100vw-1rem))] p-0 lg:hidden" showCloseButton={false}>
-                <SheetHeader className="border-b border-border/60">
-                  <SheetTitle>Workers</SheetTitle>
-                </SheetHeader>
-                <WorkersSidebar agents={state.agents ?? []} onClose={() => setMobileWorkersOpen(false)} />
-              </SheetContent>
-            </Sheet>
+            {selectedRunId ? (
+              <>
+                <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-muted-foreground hover:text-foreground lg:inline-flex" title="Toggle Conversation Workers" onClick={() => setRightSidebarOpen(!rightSidebarOpen)}>
+                  <PanelRight className="h-4 w-4" />
+                </Button>
+                <Sheet open={mobileWorkersOpen} onOpenChange={setMobileWorkersOpen}>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 lg:hidden" aria-label="Open workers" onClick={() => setMobileWorkersOpen(true)}>
+                    <PanelRight className="h-4 w-4" />
+                  </Button>
+                  <SheetContent side="right" className="w-[min(22rem,calc(100vw-1rem))] p-0 lg:hidden" showCloseButton={false}>
+                    <SheetHeader className="border-b border-border/60">
+                      <SheetTitle>Workers</SheetTitle>
+                    </SheetHeader>
+                    <WorkersSidebar agents={conversationAgents} onClose={() => setMobileWorkersOpen(false)} />
+                  </SheetContent>
+                </Sheet>
+              </>
+            ) : null}
           </div>
         </header>
 
         <ScrollArea className="min-h-0 flex-1" ref={scrollRef}>
           {selectedRunId ? (
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 pb-24 sm:gap-6 sm:p-6 sm:pb-20">
+              {selectedRun?.status === "failed" && selectedRun.lastError ? (
+                <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-destructive shadow-sm">
+                  <div className="flex items-center gap-2 text-sm font-semibold">
+                    <AlertTriangle className="h-4 w-4" />
+                    <span>Execution failed</span>
+                  </div>
+                  <p className="mt-2 whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-destructive">
+                    {selectedRun.lastError}
+                  </p>
+                </div>
+              ) : null}
+
               {filteredMessages && filteredMessages.length > 0 ? (
                 filteredMessages.map((msg: MessageRecord) => (
                   <div key={msg.id} className="group flex w-full flex-col text-sm">
@@ -1853,11 +1944,21 @@ export default function Home() {
         {selectedRunId ? composer("w-full") : null}
       </div>
 
-      {rightSidebarOpen && (
-        <div className="hidden h-full w-80 shrink-0 border-l border-border lg:flex xl:w-96">
-          <WorkersSidebar agents={state.agents ?? []} onClose={() => setRightSidebarOpen(false)} />
+      {rightSidebarOpen && selectedRunId ? (
+        <div className="relative hidden h-full shrink-0 border-l border-border lg:flex" style={{ width: rightSidebarWidth }}>
+          <button
+            type="button"
+            className="absolute inset-y-0 left-0 z-10 flex w-3 -translate-x-1/2 cursor-col-resize items-center justify-center bg-transparent"
+            aria-label="Resize workers sidebar"
+            onPointerDown={handleRightSidebarResizeStart}
+          >
+            <span className="h-14 w-1 rounded-full bg-border/80 transition-colors hover:bg-foreground/30" />
+          </button>
+          <div className="flex h-full min-w-0 flex-1 pl-2">
+            <WorkersSidebar agents={conversationAgents} onClose={() => setRightSidebarOpen(false)} />
+          </div>
         </div>
-      )}
+      ) : null}
 
       <Dialog open={showSettings} onOpenChange={setShowSettings}>
         <DialogContent className="sm:max-w-xl">
@@ -1869,145 +1970,179 @@ export default function Home() {
           </DialogHeader>
 
           <div className="space-y-4">
-            <div className="space-y-3">
-              <div className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-1">
-                <button
-                  type="button"
-                  className={cn(
-                    "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
-                    activeLlmProfileTab === "supervisor"
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                  aria-pressed={activeLlmProfileTab === "supervisor"}
-                  onClick={() => setActiveLlmProfileTab("supervisor")}
-                >
-                  Supervisor Credentials
-                </button>
-                <button
-                  type="button"
-                  className={cn(
-                    "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
-                    activeLlmProfileTab === "fallback"
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                  aria-pressed={activeLlmProfileTab === "fallback"}
-                  onClick={() => setActiveLlmProfileTab("fallback")}
-                >
-                  Fallback Credentials
-                </button>
-              </div>
-
-              {activeLlmProfileTab === "supervisor" ? (
-                <LlmSettingsForm
-                  prefix="SUPERVISOR_LLM"
-                  title="Supervisor LLM"
-                  description="Configure the provider, model, endpoint, and credentials used first for supervisor turns."
-                  apiKeys={apiKeys}
-                  setApiKeys={setApiKeys}
-                />
-              ) : (
-                <LlmSettingsForm
-                  prefix="SUPERVISOR_FALLBACK_LLM"
-                  title="Fallback LLM"
-                  description="Use a second provider profile if the primary supervisor credentials are unavailable."
-                  apiKeys={apiKeys}
-                  setApiKeys={setApiKeys}
-                />
-              )}
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-muted-foreground">Credit Exhaustion Strategy</label>
-              <select
-                className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
-                value={apiKeys.CREDIT_STRATEGY || "swap_account"}
-                onChange={e => setApiKeys(p => ({ ...p, CREDIT_STRATEGY: e.target.value }))}
+            <div className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-1">
+              <button
+                type="button"
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                  activeSettingsTab === "llm"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                aria-pressed={activeSettingsTab === "llm"}
+                onClick={() => setActiveSettingsTab("llm")}
               >
-                <option value="swap_account">Swap Account</option>
-                <option value="fallback_api">Fallback API</option>
-                <option value="wait_for_reset">Wait for Reset</option>
-                <option value="cross_provider">Cross Provider</option>
-              </select>
+                LLM Settings
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                  activeSettingsTab === "workers"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                aria-pressed={activeSettingsTab === "workers"}
+                onClick={() => setActiveSettingsTab("workers")}
+              >
+                Worker Agents
+              </button>
             </div>
-            <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-4">
-              <div className="space-y-1">
-                <div className="text-sm font-semibold">Worker Agents</div>
-                <p className="text-xs text-muted-foreground">
-                  Only currently available bridge workers can be enabled for new conversations.
-                </p>
-              </div>
 
-              <div className="space-y-2">
-                {settingsWorkers.map((worker) => {
-                  const isAvailable = worker.availability.status === "ok";
-                  const isChecked = configuredAllowedWorkerSet.has(worker.type);
-                  const availabilityTone =
-                    worker.availability.status === "ok"
-                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                      : worker.availability.status === "warning"
-                        ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
-                        : "bg-destructive/10 text-destructive";
-
-                  return (
-                    <label
-                      key={worker.type}
+            {activeSettingsTab === "llm" ? (
+              <>
+                <div className="space-y-3">
+                  <div className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-1">
+                    <button
+                      type="button"
                       className={cn(
-                        "flex items-start justify-between gap-3 rounded-lg border border-border/60 bg-background/70 p-3",
-                        !isAvailable && "opacity-70",
+                        "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                        activeLlmProfileTab === "supervisor"
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground",
                       )}
+                      aria-pressed={activeLlmProfileTab === "supervisor"}
+                      onClick={() => setActiveLlmProfileTab("supervisor")}
                     >
-                      <div className="flex min-w-0 flex-1 items-start gap-3">
-                        <input
-                          type="checkbox"
-                          className="mt-0.5 h-4 w-4 rounded border-border"
-                          checked={isChecked}
-                          disabled={!isAvailable || (isChecked && configuredAllowedWorkerTypes.length === 1)}
-                          onChange={(event) => handleToggleAllowedWorker(worker.type, event.target.checked)}
-                        />
-                        <div className="min-w-0 space-y-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-sm font-medium break-words">{worker.label}</span>
-                            <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em]", availabilityTone)}>
-                              {worker.availability.status}
-                            </span>
+                      Supervisor Credentials
+                    </button>
+                    <button
+                      type="button"
+                      className={cn(
+                        "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                        activeLlmProfileTab === "fallback"
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                      aria-pressed={activeLlmProfileTab === "fallback"}
+                      onClick={() => setActiveLlmProfileTab("fallback")}
+                    >
+                      Fallback Credentials
+                    </button>
+                  </div>
+
+                  {activeLlmProfileTab === "supervisor" ? (
+                    <LlmSettingsForm
+                      prefix="SUPERVISOR_LLM"
+                      title="Supervisor LLM"
+                      description="Configure the provider, model, endpoint, and credentials used first for supervisor turns."
+                      apiKeys={apiKeys}
+                      setApiKeys={setApiKeys}
+                    />
+                  ) : (
+                    <LlmSettingsForm
+                      prefix="SUPERVISOR_FALLBACK_LLM"
+                      title="Fallback LLM"
+                      description="Use a second provider profile if the primary supervisor credentials are unavailable."
+                      apiKeys={apiKeys}
+                      setApiKeys={setApiKeys}
+                    />
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Credit Exhaustion Strategy</label>
+                  <select
+                    className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+                    value={apiKeys.CREDIT_STRATEGY || "swap_account"}
+                    onChange={e => setApiKeys(p => ({ ...p, CREDIT_STRATEGY: e.target.value }))}
+                  >
+                    <option value="swap_account">Swap Account</option>
+                    <option value="fallback_api">Fallback API</option>
+                    <option value="wait_for_reset">Wait for Reset</option>
+                    <option value="cross_provider">Cross Provider</option>
+                  </select>
+                </div>
+              </>
+            ) : (
+              <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-4">
+                <div className="space-y-1">
+                  <div className="text-sm font-semibold">Worker Agents</div>
+                  <p className="text-xs text-muted-foreground">
+                    Only currently available bridge workers can be enabled for new conversations.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  {settingsWorkers.map((worker) => {
+                    const isAvailable = worker.availability.status === "ok";
+                    const isChecked = configuredAllowedWorkerSet.has(worker.type);
+                    const availabilityTone =
+                      worker.availability.status === "ok"
+                        ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                        : worker.availability.status === "warning"
+                          ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                          : "bg-destructive/10 text-destructive";
+
+                    return (
+                      <label
+                        key={worker.type}
+                        className={cn(
+                          "flex items-start justify-between gap-3 rounded-lg border border-border/60 bg-background/70 p-3",
+                          !isAvailable && "opacity-70",
+                        )}
+                      >
+                        <div className="flex min-w-0 flex-1 items-start gap-3">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5 h-4 w-4 rounded border-border"
+                            checked={isChecked}
+                            disabled={!isAvailable || (isChecked && configuredAllowedWorkerTypes.length === 1)}
+                            onChange={(event) => handleToggleAllowedWorker(worker.type, event.target.checked)}
+                          />
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-medium break-words">{worker.label}</span>
+                              <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em]", availabilityTone)}>
+                                {worker.availability.status}
+                              </span>
+                            </div>
+                            <p className="text-xs break-words text-muted-foreground">
+                              {worker.availability.message || (isAvailable ? "Ready to spawn from the bridge." : "Unavailable right now.")}
+                            </p>
                           </div>
-                          <p className="text-xs break-words text-muted-foreground">
-                            {worker.availability.message || (isAvailable ? "Ready to spawn from the bridge." : "Unavailable right now.")}
-                          </p>
                         </div>
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
+                      </label>
+                    );
+                  })}
+                </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-muted-foreground" htmlFor="WORKER_DEFAULT_TYPE">
-                  Default Worker Agent
-                </label>
-                <select
-                  id="WORKER_DEFAULT_TYPE"
-                  className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
-                  value={parseWorkerType(apiKeys.WORKER_DEFAULT_TYPE) ?? configuredAllowedWorkerTypes[0] ?? "codex"}
-                  onChange={(event) => setApiKeys((current) => ({ ...current, WORKER_DEFAULT_TYPE: event.target.value }))}
-                >
-                  {WORKER_OPTIONS
-                    .filter((option) => configuredAllowedWorkerSet.has(option.value))
-                    .map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                </select>
-              </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground" htmlFor="WORKER_DEFAULT_TYPE">
+                    Default Worker Agent
+                  </label>
+                  <select
+                    id="WORKER_DEFAULT_TYPE"
+                    className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+                    value={parseWorkerType(apiKeys.WORKER_DEFAULT_TYPE) ?? configuredAllowedWorkerTypes[0] ?? "codex"}
+                    onChange={(event) => setApiKeys((current) => ({ ...current, WORKER_DEFAULT_TYPE: event.target.value }))}
+                  >
+                    {WORKER_OPTIONS
+                      .filter((option) => configuredAllowedWorkerSet.has(option.value))
+                      .map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                  </select>
+                </div>
 
-              {workerCatalogQuery.isError ? (
-                <p className="text-[11px] text-destructive">
-                  {workerCatalogQuery.error instanceof Error ? workerCatalogQuery.error.message : "Unable to load worker availability."}
-                </p>
-              ) : null}
-            </div>
+                {workerCatalogQuery.isError ? (
+                  <p className="text-[11px] text-destructive">
+                    {workerCatalogQuery.error instanceof Error ? workerCatalogQuery.error.message : "Unable to load worker availability."}
+                  </p>
+                ) : null}
+              </div>
+            )}
           </div>
 
           <DialogFooter>
