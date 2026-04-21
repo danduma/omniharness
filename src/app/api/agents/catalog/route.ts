@@ -5,6 +5,7 @@ import { settings } from "@/server/db/schema";
 import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { isSpawnableWorkerType } from "@/server/supervisor/worker-availability";
 import { SUPPORTED_WORKER_TYPES, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
+import { buildAppError, errorResponse } from "@/server/api-errors";
 
 interface BridgeDoctorResult {
   type: string;
@@ -23,15 +24,26 @@ export async function GET() {
     ]);
 
     if (!doctorResponse.ok) {
-      return NextResponse.json({ error: doctorResponse.statusText }, { status: doctorResponse.status });
+      return errorResponse(`Bridge doctor request failed with status ${doctorResponse.status}`, {
+        status: doctorResponse.status,
+        source: "Bridge",
+        action: "Load worker availability",
+      });
     }
 
     const payload = await doctorResponse.json() as { results?: BridgeDoctorResult[] };
     const results = payload.results ?? [];
     const byType = new Map(results.map((result) => [result.type, result]));
-    const { env } = hydrateRuntimeEnvFromSettings(allSettings);
+    const { env, decryptionFailures } = hydrateRuntimeEnvFromSettings(allSettings);
 
     return NextResponse.json({
+      diagnostics: decryptionFailures.map((failure) => buildAppError(
+        `Unable to decrypt runtime setting "${failure.key}".`,
+        {
+          source: "Settings",
+          action: "Load worker availability",
+        },
+      )),
       workers: SUPPORTED_WORKER_TYPES.map((type) => ({
         type,
         label: WORKER_TYPE_LABELS[type],
@@ -62,7 +74,10 @@ export async function GET() {
       })),
     });
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return errorResponse(error, {
+      status: 500,
+      source: "Bridge",
+      action: "Load worker availability",
+    });
   }
 }

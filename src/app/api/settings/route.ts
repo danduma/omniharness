@@ -2,22 +2,40 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
 import { decryptSettingValue, encryptSettingValue, shouldEncryptSetting } from "@/server/settings/crypto";
+import { buildAppError, errorResponse } from "@/server/api-errors";
 
 export async function GET() {
-  const allSettings = await db.select().from(settings);
-  const dict = Object.fromEntries(allSettings.flatMap((setting) => {
-    if (!shouldEncryptSetting(setting.key)) {
-      return [[setting.key, setting.value]];
-    }
+  try {
+    const allSettings = await db.select().from(settings);
+    const diagnostics: ReturnType<typeof buildAppError>[] = [];
+    const values = Object.fromEntries(allSettings.flatMap((setting) => {
+      if (!shouldEncryptSetting(setting.key)) {
+        return [[setting.key, setting.value]];
+      }
 
-    try {
-      return [[setting.key, decryptSettingValue(setting.value)]];
-    } catch (error) {
-      console.warn(`Unable to decrypt setting "${setting.key}":`, error);
-      return [[setting.key, ""]];
-    }
-  }));
-  return NextResponse.json(dict);
+      try {
+        return [[setting.key, decryptSettingValue(setting.value)]];
+      } catch (error) {
+        console.warn(`Unable to decrypt setting "${setting.key}":`, error);
+        diagnostics.push(buildAppError(
+          `Unable to decrypt setting "${setting.key}".`,
+          {
+            source: "Settings",
+            action: "Load saved settings",
+          },
+        ));
+        return [[setting.key, ""]];
+      }
+    }));
+
+    return NextResponse.json({ values, diagnostics });
+  } catch (error) {
+    return errorResponse(error, {
+      status: 500,
+      source: "Settings",
+      action: "Load saved settings",
+    });
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -33,7 +51,10 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ ok: true });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return errorResponse(err, {
+      status: 500,
+      source: "Settings",
+      action: "Save settings",
+    });
   }
 }

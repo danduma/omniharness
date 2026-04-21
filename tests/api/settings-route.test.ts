@@ -47,8 +47,9 @@ describe("/api/settings", () => {
     expect(getResponse.status).toBe(200);
 
     const payload = await getResponse.json();
-    expect(payload.TEST_SUPERVISOR_API_KEY).toBe("top-secret-key");
-    expect(payload.TEST_SUPERVISOR_MODEL).toBe("gemini-3.1-pro-preview");
+    expect(payload.values.TEST_SUPERVISOR_API_KEY).toBe("top-secret-key");
+    expect(payload.values.TEST_SUPERVISOR_MODEL).toBe("gemini-3.1-pro-preview");
+    expect(payload.diagnostics).toEqual([]);
   });
 
   it("does not fail the whole response when an old encrypted secret cannot be decrypted", async () => {
@@ -64,9 +65,16 @@ describe("/api/settings", () => {
     expect(response.status).toBe(200);
 
     const payload = await response.json();
-    expect(payload.TEST_SUPERVISOR_API_KEY).toBe("");
-    expect(payload.TEST_SUPERVISOR_MODEL).toBe("enc:v1:invalid-payload");
-    expect(payload.TEST_CREDIT_STRATEGY).toBe("swap_account");
+    expect(payload.values.TEST_SUPERVISOR_API_KEY).toBe("");
+    expect(payload.values.TEST_SUPERVISOR_MODEL).toBe("enc:v1:invalid-payload");
+    expect(payload.values.TEST_CREDIT_STRATEGY).toBe("swap_account");
+    expect(payload.diagnostics).toEqual([
+      expect.objectContaining({
+        source: "Settings",
+        action: "Load saved settings",
+        message: 'Unable to decrypt setting "TEST_SUPERVISOR_API_KEY".',
+      }),
+    ]);
 
     warnSpy.mockRestore();
   });

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import { listProjectFiles } from "@/server/fs/files";
+import { errorResponse } from "@/server/api-errors";
 
 export async function GET(req: NextRequest) {
   try {
@@ -18,8 +19,10 @@ export async function GET(req: NextRequest) {
       files: listProjectFiles(projectPath),
     });
   } catch (err: unknown) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: errorMessage }, { status: 400 });
+    return errorResponse(err, {
+      status: 400,
+      source: "Filesystem",
+      action: "Load project files",
+    });
   }
 }
-

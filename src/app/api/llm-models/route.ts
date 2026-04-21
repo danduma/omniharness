@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorResponse } from "@/server/api-errors";
 
 interface GeminiModelRecord {
   name?: string;
@@ -90,17 +91,28 @@ export async function POST(req: NextRequest) {
     };
 
     if (body.provider !== "gemini") {
-      return NextResponse.json({ error: "Model discovery is currently supported for Gemini only." }, { status: 400 });
+      return errorResponse("Model discovery is currently supported for Gemini only.", {
+        status: 400,
+        source: "LLM Settings",
+        action: "Fetch available models",
+      });
     }
 
     if (!body.apiKey?.trim()) {
-      return NextResponse.json({ error: "A Gemini API key is required to fetch available models." }, { status: 400 });
+      return errorResponse("A Gemini API key is required to fetch available models.", {
+        status: 400,
+        source: "LLM Settings",
+        action: "Fetch available models",
+      });
     }
 
     const models = await listGeminiModels(body.apiKey.trim());
     return NextResponse.json({ models });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return errorResponse(error, {
+      status: 500,
+      source: "LLM Settings",
+      action: "Fetch available models",
+    });
   }
 }

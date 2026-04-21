@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { messages, plans, runs, workers } from "@/server/db/schema";
+import { executionEvents, messages, plans, runs, workers } from "@/server/db/schema";
 
 const { mockGetAgent } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
@@ -17,6 +17,7 @@ import { deriveWorkerEvents, pollRunWorkers } from "@/server/supervisor/observer
 describe("deriveWorkerEvents", () => {
   beforeEach(async () => {
     mockGetAgent.mockReset();
+    await db.delete(executionEvents);
     await db.delete(messages);
     await db.delete(workers);
     await db.delete(runs);
@@ -221,5 +222,56 @@ describe("deriveWorkerEvents", () => {
     expect(failedRun?.status).toBe("failed");
     expect(failedRun?.lastError).toContain("write EPIPE");
     expect(runMessages.some((message) => message.content.includes("write EPIPE"))).toBe(true);
+  });
+
+  it("fails the run with a visible error when the worker snapshot is malformed", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "opencode",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockGetAgent.mockResolvedValue({
+      state: "working",
+      currentText: "sending update",
+      lastText: "sending update",
+      pendingPermissions: [],
+      stopReason: null,
+    });
+
+    await pollRunWorkers(runId, vi.fn());
+
+    const failedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const runMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+
+    expect(failedRun?.status).toBe("failed");
+    expect(failedRun?.lastError).toContain("Invalid worker snapshot");
+    expect(failedRun?.lastError).toContain("stderrBuffer was missing or not an array");
+    expect(runMessages.some((message) => message.content.includes("stderrBuffer was missing or not an array"))).toBe(true);
   });
 });

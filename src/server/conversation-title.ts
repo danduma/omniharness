@@ -1,7 +1,9 @@
 import { TokenJS } from "token.js";
 import { db } from "@/server/db";
-import { runs } from "@/server/db/schema";
+import { executionEvents, runs } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
+import { randomUUID } from "crypto";
+import { formatErrorMessage } from "@/server/runs/failures";
 
 const tokenjs = new TokenJS();
 
@@ -24,7 +26,7 @@ function fallbackTitle(command: string) {
 
 export async function generateConversationTitle(command: string) {
   if (process.env.MOCK_LLM === "true") {
-    return fallbackTitle(command);
+    return { title: fallbackTitle(command), error: null };
   }
 
   try {
@@ -66,24 +68,39 @@ export async function generateConversationTitle(command: string) {
 
     const toolCall = completion.choices[0]?.message?.tool_calls?.[0];
     if (!toolCall) {
-      return fallbackTitle(command);
+      return { title: fallbackTitle(command), error: null };
     }
 
     const args = JSON.parse(toolCall.function.arguments) as { title?: string };
-    return (args.title || fallbackTitle(command)).trim();
-  } catch {
-    return fallbackTitle(command);
+    return { title: (args.title || fallbackTitle(command)).trim(), error: null };
+  } catch (error) {
+    return { title: fallbackTitle(command), error: formatErrorMessage(error) };
   }
 }
 
 export async function queueConversationTitleGeneration(args: { runId: string; command: string }) {
-  const title = await generateConversationTitle(args.command);
+  const result = await generateConversationTitle(args.command);
 
   await db
     .update(runs)
     .set({
-      title: title || "New conversation",
+      title: result.title || "New conversation",
       updatedAt: new Date(),
     })
     .where(eq(runs.id, args.runId));
+
+  if (result.error) {
+    await db.insert(executionEvents).values({
+      id: randomUUID(),
+      runId: args.runId,
+      workerId: null,
+      planItemId: null,
+      eventType: "conversation_title_generation_failed",
+      details: JSON.stringify({
+        summary: "Conversation title generation failed; using fallback title.",
+        error: result.error,
+      }),
+      createdAt: new Date(),
+    });
+  }
 }

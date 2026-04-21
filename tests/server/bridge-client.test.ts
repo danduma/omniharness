@@ -96,4 +96,27 @@ describe("bridge client", () => {
     expect(init?.body).toContain('"model":"openai/gpt-5.4"');
     expect(init?.body).toContain('"effort":"high"');
   });
+
+  it("normalizes sparse agent snapshots so missing text buffers do not crash callers", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ name: "worker-1", state: "working" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { getAgent } = await import("@/server/bridge-client");
+    const result = await getAgent("worker-1");
+
+    expect(result).toMatchObject({
+      name: "worker-1",
+      state: "working",
+      currentText: "",
+      lastText: "",
+      stderrBuffer: [],
+      pendingPermissions: [],
+      stopReason: null,
+    });
+  });
 });

@@ -1,17 +1,25 @@
 import { NextResponse } from "next/server";
 import { BRIDGE_URL, normalizeAgentRecord } from "@/server/bridge-client";
+import { errorResponse } from "@/server/api-errors";
 
 export async function GET() {
   try {
     const res = await fetch(`${BRIDGE_URL}/agents`);
     if (!res.ok) {
-      return NextResponse.json({ error: res.statusText }, { status: res.status });
+      return errorResponse(`Bridge agent list request failed with status ${res.status}`, {
+        status: res.status,
+        source: "Bridge",
+        action: "Load agents",
+      });
     }
     const data = await res.json();
     const normalized = Array.isArray(data) ? data.map((agent) => normalizeAgentRecord(agent)) : [];
     return NextResponse.json(normalized);
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return errorResponse(error, {
+      status: 500,
+      source: "Bridge",
+      action: "Load agents",
+    });
   }
 }
