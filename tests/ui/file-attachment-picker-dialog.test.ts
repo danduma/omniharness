@@ -15,3 +15,9 @@ test("file attachment picker supports searching and attaching multiple files fro
   expect(dialogSource).toContain("Attach Selected Files");
   expect(dialogSource).toContain("onSelect(selectedFiles.map");
 });
+
+test("file attachment picker renders loader failures inside the dialog", () => {
+  expect(dialogSource).toContain('action: "Load attachable files"');
+  expect(dialogSource).toContain("normalizeAppError(error).message");
+  expect(dialogSource).toContain("Load attachable files");
+});

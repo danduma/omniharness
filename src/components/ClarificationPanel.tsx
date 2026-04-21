@@ -16,9 +16,10 @@ interface Clarification {
 interface ClarificationPanelProps {
   clarifications: Clarification[];
   onAnswer: (clarificationId: string, answer: string) => Promise<void> | void;
+  errorMessage?: string | null;
 }
 
-export function ClarificationPanel({ clarifications, onAnswer }: ClarificationPanelProps) {
+export function ClarificationPanel({ clarifications, onAnswer, errorMessage }: ClarificationPanelProps) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
 
   const pending = clarifications.filter((item) => item.status === "pending");
@@ -32,6 +33,11 @@ export function ClarificationPanel({ clarifications, onAnswer }: ClarificationPa
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
+        {errorMessage ? (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            {errorMessage}
+          </div>
+        ) : null}
         {clarifications.length === 0 ? (
           <p className="text-sm text-muted-foreground">No outstanding questions.</p>
         ) : (

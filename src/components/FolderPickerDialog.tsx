@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Folder, ArrowUpCircle } from "lucide-react";
+import { normalizeAppError, requestJson } from "@/lib/app-errors";
 
 export function FolderPickerDialog({ 
   open, 
@@ -20,13 +21,18 @@ export function FolderPickerDialog({
   const [currentPath, setCurrentPath] = useState("");
   const [search, setSearch] = useState("");
 
-  const { data, refetch } = useQuery({
+  const { data, error, refetch } = useQuery({
     queryKey: ["fs", currentPath],
     queryFn: async () => {
       const url = currentPath ? `/api/fs?path=${encodeURIComponent(currentPath)}` : "/api/fs";
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("Failed to fetch directory");
-      return res.json();
+      return requestJson<{
+        current: string;
+        parent: string;
+        directories: Array<{ name: string; path: string }>;
+      }>(url, undefined, {
+        source: "Filesystem",
+        action: "Browse directories",
+      });
     },
     enabled: open,
   });
@@ -82,6 +88,12 @@ export function FolderPickerDialog({
         </DialogHeader>
         
         <ScrollArea className="min-h-0 flex-1 p-2">
+          {error ? (
+            <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm">
+              <div className="font-semibold text-destructive">Browse directories</div>
+              <div className="mt-1 text-xs text-foreground">{normalizeAppError(error).message}</div>
+            </div>
+          ) : null}
           {data && (
             <div className="space-y-1">
               {data.parent && data.parent !== data.current && (

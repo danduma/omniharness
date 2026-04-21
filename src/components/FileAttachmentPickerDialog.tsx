@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
+import { normalizeAppError, requestJson } from "@/lib/app-errors";
 
 export interface AttachmentItem {
   kind: "file";
@@ -38,15 +39,14 @@ export function FileAttachmentPickerDialog({
   const [search, setSearch] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
 
-  const { data } = useQuery<ProjectFilesResponse>({
+  const { data, error } = useQuery<ProjectFilesResponse>({
     queryKey: ["attachable-files", rootPath],
     queryFn: async () => {
       const url = rootPath ? `/api/fs/files?root=${encodeURIComponent(rootPath)}` : "/api/fs/files";
-      const res = await fetch(url);
-      if (!res.ok) {
-        throw new Error("Failed to load files");
-      }
-      return res.json();
+      return requestJson<ProjectFilesResponse>(url, undefined, {
+        source: "Filesystem",
+        action: "Load attachable files",
+      });
     },
     enabled: open,
     staleTime: 60_000,
@@ -99,6 +99,12 @@ export function FileAttachmentPickerDialog({
         </DialogHeader>
 
         <ScrollArea className="min-h-0 flex-1 p-2">
+          {error ? (
+            <div className="mb-3 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm">
+              <div className="font-semibold text-destructive">Load attachable files</div>
+              <div className="mt-1 text-xs text-foreground">{normalizeAppError(error).message}</div>
+            </div>
+          ) : null}
           <div className="space-y-1">
             {filteredFiles.map((filePath) => {
               const selected = selectedFiles.includes(filePath);

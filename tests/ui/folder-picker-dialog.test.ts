@@ -14,3 +14,9 @@ test("folder picker clears the active filter when navigating into another folder
   expect(dialogSource).toContain('onClick={() => handleNavigate(data.parent)}');
   expect(dialogSource).toContain('onClick={() => handleNavigate(dir.path)}');
 });
+
+test("folder picker renders filesystem errors in the dialog instead of failing silently", () => {
+  expect(dialogSource).toContain('action: "Browse directories"');
+  expect(dialogSource).toContain("normalizeAppError(error).message");
+  expect(dialogSource).toContain("Browse directories");
+});

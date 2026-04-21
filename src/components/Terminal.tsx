@@ -5,6 +5,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useQuery } from "@tanstack/react-query";
+import { normalizeAppError, requestJson } from "@/lib/app-errors";
 
 interface TerminalProps {
   agentName: string;
@@ -52,12 +53,13 @@ export function Terminal({ agentName }: TerminalProps) {
     };
   }, []);
 
-  const { data } = useQuery({
+  const { data, error } = useQuery({
     queryKey: ["agent", agentName],
     queryFn: async () => {
-      const res = await fetch(`/api/agents/${agentName}`);
-      if (!res.ok) return null;
-      return await res.json() as AgentTerminalPayload;
+      return requestJson<AgentTerminalPayload>(`/api/agents/${agentName}`, undefined, {
+        source: "Bridge",
+        action: `Load terminal output for ${agentName}`,
+      });
     },
     refetchInterval: 2000,
   });
@@ -79,5 +81,14 @@ export function Terminal({ agentName }: TerminalProps) {
     }
   }, [data]);
 
-  return <div ref={terminalRef} className="h-full w-full overflow-hidden rounded" />;
+  return (
+    <div className="relative h-full w-full overflow-hidden rounded">
+      <div ref={terminalRef} className="h-full w-full overflow-hidden rounded" />
+      {error ? (
+        <div className="absolute inset-x-0 bottom-0 border-t border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {normalizeAppError(error).message}
+        </div>
+      ) : null}
+    </div>
+  );
 }
