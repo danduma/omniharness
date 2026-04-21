@@ -122,4 +122,55 @@ describe("deriveWorkerEvents", () => {
     expect(failedRun?.lastError).toContain("ACP bridge is not running");
     expect(runMessages.some((message) => message.content.includes("ACP bridge is not running"))).toBe(true);
   });
+
+  it("fails the run when worker stderr reports a fatal bridge pipe error", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "opencode",
+      status: "working",
+      cwd: process.cwd(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockGetAgent.mockResolvedValue({
+      state: "working",
+      currentText: "sending update",
+      lastText: "sending update",
+      stderrBuffer: [
+        "[bridge] ACP write error: Error: write EPIPE",
+      ],
+      stopReason: null,
+    });
+
+    await pollRunWorkers(runId, vi.fn());
+
+    const failedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const runMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+
+    expect(failedRun?.status).toBe("failed");
+    expect(failedRun?.lastError).toContain("write EPIPE");
+    expect(runMessages.some((message) => message.content.includes("write EPIPE"))).toBe(true);
+  });
 });

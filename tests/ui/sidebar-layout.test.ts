@@ -23,6 +23,23 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain("Context usage");
   expect(pageSource).toContain("Pending permissions");
   expect(pageSource).toContain("Session ID");
+  expect(pageSource).toContain('className={cn(agents.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col")}');
+  expect(pageSource).toContain('className="flex h-full min-h-[16rem] flex-1 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground"');
+  expect(pageSource).not.toContain('className="flex h-32 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground"');
+});
+
+test("workers sidebar is conversation-scoped and resizable", () => {
+  expect(pageSource).toContain('const [rightSidebarWidth, setRightSidebarWidth] = useState(420)');
+  expect(pageSource).toContain('window.localStorage.getItem("omni-workers-sidebar-width")');
+  expect(pageSource).toContain('window.localStorage.setItem("omni-workers-sidebar-width", String(rightSidebarWidth))');
+  expect(pageSource).toContain('title="Toggle Conversation Workers"');
+  expect(pageSource).toContain('<WorkersSidebar agents={conversationAgents} onClose={() => setMobileWorkersOpen(false)} />');
+  expect(pageSource).toContain('<WorkersSidebar agents={conversationAgents} onClose={() => setRightSidebarOpen(false)} />');
+  expect(pageSource).toContain('style={{ width: rightSidebarWidth }}');
+  expect(pageSource).toContain('aria-label="Resize workers sidebar"');
+  expect(pageSource).toContain('onPointerDown={handleRightSidebarResizeStart}');
+  expect(pageSource).not.toContain("Global Workers");
+  expect(pageSource).not.toContain('<WorkersSidebar agents={state.agents ?? []} onClose={() => setRightSidebarOpen(false)} />');
 });
 
 test("settings render as a centered app modal with supervisor llm controls", () => {
@@ -32,8 +49,11 @@ test("settings render as a centered app modal with supervisor llm controls", () 
   expect(pageSource).toContain('className="sm:max-w-xl"');
   expect(pageSource).toContain("Supervisor LLM");
   expect(pageSource).toContain("Fallback LLM");
+  expect(pageSource).toContain("LLM Settings");
   expect(pageSource).toContain("Supervisor Credentials");
   expect(pageSource).toContain("Fallback Credentials");
+  expect(pageSource).toContain("activeSettingsTab === \"llm\"");
+  expect(pageSource).toContain("activeSettingsTab === \"workers\"");
   expect(pageSource).toContain("SUPERVISOR_LLM_PROVIDER");
   expect(pageSource).toContain("SUPERVISOR_LLM_MODEL");
   expect(pageSource).toContain("SUPERVISOR_LLM_BASE_URL");
@@ -67,7 +87,7 @@ test("header includes a persistent day night mode toggle beside the workers side
   expect(pageSource).toContain('setThemeMode((current) => (current === "day" ? "night" : "day"))');
   expect(pageSource).toContain('themeMode === "night" ? <Sun');
   expect(pageSource).toContain(': <Moon');
-  expect(pageSource).toContain('title="Toggle Global Workers"');
+  expect(pageSource).toContain('title="Toggle Conversation Workers"');
   expect(pageSource).not.toContain(">Day<");
   expect(pageSource).not.toContain(">Night<");
 });

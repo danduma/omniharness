@@ -20,6 +20,11 @@ test("user messages expose retry, edit, and fork recovery controls", () => {
   expect(pageSource).toContain('body: JSON.stringify({ action, targetMessageId, content })');
 });
 
+test("failed runs render the persisted last error in the conversation view", () => {
+  expect(pageSource).toContain("Execution failed");
+  expect(pageSource).toContain("selectedRun.lastError");
+});
+
 test("dropdown menus size to fit action labels instead of the trigger width", () => {
   const dropdownSource = fs.readFileSync(
     path.resolve(process.cwd(), "src/components/ui/dropdown-menu.tsx"),

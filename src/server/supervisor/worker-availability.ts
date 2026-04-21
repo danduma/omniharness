@@ -34,9 +34,13 @@ function workerHasApiKey(type: SupportedWorkerType, env: EnvLike) {
       // OmniHarness should not require a duplicate OPENAI_API_KEY.
       return true;
     case "claude":
-      return Boolean(env.ANTHROPIC_API_KEY?.trim() || env.ANTHROPIC_AUTH_TOKEN?.trim());
+      // Claude Code may already be authenticated locally, so avoid
+      // blocking worker startup on duplicated env vars.
+      return true;
     case "gemini":
-      return Boolean(env.GEMINI_API_KEY?.trim());
+      // Gemini CLI may already be authenticated locally, so avoid
+      // blocking worker startup on duplicated env vars.
+      return true;
     case "opencode":
       return true;
   }
