@@ -12,7 +12,7 @@ test("run pauses for clarifications then completes after validation", async ({ p
   }
 
   await page.goto("/");
-  await page.getByPlaceholder("e.g. implement vibes/test-plan.md").fill("implement vibes/test-plan.md");
+  await page.getByPlaceholder("e.g. vibes/test-plan.md or fix the login flow").fill("vibes/test-plan.md");
   await page.keyboard.press("Enter");
 
   await expect(page.getByText("Plan marked as done. Supervisor loop will terminate.")).toBeVisible({ timeout: 120000 });
