@@ -1,5 +1,4 @@
 import fs from "fs";
-import path from "path";
 import { randomUUID } from "crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
@@ -17,6 +16,7 @@ import {
 import { cancelAgent } from "@/server/bridge-client";
 import { createAdHocPlan, rewriteAdHocPlan } from "@/server/runs/ad-hoc-plan";
 import { startSupervisorRun } from "@/server/supervisor/start";
+import { getAppDataPath } from "@/server/app-root";
 
 export type RecoveryAction = "retry" | "edit" | "fork";
 
@@ -151,7 +151,7 @@ export async function recoverRun(args: RecoverRunArgs) {
   if (plan.path.startsWith("vibes/ad-hoc/")) {
     rewriteAdHocPlan(plan.path, nextContent);
   } else {
-    fs.writeFileSync(path.resolve(process.cwd(), plan.path), nextContent, "utf-8");
+    fs.writeFileSync(getAppDataPath(plan.path), nextContent, "utf-8");
   }
 
   await clearRunDerivedState(args.runId, run.planId);

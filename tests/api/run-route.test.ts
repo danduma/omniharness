@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import fs from "fs";
 import path from "path";
 import { db } from "@/server/db";
+import { getAppDataPath } from "@/server/app-root";
 import {
   plans,
   runs,
@@ -82,7 +83,7 @@ describe("POST /api/runs/[id]", () => {
     const userMessageId = randomUUID();
     const laterMessageId = randomUUID();
     const adHocRelativePath = path.join("vibes", "ad-hoc", `${randomUUID()}.md`);
-    const adHocAbsolutePath = path.resolve(process.cwd(), adHocRelativePath);
+    const adHocAbsolutePath = getAppDataPath(adHocRelativePath);
 
     fs.mkdirSync(path.dirname(adHocAbsolutePath), { recursive: true });
     fs.writeFileSync(adHocAbsolutePath, "# temp\nretry the failing run");
@@ -176,7 +177,7 @@ describe("POST /api/runs/[id]", () => {
     const userMessageId = randomUUID();
     const laterMessageId = randomUUID();
     const adHocRelativePath = path.join("vibes", "ad-hoc", `${randomUUID()}.md`);
-    const adHocAbsolutePath = path.resolve(process.cwd(), adHocRelativePath);
+    const adHocAbsolutePath = getAppDataPath(adHocRelativePath);
 
     fs.mkdirSync(path.dirname(adHocAbsolutePath), { recursive: true });
     fs.writeFileSync(adHocAbsolutePath, "# temp\nold prompt");
@@ -240,7 +241,7 @@ describe("POST /api/runs/[id]", () => {
     const runId = randomUUID();
     const userMessageId = randomUUID();
     const adHocRelativePath = path.join("vibes", "ad-hoc", `${randomUUID()}.md`);
-    const adHocAbsolutePath = path.resolve(process.cwd(), adHocRelativePath);
+    const adHocAbsolutePath = getAppDataPath(adHocRelativePath);
 
     fs.mkdirSync(path.dirname(adHocAbsolutePath), { recursive: true });
     fs.writeFileSync(adHocAbsolutePath, "# temp\nsource prompt");
@@ -289,7 +290,7 @@ describe("POST /api/runs/[id]", () => {
     expect(forkedRun?.forkedFromMessageId).toBe(userMessageId);
     expect(forkedMessages).toHaveLength(1);
     expect(forkedMessages[0]?.content).toBe("forked prompt");
-    expect(fs.readFileSync(path.resolve(process.cwd(), forkedPlan!.path), "utf-8")).toContain("forked prompt");
+    expect(fs.readFileSync(getAppDataPath(forkedPlan!.path), "utf-8")).toContain("forked prompt");
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
   });
 });
@@ -303,7 +304,7 @@ describe("DELETE /api/runs/[id]", () => {
     const itemId = randomUUID();
     const accountId = randomUUID();
     const adHocRelativePath = path.join("vibes", "ad-hoc", `${randomUUID()}.md`);
-    const adHocAbsolutePath = path.resolve(process.cwd(), adHocRelativePath);
+    const adHocAbsolutePath = getAppDataPath(adHocRelativePath);
 
     fs.mkdirSync(path.dirname(adHocAbsolutePath), { recursive: true });
     fs.writeFileSync(adHocAbsolutePath, "# temp");

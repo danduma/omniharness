@@ -7,14 +7,16 @@ import { Terminal } from "@/components/Terminal";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
-import { Folder, Settings, Terminal as TerminalIcon, PanelRight, Plus, Search, Blocks, Clock, CheckCircle2, XCircle, Cpu, ArrowUp, FolderPlus, MoreHorizontal, Trash2, LoaderCircle, Menu, Pencil, Sun, Moon, RotateCcw, GitBranch, AlertTriangle } from "lucide-react";
+import { Folder, Settings, Terminal as TerminalIcon, PanelRight, Plus, Search, Blocks, Clock, CheckCircle2, XCircle, Cpu, ArrowUp, FolderPlus, MoreHorizontal, Trash2, LoaderCircle, Menu, Pencil, Sun, Moon, RotateCcw, GitBranch, AlertTriangle, ChevronDown, X } from "lucide-react";
 import { FolderPickerDialog } from "@/components/FolderPickerDialog";
+import { FileAttachmentPickerDialog, type AttachmentItem } from "@/components/FileAttachmentPickerDialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ClarificationPanel } from "@/components/ClarificationPanel";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { getRunLatestMessageTimestamp, isRunUnread } from "@/lib/conversation-state";
 import { buildConversationGroups } from "@/lib/conversations";
+import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
@@ -31,6 +33,9 @@ type MessageRecord = {
   createdAt: string;
 };
 type ProjectFilesResponse = { root: string; files: string[] };
+const CLI_AGENT_OPTIONS = ["Codex", "Claude Code"];
+const MODEL_OPTIONS = ["GPT-5.4", "GPT-5.4 Mini", "Claude Sonnet 4"];
+const EFFORT_OPTIONS = ["Low", "Medium", "High"];
 
 type SidebarRun = { id: string; title: string; path: string; status: string; createdAt: string };
 type SidebarGroup = { path: string; name: string; runs: SidebarRun[] };
@@ -56,6 +61,176 @@ interface ConversationSidebarProps {
   commitRenamingRun: (runId: string) => void;
   cancelRenamingRun: () => void;
   deleteRun: (run: SidebarRun) => void;
+}
+
+type LlmProfileTab = "supervisor" | "fallback";
+type LlmFieldPrefix = "SUPERVISOR_LLM" | "SUPERVISOR_FALLBACK_LLM";
+
+const LLM_PROVIDER_OPTIONS = [
+  { value: "gemini", label: "Gemini" },
+  { value: "anthropic", label: "Anthropic" },
+  { value: "openai", label: "OpenAI" },
+  { value: "openrouter", label: "OpenRouter" },
+  { value: "openai-compatible", label: "OpenAI-Compatible" },
+] as const;
+
+function LlmSettingsForm({
+  prefix,
+  title,
+  description,
+  apiKeys,
+  setApiKeys,
+}: {
+  prefix: LlmFieldPrefix;
+  title: string;
+  description: string;
+  apiKeys: Record<string, string>;
+  setApiKeys: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+}) {
+  const providerKey = `${prefix}_PROVIDER`;
+  const modelKey = `${prefix}_MODEL`;
+  const baseUrlKey = `${prefix}_BASE_URL`;
+  const apiKeyKey = `${prefix}_API_KEY`;
+  const defaultProvider = prefix === "SUPERVISOR_LLM" ? "gemini" : "openai";
+  const provider = apiKeys[providerKey] || defaultProvider;
+  const apiKey = apiKeys[apiKeyKey] || "";
+  const currentModel = apiKeys[modelKey] || "";
+
+  const geminiModelsQuery = useQuery({
+    queryKey: ["llm-models", prefix, provider, apiKey],
+    enabled: provider === "gemini" && apiKey.trim().length > 0,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const response = await fetch("/api/llm-models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider,
+          apiKey,
+        }),
+      });
+
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(typeof payload.error === "string" ? payload.error : "Unable to fetch available models.");
+      }
+
+      return payload as { models: Array<{ id: string; label: string }> };
+    },
+  });
+  const availableModels = useMemo(() => geminiModelsQuery.data?.models ?? [], [geminiModelsQuery.data?.models]);
+  const hasKnownGeminiModel = availableModels.some((model) => model.id === currentModel);
+
+  useEffect(() => {
+    if (provider !== "gemini") {
+      return;
+    }
+
+    if (!availableModels.length) {
+      return;
+    }
+
+    if (!currentModel.trim()) {
+      setApiKeys((previous) => ({ ...previous, [modelKey]: availableModels[0].id }));
+    }
+  }, [availableModels, currentModel, modelKey, provider, setApiKeys]);
+
+  return (
+    <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
+      <div className="space-y-1">
+        <div className="text-sm font-semibold">{title}</div>
+        <p className="text-xs text-muted-foreground">{description}</p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-muted-foreground" htmlFor={providerKey}>
+            Provider
+          </label>
+          <select
+            id={providerKey}
+            className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+            value={apiKeys[providerKey] || defaultProvider}
+            onChange={(e) => setApiKeys((previous) => ({ ...previous, [providerKey]: e.target.value }))}
+          >
+            {LLM_PROVIDER_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-muted-foreground" htmlFor={modelKey}>
+            Model
+          </label>
+          {provider === "gemini" ? (
+            <select
+              id={modelKey}
+              className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+              value={currentModel}
+              onChange={(e) => setApiKeys((previous) => ({ ...previous, [modelKey]: e.target.value }))}
+              disabled={!apiKey.trim() || geminiModelsQuery.isPending}
+            >
+              {!apiKey.trim() ? <option value="">Enter API key first</option> : null}
+              {apiKey.trim() && geminiModelsQuery.isPending ? <option value="">Loading models...</option> : null}
+              {apiKey.trim() && !geminiModelsQuery.isPending && !availableModels.length ? (
+                <option value="">No Gemini models available</option>
+              ) : null}
+              {currentModel && !hasKnownGeminiModel ? <option value={currentModel}>{currentModel}</option> : null}
+              {availableModels.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <Input
+              id={modelKey}
+              value={currentModel}
+              onChange={(e) => setApiKeys((previous) => ({ ...previous, [modelKey]: e.target.value }))}
+              placeholder={prefix === "SUPERVISOR_LLM" ? "gemini-3.1-pro-preview" : "gpt-5.4-mini"}
+              className="h-8 bg-muted/50 text-xs"
+            />
+          )}
+          {provider === "gemini" ? (
+            <p className="text-[11px] text-muted-foreground">
+              Gemini model ids load automatically from the API key and refresh when the credential changes.
+            </p>
+          ) : null}
+          {geminiModelsQuery.isError ? (
+            <p className="text-[11px] text-destructive">
+              {geminiModelsQuery.error instanceof Error ? geminiModelsQuery.error.message : "Unable to fetch available models."}
+            </p>
+          ) : null}
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-muted-foreground" htmlFor={baseUrlKey}>
+            Endpoint
+          </label>
+          <Input
+            id={baseUrlKey}
+            value={apiKeys[baseUrlKey] || ""}
+            onChange={(e) => setApiKeys((previous) => ({ ...previous, [baseUrlKey]: e.target.value }))}
+            placeholder="Optional custom base URL"
+            className="h-8 bg-muted/50 text-xs"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-muted-foreground" htmlFor={apiKeyKey}>
+            API Key
+          </label>
+          <Input
+            id={apiKeyKey}
+            type="password"
+            value={apiKeys[apiKeyKey] || ""}
+            onChange={(e) => setApiKeys((previous) => ({ ...previous, [apiKeyKey]: e.target.value }))}
+            placeholder="Provider credential"
+            className="h-8 bg-muted/50 text-xs"
+          />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ConversationSidebar({
@@ -325,18 +500,21 @@ export default function Home() {
   const [command, setCommand] = useState("");
   const [themeMode, setThemeMode] = useState<"day" | "night">("day");
   const [showSettings, setShowSettings] = useState(false);
+  const [activeLlmProfileTab, setActiveLlmProfileTab] = useState<LlmProfileTab>("supervisor");
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({
-    OPENAI_API_KEY: '',
-    ANTHROPIC_API_KEY: '',
-    GEMINI_API_KEY: '',
     SUPERVISOR_LLM_PROVIDER: 'gemini',
     SUPERVISOR_LLM_MODEL: 'gemini-3.1-pro-preview',
     SUPERVISOR_LLM_BASE_URL: '',
     SUPERVISOR_LLM_API_KEY: '',
+    SUPERVISOR_FALLBACK_LLM_PROVIDER: 'openai',
+    SUPERVISOR_FALLBACK_LLM_MODEL: 'gpt-5.4-mini',
+    SUPERVISOR_FALLBACK_LLM_BASE_URL: '',
+    SUPERVISOR_FALLBACK_LLM_API_KEY: '',
     CREDIT_STRATEGY: 'swap_account',
     PROJECTS: '[]',
   });
   const [showFolderPicker, setShowFolderPicker] = useState(false);
+  const [showAttachmentPicker, setShowAttachmentPicker] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -350,6 +528,10 @@ export default function Home() {
   const [renameValue, setRenameValue] = useState("");
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingMessageValue, setEditingMessageValue] = useState("");
+  const [selectedCliAgent, setSelectedCliAgent] = useState("Codex");
+  const [selectedModel, setSelectedModel] = useState("GPT-5.4");
+  const [selectedEffort, setSelectedEffort] = useState("High");
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [state, setState] = useState<any>({
@@ -366,7 +548,7 @@ export default function Home() {
   });
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const commandInputRef = useRef<HTMLInputElement>(null);
+  const commandInputRef = useRef<HTMLTextAreaElement>(null);
 
   useQuery({
     queryKey: ["settings"],
@@ -549,13 +731,18 @@ export default function Home() {
       const res = await fetch("/api/supervisor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: cmd, projectPath: currentProjectScope }),
+        body: JSON.stringify({
+          command: cmd,
+          projectPath: currentProjectScope,
+          attachments: attachments.map(({ kind, name, path }) => ({ kind, name, path })),
+        }),
       });
       if (!res.ok) throw new Error(await res.text());
       return res.json();
     },
     onSuccess: (data) => {
       setCommand("");
+      setAttachments([]);
       if (data.runId) setSelectedRunId(data.runId);
     },
   });
@@ -571,6 +758,7 @@ export default function Home() {
     setSelectedRunId(null);
     setDraftProjectPath(null);
     setCommand("");
+    setAttachments([]);
     setMobileNavOpen(false);
   };
 
@@ -602,6 +790,7 @@ export default function Home() {
     setSelectedRunId(null);
     setDraftProjectPath(projectPath);
     setCommand("");
+    setAttachments([]);
     setMobileNavOpen(false);
     requestAnimationFrame(() => {
       commandInputRef.current?.focus();
@@ -756,6 +945,203 @@ export default function Home() {
       commandInputRef.current?.setSelectionRange(nextCursor, nextCursor);
     });
   };
+
+  const handleAttachFiles = (nextAttachments: AttachmentItem[]) => {
+    setAttachments((current) => {
+      const seen = new Set(current.map((attachment) => attachment.path));
+      const merged = [...current];
+
+      for (const attachment of nextAttachments) {
+        if (!seen.has(attachment.path)) {
+          seen.add(attachment.path);
+          merged.push(attachment);
+        }
+      }
+
+      return merged;
+    });
+  };
+
+  const handleRemoveAttachment = (attachmentPath: string) => {
+    setAttachments((current) => current.filter((attachment) => attachment.path !== attachmentPath));
+  };
+
+  const composer = (className: string) => (
+    <div className={`relative z-20 w-full shrink-0 bg-background p-3 sm:p-4 ${className}`}>
+      <form onSubmit={handleSubmit} className="group relative mx-auto max-w-3xl">
+        {showMentionPicker && (
+          <div className="absolute inset-x-0 bottom-full mb-3 overflow-hidden rounded-2xl border border-border bg-background shadow-xl">
+            <div className="border-b border-border/60 px-4 py-2 text-xs text-muted-foreground">
+              {currentProjectScope}
+            </div>
+            <div className="max-h-72 overflow-y-auto p-2">
+              {filteredProjectFiles.length > 0 ? (
+                filteredProjectFiles.map((filePath, index) => (
+                  <button
+                    key={filePath}
+                    type="button"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => applyMention(filePath)}
+                    className={`flex w-full items-center rounded-xl px-3 py-2 text-left text-sm transition-colors ${
+                      index === mentionIndex ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted/60"
+                    }`}
+                  >
+                    <span className="truncate">{filePath}</span>
+                  </button>
+                ))
+              ) : (
+                <div className="px-3 py-2 text-sm text-muted-foreground">
+                  No matching files in this project.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        <div className="rounded-[1.5rem] border border-transparent bg-muted/80 px-4 pb-2 pt-3 shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] transition-colors focus-within:bg-muted/90 dark:bg-[#2f2f2f] dark:focus-within:bg-[#343434] sm:px-5 sm:pb-2.5 sm:pt-4">
+          <textarea
+            ref={commandInputRef}
+            value={command}
+            onChange={(e) => {
+              setCommand(e.target.value);
+              setCommandCursor(e.target.selectionStart ?? e.target.value.length);
+            }}
+            onClick={(e) => setCommandCursor(e.currentTarget.selectionStart ?? 0)}
+            onKeyUp={(e) => setCommandCursor(e.currentTarget.selectionStart ?? 0)}
+            onKeyDown={(e) => {
+              if (showMentionPicker) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setMentionIndex((current) => (current + 1) % Math.max(filteredProjectFiles.length, 1));
+                  return;
+                }
+
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setMentionIndex((current) =>
+                    current === 0 ? Math.max(filteredProjectFiles.length - 1, 0) : current - 1
+                  );
+                  return;
+                }
+
+                if ((e.key === "Enter" || e.key === "Tab") && filteredProjectFiles[mentionIndex]) {
+                  e.preventDefault();
+                  applyMention(filteredProjectFiles[mentionIndex]);
+                  return;
+                }
+
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setCommandCursor(0);
+                  return;
+                }
+              }
+
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (!runCommand.isPending && command.trim()) {
+                  runCommand.mutate(command);
+                }
+              }
+            }}
+            placeholder="Ask Omni anything. @ to refer to files"
+            disabled={runCommand.isPending}
+            rows={2}
+            className="min-h-[72px] w-full resize-none bg-transparent text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/80"
+          />
+
+          {attachments.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {attachments.map((attachment) => (
+                <div
+                  key={attachment.path}
+                  className="inline-flex max-w-full items-center gap-2 rounded-full bg-background/65 px-3 py-1.5 text-xs text-foreground shadow-sm dark:bg-black/20"
+                >
+                  <span className="truncate">{attachment.relativePath}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveAttachment(attachment.path)}
+                    className="inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
+                    aria-label={`Remove ${attachment.name}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowAttachmentPicker(true)}
+                className="h-10 w-10 rounded-full text-muted-foreground hover:bg-background/45 hover:text-foreground"
+                aria-label="Attach files"
+              >
+                <Plus className="h-5 w-5" />
+              </Button>
+            </div>
+
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <select
+                  value={selectedCliAgent}
+                  onChange={(event) => setSelectedCliAgent(event.target.value)}
+                  className="h-9 appearance-none border-0 bg-transparent pl-3 pr-8 text-sm text-muted-foreground outline-none transition-colors hover:text-foreground"
+                >
+                  {CLI_AGENT_OPTIONS.map((agent) => (
+                    <option key={agent} value={agent}>{agent}</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              </div>
+
+              <div className="relative">
+                <select
+                  value={selectedModel}
+                  onChange={(event) => setSelectedModel(event.target.value)}
+                  className="h-9 appearance-none border-0 bg-transparent pl-3 pr-8 text-sm text-muted-foreground outline-none transition-colors hover:text-foreground"
+                >
+                  {MODEL_OPTIONS.map((model) => (
+                    <option key={model} value={model}>{model}</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              </div>
+
+              <div className="relative">
+                <select
+                  value={selectedEffort}
+                  onChange={(event) => setSelectedEffort(event.target.value)}
+                  className="h-9 appearance-none border-0 bg-transparent pl-3 pr-8 text-sm text-muted-foreground outline-none transition-colors hover:text-foreground"
+                >
+                  {EFFORT_OPTIONS.map((effort) => (
+                    <option key={effort} value={effort}>{effort}</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              </div>
+
+              <Button
+                type="submit"
+                size="icon"
+                disabled={runCommand.isPending || !command.trim()}
+                className="h-12 w-12 rounded-full bg-foreground text-background transition-all hover:bg-foreground/90 disabled:bg-foreground/50"
+              >
+                {runCommand.isPending ? (
+                  <LoaderCircle className="h-5 w-5 animate-spin" />
+                ) : (
+                  <ArrowUp className="h-5 w-5" />
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </form>
+    </div>
+  );
 
   const handleRetryMessage = (messageId: string) => {
     if (!selectedRunId) return;
@@ -1037,7 +1423,7 @@ export default function Home() {
               )}
             </div>
           ) : (
-            <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center px-6 pt-[16vh] text-center sm:pt-[20vh]">
+            <div className="mx-auto flex h-full w-full max-w-3xl flex-col items-center justify-center px-6 text-center">
               <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
                 <Blocks className="h-8 w-8 text-primary" />
               </div>
@@ -1045,94 +1431,12 @@ export default function Home() {
               <p className="mb-8 max-w-md text-sm text-muted-foreground">
                 Enter a plan path or plain-English command below to spin up a supervised pool of headless CLI agents (Claude Code, Codex) and drive the work forward.
               </p>
+              {composer("mt-6 w-full")}
             </div>
           )}
         </ScrollArea>
 
-        <div className="relative z-20 w-full shrink-0 bg-background p-3 sm:p-4">
-          <form onSubmit={handleSubmit} className="group relative mx-auto max-w-3xl">
-            {showMentionPicker && (
-              <div className="absolute inset-x-0 bottom-full mb-3 overflow-hidden rounded-2xl border border-border bg-background shadow-xl">
-                <div className="border-b border-border/60 px-4 py-2 text-xs text-muted-foreground">
-                  {currentProjectScope}
-                </div>
-                <div className="max-h-72 overflow-y-auto p-2">
-                  {filteredProjectFiles.length > 0 ? (
-                    filteredProjectFiles.map((filePath, index) => (
-                      <button
-                        key={filePath}
-                        type="button"
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => applyMention(filePath)}
-                        className={`flex w-full items-center rounded-xl px-3 py-2 text-left text-sm transition-colors ${
-                          index === mentionIndex ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted/60"
-                        }`}
-                      >
-                        <span className="truncate">{filePath}</span>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="px-3 py-2 text-sm text-muted-foreground">
-                      No matching files in this project.
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-            <Input
-              type="text"
-              ref={commandInputRef}
-              value={command}
-              onChange={(e) => {
-                setCommand(e.target.value);
-                setCommandCursor(e.target.selectionStart ?? e.target.value.length);
-              }}
-              onClick={(e) => setCommandCursor(e.currentTarget.selectionStart ?? 0)}
-              onKeyUp={(e) => setCommandCursor(e.currentTarget.selectionStart ?? 0)}
-              onKeyDown={(e) => {
-                if (!showMentionPicker) {
-                  return;
-                }
-
-                if (e.key === "ArrowDown") {
-                  e.preventDefault();
-                  setMentionIndex((current) => (current + 1) % Math.max(filteredProjectFiles.length, 1));
-                  return;
-                }
-
-                if (e.key === "ArrowUp") {
-                  e.preventDefault();
-                  setMentionIndex((current) =>
-                    current === 0 ? Math.max(filteredProjectFiles.length - 1, 0) : current - 1
-                  );
-                  return;
-                }
-
-                if ((e.key === "Enter" || e.key === "Tab") && filteredProjectFiles[mentionIndex]) {
-                  e.preventDefault();
-                  applyMention(filteredProjectFiles[mentionIndex]);
-                  return;
-                }
-
-                if (e.key === "Escape") {
-                  e.preventDefault();
-                  setCommandCursor(0);
-                }
-              }}
-              placeholder={draftProjectPath ? `${draftProjectPath}/...` : "e.g. vibes/test-plan.md or fix the login flow"}
-              disabled={runCommand.isPending}
-              className="h-14 w-full rounded-2xl border-border bg-background pl-4 pr-14 text-sm shadow-sm focus-visible:ring-1 focus-visible:ring-primary/50 sm:pl-5"
-            />
-            <Button 
-              type="submit" 
-              size="icon" 
-              disabled={runCommand.isPending || !command.trim()} 
-              className="absolute right-2 top-2 bottom-2 h-10 w-10 rounded-xl transition-all"
-            >
-              <ArrowUp className="h-5 w-5" />
-            </Button>
-          </form>
-        </div>
+        {selectedRunId ? composer("w-full") : null}
       </div>
 
       {rightSidebarOpen && (
@@ -1146,76 +1450,58 @@ export default function Home() {
           <DialogHeader>
             <DialogTitle>OmniHarness Configuration</DialogTitle>
             <DialogDescription>
-              Configure the supervisor LLM and provider fallback credentials for this workspace.
+              Configure primary and fallback supervisor LLM credentials for this workspace.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
-            <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-3">
-              <div>
-                <div className="text-sm font-semibold">Supervisor LLM</div>
-                <p className="text-xs text-muted-foreground">Configure the provider, model, endpoint, and credentials used by the supervisor.</p>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-muted-foreground">Provider</label>
-                <select
-                  className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
-                  value={apiKeys.SUPERVISOR_LLM_PROVIDER || "gemini"}
-                  onChange={e => setApiKeys(p => ({ ...p, SUPERVISOR_LLM_PROVIDER: e.target.value }))}
+            <div className="space-y-3">
+              <div className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-1">
+                <button
+                  type="button"
+                  className={cn(
+                    "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                    activeLlmProfileTab === "supervisor"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                  aria-pressed={activeLlmProfileTab === "supervisor"}
+                  onClick={() => setActiveLlmProfileTab("supervisor")}
                 >
-                  <option value="gemini">Gemini</option>
-                  <option value="anthropic">Anthropic</option>
-                  <option value="openai">OpenAI</option>
-                  <option value="openrouter">OpenRouter</option>
-                  <option value="openai-compatible">OpenAI-Compatible</option>
-                </select>
+                  Supervisor Credentials
+                </button>
+                <button
+                  type="button"
+                  className={cn(
+                    "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                    activeLlmProfileTab === "fallback"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                  aria-pressed={activeLlmProfileTab === "fallback"}
+                  onClick={() => setActiveLlmProfileTab("fallback")}
+                >
+                  Fallback Credentials
+                </button>
               </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-muted-foreground">Model</label>
-                <Input
-                  value={apiKeys.SUPERVISOR_LLM_MODEL || ""}
-                  onChange={e => setApiKeys(p => ({ ...p, SUPERVISOR_LLM_MODEL: e.target.value }))}
-                  placeholder="gemini-3.1-pro-preview"
-                  className="h-8 bg-muted/50 text-xs"
+
+              {activeLlmProfileTab === "supervisor" ? (
+                <LlmSettingsForm
+                  prefix="SUPERVISOR_LLM"
+                  title="Supervisor LLM"
+                  description="Configure the provider, model, endpoint, and credentials used first for supervisor turns."
+                  apiKeys={apiKeys}
+                  setApiKeys={setApiKeys}
                 />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-muted-foreground">Endpoint</label>
-                <Input
-                  value={apiKeys.SUPERVISOR_LLM_BASE_URL || ""}
-                  onChange={e => setApiKeys(p => ({ ...p, SUPERVISOR_LLM_BASE_URL: e.target.value }))}
-                  placeholder="Optional custom base URL"
-                  className="h-8 bg-muted/50 text-xs"
+              ) : (
+                <LlmSettingsForm
+                  prefix="SUPERVISOR_FALLBACK_LLM"
+                  title="Fallback LLM"
+                  description="Use a second provider profile if the primary supervisor credentials are unavailable."
+                  apiKeys={apiKeys}
+                  setApiKeys={setApiKeys}
                 />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-muted-foreground">API Key</label>
-                <Input
-                  type="password"
-                  value={apiKeys.SUPERVISOR_LLM_API_KEY || ""}
-                  onChange={e => setApiKeys(p => ({ ...p, SUPERVISOR_LLM_API_KEY: e.target.value }))}
-                  placeholder="Optional override for the selected provider"
-                  className="h-8 bg-muted/50 text-xs"
-                />
-              </div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Provider Fallback Keys</div>
-              <p className="text-xs text-muted-foreground">Used when the generic supervisor API key above is blank.</p>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-muted-foreground">OpenAI API Key</label>
-                <Input type="password" value={apiKeys.OPENAI_API_KEY} onChange={e => setApiKeys(p => ({ ...p, OPENAI_API_KEY: e.target.value }))} className="h-8 bg-muted/50 text-xs" />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-muted-foreground">Anthropic API Key</label>
-                <Input type="password" value={apiKeys.ANTHROPIC_API_KEY} onChange={e => setApiKeys(p => ({ ...p, ANTHROPIC_API_KEY: e.target.value }))} className="h-8 bg-muted/50 text-xs" />
-              </div>
-              <div className="space-y-1.5 sm:col-span-2">
-                <label className="text-xs font-semibold text-muted-foreground">Gemini API Key</label>
-                <Input type="password" value={apiKeys.GEMINI_API_KEY} onChange={e => setApiKeys(p => ({ ...p, GEMINI_API_KEY: e.target.value }))} className="h-8 bg-muted/50 text-xs" />
-              </div>
+              )}
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-muted-foreground">Credit Exhaustion Strategy</label>
@@ -1243,6 +1529,12 @@ export default function Home() {
         open={showFolderPicker} 
         onOpenChange={setShowFolderPicker} 
         onSelect={handleAddProject} 
+      />
+      <FileAttachmentPickerDialog
+        open={showAttachmentPicker}
+        onOpenChange={setShowAttachmentPicker}
+        rootPath={currentProjectScope}
+        onSelect={handleAttachFiles}
       />
     </div>
   );

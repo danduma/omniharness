@@ -4,12 +4,13 @@ import { eq } from "drizzle-orm";
 import * as bridge from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { clarifications, executionEvents, messages as dbMessages, runs, settings, workers } from "@/server/db/schema";
-import { configureSupervisorModel } from "@/server/supervisor/model-config";
+import { configureSupervisorModel, getSupervisorModelConfig, validateSupervisorModelConfig } from "@/server/supervisor/model-config";
 import { SUPERVISOR_SYSTEM_PROMPT } from "@/server/supervisor/prompt";
 import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { buildSupervisorTools } from "@/server/supervisor/tools";
 import { buildSupervisorTurnContext } from "@/server/supervisor/context";
 import { parseSupervisorToolCall, SupervisorProtocolError } from "@/server/supervisor/protocol";
+import { retrySupervisorRequest } from "@/server/supervisor/retry";
 
 export interface SupervisorOptions {
   runId: string;
@@ -88,12 +89,13 @@ export class Supervisor {
 
   private async createModel() {
     const allSettings = await db.select().from(settings);
-    const envParams = hydrateRuntimeEnvFromSettings(allSettings);
+    const { env: envParams, decryptionFailures } = hydrateRuntimeEnvFromSettings(allSettings);
     Object.entries(envParams).forEach(([key, value]) => {
       process.env[key] = value;
     });
 
-    const llmConfig = configureSupervisorModel(process.env, { extendModelList: () => undefined });
+    const llmConfig = getSupervisorModelConfig(process.env);
+    validateSupervisorModelConfig(llmConfig, decryptionFailures);
     const tokenjs = new TokenJS({
       apiKey: llmConfig.apiKey,
       baseURL: llmConfig.baseURL,
@@ -120,7 +122,7 @@ export class Supervisor {
       runStatus: run.status,
     }, null, 2);
 
-    const completion = await tokenjs.chat.completions.create({
+    const completion = await retrySupervisorRequest(() => tokenjs.chat.completions.create({
       provider: llmConfig.provider as never,
       model: llmConfig.model as never,
       messages: [
@@ -133,7 +135,7 @@ export class Supervisor {
       ],
       tools: buildSupervisorTools(),
       tool_choice: "required",
-    });
+    }));
 
     return {
       context,

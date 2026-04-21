@@ -20,6 +20,10 @@ export type ConversationGroup = {
   }>;
 };
 
+function normalizeProjectPath(projectPath: string) {
+  return projectPath.replace(/\/+$/, "") || "/";
+}
+
 function findMatchingProject(planPath: string, explicitProjects: string[]) {
   return (
     explicitProjects.find((projectPath) => {
@@ -44,7 +48,7 @@ export function buildConversationGroups(args: {
       const projectPath = run.projectPath || findMatchingProject(plan.path, args.explicitProjects);
       return {
         id: run.id,
-        groupPath: projectPath ?? "other",
+        groupPath: projectPath ? normalizeProjectPath(projectPath) : "other",
         title: run.title || "New conversation",
         path: plan.path,
         status: run.status,
@@ -53,11 +57,33 @@ export function buildConversationGroups(args: {
     })
     .filter((run): run is NonNullable<typeof run> => Boolean(run));
 
-  const explicitGroups: ConversationGroup[] = args.explicitProjects.map((projectPath) => ({
-    path: projectPath,
-    name: projectPath.split("/").pop() || projectPath,
+  const groups = new Map<string, ConversationGroup>();
+
+  for (const projectPath of args.explicitProjects) {
+    const normalizedPath = normalizeProjectPath(projectPath);
+    groups.set(normalizedPath, {
+      path: normalizedPath,
+      name: normalizedPath.split("/").pop() || normalizedPath,
+      runs: [],
+    });
+  }
+
+  for (const run of mappedRuns) {
+    if (run.groupPath === "other" || groups.has(run.groupPath)) {
+      continue;
+    }
+
+    groups.set(run.groupPath, {
+      path: run.groupPath,
+      name: run.groupPath.split("/").pop() || run.groupPath,
+      runs: [],
+    });
+  }
+
+  const explicitGroups = Array.from(groups.values()).map((group) => ({
+    ...group,
     runs: mappedRuns
-      .filter((run) => run.groupPath === projectPath)
+      .filter((run) => run.groupPath === group.path)
       .map((run) => ({
         id: run.id,
         title: run.title,

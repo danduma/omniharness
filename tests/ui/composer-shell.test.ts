@@ -1,0 +1,38 @@
+import fs from "fs";
+import path from "path";
+import { test, expect } from "vitest";
+
+const pageSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/app/page.tsx"),
+  "utf8"
+);
+
+test("composer uses a filled textarea shell with inline cli agent, model, and effort controls", () => {
+  expect(pageSource).toContain('const [selectedCliAgent, setSelectedCliAgent] = useState("Codex")');
+  expect(pageSource).toContain('const [selectedModel, setSelectedModel] = useState("GPT-5.4")');
+  expect(pageSource).toContain('const [selectedEffort, setSelectedEffort] = useState("High")');
+  expect(pageSource).toContain("rounded-[1.5rem] border border-transparent bg-muted/80");
+  expect(pageSource).toContain("px-4 pb-2 pt-3");
+  expect(pageSource).toContain("min-h-[72px] w-full resize-none bg-transparent");
+  expect(pageSource).toContain("rows={2}");
+  expect(pageSource).toContain("appearance-none border-0 bg-transparent");
+  expect(pageSource).toContain('const CLI_AGENT_OPTIONS = ["Codex", "Claude Code"]');
+  expect(pageSource).toContain('const MODEL_OPTIONS = ["GPT-5.4", "GPT-5.4 Mini", "Claude Sonnet 4"]');
+  expect(pageSource).toContain('const EFFORT_OPTIONS = ["Low", "Medium", "High"]');
+});
+
+test("composer exposes attachment entry and renders attached file chips", () => {
+  expect(pageSource).toContain('const [showAttachmentPicker, setShowAttachmentPicker] = useState(false)');
+  expect(pageSource).toContain('const [attachments, setAttachments] = useState<AttachmentItem[]>([])');
+  expect(pageSource).toContain('setShowAttachmentPicker(true)');
+  expect(pageSource).toContain('attachments.map((attachment) => (');
+  expect(pageSource).toContain('aria-label={`Remove ${attachment.name}`}');
+  expect(pageSource).toContain('<Plus className="h-5 w-5" />');
+  expect(pageSource).toContain("FileAttachmentPickerDialog");
+  expect(pageSource).toContain("attachments,");
+});
+
+test("composer control row uses tighter centered spacing instead of bottom-heavy end alignment", () => {
+  expect(pageSource).toContain('className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2"');
+  expect(pageSource).not.toContain('className="mt-3 flex flex-wrap items-end justify-between gap-x-3 gap-y-2"');
+});

@@ -1,0 +1,17 @@
+import fs from "fs";
+import path from "path";
+import { test, expect } from "vitest";
+
+const dialogSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/components/FileAttachmentPickerDialog.tsx"),
+  "utf8"
+);
+
+test("file attachment picker supports searching and attaching multiple files from the active scope", () => {
+  expect(dialogSource).toContain('queryKey: ["attachable-files", rootPath]');
+  expect(dialogSource).toContain('placeholder="Search files..."');
+  expect(dialogSource).toContain("selectedFiles.includes(filePath)");
+  expect(dialogSource).toContain("setSelectedFiles((current) =>");
+  expect(dialogSource).toContain("Attach Selected Files");
+  expect(dialogSource).toContain("onSelect(selectedFiles.map");
+});

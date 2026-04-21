@@ -21,10 +21,20 @@ test("settings render as a centered app modal with supervisor llm controls", () 
   expect(pageSource).toContain('<Dialog open={showSettings} onOpenChange={setShowSettings}>');
   expect(pageSource).toContain('className="sm:max-w-xl"');
   expect(pageSource).toContain("Supervisor LLM");
+  expect(pageSource).toContain("Fallback LLM");
+  expect(pageSource).toContain("Supervisor Credentials");
+  expect(pageSource).toContain("Fallback Credentials");
   expect(pageSource).toContain("SUPERVISOR_LLM_PROVIDER");
   expect(pageSource).toContain("SUPERVISOR_LLM_MODEL");
   expect(pageSource).toContain("SUPERVISOR_LLM_BASE_URL");
   expect(pageSource).toContain("SUPERVISOR_LLM_API_KEY");
+  expect(pageSource).toContain("SUPERVISOR_FALLBACK_LLM_PROVIDER");
+  expect(pageSource).toContain("SUPERVISOR_FALLBACK_LLM_MODEL");
+  expect(pageSource).toContain("SUPERVISOR_FALLBACK_LLM_BASE_URL");
+  expect(pageSource).toContain("SUPERVISOR_FALLBACK_LLM_API_KEY");
+  expect(pageSource).toContain("/api/llm-models");
+  expect(pageSource).toContain('enabled: provider === "gemini" && apiKey.trim().length > 0');
+  expect(pageSource).toContain("Gemini model ids load automatically from the API key");
 });
 
 test("header includes a persistent day night mode toggle beside the workers sidebar button", () => {
@@ -41,6 +51,19 @@ test("header includes a persistent day night mode toggle beside the workers side
   expect(pageSource).not.toContain(">Night<");
 });
 
+test("command input uses a fixed helper placeholder instead of echoing the selected directory", () => {
+  expect(pageSource).toContain('placeholder="Ask Omni anything. @ to refer to files"');
+  expect(pageSource).not.toContain('placeholder={draftProjectPath ? `${draftProjectPath}/...` : "e.g. vibes/test-plan.md or fix the login flow"}');
+});
+
+test("send button swaps to a spinner while a command submission is pending", () => {
+  expect(pageSource).toContain('disabled={runCommand.isPending || !command.trim()}');
+  expect(pageSource).toContain('{runCommand.isPending ? (');
+  expect(pageSource).toContain('<LoaderCircle className="h-5 w-5 animate-spin" />');
+  expect(pageSource).toContain(') : (');
+  expect(pageSource).toContain('<ArrowUp className="h-5 w-5" />');
+});
+
 test("failed runs surface recovery UI in the header and conversation feed", () => {
   expect(pageSource).toContain('selectedRun?.status === "failed"');
   expect(pageSource).toContain("Retry latest");
@@ -50,6 +73,13 @@ test("failed runs surface recovery UI in the header and conversation feed", () =
 
 test("starting a project-scoped conversation keeps the composer empty", () => {
   expect(pageSource).toContain('setDraftProjectPath(projectPath)');
-  expect(pageSource).toContain('placeholder={draftProjectPath ? `${draftProjectPath}/...`');
+  expect(pageSource).toContain('placeholder="Ask Omni anything. @ to refer to files"');
   expect(pageSource).not.toContain('setCommand(`${projectPath}/`)');
+});
+
+test("empty state centers the composer with the welcome stack instead of docking it to the bottom", () => {
+  expect(pageSource).toContain("const composer = (");
+  expect(pageSource).toContain('{selectedRunId ? (');
+  expect(pageSource).toContain('{composer("mt-6 w-full")}');
+  expect(pageSource).toContain('{selectedRunId ? composer("w-full") : null}');
 });
