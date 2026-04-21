@@ -32,6 +32,7 @@ export const workers = sqliteTable('workers', {
   type: text('type').notNull(),
   status: text('status').notNull(), // 'idle', 'working', 'stuck', 'cred-exhausted'
   cwd: text('cwd').notNull(),
+  outputLog: text('output_log').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });

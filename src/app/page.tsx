@@ -44,6 +44,15 @@ type MessageRecord = {
   content: string;
   createdAt: string;
 };
+type ExecutionEventRecord = {
+  id: string;
+  runId: string;
+  workerId?: string | null;
+  planItemId?: string | null;
+  eventType: string;
+  details?: string | null;
+  createdAt: string;
+};
 type AgentSnapshot = {
   name: string;
   type?: string;
@@ -173,8 +182,99 @@ function parseWorkerType(value: string | null | undefined): WorkerType | null {
   return WORKER_OPTIONS.some((option) => option.value === normalized) ? normalized as WorkerType : null;
 }
 
+function parseBooleanSetting(value: string | null | undefined, defaultValue: boolean) {
+  if (!value?.trim()) {
+    return defaultValue;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return defaultValue;
+}
+
 function summarizeThought(text: string) {
   return text.replace(/\s+/g, " ").trim().slice(0, 220);
+}
+
+function parseExecutionEventDetails(details: string | null | undefined) {
+  if (!details) {
+    return {} as Record<string, unknown>;
+  }
+
+  try {
+    const parsed = JSON.parse(details) as Record<string, unknown>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function getExecutionEventSource(eventType: string) {
+  if ([
+    "worker_spawned",
+    "worker_prompted",
+    "worker_prompt_failed",
+    "worker_mode_changed",
+    "worker_permission_approved",
+    "worker_permission_denied",
+    "worker_cancelled",
+  ].includes(eventType)) {
+    return "Bridge";
+  }
+
+  if (["supervisor_wait", "clarification_requested"].includes(eventType)) {
+    return "Supervisor";
+  }
+
+  if ([
+    "worker_output_changed",
+    "worker_permission_requested",
+    "worker_idle",
+    "worker_error",
+    "worker_stopped",
+  ].includes(eventType)) {
+    return "Worker";
+  }
+
+  return "System";
+}
+
+function summarizeExecutionEvent(event: ExecutionEventRecord) {
+  const details = parseExecutionEventDetails(event.details);
+  const summary = typeof details.summary === "string" ? details.summary.trim() : "";
+  const reason = typeof details.reason === "string" ? details.reason.trim() : "";
+  const error = typeof details.error === "string" ? details.error.trim() : "";
+  const seconds = typeof details.seconds === "number" ? details.seconds : null;
+
+  if (event.eventType === "supervisor_wait") {
+    const waitReason = summary || reason || "Waiting before the next supervisor check";
+    return seconds ? `Waiting ${seconds}s: ${waitReason}` : waitReason;
+  }
+
+  if (event.eventType === "run_failed") {
+    return reason || summary || error || "Run failed";
+  }
+
+  if (event.eventType === "worker_prompt_failed") {
+    return error ? `${summary || "Initial worker prompt failed"}: ${error}` : (summary || "Initial worker prompt failed");
+  }
+
+  return summary || reason || error || event.eventType.replace(/_/g, " ");
+}
+
+function formatExecutionTimestamp(value: string) {
+  return new Date(value).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel: string) {
@@ -574,6 +674,8 @@ function ConversationSidebar({
 
 interface WorkersSidebarProps {
   agents: AgentSnapshot[];
+  preferredModel: string | null;
+  preferredEffort: string | null;
   onClose?: () => void;
 }
 
@@ -598,7 +700,111 @@ function ThemeModeToggle({ themeMode, setThemeMode }: ThemeModeToggleProps) {
   );
 }
 
-function WorkersSidebar({ agents, onClose }: WorkersSidebarProps) {
+function renderContextMeter(fullnessPercent: number | null | undefined) {
+  const normalized = typeof fullnessPercent === "number" && Number.isFinite(fullnessPercent)
+    ? Math.min(100, Math.max(0, Math.round(fullnessPercent)))
+    : null;
+  const meterTone = normalized === null
+    ? "#3f3f46"
+    : normalized >= 85
+      ? "#f43f5e"
+      : normalized >= 60
+        ? "#f59e0b"
+        : "#34d399";
+  const meterFill = normalized === null ? 0 : normalized;
+
+  return (
+    <div
+      aria-label={normalized === null ? "Context usage unavailable" : `Context usage ${normalized}%`}
+      className="relative h-7 w-7 shrink-0 rounded-full border border-white/10 bg-black/20"
+      title={normalized === null ? "Context usage unavailable" : `Context usage ${normalized}%`}
+    >
+      <div
+        className="absolute inset-0 rounded-full"
+        style={{ background: `conic-gradient(${meterTone} ${meterFill}%, rgba(255,255,255,0.08) ${meterFill}% 100%)` }}
+      />
+      <div className="absolute inset-[4px] rounded-full bg-[#0d0f12]" />
+    </div>
+  );
+}
+
+function formatWorkerRuntime(type: string | undefined) {
+  if (!type) {
+    return null;
+  }
+
+  return WORKER_OPTIONS.find((option) => option.value === type)?.label ?? type;
+}
+
+type PendingPermissionRecord = NonNullable<AgentSnapshot["pendingPermissions"]>[number];
+
+function PermissionWarning({ pendingPermissions }: { pendingPermissions: PendingPermissionRecord[] }) {
+  const [open, setOpen] = useState(false);
+  const popupRef = useRef<HTMLDivElement>(null);
+  const permissionCount = pendingPermissions.length;
+  const summary = `${permissionCount} permission request${permissionCount === 1 ? "" : "s"} waiting`;
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!popupRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [open]);
+
+  return (
+    <div ref={popupRef} className="relative">
+      <button
+        type="button"
+        aria-label={summary}
+        title={summary}
+        className="group relative flex h-7 w-7 items-center justify-center rounded-full border border-amber-400/30 bg-amber-500/12 text-amber-200 transition-colors hover:bg-amber-500/18"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <AlertTriangle className="h-3.5 w-3.5" />
+        {!open ? (
+          <div className="pointer-events-none absolute right-0 top-8 hidden min-w-max rounded-md border border-amber-400/20 bg-[#17120a] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-100 shadow-lg group-hover:block">
+            Permissions waiting
+          </div>
+        ) : null}
+      </button>
+      {open ? (
+        <div className="absolute right-0 top-9 z-30 w-80 rounded-xl border border-amber-400/20 bg-[#17120a] p-3 shadow-[0_20px_60px_rgba(0,0,0,0.45)]">
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-200">Permissions waiting</div>
+          <div className="space-y-2">
+            {pendingPermissions.map((permission) => (
+              <div key={permission.requestId} className="rounded-lg border border-white/10 bg-black/20 p-2 text-[11px] text-zinc-200">
+                <div className="font-semibold text-amber-100">Request {permission.requestId}</div>
+                <div className="mt-1 text-zinc-400">{permission.requestedAt}</div>
+                {permission.options?.length ? (
+                  <div className="mt-2 space-y-1">
+                    {permission.options.map((option) => (
+                      <div key={option.optionId} className="rounded-md bg-white/5 px-2 py-1">
+                        <span className="font-medium text-zinc-100">{option.kind}</span>
+                        <span className="text-zinc-400"> {option.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-2 text-zinc-400">No option details available yet.</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function WorkersSidebar({ agents, preferredModel, preferredEffort, onClose }: WorkersSidebarProps) {
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col bg-muted/10">
       <div className="flex items-center justify-between border-b p-4">
@@ -614,19 +820,52 @@ function WorkersSidebar({ agents, onClose }: WorkersSidebarProps) {
       <ScrollArea className="flex-1 p-4">
         <div className={cn(agents.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col")}>
           {agents.length > 0 ? (
-            agents.map((agent) => (
-              <div key={agent.name} className="flex flex-col overflow-hidden rounded-lg border border-border bg-background shadow-sm">
-                <div className="flex items-start justify-between gap-2 border-b border-border bg-muted/30 p-2">
-                  <span className="min-w-0 flex-1 break-all font-mono text-xs font-semibold leading-4" title={agent.name}>{agent.name}</span>
-                  <span className="text-[9px] font-bold uppercase text-muted-foreground">
-                    {agent.state}
-                  </span>
+            agents.map((agent) => {
+              const configuredModel = agent.requestedModel || preferredModel;
+              const configuredEffort = agent.requestedEffort || preferredEffort;
+              const activeModel = agent.effectiveModel || configuredModel;
+              const activeEffort = agent.effectiveEffort || configuredEffort;
+              const pendingPermissions = agent.pendingPermissions ?? [];
+              const runtimeLabel = formatWorkerRuntime(agent.type);
+
+              return (
+                <div key={agent.name} className="overflow-hidden rounded-xl border border-white/10 bg-[#0d0f12] text-zinc-100 shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
+                  <div className="border-b border-white/10 bg-[#13161b] p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 space-y-1.5">
+                        <div className="break-all font-mono text-xs font-semibold leading-5" title={agent.name}>
+                          {agent.name}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {runtimeLabel ? (
+                            <span className="rounded-md border border-cyan-400/30 bg-cyan-400/10 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-100">
+                              {runtimeLabel}
+                            </span>
+                          ) : null}
+                          {activeModel ? (
+                            <span className="max-w-full truncate rounded-md border border-fuchsia-400/25 bg-fuchsia-400/10 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-100" title={activeModel}>
+                              {activeModel}
+                            </span>
+                          ) : null}
+                          {activeEffort ? <span className="text-[11px] text-zinc-400">{activeEffort}</span> : null}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {pendingPermissions.length > 0 ? <PermissionWarning pendingPermissions={pendingPermissions} /> : null}
+                        {renderContextMeter(agent.contextUsage?.fullnessPercent)}
+                        {agent.state === "working" ? <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" /> : null}
+                        <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-300">
+                          {agent.state}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="relative h-44 w-full bg-[#050607]">
+                    <Terminal agentName={agent.name} />
+                  </div>
                 </div>
-                <div className="relative h-48 w-full bg-[#1e1e1e]">
-                  <Terminal agentName={agent.name} />
-                </div>
-              </div>
-            ))
+              );
+            })
           ) : (
             <div className="flex h-full min-h-[16rem] flex-1 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground">
               <TerminalIcon className="mb-2 h-6 w-6 opacity-30" />
@@ -657,6 +896,7 @@ export default function Home() {
     CREDIT_STRATEGY: 'swap_account',
     WORKER_DEFAULT_TYPE: 'codex',
     WORKER_ALLOWED_TYPES: DEFAULT_ALLOWED_WORKER_TYPES,
+    WORKER_YOLO_MODE: 'true',
     PROJECTS: '[]',
   });
   const [showFolderPicker, setShowFolderPicker] = useState(false);
@@ -676,6 +916,7 @@ export default function Home() {
   const [renameValue, setRenameValue] = useState("");
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingMessageValue, setEditingMessageValue] = useState("");
+  const [executionDetailsOpen, setExecutionDetailsOpen] = useState(false);
   const [selectedCliAgent, setSelectedCliAgent] = useState<ComposerWorkerOption>("auto");
   const [selectedModel, setSelectedModel] = useState("GPT-5.4");
   const [selectedEffort, setSelectedEffort] = useState("High");
@@ -1085,6 +1326,9 @@ export default function Home() {
   const plans = (state.plans || []) as PlanRecord[];
   const clarifications = (state.clarifications || []) as ClarificationRecord[];
   const selectedRun = selectedRunId ? runs.find((run) => run.id === selectedRunId) ?? null : null;
+  useEffect(() => {
+    setExecutionDetailsOpen(false);
+  }, [selectedRunId]);
   const catalogWorkers = useMemo(
     () => workerCatalogQuery.data?.workers ?? [],
     [workerCatalogQuery.data?.workers],
@@ -1738,7 +1982,12 @@ export default function Home() {
                     <SheetHeader className="border-b border-border/60">
                       <SheetTitle>Workers</SheetTitle>
                     </SheetHeader>
-                    <WorkersSidebar agents={conversationAgents} onClose={() => setMobileWorkersOpen(false)} />
+                    <WorkersSidebar
+                      agents={conversationAgents}
+                      preferredModel={selectedRun?.preferredWorkerModel ?? null}
+                      preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
+                      onClose={() => setMobileWorkersOpen(false)}
+                    />
                   </SheetContent>
                 </Sheet>
               </>
@@ -1749,18 +1998,6 @@ export default function Home() {
         <ScrollArea className="min-h-0 flex-1" ref={scrollRef}>
           {selectedRunId ? (
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 pb-24 sm:gap-6 sm:p-6 sm:pb-20">
-              {selectedRun?.status === "failed" && selectedRun.lastError ? (
-                <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-destructive shadow-sm">
-                  <div className="flex items-center gap-2 text-sm font-semibold">
-                    <AlertTriangle className="h-4 w-4" />
-                    <span>Execution failed</span>
-                  </div>
-                  <p className="mt-2 whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-destructive">
-                    {selectedRun.lastError}
-                  </p>
-                </div>
-              ) : null}
-
               {filteredMessages && filteredMessages.length > 0 ? (
                 filteredMessages.map((msg: MessageRecord) => (
                   <div key={msg.id} className="group flex w-full flex-col text-sm">
@@ -1869,7 +2106,7 @@ export default function Home() {
                       const effectiveEffort = agent?.effectiveEffort || "Unknown";
                       const contextUsage = agent?.contextUsage?.fullnessPercent;
                       const contextUsageLabel = typeof contextUsage === "number" ? `${Math.round(contextUsage)}% full` : "Unknown";
-                      const pendingPermissions = agent?.pendingPermissions?.length ?? 0;
+                      const pendingPermissions = agent?.pendingPermissions ?? [];
                       return (
                         <div key={worker.id} className="flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-sm">
                           <div className="flex items-center justify-between border-b border-border bg-muted/20 p-2.5">
@@ -1877,6 +2114,7 @@ export default function Home() {
                               <TerminalIcon className="h-3 w-3" /> {worker.id}
                             </span>
                             <div className="flex items-center gap-2">
+                              {pendingPermissions.length > 0 ? <PermissionWarning pendingPermissions={pendingPermissions} /> : null}
                               {agent?.state === "working" && <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />}
                               <span className="text-[10px] font-bold uppercase text-muted-foreground">
                                 {agent?.type || worker.type}
@@ -1903,14 +2141,6 @@ export default function Home() {
                             <div className="space-y-1 text-xs">
                               <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Context usage</div>
                               <div className="font-mono text-foreground">{contextUsageLabel}</div>
-                            </div>
-                            <div className="space-y-1 text-xs">
-                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Pending permissions</div>
-                              <div className="font-mono text-foreground">{pendingPermissions}</div>
-                            </div>
-                            <div className="space-y-1 text-xs">
-                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Session ID</div>
-                              <div className="break-all font-mono text-foreground">{agent?.sessionId || "Unknown"}</div>
                             </div>
                             <div className="space-y-1 text-xs">
                               <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Last error</div>
@@ -1955,7 +2185,12 @@ export default function Home() {
             <span className="h-14 w-1 rounded-full bg-border/80 transition-colors hover:bg-foreground/30" />
           </button>
           <div className="flex h-full min-w-0 flex-1 pl-2">
-            <WorkersSidebar agents={conversationAgents} onClose={() => setRightSidebarOpen(false)} />
+            <WorkersSidebar
+              agents={conversationAgents}
+              preferredModel={selectedRun?.preferredWorkerModel ?? null}
+              preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
+              onClose={() => setRightSidebarOpen(false)}
+            />
           </div>
         </div>
       ) : null}
@@ -2132,9 +2367,28 @@ export default function Home() {
                         <option key={option.value} value={option.value}>
                           {option.label}
                         </option>
-                      ))}
+                    ))}
                   </select>
                 </div>
+
+                <label className="flex items-start justify-between gap-3 rounded-lg border border-border/60 bg-background/70 p-3" htmlFor="WORKER_YOLO_MODE">
+                  <div className="min-w-0 space-y-1">
+                    <div className="text-sm font-medium">YOLO Worker Mode</div>
+                    <p className="text-xs text-muted-foreground">
+                      Default new workers to the bridge&apos;s most permissive mode so routine approvals rarely interrupt execution.
+                    </p>
+                  </div>
+                  <input
+                    id="WORKER_YOLO_MODE"
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 rounded border-border"
+                    checked={parseBooleanSetting(apiKeys.WORKER_YOLO_MODE, true)}
+                    onChange={(event) => setApiKeys((current) => ({
+                      ...current,
+                      WORKER_YOLO_MODE: event.target.checked ? "true" : "false",
+                    }))}
+                  />
+                </label>
 
                 {workerCatalogQuery.isError ? (
                   <p className="text-[11px] text-destructive">

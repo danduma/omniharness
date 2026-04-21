@@ -113,6 +113,7 @@ describe("POST /api/runs/[id]", () => {
       type: "codex",
       status: "working",
       cwd: process.cwd(),
+      outputLog: "",
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -344,6 +345,7 @@ describe("DELETE /api/runs/[id]", () => {
       type: "codex",
       status: "idle",
       cwd: process.cwd(),
+      outputLog: "",
       createdAt: new Date(),
       updatedAt: new Date(),
     });

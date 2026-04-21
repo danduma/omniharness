@@ -52,6 +52,7 @@ describe("CreditManager", () => {
       type: "codex",
       status: "idle",
       cwd: process.cwd(),
+      outputLog: "",
       createdAt: new Date(),
       updatedAt: new Date(),
     });

@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import * as bridge from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { executionEvents, runs, workers } from "@/server/db/schema";
-import { persistRunFailure } from "@/server/runs/failures";
+import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 
 const OBSERVER_INTERVAL_MS = 5_000;
 const IDLE_THRESHOLD_MS = 30_000;
@@ -12,6 +12,12 @@ interface WorkerBridgeSnapshot {
   state: string;
   currentText: string;
   lastText: string;
+  pendingPermissions?: Array<{
+    requestId: number;
+    requestedAt: string;
+    sessionId?: string | null;
+    options?: Array<{ optionId: string; kind: string; name: string }>;
+  }>;
   stderrBuffer: string[];
   stopReason: string | null;
 }
@@ -42,11 +48,36 @@ function stateKey(runId: string, workerId: string) {
   return `${runId}:${workerId}`;
 }
 
+function normalizeSnapshot(snapshot: WorkerBridgeSnapshot | bridge.AgentRecord) {
+  const issues: string[] = [];
+
+  if (!Array.isArray(snapshot.stderrBuffer)) {
+    issues.push("stderrBuffer was missing or not an array");
+  }
+
+  if (typeof snapshot.state !== "string" || !snapshot.state.trim()) {
+    issues.push("state was missing or not a string");
+  }
+
+  return {
+    snapshot: {
+      state: typeof snapshot.state === "string" ? snapshot.state : "unknown",
+      currentText: typeof snapshot.currentText === "string" ? snapshot.currentText : "",
+      lastText: typeof snapshot.lastText === "string" ? snapshot.lastText : "",
+      pendingPermissions: snapshot.pendingPermissions ?? [],
+      stderrBuffer: Array.isArray(snapshot.stderrBuffer) ? snapshot.stderrBuffer : [],
+      stopReason: typeof snapshot.stopReason === "string" ? snapshot.stopReason : null,
+    } satisfies WorkerBridgeSnapshot,
+    issues,
+  };
+}
+
 function snapshotFingerprint(snapshot: WorkerBridgeSnapshot) {
   return JSON.stringify({
     state: snapshot.state,
     currentText: snapshot.currentText,
     lastText: snapshot.lastText,
+    pendingPermissions: snapshot.pendingPermissions ?? [],
     stopReason: snapshot.stopReason,
     stderrTail: snapshot.stderrBuffer.slice(-10),
   });
@@ -69,6 +100,16 @@ export function deriveWorkerEvents(args: {
   const fingerprint = snapshotFingerprint(args.snapshot);
   const previous = args.previous;
   const changed = !previous || previous.fingerprint !== fingerprint;
+  const currentPendingFingerprint = JSON.stringify(args.snapshot.pendingPermissions ?? []);
+  let previousPendingFingerprint = "[]";
+  if (previous) {
+    try {
+      const parsed = JSON.parse(previous.fingerprint) as { pendingPermissions?: unknown };
+      previousPendingFingerprint = JSON.stringify(parsed.pendingPermissions ?? []);
+    } catch {
+      previousPendingFingerprint = "[]";
+    }
+  }
   const lastChangedAt = changed ? args.now : previous.lastChangedAt;
   const silenceMs = Math.max(0, args.now - lastChangedAt);
   const events: DerivedWorkerEvent[] = [];
@@ -82,6 +123,18 @@ export function deriveWorkerEvents(args: {
       updatesActivity: true,
     });
     idleNotified = false;
+  }
+
+  if (
+    currentPendingFingerprint !== previousPendingFingerprint &&
+    (args.snapshot.pendingPermissions?.length ?? 0) > 0
+  ) {
+    events.push({
+      type: "worker_permission_requested",
+      summary: `${args.workerId} is waiting on a permission decision`,
+      shouldWakeSupervisor: true,
+      updatesActivity: false,
+    });
   }
 
   if (!idleNotified && silenceMs >= IDLE_THRESHOLD_MS) {
@@ -156,48 +209,81 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
 
     let snapshot: WorkerBridgeSnapshot;
     try {
-      snapshot = await bridge.getAgent(worker.id) as WorkerBridgeSnapshot;
+      const rawSnapshot = await bridge.getAgent(worker.id);
+      const normalized = normalizeSnapshot(rawSnapshot);
+      snapshot = normalized.snapshot;
+
+      if (normalized.issues.length > 0) {
+        const error = new Error(
+          `Invalid worker snapshot for ${worker.id}: ${normalized.issues.join("; ")}`,
+        );
+        await insertExecutionEvent(runId, worker.id, "worker_snapshot_invalid", {
+          summary: error.message,
+          issues: normalized.issues,
+          snapshot: {
+            state: snapshot.state,
+            stopReason: snapshot.stopReason,
+          },
+        });
+        stopRunObserver(runId);
+        await persistRunFailure(runId, error);
+        return;
+      }
     } catch (error) {
+      await insertExecutionEvent(runId, worker.id, "worker_poll_failed", {
+        summary: `Observer polling failed for ${worker.id}`,
+        reason: formatErrorMessage(error),
+      });
       stopRunObserver(runId);
       await persistRunFailure(runId, error);
       return;
     }
 
-    const key = stateKey(runId, worker.id);
-    const previous = observerState.get(key);
-    const { nextState, events } = deriveWorkerEvents({
-      workerId: worker.id,
-      snapshot,
-      previous,
-      now,
-    });
-
-    observerState.set(key, nextState);
-
-    const fatalBridgeError = getFatalBridgeStderr(snapshot.stderrBuffer);
-    if (fatalBridgeError) {
-      stopRunObserver(runId);
-      await persistRunFailure(runId, new Error(fatalBridgeError));
-      return;
-    }
-
-    const activityEvent = events.find((event) => event.updatesActivity);
-    await db.update(workers).set({
-      status: snapshot.state,
-      updatedAt: activityEvent ? new Date(now) : worker.updatedAt,
-    }).where(eq(workers.id, worker.id));
-
-    for (const event of events) {
-      await insertExecutionEvent(runId, worker.id, event.type, {
-        summary: event.summary,
-        state: snapshot.state,
-        stopReason: snapshot.stopReason,
-        currentText: snapshot.currentText.slice(-1000),
-        lastText: snapshot.lastText.slice(-1000),
+    try {
+      const key = stateKey(runId, worker.id);
+      const previous = observerState.get(key);
+      const { nextState, events } = deriveWorkerEvents({
+        workerId: worker.id,
+        snapshot,
+        previous,
+        now,
       });
-      if (event.shouldWakeSupervisor && run.status !== "awaiting_user") {
-        wakeSupervisor(runId, 0);
+
+      observerState.set(key, nextState);
+
+      const fatalBridgeError = getFatalBridgeStderr(snapshot.stderrBuffer);
+      if (fatalBridgeError) {
+        stopRunObserver(runId);
+        await persistRunFailure(runId, new Error(fatalBridgeError));
+        return;
       }
+
+      const activityEvent = events.find((event) => event.updatesActivity);
+      await db.update(workers).set({
+        status: snapshot.state,
+        updatedAt: activityEvent ? new Date(now) : worker.updatedAt,
+      }).where(eq(workers.id, worker.id));
+
+      for (const event of events) {
+        await insertExecutionEvent(runId, worker.id, event.type, {
+          summary: event.summary,
+          state: snapshot.state,
+          stopReason: snapshot.stopReason,
+          currentText: snapshot.currentText.slice(-1000),
+          lastText: snapshot.lastText.slice(-1000),
+        });
+        if (event.shouldWakeSupervisor && run.status !== "awaiting_user") {
+          wakeSupervisor(runId, 0);
+        }
+      }
+    } catch (error) {
+      await insertExecutionEvent(runId, worker.id, "worker_observer_failed", {
+        summary: `Observer failed while processing ${worker.id}`,
+        reason: formatErrorMessage(error),
+      });
+      stopRunObserver(runId);
+      await persistRunFailure(runId, error);
+      return;
     }
   }
 }

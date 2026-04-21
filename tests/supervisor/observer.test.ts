@@ -30,6 +30,7 @@ describe("deriveWorkerEvents", () => {
         state: "working",
         currentText: "running tests",
         lastText: "editing files",
+        pendingPermissions: [],
         stderrBuffer: [],
         stopReason: null,
       },
@@ -54,6 +55,7 @@ describe("deriveWorkerEvents", () => {
         state: "working",
         currentText: "same output",
         lastText: "same output",
+        pendingPermissions: [],
         stderrBuffer: [],
         stopReason: null,
       },
@@ -62,6 +64,7 @@ describe("deriveWorkerEvents", () => {
           state: "working",
           currentText: "same output",
           lastText: "same output",
+          pendingPermissions: [],
           stopReason: null,
           stderrTail: [],
         }),
@@ -78,6 +81,49 @@ describe("deriveWorkerEvents", () => {
         updatesActivity: false,
       }),
     ]);
+  });
+
+  it("wakes the supervisor immediately when a permission request appears", () => {
+    const permission = {
+      requestId: 12,
+      requestedAt: new Date(0).toISOString(),
+      options: [
+        { optionId: "allow-always", kind: "allow_always", name: "Always Allow" },
+      ],
+    };
+
+    const { events } = deriveWorkerEvents({
+      workerId: "worker-1",
+      snapshot: {
+        state: "working",
+        currentText: "waiting for approval",
+        lastText: "waiting for approval",
+        pendingPermissions: [permission],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+      previous: {
+        fingerprint: JSON.stringify({
+          state: "working",
+          currentText: "waiting for approval",
+          lastText: "waiting for approval",
+          pendingPermissions: [],
+          stopReason: null,
+          stderrTail: [],
+        }),
+        lastChangedAt: 0,
+        idleNotified: false,
+      },
+      now: 1_000,
+    });
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "worker_permission_requested",
+        shouldWakeSupervisor: true,
+        updatesActivity: false,
+      }),
+    ]));
   });
 
   it("fails the run when bridge status polling errors", async () => {
@@ -107,6 +153,7 @@ describe("deriveWorkerEvents", () => {
       type: "opencode",
       status: "working",
       cwd: process.cwd(),
+      outputLog: "",
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -150,6 +197,7 @@ describe("deriveWorkerEvents", () => {
       type: "opencode",
       status: "working",
       cwd: process.cwd(),
+      outputLog: "",
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -158,6 +206,7 @@ describe("deriveWorkerEvents", () => {
       state: "working",
       currentText: "sending update",
       lastText: "sending update",
+      pendingPermissions: [],
       stderrBuffer: [
         "[bridge] ACP write error: Error: write EPIPE",
       ],

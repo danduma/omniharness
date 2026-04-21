@@ -45,4 +45,12 @@ describe("buildSupervisorTools", () => {
     expect(toolNames).not.toContain("plan_read");
     expect(toolNames).not.toContain("plan_mark_done");
   });
+
+  it("lets permission tools specify an explicit bridge option id", () => {
+    const approveTool = buildSupervisorTools().find((tool) => tool.function.name === "worker_approve");
+    const denyTool = buildSupervisorTools().find((tool) => tool.function.name === "worker_deny");
+
+    expect(approveTool?.function.parameters.properties).toHaveProperty("optionId");
+    expect(denyTool?.function.parameters.properties).toHaveProperty("optionId");
+  });
 });
