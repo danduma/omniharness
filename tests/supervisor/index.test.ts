@@ -146,6 +146,8 @@ describe("Supervisor worker spawn flow", () => {
       planId,
       status: "running",
       allowedWorkerTypes: JSON.stringify(["opencode"]),
+      preferredWorkerModel: "openai/gpt-5.4",
+      preferredWorkerEffort: "high",
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -167,6 +169,8 @@ describe("Supervisor worker spawn flow", () => {
       cwd: "/tmp/project",
       name: "worker-123456",
       env: { OPENAI_API_KEY: "key" },
+      model: "openai/gpt-5.4",
+      effort: "high",
     }));
     expect(mockSpawnAgent.mock.calls[0]?.[0]?.mode).toBeUndefined();
 
@@ -191,6 +195,8 @@ describe("Supervisor worker spawn flow", () => {
       planId,
       status: "running",
       allowedWorkerTypes: JSON.stringify(["opencode"]),
+      preferredWorkerModel: "openai/gpt-5.4",
+      preferredWorkerEffort: "high",
       createdAt: new Date(),
       updatedAt: new Date(),
     });

@@ -14,6 +14,8 @@ export const runs = sqliteTable('runs', {
   projectPath: text('project_path'),
   title: text('title'),
   preferredWorkerType: text('preferred_worker_type'),
+  preferredWorkerModel: text('preferred_worker_model'),
+  preferredWorkerEffort: text('preferred_worker_effort'),
   allowedWorkerTypes: text('allowed_worker_types'),
   parentRunId: text('parent_run_id'),
   forkedFromMessageId: text('forked_from_message_id'),

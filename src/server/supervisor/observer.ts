@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import * as bridge from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { executionEvents, runs, workers } from "@/server/db/schema";
+import { persistRunFailure } from "@/server/runs/failures";
 
 const OBSERVER_INTERVAL_MS = 5_000;
 const IDLE_THRESHOLD_MS = 30_000;
@@ -124,7 +125,7 @@ async function insertExecutionEvent(
   });
 }
 
-async function pollRunWorkers(runId: string, wakeSupervisor: (runId: string, delayMs?: number) => void) {
+export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: string, delayMs?: number) => void) {
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
   if (!run || run.status === "done" || run.status === "failed") {
     stopRunObserver(runId);
@@ -139,9 +140,13 @@ async function pollRunWorkers(runId: string, wakeSupervisor: (runId: string, del
       continue;
     }
 
-    const snapshot = await bridge.getAgent(worker.id).catch(() => null);
-    if (!snapshot) {
-      continue;
+    let snapshot: WorkerBridgeSnapshot;
+    try {
+      snapshot = await bridge.getAgent(worker.id) as WorkerBridgeSnapshot;
+    } catch (error) {
+      stopRunObserver(runId);
+      await persistRunFailure(runId, error);
+      return;
     }
 
     const key = stateKey(runId, worker.id);

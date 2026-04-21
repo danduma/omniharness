@@ -30,7 +30,9 @@ function workerBinaryAvailable(type: SupportedWorkerType) {
 function workerHasApiKey(type: SupportedWorkerType, env: EnvLike) {
   switch (type) {
     case "codex":
-      return Boolean(env.OPENAI_API_KEY?.trim());
+      // Codex can use credentials established via `codex --login`, so
+      // OmniHarness should not require a duplicate OPENAI_API_KEY.
+      return true;
     case "claude":
       return Boolean(env.ANTHROPIC_API_KEY?.trim() || env.ANTHROPIC_AUTH_TOKEN?.trim());
     case "gemini":

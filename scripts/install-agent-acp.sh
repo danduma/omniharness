@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+DRY_RUN=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run)
+      DRY_RUN=1
+      ;;
+    *)
+      echo "Unknown argument: $arg" >&2
+      echo "Usage: scripts/install-agent-acp.sh [--dry-run]" >&2
+      exit 1
+      ;;
+  esac
+done
+
+have_command() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+run_install() {
+  local package_name="$1"
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "  -> would install \`$package_name\` with \`npm install -g $package_name\`"
+    return 0
+  fi
+
+  if ! have_command npm; then
+    echo "  -> cannot install \`$package_name\`: npm is not on PATH" >&2
+    return 1
+  fi
+
+  npm install -g "$package_name"
+  echo "  -> installed \`$package_name\`"
+}
+
+echo "Detecting local coding agents and ACP adapters..."
+
+if have_command codex; then
+  echo "codex: detected"
+  if have_command codex-acp; then
+    echo "  -> \`codex-acp\` already installed"
+  else
+    echo "  -> native bridge support via \`codex mcp-server\`; no separate ACP adapter needed"
+  fi
+else
+  echo "codex: not detected"
+fi
+
+if have_command claude; then
+  echo "claude: detected"
+  if have_command claude-agent-acp; then
+    echo "  -> \`claude-agent-acp\` already installed"
+  else
+    run_install "@agentclientprotocol/claude-agent-acp"
+  fi
+else
+  echo "claude: not detected"
+fi
+
+if have_command gemini; then
+  echo "gemini: detected"
+  echo "  -> native ACP support via \`gemini --experimental-acp\`; no separate adapter needed"
+else
+  echo "gemini: not detected"
+fi
+
+if have_command opencode; then
+  echo "opencode: detected"
+  echo "  -> native ACP support via \`opencode acp\`; no separate adapter needed"
+else
+  echo "opencode: not detected"
+fi
+
+echo "Done."

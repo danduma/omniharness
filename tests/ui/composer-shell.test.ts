@@ -12,19 +12,23 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('const [selectedModel, setSelectedModel] = useState("GPT-5.4")');
   expect(pageSource).toContain('const [selectedEffort, setSelectedEffort] = useState("High")');
   expect(pageSource).toContain("rounded-[1.5rem] border border-transparent bg-muted/80");
-  expect(pageSource).toContain("px-4 pb-2 pt-3");
-  expect(pageSource).toContain("min-h-[72px] w-full resize-none bg-transparent");
-  expect(pageSource).toContain("rows={2}");
+  expect(pageSource).toContain("px-4 pb-0.5 pt-3");
+  expect(pageSource).toContain("min-h-[56px] w-full resize-none bg-transparent");
+  expect(pageSource).toContain("rows={1}");
   expect(pageSource).toContain("appearance-none border-0 bg-transparent");
   expect(pageSource).toContain("const WORKER_OPTIONS: Array<{ value: WorkerType; label: string }> = [");
   expect(pageSource).toContain('{ value: "codex", label: "Codex" }');
   expect(pageSource).toContain('{ value: "claude", label: "Claude Code" }');
   expect(pageSource).toContain('const MODEL_OPTIONS = ["GPT-5.4", "GPT-5.4 Mini", "Claude Sonnet 4"]');
   expect(pageSource).toContain('const EFFORT_OPTIONS = ["Low", "Medium", "High"]');
+  expect(pageSource).toContain('className="h-10 w-10 rounded-full bg-foreground text-background transition-all hover:bg-foreground/90 disabled:bg-foreground/50"');
 });
 
 test("composer submits the selected preferred worker together with the allowed worker list", () => {
   expect(pageSource).toContain("preferredWorkerType: selectedCliAgent");
+  expect(pageSource).toContain("const resolvedSelectedModel = resolveSelectedWorkerModel(selectedCliAgent, selectedModel)");
+  expect(pageSource).toContain("preferredWorkerModel: resolvedSelectedModel");
+  expect(pageSource).toContain("preferredWorkerEffort: selectedEffort.toLowerCase()");
   expect(pageSource).toContain("allowedWorkerTypes: activeAllowedWorkerTypes");
   expect(pageSource).toContain("composerWorkerOptions.map((agent) => (");
 });
@@ -41,6 +45,6 @@ test("composer exposes attachment entry and renders attached file chips", () => 
 });
 
 test("composer control row uses tighter centered spacing instead of bottom-heavy end alignment", () => {
-  expect(pageSource).toContain('className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2"');
-  expect(pageSource).not.toContain('className="mt-3 flex flex-wrap items-end justify-between gap-x-3 gap-y-2"');
+  expect(pageSource).toContain('className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2"');
+  expect(pageSource).not.toContain('className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2"');
 });

@@ -105,6 +105,8 @@ export async function recoverRun(args: RecoverRunArgs) {
       title: run.title,
       projectPath: run.projectPath,
       preferredWorkerType: run.preferredWorkerType,
+      preferredWorkerModel: run.preferredWorkerModel,
+      preferredWorkerEffort: run.preferredWorkerEffort,
       allowedWorkerTypes: run.allowedWorkerTypes,
       parentRunId: args.runId,
       forkedFromMessageId: args.targetMessageId,

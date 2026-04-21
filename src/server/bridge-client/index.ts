@@ -7,6 +7,18 @@ export interface AgentRecord {
   type: string;
   cwd: string;
   state: string; // 'idle' | 'working' | 'stopped' | 'error'
+  requestedModel?: string | null;
+  effectiveModel?: string | null;
+  requestedEffort?: string | null;
+  effectiveEffort?: string | null;
+  sessionMode?: string | null;
+  contextUsage?: {
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+    totalTokens?: number | null;
+    maxTokens?: number | null;
+    fullnessPercent?: number | null;
+  } | null;
   lastText: string;
   currentText: string;
   stderrBuffer: string[];
@@ -77,7 +89,15 @@ async function requestBridge<T>(path: string, init: RequestInit, action: string)
   }
 }
 
-export async function spawnAgent(params: { type: string; cwd: string; name: string; mode?: string; env?: Record<string, string> }) {
+export async function spawnAgent(params: {
+  type: string;
+  cwd: string;
+  name: string;
+  mode?: string;
+  env?: Record<string, string>;
+  model?: string;
+  effort?: string;
+}) {
   return requestBridge<AgentRecord>(
     "/agents",
     {

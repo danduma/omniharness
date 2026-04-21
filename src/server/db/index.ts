@@ -21,6 +21,10 @@ CREATE TABLE IF NOT EXISTS runs (
   plan_id text NOT NULL,
   project_path text,
   title text,
+  preferred_worker_type text,
+  preferred_worker_model text,
+  preferred_worker_effort text,
+  allowed_worker_types text,
   parent_run_id text,
   forked_from_message_id text,
   status text NOT NULL,
@@ -147,6 +151,14 @@ if (!runColumnNames.has("title")) {
 
 if (!runColumnNames.has("preferred_worker_type")) {
   sqlite.exec("ALTER TABLE runs ADD COLUMN preferred_worker_type text;");
+}
+
+if (!runColumnNames.has("preferred_worker_model")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN preferred_worker_model text;");
+}
+
+if (!runColumnNames.has("preferred_worker_effort")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN preferred_worker_effort text;");
 }
 
 if (!runColumnNames.has("allowed_worker_types")) {
