@@ -11,7 +11,13 @@ export const plans = sqliteTable('plans', {
 export const runs = sqliteTable('runs', {
   id: text('id').primaryKey(),
   planId: text('plan_id').references(() => plans.id).notNull(),
+  projectPath: text('project_path'),
+  title: text('title'),
+  parentRunId: text('parent_run_id'),
+  forkedFromMessageId: text('forked_from_message_id'),
   status: text('status').notNull(), // 'running', 'done', 'failed'
+  failedAt: integer('failed_at', { mode: 'timestamp' }),
+  lastError: text('last_error'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });
@@ -30,8 +36,11 @@ export const messages = sqliteTable('messages', {
   id: text('id').primaryKey(),
   runId: text('run_id').references(() => runs.id).notNull(),
   role: text('role').notNull(), // 'user', 'supervisor', 'worker'
+  kind: text('kind'),
   content: text('content').notNull(),
   workerId: text('worker_id').references(() => workers.id),
+  supersededAt: integer('superseded_at', { mode: 'timestamp' }),
+  editedFromMessageId: text('edited_from_message_id'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 

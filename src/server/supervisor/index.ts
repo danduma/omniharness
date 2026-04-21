@@ -1,47 +1,98 @@
-import { TokenJS } from 'token.js';
-import * as bridge from '../bridge-client';
-import fs from 'fs';
-import path from 'path';
-import { db } from '../db';
-import { runs, workers, messages as dbMessages, settings, plans, planItems, clarifications } from '../db/schema';
-import { eq } from 'drizzle-orm';
-import { randomUUID } from 'crypto';
-import { CreditManager } from '../credits';
-import { parsePlan } from '../plans/parser';
-import { syncPlanItems } from '../plans/checklist';
-import { assessPlanReadiness } from '../plans/readiness';
-import { pauseForClarifications } from '../clarifications/loop';
-import { SUPERVISOR_SYSTEM_PROMPT } from './prompt';
-import { buildSupervisorTools } from './tools';
-import { nextRunState } from './runtime';
-import { createExecutionGraph } from '../workers/orchestrator';
-import { validateRun } from '../validation';
-import { classifyPermissionRequest } from '../permissions';
-import { configureSupervisorModel } from './model-config';
+import { randomUUID } from "crypto";
+import { TokenJS } from "token.js";
+import { eq } from "drizzle-orm";
+import * as bridge from "@/server/bridge-client";
+import { db } from "@/server/db";
+import { clarifications, executionEvents, messages as dbMessages, runs, settings, workers } from "@/server/db/schema";
+import { configureSupervisorModel } from "@/server/supervisor/model-config";
+import { SUPERVISOR_SYSTEM_PROMPT } from "@/server/supervisor/prompt";
+import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
+import { buildSupervisorTools } from "@/server/supervisor/tools";
+import { buildSupervisorTurnContext } from "@/server/supervisor/context";
+import { parseSupervisorToolCall, SupervisorProtocolError } from "@/server/supervisor/protocol";
 
 export interface SupervisorOptions {
-  planId: string;
   runId: string;
 }
 
+export type SupervisorRunResult =
+  | { state: "wait"; delayMs: number }
+  | { state: "paused" }
+  | { state: "completed" }
+  | { state: "failed" };
+
+function asString(value: unknown, field: string) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new SupervisorProtocolError(`Tool argument "${field}" must be a non-empty string.`);
+  }
+  return value.trim();
+}
+
+function asNumber(value: unknown, field: string) {
+  if (typeof value !== "number" || Number.isNaN(value) || !Number.isFinite(value)) {
+    throw new SupervisorProtocolError(`Tool argument "${field}" must be a finite number.`);
+  }
+  return value;
+}
+
+async function insertRunMessage(runId: string, role: string, content: string, kind?: string, workerId?: string) {
+  await db.insert(dbMessages).values({
+    id: randomUUID(),
+    runId,
+    role,
+    kind,
+    content,
+    workerId: workerId ?? null,
+    createdAt: new Date(),
+  });
+}
+
+async function insertExecutionEvent(
+  runId: string,
+  eventType: string,
+  details: Record<string, unknown>,
+  workerId?: string | null,
+) {
+  await db.insert(executionEvents).values({
+    id: randomUUID(),
+    runId,
+    workerId: workerId ?? null,
+    planItemId: null,
+    eventType,
+    details: JSON.stringify(details),
+    createdAt: new Date(),
+  });
+}
+
+async function cancelRunWorkers(runId: string) {
+  const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+  for (const worker of runWorkers) {
+    try {
+      await bridge.cancelAgent(worker.id);
+    } catch {
+      // best effort shutdown
+    }
+    await db.update(workers).set({
+      status: "cancelled",
+      updatedAt: new Date(),
+    }).where(eq(workers.id, worker.id));
+  }
+}
+
 export class Supervisor {
-  private runId: string;
-  private planId: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private messages: any[] = [];
-  
+  private readonly runId: string;
+
   constructor(options: SupervisorOptions) {
     this.runId = options.runId;
-    this.planId = options.planId;
   }
 
-  async run() {
+  private async createModel() {
     const allSettings = await db.select().from(settings);
-    const envParams: Record<string, string> = {};
-    allSettings.forEach(s => {
-      envParams[s.key] = s.value;
-      process.env[s.key] = s.value;
+    const envParams = hydrateRuntimeEnvFromSettings(allSettings);
+    Object.entries(envParams).forEach(([key, value]) => {
+      process.env[key] = value;
     });
+
     const llmConfig = configureSupervisorModel(process.env, { extendModelList: () => undefined });
     const tokenjs = new TokenJS({
       apiKey: llmConfig.apiKey,
@@ -49,359 +100,231 @@ export class Supervisor {
     });
     configureSupervisorModel(process.env, tokenjs);
 
-    const planRecord = await db.select().from(plans).where(eq(plans.id, this.planId)).get();
-    if (!planRecord) {
-      throw new Error(`Plan ${this.planId} not found`);
+    return { tokenjs, llmConfig, envParams };
+  }
+
+  private async requestAction(tokenjs: TokenJS, llmConfig: ReturnType<typeof configureSupervisorModel>, heartbeatCount: number) {
+    const context = await buildSupervisorTurnContext(this.runId);
+    const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+    if (!run) {
+      throw new Error(`Run ${this.runId} not found`);
     }
 
-    const planContent = fs.readFileSync(path.resolve(process.cwd(), planRecord.path), 'utf-8');
-    const parsedPlan = parsePlan(planContent);
-    await syncPlanItems(this.planId, parsedPlan.items);
-    const readiness = await assessPlanReadiness(parsedPlan);
+    const observationSummary = JSON.stringify({
+      heartbeatCount,
+      projectPath: context.projectPath,
+      pendingClarifications: context.pendingClarifications,
+      answeredClarifications: context.answeredClarifications,
+      activeWorkers: context.activeWorkers,
+      recentEvents: context.recentEvents,
+      runStatus: run.status,
+    }, null, 2);
 
-    if (!readiness.ready) {
-      await pauseForClarifications(this.runId, readiness.questions);
-      this.messages.push({
-        role: 'system',
-        content: `Plan is awaiting clarification. Questions asked: ${readiness.questions.join(' | ')}`,
-      });
-      while (true) {
-        const pendingClarifications = await db.select().from(clarifications).where(eq(clarifications.runId, this.runId));
-        const unresolved = pendingClarifications.filter(c => c.status === 'pending');
-        if (unresolved.length === 0) break;
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    }
-
-    if (parsedPlan.items.length > 1 && process.env.MOCK_LLM !== 'true') {
-      const taskGraph = await createExecutionGraph(`plan-${this.planId}`, parsedPlan.items);
-      await db.insert(dbMessages).values({
-        id: randomUUID(),
-        runId: this.runId,
-        role: 'system',
-        content: `Created execution graph ${taskGraph.id} for ${parsedPlan.items.length} plan items.`,
-        createdAt: new Date(),
-      });
-    }
-
-    await db.update(runs).set({ status: 'executing', updatedAt: new Date() }).where(eq(runs.id, this.runId));
-
-    this.messages.push({
-      role: 'system',
-      content: SUPERVISOR_SYSTEM_PROMPT,
+    const completion = await tokenjs.chat.completions.create({
+      provider: llmConfig.provider as never,
+      model: llmConfig.model as never,
+      messages: [
+        { role: "system", content: SUPERVISOR_SYSTEM_PROMPT },
+        ...context.recentUserMessages.map((content) => ({ role: "user" as const, content })),
+        {
+          role: "system" as const,
+          content: `Current supervision snapshot:\n\n${observationSummary}`,
+        },
+      ],
+      tools: buildSupervisorTools(),
+      tool_choice: "required",
     });
 
-    let mockStep = 0;
+    return {
+      context,
+      action: parseSupervisorToolCall(completion.choices[0]?.message?.tool_calls),
+    };
+  }
 
-    while (true) {
-      let message;
+  async run(): Promise<SupervisorRunResult> {
+    const { tokenjs, llmConfig, envParams } = await this.createModel();
 
-      if (process.env.MOCK_LLM === 'true') {
-        const mockResponses = [
-          {
-            tool_calls: [{ id: 'tc1', function: { name: 'plan_read', arguments: JSON.stringify({ path: this.planId ? 'vibes/test-plan.md' : '' }) } }]
-          },
-          {
-            tool_calls: [{ id: 'tc2', function: { name: 'worker_spawn', arguments: JSON.stringify({ type: 'codex', cwd: process.cwd(), mode: 'auto' }) } }]
-          },
-          {
-            tool_calls: [
-              { id: 'tc3', function: { name: 'worker_send_prompt', arguments: JSON.stringify({ id: 'mock-id', prompt: 'Create hello.txt with content "Hello World"' }) } }
-            ]
-          },
-          {
-            tool_calls: [
-               { id: 'tc4', function: { name: 'plan_checklist_update', arguments: JSON.stringify({ item: 'Create hello.txt', status: 'done' }) } },
-               { id: 'tc5', function: { name: 'worker_send_prompt', arguments: JSON.stringify({ id: 'mock-id', prompt: 'Create hi.txt with content "Hi World"' }) } }
-            ]
-          },
-          {
-            tool_calls: [
-               { id: 'tc6', function: { name: 'plan_checklist_update', arguments: JSON.stringify({ item: 'Create hi.txt', status: 'done' }) } },
-               { id: 'tc7', function: { name: 'worker_send_prompt', arguments: JSON.stringify({ id: 'mock-id', prompt: 'Create greetings.txt with content "Greetings"' }) } }
-            ]
-          },
-          {
-            tool_calls: [
-               { id: 'tc8', function: { name: 'plan_checklist_update', arguments: JSON.stringify({ item: 'Create greetings.txt', status: 'done' }) } },
-               { id: 'tc9', function: { name: 'plan_mark_done', arguments: JSON.stringify({ reason: 'All checklist items completed' }) } }
-            ]
-          }
-        ];
-        message = mockResponses[mockStep++] || { content: "Done" };
-        
-        // In mock mode, we need to pass the real worker ID instead of 'mock-id'
-        if (message.tool_calls) {
-          message.tool_calls.forEach(tc => {
-             if (tc.function.name === 'worker_send_prompt') {
-                const args = JSON.parse(tc.function.arguments);
-                const worker = this.messages.find(m => m.content && m.content.includes('Spawned worker ID:'));
-                if (worker) {
-                   const match = worker.content.match(/Spawned worker ID: (worker-\d+)/);
-                   if (match) args.id = match[1];
-                }
-                tc.function.arguments = JSON.stringify(args);
-             }
+    await db.update(runs).set({
+      status: "running",
+      failedAt: null,
+      lastError: null,
+      updatedAt: new Date(),
+    }).where(eq(runs.id, this.runId));
+
+    const currentRun = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+    if (!currentRun || currentRun.status === "done" || currentRun.status === "failed") {
+      return { state: "completed" };
+    }
+
+    const pendingClarifications = await db.select().from(clarifications).where(eq(clarifications.runId, this.runId));
+    if (pendingClarifications.some((clarification) => clarification.status === "pending")) {
+      await db.update(runs).set({ status: "awaiting_user", updatedAt: new Date() }).where(eq(runs.id, this.runId));
+      return { state: "paused" };
+    }
+
+    const { action } = await this.requestAction(tokenjs, llmConfig, 0);
+
+    switch (action.name) {
+        case "worker_spawn": {
+          const type = asString(action.args.type, "type");
+          const cwd = asString(action.args.cwd, "cwd");
+          const prompt = asString(action.args.prompt, "prompt");
+          const mode = typeof action.args.mode === "string" ? action.args.mode : "auto";
+          const purpose = typeof action.args.purpose === "string" ? action.args.purpose.trim() : "";
+          const workerId = `worker-${Date.now()}`;
+
+          await bridge.spawnAgent({
+            type,
+            cwd,
+            name: workerId,
+            mode,
+            env: envParams,
           });
+          const response = await bridge.askAgent(workerId, prompt);
+
+          await db.insert(workers).values({
+            id: workerId,
+            runId: this.runId,
+            type,
+            status: purpose ? `${response.state}: ${purpose}` : response.state,
+            cwd,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
+
+          await insertExecutionEvent(this.runId, "worker_spawned", {
+            summary: `Spawned ${type} worker ${workerId}`,
+            purpose,
+            mode,
+          }, workerId);
+          await insertRunMessage(this.runId, "system", `Spawned ${type} worker ${workerId}.${purpose ? ` Purpose: ${purpose}.` : ""}`, "supervisor_action");
+          await insertRunMessage(this.runId, "worker", `Prompted ${workerId}:\n${prompt}\n\nInitial response:\n${response.response}`.slice(0, 4000), "worker_output", workerId);
+          return { state: "wait", delayMs: 5_000 };
         }
-      } else {
-        const completion = await tokenjs.chat.completions.create({
-          provider: llmConfig.provider as never,
-          model: llmConfig.model as never,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          messages: this.messages as any,
-          tools: buildSupervisorTools(),
-      });
-      message = completion.choices[0].message;
-      }
 
-      this.messages.push(message);
+        case "worker_continue": {
+          const workerId = asString(action.args.workerId, "workerId");
+          const prompt = asString(action.args.prompt, "prompt");
+          const response = await bridge.askAgent(workerId, prompt);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if ((message as any).content) {
-        await db.insert(dbMessages).values({
-          id: randomUUID(),
-          runId: this.runId,
-          role: 'supervisor',
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          content: (message as any).content,
-          createdAt: new Date(),
-        });
-      }
+          await db.update(workers).set({
+            status: response.state,
+            updatedAt: new Date(),
+          }).where(eq(workers.id, workerId));
 
-      if (message.tool_calls && message.tool_calls.length > 0) {
-        for (const toolCall of message.tool_calls) {
-          const args = JSON.parse(toolCall.function.arguments);
-          let result: string;
-          
-          let logContent = `Action: ${toolCall.function.name}`;
-          if (args.prompt) logContent += `\nPrompt: ${args.prompt}`;
-          if (args.path) logContent += `\nPath: ${args.path}`;
-          
-          await db.insert(dbMessages).values({
+          await insertExecutionEvent(this.runId, "worker_prompted", {
+            summary: `Sent follow-up to ${workerId}`,
+            prompt,
+          }, workerId);
+          await insertRunMessage(this.runId, "worker", `Prompted ${workerId}:\n${prompt}\n\nResponse:\n${response.response}`.slice(0, 4000), "worker_output", workerId);
+          return { state: "wait", delayMs: 5_000 };
+        }
+
+        case "worker_cancel": {
+          const workerId = asString(action.args.workerId, "workerId");
+          const reason = asString(action.args.reason, "reason");
+          await bridge.cancelAgent(workerId);
+          await db.delete(workers).where(eq(workers.id, workerId));
+          await insertExecutionEvent(this.runId, "worker_cancelled", {
+            summary: `Cancelled ${workerId}`,
+            reason,
+          }, workerId);
+          await insertRunMessage(this.runId, "system", `Cancelled ${workerId}: ${reason}`, "supervisor_action");
+          return { state: "wait", delayMs: 1_000 };
+        }
+
+        case "worker_set_mode": {
+          const workerId = asString(action.args.workerId, "workerId");
+          const mode = asString(action.args.mode, "mode");
+          await bridge.setWorkerMode(workerId, mode);
+          await insertExecutionEvent(this.runId, "worker_mode_changed", {
+            summary: `Set ${workerId} mode to ${mode}`,
+            mode,
+          }, workerId);
+          await insertRunMessage(this.runId, "system", `Set ${workerId} mode to ${mode}.`, "supervisor_action");
+          return { state: "wait", delayMs: 1_000 };
+        }
+
+        case "worker_approve": {
+          const workerId = asString(action.args.workerId, "workerId");
+          const reason = asString(action.args.reason, "reason");
+          await bridge.approvePermission(workerId);
+          await insertExecutionEvent(this.runId, "worker_permission_approved", {
+            summary: `Approved permission for ${workerId}`,
+            reason,
+          }, workerId);
+          await insertRunMessage(this.runId, "system", `Approved permission for ${workerId}: ${reason}`, "supervisor_action");
+          return { state: "wait", delayMs: 1_000 };
+        }
+
+        case "worker_deny": {
+          const workerId = asString(action.args.workerId, "workerId");
+          const reason = asString(action.args.reason, "reason");
+          await bridge.denyPermission(workerId);
+          await insertExecutionEvent(this.runId, "worker_permission_denied", {
+            summary: `Denied permission for ${workerId}`,
+            reason,
+          }, workerId);
+          await insertRunMessage(this.runId, "system", `Denied permission for ${workerId}: ${reason}`, "supervisor_action");
+          return { state: "wait", delayMs: 1_000 };
+        }
+
+        case "ask_user": {
+          const question = asString(action.args.question, "question");
+          const now = new Date();
+          await db.insert(clarifications).values({
             id: randomUUID(),
             runId: this.runId,
-            role: 'system',
-            content: logContent,
-            createdAt: new Date(),
+            question,
+            answer: null,
+            status: "pending",
+            createdAt: now,
+            updatedAt: now,
           });
-          
-          if (toolCall.function.name === 'plan_read') {
-            try {
-              const content = fs.readFileSync(path.resolve(process.cwd(), args.path), 'utf-8');
-              const parsed = parsePlan(content);
-              await syncPlanItems(this.planId, parsed.items);
-              result = content;
-            } catch (err: unknown) {
-              const errorMessage = err instanceof Error ? err.message : String(err);
-              result = `Error reading plan: ${errorMessage}`;
-            }
-          } else if (toolCall.function.name === 'worker_spawn') {
-            try {
-              const workerId = `worker-${Date.now()}`;
-              if (process.env.MOCK_LLM !== 'true') {
-                await bridge.spawnAgent({
-                  type: args.type,
-                  cwd: args.cwd,
-                  name: workerId,
-                  mode: args.mode,
-                  env: envParams
-                });
-              }
-              
-              await db.insert(workers).values({
-                id: workerId,
-                runId: this.runId,
-                type: args.type,
-                status: 'idle',
-                cwd: args.cwd,
-                createdAt: new Date(),
-                updatedAt: new Date(),
-              });
-              
-              result = `Spawned worker ID: ${workerId}`;
-            } catch (err: unknown) {
-              const errorMessage = err instanceof Error ? err.message : String(err);
-              result = `Error spawning worker: ${errorMessage}`;
-            }
-          } else if (toolCall.function.name === 'worker_send_prompt') {
-             try {
-               let res;
-               if (process.env.MOCK_LLM === 'true') {
-                  res = { response: 'Action completed (mock)', state: 'idle' };
-                  if (args.prompt.includes('hello.txt')) fs.writeFileSync('hello.txt', 'Hello World');
-                  if (args.prompt.includes('hi.txt')) fs.writeFileSync('hi.txt', 'Hi World');
-                  if (args.prompt.includes('greetings.txt')) fs.writeFileSync('greetings.txt', 'Greetings');
-               } else {
-                  res = await bridge.askAgent(args.id, args.prompt);
-               }
-               result = `Response: ${res.response}\nState: ${res.state}`;
-             } catch (err: unknown) {              const errorMessage = err instanceof Error ? err.message : String(err);
-              result = `Error sending prompt: ${errorMessage}`;
-            }
-          } else if (toolCall.function.name === 'worker_read_output') {
-             try {
-               const agentData = await bridge.getAgent(args.id);
-               result = `Current Output:\n${agentData.currentText}\n\nLast Output:\n${agentData.lastText}`;
-               const decision = classifyPermissionRequest(`${agentData.currentText}\n${agentData.lastText}\n${agentData.stderrBuffer.join("\n")}`);
-               if (decision === 'approve') {
-                 await bridge.approvePermission(args.id);
-                 result += `\nPermission decision: auto-approved`;
-               } else if (decision === 'escalate') {
-                 await db.insert(dbMessages).values({
-                   id: randomUUID(),
-                   runId: this.runId,
-                   role: 'supervisor',
-                   content: `Permission escalation required for worker ${args.id}.`,
-                   createdAt: new Date(),
-                 });
-                 await db.update(runs).set({ status: 'awaiting_user', updatedAt: new Date() }).where(eq(runs.id, this.runId));
-                 result += `\nPermission decision: escalate to user`;
-               }
-             } catch (err: unknown) {
-               const errorMessage = err instanceof Error ? err.message : String(err);
-               result = `Error reading output: ${errorMessage}`;
-             }
-          } else if (toolCall.function.name === 'plan_checklist_update') {
-            try {
-              const items = await db.select().from(planItems).where(eq(planItems.planId, this.planId));
-              const itemToken = (args.item.match(/`([^`]+)`/)?.[1] ?? args.item.match(/([A-Za-z0-9_.-]+\.[A-Za-z0-9]+)$/)?.[1] ?? args.item).toLowerCase();
-              const item = items.find(entry => entry.title.toLowerCase().includes(itemToken)) || items[0];
-              if (item) {
-                await db.update(planItems).set({
-                  status: args.status,
-                  updatedAt: new Date(),
-                }).where(eq(planItems.id, item.id));
-              }
-              result = `Checklist updated: ${args.item} -> ${args.status}`;
-            } catch (err: unknown) {
-              const errorMessage = err instanceof Error ? err.message : String(err);
-              result = `Error updating checklist: ${errorMessage}`;
-            }
-          } else if (toolCall.function.name === 'worker_approve') {
-             try {
-               await bridge.approvePermission(args.id);
-               result = `Worker ${args.id} permission approved.`;
-             } catch (err: unknown) {
-               const errorMessage = err instanceof Error ? err.message : String(err);
-               result = `Error approving worker permission: ${errorMessage}`;
-             }
-          } else if (toolCall.function.name === 'worker_deny') {
-             try {
-               await bridge.denyPermission(args.id);
-               result = `Worker ${args.id} permission denied.`;
-             } catch (err: unknown) {
-               const errorMessage = err instanceof Error ? err.message : String(err);
-               result = `Error denying worker permission: ${errorMessage}`;
-             }
-          } else if (toolCall.function.name === 'worker_set_mode') {
-             try {
-               await bridge.setWorkerMode(args.id, args.mode);
-               result = `Worker ${args.id} mode set to ${args.mode}.`;
-             } catch (err: unknown) {
-               const errorMessage = err instanceof Error ? err.message : String(err);
-               result = `Error setting worker mode: ${errorMessage}`;
-             }
-          } else if (toolCall.function.name === 'worker_cancel') {
-             try {
-               await bridge.cancelAgent(args.id);
-               result = `Worker ${args.id} cancelled.`;
-             } catch (err: unknown) {
-               const errorMessage = err instanceof Error ? err.message : String(err);
-               result = `Error cancelling worker: ${errorMessage}`;
-             }
-          } else if (toolCall.function.name === 'credits_check') {
-             try {
-               const creditManager = new CreditManager();
-               result = await creditManager.checkCredits(args.accountId);
-             } catch (err: unknown) {
-               const errorMessage = err instanceof Error ? err.message : String(err);
-               result = `Error checking credits: ${errorMessage}`;
-             }
-          } else if (toolCall.function.name === 'credits_switch') {
-             try {
-               const creditManager = new CreditManager();
-               result = await creditManager.applyStrategy(args.workerId, args.strategy);
-             } catch (err: unknown) {
-               const errorMessage = err instanceof Error ? err.message : String(err);
-               result = `Error switching credits: ${errorMessage}`;
-             }
-          } else if (toolCall.function.name === 'plan_mark_done') {
-            const validation = await validateRun(this.runId);
-            const pendingItems = await db.select().from(planItems).where(eq(planItems.planId, this.planId));
-            const pendingCount = pendingItems.filter(item => item.status !== 'done').length;
-            const snapshot = {
-              status: 'validating',
-              pendingClarifications: 0,
-              unvalidatedDoneItems: validation.ok ? 0 : 1,
-              pendingItems: pendingCount,
-            };
-            const nextState = nextRunState(snapshot);
-            if (!validation.ok || nextState !== 'completed') {
-              await db.update(runs).set({ status: 'executing', updatedAt: new Date() }).where(eq(runs.id, this.runId));
-              result = `Validation blocked completion: ${validation.failures.join('; ')}`;
-            } else {
-              await db.update(runs).set({ status: 'done', updatedAt: new Date() }).where(eq(runs.id, this.runId));
-              result = 'Plan marked as done. Supervisor loop will terminate.';
-              await db.insert(dbMessages).values({
-                id: randomUUID(),
-                runId: this.runId,
-                role: 'worker',
-                content: result,
-                createdAt: new Date(),
-              });
-              this.messages.push({
-                role: 'tool',
-                tool_call_id: toolCall.id,
-                content: result
-              });
-              return; // Terminate loop
-            }
-          } else if (toolCall.function.name === 'user_ask') {
-            await db.insert(dbMessages).values({
-              id: randomUUID(),
-              runId: this.runId,
-              role: 'supervisor',
-              content: args.question,
-              createdAt: new Date(),
-            });
-            await db.insert(clarifications).values({
-              id: randomUUID(),
-              runId: this.runId,
-              question: args.question,
-              answer: null,
-              status: 'pending',
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            });
-            await db.update(runs).set({ status: 'awaiting_user', updatedAt: new Date() }).where(eq(runs.id, this.runId));
-            result = 'User asked (simulated).';
-          } else {
-            result = `Unknown tool: ${toolCall.function.name}`;
-          }
-
-          if (result) {
-            await db.insert(dbMessages).values({
-              id: randomUUID(),
-              runId: this.runId,
-              role: 'worker', // Rendered distinctly
-              content: result.substring(0, 4000), // Avoid crazy big blobs in chat
-              createdAt: new Date(),
-            });
-          }
-
-          this.messages.push({
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            content: result
+          await db.update(runs).set({ status: "awaiting_user", updatedAt: now }).where(eq(runs.id, this.runId));
+          await insertExecutionEvent(this.runId, "clarification_requested", {
+            summary: question,
           });
+          await insertRunMessage(this.runId, "supervisor", question, "clarification");
+          return { state: "paused" };
         }
-      } else {
-        // If no tool calls, just break or loop (ideally should have plan_mark_done)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        console.log("No tool calls, output:", (message as any).content);
-        break;
-      }
+
+        case "wait_until": {
+          const seconds = Math.max(1, Math.min(300, Math.round(asNumber(action.args.seconds, "seconds"))));
+          const reason = asString(action.args.reason, "reason");
+          await insertExecutionEvent(this.runId, "supervisor_wait", {
+            summary: reason,
+            seconds,
+          });
+          await insertRunMessage(this.runId, "system", `Waiting ${seconds}s before the next check: ${reason}`, "supervisor_action");
+          return { state: "wait", delayMs: seconds * 1000 };
+        }
+
+        case "mark_complete": {
+          const summary = asString(action.args.summary, "summary");
+          await cancelRunWorkers(this.runId);
+          await db.update(runs).set({ status: "done", updatedAt: new Date() }).where(eq(runs.id, this.runId));
+          await insertExecutionEvent(this.runId, "run_completed", { summary });
+          await insertRunMessage(this.runId, "supervisor", summary, "completion");
+          return { state: "completed" };
+        }
+
+        case "mark_failed": {
+          const reason = asString(action.args.reason, "reason");
+          await cancelRunWorkers(this.runId);
+          await db.update(runs).set({
+            status: "failed",
+            failedAt: new Date(),
+            lastError: reason,
+            updatedAt: new Date(),
+          }).where(eq(runs.id, this.runId));
+          await insertExecutionEvent(this.runId, "run_failed", { reason });
+          await insertRunMessage(this.runId, "system", `Run failed: ${reason}`, "error");
+          return { state: "failed" };
+        }
+
+        default:
+          throw new SupervisorProtocolError(`Unknown tool "${action.name}".`);
     }
   }
 }

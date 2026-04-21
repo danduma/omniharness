@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
 import { Folder, ArrowUpCircle } from "lucide-react";
 
 export function FolderPickerDialog({ 
@@ -17,6 +18,7 @@ export function FolderPickerDialog({
   onSelect: (path: string) => void; 
 }) {
   const [currentPath, setCurrentPath] = useState("");
+  const [search, setSearch] = useState("");
 
   const { data, refetch } = useQuery({
     queryKey: ["fs", currentPath],
@@ -33,35 +35,71 @@ export function FolderPickerDialog({
     if (open) refetch();
   }, [open, currentPath, refetch]);
 
+  const directories = useMemo(() => {
+    const items = data?.directories ?? [];
+    const term = search.trim().toLowerCase();
+    if (!term) return items;
+    return items.filter((dir: { name: string }) => dir.name.toLowerCase().includes(term));
+  }, [data?.directories, search]);
+
+  const canGoUp = Boolean(data && data.parent && data.parent !== data.current);
+  const handleNavigate = (path: string) => {
+    setCurrentPath(path);
+    setSearch("");
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md p-0 overflow-hidden flex flex-col h-[500px]">
-        <DialogHeader className="p-4 border-b bg-muted/20 shrink-0">
-          <DialogTitle>Select Project Folder</DialogTitle>
-          <div className="text-xs text-muted-foreground truncate mt-1" title={data?.current || "Loading..."}>
-            {data?.current || "Loading..."}
+      <DialogContent className="flex h-[500px] max-w-md flex-col overflow-hidden p-0">
+        <DialogHeader className="shrink-0 gap-3 border-b bg-muted/20 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <DialogTitle>Select Project Folder</DialogTitle>
+              <div className="mt-1 truncate text-xs text-muted-foreground" title={data?.current || "Loading..."}>
+                {data?.current || "Loading..."}
+              </div>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="shrink-0"
+              disabled={!canGoUp}
+              onClick={() => canGoUp && handleNavigate(data.parent)}
+            >
+              <ArrowUpCircle className="mr-2 h-4 w-4" />
+              Up
+            </Button>
+          </div>
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search folders..."
+            className="h-9"
+          />
+          <div className="text-[11px] text-muted-foreground">
+            {directories.length} folder{directories.length === 1 ? "" : "s"} shown
           </div>
         </DialogHeader>
         
-        <ScrollArea className="flex-1 p-2">
+        <ScrollArea className="min-h-0 flex-1 p-2">
           {data && (
             <div className="space-y-1">
               {data.parent && data.parent !== data.current && (
                 <Button 
                   variant="ghost" 
                   className="w-full justify-start h-8 px-2 text-sm text-muted-foreground"
-                  onClick={() => setCurrentPath(data.parent)}
-                >
+                  onClick={() => handleNavigate(data.parent)}
+                  >
                   <ArrowUpCircle className="h-4 w-4 mr-2" /> ..
                 </Button>
               )}
               {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-              {data.directories.map((dir: any) => (
+              {directories.map((dir: any) => (
                 <Button 
                   key={dir.path}
                   variant="ghost" 
                   className="w-full justify-start h-8 px-2 text-sm truncate"
-                  onClick={() => setCurrentPath(dir.path)}
+                  onClick={() => handleNavigate(dir.path)}
                 >
                   <Folder className="h-4 w-4 mr-2 text-primary/70" /> {dir.name}
                 </Button>

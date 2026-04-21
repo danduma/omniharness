@@ -1,13 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { plans, runs, clarifications } from "@/server/db/schema";
+
+const { mockStartSupervisorRun } = vi.hoisted(() => ({
+  mockStartSupervisorRun: vi.fn(),
+}));
+
+vi.mock("@/server/supervisor/start", () => ({
+  startSupervisorRun: mockStartSupervisorRun,
+}));
+
 import { POST } from "@/app/api/runs/[id]/answer/route";
 
 describe("POST /api/runs/[id]/answer", () => {
   it("stores the answer, marks the clarification answered, and resumes the run", async () => {
+    mockStartSupervisorRun.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const clarificationId = randomUUID();
@@ -55,5 +65,6 @@ describe("POST /api/runs/[id]/answer", () => {
     expect(updatedClarification?.answer).toBe("Implement the onboarding flow and add tests.");
     expect(updatedClarification?.status).toBe("answered");
     expect(updatedRun?.status).toBe("running");
+    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
   });
 });

@@ -19,7 +19,13 @@ CREATE TABLE IF NOT EXISTS plans (
 CREATE TABLE IF NOT EXISTS runs (
   id text PRIMARY KEY NOT NULL,
   plan_id text NOT NULL,
+  project_path text,
+  title text,
+  parent_run_id text,
+  forked_from_message_id text,
   status text NOT NULL,
+  failed_at integer,
+  last_error text,
   created_at integer NOT NULL,
   updated_at integer NOT NULL,
   FOREIGN KEY (plan_id) REFERENCES plans(id) ON UPDATE no action ON DELETE no action
@@ -40,8 +46,11 @@ CREATE TABLE IF NOT EXISTS messages (
   id text PRIMARY KEY NOT NULL,
   run_id text NOT NULL,
   role text NOT NULL,
+  kind text,
   content text NOT NULL,
   worker_id text,
+  superseded_at integer,
+  edited_from_message_id text,
   created_at integer NOT NULL,
   FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action,
   FOREIGN KEY (worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE no action
@@ -124,5 +133,47 @@ CREATE TABLE IF NOT EXISTS execution_events (
   FOREIGN KEY (plan_item_id) REFERENCES plan_items(id) ON UPDATE no action ON DELETE no action
 );
 `);
+
+const runColumns = sqlite.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>;
+const runColumnNames = new Set(runColumns.map((column) => column.name));
+
+if (!runColumnNames.has("project_path")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN project_path text;");
+}
+
+if (!runColumnNames.has("title")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN title text;");
+}
+
+if (!runColumnNames.has("parent_run_id")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN parent_run_id text;");
+}
+
+if (!runColumnNames.has("forked_from_message_id")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN forked_from_message_id text;");
+}
+
+if (!runColumnNames.has("failed_at")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN failed_at integer;");
+}
+
+if (!runColumnNames.has("last_error")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN last_error text;");
+}
+
+const messageColumns = sqlite.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>;
+const messageColumnNames = new Set(messageColumns.map((column) => column.name));
+
+if (!messageColumnNames.has("kind")) {
+  sqlite.exec("ALTER TABLE messages ADD COLUMN kind text;");
+}
+
+if (!messageColumnNames.has("superseded_at")) {
+  sqlite.exec("ALTER TABLE messages ADD COLUMN superseded_at integer;");
+}
+
+if (!messageColumnNames.has("edited_from_message_id")) {
+  sqlite.exec("ALTER TABLE messages ADD COLUMN edited_from_message_id text;");
+}
 
 export const db = drizzle(sqlite, { schema });
