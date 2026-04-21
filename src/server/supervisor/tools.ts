@@ -1,16 +1,22 @@
 import type { SupervisorToolDefinition } from "./protocol";
+import { SUPPORTED_WORKER_TYPES } from "./worker-types";
 
-export function buildSupervisorTools(): SupervisorToolDefinition[] {
+export function buildSupervisorTools(options?: { allowedWorkerTypes?: string[]; preferredWorkerType?: string | null }): SupervisorToolDefinition[] {
+  const allowedWorkerTypes = options?.allowedWorkerTypes?.length ? options.allowedWorkerTypes : [...SUPPORTED_WORKER_TYPES];
+  const preferredWorkerType = options?.preferredWorkerType?.trim() || null;
   return [
     {
       type: "function",
       function: {
         name: "worker_spawn",
-        description: "Spawn a new external coding worker. Prefer one main worker unless a distinct validator or sidecar is necessary.",
+        description:
+          `Spawn a new external coding worker. Prefer one main worker unless a distinct validator or sidecar is necessary. ` +
+          `Only use these worker types for this run: ${allowedWorkerTypes.join(", ")}.` +
+          (preferredWorkerType ? ` Prefer ${preferredWorkerType} when it is suitable.` : ""),
         parameters: {
           type: "object",
           properties: {
-            type: { type: "string", description: "External harness type, for example codex or claude-code." },
+            type: { type: "string", description: `External harness type. Valid values for this run: ${allowedWorkerTypes.join(", ")}.` },
             cwd: { type: "string", description: "Working directory for the worker." },
             mode: { type: "string", description: "Worker permission mode such as auto, full-access, or read-only." },
             purpose: { type: "string", description: "Short purpose for why this worker exists." },

@@ -36,10 +36,16 @@ test("settings render as a centered app modal with supervisor llm controls", () 
   expect(pageSource).toContain("SUPERVISOR_FALLBACK_LLM_BASE_URL");
   expect(pageSource).toContain("SUPERVISOR_FALLBACK_LLM_API_KEY");
   expect(pageSource).toContain("/api/llm-models");
+  expect(pageSource).toContain("/api/agents/catalog");
   expect(pageSource).toContain('enabled: provider === "gemini" && apiKey.trim().length > 0');
   expect(pageSource).toContain("<Combobox");
   expect(pageSource).toContain("Search Gemini models");
   expect(pageSource).toContain("Gemini model ids load automatically from the API key and appear in a searchable dropdown.");
+  expect(pageSource).toContain("Worker Agents");
+  expect(pageSource).toContain("Default Worker Agent");
+  expect(pageSource).toContain("Only currently available bridge workers can be enabled for new conversations.");
+  expect(pageSource).toContain("WORKER_ALLOWED_TYPES");
+  expect(pageSource).toContain("WORKER_DEFAULT_TYPE");
 });
 
 test("header includes a persistent day night mode toggle beside the workers sidebar button", () => {
@@ -74,6 +80,17 @@ test("failed runs surface recovery UI in the header and conversation feed", () =
   expect(pageSource).toContain("Retry latest");
   expect(pageSource).toContain('msg.kind === "error"');
   expect(pageSource).toContain("Run failed");
+});
+
+test("running conversations render an in-thread thinking indicator with live thought snippets", () => {
+  expect(pageSource).toContain("const conversationThinking =");
+  expect(pageSource).toContain("const isConversationThinking =");
+  expect(pageSource).toContain("const liveThoughts =");
+  expect(pageSource).toContain("Thinking");
+  expect(pageSource).toContain("animate-pulse");
+  expect(pageSource).toContain("animationDelay:");
+  expect(pageSource).toContain("Latest thought");
+  expect(pageSource).toContain("{isConversationThinking ? conversationThinking : null}");
 });
 
 test("starting a project-scoped conversation keeps the composer empty", () => {

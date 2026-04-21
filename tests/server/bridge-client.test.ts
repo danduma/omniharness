@@ -39,4 +39,21 @@ describe("bridge client", () => {
     await expect(askAgent("worker-1", "hello")).rejects.toThrow(/ACP bridge is not running at http:\/\/127\.0\.0\.1:7800/i);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+
+  it("preserves structured bridge error messages instead of collapsing them to status text", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "claude-code binary not found on PATH." }), {
+        status: 400,
+        statusText: "Bad Request",
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { spawnAgent } = await import("@/server/bridge-client");
+
+    await expect(spawnAgent({ type: "claude-code", cwd: "/tmp", name: "worker-1" })).rejects.toThrow(
+      /Spawn failed: claude-code binary not found on PATH/i,
+    );
+  });
 });

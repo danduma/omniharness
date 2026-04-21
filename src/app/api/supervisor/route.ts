@@ -5,6 +5,7 @@ import { CreditManager } from '@/server/credits';
 import { queueConversationTitleGeneration } from '@/server/conversation-title';
 import { createAdHocPlan } from '@/server/runs/ad-hoc-plan';
 import { startSupervisorRun } from '@/server/supervisor/start';
+import { parseAllowedWorkerTypes, normalizeWorkerType } from '@/server/supervisor/worker-types';
 import { randomUUID } from 'crypto';
 interface AttachmentInput {
   kind?: string;
@@ -17,6 +18,16 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { command } = body as { command?: unknown };
     const trimmedCommand = String(command ?? '').trim();
+    const preferredWorkerType = typeof body?.preferredWorkerType === "string" && body.preferredWorkerType.trim()
+      ? normalizeWorkerType(body.preferredWorkerType)
+      : null;
+    const allowedWorkerTypes = parseAllowedWorkerTypes(
+      Array.isArray(body?.allowedWorkerTypes)
+        ? JSON.stringify(body.allowedWorkerTypes)
+        : typeof body?.allowedWorkerTypes === "string"
+          ? body.allowedWorkerTypes
+          : null,
+    );
     const projectPath = typeof body?.projectPath === "string" && body.projectPath.trim()
       ? body.projectPath.trim()
       : null;
@@ -48,6 +59,8 @@ export async function POST(req: NextRequest) {
       planId,
       projectPath,
       title: 'New conversation',
+      preferredWorkerType,
+      allowedWorkerTypes: JSON.stringify(allowedWorkerTypes),
       status: 'running',
       createdAt: new Date(),
       updatedAt: new Date(),

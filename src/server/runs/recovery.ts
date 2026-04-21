@@ -104,6 +104,8 @@ export async function recoverRun(args: RecoverRunArgs) {
       planId: newPlanId,
       title: run.title,
       projectPath: run.projectPath,
+      preferredWorkerType: run.preferredWorkerType,
+      allowedWorkerTypes: run.allowedWorkerTypes,
       parentRunId: args.runId,
       forkedFromMessageId: args.targetMessageId,
       status: "running",

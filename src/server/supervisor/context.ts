@@ -2,6 +2,7 @@ import { desc, eq } from "drizzle-orm";
 import * as bridge from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { clarifications, executionEvents, messages, runs, workers } from "@/server/db/schema";
+import { parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
 
 function truncate(text: string, maxLength: number) {
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
@@ -23,6 +24,8 @@ export interface SupervisorTurnContext {
   runId: string;
   projectPath: string | null;
   goal: string;
+  preferredWorkerType: string | null;
+  allowedWorkerTypes: string[];
   recentUserMessages: string[];
   pendingClarifications: Array<{ id: string; question: string }>;
   answeredClarifications: Array<{ question: string; answer: string }>;
@@ -106,6 +109,8 @@ export async function buildSupervisorTurnContext(runId: string): Promise<Supervi
     runId,
     projectPath: run.projectPath,
     goal,
+    preferredWorkerType: run.preferredWorkerType,
+    allowedWorkerTypes: parseAllowedWorkerTypes(run.allowedWorkerTypes),
     recentUserMessages: userMessages.slice(-6).map((message) => message.content),
     pendingClarifications,
     answeredClarifications,

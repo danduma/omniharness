@@ -11,6 +11,8 @@ import { buildSupervisorTools } from "@/server/supervisor/tools";
 import { buildSupervisorTurnContext } from "@/server/supervisor/context";
 import { parseSupervisorToolCall, SupervisorProtocolError } from "@/server/supervisor/protocol";
 import { retrySupervisorRequest } from "@/server/supervisor/retry";
+import { selectSpawnableWorkerType } from "@/server/supervisor/worker-availability";
+import { parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
 
 export interface SupervisorOptions {
   runId: string;
@@ -115,6 +117,8 @@ export class Supervisor {
     const observationSummary = JSON.stringify({
       heartbeatCount,
       projectPath: context.projectPath,
+      preferredWorkerType: context.preferredWorkerType,
+      allowedWorkerTypes: context.allowedWorkerTypes,
       pendingClarifications: context.pendingClarifications,
       answeredClarifications: context.answeredClarifications,
       activeWorkers: context.activeWorkers,
@@ -133,7 +137,10 @@ export class Supervisor {
           content: `Current supervision snapshot:\n\n${observationSummary}`,
         },
       ],
-      tools: buildSupervisorTools(),
+      tools: buildSupervisorTools({
+        preferredWorkerType: context.preferredWorkerType,
+        allowedWorkerTypes: context.allowedWorkerTypes,
+      }),
       tool_choice: "required",
     }));
 
@@ -168,7 +175,10 @@ export class Supervisor {
 
     switch (action.name) {
         case "worker_spawn": {
-          const type = asString(action.args.type, "type");
+          const requestedType = asString(action.args.type, "type");
+          const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+          const allowedWorkerTypes = parseAllowedWorkerTypes(run?.allowedWorkerTypes);
+          const workerType = selectSpawnableWorkerType(requestedType, envParams, allowedWorkerTypes);
           const cwd = asString(action.args.cwd, "cwd");
           const prompt = asString(action.args.prompt, "prompt");
           const mode = typeof action.args.mode === "string" ? action.args.mode : "auto";
@@ -176,7 +186,7 @@ export class Supervisor {
           const workerId = `worker-${Date.now()}`;
 
           await bridge.spawnAgent({
-            type,
+            type: workerType.type,
             cwd,
             name: workerId,
             mode,
@@ -187,7 +197,7 @@ export class Supervisor {
           await db.insert(workers).values({
             id: workerId,
             runId: this.runId,
-            type,
+            type: workerType.type,
             status: purpose ? `${response.state}: ${purpose}` : response.state,
             cwd,
             createdAt: new Date(),
@@ -195,11 +205,22 @@ export class Supervisor {
           });
 
           await insertExecutionEvent(this.runId, "worker_spawned", {
-            summary: `Spawned ${type} worker ${workerId}`,
+            summary: `Spawned ${workerType.type} worker ${workerId}`,
             purpose,
             mode,
+            requestedType: workerType.requestedType,
+            fallbackReason: workerType.fallbackReason,
           }, workerId);
-          await insertRunMessage(this.runId, "system", `Spawned ${type} worker ${workerId}.${purpose ? ` Purpose: ${purpose}.` : ""}`, "supervisor_action");
+          const fallbackNote =
+            workerType.type !== workerType.requestedType
+              ? ` Requested ${workerType.requestedType}, used ${workerType.type} because ${workerType.fallbackReason}.`
+              : "";
+          await insertRunMessage(
+            this.runId,
+            "system",
+            `Spawned ${workerType.type} worker ${workerId}.${purpose ? ` Purpose: ${purpose}.` : ""}${fallbackNote}`,
+            "supervisor_action",
+          );
           await insertRunMessage(this.runId, "worker", `Prompted ${workerId}:\n${prompt}\n\nInitial response:\n${response.response}`.slice(0, 4000), "worker_output", workerId);
           return { state: "wait", delayMs: 5_000 };
         }

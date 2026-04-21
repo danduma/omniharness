@@ -13,6 +13,8 @@ export const runs = sqliteTable('runs', {
   planId: text('plan_id').references(() => plans.id).notNull(),
   projectPath: text('project_path'),
   title: text('title'),
+  preferredWorkerType: text('preferred_worker_type'),
+  allowedWorkerTypes: text('allowed_worker_types'),
   parentRunId: text('parent_run_id'),
   forkedFromMessageId: text('forked_from_message_id'),
   status: text('status').notNull(), // 'running', 'done', 'failed'
