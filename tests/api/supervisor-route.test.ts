@@ -128,6 +128,27 @@ describe("POST /api/supervisor", () => {
     expect(mockQueueConversationTitleGeneration).toHaveBeenCalledWith({ runId: payload.runId, command });
   });
 
+  it("persists preferred and allowed worker types on the run", async () => {
+    const command = "fix the search layout";
+    const request = new NextRequest("http://localhost/api/supervisor", {
+      method: "POST",
+      body: JSON.stringify({
+        command,
+        preferredWorkerType: "Codex",
+        allowedWorkerTypes: ["codex", "opencode"],
+      }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    const insertedRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+
+    expect(insertedRun?.preferredWorkerType).toBe("codex");
+    expect(insertedRun?.allowedWorkerTypes).toBe(JSON.stringify(["codex", "opencode"]));
+  });
+
   it("accepts optional attachment metadata alongside text input", async () => {
     const command = "inspect the attached screenshot and notes";
     const request = new NextRequest("http://localhost/api/supervisor", {

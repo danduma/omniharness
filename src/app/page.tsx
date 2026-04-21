@@ -22,7 +22,16 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type PlanRecord = { id: string; path: string };
-type RunRecord = { id: string; planId: string; status: string; createdAt: string; projectPath: string | null; title: string | null };
+type RunRecord = {
+  id: string;
+  planId: string;
+  status: string;
+  createdAt: string;
+  projectPath: string | null;
+  title: string | null;
+  preferredWorkerType?: string | null;
+  allowedWorkerTypes?: string | null;
+};
 type PlanItemRecord = { id: string; planId: string; title: string; phase: string | null; status: string };
 type ClarificationRecord = { id: string; runId: string; question: string; answer: string | null; status: string };
 type MessageRecord = {
@@ -33,8 +42,38 @@ type MessageRecord = {
   content: string;
   createdAt: string;
 };
+type AgentSnapshot = {
+  name: string;
+  type?: string;
+  cwd?: string;
+  state: string;
+  lastText?: string;
+  currentText?: string;
+  stderrBuffer?: string[];
+  stopReason?: string | null;
+};
 type ProjectFilesResponse = { root: string; files: string[] };
-const CLI_AGENT_OPTIONS = ["Codex", "Claude Code"];
+type WorkerType = "codex" | "claude" | "gemini" | "opencode";
+type WorkerAvailability = {
+  type: WorkerType;
+  label: string;
+  availability: {
+    status: "ok" | "warning" | "error";
+    binary: boolean;
+    apiKey: boolean | null;
+    endpoint: boolean | null;
+    message?: string;
+  };
+};
+type WorkerCatalogResponse = { workers: WorkerAvailability[] };
+
+const WORKER_OPTIONS: Array<{ value: WorkerType; label: string }> = [
+  { value: "codex", label: "Codex" },
+  { value: "claude", label: "Claude Code" },
+  { value: "gemini", label: "Gemini" },
+  { value: "opencode", label: "OpenCode" },
+] as const;
+const DEFAULT_ALLOWED_WORKER_TYPES = JSON.stringify(WORKER_OPTIONS.map((option) => option.value));
 const MODEL_OPTIONS = ["GPT-5.4", "GPT-5.4 Mini", "Claude Sonnet 4"];
 const EFFORT_OPTIONS = ["Low", "Medium", "High"];
 
@@ -74,6 +113,42 @@ const LLM_PROVIDER_OPTIONS = [
   { value: "openrouter", label: "OpenRouter" },
   { value: "openai-compatible", label: "OpenAI-Compatible" },
 ] as const;
+
+function parseWorkerTypes(value: string | null | undefined): WorkerType[] {
+  if (!value?.trim()) {
+    return WORKER_OPTIONS.map((option) => option.value);
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      return WORKER_OPTIONS.map((option) => option.value);
+    }
+
+    const allowed = new Set(WORKER_OPTIONS.map((option) => option.value));
+    const normalized = parsed
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => entry.trim().toLowerCase())
+      .filter((entry): entry is WorkerType => allowed.has(entry as WorkerType));
+
+    return normalized.length > 0 ? Array.from(new Set(normalized)) : WORKER_OPTIONS.map((option) => option.value);
+  } catch {
+    return WORKER_OPTIONS.map((option) => option.value);
+  }
+}
+
+function parseWorkerType(value: string | null | undefined): WorkerType | null {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return WORKER_OPTIONS.some((option) => option.value === normalized) ? normalized as WorkerType : null;
+}
+
+function summarizeThought(text: string) {
+  return text.replace(/\s+/g, " ").trim().slice(0, 220);
+}
 
 function LlmSettingsForm({
   prefix,
@@ -536,6 +611,8 @@ export default function Home() {
     SUPERVISOR_FALLBACK_LLM_BASE_URL: '',
     SUPERVISOR_FALLBACK_LLM_API_KEY: '',
     CREDIT_STRATEGY: 'swap_account',
+    WORKER_DEFAULT_TYPE: 'codex',
+    WORKER_ALLOWED_TYPES: DEFAULT_ALLOWED_WORKER_TYPES,
     PROJECTS: '[]',
   });
   const [showFolderPicker, setShowFolderPicker] = useState(false);
@@ -553,7 +630,7 @@ export default function Home() {
   const [renameValue, setRenameValue] = useState("");
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingMessageValue, setEditingMessageValue] = useState("");
-  const [selectedCliAgent, setSelectedCliAgent] = useState("Codex");
+  const [selectedCliAgent, setSelectedCliAgent] = useState<WorkerType>("codex");
   const [selectedModel, setSelectedModel] = useState("GPT-5.4");
   const [selectedEffort, setSelectedEffort] = useState("High");
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
@@ -583,6 +660,19 @@ export default function Home() {
       const data = await res.json();
       setApiKeys(prev => ({ ...prev, ...data }));
       return data;
+    },
+  });
+
+  const workerCatalogQuery = useQuery<WorkerCatalogResponse>({
+    queryKey: ["worker-catalog"],
+    staleTime: 60_000,
+    queryFn: async () => {
+      const response = await fetch("/api/agents/catalog");
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(typeof payload.error === "string" ? payload.error : "Unable to load worker catalog.");
+      }
+      return payload as WorkerCatalogResponse;
     },
   });
 
@@ -759,6 +849,8 @@ export default function Home() {
         body: JSON.stringify({
           command: cmd,
           projectPath: currentProjectScope,
+          preferredWorkerType: selectedCliAgent,
+          allowedWorkerTypes: activeAllowedWorkerTypes,
           attachments: attachments.map(({ kind, name, path }) => ({ kind, name, path })),
         }),
       });
@@ -875,18 +967,145 @@ export default function Home() {
     deleteRun.mutate({ runId: run.id });
   };
 
+  const runs = (state.runs || []) as RunRecord[];
+  const plans = (state.plans || []) as PlanRecord[];
+  const clarifications = (state.clarifications || []) as ClarificationRecord[];
+  const selectedRun = selectedRunId ? runs.find((run) => run.id === selectedRunId) ?? null : null;
+  const catalogWorkers = workerCatalogQuery.data?.workers ?? [];
+  const availableWorkerTypes = useMemo(
+    () => catalogWorkers
+      .filter((worker) => worker.availability.status === "ok")
+      .map((worker) => worker.type),
+    [catalogWorkers],
+  );
+  const configuredAllowedWorkerTypes = useMemo(
+    () => parseWorkerTypes(apiKeys.WORKER_ALLOWED_TYPES),
+    [apiKeys.WORKER_ALLOWED_TYPES],
+  );
+  const selectedRunAllowedWorkerTypes = useMemo(
+    () => parseWorkerTypes(selectedRun?.allowedWorkerTypes),
+    [selectedRun?.allowedWorkerTypes],
+  );
+  const activeAllowedWorkerTypes = useMemo(() => {
+    const configured = selectedRun ? selectedRunAllowedWorkerTypes : configuredAllowedWorkerTypes;
+    if (availableWorkerTypes.length === 0) {
+      return configured;
+    }
+
+    const availableSet = new Set(availableWorkerTypes);
+    const filtered = configured.filter((type) => availableSet.has(type));
+    return filtered.length > 0 ? filtered : [...availableWorkerTypes];
+  }, [availableWorkerTypes, configuredAllowedWorkerTypes, selectedRun, selectedRunAllowedWorkerTypes]);
+  const composerWorkerOptions = useMemo(() => {
+    const allowedSet = new Set(activeAllowedWorkerTypes);
+    return WORKER_OPTIONS.filter((option) => allowedSet.has(option.value));
+  }, [activeAllowedWorkerTypes]);
+  const settingsWorkers = useMemo(() => {
+    if (catalogWorkers.length > 0) {
+      return catalogWorkers;
+    }
+
+    return WORKER_OPTIONS.map((option) => ({
+      type: option.value,
+      label: option.label,
+      availability: {
+        status: "warning" as const,
+        binary: false,
+        apiKey: null,
+        endpoint: null,
+        message: "Worker availability has not loaded yet.",
+      },
+    }));
+  }, [catalogWorkers]);
+  const configuredAllowedWorkerSet = useMemo(
+    () => new Set(configuredAllowedWorkerTypes),
+    [configuredAllowedWorkerTypes],
+  );
   const filteredMessages = selectedRunId 
     ? state.messages?.filter((m: { runId: string }) => m.runId === selectedRunId) 
     : [];
 
   // Active agents for the selected conversation
-  const conversationWorkers = selectedRunId && state.workers && state.agents
-    ? state.workers.filter((w: { runId: string, id: string }) => w.runId === selectedRunId && state.agents.some((a: { name: string }) => a.name === w.id))
-    : [];
+  const conversationWorkers = useMemo(() => {
+    if (!selectedRunId || !state.workers || !state.agents) {
+      return [];
+    }
 
-  const runs = (state.runs || []) as RunRecord[];
-  const plans = (state.plans || []) as PlanRecord[];
-  const clarifications = (state.clarifications || []) as ClarificationRecord[];
+    return state.workers.filter((w: { runId: string, id: string }) => (
+      w.runId === selectedRunId && state.agents.some((a: AgentSnapshot) => a.name === w.id)
+    ));
+  }, [selectedRunId, state.workers, state.agents]);
+  const conversationAgents = useMemo(() => {
+    if (!conversationWorkers.length || !state.agents?.length) {
+      return [] as AgentSnapshot[];
+    }
+
+    const workerIds = new Set(conversationWorkers.map((worker: { id: string }) => worker.id));
+    return (state.agents as AgentSnapshot[]).filter((agent) => workerIds.has(agent.name));
+  }, [conversationWorkers, state.agents]);
+  const liveThoughts = useMemo(() => {
+    const seen = new Set<string>();
+
+    return conversationAgents
+      .map((agent) => {
+        const rawThought = agent.currentText?.trim() || agent.lastText?.trim() || "";
+        const snippet = summarizeThought(rawThought);
+        if (!snippet) {
+          return null;
+        }
+
+        const key = `${agent.name}:${snippet}`;
+        if (seen.has(key)) {
+          return null;
+        }
+        seen.add(key);
+
+        return {
+          agentName: agent.name,
+          snippet,
+          isLive: Boolean(agent.currentText?.trim()),
+        };
+      })
+      .filter((thought): thought is { agentName: string; snippet: string; isLive: boolean } => Boolean(thought))
+      .slice(0, 3);
+  }, [conversationAgents]);
+  const isConversationThinking = selectedRun?.status === "running" || conversationAgents.some((agent) => agent.state === "working");
+  const conversationThinking = (
+    <div className="group flex w-full flex-col text-sm">
+      <div className="mb-1.5 flex items-center gap-2 px-1">
+        <span className="text-xs font-semibold uppercase tracking-wider text-amber-600">
+          Thinking
+        </span>
+        <div className="flex items-center gap-1">
+          {[0, 1, 2].map((index) => (
+            <span
+              key={index}
+              className="h-1.5 w-1.5 rounded-full bg-amber-500/80 animate-pulse"
+              style={{ animationDelay: `${index * 180}ms` }}
+            />
+          ))}
+        </div>
+      </div>
+      <div className="overflow-hidden rounded-xl border border-amber-500/20 bg-gradient-to-r from-amber-500/5 via-background to-amber-500/10 p-4 shadow-sm">
+        {liveThoughts.length > 0 ? (
+          <div className="space-y-2">
+            {liveThoughts.map((thought) => (
+              <div key={`${thought.agentName}:${thought.snippet}`} className="rounded-lg border border-border/60 bg-background/80 px-3 py-2">
+                <div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  <span>{thought.agentName}</span>
+                  <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[9px] tracking-[0.14em] text-amber-700">
+                    {thought.isLive ? "Latest thought" : "Recent thought"}
+                  </span>
+                </div>
+                <p className="text-sm leading-relaxed text-foreground/85">{thought.snippet}</p>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+
   const currentProjectScope = resolveProjectScope({
     draftProjectPath,
     selectedRunId,
@@ -911,13 +1130,59 @@ export default function Home() {
   const activePlan = selectedRunId && runs.length && plans.length
     ? plans.find((p) => p.id === runs.find((r) => r.id === selectedRunId)?.planId) ?? null
     : null;
-  const selectedRun = selectedRunId ? runs.find((run) => run.id === selectedRunId) ?? null : null;
   const selectedClarifications = selectedRunId ? clarifications.filter((item) => item.runId === selectedRunId) : [];
   const latestUserCheckpoint = selectedRunId
     ? [...((filteredMessages || []) as MessageRecord[])]
         .filter((message) => message.role === "user")
         .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null
     : null;
+
+  useEffect(() => {
+    if (selectedRun) {
+      const preferredFromRun = parseWorkerType(selectedRun.preferredWorkerType);
+      const nextSelected = preferredFromRun && activeAllowedWorkerTypes.includes(preferredFromRun)
+        ? preferredFromRun
+        : activeAllowedWorkerTypes[0];
+      if (nextSelected && nextSelected !== selectedCliAgent) {
+        setSelectedCliAgent(nextSelected);
+      }
+      return;
+    }
+
+    const preferredFromSettings = parseWorkerType(apiKeys.WORKER_DEFAULT_TYPE);
+    const nextSelected = preferredFromSettings && activeAllowedWorkerTypes.includes(preferredFromSettings)
+      ? preferredFromSettings
+      : activeAllowedWorkerTypes[0];
+    if (nextSelected && nextSelected !== selectedCliAgent) {
+      setSelectedCliAgent(nextSelected);
+    }
+  }, [activeAllowedWorkerTypes, apiKeys.WORKER_DEFAULT_TYPE, selectedCliAgent, selectedRun]);
+
+  useEffect(() => {
+    if (availableWorkerTypes.length === 0) {
+      return;
+    }
+
+    const availableSet = new Set(availableWorkerTypes);
+    const sanitizedAllowed = configuredAllowedWorkerTypes.filter((type) => availableSet.has(type));
+    const nextAllowed = sanitizedAllowed.length > 0 ? sanitizedAllowed : [...availableWorkerTypes];
+    const normalizedDefault = nextAllowed.includes(apiKeys.WORKER_DEFAULT_TYPE as WorkerType)
+      ? apiKeys.WORKER_DEFAULT_TYPE
+      : nextAllowed[0];
+
+    if (
+      JSON.stringify(nextAllowed) === JSON.stringify(configuredAllowedWorkerTypes) &&
+      normalizedDefault === apiKeys.WORKER_DEFAULT_TYPE
+    ) {
+      return;
+    }
+
+    setApiKeys((current) => ({
+      ...current,
+      WORKER_ALLOWED_TYPES: JSON.stringify(nextAllowed),
+      WORKER_DEFAULT_TYPE: normalizedDefault,
+    }));
+  }, [apiKeys.WORKER_DEFAULT_TYPE, availableWorkerTypes, configuredAllowedWorkerTypes]);
 
   useEffect(() => {
     if (!selectedRunId) {
@@ -989,6 +1254,25 @@ export default function Home() {
 
   const handleRemoveAttachment = (attachmentPath: string) => {
     setAttachments((current) => current.filter((attachment) => attachment.path !== attachmentPath));
+  };
+
+  const handleToggleAllowedWorker = (workerType: WorkerType, checked: boolean) => {
+    const currentlyAllowed = parseWorkerTypes(apiKeys.WORKER_ALLOWED_TYPES);
+    const nextAllowed = checked
+      ? Array.from(new Set([...currentlyAllowed, workerType]))
+      : currentlyAllowed.filter((type) => type !== workerType);
+
+    if (nextAllowed.length === 0) {
+      return;
+    }
+
+    setApiKeys((current) => ({
+      ...current,
+      WORKER_ALLOWED_TYPES: JSON.stringify(nextAllowed),
+      WORKER_DEFAULT_TYPE: nextAllowed.includes(current.WORKER_DEFAULT_TYPE as WorkerType)
+        ? current.WORKER_DEFAULT_TYPE
+        : nextAllowed[0],
+    }));
   };
 
   const composer = (className: string) => (
@@ -1113,11 +1397,11 @@ export default function Home() {
               <div className="relative">
                 <select
                   value={selectedCliAgent}
-                  onChange={(event) => setSelectedCliAgent(event.target.value)}
+                  onChange={(event) => setSelectedCliAgent(event.target.value as WorkerType)}
                   className="h-9 appearance-none border-0 bg-transparent pl-3 pr-8 text-sm text-muted-foreground outline-none transition-colors hover:text-foreground"
                 >
-                  {CLI_AGENT_OPTIONS.map((agent) => (
-                    <option key={agent} value={agent}>{agent}</option>
+                  {composerWorkerOptions.map((agent) => (
+                    <option key={agent.value} value={agent.value}>{agent.label}</option>
                   ))}
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -1405,6 +1689,8 @@ export default function Home() {
                 </div>
               )}
 
+              {isConversationThinking ? conversationThinking : null}
+
               {selectedClarifications.length > 0 && (
                 <div className="max-w-xl">
                   <ClarificationPanel
@@ -1422,8 +1708,7 @@ export default function Home() {
                   <div className="flex flex-col gap-6">
                     {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                     {conversationWorkers.map((worker: any) => {
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      const agent = state.agents.find((a: any) => a.name === worker.id);
+                      const agent = conversationAgents.find((item) => item.name === worker.id);
                       return (
                         <div key={worker.id} className="flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-sm">
                           <div className="flex items-center justify-between border-b border-border bg-muted/20 p-2.5">
@@ -1540,6 +1825,84 @@ export default function Home() {
                 <option value="wait_for_reset">Wait for Reset</option>
                 <option value="cross_provider">Cross Provider</option>
               </select>
+            </div>
+            <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-4">
+              <div className="space-y-1">
+                <div className="text-sm font-semibold">Worker Agents</div>
+                <p className="text-xs text-muted-foreground">
+                  Only currently available bridge workers can be enabled for new conversations.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {settingsWorkers.map((worker) => {
+                  const isAvailable = worker.availability.status === "ok";
+                  const isChecked = configuredAllowedWorkerSet.has(worker.type);
+                  const availabilityTone =
+                    worker.availability.status === "ok"
+                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                      : worker.availability.status === "warning"
+                        ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                        : "bg-destructive/10 text-destructive";
+
+                  return (
+                    <label
+                      key={worker.type}
+                      className={cn(
+                        "flex items-start justify-between gap-3 rounded-lg border border-border/60 bg-background/70 p-3",
+                        !isAvailable && "opacity-70",
+                      )}
+                    >
+                      <div className="flex min-w-0 items-start gap-3">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 rounded border-border"
+                          checked={isChecked}
+                          disabled={!isAvailable || (isChecked && configuredAllowedWorkerTypes.length === 1)}
+                          onChange={(event) => handleToggleAllowedWorker(worker.type, event.target.checked)}
+                        />
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium">{worker.label}</span>
+                            <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em]", availabilityTone)}>
+                              {worker.availability.status}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {worker.availability.message || (isAvailable ? "Ready to spawn from the bridge." : "Unavailable right now.")}
+                          </p>
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-muted-foreground" htmlFor="WORKER_DEFAULT_TYPE">
+                  Default Worker Agent
+                </label>
+                <select
+                  id="WORKER_DEFAULT_TYPE"
+                  className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+                  value={parseWorkerType(apiKeys.WORKER_DEFAULT_TYPE) ?? configuredAllowedWorkerTypes[0] ?? "codex"}
+                  onChange={(event) => setApiKeys((current) => ({ ...current, WORKER_DEFAULT_TYPE: event.target.value }))}
+                >
+                  {WORKER_OPTIONS
+                    .filter((option) => configuredAllowedWorkerSet.has(option.value))
+                    .map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              {workerCatalogQuery.isError ? (
+                <p className="text-[11px] text-destructive">
+                  {workerCatalogQuery.error instanceof Error ? workerCatalogQuery.error.message : "Unable to load worker availability."}
+                </p>
+              ) : null}
             </div>
           </div>
 

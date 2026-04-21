@@ -258,6 +258,8 @@ describe("POST /api/runs/[id]", () => {
       id: runId,
       planId,
       title: "Source run",
+      preferredWorkerType: "codex",
+      allowedWorkerTypes: JSON.stringify(["codex", "opencode"]),
       status: "done",
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -288,6 +290,8 @@ describe("POST /api/runs/[id]", () => {
     expect(payload.runId).not.toBe(runId);
     expect(forkedRun?.parentRunId).toBe(runId);
     expect(forkedRun?.forkedFromMessageId).toBe(userMessageId);
+    expect(forkedRun?.preferredWorkerType).toBe("codex");
+    expect(forkedRun?.allowedWorkerTypes).toBe(JSON.stringify(["codex", "opencode"]));
     expect(forkedMessages).toHaveLength(1);
     expect(forkedMessages[0]?.content).toBe("forked prompt");
     expect(fs.readFileSync(getAppDataPath(forkedPlan!.path), "utf-8")).toContain("forked prompt");

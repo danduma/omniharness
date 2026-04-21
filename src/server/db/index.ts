@@ -145,6 +145,14 @@ if (!runColumnNames.has("title")) {
   sqlite.exec("ALTER TABLE runs ADD COLUMN title text;");
 }
 
+if (!runColumnNames.has("preferred_worker_type")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN preferred_worker_type text;");
+}
+
+if (!runColumnNames.has("allowed_worker_types")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN allowed_worker_types text;");
+}
+
 if (!runColumnNames.has("parent_run_id")) {
   sqlite.exec("ALTER TABLE runs ADD COLUMN parent_run_id text;");
 }

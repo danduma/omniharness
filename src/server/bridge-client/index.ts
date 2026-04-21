@@ -52,7 +52,16 @@ async function requestBridge<T>(path: string, init: RequestInit, action: string)
     return await retrySupervisorRequest(async () => {
       const res = await fetch(`${BRIDGE_URL}${path}`, init);
       if (!res.ok) {
-        throw Object.assign(new Error(`${action} failed: ${res.status} ${res.statusText}`), { status: res.status });
+        let detail = `${res.status} ${res.statusText}`;
+        try {
+          const payload = await res.json() as { error?: unknown };
+          if (typeof payload.error === "string" && payload.error.trim()) {
+            detail = payload.error.trim();
+          }
+        } catch {
+          // ignore malformed/non-json bodies and fall back to status text
+        }
+        throw Object.assign(new Error(`${action} failed: ${detail}`), { status: res.status });
       }
       return res.json() as Promise<T>;
     });

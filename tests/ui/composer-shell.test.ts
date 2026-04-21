@@ -8,7 +8,7 @@ const pageSource = fs.readFileSync(
 );
 
 test("composer uses a filled textarea shell with inline cli agent, model, and effort controls", () => {
-  expect(pageSource).toContain('const [selectedCliAgent, setSelectedCliAgent] = useState("Codex")');
+  expect(pageSource).toContain('const [selectedCliAgent, setSelectedCliAgent] = useState<WorkerType>("codex")');
   expect(pageSource).toContain('const [selectedModel, setSelectedModel] = useState("GPT-5.4")');
   expect(pageSource).toContain('const [selectedEffort, setSelectedEffort] = useState("High")');
   expect(pageSource).toContain("rounded-[1.5rem] border border-transparent bg-muted/80");
@@ -16,9 +16,17 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain("min-h-[72px] w-full resize-none bg-transparent");
   expect(pageSource).toContain("rows={2}");
   expect(pageSource).toContain("appearance-none border-0 bg-transparent");
-  expect(pageSource).toContain('const CLI_AGENT_OPTIONS = ["Codex", "Claude Code"]');
+  expect(pageSource).toContain("const WORKER_OPTIONS: Array<{ value: WorkerType; label: string }> = [");
+  expect(pageSource).toContain('{ value: "codex", label: "Codex" }');
+  expect(pageSource).toContain('{ value: "claude", label: "Claude Code" }');
   expect(pageSource).toContain('const MODEL_OPTIONS = ["GPT-5.4", "GPT-5.4 Mini", "Claude Sonnet 4"]');
   expect(pageSource).toContain('const EFFORT_OPTIONS = ["Low", "Medium", "High"]');
+});
+
+test("composer submits the selected preferred worker together with the allowed worker list", () => {
+  expect(pageSource).toContain("preferredWorkerType: selectedCliAgent");
+  expect(pageSource).toContain("allowedWorkerTypes: activeAllowedWorkerTypes");
+  expect(pageSource).toContain("composerWorkerOptions.map((agent) => (");
 });
 
 test("composer exposes attachment entry and renders attached file chips", () => {
