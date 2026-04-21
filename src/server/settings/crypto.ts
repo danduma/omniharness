@@ -6,6 +6,12 @@ import path from "path";
 const ENVELOPE_PREFIX = "enc:v1:";
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
+const SECRET_KEY_PATTERNS = [
+  /_API_KEY$/i,
+  /_TOKEN$/i,
+  /_SECRET$/i,
+  /_PASSWORD$/i,
+];
 
 function resolveKeyPath() {
   if (process.env.OMNIHARNESS_SETTINGS_KEY_PATH?.trim()) {
@@ -47,18 +53,30 @@ export function encryptSettingValue(plaintext: string) {
   return `${ENVELOPE_PREFIX}${Buffer.concat([iv, tag, ciphertext]).toString("base64")}`;
 }
 
+export function shouldEncryptSetting(key: string) {
+  return SECRET_KEY_PATTERNS.some((pattern) => pattern.test(key));
+}
+
 export function decryptSettingValue(storedValue: string) {
   if (!storedValue.startsWith(ENVELOPE_PREFIX)) {
     return storedValue;
   }
 
-  const payload = Buffer.from(storedValue.slice(ENVELOPE_PREFIX.length), "base64");
-  const iv = payload.subarray(0, IV_BYTES);
-  const tag = payload.subarray(IV_BYTES, IV_BYTES + 16);
-  const ciphertext = payload.subarray(IV_BYTES + 16);
+  try {
+    const payload = Buffer.from(storedValue.slice(ENVELOPE_PREFIX.length), "base64");
+    const iv = payload.subarray(0, IV_BYTES);
+    const tag = payload.subarray(IV_BYTES, IV_BYTES + 16);
+    const ciphertext = payload.subarray(IV_BYTES + 16);
 
-  const decipher = crypto.createDecipheriv("aes-256-gcm", getKey(), iv);
-  decipher.setAuthTag(tag);
+    if (iv.length !== IV_BYTES || tag.length !== 16 || ciphertext.length === 0) {
+      throw new Error("Invalid encrypted settings payload.");
+    }
 
-  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+    const decipher = crypto.createDecipheriv("aes-256-gcm", getKey(), iv);
+    decipher.setAuthTag(tag);
+
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+  } catch {
+    throw new Error("Unable to decrypt stored setting value.");
+  }
 }
