@@ -14,6 +14,8 @@ interface WorkerBridgeSnapshot {
   state: string;
   currentText: string;
   lastText: string;
+  sessionId?: string | null;
+  sessionMode?: string | null;
   pendingPermissions?: Array<{
     requestId: number;
     requestedAt: string;
@@ -70,6 +72,8 @@ function normalizeSnapshot(snapshot: WorkerBridgeSnapshot | bridge.AgentRecord) 
       state: typeof snapshot.state === "string" ? snapshot.state : "unknown",
       currentText: typeof snapshot.currentText === "string" ? snapshot.currentText : "",
       lastText: typeof snapshot.lastText === "string" ? snapshot.lastText : "",
+      sessionId: typeof snapshot.sessionId === "string" ? snapshot.sessionId : null,
+      sessionMode: typeof snapshot.sessionMode === "string" ? snapshot.sessionMode : null,
       pendingPermissions: snapshot.pendingPermissions ?? [],
       outputEntries: Array.isArray(snapshot.outputEntries) ? snapshot.outputEntries : [],
       stderrBuffer: Array.isArray(snapshot.stderrBuffer) ? snapshot.stderrBuffer : [],
@@ -327,6 +331,45 @@ async function insertExecutionEvent(
   });
 }
 
+function isMissingAgentError(error: unknown) {
+  const message = formatErrorMessage(error).toLowerCase();
+  return message.includes("404") || message.includes("not_found") || message.includes("agent not found");
+}
+
+async function reviveWorkerFromSavedSession(args: {
+  run: typeof runs.$inferSelect;
+  worker: typeof workers.$inferSelect;
+  now: number;
+}) {
+  if (!args.worker.bridgeSessionId) {
+    return null;
+  }
+
+  const resumedWorker = await bridge.spawnAgent({
+    type: args.worker.type,
+    cwd: args.worker.cwd,
+    name: args.worker.id,
+    ...(args.worker.bridgeSessionMode ? { mode: args.worker.bridgeSessionMode } : {}),
+    ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
+    ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
+    resumeSessionId: args.worker.bridgeSessionId,
+  });
+
+  await insertExecutionEvent(args.run.id, args.worker.id, "worker_session_resumed", {
+    summary: `Resumed ${args.worker.id} from saved session`,
+    sessionId: args.worker.bridgeSessionId,
+  });
+
+  await db.update(workers).set({
+    status: resumedWorker.state,
+    bridgeSessionId: resumedWorker.sessionId ?? args.worker.bridgeSessionId,
+    bridgeSessionMode: resumedWorker.sessionMode ?? args.worker.bridgeSessionMode,
+    updatedAt: new Date(args.now),
+  }).where(eq(workers.id, args.worker.id));
+
+  return normalizeSnapshot(resumedWorker).snapshot;
+}
+
 export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: string, delayMs?: number) => void) {
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
   if (!run || run.status === "done" || run.status === "failed") {
@@ -365,6 +408,29 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
         return;
       }
     } catch (error) {
+      if (run && isMissingAgentError(error)) {
+        try {
+          const revivedSnapshot = await reviveWorkerFromSavedSession({
+            run,
+            worker,
+            now,
+          });
+          if (revivedSnapshot) {
+            snapshot = revivedSnapshot;
+          } else {
+            throw error;
+          }
+        } catch (resumeError) {
+          await insertExecutionEvent(runId, worker.id, "worker_resume_failed", {
+            summary: `Failed to resume ${worker.id} from saved session`,
+            reason: formatErrorMessage(resumeError),
+            sessionId: worker.bridgeSessionId,
+          });
+          stopRunObserver(runId);
+          await persistRunFailure(runId, resumeError);
+          return;
+        }
+      } else {
       await insertExecutionEvent(runId, worker.id, "worker_poll_failed", {
         summary: `Observer polling failed for ${worker.id}`,
         reason: formatErrorMessage(error),
@@ -372,6 +438,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
       stopRunObserver(runId);
       await persistRunFailure(runId, error);
       return;
+      }
     }
 
     try {
@@ -402,6 +469,8 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
       const stuckEvent = filteredEvents.find((event) => event.type === "worker_stuck");
       await db.update(workers).set({
         status: stuckEvent ? "stuck" : snapshot.state,
+        bridgeSessionId: snapshot.sessionId ?? worker.bridgeSessionId,
+        bridgeSessionMode: snapshot.sessionMode ?? worker.bridgeSessionMode,
         updatedAt: activityEvent ? new Date(now) : worker.updatedAt,
       }).where(eq(workers.id, worker.id));
 

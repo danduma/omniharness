@@ -303,7 +303,7 @@ export class Supervisor {
           const preferredModel = run?.preferredWorkerModel ?? null;
           const preferredEffort = run?.preferredWorkerEffort ?? null;
 
-          await bridge.spawnAgent({
+          const spawnedWorker = await bridge.spawnAgent({
             type: workerType.type,
             cwd,
             name: workerId,
@@ -320,6 +320,8 @@ export class Supervisor {
             status: "starting",
             cwd,
             outputLog: "",
+            bridgeSessionId: spawnedWorker.sessionId ?? null,
+            bridgeSessionMode: spawnedWorker.sessionMode ?? mode ?? null,
             createdAt: new Date(),
             updatedAt: new Date(),
           });

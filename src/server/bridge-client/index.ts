@@ -8,11 +8,13 @@ export interface AgentRecord {
   type: string;
   cwd: string;
   state: string; // 'idle' | 'working' | 'stopped' | 'error'
+  sessionId?: string | null;
   requestedModel?: string | null;
   effectiveModel?: string | null;
   requestedEffort?: string | null;
   effectiveEffort?: string | null;
   sessionMode?: string | null;
+  lastError?: string | null;
   contextUsage?: {
     inputTokens?: number | null;
     outputTokens?: number | null;
@@ -163,11 +165,13 @@ export function normalizeAgentRecord(value: unknown): AgentRecord {
     type: asString(record.type),
     cwd: asString(record.cwd),
     state: asString(record.state, "unknown"),
+    sessionId: asNullableString(record.sessionId),
     requestedModel: asNullableString(record.requestedModel),
     effectiveModel: asNullableString(record.effectiveModel),
     requestedEffort: asNullableString(record.requestedEffort),
     effectiveEffort: asNullableString(record.effectiveEffort),
     sessionMode: asNullableString(record.sessionMode),
+    lastError: asNullableString(record.lastError),
     contextUsage,
     pendingPermissions: asPendingPermissions(record.pendingPermissions),
     outputEntries: asOutputEntries(record.outputEntries),
@@ -220,6 +224,7 @@ export async function spawnAgent(params: {
   env?: Record<string, string>;
   model?: string;
   effort?: string;
+  resumeSessionId?: string;
 }) {
   return requestBridge<AgentRecord>(
     "/agents",

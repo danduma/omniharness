@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS workers (
   status text NOT NULL,
   cwd text NOT NULL,
   output_log text NOT NULL DEFAULT '',
+  bridge_session_id text,
+  bridge_session_mode text,
   created_at integer NOT NULL,
   updated_at integer NOT NULL,
   FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action
@@ -190,6 +192,14 @@ const workerColumnNames = new Set(workerColumns.map((column) => column.name));
 
 if (!workerColumnNames.has("output_log")) {
   sqlite.exec("ALTER TABLE workers ADD COLUMN output_log text NOT NULL DEFAULT '';");
+}
+
+if (!workerColumnNames.has("bridge_session_id")) {
+  sqlite.exec("ALTER TABLE workers ADD COLUMN bridge_session_id text;");
+}
+
+if (!workerColumnNames.has("bridge_session_mode")) {
+  sqlite.exec("ALTER TABLE workers ADD COLUMN bridge_session_mode text;");
 }
 
 if (!messageColumnNames.has("kind")) {
