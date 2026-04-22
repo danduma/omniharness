@@ -35,6 +35,7 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('title="Toggle Conversation Workers"');
   expect(pageSource).toContain('<WorkersSidebar');
   expect(pageSource).toContain('agents={conversationAgents}');
+  expect(pageSource).toContain('queries: selectedRunWorkers.map((worker: { id: string; status: string }) => ({');
   expect(pageSource).toContain('preferredModel={selectedRun?.preferredWorkerModel ?? null}');
   expect(pageSource).toContain('preferredEffort={selectedRun?.preferredWorkerEffort ?? null}');
   expect(pageSource).toContain('onClose={() => setMobileWorkersOpen(false)}');
@@ -56,6 +57,15 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).not.toContain('border border-emerald-400/30 bg-emerald-400/10');
   expect(pageSource).not.toContain("Global Workers");
   expect(pageSource).not.toContain('<WorkersSidebar agents={state.agents ?? []} onClose={() => setRightSidebarOpen(false)} />');
+});
+
+test("worker panes stay mounted for recorded run workers after live agents exit", () => {
+  expect(pageSource).toContain('{selectedRunWorkers.length > 0 && (');
+  expect(pageSource).toContain('{selectedRunWorkers.map((worker: any) => {');
+  expect(pageSource).toContain("<Cpu className=\"h-4 w-4\" /> CLI Agents");
+  expect(pageSource).not.toContain("<Cpu className=\"h-4 w-4\" /> Live CLI Agents");
+  expect(pageSource).not.toContain('{conversationWorkers.length > 0 && (');
+  expect(pageSource).not.toContain('{conversationWorkers.map((worker: any) => {');
 });
 
 test("settings render as a centered app modal with supervisor llm controls", () => {
@@ -116,8 +126,9 @@ test("header exposes and syncs the active conversation route", () => {
   expect(pageSource).toContain('window.location.pathname');
   expect(pageSource).toContain('window.history.replaceState(window.history.state, "", nextPath)');
   expect(pageSource).toContain('`/session/${selectedRunId}`');
-  expect(pageSource).toContain('window.localStorage.getItem(LAST_RUN_ROUTE_STORAGE_KEY)');
-  expect(pageSource).toContain('window.localStorage.setItem(LAST_RUN_ROUTE_STORAGE_KEY, selectedRunId)');
+  expect(pageSource).not.toContain('window.localStorage.getItem(LAST_RUN_ROUTE_STORAGE_KEY)');
+  expect(pageSource).not.toContain('window.localStorage.setItem(LAST_RUN_ROUTE_STORAGE_KEY, selectedRunId)');
+  expect(pageSource).not.toContain('window.localStorage.removeItem(LAST_RUN_ROUTE_STORAGE_KEY)');
   expect(pageSource).toContain('aria-label="Conversation route"');
   expect(pageSource).toContain('{activeConversationRoute}');
 });

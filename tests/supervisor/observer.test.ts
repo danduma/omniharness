@@ -596,4 +596,73 @@ describe("deriveWorkerEvents", () => {
     expect(persistedWorker?.status).toBe("idle");
     expect(workerEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
   });
+
+  it("persists structured terminal snapshots for later inspection", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "",
+      currentText: "",
+      lastText: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockGetAgent.mockResolvedValue({
+      state: "working",
+      currentText: "Wrapping up verification",
+      lastText: "Ran the focused test suite",
+      pendingPermissions: [],
+      outputEntries: [
+        {
+          id: "tool-1",
+          type: "tool_call",
+          text: "pnpm test tests/api/agent-route.test.ts",
+          timestamp: new Date(0).toISOString(),
+          toolCallId: "tool-1",
+          toolKind: "execute",
+          status: "completed",
+        },
+      ],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    await pollRunWorkers(runId, vi.fn());
+
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(persistedWorker?.currentText).toBe("Wrapping up verification");
+    expect(persistedWorker?.lastText).toBe("Ran the focused test suite");
+    await expect(Promise.resolve(JSON.parse(persistedWorker?.outputEntriesJson ?? "[]"))).resolves.toEqual([
+      expect.objectContaining({
+        id: "tool-1",
+        type: "tool_call",
+        status: "completed",
+      }),
+    ]);
+  });
 });

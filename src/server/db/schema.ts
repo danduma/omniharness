@@ -32,7 +32,10 @@ export const workers = sqliteTable('workers', {
   type: text('type').notNull(),
   status: text('status').notNull(), // 'idle', 'working', 'stuck', 'cred-exhausted'
   cwd: text('cwd').notNull(),
-  outputLog: text('output_log').notNull(),
+  outputLog: text('output_log').notNull().default(''),
+  outputEntriesJson: text('output_entries_json').notNull().default(''),
+  currentText: text('current_text').notNull().default(''),
+  lastText: text('last_text').notNull().default(''),
   bridgeSessionId: text('bridge_session_id'),
   bridgeSessionMode: text('bridge_session_mode'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
