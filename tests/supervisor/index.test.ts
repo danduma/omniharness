@@ -308,4 +308,105 @@ describe("Supervisor worker spawn flow", () => {
 
     expect(mockApprovePermission).toHaveBeenCalledWith("worker-claude", "allow-once");
   });
+
+  it("records worker cancellation without deleting the worker before writing events", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: "worker-cancel",
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/tmp/project",
+      outputLog: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-cancel",
+      name: "worker_cancel",
+      args: {
+        workerId: "worker-cancel",
+        reason: "switch strategy",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 1_000 });
+
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, "worker-cancel")).get();
+    const cancelEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+
+    expect(persistedWorker?.status).toBe("cancelled");
+    expect(cancelEvent?.workerId).toBe("worker-cancel");
+    expect(cancelEvent?.eventType).toBe("worker_cancelled");
+  });
+
+  it("treats not_found bridge cancellations as already cancelled instead of failing the run", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: "worker-missing",
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/tmp/project",
+      outputLog: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockCancelAgent.mockRejectedValueOnce(new Error("Cancel failed: not_found"));
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-cancel-missing",
+      name: "worker_cancel",
+      args: {
+        workerId: "worker-missing",
+        reason: "worker already gone",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 1_000 });
+
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, "worker-missing")).get();
+    expect(persistedWorker?.status).toBe("cancelled");
+  });
 });

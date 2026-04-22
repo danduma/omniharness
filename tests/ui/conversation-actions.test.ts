@@ -38,8 +38,30 @@ test("saving an edited message closes the inline editor before the rerun request
 
 test("failed runs render a single persisted error in the conversation view", () => {
   expect(pageSource).not.toContain("Execution failed");
-  expect(pageSource).toContain('msg.kind === "error"');
+  expect(pageSource).toContain("function extractWorkerFailureDetail(messages: MessageRecord[])");
+  expect(pageSource).toContain("const visibleMessages = useMemo(() => {");
+  expect(pageSource).toContain('message.role === "system"');
+  expect(pageSource).toContain('message.kind === "error"');
+  expect(pageSource).toContain('visibleMessages.map((msg: MessageRecord) => (');
+  expect(pageSource).toContain('action: workerFailureDetail ? "Worker configuration issue" : staleFailure ? "Ready to retry" : "Run failed"');
+  expect(pageSource).toContain('message: workerFailureDetail || (staleFailure');
+  expect(pageSource).toContain("Retry latest after updating the worker model or account configuration.");
+  expect(pageSource).toContain("Retry latest to rerun with the current worker availability.");
+  expect(pageSource).not.toContain("This failure was recorded earlier and may be stale.");
+  expect(pageSource).not.toContain('<div className="font-semibold">Run failed</div>');
   expect(pageSource).toContain("Run failed");
+});
+
+test("conversation error notices render below the thread content", () => {
+  const appErrorsIndex = pageSource.indexOf("{appErrors.length > 0 ? (");
+  const failureNoticeIndex = pageSource.indexOf("{conversationFailure ? (");
+  const messagesIndex = pageSource.indexOf("{visibleMessages.length > 0 ? (");
+  const executionIndex = pageSource.indexOf("{showConversationExecution ? conversationThinking : null}");
+
+  expect(messagesIndex).toBeGreaterThanOrEqual(0);
+  expect(executionIndex).toBeGreaterThan(messagesIndex);
+  expect(appErrorsIndex).toBeGreaterThan(executionIndex);
+  expect(failureNoticeIndex).toBeGreaterThan(appErrorsIndex);
 });
 
 test("frontend transport and mutation errors render as explicit notices", () => {
