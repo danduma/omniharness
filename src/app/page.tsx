@@ -337,6 +337,10 @@ function summarizeExecutionEvent(event: ExecutionEventRecord) {
     return `Auto-approved permission for ${workerLabel}`;
   }
 
+  if (event.eventType === "worker_session_resumed") {
+    return `Resumed ${workerLabel} from saved session`;
+  }
+
   if (event.eventType === "worker_permission_denied") {
     return `Denied permission for ${workerLabel}`;
   }

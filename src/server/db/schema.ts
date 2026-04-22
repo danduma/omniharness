@@ -33,6 +33,8 @@ export const workers = sqliteTable('workers', {
   status: text('status').notNull(), // 'idle', 'working', 'stuck', 'cred-exhausted'
   cwd: text('cwd').notNull(),
   outputLog: text('output_log').notNull(),
+  bridgeSessionId: text('bridge_session_id'),
+  bridgeSessionMode: text('bridge_session_mode'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });

@@ -11,15 +11,18 @@ const { mockGetAgent } = vi.hoisted(() => ({
 vi.mock("@/server/bridge-client", () => ({
   getAgent: mockGetAgent,
   approvePermission: vi.fn(),
+  spawnAgent: vi.fn(),
 }));
 
 import { deriveWorkerEvents, pollRunWorkers } from "@/server/supervisor/observer";
 import { approvePermission as mockApprovePermission } from "@/server/bridge-client";
+import { spawnAgent as mockSpawnAgent } from "@/server/bridge-client";
 
 describe("deriveWorkerEvents", () => {
   beforeEach(async () => {
     mockGetAgent.mockReset();
     vi.mocked(mockApprovePermission).mockReset();
+    vi.mocked(mockSpawnAgent).mockReset();
     await db.delete(executionEvents);
     await db.delete(messages);
     await db.delete(workers);
@@ -521,5 +524,76 @@ describe("deriveWorkerEvents", () => {
 
     const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
     expect(workerEvents.some((event) => event.eventType === "worker_permission_auto_approved")).toBe(true);
+  });
+
+  it("respawns a missing worker from its saved session instead of failing the run", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      preferredWorkerModel: "openai/gpt-5.4",
+      preferredWorkerEffort: "high",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      bridgeSessionId: "session-123",
+      bridgeSessionMode: "full-access",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    mockGetAgent.mockRejectedValue(new Error("Get agent failed: 404 not_found"));
+    vi.mocked(mockSpawnAgent).mockResolvedValue({
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "session-123",
+      sessionMode: "full-access",
+      currentText: "",
+      lastText: "",
+      pendingPermissions: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    await pollRunWorkers(runId, wakeSupervisor);
+
+    expect(mockSpawnAgent).toHaveBeenCalledWith({
+      type: "claude",
+      cwd: process.cwd(),
+      name: workerId,
+      mode: "full-access",
+      model: "openai/gpt-5.4",
+      effort: "high",
+      resumeSessionId: "session-123",
+    });
+
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+
+    expect(persistedWorker?.status).toBe("idle");
+    expect(workerEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
   });
 });

@@ -97,6 +97,27 @@ describe("bridge client", () => {
     expect(init?.body).toContain('"effort":"high"');
   });
 
+  it("passes resumeSessionId through when respawning a worker from saved history", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ name: "worker-1", state: "idle", sessionId: "session-123" }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { spawnAgent } = await import("@/server/bridge-client");
+    await spawnAgent({
+      type: "claude",
+      cwd: "/tmp",
+      name: "worker-1",
+      resumeSessionId: "session-123",
+    });
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    expect(init?.body).toContain('"resumeSessionId":"session-123"');
+  });
+
   it("normalizes sparse agent snapshots so missing text buffers do not crash callers", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ name: "worker-1", state: "working" }), {
