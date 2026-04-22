@@ -3,6 +3,7 @@ import { retrySupervisorRequest } from "@/server/supervisor/retry";
 export const BRIDGE_URL = process.env.OMNIHARNESS_BRIDGE_URL?.trim() || "http://127.0.0.1:7800";
 
 export interface AgentRecord {
+  [key: string]: unknown;
   name: string;
   type: string;
   cwd: string;
@@ -30,9 +31,10 @@ export interface AgentRecord {
     type: "message" | "thought" | "tool_call" | "tool_call_update" | "permission";
     text: string;
     timestamp: string;
-    toolCallId?: string;
-    toolKind?: string;
-    status?: string;
+    toolCallId?: string | null;
+    toolKind?: string | null;
+    status?: string | null;
+    raw?: unknown;
   }>;
   renderedOutput?: string | null;
   lastText: string;
@@ -143,6 +145,7 @@ function asOutputEntries(value: unknown): NonNullable<AgentRecord["outputEntries
       toolCallId: asNullableString(item.toolCallId),
       toolKind: asNullableString(item.toolKind),
       status: asNullableString(item.status),
+      raw: item.raw,
     }))
     .filter((item) => item.id && item.type && item.text);
 }
@@ -155,6 +158,7 @@ export function normalizeAgentRecord(value: unknown): AgentRecord {
       : null;
 
   return {
+    ...record,
     name: asString(record.name),
     type: asString(record.type),
     cwd: asString(record.cwd),

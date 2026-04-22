@@ -126,6 +126,9 @@ test("send button swaps to a spinner while a command submission is pending", () 
 test("failed runs surface recovery UI in the header and conversation feed", () => {
   expect(pageSource).toContain('selectedRun?.status === "failed"');
   expect(pageSource).toContain("Retry latest");
+  expect(pageSource).toContain("Unstick latest");
+  expect(pageSource).toContain('label: "Stuck"');
+  expect(pageSource).toContain('label: "Needs recovery"');
   expect(pageSource).toContain('msg.kind === "error"');
   expect(pageSource).toContain("Run failed");
 });

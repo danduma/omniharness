@@ -333,6 +333,10 @@ function summarizeExecutionEvent(event: ExecutionEventRecord) {
     return `Approved permission for ${workerLabel}`;
   }
 
+  if (event.eventType === "worker_permission_auto_approved") {
+    return `Auto-approved permission for ${workerLabel}`;
+  }
+
   if (event.eventType === "worker_permission_denied") {
     return `Denied permission for ${workerLabel}`;
   }
@@ -347,6 +351,10 @@ function summarizeExecutionEvent(event: ExecutionEventRecord) {
 
   if (event.eventType === "worker_idle") {
     return `${workerLabel} is waiting`;
+  }
+
+  if (event.eventType === "worker_stuck") {
+    return `${workerLabel} appears stuck`;
   }
 
   if (event.eventType === "worker_error") {
@@ -1602,6 +1610,13 @@ export default function Home() {
       w.runId === selectedRunId && state.agents.some((a: AgentSnapshot) => a.name === w.id)
     ));
   }, [selectedRunId, state.workers, state.agents]);
+  const selectedRunWorkers = useMemo(() => {
+    if (!selectedRunId || !state.workers) {
+      return [] as Array<{ id: string; runId: string; type: string; status: string }>;
+    }
+
+    return (state.workers || []).filter((worker: { runId: string }) => worker.runId === selectedRunId);
+  }, [selectedRunId, state.workers]);
   const conversationAgentQueries = useQueries({
     queries: conversationWorkers.map((worker: { id: string }) => ({
       queryKey: ["conversation-agent", worker.id],
@@ -1629,6 +1644,11 @@ export default function Home() {
     const workerIds = new Set(conversationWorkers.map((worker: { id: string }) => worker.id));
     return (state.agents as AgentSnapshot[]).filter((agent) => workerIds.has(agent.name));
   }, [conversationAgentQueries, conversationWorkers, state.agents]);
+  const latestUserCheckpoint = selectedRunId
+    ? [...((filteredMessages || []) as MessageRecord[])]
+        .filter((message) => message.role === "user")
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null
+    : null;
   const liveThoughts = useMemo(() => {
     const seen = new Set<string>();
 
@@ -1670,6 +1690,28 @@ export default function Home() {
   const pendingPermissionAgent = conversationAgents.find((agent) => (agent.pendingPermissions?.length ?? 0) > 0) ?? null;
   const erroredAgent = conversationAgents.find((agent) => agent.state === "error" || Boolean(agent.lastError) || Boolean(agent.stopReason)) ?? null;
   const latestWaitEvent = selectedRunExecutionEvents.find((event) => event.eventType === "supervisor_wait") ?? null;
+  const latestStuckEvent = selectedRunExecutionEvents.find((event) => event.eventType === "worker_stuck") ?? null;
+  const hasStuckWorker = selectedRunWorkers.some((worker) => worker.status === "stuck")
+    || conversationAgents.some((agent) => agent.state === "stuck")
+    || Boolean(latestStuckEvent);
+  const hasActiveWorker = conversationAgents.some((agent) => (
+    agent.state === "working"
+    || agent.state === "starting"
+    || Boolean(agent.currentText?.trim())
+  ));
+  const latestExecutionAgeMs = latestExecutionEvent
+    ? Date.now() - new Date(latestExecutionEvent.createdAt).getTime()
+    : Number.POSITIVE_INFINITY;
+  const showRecoverableRunningState = Boolean(
+    selectedRun?.status === "running"
+      && latestUserCheckpoint
+      && !pendingPermissionAgent
+      && !hasActiveWorker
+      && (
+        hasStuckWorker
+        || (selectedRunWorkers.length === 0 && latestExecutionAgeMs >= 30_000)
+      )
+  );
   const liveExecutionStatus = useMemo(() => {
     if (selectedRun?.status === "failed") {
       return {
@@ -1700,6 +1742,24 @@ export default function Home() {
       return {
         label: "Awaiting input",
         detail: "The supervisor asked for clarification before continuing.",
+        tone: "warning" as const,
+      };
+    }
+
+    if (hasStuckWorker) {
+      return {
+        label: "Stuck",
+        detail: latestStuckEvent
+          ? summarizeExecutionEvent(latestStuckEvent)
+          : "The worker stopped making progress. Retry the latest message to restart the turn.",
+        tone: "warning" as const,
+      };
+    }
+
+    if (showRecoverableRunningState) {
+      return {
+        label: "Needs recovery",
+        detail: "This conversation is still marked running, but nothing active is attached to it. Retry the latest message to unstick it.",
         tone: "warning" as const,
       };
     }
@@ -1735,7 +1795,7 @@ export default function Home() {
       detail: latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The supervisor is still checking the run.",
       tone: "active" as const,
     };
-  }, [conversationAgents, erroredAgent, latestExecutionEvent, latestWaitEvent, liveThoughts, pendingPermissionAgent, selectedRun]);
+  }, [conversationAgents, erroredAgent, hasStuckWorker, latestExecutionEvent, latestStuckEvent, latestWaitEvent, liveThoughts, pendingPermissionAgent, selectedRun, showRecoverableRunningState]);
   const executionDetailLines = useMemo(() => {
     const lines: Array<{ text: string; createdAt?: string }> = [];
 
@@ -1746,7 +1806,7 @@ export default function Home() {
       lines.push({ text, createdAt });
     };
 
-    if (conversationAgents.length === 0 && selectedRun?.status === "running") {
+    if (conversationAgents.length === 0 && selectedRun?.status === "running" && !showRecoverableRunningState) {
       pushLine("Connecting to ACP bridge");
     }
 
@@ -1769,7 +1829,7 @@ export default function Home() {
     }
 
     return lines.slice(0, 6);
-  }, [agentQueryErrors, conversationAgents, recentExecutionEvents, selectedRun]);
+  }, [agentQueryErrors, conversationAgents, recentExecutionEvents, selectedRun, showRecoverableRunningState]);
   const isConversationThinking = selectedRun?.status === "running" || conversationAgents.some((agent) => agent.state === "working");
   const showConversationExecution = Boolean(
     selectedRun && (isConversationThinking || selectedRun.status === "failed" || selectedRunExecutionEvents.length > 0)
@@ -1863,11 +1923,6 @@ export default function Home() {
     ? plans.find((p) => p.id === runs.find((r) => r.id === selectedRunId)?.planId) ?? null
     : null;
   const selectedClarifications = selectedRunId ? clarifications.filter((item) => item.runId === selectedRunId) : [];
-  const latestUserCheckpoint = selectedRunId
-    ? [...((filteredMessages || []) as MessageRecord[])]
-        .filter((message) => message.role === "user")
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null
-    : null;
   const appErrors = useMemo(() => {
     const errors: AppErrorDescriptor[] = [];
 
@@ -2095,7 +2150,14 @@ export default function Home() {
             </div>
           </div>
         )}
-        <div className="rounded-[1.5rem] border border-transparent bg-muted/80 px-4 pb-0.5 pt-3 shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] transition-colors focus-within:bg-muted/90 dark:bg-[#2f2f2f] dark:focus-within:bg-[#343434] sm:px-5 sm:pb-1 sm:pt-4">
+        <div
+          className={cn(
+            "rounded-[1.5rem] px-4 pb-0.5 pt-3 transition-all sm:px-5 sm:pb-1 sm:pt-4",
+            themeMode === "night"
+              ? "border border-transparent bg-muted/80 shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] focus-within:bg-muted/90 dark:bg-[#2f2f2f] dark:focus-within:bg-[#343434]"
+              : "border border-[#d8d8d8] bg-[#fbfbfa] shadow-[0_24px_60px_-34px_rgba(24,24,27,0.22),0_1px_0_rgba(255,255,255,0.92)_inset] focus-within:bg-white",
+          )}
+        >
           <textarea
             ref={commandInputRef}
             value={command}
@@ -2144,7 +2206,12 @@ export default function Home() {
             placeholder="Ask Omni anything. @ to refer to files"
             disabled={runCommand.isPending}
             rows={1}
-            className="min-h-[56px] w-full resize-none bg-transparent text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/80"
+            className={cn(
+              "min-h-[56px] w-full resize-none bg-transparent text-[15px] leading-6 outline-none",
+              themeMode === "night"
+                ? "text-foreground placeholder:text-muted-foreground/80"
+                : "text-[#454545] placeholder:text-[#c4c4c2]",
+            )}
           />
 
           {attachments.length > 0 ? (
@@ -2152,13 +2219,23 @@ export default function Home() {
               {attachments.map((attachment) => (
                 <div
                   key={attachment.path}
-                  className="inline-flex max-w-full items-center gap-2 rounded-full bg-background/65 px-3 py-1.5 text-xs text-foreground shadow-sm dark:bg-black/20"
+                  className={cn(
+                    "inline-flex max-w-full items-center gap-2 rounded-full px-3 py-1.5 text-xs shadow-sm",
+                    themeMode === "night"
+                      ? "bg-background/65 text-foreground dark:bg-black/20"
+                      : "border border-[#e2e2df] bg-white/95 text-[#4d4d4d]",
+                  )}
                 >
                   <span className="truncate">{attachment.relativePath}</span>
                   <button
                     type="button"
                     onClick={() => handleRemoveAttachment(attachment.path)}
-                    className="inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
+                    className={cn(
+                      "inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors",
+                      themeMode === "night"
+                        ? "text-muted-foreground hover:bg-background/60 hover:text-foreground"
+                        : "text-[#8f8f8f] hover:bg-black/5 hover:text-[#5c5c5c]",
+                    )}
                     aria-label={`Remove ${attachment.name}`}
                   >
                     <X className="h-3 w-3" />
@@ -2175,7 +2252,12 @@ export default function Home() {
                 variant="ghost"
                 size="icon"
                 onClick={() => setShowAttachmentPicker(true)}
-                className="h-10 w-10 rounded-full text-muted-foreground hover:bg-background/45 hover:text-foreground"
+                className={cn(
+                  "h-10 w-10 rounded-full",
+                  themeMode === "night"
+                    ? "text-muted-foreground hover:bg-background/45 hover:text-foreground"
+                    : "text-[#959595] hover:bg-black/[0.04] hover:text-[#666666]",
+                )}
                 aria-label="Attach files"
               >
                 <Plus className="h-5 w-5" />
@@ -2187,46 +2269,75 @@ export default function Home() {
                 <select
                   value={selectedCliAgent}
                   onChange={(event) => setSelectedCliAgent(event.target.value as ComposerWorkerOption)}
-                  className="h-9 appearance-none border-0 bg-transparent pl-3 pr-8 text-sm text-muted-foreground outline-none transition-colors hover:text-foreground"
+                  className={cn(
+                    "h-9 appearance-none border-0 bg-transparent pl-3 pr-8 text-sm outline-none transition-colors",
+                    themeMode === "night"
+                      ? "text-muted-foreground hover:text-foreground"
+                      : "text-[#8f8f8f] hover:text-[#5e5e5e]",
+                  )}
                 >
                   {composerWorkerOptions.map((agent) => (
                     <option key={agent.value} value={agent.value}>{agent.label}</option>
                   ))}
                 </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <ChevronDown className={cn(
+                  "pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2",
+                  themeMode === "night" ? "text-muted-foreground" : "text-[#9a9a9a]",
+                )} />
               </div>
 
               <div className="relative">
                 <select
                   value={selectedModel}
                   onChange={(event) => setSelectedModel(event.target.value)}
-                  className="h-9 appearance-none border-0 bg-transparent pl-3 pr-8 text-sm text-muted-foreground outline-none transition-colors hover:text-foreground"
+                  className={cn(
+                    "h-9 appearance-none border-0 bg-transparent pl-3 pr-8 text-sm outline-none transition-colors",
+                    themeMode === "night"
+                      ? "text-muted-foreground hover:text-foreground"
+                      : "text-[#8f8f8f] hover:text-[#5e5e5e]",
+                  )}
                 >
                   {MODEL_OPTIONS.map((model) => (
                     <option key={model} value={model}>{model}</option>
                   ))}
                 </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <ChevronDown className={cn(
+                  "pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2",
+                  themeMode === "night" ? "text-muted-foreground" : "text-[#9a9a9a]",
+                )} />
               </div>
 
               <div className="relative">
                 <select
                   value={selectedEffort}
                   onChange={(event) => setSelectedEffort(event.target.value)}
-                  className="h-9 appearance-none border-0 bg-transparent pl-3 pr-8 text-sm text-muted-foreground outline-none transition-colors hover:text-foreground"
+                  className={cn(
+                    "h-9 appearance-none border-0 bg-transparent pl-3 pr-8 text-sm outline-none transition-colors",
+                    themeMode === "night"
+                      ? "text-muted-foreground hover:text-foreground"
+                      : "text-[#8f8f8f] hover:text-[#5e5e5e]",
+                  )}
                 >
                   {EFFORT_OPTIONS.map((effort) => (
                     <option key={effort} value={effort}>{effort}</option>
                   ))}
                 </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <ChevronDown className={cn(
+                  "pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2",
+                  themeMode === "night" ? "text-muted-foreground" : "text-[#9a9a9a]",
+                )} />
               </div>
 
               <Button
                 type="submit"
                 size="icon"
                 disabled={runCommand.isPending || !command.trim()}
-                className="h-10 w-10 rounded-full bg-foreground text-background transition-all hover:bg-foreground/90 disabled:bg-foreground/50"
+                className={cn(
+                  "h-10 w-10 rounded-full transition-all",
+                  themeMode === "night"
+                    ? "bg-foreground text-background hover:bg-foreground/90 disabled:bg-foreground/50"
+                    : "bg-[#9d9d9d] text-white hover:bg-[#8b8b8b] disabled:bg-[#c9c9c9]",
+                )}
               >
                 {runCommand.isPending ? (
                   <LoaderCircle className="h-5 w-5 animate-spin" />
@@ -2370,14 +2481,14 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-2">
-            {selectedRun?.status === "failed" && latestUserCheckpoint ? (
+            {(selectedRun?.status === "failed" || showRecoverableRunningState || hasStuckWorker) && latestUserCheckpoint ? (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => handleRetryMessage(latestUserCheckpoint.id)}
                 disabled={recoverRun.isPending}
               >
-                <RotateCcw className="mr-2 h-4 w-4" /> Retry latest
+                <RotateCcw className="mr-2 h-4 w-4" /> {selectedRun?.status === "failed" ? "Retry latest" : "Unstick latest"}
               </Button>
             ) : null}
             <ThemeModeToggle themeMode={themeMode} setThemeMode={setThemeMode} />
@@ -2544,33 +2655,42 @@ export default function Home() {
                       const details = [
                         activeModel ? { label: "Model", value: activeModel } : null,
                         activeEffort ? { label: "Effort", value: activeEffort } : null,
-                        typeof contextUsage === "number" ? { label: "Context usage", value: `${Math.round(contextUsage)}% full` } : null,
-                        agent?.lastError ? { label: "Last error", value: agent.lastError } : null,
+                        typeof contextUsage === "number" ? { label: "Context", value: `${Math.round(contextUsage)}% full` } : null,
                       ].filter((detail): detail is { label: string; value: string } => Boolean(detail));
 
                       return (
-                        <div key={worker.id} className="flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-sm">
-                          <div className="flex items-center justify-between border-b border-border bg-muted/20 p-2.5">
-                            <span className="flex items-center gap-2 font-mono text-xs font-semibold text-foreground">
+                        <div key={worker.id} className="flex flex-col overflow-hidden rounded-[1.25rem] border border-white/10 bg-[#0d0f12] text-zinc-100 shadow-[0_24px_80px_rgba(0,0,0,0.22)]">
+                          <div className="flex items-center justify-between border-b border-white/10 bg-[#13161b] p-3">
+                            <span className="flex items-center gap-2 font-mono text-xs font-semibold text-zinc-100">
                               <TerminalIcon className="h-3 w-3" /> {worker.id}
                             </span>
                             <div className="flex items-center gap-2">
                               {pendingPermissions.length > 0 ? <PermissionWarning pendingPermissions={pendingPermissions} /> : null}
-                              {agent?.state === "working" && <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />}
-                              {runtimeLabel ? <span className="text-[10px] font-bold uppercase text-muted-foreground">{runtimeLabel}</span> : null}
+                              {agent?.state === "working" && <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />}
+                              {runtimeLabel ? (
+                                <span className="rounded-md border border-amber-300/20 bg-amber-300/6 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-100/90">
+                                  {runtimeLabel}
+                                </span>
+                              ) : null}
                             </div>
                           </div>
                           {details.length > 0 ? (
-                            <div className="grid gap-3 border-b border-border/60 bg-muted/10 p-3 sm:grid-cols-2">
+                            <div className="grid gap-3 border-b border-white/10 bg-[#101318] p-3 sm:grid-cols-3">
                               {details.map((detail) => (
                                 <div key={detail.label} className="space-y-1 text-xs">
-                                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{detail.label}</div>
-                                  <div className="break-all font-mono text-foreground">{detail.value}</div>
+                                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">{detail.label}</div>
+                                  <div className="break-all font-mono text-zinc-200">{detail.value}</div>
                                 </div>
                               ))}
                             </div>
                           ) : null}
-                          <div className="relative h-64 w-full bg-[#1e1e1e] sm:h-72">
+                          {agent?.lastError ? (
+                            <div className="border-b border-white/10 bg-[#101318] px-3 py-2">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">Last error</div>
+                              <div className="mt-1 break-all font-mono text-xs text-zinc-300">{agent.lastError}</div>
+                            </div>
+                          ) : null}
+                          <div className="relative h-72 w-full bg-[#050607] sm:h-[26rem]">
                             <Terminal agentName={worker.id} />
                           </div>
                         </div>

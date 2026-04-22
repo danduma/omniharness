@@ -7,12 +7,11 @@ const terminalSource = fs.readFileSync(
   "utf8"
 );
 
-test("terminal refits when its container changes size, not just on window resize", () => {
-  expect(terminalSource).toContain("const resizeObserver = new ResizeObserver");
-  expect(terminalSource).toContain("resizeObserver.observe(terminalRef.current)");
-  expect(terminalSource).toContain("window.addEventListener(\"resize\", handleResize)");
-  expect(terminalSource).toContain("fitAddon.fit()");
-  expect(terminalSource).toContain("resizeObserver.disconnect()");
+test("terminal renders a structured activity feed instead of replaying xterm text", () => {
+  expect(terminalSource).toContain("buildAgentOutputActivity");
+  expect(terminalSource).toContain('activity.kind === "thought"');
+  expect(terminalSource).toContain('activity.kind === "tool"');
+  expect(terminalSource).not.toContain("@xterm/xterm");
 });
 
 test("terminal surfaces fetch failures in the frontend instead of silently dropping them", () => {

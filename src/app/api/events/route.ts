@@ -4,10 +4,13 @@ import { messages, plans, runs, accounts, workers, clarifications, validationRun
 import { BRIDGE_URL } from "@/server/bridge-client";
 import { buildAppError } from "@/server/api-errors";
 import { desc } from "drizzle-orm";
+import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
+  await ensureSupervisorRuntimeStarted();
+
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
