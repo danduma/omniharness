@@ -37,6 +37,13 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain("preferredWorkerEffort: selectedEffort.toLowerCase()");
   expect(pageSource).toContain("allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent]");
   expect(pageSource).toContain("composerWorkerOptions.map((agent) => (");
+  expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)');
+  expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)');
+  expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_EFFORT_STORAGE_KEY)');
+  expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_WORKER_STORAGE_KEY, selectedCliAgent)');
+  expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_MODEL_STORAGE_KEY, selectedModel)');
+  expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_EFFORT_STORAGE_KEY, selectedEffort)');
+  expect(pageSource).not.toContain('if (selectedCliAgent !== "auto") {\n      setSelectedCliAgent("auto");');
 });
 
 test("composer exposes attachment entry and renders attached file chips", () => {

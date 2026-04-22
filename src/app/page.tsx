@@ -129,6 +129,11 @@ const COMPOSER_WORKER_OPTIONS: Array<{ value: ComposerWorkerOption; label: strin
 const DEFAULT_ALLOWED_WORKER_TYPES = JSON.stringify(WORKER_OPTIONS.map((option) => option.value));
 const MODEL_OPTIONS = ["GPT-5.4", "GPT-5.4 Mini", "Claude Sonnet 4"];
 const EFFORT_OPTIONS = ["Low", "Medium", "High"];
+const COMPOSER_WORKER_STORAGE_KEY = "omni-composer-worker";
+const COMPOSER_MODEL_STORAGE_KEY = "omni-composer-model";
+const COMPOSER_EFFORT_STORAGE_KEY = "omni-composer-effort";
+const LAST_RUN_ROUTE_STORAGE_KEY = "omni-last-run-route";
+const RUN_PATH_PATTERN = /^\/session\/([0-9a-fA-F-]{36})\/?$/;
 
 type SidebarRun = { id: string; title: string; path: string; status: string; createdAt: string };
 type SidebarGroup = { path: string; name: string; runs: SidebarRun[] };
@@ -430,6 +435,70 @@ function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel: strin
   }
 
   return selectedModel;
+}
+
+function resolveComposerModelLabel(preferredModel: string | null | undefined) {
+  if (!preferredModel?.trim()) {
+    return null;
+  }
+
+  const normalized = preferredModel.trim().toLowerCase();
+  if (normalized === "gpt-5.4" || normalized === "openai/gpt-5.4") {
+    return "GPT-5.4";
+  }
+  if (normalized === "gpt-5.4-mini" || normalized === "openai/gpt-5.4-mini") {
+    return "GPT-5.4 Mini";
+  }
+  if (normalized === "claude-sonnet-4" || normalized === "anthropic/claude-sonnet-4") {
+    return "Claude Sonnet 4";
+  }
+
+  return null;
+}
+
+function resolveComposerEffortLabel(preferredEffort: string | null | undefined) {
+  if (!preferredEffort?.trim()) {
+    return null;
+  }
+
+  const normalized = preferredEffort.trim().toLowerCase();
+  if (normalized === "low") {
+    return "Low";
+  }
+  if (normalized === "medium") {
+    return "Medium";
+  }
+  if (normalized === "high") {
+    return "High";
+  }
+
+  return null;
+}
+
+function buildConversationPath(selectedRunId: string | null, draftProjectPath: string | null) {
+  if (selectedRunId) {
+    return `/session/${selectedRunId}`;
+  }
+
+  const params = new URLSearchParams();
+  if (draftProjectPath) {
+    params.set("project", draftProjectPath);
+  }
+
+  const query = params.toString();
+  return query ? `/?${query}` : "/";
+}
+
+function buildConversationRoute(selectedRunId: string | null, draftProjectPath: string | null) {
+  if (selectedRunId) {
+    return `/session/${selectedRunId}`;
+  }
+
+  if (draftProjectPath) {
+    return `/?project=${encodeURIComponent(draftProjectPath)}`;
+  }
+
+  return "/";
 }
 
 function LlmSettingsForm({
@@ -1052,6 +1121,7 @@ export default function Home() {
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingMessageValue, setEditingMessageValue] = useState("");
   const [executionDetailsOpen, setExecutionDetailsOpen] = useState(false);
+  const [routeReady, setRouteReady] = useState(false);
   const [selectedCliAgent, setSelectedCliAgent] = useState<ComposerWorkerOption>("auto");
   const [selectedModel, setSelectedModel] = useState("GPT-5.4");
   const [selectedEffort, setSelectedEffort] = useState("High");
@@ -1151,6 +1221,62 @@ export default function Home() {
       eventSource.close();
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const pathnameMatch = window.location.pathname.match(RUN_PATH_PATTERN);
+    const routeRunId = pathnameMatch?.[1]?.trim() || "";
+    const params = new URLSearchParams(window.location.search);
+    const routeProjectPath = params.get("project")?.trim() || "";
+    const lastRunRoute = window.localStorage.getItem(LAST_RUN_ROUTE_STORAGE_KEY)?.trim() || "";
+    const savedWorker = window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)?.trim() || "";
+    const savedModel = window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)?.trim() || "";
+    const savedEffort = window.localStorage.getItem(COMPOSER_EFFORT_STORAGE_KEY)?.trim() || "";
+
+    if (routeRunId) {
+      setSelectedRunId(routeRunId);
+      setDraftProjectPath(null);
+    } else if (routeProjectPath) {
+      setDraftProjectPath(routeProjectPath);
+      setSelectedRunId(null);
+    } else if (lastRunRoute) {
+      setSelectedRunId(lastRunRoute);
+      setDraftProjectPath(null);
+    }
+
+    if (savedWorker === "auto" || WORKER_OPTIONS.some((option) => option.value === savedWorker)) {
+      setSelectedCliAgent(savedWorker as ComposerWorkerOption);
+    }
+    if (MODEL_OPTIONS.includes(savedModel)) {
+      setSelectedModel(savedModel);
+    }
+    if (EFFORT_OPTIONS.includes(savedEffort)) {
+      setSelectedEffort(savedEffort);
+    }
+
+    setRouteReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !routeReady) {
+      return;
+    }
+
+    const nextPath = buildConversationPath(selectedRunId, draftProjectPath);
+    const currentPath = `${window.location.pathname}${window.location.search}`;
+    if (currentPath !== nextPath) {
+      window.history.replaceState(window.history.state, "", nextPath);
+    }
+
+    if (selectedRunId) {
+      window.localStorage.setItem(LAST_RUN_ROUTE_STORAGE_KEY, selectedRunId);
+    } else {
+      window.localStorage.removeItem(LAST_RUN_ROUTE_STORAGE_KEY);
+    }
+  }, [draftProjectPath, routeReady, selectedRunId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1294,6 +1420,30 @@ export default function Home() {
     document.documentElement.classList.toggle("dark", themeMode === "night");
     document.documentElement.style.colorScheme = themeMode === "night" ? "dark" : "light";
   }, [themeMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(COMPOSER_WORKER_STORAGE_KEY, selectedCliAgent);
+  }, [selectedCliAgent]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(COMPOSER_MODEL_STORAGE_KEY, selectedModel);
+  }, [selectedModel]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(COMPOSER_EFFORT_STORAGE_KEY, selectedEffort);
+  }, [selectedEffort]);
 
   const saveSettings = useMutation({
     mutationFn: async () => {
@@ -1544,6 +1694,9 @@ export default function Home() {
   const plans = (state.plans || []) as PlanRecord[];
   const clarifications = (state.clarifications || []) as ClarificationRecord[];
   const selectedRun = selectedRunId ? runs.find((run) => run.id === selectedRunId) ?? null : null;
+  const activeConversationRoute = useMemo(() => (
+    buildConversationRoute(selectedRunId, draftProjectPath)
+  ), [draftProjectPath, selectedRunId]);
   useEffect(() => {
     setExecutionDetailsOpen(false);
   }, [selectedRunId]);
@@ -1995,16 +2148,24 @@ export default function Home() {
       const nextSelected: ComposerWorkerOption = preferredFromRun && activeAllowedWorkerTypes.includes(preferredFromRun)
         ? preferredFromRun
         : "auto";
-      if (nextSelected && nextSelected !== selectedCliAgent) {
+      if (nextSelected !== selectedCliAgent) {
         setSelectedCliAgent(nextSelected);
+      }
+      const nextModel = resolveComposerModelLabel(selectedRun.preferredWorkerModel);
+      if (nextModel && nextModel !== selectedModel) {
+        setSelectedModel(nextModel);
+      }
+      const nextEffort = resolveComposerEffortLabel(selectedRun.preferredWorkerEffort);
+      if (nextEffort && nextEffort !== selectedEffort) {
+        setSelectedEffort(nextEffort);
       }
       return;
     }
 
-    if (selectedCliAgent !== "auto") {
+    if (selectedCliAgent !== "auto" && !activeAllowedWorkerTypes.includes(selectedCliAgent)) {
       setSelectedCliAgent("auto");
     }
-  }, [activeAllowedWorkerTypes, apiKeys.WORKER_DEFAULT_TYPE, selectedCliAgent, selectedRun]);
+  }, [activeAllowedWorkerTypes, selectedCliAgent, selectedEffort, selectedModel, selectedRun]);
 
   useEffect(() => {
     if (availableWorkerTypes.length === 0) {
@@ -2468,19 +2629,46 @@ export default function Home() {
                     </span>
                   ) : null}
                 </div>
-                <span className="max-w-[24rem] truncate text-xs text-muted-foreground" title={selectedRun.projectPath || activePlan?.path || undefined}>
-                  {selectedRun.projectPath || activePlan?.path || "Ad hoc request"}
-                </span>
+                <div className="flex min-w-0 items-center gap-2">
+                  <span
+                    aria-label="Conversation route"
+                    className="max-w-[18rem] truncate font-mono text-[11px] text-muted-foreground"
+                    title={activeConversationRoute}
+                  >
+                    {activeConversationRoute}
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground" title={selectedRun.projectPath || activePlan?.path || undefined}>
+                    {selectedRun.projectPath || activePlan?.path || "Ad hoc request"}
+                  </span>
+                </div>
               </div>
             ) : draftProjectPath ? (
               <div className="flex min-w-0 flex-col">
                 <span className="font-semibold text-sm">New Session</span>
-                <span className="max-w-[24rem] truncate text-xs text-muted-foreground" title={draftProjectPath}>
-                  Starting in {draftProjectPath}
-                </span>
+                <div className="flex min-w-0 items-center gap-2">
+                  <span
+                    aria-label="Conversation route"
+                    className="max-w-[18rem] truncate font-mono text-[11px] text-muted-foreground"
+                    title={activeConversationRoute}
+                  >
+                    {activeConversationRoute}
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground" title={draftProjectPath}>
+                    Starting in {draftProjectPath}
+                  </span>
+                </div>
               </div>
             ) : (
-              <span className="font-semibold text-sm">New Session</span>
+              <div className="flex min-w-0 flex-col">
+                <span className="font-semibold text-sm">New Session</span>
+                <span
+                  aria-label="Conversation route"
+                  className="max-w-[24rem] truncate font-mono text-[11px] text-muted-foreground"
+                  title={activeConversationRoute}
+                >
+                  {activeConversationRoute}
+                </span>
+              </div>
             )}
           </div>
 
