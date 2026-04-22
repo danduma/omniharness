@@ -34,7 +34,7 @@ export async function GET() {
     const payload = await doctorResponse.json() as { results?: BridgeDoctorResult[] };
     const results = payload.results ?? [];
     const byType = new Map(results.map((result) => [result.type, result]));
-    const { env, decryptionFailures } = hydrateRuntimeEnvFromSettings(allSettings);
+    const { decryptionFailures } = hydrateRuntimeEnvFromSettings(allSettings);
 
     return NextResponse.json({
       diagnostics: decryptionFailures.map((failure) => buildAppError(
@@ -49,7 +49,7 @@ export async function GET() {
         label: WORKER_TYPE_LABELS[type],
         availability: (() => {
           const doctorAvailability = byType.get(type);
-          const localAvailability = isSpawnableWorkerType(type, env);
+          const localAvailability = isSpawnableWorkerType(type);
 
           if (localAvailability.ok) {
             return {

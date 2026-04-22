@@ -27,7 +27,7 @@ function workerBinaryAvailable(type: SupportedWorkerType) {
   }
 }
 
-function workerHasApiKey(type: SupportedWorkerType, env: EnvLike) {
+function workerHasApiKey(type: SupportedWorkerType) {
   switch (type) {
     case "codex":
       // Codex can use credentials established via `codex --login`, so
@@ -46,7 +46,7 @@ function workerHasApiKey(type: SupportedWorkerType, env: EnvLike) {
   }
 }
 
-export function isSpawnableWorkerType(type: string, env: EnvLike) {
+export function isSpawnableWorkerType(type: string) {
   const normalized = normalizeWorkerType(type);
   if (!SUPPORTED_WORKER_TYPES.includes(normalized as SupportedWorkerType)) {
     return {
@@ -66,7 +66,7 @@ export function isSpawnableWorkerType(type: string, env: EnvLike) {
     };
   }
 
-  if (!workerHasApiKey(supportedType, env)) {
+  if (!workerHasApiKey(supportedType)) {
     return {
       ok: false,
       type: supportedType,
@@ -91,7 +91,7 @@ export function selectSpawnableWorkerType(requestedType: string, env: EnvLike, a
     if (!firstAllowed) {
       throw new Error("No allowed worker types are configured for this run.");
     }
-    const availability = isSpawnableWorkerType(firstAllowed, env);
+    const availability = isSpawnableWorkerType(firstAllowed);
     if (availability.ok) {
       return {
         type: availability.type,
@@ -101,7 +101,7 @@ export function selectSpawnableWorkerType(requestedType: string, env: EnvLike, a
     }
   }
 
-  const requested = isSpawnableWorkerType(normalizedRequestedType, env);
+  const requested = isSpawnableWorkerType(normalizedRequestedType);
   if (requested.ok && normalizedAllowedTypes.includes(requested.type)) {
     return {
       type: requested.type,
@@ -114,7 +114,7 @@ export function selectSpawnableWorkerType(requestedType: string, env: EnvLike, a
     if (candidate === normalizedRequestedType || !normalizedAllowedTypes.includes(candidate)) {
       continue;
     }
-    const availability = isSpawnableWorkerType(candidate, env);
+    const availability = isSpawnableWorkerType(candidate);
     if (availability.ok) {
       return {
         type: availability.type,

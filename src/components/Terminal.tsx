@@ -35,11 +35,11 @@ function statusBadgeClass(status: string) {
 
 function TimelineRail({ active = false, muted = false }: { active?: boolean; muted?: boolean }) {
   return (
-    <div className="absolute bottom-0 left-0 top-0 flex w-7 justify-center">
+    <div className="absolute bottom-0 left-0 top-0 flex w-4.5 justify-center">
       <div className={cn("h-full w-px bg-white/8", muted && "bg-white/5")} />
       <div
         className={cn(
-          "absolute top-1.5 h-3.5 w-3.5 rounded-full border bg-[#101318]",
+          "absolute top-0.5 h-2 w-2 rounded-full border bg-[#101318]",
           muted ? "border-white/15" : "border-teal-400/45",
           active && "border-cyan-300/55 bg-cyan-400/12 shadow-[0_0_0_4px_rgba(56,189,248,0.06)]",
         )}
@@ -50,12 +50,12 @@ function TimelineRail({ active = false, muted = false }: { active?: boolean; mut
 
 function ActivityPane({ label, text }: { label: string; text: string }) {
   return (
-    <div className="overflow-hidden rounded-[1.15rem] border border-white/10 bg-[#111318] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+    <div className="overflow-hidden rounded-[0.85rem] border border-white/10 bg-[#111318] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
       <div className="flex items-stretch">
-        <div className="flex w-12 shrink-0 items-start justify-center border-r border-white/8 bg-black/20 px-2 py-3 font-mono text-[10px] font-semibold uppercase tracking-[0.28em] text-zinc-500">
+        <div className="flex w-8 shrink-0 items-start justify-center border-r border-white/8 bg-black/20 px-1 py-2 font-mono text-[8px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
           {label}
         </div>
-        <pre className="min-w-0 flex-1 overflow-x-auto px-4 py-3.5 font-mono text-[12px] leading-6 whitespace-pre-wrap break-words text-zinc-200">
+        <pre className="min-w-0 flex-1 overflow-x-auto px-2.5 py-2 font-mono text-[9px] leading-[1.55] whitespace-pre-wrap break-words text-zinc-200">
           {text}
         </pre>
       </div>
@@ -65,13 +65,13 @@ function ActivityPane({ label, text }: { label: string; text: string }) {
 
 function ToolActivity({ activity }: { activity: Extract<AgentActivityItem, { kind: "tool" }> }) {
   return (
-    <div className="space-y-3.5">
-      <div className="flex flex-wrap items-center gap-2.5">
-        <span className="text-[14px] font-semibold tracking-tight text-zinc-100">{activity.label}</span>
-        <span className="font-mono text-[13px] leading-6 text-zinc-300/95">{activity.title}</span>
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[11px] font-semibold tracking-tight text-zinc-100">{activity.label}</span>
+        <span className="font-mono text-[10px] leading-[1.45] text-zinc-300/95">{activity.title}</span>
         <span
           className={cn(
-            "rounded-full border px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.18em]",
+            "rounded-full border px-1.5 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-[0.12em]",
             statusBadgeClass(activity.status),
           )}
         >
@@ -89,19 +89,19 @@ function ActivityRow({ activity }: { activity: AgentActivityItem }) {
   const muted = activity.kind === "thought";
 
   return (
-    <div className="relative pl-9">
+    <div className="relative pl-6">
       <TimelineRail active={active} muted={muted} />
       {activity.kind === "message" ? (
-        <p className="max-w-none whitespace-pre-wrap text-[15px] leading-7 text-zinc-100/95">{activity.text}</p>
+        <p className="max-w-none whitespace-pre-wrap text-[12px] leading-[1.55] text-zinc-100/95">{activity.text}</p>
       ) : null}
       {activity.kind === "thought" ? (
-        <p className="max-w-none whitespace-pre-wrap text-[14px] leading-7 italic text-zinc-500">{activity.text}</p>
+        <p className="max-w-none whitespace-pre-wrap text-[11px] leading-[1.5] italic text-zinc-500">{activity.text}</p>
       ) : null}
       {activity.kind === "tool" ? <ToolActivity activity={activity} /> : null}
       {activity.kind === "permission" ? (
-        <div className="rounded-[1.15rem] border border-amber-400/20 bg-[rgba(96,67,22,0.34)] px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
-          <div className="text-[14px] font-semibold tracking-tight text-amber-100">{activity.title}</div>
-          <p className="mt-1 whitespace-pre-wrap text-[14px] leading-6 text-amber-50/85">{activity.text}</p>
+        <div className="rounded-[0.85rem] border border-amber-400/20 bg-[rgba(96,67,22,0.34)] px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+          <div className="text-[11px] font-semibold tracking-tight text-amber-100">{activity.title}</div>
+          <p className="mt-0.5 whitespace-pre-wrap text-[10px] leading-[1.45] text-amber-50/85">{activity.text}</p>
         </div>
       ) : null}
     </div>
@@ -140,13 +140,13 @@ export function Terminal({ agentName }: TerminalProps) {
   }, [activity]);
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-[1.25rem] bg-[#0b0d10] text-zinc-100">
+    <div className="relative h-full w-full overflow-hidden rounded-[1.05rem] bg-[#0b0d10] text-zinc-100">
       <div
         ref={scrollRef}
-        className="h-full overflow-y-auto px-5 py-5 [scrollbar-color:rgba(255,255,255,0.16)_transparent] [scrollbar-width:thin]"
+        className="h-full overflow-y-auto px-3 py-2.5 [scrollbar-color:rgba(255,255,255,0.16)_transparent] [scrollbar-width:thin]"
       >
         {activity.length > 0 ? (
-          <div className="space-y-6.5">
+          <div className="space-y-3">
             {activity.map((entry) => (
               <ActivityRow key={entry.id} activity={entry} />
             ))}
