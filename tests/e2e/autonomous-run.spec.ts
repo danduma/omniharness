@@ -6,7 +6,7 @@ test("run pauses for clarifications then completes after validation", async ({ p
   for (const file of ["hello.txt", "hi.txt", "greetings.txt"]) {
     try {
       fs.rmSync(path.resolve(process.cwd(), file));
-    } catch (_err) {
+    } catch {
       // ignore missing files
     }
   }

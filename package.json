@@ -9,7 +9,7 @@
     "dev:web": "next dev",
     "setup:agents": "./scripts/install-agent-acp.sh",
     "build": "next build --turbopack",
-    "start": "next start",
+    "start": "next start -p 3050",
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",

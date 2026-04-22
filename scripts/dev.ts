@@ -6,6 +6,7 @@ import { acquireBridgeLock, releaseBridgeLock, resolveBridgeLockPath } from "../
 import { bridgeNeedsBuild, resolveBridgeDir, resolveBridgeUrl, shouldAutoStartBridge } from "../src/server/dev/managed-bridge";
 
 const repoRoot = process.cwd();
+process.env.PORT = process.env.PORT || "3050";
 const bridgeUrl = resolveBridgeUrl(process.env);
 const bridgeDir = resolveBridgeDir(repoRoot, process.env);
 const bridgeLockPath = resolveBridgeLockPath(repoRoot);

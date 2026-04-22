@@ -3,7 +3,7 @@
 # Configuration
 BRIDGE_PORT=7800
 BRIDGE_URL="http://127.0.0.1:$BRIDGE_PORT"
-WEB_PORT=3000
+WEB_PORT=3050
 OMNI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BRIDGE_DIR="$(cd "$OMNI_DIR/../acp-bridge" && pwd 2>/dev/null)"
 

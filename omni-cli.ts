@@ -25,7 +25,7 @@ async function start() {
   try {
     const res = await fetch(`${BRIDGE_URL}/agents`);
     if (!res.ok) throw new Error('Bridge not responding');
-  } catch (err) {
+  } catch {
     console.error(`Error: acp-bridge is not running at ${BRIDGE_URL}.`);
     console.error(`Please start it first (e.g., in a sibling directory: cd ../acp-bridge && pnpm run daemon)`);
     process.exit(1);
@@ -99,12 +99,12 @@ async function start() {
     return process.exit(0);
   });
 
-  let agents: any[] = [];
+  let agents: { name: string }[] = [];
   let selectedAgentName: string | null = null;
   let lastMessageCount = 0;
   const agentOutputs: Record<string, string> = {};
 
-  agentList.on('select', (item: any) => {
+  agentList.on('select', (item: { content: string }) => {
     selectedAgentName = item.content;
     updateTerminal();
   });
@@ -164,7 +164,7 @@ async function start() {
         
         updateTerminal();
       }
-    } catch (err) {
+    } catch {
       // log.log(`Error polling: ${err}`);
     }
     screen.render();
