@@ -3,10 +3,12 @@ import { randomUUID } from "crypto";
 import * as bridge from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { executionEvents, runs, workers } from "@/server/db/schema";
+import { shouldAutoApprove } from "@/server/permissions";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 
 const OBSERVER_INTERVAL_MS = 5_000;
 const IDLE_THRESHOLD_MS = 30_000;
+const STUCK_THRESHOLD_MS = 90_000;
 
 interface WorkerBridgeSnapshot {
   state: string;
@@ -18,6 +20,7 @@ interface WorkerBridgeSnapshot {
     sessionId?: string | null;
     options?: Array<{ optionId: string; kind: string; name: string }>;
   }>;
+  outputEntries?: NonNullable<bridge.AgentRecord["outputEntries"]>;
   stderrBuffer: string[];
   stopReason: string | null;
 }
@@ -25,7 +28,10 @@ interface WorkerBridgeSnapshot {
 interface WorkerObserverState {
   fingerprint: string;
   lastChangedAt: number;
+  lastMeaningfulActivityAt: number;
+  progressSignature: string;
   idleNotified: boolean;
+  stuckNotified: boolean;
 }
 
 export interface DerivedWorkerEvent {
@@ -65,6 +71,7 @@ function normalizeSnapshot(snapshot: WorkerBridgeSnapshot | bridge.AgentRecord) 
       currentText: typeof snapshot.currentText === "string" ? snapshot.currentText : "",
       lastText: typeof snapshot.lastText === "string" ? snapshot.lastText : "",
       pendingPermissions: snapshot.pendingPermissions ?? [],
+      outputEntries: Array.isArray(snapshot.outputEntries) ? snapshot.outputEntries : [],
       stderrBuffer: Array.isArray(snapshot.stderrBuffer) ? snapshot.stderrBuffer : [],
       stopReason: typeof snapshot.stopReason === "string" ? snapshot.stopReason : null,
     } satisfies WorkerBridgeSnapshot,
@@ -83,12 +90,118 @@ function snapshotFingerprint(snapshot: WorkerBridgeSnapshot) {
   });
 }
 
+function normalizeProgressText(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function progressSignature(snapshot: WorkerBridgeSnapshot) {
+  return JSON.stringify({
+    state: snapshot.state,
+    currentText: normalizeProgressText(snapshot.currentText),
+    lastText: normalizeProgressText(snapshot.lastText),
+    pendingPermissions: snapshot.pendingPermissions ?? [],
+    stopReason: snapshot.stopReason,
+  });
+}
+
 function getFatalBridgeStderr(stderrBuffer: string[]) {
   const fatalLine = [...stderrBuffer]
     .reverse()
     .find((line) => FATAL_STDERR_PATTERNS.some((pattern) => pattern.test(line)));
 
   return fatalLine?.trim() || null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
+}
+
+function collectPermissionContextParts(
+  snapshot: WorkerBridgeSnapshot,
+  permission: NonNullable<WorkerBridgeSnapshot["pendingPermissions"]>[number],
+) {
+  const permissionEntries = [...(snapshot.outputEntries ?? [])]
+    .reverse()
+    .filter((entry) => entry.type === "permission");
+
+  const matchingEntry = permissionEntries.find((entry) => {
+    const raw = asRecord(entry.raw);
+    return typeof raw?.requestId === "number" && raw.requestId === permission.requestId;
+  }) ?? permissionEntries[0] ?? null;
+
+  if (!matchingEntry) {
+    return [];
+  }
+
+  const raw = asRecord(matchingEntry.raw);
+  const toolCall = asRecord(raw?.toolCall);
+  const rawInput = asRecord(toolCall?.rawInput);
+  return [
+    matchingEntry.text,
+    typeof toolCall?.title === "string" ? toolCall.title : "",
+    typeof rawInput?.description === "string" ? rawInput.description : "",
+    typeof rawInput?.command === "string" ? rawInput.command : "",
+  ]
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function pickApprovalOption(
+  permission: NonNullable<WorkerBridgeSnapshot["pendingPermissions"]>[number],
+) {
+  const options = permission.options ?? [];
+  return (
+    options.find((option) => option.kind === "allow_always")?.optionId ??
+    options.find((option) => option.optionId === "allow_always")?.optionId ??
+    options.find((option) => option.kind === "allow")?.optionId ??
+    options.find((option) => option.optionId === "allow")?.optionId ??
+    options.find((option) => /^allow/i.test(option.kind) || /^allow/i.test(option.optionId))?.optionId ??
+    null
+  );
+}
+
+async function autoApproveSafePermissions(
+  runId: string,
+  workerId: string,
+  snapshot: WorkerBridgeSnapshot,
+  now: number,
+) {
+  const pendingPermissions = snapshot.pendingPermissions ?? [];
+  const autoApprovedRequestIds: number[] = [];
+
+  for (const permission of pendingPermissions) {
+    const contextParts = collectPermissionContextParts(snapshot, permission);
+    const requestSummary = contextParts.join("\n").trim();
+    if (!requestSummary || !shouldAutoApprove(requestSummary)) {
+      continue;
+    }
+
+    const optionId = pickApprovalOption(permission);
+    if (!optionId) {
+      continue;
+    }
+
+    await bridge.approvePermission(workerId, optionId);
+    autoApprovedRequestIds.push(permission.requestId);
+    await insertExecutionEvent(runId, workerId, "worker_permission_auto_approved", {
+      summary: `Auto-approved permission for ${workerId}`,
+      requestId: permission.requestId,
+      optionId,
+      requestSummary: requestSummary.slice(0, 1000),
+    });
+  }
+
+  if (autoApprovedRequestIds.length > 0) {
+    await db.update(workers).set({
+      updatedAt: new Date(now),
+    }).where(eq(workers.id, workerId));
+  }
+
+  return {
+    autoApprovedRequestIds,
+    autoApprovedAllPending:
+      pendingPermissions.length > 0 && autoApprovedRequestIds.length === pendingPermissions.length,
+  };
 }
 
 export function deriveWorkerEvents(args: {
@@ -100,6 +213,7 @@ export function deriveWorkerEvents(args: {
   const fingerprint = snapshotFingerprint(args.snapshot);
   const previous = args.previous;
   const changed = !previous || previous.fingerprint !== fingerprint;
+  const currentProgressSignature = progressSignature(args.snapshot);
   const currentPendingFingerprint = JSON.stringify(args.snapshot.pendingPermissions ?? []);
   let previousPendingFingerprint = "[]";
   if (previous) {
@@ -111,18 +225,26 @@ export function deriveWorkerEvents(args: {
     }
   }
   const lastChangedAt = changed ? args.now : previous.lastChangedAt;
-  const silenceMs = Math.max(0, args.now - lastChangedAt);
+  const madeMeaningfulProgress = !previous || previous.progressSignature !== currentProgressSignature;
+  const lastMeaningfulActivityAt = madeMeaningfulProgress
+    ? args.now
+    : previous?.lastMeaningfulActivityAt ?? lastChangedAt;
+  const silenceMs = Math.max(0, args.now - lastMeaningfulActivityAt);
   const events: DerivedWorkerEvent[] = [];
   let idleNotified = previous?.idleNotified ?? false;
+  let stuckNotified = previous?.stuckNotified ?? false;
 
   if (changed) {
     events.push({
       type: "worker_output_changed",
       summary: `${args.workerId} output changed`,
       shouldWakeSupervisor: false,
-      updatesActivity: true,
+      updatesActivity: madeMeaningfulProgress,
     });
-    idleNotified = false;
+    if (madeMeaningfulProgress) {
+      idleNotified = false;
+      stuckNotified = false;
+    }
   }
 
   if (
@@ -147,6 +269,16 @@ export function deriveWorkerEvents(args: {
     idleNotified = true;
   }
 
+  if (!stuckNotified && silenceMs >= STUCK_THRESHOLD_MS) {
+    events.push({
+      type: "worker_stuck",
+      summary: `${args.workerId} appears stuck after ${Math.round(silenceMs / 1000)} seconds without meaningful progress`,
+      shouldWakeSupervisor: true,
+      updatesActivity: false,
+    });
+    stuckNotified = true;
+  }
+
   if (args.snapshot.state === "error") {
     events.push({
       type: "worker_error",
@@ -169,7 +301,10 @@ export function deriveWorkerEvents(args: {
     nextState: {
       fingerprint,
       lastChangedAt,
+      lastMeaningfulActivityAt,
+      progressSignature: currentProgressSignature,
       idleNotified,
+      stuckNotified,
     },
     events,
   };
@@ -258,13 +393,19 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
         return;
       }
 
-      const activityEvent = events.find((event) => event.updatesActivity);
+      const autoApprovalResult = await autoApproveSafePermissions(runId, worker.id, snapshot, now);
+      const filteredEvents = autoApprovalResult.autoApprovedAllPending
+        ? events.filter((event) => event.type !== "worker_permission_requested")
+        : events;
+
+      const activityEvent = filteredEvents.find((event) => event.updatesActivity);
+      const stuckEvent = filteredEvents.find((event) => event.type === "worker_stuck");
       await db.update(workers).set({
-        status: snapshot.state,
+        status: stuckEvent ? "stuck" : snapshot.state,
         updatedAt: activityEvent ? new Date(now) : worker.updatedAt,
       }).where(eq(workers.id, worker.id));
 
-      for (const event of events) {
+      for (const event of filteredEvents) {
         await insertExecutionEvent(runId, worker.id, event.type, {
           summary: event.summary,
           state: snapshot.state,

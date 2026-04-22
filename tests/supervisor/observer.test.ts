@@ -10,13 +10,16 @@ const { mockGetAgent } = vi.hoisted(() => ({
 
 vi.mock("@/server/bridge-client", () => ({
   getAgent: mockGetAgent,
+  approvePermission: vi.fn(),
 }));
 
 import { deriveWorkerEvents, pollRunWorkers } from "@/server/supervisor/observer";
+import { approvePermission as mockApprovePermission } from "@/server/bridge-client";
 
 describe("deriveWorkerEvents", () => {
   beforeEach(async () => {
     mockGetAgent.mockReset();
+    vi.mocked(mockApprovePermission).mockReset();
     await db.delete(executionEvents);
     await db.delete(messages);
     await db.delete(workers);
@@ -70,7 +73,16 @@ describe("deriveWorkerEvents", () => {
           stderrTail: [],
         }),
         lastChangedAt: 0,
+        lastMeaningfulActivityAt: 0,
+        progressSignature: JSON.stringify({
+          state: "working",
+          currentText: "same output",
+          lastText: "same output",
+          pendingPermissions: [],
+          stopReason: null,
+        }),
         idleNotified: false,
+        stuckNotified: false,
       },
       now: 30_000,
     });
@@ -113,7 +125,16 @@ describe("deriveWorkerEvents", () => {
           stderrTail: [],
         }),
         lastChangedAt: 0,
+        lastMeaningfulActivityAt: 0,
+        progressSignature: JSON.stringify({
+          state: "working",
+          currentText: "waiting for approval",
+          lastText: "waiting for approval",
+          pendingPermissions: [],
+          stopReason: null,
+        }),
         idleNotified: false,
+        stuckNotified: false,
       },
       now: 1_000,
     });
@@ -125,6 +146,96 @@ describe("deriveWorkerEvents", () => {
         updatesActivity: false,
       }),
     ]));
+  });
+
+  it("marks a worker stuck after prolonged churn without meaningful progress", () => {
+    const { nextState, events } = deriveWorkerEvents({
+      workerId: "worker-1",
+      snapshot: {
+        state: "working",
+        currentText: "Let me assess the current implementation details.",
+        lastText: "Let me assess the current implementation details..",
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+      previous: {
+        fingerprint: JSON.stringify({
+          state: "working",
+          currentText: "Let me assess the current implementation details",
+          lastText: "Let me assess the current implementation details.",
+          pendingPermissions: [],
+          stopReason: null,
+          stderrTail: [],
+        }),
+        lastChangedAt: 85_000,
+        lastMeaningfulActivityAt: 0,
+        progressSignature: JSON.stringify({
+          state: "working",
+          currentText: "Let me assess the current implementation details.",
+          lastText: "Let me assess the current implementation details..",
+          pendingPermissions: [],
+          stopReason: null,
+        }),
+        idleNotified: true,
+        stuckNotified: false,
+      },
+      now: 90_000,
+    });
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "worker_stuck",
+        shouldWakeSupervisor: true,
+        updatesActivity: false,
+      }),
+    ]));
+    expect(nextState.lastMeaningfulActivityAt).toBe(0);
+    expect(nextState.stuckNotified).toBe(true);
+  });
+
+  it("does not reset activity for noisy snapshot churn with the same normalized progress text", () => {
+    const { nextState, events } = deriveWorkerEvents({
+      workerId: "worker-1",
+      snapshot: {
+        state: "working",
+        currentText: "Running tests\n\nand reading files",
+        lastText: "Running tests and reading files",
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+      previous: {
+        fingerprint: JSON.stringify({
+          state: "working",
+          currentText: "Running tests and reading files",
+          lastText: "Running tests and reading files",
+          pendingPermissions: [],
+          stopReason: null,
+          stderrTail: [],
+        }),
+        lastChangedAt: 5_000,
+        lastMeaningfulActivityAt: 5_000,
+        progressSignature: JSON.stringify({
+          state: "working",
+          currentText: "Running tests and reading files",
+          lastText: "Running tests and reading files",
+          pendingPermissions: [],
+          stopReason: null,
+        }),
+        idleNotified: false,
+        stuckNotified: false,
+      },
+      now: 10_000,
+    });
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "worker_output_changed",
+        updatesActivity: false,
+      }),
+    ]));
+    expect(nextState.lastMeaningfulActivityAt).toBe(5_000);
   });
 
   it("fails the run when bridge status polling errors", async () => {
@@ -273,5 +384,142 @@ describe("deriveWorkerEvents", () => {
     expect(failedRun?.lastError).toContain("Invalid worker snapshot");
     expect(failedRun?.lastError).toContain("stderrBuffer was missing or not an array");
     expect(runMessages.some((message) => message.content.includes("stderrBuffer was missing or not an array"))).toBe(true);
+  });
+
+  it("persists a stuck status and wakes the supervisor when a worker stops making meaningful progress", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "opencode",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    mockGetAgent.mockResolvedValue({
+      state: "working",
+      currentText: "same output",
+      lastText: "same output",
+      pendingPermissions: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(90_000);
+
+    await pollRunWorkers(runId, wakeSupervisor);
+    await pollRunWorkers(runId, wakeSupervisor);
+
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+
+    expect(persistedWorker?.status).toBe("stuck");
+    expect(workerEvents.some((event) => event.eventType === "worker_stuck")).toBe(true);
+    expect(wakeSupervisor).toHaveBeenCalledWith(runId, 0);
+  });
+
+  it("auto-approves safe pending permission requests using the strongest allow option", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "opencode",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    mockGetAgent.mockResolvedValue({
+      state: "idle",
+      currentText: "waiting for approval",
+      lastText: "waiting for approval",
+      pendingPermissions: [
+        {
+          requestId: 1,
+          requestedAt: new Date(0).toISOString(),
+          options: [
+            { optionId: "allow_always", kind: "allow_always", name: "Always Allow" },
+            { optionId: "allow", kind: "allow", name: "Allow" },
+            { optionId: "reject", kind: "reject", name: "Reject" },
+          ],
+        },
+      ],
+      outputEntries: [
+        {
+          id: "permission-1",
+          type: "permission",
+          text: "Permission requested: allow_always Always Allow, allow Allow, reject Reject",
+          timestamp: new Date(0).toISOString(),
+          raw: {
+            requestId: 1,
+            toolCall: {
+              kind: "execute",
+              title: 'cat /Users/masterman/NLP/wikinuxt/package.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d.get(\'jest\', {}), indent=2))"',
+              rawInput: {
+                command:
+                  'cat /Users/masterman/NLP/wikinuxt/package.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d.get(\'jest\', {}), indent=2))"',
+                description: "Extract jest config from package.json",
+              },
+            },
+          },
+        },
+      ],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    await pollRunWorkers(runId, wakeSupervisor);
+
+    expect(mockApprovePermission).toHaveBeenCalledWith(workerId, "allow_always");
+
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+    expect(workerEvents.some((event) => event.eventType === "worker_permission_auto_approved")).toBe(true);
   });
 });

@@ -29,7 +29,9 @@ export async function GET(
       : displayBase;
     return NextResponse.json({
       ...data,
-      lastError: run?.lastError ?? null,
+      bridgeLastError: data.lastError ?? null,
+      runLastError: run?.lastError ?? null,
+      lastError: data.lastError ?? run?.lastError ?? null,
       outputLog,
       displayText,
     });

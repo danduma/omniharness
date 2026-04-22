@@ -173,7 +173,7 @@ async function start() {
   // We need to import 'eq' for the query
   const { eq } = await import('drizzle-orm');
 
-  const supervisor = new Supervisor({ planId, runId });
+  const supervisor = new Supervisor({ runId });
   supervisor.run().catch((err) => {
     log.log(`Supervisor ERROR: ${err.message}`);
   });

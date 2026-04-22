@@ -11,7 +11,9 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('const [selectedCliAgent, setSelectedCliAgent] = useState<ComposerWorkerOption>("auto")');
   expect(pageSource).toContain('const [selectedModel, setSelectedModel] = useState("GPT-5.4")');
   expect(pageSource).toContain('const [selectedEffort, setSelectedEffort] = useState("High")');
-  expect(pageSource).toContain("rounded-[1.5rem] border border-transparent bg-muted/80");
+  expect(pageSource).toContain('themeMode === "night"');
+  expect(pageSource).toContain('border border-[#d8d8d8] bg-[#fbfbfa]');
+  expect(pageSource).toContain('focus-within:bg-white');
   expect(pageSource).toContain("px-4 pb-0.5 pt-3");
   expect(pageSource).toContain("min-h-[56px] w-full resize-none bg-transparent");
   expect(pageSource).toContain("rows={1}");
@@ -23,7 +25,8 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('{ value: "claude", label: "Claude Code" }');
   expect(pageSource).toContain('const MODEL_OPTIONS = ["GPT-5.4", "GPT-5.4 Mini", "Claude Sonnet 4"]');
   expect(pageSource).toContain('const EFFORT_OPTIONS = ["Low", "Medium", "High"]');
-  expect(pageSource).toContain('className="h-10 w-10 rounded-full bg-foreground text-background transition-all hover:bg-foreground/90 disabled:bg-foreground/50"');
+  expect(pageSource).toContain('bg-[#9d9d9d] text-white hover:bg-[#8b8b8b] disabled:bg-[#c9c9c9]');
+  expect(pageSource).toContain('placeholder:text-[#c4c4c2]');
 });
 
 test("composer supports auto agent selection while pinning explicit agent choices", () => {

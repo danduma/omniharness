@@ -70,7 +70,11 @@ export function FolderPickerDialog({
               size="sm"
               className="shrink-0"
               disabled={!canGoUp}
-              onClick={() => canGoUp && handleNavigate(data.parent)}
+              onClick={() => {
+                if (data?.parent && canGoUp) {
+                  handleNavigate(data.parent);
+                }
+              }}
             >
               <ArrowUpCircle className="mr-2 h-4 w-4" />
               Up

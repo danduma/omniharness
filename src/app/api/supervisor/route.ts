@@ -5,6 +5,7 @@ import { CreditManager } from '@/server/credits';
 import { queueConversationTitleGeneration } from '@/server/conversation-title';
 import { createAdHocPlan } from '@/server/runs/ad-hoc-plan';
 import { startSupervisorRun } from '@/server/supervisor/start';
+import { ensureSupervisorRuntimeStarted } from '@/server/supervisor/runtime-watchdog';
 import { parseAllowedWorkerTypes, normalizeWorkerType } from '@/server/supervisor/worker-types';
 import { errorResponse } from '@/server/api-errors';
 import { randomUUID } from 'crypto';
@@ -16,6 +17,8 @@ interface AttachmentInput {
 
 export async function POST(req: NextRequest) {
   try {
+    await ensureSupervisorRuntimeStarted();
+
     const body = await req.json();
     const { command } = body as { command?: unknown };
     const trimmedCommand = String(command ?? '').trim();
