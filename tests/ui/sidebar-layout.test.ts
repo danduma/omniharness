@@ -110,6 +110,18 @@ test("header includes a persistent day night mode toggle beside the workers side
   expect(pageSource).not.toContain(">Night<");
 });
 
+test("header exposes and syncs the active conversation route", () => {
+  expect(pageSource).toContain('const [routeReady, setRouteReady] = useState(false)');
+  expect(pageSource).toContain('const activeConversationRoute = useMemo(() =>');
+  expect(pageSource).toContain('window.location.pathname');
+  expect(pageSource).toContain('window.history.replaceState(window.history.state, "", nextPath)');
+  expect(pageSource).toContain('`/session/${selectedRunId}`');
+  expect(pageSource).toContain('window.localStorage.getItem(LAST_RUN_ROUTE_STORAGE_KEY)');
+  expect(pageSource).toContain('window.localStorage.setItem(LAST_RUN_ROUTE_STORAGE_KEY, selectedRunId)');
+  expect(pageSource).toContain('aria-label="Conversation route"');
+  expect(pageSource).toContain('{activeConversationRoute}');
+});
+
 test("command input uses a fixed helper placeholder instead of echoing the selected directory", () => {
   expect(pageSource).toContain('placeholder="Ask Omni anything. @ to refer to files"');
   expect(pageSource).not.toContain('placeholder={draftProjectPath ? `${draftProjectPath}/...` : "e.g. vibes/test-plan.md or fix the login flow"}');
