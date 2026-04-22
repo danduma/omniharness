@@ -132,7 +132,6 @@ const EFFORT_OPTIONS = ["Low", "Medium", "High"];
 const COMPOSER_WORKER_STORAGE_KEY = "omni-composer-worker";
 const COMPOSER_MODEL_STORAGE_KEY = "omni-composer-model";
 const COMPOSER_EFFORT_STORAGE_KEY = "omni-composer-effort";
-const LAST_RUN_ROUTE_STORAGE_KEY = "omni-last-run-route";
 const RUN_PATH_PATTERN = /^\/session\/([0-9a-fA-F-]{36})\/?$/;
 
 type SidebarRun = { id: string; title: string; path: string; status: string; createdAt: string };
@@ -1125,6 +1124,7 @@ export default function Home() {
   const [selectedCliAgent, setSelectedCliAgent] = useState<ComposerWorkerOption>("auto");
   const [selectedModel, setSelectedModel] = useState("GPT-5.4");
   const [selectedEffort, setSelectedEffort] = useState("High");
+  const [hydratedRunSelectionId, setHydratedRunSelectionId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   
   const [state, setState] = useState<EventStreamState>({
@@ -1231,7 +1231,6 @@ export default function Home() {
     const routeRunId = pathnameMatch?.[1]?.trim() || "";
     const params = new URLSearchParams(window.location.search);
     const routeProjectPath = params.get("project")?.trim() || "";
-    const lastRunRoute = window.localStorage.getItem(LAST_RUN_ROUTE_STORAGE_KEY)?.trim() || "";
     const savedWorker = window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)?.trim() || "";
     const savedModel = window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)?.trim() || "";
     const savedEffort = window.localStorage.getItem(COMPOSER_EFFORT_STORAGE_KEY)?.trim() || "";
@@ -1242,9 +1241,6 @@ export default function Home() {
     } else if (routeProjectPath) {
       setDraftProjectPath(routeProjectPath);
       setSelectedRunId(null);
-    } else if (lastRunRoute) {
-      setSelectedRunId(lastRunRoute);
-      setDraftProjectPath(null);
     }
 
     if (savedWorker === "auto" || WORKER_OPTIONS.some((option) => option.value === savedWorker)) {
@@ -1269,12 +1265,6 @@ export default function Home() {
     const currentPath = `${window.location.pathname}${window.location.search}`;
     if (currentPath !== nextPath) {
       window.history.replaceState(window.history.state, "", nextPath);
-    }
-
-    if (selectedRunId) {
-      window.localStorage.setItem(LAST_RUN_ROUTE_STORAGE_KEY, selectedRunId);
-    } else {
-      window.localStorage.removeItem(LAST_RUN_ROUTE_STORAGE_KEY);
     }
   }, [draftProjectPath, routeReady, selectedRunId]);
 
@@ -1569,7 +1559,7 @@ export default function Home() {
         body: JSON.stringify({
           command: cmd,
           projectPath: currentProjectScope,
-          preferredWorkerType: isAutoWorkerSelection ? null : selectedCliAgent,
+          preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
           preferredWorkerModel: resolvedSelectedModel,
           preferredWorkerEffort: selectedEffort.toLowerCase(),
           allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent],
@@ -1728,6 +1718,14 @@ export default function Home() {
     const filtered = configured.filter((type) => availableSet.has(type));
     return filtered.length > 0 ? filtered : [...availableWorkerTypes];
   }, [availableWorkerTypes, configuredAllowedWorkerTypes, selectedRun, selectedRunAllowedWorkerTypes]);
+  const autoSelectedWorkerType = useMemo(() => {
+    const normalizedDefaultWorkerType = parseWorkerType(apiKeys.WORKER_DEFAULT_TYPE);
+    if (normalizedDefaultWorkerType && activeAllowedWorkerTypes.includes(normalizedDefaultWorkerType)) {
+      return normalizedDefaultWorkerType;
+    }
+
+    return activeAllowedWorkerTypes[0] ?? null;
+  }, [activeAllowedWorkerTypes, apiKeys.WORKER_DEFAULT_TYPE]);
   const composerWorkerOptions = useMemo(() => {
     const allowedSet = new Set(activeAllowedWorkerTypes);
     return COMPOSER_WORKER_OPTIONS.filter((option) => option.value === "auto" || allowedSet.has(option.value));
@@ -1757,16 +1755,6 @@ export default function Home() {
     ? state.messages?.filter((m: { runId: string }) => m.runId === selectedRunId) 
     : [];
 
-  // Active agents for the selected conversation
-  const conversationWorkers = useMemo(() => {
-    if (!selectedRunId || !state.workers || !state.agents) {
-      return [];
-    }
-
-    return state.workers.filter((w: { runId: string, id: string }) => (
-      w.runId === selectedRunId && state.agents.some((a: AgentSnapshot) => a.name === w.id)
-    ));
-  }, [selectedRunId, state.workers, state.agents]);
   const selectedRunWorkers = useMemo(() => {
     if (!selectedRunId || !state.workers) {
       return [] as Array<{ id: string; runId: string; type: string; status: string }>;
@@ -1775,7 +1763,7 @@ export default function Home() {
     return (state.workers || []).filter((worker: { runId: string }) => worker.runId === selectedRunId);
   }, [selectedRunId, state.workers]);
   const conversationAgentQueries = useQueries({
-    queries: conversationWorkers.map((worker: { id: string }) => ({
+    queries: selectedRunWorkers.map((worker: { id: string; status: string }) => ({
       queryKey: ["conversation-agent", worker.id],
       queryFn: async () => {
         return requestJson<AgentSnapshot>(`/api/agents/${worker.id}`, undefined, {
@@ -1783,24 +1771,26 @@ export default function Home() {
           action: `Load worker details for ${worker.id}`,
         });
       },
-      refetchInterval: 2000,
+      refetchInterval: ["starting", "working", "idle", "stuck"].includes(worker.status) ? 2000 : false,
     })),
   });
   const conversationAgents = useMemo(() => {
-    const detailedAgents = conversationAgentQueries
-      .map((query) => query.data)
-      .filter((agent): agent is AgentSnapshot => Boolean(agent));
-    if (detailedAgents.length > 0) {
-      return detailedAgents;
-    }
+    const liveAgentsById = new Map(
+      ((state.agents || []) as AgentSnapshot[]).map((agent) => [agent.name, agent]),
+    );
 
-    if (!conversationWorkers.length || !state.agents?.length) {
-      return [] as AgentSnapshot[];
-    }
-
-    const workerIds = new Set(conversationWorkers.map((worker: { id: string }) => worker.id));
-    return (state.agents as AgentSnapshot[]).filter((agent) => workerIds.has(agent.name));
-  }, [conversationAgentQueries, conversationWorkers, state.agents]);
+    return selectedRunWorkers.map((worker, index) => {
+      const queriedAgent = conversationAgentQueries[index]?.data;
+      const liveAgent = liveAgentsById.get(worker.id);
+      return queriedAgent ?? liveAgent ?? {
+        name: worker.id,
+        type: worker.type,
+        state: worker.status,
+        currentText: "",
+        lastText: "",
+      };
+    });
+  }, [conversationAgentQueries, selectedRunWorkers, state.agents]);
   const latestUserCheckpoint = selectedRunId
     ? [...((filteredMessages || []) as MessageRecord[])]
         .filter((message) => message.role === "user")
@@ -1842,7 +1832,7 @@ export default function Home() {
   const agentQueryErrors = conversationAgentQueries
     .flatMap((query, index) => query.error ? [buildInlineError(query.error, {
       source: "Bridge",
-      action: `Load worker details for ${conversationWorkers[index]?.id ?? "worker"}`,
+      action: `Load worker details for ${selectedRunWorkers[index]?.id ?? "worker"}`,
     })] : []);
   const pendingPermissionAgent = conversationAgents.find((agent) => (agent.pendingPermissions?.length ?? 0) > 0) ?? null;
   const erroredAgent = conversationAgents.find((agent) => agent.state === "error" || Boolean(agent.lastError) || Boolean(agent.stopReason)) ?? null;
@@ -2143,29 +2133,43 @@ export default function Home() {
   ]);
 
   useEffect(() => {
-    if (selectedRun) {
-      const preferredFromRun = parseWorkerType(selectedRun.preferredWorkerType);
-      const nextSelected: ComposerWorkerOption = preferredFromRun && activeAllowedWorkerTypes.includes(preferredFromRun)
-        ? preferredFromRun
-        : "auto";
-      if (nextSelected !== selectedCliAgent) {
-        setSelectedCliAgent(nextSelected);
-      }
-      const nextModel = resolveComposerModelLabel(selectedRun.preferredWorkerModel);
-      if (nextModel && nextModel !== selectedModel) {
-        setSelectedModel(nextModel);
-      }
-      const nextEffort = resolveComposerEffortLabel(selectedRun.preferredWorkerEffort);
-      if (nextEffort && nextEffort !== selectedEffort) {
-        setSelectedEffort(nextEffort);
+    if (!selectedRunId || !selectedRun) {
+      setHydratedRunSelectionId(null);
+      if (selectedCliAgent !== "auto" && !activeAllowedWorkerTypes.includes(selectedCliAgent)) {
+        setSelectedCliAgent("auto");
       }
       return;
     }
 
-    if (selectedCliAgent !== "auto" && !activeAllowedWorkerTypes.includes(selectedCliAgent)) {
-      setSelectedCliAgent("auto");
+    if (hydratedRunSelectionId === selectedRunId) {
+      return;
     }
-  }, [activeAllowedWorkerTypes, selectedCliAgent, selectedEffort, selectedModel, selectedRun]);
+
+    const preferredFromRun = parseWorkerType(selectedRun.preferredWorkerType);
+    const nextSelected: ComposerWorkerOption = preferredFromRun && activeAllowedWorkerTypes.includes(preferredFromRun)
+      ? preferredFromRun
+      : "auto";
+    if (nextSelected !== selectedCliAgent) {
+      setSelectedCliAgent(nextSelected);
+    }
+    const nextModel = resolveComposerModelLabel(selectedRun.preferredWorkerModel);
+    if (nextModel && nextModel !== selectedModel) {
+      setSelectedModel(nextModel);
+    }
+    const nextEffort = resolveComposerEffortLabel(selectedRun.preferredWorkerEffort);
+    if (nextEffort && nextEffort !== selectedEffort) {
+      setSelectedEffort(nextEffort);
+    }
+    setHydratedRunSelectionId(selectedRunId);
+  }, [
+    activeAllowedWorkerTypes,
+    hydratedRunSelectionId,
+    selectedCliAgent,
+    selectedEffort,
+    selectedModel,
+    selectedRun,
+    selectedRunId,
+  ]);
 
   useEffect(() => {
     if (availableWorkerTypes.length === 0) {
@@ -2830,14 +2834,14 @@ export default function Home() {
                 </div>
               )}
 
-              {conversationWorkers.length > 0 && (
+              {selectedRunWorkers.length > 0 && (
                 <div className="mt-4 border-t border-border/50 pt-6 sm:mt-8">
                   <div className="mb-4 flex items-center gap-2 pl-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    <Cpu className="h-4 w-4" /> Live CLI Agents
+                    <Cpu className="h-4 w-4" /> CLI Agents
                   </div>
                   <div className="flex flex-col gap-6">
                     {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                    {conversationWorkers.map((worker: any) => {
+                    {selectedRunWorkers.map((worker: any) => {
                       const agent = conversationAgents.find((item) => item.name === worker.id);
                       const activeModel = agent?.effectiveModel || agent?.requestedModel || selectedRun?.preferredWorkerModel || null;
                       const activeEffort = agent?.effectiveEffort || agent?.requestedEffort || selectedRun?.preferredWorkerEffort || null;

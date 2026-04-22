@@ -4,6 +4,7 @@ import { db } from "@/server/db";
 import { runs, workers } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
 import { errorResponse } from "@/server/api-errors";
+import { parseWorkerOutputEntries } from "@/server/workers/snapshots";
 
 function formatErrorMessage(error: unknown) {
   if (error instanceof Error) {
@@ -26,6 +27,8 @@ export async function GET(
   const worker = await db.select().from(workers).where(eq(workers.id, name)).get();
   const run = worker ? await db.select().from(runs).where(eq(runs.id, worker.runId)).get() : null;
   const outputLog = worker?.outputLog ?? "";
+  const persistedOutputEntries = parseWorkerOutputEntries(worker?.outputEntriesJson);
+  const persistedLastText = worker?.lastText ?? "";
 
   try {
     const data = await getAgent(name);
@@ -35,7 +38,9 @@ export async function GET(
     const liveText = data.currentText.length > 0
       ? data.currentText
       : "";
-    const displayBase = structuredOutput || outputLog || data.lastText || "";
+    const outputEntries = data.outputEntries?.length ? data.outputEntries : persistedOutputEntries;
+    const lastText = data.lastText || persistedLastText || outputLog;
+    const displayBase = structuredOutput || outputLog || lastText || "";
     const displayText = liveText && !structuredOutput
       ? displayBase
         ? `${displayBase}${displayBase.endsWith("\n") || liveText.startsWith("\n") ? "" : "\n"}${liveText}`
@@ -43,6 +48,8 @@ export async function GET(
       : displayBase;
     return NextResponse.json({
       ...data,
+      outputEntries,
+      lastText,
       bridgeLastError: data.lastError ?? null,
       runLastError: run?.lastError ?? null,
       lastError: data.lastError ?? run?.lastError ?? null,
@@ -55,7 +62,7 @@ export async function GET(
         name,
         type: worker.type,
         cwd: worker.cwd,
-        state: "starting",
+        state: worker.status || "starting",
         sessionId: worker.bridgeSessionId ?? null,
         requestedModel: run?.preferredWorkerModel ?? null,
         effectiveModel: null,
@@ -65,12 +72,12 @@ export async function GET(
         bridgeLastError: formatErrorMessage(error),
         runLastError: run?.lastError ?? null,
         lastError: run?.lastError ?? null,
-        outputEntries: [],
+        outputEntries: persistedOutputEntries,
         outputLog,
         displayText: outputLog,
         renderedOutput: null,
-        currentText: "",
-        lastText: outputLog,
+        currentText: worker.currentText,
+        lastText: persistedLastText || outputLog,
         stderrBuffer: [],
         pendingPermissions: [],
         stopReason: null,

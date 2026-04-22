@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS workers (
   status text NOT NULL,
   cwd text NOT NULL,
   output_log text NOT NULL DEFAULT '',
+  output_entries_json text NOT NULL DEFAULT '',
+  current_text text NOT NULL DEFAULT '',
+  last_text text NOT NULL DEFAULT '',
   bridge_session_id text,
   bridge_session_mode text,
   created_at integer NOT NULL,
@@ -192,6 +195,18 @@ const workerColumnNames = new Set(workerColumns.map((column) => column.name));
 
 if (!workerColumnNames.has("output_log")) {
   sqlite.exec("ALTER TABLE workers ADD COLUMN output_log text NOT NULL DEFAULT '';");
+}
+
+if (!workerColumnNames.has("output_entries_json")) {
+  sqlite.exec("ALTER TABLE workers ADD COLUMN output_entries_json text NOT NULL DEFAULT '';");
+}
+
+if (!workerColumnNames.has("current_text")) {
+  sqlite.exec("ALTER TABLE workers ADD COLUMN current_text text NOT NULL DEFAULT '';");
+}
+
+if (!workerColumnNames.has("last_text")) {
+  sqlite.exec("ALTER TABLE workers ADD COLUMN last_text text NOT NULL DEFAULT '';");
 }
 
 if (!workerColumnNames.has("bridge_session_id")) {

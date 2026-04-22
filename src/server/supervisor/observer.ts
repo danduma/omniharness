@@ -5,6 +5,7 @@ import { db } from "@/server/db";
 import { executionEvents, runs, workers } from "@/server/db/schema";
 import { shouldAutoApprove } from "@/server/permissions";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
+import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 
 const OBSERVER_INTERVAL_MS = 5_000;
 const IDLE_THRESHOLD_MS = 30_000;
@@ -452,6 +453,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
       });
 
       observerState.set(key, nextState);
+      await persistWorkerSnapshot(worker.id, snapshot);
 
       const fatalBridgeError = getFatalBridgeStderr(snapshot.stderrBuffer);
       if (fatalBridgeError) {

@@ -8,4 +8,10 @@ describe("db schema", () => {
     expect(schema).toHaveProperty("validationRuns");
     expect(schema).toHaveProperty("executionEvents");
   });
+
+  it("persists durable worker terminal snapshots", () => {
+    expect(schema.workers).toHaveProperty("outputEntriesJson");
+    expect(schema.workers).toHaveProperty("currentText");
+    expect(schema.workers).toHaveProperty("lastText");
+  });
 });

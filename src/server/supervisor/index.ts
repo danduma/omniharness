@@ -13,6 +13,7 @@ import { parseSupervisorToolCall, SupervisorProtocolError } from "@/server/super
 import { retrySupervisorRequest } from "@/server/supervisor/retry";
 import { selectSpawnableWorkerType } from "@/server/supervisor/worker-availability";
 import { parseAllowedWorkerTypes, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
+import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 
 export interface SupervisorOptions {
   runId: string;
@@ -181,6 +182,12 @@ async function cancelRunWorkers(runId: string) {
   const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
   for (const worker of runWorkers) {
     try {
+      const snapshot = await bridge.getAgent(worker.id);
+      await persistWorkerSnapshot(worker.id, snapshot);
+    } catch {
+      // best effort snapshot capture before shutdown
+    }
+    try {
       await bridge.cancelAgent(worker.id);
     } catch {
       // best effort shutdown
@@ -320,6 +327,9 @@ export class Supervisor {
             status: "starting",
             cwd,
             outputLog: "",
+            outputEntriesJson: "",
+            currentText: "",
+            lastText: "",
             bridgeSessionId: spawnedWorker.sessionId ?? null,
             bridgeSessionMode: spawnedWorker.sessionMode ?? mode ?? null,
             createdAt: new Date(),
