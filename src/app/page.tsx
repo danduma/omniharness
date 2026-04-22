@@ -2540,7 +2540,17 @@ export default function Home() {
     if (!selectedRunId) return;
     const content = editingMessageValue.trim();
     if (!content) return;
-    recoverRun.mutate({ runId: selectedRunId, action: "edit", targetMessageId: messageId, content });
+    setEditingMessageId(null);
+    setEditingMessageValue("");
+    recoverRun.mutate(
+      { runId: selectedRunId, action: "edit", targetMessageId: messageId, content },
+      {
+        onError: () => {
+          setEditingMessageId(messageId);
+          setEditingMessageValue(content);
+        },
+      },
+    );
   };
 
   const handleForkMessage = (message: MessageRecord) => {

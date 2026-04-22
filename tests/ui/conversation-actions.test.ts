@@ -20,6 +20,22 @@ test("user messages expose retry, edit, and fork recovery controls", () => {
   expect(pageSource).toContain('body: JSON.stringify({ action, targetMessageId, content })');
 });
 
+test("saving an edited message closes the inline editor before the rerun request resolves", () => {
+  const handleSaveStart = pageSource.indexOf("const handleSaveEditedMessage = (messageId: string) => {");
+  const clearEditorIndex = pageSource.indexOf("setEditingMessageId(null);", handleSaveStart);
+  const clearDraftIndex = pageSource.indexOf('setEditingMessageValue("");', handleSaveStart);
+  const mutateIndex = pageSource.indexOf("recoverRun.mutate(", handleSaveStart);
+  const restoreEditorIndex = pageSource.indexOf("setEditingMessageId(messageId);", mutateIndex);
+  const restoreDraftIndex = pageSource.indexOf("setEditingMessageValue(content);", mutateIndex);
+
+  expect(handleSaveStart).toBeGreaterThanOrEqual(0);
+  expect(clearEditorIndex).toBeGreaterThan(handleSaveStart);
+  expect(clearDraftIndex).toBeGreaterThan(clearEditorIndex);
+  expect(mutateIndex).toBeGreaterThan(clearDraftIndex);
+  expect(restoreEditorIndex).toBeGreaterThan(mutateIndex);
+  expect(restoreDraftIndex).toBeGreaterThan(restoreEditorIndex);
+});
+
 test("failed runs render a single persisted error in the conversation view", () => {
   expect(pageSource).not.toContain("Execution failed");
   expect(pageSource).toContain('msg.kind === "error"');

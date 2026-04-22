@@ -31,7 +31,9 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
 
 test("composer supports auto agent selection while pinning explicit agent choices", () => {
   expect(pageSource).toContain('const isAutoWorkerSelection = selectedCliAgent === "auto"');
-  expect(pageSource).toContain("preferredWorkerType: isAutoWorkerSelection ? null : selectedCliAgent");
+  expect(pageSource).toContain("const autoSelectedWorkerType = useMemo(() => {");
+  expect(pageSource).toContain('const normalizedDefaultWorkerType = parseWorkerType(apiKeys.WORKER_DEFAULT_TYPE)');
+  expect(pageSource).toContain("preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent");
   expect(pageSource).toContain("const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel)");
   expect(pageSource).toContain("preferredWorkerModel: resolvedSelectedModel");
   expect(pageSource).toContain("preferredWorkerEffort: selectedEffort.toLowerCase()");
@@ -44,6 +46,9 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_MODEL_STORAGE_KEY, selectedModel)');
   expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_EFFORT_STORAGE_KEY, selectedEffort)');
   expect(pageSource).not.toContain('if (selectedCliAgent !== "auto") {\n      setSelectedCliAgent("auto");');
+  expect(pageSource).toContain('const [hydratedRunSelectionId, setHydratedRunSelectionId] = useState<string | null>(null)');
+  expect(pageSource).toContain('if (!selectedRunId || !selectedRun) {');
+  expect(pageSource).toContain('if (hydratedRunSelectionId === selectedRunId) {');
 });
 
 test("composer exposes attachment entry and renders attached file chips", () => {
