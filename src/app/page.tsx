@@ -144,18 +144,47 @@ function buildInlineError(
   return normalizeAppError(error, fallback);
 }
 
+type NoticeTone = "error" | "warning" | "success";
+type NoticeDescriptor = AppErrorDescriptor & { tone?: NoticeTone };
+
 function ErrorNotice({
   error,
 }: {
-  error: AppErrorDescriptor;
+  error: NoticeDescriptor;
 }) {
+  const tone = error.tone ?? "error";
+  const containerClass = cn(
+    "rounded-2xl p-4 text-sm shadow-sm",
+    tone === "success"
+      ? "border border-emerald-500/30 bg-emerald-500/5"
+      : tone === "warning"
+        ? "border border-amber-500/30 bg-amber-500/5"
+        : "border border-destructive/30 bg-destructive/5",
+  );
+  const iconClass = cn(
+    "mt-0.5 h-4 w-4 shrink-0",
+    tone === "success"
+      ? "text-emerald-600"
+      : tone === "warning"
+        ? "text-amber-700"
+        : "text-destructive",
+  );
+  const titleClass = cn(
+    "font-semibold",
+    tone === "success"
+      ? "text-emerald-700 dark:text-emerald-300"
+      : tone === "warning"
+        ? "text-amber-800 dark:text-amber-300"
+        : "text-destructive",
+  );
+
   return (
-    <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm shadow-sm">
+    <div className={containerClass}>
       <div className="flex items-start gap-3">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+        <AlertTriangle className={iconClass} />
         <div className="min-w-0 flex-1">
           <div>
-            <div className="font-semibold text-destructive">{error.action || error.source || "Error"}</div>
+            <div className={titleClass}>{error.action || error.source || "Error"}</div>
             <div className="mt-1 whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-foreground">
               {error.message}
             </div>
@@ -176,6 +205,37 @@ function ErrorNotice({
       </div>
     </div>
   );
+}
+
+function stripRunFailurePrefix(value: string | null | undefined) {
+  if (!value) {
+    return "";
+  }
+
+  return value.replace(/^run failed:\s*/i, "").trim();
+}
+
+function extractWorkerFailureDetail(messages: MessageRecord[]) {
+  const workerMessages = [...messages]
+    .filter((message) => message.role === "worker")
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  for (const message of workerMessages) {
+    const detailMatch = message.content.match(/"detail":"([^"]+)"/i);
+    if (detailMatch?.[1]) {
+      return detailMatch[1];
+    }
+
+    const errorLine = message.content
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => /^error[:\s]/i.test(line) || /^failed[:\s]/i.test(line));
+    if (errorLine) {
+      return errorLine.replace(/^(error|failed)[:\s]*/i, "").trim();
+    }
+  }
+
+  return "";
 }
 
 interface ConversationSidebarProps {
@@ -1705,7 +1765,7 @@ export default function Home() {
     [apiKeys.WORKER_ALLOWED_TYPES],
   );
   const selectedRunAllowedWorkerTypes = useMemo(
-    () => parseWorkerTypes(selectedRun?.allowedWorkerTypes),
+    () => selectedRun?.allowedWorkerTypes?.trim() ? parseWorkerTypes(selectedRun.allowedWorkerTypes) : [],
     [selectedRun?.allowedWorkerTypes],
   );
   const activeAllowedWorkerTypes = useMemo(() => {
@@ -1751,9 +1811,12 @@ export default function Home() {
     () => new Set(configuredAllowedWorkerTypes),
     [configuredAllowedWorkerTypes],
   );
-  const filteredMessages = selectedRunId 
-    ? state.messages?.filter((m: { runId: string }) => m.runId === selectedRunId) 
-    : [];
+  const filteredMessages = useMemo(
+    () => (selectedRunId
+      ? state.messages?.filter((m: { runId: string }) => m.runId === selectedRunId)
+      : []),
+    [selectedRunId, state.messages],
+  );
 
   const selectedRunWorkers = useMemo(() => {
     if (!selectedRunId || !state.workers) {
@@ -1829,6 +1892,59 @@ export default function Home() {
   ), [selectedRunId, state.executionEvents]);
   const recentExecutionEvents = selectedRunExecutionEvents.slice(0, 6);
   const latestExecutionEvent = selectedRunExecutionEvents[0] ?? null;
+  const failedWorkerAvailability = useMemo(() => {
+    if (!selectedRun || selectedRun.status !== "failed") {
+      return null;
+    }
+
+    const candidateTypes = [
+      parseWorkerType(selectedRun.preferredWorkerType),
+      ...selectedRunAllowedWorkerTypes,
+    ].filter((type, index, values): type is WorkerType => Boolean(type) && values.indexOf(type) === index);
+
+    for (const type of candidateTypes) {
+      const worker = catalogWorkers.find((entry) => entry.type === type);
+      if (worker) {
+        return worker;
+      }
+    }
+
+    return null;
+  }, [catalogWorkers, selectedRun, selectedRunAllowedWorkerTypes]);
+  const conversationFailure = useMemo(() => {
+    if (!selectedRun || selectedRun.status !== "failed" || !selectedRun.lastError) {
+      return null;
+    }
+
+    const staleFailure = failedWorkerAvailability?.availability.status === "ok";
+    const workerFailureDetail = extractWorkerFailureDetail((filteredMessages || []) as MessageRecord[]);
+    const workerLabel = failedWorkerAvailability?.label;
+    const workerStatus = failedWorkerAvailability?.availability.message;
+
+    return {
+      tone: workerFailureDetail ? "warning" : staleFailure ? "success" : "error",
+      action: workerFailureDetail ? "Worker configuration issue" : staleFailure ? "Ready to retry" : "Run failed",
+      message: workerFailureDetail || (staleFailure
+        ? `${workerLabel || "The selected worker"} is available now.`
+        : stripRunFailurePrefix(selectedRun.lastError)),
+      suggestion: workerFailureDetail
+        ? "Retry latest after updating the worker model or account configuration."
+        : staleFailure
+        ? "Retry latest to rerun with the current worker availability."
+        : "Retry latest after fixing the worker runtime, or switch to another available worker.",
+      details: workerLabel && workerStatus ? [`Current ${workerLabel} status: ${workerStatus}`] : [],
+    } satisfies NoticeDescriptor;
+  }, [failedWorkerAvailability, filteredMessages, selectedRun]);
+  const visibleMessages = useMemo(() => {
+    if (!selectedRun || selectedRun.status !== "failed" || !selectedRun.lastError) {
+      return (filteredMessages || []) as MessageRecord[];
+    }
+
+    return ((filteredMessages || []) as MessageRecord[]).filter((message) => !(
+      message.role === "system"
+      && message.kind === "error"
+    ));
+  }, [filteredMessages, selectedRun]);
   const agentQueryErrors = conversationAgentQueries
     .flatMap((query, index) => query.error ? [buildInlineError(query.error, {
       source: "Bridge",
@@ -1979,7 +2095,7 @@ export default function Home() {
   }, [agentQueryErrors, conversationAgents, recentExecutionEvents, selectedRun, showRecoverableRunningState]);
   const isConversationThinking = selectedRun?.status === "running" || conversationAgents.some((agent) => agent.state === "working");
   const showConversationExecution = Boolean(
-    selectedRun && (isConversationThinking || selectedRun.status === "failed" || selectedRunExecutionEvents.length > 0)
+    selectedRun && selectedRun.status !== "failed" && (isConversationThinking || selectedRunExecutionEvents.length > 0)
   );
   const conversationThinking = (
     <div className="group flex w-full flex-col text-sm">
@@ -2727,28 +2843,8 @@ export default function Home() {
         <ScrollArea className="min-h-0 flex-1" ref={scrollRef}>
           {selectedRunId ? (
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 pb-24 sm:gap-6 sm:p-6 sm:pb-20">
-              {appErrors.length > 0 ? (
-                <div className="space-y-3">
-                  {appErrors.map((error) => (
-                    <ErrorNotice key={appErrorKey(error)} error={error} />
-                  ))}
-                </div>
-              ) : null}
-              {selectedRun?.status === "failed" && selectedRun.lastError ? (
-                <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive shadow-sm">
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <div className="min-w-0">
-                      <div className="font-semibold">Run failed</div>
-                      <div className="mt-1 whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-foreground">
-                        {selectedRun.lastError}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-              {filteredMessages && filteredMessages.length > 0 ? (
-                filteredMessages.map((msg: MessageRecord) => (
+              {visibleMessages.length > 0 ? (
+                visibleMessages.map((msg: MessageRecord) => (
                   <div key={msg.id} className="group flex w-full flex-col text-sm">
                     <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
                       <div className="flex items-center gap-2">
@@ -2843,6 +2939,18 @@ export default function Home() {
                   />
                 </div>
               )}
+
+              {appErrors.length > 0 ? (
+                <div className="space-y-3">
+                  {appErrors.map((error) => (
+                    <ErrorNotice key={appErrorKey(error)} error={error} />
+                  ))}
+                </div>
+              ) : null}
+
+              {conversationFailure ? (
+                <ErrorNotice error={conversationFailure} />
+              ) : null}
 
               {selectedRunWorkers.length > 0 && (
                 <div className="mt-4 border-t border-border/50 pt-6 sm:mt-8">

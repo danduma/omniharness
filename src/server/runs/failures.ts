@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { messages, runs } from "@/server/db/schema";
 
@@ -53,6 +53,7 @@ export function formatErrorMessage(error: unknown) {
 export async function persistRunFailure(runId: string, error: unknown) {
   const errorMessage = formatErrorMessage(error);
   const now = new Date();
+  const content = `Run failed: ${errorMessage}`;
 
   await db.update(runs).set({
     status: "failed",
@@ -61,12 +62,25 @@ export async function persistRunFailure(runId: string, error: unknown) {
     updatedAt: now,
   }).where(eq(runs.id, runId));
 
+  const latestMessage = await db.select().from(messages)
+    .where(eq(messages.runId, runId))
+    .orderBy(desc(messages.createdAt))
+    .get();
+
+  if (
+    latestMessage?.role === "system"
+    && latestMessage.kind === "error"
+    && latestMessage.content === content
+  ) {
+    return;
+  }
+
   await db.insert(messages).values({
     id: randomUUID(),
     runId,
     role: "system",
     kind: "error",
-    content: `Run failed: ${errorMessage}`,
+    content,
     createdAt: now,
   });
 }

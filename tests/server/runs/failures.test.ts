@@ -47,4 +47,33 @@ describe("persistRunFailure", () => {
     expect(persistedMessage?.content).toContain("fetch failed");
     expect(persistedMessage?.content).toContain("connect ECONNREFUSED api.example.com:443");
   });
+
+  it("does not append a duplicate system error message when the same failure is persisted twice", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await persistRunFailure(runId, new Error("codex ACP adapter is not installed"));
+    await persistRunFailure(runId, new Error("codex ACP adapter is not installed"));
+
+    const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+
+    expect(persistedMessages).toHaveLength(1);
+    expect(persistedMessages[0]?.content).toBe("Run failed: codex ACP adapter is not installed");
+  });
 });

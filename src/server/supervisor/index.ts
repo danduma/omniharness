@@ -13,6 +13,7 @@ import { parseSupervisorToolCall, SupervisorProtocolError } from "@/server/super
 import { retrySupervisorRequest } from "@/server/supervisor/retry";
 import { selectSpawnableWorkerType } from "@/server/supervisor/worker-availability";
 import { parseAllowedWorkerTypes, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
+import { persistRunFailure } from "@/server/runs/failures";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 
 export interface SupervisorOptions {
@@ -82,6 +83,11 @@ function resolveWorkerSpawnMode(requestedMode: unknown, yoloModeEnabled: boolean
   }
 
   return yoloModeEnabled ? "full-access" : undefined;
+}
+
+function isMissingAgentError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return message.includes("404") || message.includes("not_found") || message.includes("agent not found");
 }
 
 function buildWorkerSpawnSummary({
@@ -419,8 +425,17 @@ export class Supervisor {
         case "worker_cancel": {
           const workerId = asString(action.args.workerId, "workerId");
           const reason = asString(action.args.reason, "reason");
-          await bridge.cancelAgent(workerId);
-          await db.delete(workers).where(eq(workers.id, workerId));
+          try {
+            await bridge.cancelAgent(workerId);
+          } catch (error) {
+            if (!isMissingAgentError(error)) {
+              throw error;
+            }
+          }
+          await db.update(workers).set({
+            status: "cancelled",
+            updatedAt: new Date(),
+          }).where(eq(workers.id, workerId));
           await insertExecutionEvent(this.runId, "worker_cancelled", {
             summary: `Cancelled ${workerId}`,
             reason,
@@ -528,14 +543,8 @@ export class Supervisor {
         case "mark_failed": {
           const reason = asString(action.args.reason, "reason");
           await cancelRunWorkers(this.runId);
-          await db.update(runs).set({
-            status: "failed",
-            failedAt: new Date(),
-            lastError: reason,
-            updatedAt: new Date(),
-          }).where(eq(runs.id, this.runId));
           await insertExecutionEvent(this.runId, "run_failed", { reason });
-          await insertRunMessage(this.runId, "system", `Run failed: ${reason}`, "error");
+          await persistRunFailure(this.runId, reason);
           return { state: "failed" };
         }
 
