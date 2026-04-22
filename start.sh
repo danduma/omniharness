@@ -17,13 +17,13 @@ else
 fi
 
 echo "[2/2] Starting OmniHarness Web UI..."
-(cd "$DIR" && pnpm dev) &
+(cd "$DIR" && PORT=3050 pnpm dev) &
 OMNI_PID=$!
 
 echo ""
 echo "========================================================="
 echo " OmniHarness is starting!"
-echo " Access the Web UI at: http://localhost:3000"
+echo " Access the Web UI at: http://localhost:3050"
 echo " You can configure your API keys securely inside the UI."
 echo " Press Ctrl+C to stop both services."
 echo "========================================================="

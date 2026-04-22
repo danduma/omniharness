@@ -714,7 +714,7 @@ git commit -m "feat: surface clarifications progress and validation in ui"
 import { test, expect } from "@playwright/test";
 
 test("run pauses for clarifications then completes after validation", async ({ page }) => {
-  await page.goto("http://127.0.0.1:3000");
+  await page.goto("http://127.0.0.1:3050");
   await page.getByPlaceholder("Enter command").fill("implement vibes/test-plan.md");
   await page.keyboard.press("Enter");
   await expect(page.getByText("awaiting_user")).toBeVisible();
