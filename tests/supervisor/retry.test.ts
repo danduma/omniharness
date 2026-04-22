@@ -14,6 +14,13 @@ describe("isTransientSupervisorError", () => {
   it("does not retry clear configuration errors", () => {
     expect(isTransientSupervisorError(new Error("API key not valid"))).toBe(false);
   });
+
+  it("honors an explicit retryable override on wrapped errors", () => {
+    expect(isTransientSupervisorError(Object.assign(new Error("Spawn failed: failed to start agent"), {
+      status: 500,
+      retryable: false,
+    }))).toBe(false);
+  });
 });
 
 describe("retrySupervisorRequest", () => {

@@ -74,6 +74,50 @@ describe("bridge client", () => {
     );
   });
 
+  it("does not retry deterministic bridge spawn failures returned as http 500s", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "Spawn failed: failed to start agent" }), {
+        status: 500,
+        statusText: "Internal Server Error",
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { spawnAgent } = await import("@/server/bridge-client");
+
+    await expect(spawnAgent({ type: "codex", cwd: "/tmp", name: "worker-1" })).rejects.toThrow(
+      /^Spawn failed: failed to start agent$/i,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("retries transient bridge socket-closure errors returned as http 500s", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "other side closed" }), {
+          status: 500,
+          statusText: "Internal Server Error",
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ name: "worker-1", state: "idle" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { spawnAgent } = await import("@/server/bridge-client");
+    const result = await spawnAgent({ type: "codex", cwd: "/tmp", name: "worker-1" });
+
+    expect(result).toEqual({ name: "worker-1", state: "idle" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(warnSpy).toHaveBeenCalledOnce();
+  });
+
   it("passes requested model and effort through when spawning a worker", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ name: "worker-1", state: "idle" }), {

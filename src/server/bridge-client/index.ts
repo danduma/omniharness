@@ -1,4 +1,4 @@
-import { retrySupervisorRequest } from "@/server/supervisor/retry";
+import { isTransientSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
 
 export const BRIDGE_URL = process.env.OMNIHARNESS_BRIDGE_URL?.trim() || "http://127.0.0.1:7800";
 
@@ -189,15 +189,28 @@ async function requestBridge<T>(path: string, init: RequestInit, action: string)
       const res = await fetch(`${BRIDGE_URL}${path}`, init);
       if (!res.ok) {
         let detail = `${res.status} ${res.statusText}`;
+        let detailFromPayload = false;
         try {
           const payload = await res.json() as { error?: unknown };
           if (typeof payload.error === "string" && payload.error.trim()) {
             detail = payload.error.trim();
+            detailFromPayload = true;
           }
         } catch {
           // ignore malformed/non-json bodies and fall back to status text
         }
-        throw Object.assign(new Error(`${action} failed: ${detail}`), { status: res.status });
+
+        const retryable =
+          detailFromPayload
+            ? (res.status === 500
+              ? isTransientSupervisorError(new Error(detail))
+              : isTransientSupervisorError(Object.assign(new Error(detail), { status: res.status })))
+            : undefined;
+
+        throw Object.assign(new Error(`${action} failed: ${detail}`), {
+          status: res.status,
+          retryable,
+        });
       }
       return res.json() as Promise<T>;
     });

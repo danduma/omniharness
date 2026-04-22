@@ -32,7 +32,7 @@ describe("selectSpawnableWorkerType", () => {
 
   it("falls back when the requested worker binary is unavailable", async () => {
     mockExecFileSync.mockImplementation((command: string, args: string[]) => {
-      if (args[0] === "codex") {
+      if (args[0] === "opencode") {
         return Buffer.from("");
       }
       throw new Error("not found");
@@ -41,15 +41,15 @@ describe("selectSpawnableWorkerType", () => {
     const { selectSpawnableWorkerType } = await import("@/server/supervisor/worker-availability");
 
     expect(selectSpawnableWorkerType("claude-code", { OPENAI_API_KEY: "key" })).toEqual({
-      type: "codex",
+      type: "opencode",
       requestedType: "claude",
       fallbackReason: "claude worker binary is not installed.",
     });
   });
 
-  it("accepts codex when the binary is available even without OPENAI_API_KEY", async () => {
+  it("accepts codex when the ACP adapter is available even without OPENAI_API_KEY", async () => {
     mockExecFileSync.mockImplementation((command: string, args: string[]) => {
-      if (args[0] === "codex") {
+      if (args[0] === "codex-acp") {
         return Buffer.from("");
       }
       throw new Error("not found");
@@ -61,6 +61,23 @@ describe("selectSpawnableWorkerType", () => {
       type: "codex",
       requestedType: "codex",
       fallbackReason: null,
+    });
+  });
+
+  it("falls back from codex when only the MCP-only codex binary is installed", async () => {
+    mockExecFileSync.mockImplementation((command: string, args: string[]) => {
+      if (args[0] === "codex" || args[0] === "opencode") {
+        return Buffer.from("");
+      }
+      throw new Error("not found");
+    });
+
+    const { selectSpawnableWorkerType } = await import("@/server/supervisor/worker-availability");
+
+    expect(selectSpawnableWorkerType("codex", {})).toEqual({
+      type: "opencode",
+      requestedType: "codex",
+      fallbackReason: "codex ACP adapter is not installed.",
     });
   });
 

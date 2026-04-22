@@ -17,7 +17,7 @@ function commandExists(command: string) {
 function workerBinaryAvailable(type: SupportedWorkerType) {
   switch (type) {
     case "codex":
-      return commandExists("codex") || commandExists("codex-acp");
+      return commandExists("codex-acp");
     case "claude":
       return commandExists("claude-agent-acp");
     case "gemini":
@@ -59,10 +59,14 @@ export function isSpawnableWorkerType(type: string) {
   const supportedType = normalized as SupportedWorkerType;
 
   if (!workerBinaryAvailable(supportedType)) {
+    const reason =
+      supportedType === "codex"
+        ? "codex ACP adapter is not installed."
+        : `${supportedType} worker binary is not installed.`;
     return {
       ok: false,
       type: supportedType,
-      reason: `${supportedType} worker binary is not installed.`,
+      reason,
     };
   }
 
