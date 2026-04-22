@@ -24,6 +24,7 @@ const RETRYABLE_MESSAGE_PATTERNS = [
   /\boverloaded\b/i,
   /\bnetwork\b/i,
   /\bsocket hang up\b/i,
+  /\bother side closed\b/i,
 ];
 
 export interface RetrySupervisorRequestOptions {
@@ -54,6 +55,7 @@ function extractErrorChain(error: unknown, seen = new Set<unknown>()): Array<Rec
     code?: unknown;
     status?: unknown;
     statusCode?: unknown;
+    retryable?: unknown;
     cause?: unknown;
   };
 
@@ -63,6 +65,7 @@ function extractErrorChain(error: unknown, seen = new Set<unknown>()): Array<Rec
       code: typeof record.code === "string" ? record.code : undefined,
       status: typeof record.status === "number" ? record.status : undefined,
       statusCode: typeof record.statusCode === "number" ? record.statusCode : undefined,
+      retryable: typeof record.retryable === "boolean" ? record.retryable : undefined,
     },
     ...extractErrorChain(record.cause, seen),
   ];
@@ -70,6 +73,11 @@ function extractErrorChain(error: unknown, seen = new Set<unknown>()): Array<Rec
 
 export function isTransientSupervisorError(error: unknown) {
   const chain = extractErrorChain(error);
+
+  const explicitOverride = chain.find((entry) => typeof entry.retryable === "boolean");
+  if (explicitOverride && typeof explicitOverride.retryable === "boolean") {
+    return explicitOverride.retryable;
+  }
 
   return chain.some((entry) => {
     const message = typeof entry.message === "string" ? entry.message : "";

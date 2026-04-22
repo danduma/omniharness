@@ -21,7 +21,7 @@ have_command() {
   command -v "$1" >/dev/null 2>&1
 }
 
-run_install() {
+run_install_npm() {
   local package_name="$1"
 
   if [ "$DRY_RUN" -eq 1 ]; then
@@ -38,6 +38,25 @@ run_install() {
   echo "  -> installed \`$package_name\`"
 }
 
+run_install_cargo_git() {
+  local binary_name="$1"
+  local git_url="$2"
+  local git_tag="$3"
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "  -> would install \`$binary_name\` with \`cargo install --locked --git $git_url --tag $git_tag $binary_name\`"
+    return 0
+  fi
+
+  if ! have_command cargo; then
+    echo "  -> cannot install \`$binary_name\`: cargo is not on PATH" >&2
+    return 1
+  fi
+
+  cargo install --locked --git "$git_url" --tag "$git_tag" "$binary_name"
+  echo "  -> installed \`$binary_name\`"
+}
+
 echo "Detecting local coding agents and ACP adapters..."
 
 if have_command codex; then
@@ -45,7 +64,7 @@ if have_command codex; then
   if have_command codex-acp; then
     echo "  -> \`codex-acp\` already installed"
   else
-    echo "  -> native bridge support via \`codex mcp-server\`; no separate ACP adapter needed"
+    run_install_cargo_git "codex-acp" "https://github.com/cola-io/codex-acp.git" "v0.4.2"
   fi
 else
   echo "codex: not detected"
@@ -56,7 +75,7 @@ if have_command claude; then
   if have_command claude-agent-acp; then
     echo "  -> \`claude-agent-acp\` already installed"
   else
-    run_install "@agentclientprotocol/claude-agent-acp"
+    run_install_npm "@agentclientprotocol/claude-agent-acp"
   fi
 else
   echo "claude: not detected"
