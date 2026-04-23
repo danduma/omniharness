@@ -9,6 +9,7 @@ import { ensureSupervisorRuntimeStarted } from '@/server/supervisor/runtime-watc
 import { parseAllowedWorkerTypes, normalizeWorkerType } from '@/server/supervisor/worker-types';
 import { errorResponse } from '@/server/api-errors';
 import { randomUUID } from 'crypto';
+import { requireApiSession } from "@/server/auth/guards";
 interface AttachmentInput {
   kind?: string;
   name?: string;
@@ -17,6 +18,15 @@ interface AttachmentInput {
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requireApiSession(req, {
+      source: "Supervisor",
+      action: "Start a run",
+      enforceSameOrigin: true,
+    });
+    if (auth.response) {
+      return auth.response;
+    }
+
     await ensureSupervisorRuntimeStarted();
 
     const body = await req.json();

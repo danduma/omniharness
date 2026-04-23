@@ -5,10 +5,19 @@ import { BRIDGE_URL } from "@/server/bridge-client";
 import { buildAppError } from "@/server/api-errors";
 import { desc } from "drizzle-orm";
 import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
+import { requireApiSession } from "@/server/auth/guards";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
+  const auth = await requireApiSession(req, {
+    source: "Events",
+    action: "Stream live updates",
+  });
+  if (auth.response) {
+    return auth.response;
+  }
+
   await ensureSupervisorRuntimeStarted();
 
   const stream = new ReadableStream({

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorResponse } from "@/server/api-errors";
+import { requireApiSession } from "@/server/auth/guards";
 
 interface GeminiModelRecord {
   name?: string;
@@ -85,6 +86,15 @@ async function listGeminiModels(apiKey: string) {
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requireApiSession(req, {
+      source: "LLM Settings",
+      action: "Fetch available models",
+      enforceSameOrigin: true,
+    });
+    if (auth.response) {
+      return auth.response;
+    }
+
     const body = await req.json() as {
       provider?: string;
       apiKey?: string;
