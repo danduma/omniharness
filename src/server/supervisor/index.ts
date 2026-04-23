@@ -5,7 +5,7 @@ import * as bridge from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { clarifications, executionEvents, messages as dbMessages, runs, settings, workers } from "@/server/db/schema";
 import { configureSupervisorModel, getSupervisorModelConfig, validateSupervisorModelConfig } from "@/server/supervisor/model-config";
-import { SUPERVISOR_SYSTEM_PROMPT } from "@/server/supervisor/prompt";
+import { SUPERVISOR_SYSTEM_PROMPT } from "@/server/prompts";
 import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { buildSupervisorTools } from "@/server/supervisor/tools";
 import { buildSupervisorTurnContext } from "@/server/supervisor/context";

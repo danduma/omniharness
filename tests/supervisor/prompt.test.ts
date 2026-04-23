@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SUPERVISOR_SYSTEM_PROMPT } from "@/server/supervisor/prompt";
+import { SUPERVISOR_SYSTEM_PROMPT } from "@/server/prompts";
 
 describe("SUPERVISOR_SYSTEM_PROMPT", () => {
   it("guides permission decisions across all agents with extra caution for destructive actions", () => {

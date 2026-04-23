@@ -3,6 +3,7 @@ import { db } from "@/server/db";
 import { executionEvents, runs } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import { CONVERSATION_TITLE_SYSTEM_PROMPT } from "@/server/prompts";
 import { formatErrorMessage } from "@/server/runs/failures";
 
 const tokenjs = new TokenJS();
@@ -36,8 +37,7 @@ export async function generateConversationTitle(command: string) {
       messages: [
         {
           role: "system",
-          content:
-            "Generate a concise title for a coding conversation. Return it only via the provided tool. Keep it to 2-6 words, title case, and never use ISO timestamps or markdown filenames.",
+          content: CONVERSATION_TITLE_SYSTEM_PROMPT,
         },
         {
           role: "user",
