@@ -167,6 +167,13 @@ test("send button swaps to a spinner while a command submission is pending", () 
   expect(pageSource).toContain('<ArrowUp className="h-5 w-5" />');
 });
 
+test("project groups show a loading indicator while conversations are still hydrating", () => {
+  expect(pageSource).toContain("const [hasReceivedInitialEventStreamPayload, setHasReceivedInitialEventStreamPayload] = useState(false)");
+  expect(pageSource).toContain("const isHydratingConversations = appUnlocked && !hasReceivedInitialEventStreamPayload;");
+  expect(pageSource).toContain("isHydratingConversations={isHydratingConversations}");
+  expect(pageSource).toContain("Loading conversations...");
+});
+
 test("failed runs surface recovery UI in the header and conversation feed", () => {
   expect(pageSource).toContain('selectedRun?.status === "failed"');
   expect(pageSource).toContain("Retry latest");
