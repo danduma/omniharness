@@ -1,16 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { normalizeAppError, requestJson } from "@/lib/app-errors";
 import { buildAgentOutputActivity, formatActivityStatus, type AgentActivityItem, type AgentOutputEntry } from "@/lib/agent-output";
 import { cn } from "@/lib/utils";
 
 interface TerminalProps {
-  agentName: string;
+  agent?: AgentTerminalPayload | null;
 }
 
-interface AgentTerminalPayload {
+export interface AgentTerminalPayload {
   outputEntries?: AgentOutputEntry[];
   currentText?: string;
   lastText?: string;
@@ -108,27 +106,16 @@ function ActivityRow({ activity }: { activity: AgentActivityItem }) {
   );
 }
 
-export function Terminal({ agentName }: TerminalProps) {
+export function Terminal({ agent }: TerminalProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  const { data, error } = useQuery({
-    queryKey: ["agent", agentName],
-    queryFn: async () => {
-      return requestJson<AgentTerminalPayload>(`/api/agents/${agentName}`, undefined, {
-        source: "Bridge",
-        action: `Load terminal output for ${agentName}`,
-      });
-    },
-    refetchInterval: 2000,
-  });
 
   const activity = useMemo(
     () => buildAgentOutputActivity({
-      outputEntries: data?.outputEntries,
-      currentText: data?.currentText,
-      lastText: data?.lastText,
+      outputEntries: agent?.outputEntries,
+      currentText: agent?.currentText,
+      lastText: agent?.lastText,
     }),
-    [data],
+    [agent],
   );
 
   useEffect(() => {
@@ -157,11 +144,6 @@ export function Terminal({ agentName }: TerminalProps) {
           </div>
         )}
       </div>
-      {error ? (
-        <div className="absolute inset-x-0 bottom-0 border-t border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive backdrop-blur-sm">
-          {normalizeAppError(error).message}
-        </div>
-      ) : null}
     </div>
   );
 }

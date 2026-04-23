@@ -1124,7 +1124,7 @@ function WorkersSidebar({ agents, preferredModel, preferredEffort, onClose }: Wo
                     </div>
                   </div>
                   <div className="relative h-44 w-full bg-[#050607]">
-                    <Terminal agentName={agent.name} />
+                    <Terminal agent={agent} />
                   </div>
                 </div>
               );
@@ -1834,7 +1834,7 @@ export default function Home() {
           action: `Load worker details for ${worker.id}`,
         });
       },
-      refetchInterval: ["starting", "working", "idle", "stuck"].includes(worker.status) ? 2000 : false,
+      refetchInterval: ["starting", "working", "stuck"].includes(worker.status) ? 2000 : false,
     })),
   });
   const conversationAgents = useMemo(() => {
@@ -3005,7 +3005,7 @@ export default function Home() {
                             </div>
                           ) : null}
                           <div className="relative h-64 w-full bg-[#050607] sm:h-[22rem]">
-                            <Terminal agentName={worker.id} />
+                            <Terminal agent={agent} />
                           </div>
                         </div>
                       );

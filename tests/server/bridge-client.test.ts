@@ -141,6 +141,28 @@ describe("bridge client", () => {
     expect(init?.body).toContain('"effort":"high"');
   });
 
+  it("normalizes provider-prefixed GPT model ids before spawning a codex worker", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ name: "worker-1", state: "idle" }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { spawnAgent } = await import("@/server/bridge-client");
+    await spawnAgent({
+      type: "codex",
+      cwd: "/tmp",
+      name: "worker-1",
+      model: "openai/gpt-5.4",
+    });
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    expect(init?.body).toContain('"model":"gpt-5.4"');
+    expect(init?.body).not.toContain('"model":"openai/gpt-5.4"');
+  });
+
   it("passes resumeSessionId through when respawning a worker from saved history", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ name: "worker-1", state: "idle", sessionId: "session-123" }), {

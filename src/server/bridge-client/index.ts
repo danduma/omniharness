@@ -152,6 +152,30 @@ function asOutputEntries(value: unknown): NonNullable<AgentRecord["outputEntries
     .filter((item) => item.id && item.type && item.text);
 }
 
+function normalizeModelForWorkerType(type: string, model?: string) {
+  if (!model?.trim()) {
+    return model;
+  }
+
+  const trimmedModel = model.trim();
+  const normalizedType = type.trim().toLowerCase();
+  const normalizedModel = trimmedModel.toLowerCase();
+
+  if (normalizedType === "codex") {
+    if (normalizedModel === "openai/gpt-5.4") return "gpt-5.4";
+    if (normalizedModel === "openai/gpt-5.4-mini") return "gpt-5.4-mini";
+    if (normalizedModel === "anthropic/claude-sonnet-4") return "claude-sonnet-4";
+  }
+
+  if (normalizedType === "opencode") {
+    if (normalizedModel === "gpt-5.4") return "openai/gpt-5.4";
+    if (normalizedModel === "gpt-5.4-mini") return "openai/gpt-5.4-mini";
+    if (normalizedModel === "claude-sonnet-4") return "anthropic/claude-sonnet-4";
+  }
+
+  return trimmedModel;
+}
+
 export function normalizeAgentRecord(value: unknown): AgentRecord {
   const record = typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
   const contextUsage =
@@ -239,12 +263,17 @@ export async function spawnAgent(params: {
   effort?: string;
   resumeSessionId?: string;
 }) {
+  const normalizedParams = {
+    ...params,
+    ...(params.model ? { model: normalizeModelForWorkerType(params.type, params.model) } : {}),
+  };
+
   return requestBridge<AgentRecord>(
     "/agents",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params),
+      body: JSON.stringify(normalizedParams),
     },
     "Spawn",
   );
