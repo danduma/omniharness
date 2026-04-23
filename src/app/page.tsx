@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Terminal } from "@/components/Terminal";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -18,6 +18,8 @@ import { resolveProjectScope } from "@/lib/project-scope";
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { getRunLatestMessageTimestamp, isRunUnread } from "@/lib/conversation-state";
 import { buildConversationGroups } from "@/lib/conversations";
+import { buildWorkerLists, buildWorkerPreview, isWorkerActiveStatus, normalizeWorkerStatus, type ConversationWorkerRecord } from "@/lib/conversation-workers";
+import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -84,6 +86,7 @@ type AgentSnapshot = {
   } | null;
   lastText?: string;
   currentText?: string;
+  displayText?: string;
   stderrBuffer?: string[];
   stopReason?: string | null;
 };
@@ -128,7 +131,7 @@ type EventStreamState = {
   runs: RunRecord[];
   accounts: unknown[];
   agents: AgentSnapshot[];
-  workers: Array<{ id: string; runId: string; type: string; status: string }>;
+  workers: ConversationWorkerRecord[];
   planItems: PlanItemRecord[];
   clarifications: ClarificationRecord[];
   validationRuns: Array<{ runId: string }>;
@@ -973,6 +976,7 @@ function ConversationSidebar({
 }
 
 interface WorkersSidebarProps {
+  workers: ConversationWorkerRecord[];
   agents: AgentSnapshot[];
   preferredModel: string | null;
   preferredEffort: string | null;
@@ -1034,6 +1038,15 @@ function formatWorkerRuntime(type: string | undefined) {
   }
 
   return WORKER_OPTIONS.find((option) => option.value === type)?.label ?? type;
+}
+
+function formatContextAvailability(fullnessPercent: number | null | undefined) {
+  if (typeof fullnessPercent !== "number" || !Number.isFinite(fullnessPercent)) {
+    return "Context unavailable";
+  }
+
+  const availablePercent = Math.max(0, Math.min(100, 100 - Math.round(fullnessPercent)));
+  return `Context ${availablePercent}% available`;
 }
 
 type PendingPermissionRecord = NonNullable<AgentSnapshot["pendingPermissions"]>[number];
@@ -1104,7 +1117,124 @@ function PermissionWarning({ pendingPermissions }: { pendingPermissions: Pending
   );
 }
 
-function WorkersSidebar({ agents, preferredModel, preferredEffort, onClose }: WorkersSidebarProps) {
+function WorkerCard({
+  workerId,
+  agent,
+  defaultOpen,
+  runtimeLabel,
+  activeModel,
+  activeEffort,
+  pendingPermissions,
+  terminalHeightClass,
+}: {
+  workerId: string;
+  agent: AgentSnapshot;
+  defaultOpen: boolean;
+  runtimeLabel: string | null;
+  activeModel: string | null;
+  activeEffort: string | null;
+  pendingPermissions: PendingPermissionRecord[];
+  terminalHeightClass: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const contextLabel = formatContextAvailability(agent.contextUsage?.fullnessPercent);
+  const preview = buildWorkerPreview(agent);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <div className="overflow-hidden rounded-xl border border-white/10 bg-[#0d0f12] text-zinc-100 shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
+        <CollapsibleTrigger className="w-full text-left">
+          <div className="border-b border-white/10 bg-[#13161b] p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="flex items-center gap-2">
+                  <div className="break-all font-mono text-xs font-semibold leading-5 text-zinc-100" title={workerId}>
+                    {workerId}
+                  </div>
+                  <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-300">
+                    {agent.state}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {runtimeLabel ? (
+                    <span className="rounded-md border border-cyan-400/30 bg-cyan-400/10 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-100">
+                      {runtimeLabel}
+                    </span>
+                  ) : null}
+                  {activeModel ? (
+                    <span className="max-w-full truncate rounded-md border border-fuchsia-400/25 bg-fuchsia-400/10 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-100" title={activeModel}>
+                      {activeModel}
+                    </span>
+                  ) : null}
+                  {activeEffort ? <span className="text-[11px] text-zinc-400">{activeEffort}</span> : null}
+                  <span className="rounded-md border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-300">
+                    {contextLabel}
+                  </span>
+                </div>
+                <div className="truncate text-xs leading-5 text-zinc-400" title={preview}>
+                  {preview}
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {pendingPermissions.length > 0 ? <PermissionWarning pendingPermissions={pendingPermissions} /> : null}
+                {renderContextMeter(agent.contextUsage?.fullnessPercent)}
+                {isWorkerActiveStatus(agent.state) ? <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" /> : null}
+                <ChevronDown className={cn("h-4 w-4 text-zinc-400 transition-transform", open && "rotate-180")} />
+              </div>
+            </div>
+          </div>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="grid gap-2.5 border-b border-white/10 bg-[#101318] px-3 py-2.5 sm:grid-cols-3">
+            <div className="space-y-0.5 text-[11px]">
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Harness</div>
+              <div className="break-all font-mono text-[10px] leading-[1.45] text-zinc-200">{runtimeLabel || "Unknown"}</div>
+            </div>
+            <div className="space-y-0.5 text-[11px]">
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Model</div>
+              <div className="break-all font-mono text-[10px] leading-[1.45] text-zinc-200">{activeModel || "Default"}</div>
+            </div>
+            <div className="space-y-0.5 text-[11px]">
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Context</div>
+              <div className="break-all font-mono text-[10px] leading-[1.45] text-zinc-200">{contextLabel}</div>
+            </div>
+          </div>
+          {agent.lastError ? (
+            <div className="border-b border-white/10 bg-[#101318] px-3 py-2">
+              <div className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Last error</div>
+              <div className="mt-0.5 break-all font-mono text-[10px] leading-[1.45] text-zinc-300">{agent.lastError}</div>
+            </div>
+          ) : null}
+          <div className={cn("relative w-full bg-[#050607]", terminalHeightClass)}>
+            <Terminal agent={agent} />
+          </div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
+  );
+}
+
+function WorkersSidebar({ workers, agents, preferredModel, preferredEffort, onClose }: WorkersSidebarProps) {
+  const [activeTab, setActiveTab] = useState<"active" | "finished">("active");
+  const workerGroups = buildWorkerLists(workers);
+  const agentsById = useMemo(
+    () => new Map(agents.map((agent) => [agent.name, agent])),
+    [agents],
+  );
+
+  useEffect(() => {
+    if (activeTab === "active" && workerGroups.active.length === 0 && workerGroups.finished.length > 0) {
+      setActiveTab("finished");
+      return;
+    }
+
+    if (activeTab === "finished" && workerGroups.finished.length === 0 && workerGroups.active.length > 0) {
+      setActiveTab("active");
+    }
+  }, [activeTab, workerGroups.active.length, workerGroups.finished.length]);
+
+  const visibleWorkers = activeTab === "active" ? workerGroups.active : workerGroups.finished;
+
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col bg-muted/10">
       <div className="flex items-center justify-between border-b p-4">
@@ -1117,59 +1247,70 @@ function WorkersSidebar({ agents, preferredModel, preferredEffort, onClose }: Wo
           </Button>
         )}
       </div>
+      <div className="border-b border-border/60 px-4 py-3">
+        <div className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-1">
+          <button
+            type="button"
+            className={cn(
+              "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+              activeTab === "active"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            onClick={() => setActiveTab("active")}
+          >
+            Active ({workerGroups.active.length})
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+              activeTab === "finished"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            onClick={() => setActiveTab("finished")}
+          >
+            Finished ({workerGroups.finished.length})
+          </button>
+        </div>
+      </div>
       <ScrollArea className="flex-1 p-4">
-        <div className={cn(agents.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col")}>
-          {agents.length > 0 ? (
-            agents.map((agent) => {
+        <div className={cn(visibleWorkers.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col")}>
+          {visibleWorkers.length > 0 ? (
+            visibleWorkers.map((worker) => {
+              const agent = agentsById.get(worker.id) ?? {
+                name: worker.id,
+                type: worker.type,
+                state: worker.status,
+                currentText: "",
+                lastText: "",
+              };
               const configuredModel = agent.requestedModel || preferredModel;
               const configuredEffort = agent.requestedEffort || preferredEffort;
               const activeModel = agent.effectiveModel || configuredModel;
               const activeEffort = agent.effectiveEffort || configuredEffort;
               const pendingPermissions = agent.pendingPermissions ?? [];
-              const runtimeLabel = formatWorkerRuntime(agent.type);
+              const runtimeLabel = formatWorkerRuntime(agent.type || worker.type);
 
               return (
-                <div key={agent.name} className="overflow-hidden rounded-xl border border-white/10 bg-[#0d0f12] text-zinc-100 shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
-                  <div className="border-b border-white/10 bg-[#13161b] p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 space-y-1.5">
-                        <div className="break-all font-mono text-xs font-semibold leading-5" title={agent.name}>
-                          {agent.name}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          {runtimeLabel ? (
-                            <span className="rounded-md border border-cyan-400/30 bg-cyan-400/10 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-100">
-                              {runtimeLabel}
-                            </span>
-                          ) : null}
-                          {activeModel ? (
-                            <span className="max-w-full truncate rounded-md border border-fuchsia-400/25 bg-fuchsia-400/10 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-100" title={activeModel}>
-                              {activeModel}
-                            </span>
-                          ) : null}
-                          {activeEffort ? <span className="text-[11px] text-zinc-400">{activeEffort}</span> : null}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {pendingPermissions.length > 0 ? <PermissionWarning pendingPermissions={pendingPermissions} /> : null}
-                        {renderContextMeter(agent.contextUsage?.fullnessPercent)}
-                        {agent.state === "working" ? <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" /> : null}
-                        <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-300">
-                          {agent.state}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="relative h-44 w-full bg-[#050607]">
-                    <Terminal agent={agent} />
-                  </div>
-                </div>
+                <WorkerCard
+                  key={`${activeTab}-${worker.id}`}
+                  workerId={worker.id}
+                  agent={agent}
+                  defaultOpen={activeTab === "active"}
+                  runtimeLabel={runtimeLabel}
+                  activeModel={activeModel}
+                  activeEffort={activeEffort}
+                  pendingPermissions={pendingPermissions}
+                  terminalHeightClass="h-44"
+                />
               );
             })
           ) : (
             <div className="flex h-full min-h-[16rem] flex-1 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground">
               <TerminalIcon className="mb-2 h-6 w-6 opacity-30" />
-              No workers running for this conversation.
+              {activeTab === "active" ? "No active workers for this conversation." : "No finished workers for this conversation."}
             </div>
           )}
         </div>
@@ -1244,6 +1385,7 @@ export default function Home() {
   });
   const [runtimeErrors, setRuntimeErrors] = useState<AppErrorDescriptor[]>([]);
   const [settingsDiagnostics, setSettingsDiagnostics] = useState<AppErrorDescriptor[]>([]);
+  const queryClient = useQueryClient();
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const commandInputRef = useRef<HTMLTextAreaElement>(null);
@@ -1747,6 +1889,30 @@ export default function Home() {
         action: "Recover conversation",
       });
     },
+    onMutate: async (variables) => {
+      const previousState = state;
+      const workerIds = (state.workers || [])
+        .filter((worker) => worker.runId === variables.runId)
+        .map((worker) => worker.id);
+
+      if (variables.action !== "fork") {
+        setState((current) => applyRunRecoveryOptimisticUpdate(
+          current as RecoverableConversationState,
+          variables,
+        ) as typeof current);
+      }
+
+      for (const workerId of workerIds) {
+        queryClient.removeQueries({ queryKey: ["conversation-agent", workerId], exact: true });
+      }
+
+      return { previousState };
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previousState) {
+        setState(context.previousState);
+      }
+    },
     onSuccess: (data) => {
       if (data.runId) {
         setSelectedRunId(data.runId);
@@ -1967,13 +2133,13 @@ export default function Home() {
 
   const selectedRunWorkers = useMemo(() => {
     if (!selectedRunId || !state.workers) {
-      return [] as Array<{ id: string; runId: string; type: string; status: string }>;
+      return [] as ConversationWorkerRecord[];
     }
 
-    return (state.workers || []).filter((worker: { runId: string }) => worker.runId === selectedRunId);
+    return (state.workers || []).filter((worker: ConversationWorkerRecord) => worker.runId === selectedRunId);
   }, [selectedRunId, state.workers]);
   const conversationAgentQueries = useQueries({
-    queries: selectedRunWorkers.map((worker: { id: string; status: string }) => ({
+    queries: selectedRunWorkers.map((worker: ConversationWorkerRecord) => ({
       queryKey: ["conversation-agent", worker.id],
       queryFn: async () => {
         return requestJson<AgentSnapshot>(`/api/agents/${worker.id}`, undefined, {
@@ -1981,7 +2147,7 @@ export default function Home() {
           action: `Load worker details for ${worker.id}`,
         });
       },
-      refetchInterval: ["starting", "working", "stuck"].includes(worker.status) ? 2000 : false,
+      refetchInterval: ["starting", "working", "stuck"].includes(normalizeWorkerStatus(worker.status)) ? 2000 : false,
     })),
   });
   const conversationAgents = useMemo(() => {
@@ -2001,6 +2167,18 @@ export default function Home() {
       };
     });
   }, [conversationAgentQueries, selectedRunWorkers, state.agents]);
+  const conversationWorkerGroups = useMemo(
+    () => buildWorkerLists(selectedRunWorkers),
+    [selectedRunWorkers],
+  );
+  const activeConversationWorkerIds = useMemo(
+    () => new Set(conversationWorkerGroups.active.map((worker) => worker.id)),
+    [conversationWorkerGroups.active],
+  );
+  const activeConversationAgents = useMemo(
+    () => conversationAgents.filter((agent) => activeConversationWorkerIds.has(agent.name)),
+    [activeConversationWorkerIds, conversationAgents],
+  );
   const latestUserCheckpoint = selectedRunId
     ? [...((filteredMessages || []) as MessageRecord[])]
         .filter((message) => message.role === "user")
@@ -2009,7 +2187,7 @@ export default function Home() {
   const liveThoughts = useMemo(() => {
     const seen = new Set<string>();
 
-    return conversationAgents
+    return activeConversationAgents
       .map((agent) => {
         const rawThought = agent.currentText?.trim() || agent.lastText?.trim() || "";
         const snippet = summarizeThought(rawThought);
@@ -2031,7 +2209,7 @@ export default function Home() {
       })
       .filter((thought): thought is { agentName: string; snippet: string; isLive: boolean } => Boolean(thought))
       .slice(0, 3);
-  }, [conversationAgents]);
+  }, [activeConversationAgents]);
   const selectedRunExecutionEvents = useMemo(() => (
     ((state.executionEvents || []) as ExecutionEventRecord[])
       .filter((event) => event.runId === selectedRunId)
@@ -2097,16 +2275,15 @@ export default function Home() {
       source: "Bridge",
       action: `Load worker details for ${selectedRunWorkers[index]?.id ?? "worker"}`,
     })] : []);
-  const pendingPermissionAgent = conversationAgents.find((agent) => (agent.pendingPermissions?.length ?? 0) > 0) ?? null;
-  const erroredAgent = conversationAgents.find((agent) => agent.state === "error" || Boolean(agent.lastError) || Boolean(agent.stopReason)) ?? null;
+  const pendingPermissionAgent = activeConversationAgents.find((agent) => (agent.pendingPermissions?.length ?? 0) > 0) ?? null;
+  const erroredAgent = activeConversationAgents.find((agent) => agent.state === "error" || Boolean(agent.lastError) || Boolean(agent.stopReason)) ?? null;
   const latestWaitEvent = selectedRunExecutionEvents.find((event) => event.eventType === "supervisor_wait") ?? null;
   const latestStuckEvent = selectedRunExecutionEvents.find((event) => event.eventType === "worker_stuck") ?? null;
-  const hasStuckWorker = selectedRunWorkers.some((worker) => worker.status === "stuck")
-    || conversationAgents.some((agent) => agent.state === "stuck")
+  const hasStuckWorker = conversationWorkerGroups.active.some((worker) => worker.status === "stuck")
+    || activeConversationAgents.some((agent) => agent.state === "stuck")
     || Boolean(latestStuckEvent);
-  const hasActiveWorker = conversationAgents.some((agent) => (
-    agent.state === "working"
-    || agent.state === "starting"
+  const hasActiveWorker = activeConversationAgents.some((agent) => (
+    isWorkerActiveStatus(agent.state)
     || Boolean(agent.currentText?.trim())
   ));
   const latestExecutionAgeMs = latestExecutionEvent
@@ -2119,7 +2296,7 @@ export default function Home() {
       && !hasActiveWorker
       && (
         hasStuckWorker
-        || (selectedRunWorkers.length === 0 && latestExecutionAgeMs >= 30_000)
+        || (conversationWorkerGroups.active.length === 0 && latestExecutionAgeMs >= 30_000)
       )
   );
   const liveExecutionStatus = useMemo(() => {
@@ -2174,7 +2351,7 @@ export default function Home() {
       };
     }
 
-    if (latestWaitEvent && !conversationAgents.some((agent) => agent.state === "working")) {
+    if (latestWaitEvent && !activeConversationAgents.some((agent) => agent.state === "working")) {
       const details = parseExecutionEventDetails(latestWaitEvent.details);
       const seconds = typeof details.seconds === "number" ? details.seconds : null;
       return {
@@ -2184,7 +2361,7 @@ export default function Home() {
       };
     }
 
-    if (conversationAgents.some((agent) => agent.state === "working" || Boolean(agent.currentText?.trim()))) {
+    if (activeConversationAgents.some((agent) => agent.state === "working" || Boolean(agent.currentText?.trim()))) {
       return {
         label: "Thinking",
         detail: liveThoughts[0]?.snippet || "The worker is actively reasoning.",
@@ -2205,7 +2382,7 @@ export default function Home() {
       detail: latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The supervisor is still checking the run.",
       tone: "active" as const,
     };
-  }, [conversationAgents, erroredAgent, hasStuckWorker, latestExecutionEvent, latestStuckEvent, latestWaitEvent, liveThoughts, pendingPermissionAgent, selectedRun, showRecoverableRunningState]);
+  }, [activeConversationAgents, erroredAgent, hasStuckWorker, latestExecutionEvent, latestStuckEvent, latestWaitEvent, liveThoughts, pendingPermissionAgent, selectedRun, showRecoverableRunningState]);
   const executionDetailLines = useMemo(() => {
     const lines: Array<{ text: string; createdAt?: string }> = [];
 
@@ -3006,6 +3183,7 @@ export default function Home() {
                   <SheetTitle>Workers</SheetTitle>
                 </SheetHeader>
                 <WorkersSidebar
+                  workers={selectedRunWorkers}
                   agents={conversationAgents}
                   preferredModel={selectedRun?.preferredWorkerModel ?? null}
                   preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
@@ -3128,62 +3306,38 @@ export default function Home() {
                 <ErrorNotice error={conversationFailure} />
               ) : null}
 
-              {selectedRunWorkers.length > 0 && (
+              {conversationWorkerGroups.active.length > 0 && (
                 <div className="mt-4 border-t border-border/50 pt-6 sm:mt-8">
                   <div className="mb-4 flex items-center gap-2 pl-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     <Cpu className="h-4 w-4" /> CLI Agents
                   </div>
                   <div className="flex flex-col gap-6">
-                    {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                    {selectedRunWorkers.map((worker: any) => {
+                    {conversationWorkerGroups.active.map((worker) => {
                       const agent = conversationAgents.find((item) => item.name === worker.id);
                       const activeModel = agent?.effectiveModel || agent?.requestedModel || selectedRun?.preferredWorkerModel || null;
                       const activeEffort = agent?.effectiveEffort || agent?.requestedEffort || selectedRun?.preferredWorkerEffort || null;
-                      const contextUsage = agent?.contextUsage?.fullnessPercent;
                       const pendingPermissions = agent?.pendingPermissions ?? [];
                       const runtimeLabel = formatWorkerRuntime(agent?.type || worker.type);
-                      const details = [
-                        activeModel ? { label: "Model", value: activeModel } : null,
-                        activeEffort ? { label: "Effort", value: activeEffort } : null,
-                        typeof contextUsage === "number" ? { label: "Context", value: `${Math.round(contextUsage)}% full` } : null,
-                      ].filter((detail): detail is { label: string; value: string } => Boolean(detail));
+                      const fallbackAgent = agent ?? {
+                        name: worker.id,
+                        type: worker.type,
+                        state: worker.status,
+                        currentText: "",
+                        lastText: "",
+                      };
 
                       return (
-                        <div key={worker.id} className="flex flex-col overflow-hidden rounded-[1.05rem] border border-white/10 bg-[#0d0f12] text-zinc-100 shadow-[0_20px_60px_rgba(0,0,0,0.2)]">
-                          <div className="flex items-center justify-between border-b border-white/10 bg-[#13161b] px-3 py-2.5">
-                            <span className="flex items-center gap-1.5 font-mono text-[11px] font-semibold text-zinc-100">
-                              <TerminalIcon className="h-3 w-3" /> {worker.id}
-                            </span>
-                            <div className="flex items-center gap-2">
-                              {pendingPermissions.length > 0 ? <PermissionWarning pendingPermissions={pendingPermissions} /> : null}
-                              {agent?.state === "working" && <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />}
-                              {runtimeLabel ? (
-                                <span className="rounded-md border border-amber-300/20 bg-amber-300/6 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-amber-100/90">
-                                  {runtimeLabel}
-                                </span>
-                              ) : null}
-                            </div>
-                          </div>
-                          {details.length > 0 ? (
-                            <div className="grid gap-2.5 border-b border-white/10 bg-[#101318] px-3 py-2.5 sm:grid-cols-3">
-                              {details.map((detail) => (
-                                <div key={detail.label} className="space-y-0.5 text-[11px]">
-                                  <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">{detail.label}</div>
-                                  <div className="break-all font-mono text-[10px] leading-[1.45] text-zinc-200">{detail.value}</div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : null}
-                          {agent?.lastError ? (
-                            <div className="border-b border-white/10 bg-[#101318] px-3 py-2">
-                              <div className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Last error</div>
-                              <div className="mt-0.5 break-all font-mono text-[10px] leading-[1.45] text-zinc-300">{agent.lastError}</div>
-                            </div>
-                          ) : null}
-                          <div className="relative h-64 w-full bg-[#050607] sm:h-[22rem]">
-                            <Terminal agent={agent} />
-                          </div>
-                        </div>
+                        <WorkerCard
+                          key={worker.id}
+                          workerId={worker.id}
+                          agent={fallbackAgent}
+                          defaultOpen={false}
+                          runtimeLabel={runtimeLabel}
+                          activeModel={activeModel}
+                          activeEffort={activeEffort}
+                          pendingPermissions={pendingPermissions}
+                          terminalHeightClass="h-64 sm:h-[22rem]"
+                        />
                       );
                     })}
                   </div>
@@ -3226,6 +3380,7 @@ export default function Home() {
           </button>
           <div className="flex h-full min-w-0 flex-1 pl-2">
             <WorkersSidebar
+              workers={selectedRunWorkers}
               agents={conversationAgents}
               preferredModel={selectedRun?.preferredWorkerModel ?? null}
               preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
