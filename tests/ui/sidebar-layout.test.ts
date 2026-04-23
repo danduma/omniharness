@@ -22,8 +22,10 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain("Context usage unavailable");
   expect(pageSource).toContain("Context usage ");
   expect(pageSource).toContain("Claude Code");
+  expect(pageSource).toContain("Context unavailable");
+  expect(pageSource).toContain('className="truncate text-xs leading-5 text-zinc-400"');
   expect(pageSource).not.toContain("Recent output");
-  expect(pageSource).toContain('className={cn(agents.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col")}');
+  expect(pageSource).toContain('className={cn(visibleWorkers.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col")}');
   expect(pageSource).toContain('className="flex h-full min-h-[16rem] flex-1 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground"');
   expect(pageSource).not.toContain('className="flex h-32 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground"');
 });
@@ -34,8 +36,12 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('window.localStorage.setItem("omni-workers-sidebar-width", String(rightSidebarWidth))');
   expect(pageSource).toContain('title="Toggle Conversation Workers"');
   expect(pageSource).toContain('<WorkersSidebar');
+  expect(pageSource).toContain('workers={selectedRunWorkers}');
   expect(pageSource).toContain('agents={conversationAgents}');
-  expect(pageSource).toContain('queries: selectedRunWorkers.map((worker: { id: string; status: string }) => ({');
+  expect(pageSource).toContain('const [activeTab, setActiveTab] = useState<"active" | "finished">("active")');
+  expect(pageSource).toContain("Active ({workerGroups.active.length})");
+  expect(pageSource).toContain("Finished ({workerGroups.finished.length})");
+  expect(pageSource).toContain('queries: selectedRunWorkers.map((worker: ConversationWorkerRecord) => ({');
   expect(pageSource).toContain('preferredModel={selectedRun?.preferredWorkerModel ?? null}');
   expect(pageSource).toContain('preferredEffort={selectedRun?.preferredWorkerEffort ?? null}');
   expect(pageSource).toContain('onClose={() => setMobileWorkersOpen(false)}');
@@ -43,6 +49,7 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('style={{ width: rightSidebarWidth }}');
   expect(pageSource).toContain('aria-label="Resize workers sidebar"');
   expect(pageSource).toContain('onPointerDown={handleRightSidebarResizeStart}');
+  expect(pageSource).toContain('queryClient.removeQueries({ queryKey: ["conversation-agent", workerId], exact: true })');
   expect(pageSource).toContain('function renderContextMeter(fullnessPercent: number | null | undefined)');
   expect(pageSource).toContain("Permissions waiting");
   expect(pageSource).toContain("Context usage unavailable");
@@ -60,15 +67,17 @@ test("workers sidebar is conversation-scoped and resizable", () => {
 });
 
 test("worker detail polling skips idle workers to avoid runaway bridge traffic", () => {
-  expect(pageSource).toContain('refetchInterval: ["starting", "working", "stuck"].includes(worker.status) ? 2000 : false');
+  expect(pageSource).toContain('refetchInterval: ["starting", "working", "stuck"].includes(normalizeWorkerStatus(worker.status)) ? 2000 : false');
   expect(pageSource).not.toContain('refetchInterval: ["starting", "working", "idle", "stuck"].includes(worker.status) ? 2000 : false');
 });
 
-test("worker panes stay mounted for recorded run workers after live agents exit", () => {
-  expect(pageSource).toContain('{selectedRunWorkers.length > 0 && (');
-  expect(pageSource).toContain('{selectedRunWorkers.map((worker: any) => {');
+test("main conversation only renders active worker panes while the sidebar keeps finished workers", () => {
+  expect(pageSource).toContain('{conversationWorkerGroups.active.length > 0 && (');
+  expect(pageSource).toContain('{conversationWorkerGroups.active.map((worker) => {');
   expect(pageSource).toContain('<Terminal agent={agent} />');
   expect(pageSource).toContain("<Cpu className=\"h-4 w-4\" /> CLI Agents");
+  expect(pageSource).toContain('defaultOpen={false}');
+  expect(pageSource).toContain('defaultOpen={activeTab === "active"}');
   expect(pageSource).not.toContain("<Cpu className=\"h-4 w-4\" /> Live CLI Agents");
   expect(pageSource).not.toContain('{conversationWorkers.length > 0 && (');
   expect(pageSource).not.toContain('{conversationWorkers.map((worker: any) => {');
