@@ -13,6 +13,9 @@ import { FolderPickerDialog } from "@/components/FolderPickerDialog";
 import { FileAttachmentPickerDialog, type AttachmentItem } from "@/components/FileAttachmentPickerDialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ClarificationPanel } from "@/components/ClarificationPanel";
+import { AgentSurface } from "@/components/AgentSurface";
+import { ConversationModePicker, getConversationModeCopy, type ConversationModeOption } from "@/components/ConversationModePicker";
+import { PlanningArtifactsPanel } from "@/components/PlanningArtifactsPanel";
 import { type AppErrorDescriptor, appErrorKey, mergeAppErrors, normalizeAppError, requestJson } from "@/lib/app-errors";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
@@ -23,6 +26,7 @@ import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } f
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { BootShell } from "@/components/BootShell";
 import { LoginShell } from "@/components/LoginShell";
 import { PairDeviceDialog } from "@/components/PairDeviceDialog";
 
@@ -30,6 +34,7 @@ type PlanRecord = { id: string; path: string };
 type RunRecord = {
   id: string;
   planId: string;
+  mode?: ConversationModeOption | null;
   status: string;
   createdAt: string;
   failedAt?: string | null;
@@ -40,6 +45,9 @@ type RunRecord = {
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
   allowedWorkerTypes?: string | null;
+  specPath?: string | null;
+  artifactPlanPath?: string | null;
+  plannerArtifactsJson?: string | null;
 };
 type PlanItemRecord = { id: string; planId: string; title: string; phase: string | null; status: string };
 type ClarificationRecord = { id: string; runId: string; question: string; answer: string | null; status: string };
@@ -124,6 +132,7 @@ type AuthSessionResponse = {
   authenticated: boolean;
   currentSession: AuthSessionRecord | null;
   sessions: AuthSessionRecord[];
+  configurationError?: string | null;
 };
 type EventStreamState = {
   messages: MessageRecord[];
@@ -156,6 +165,7 @@ const EFFORT_OPTIONS = ["Low", "Medium", "High"];
 const COMPOSER_WORKER_STORAGE_KEY = "omni-composer-worker";
 const COMPOSER_MODEL_STORAGE_KEY = "omni-composer-model";
 const COMPOSER_EFFORT_STORAGE_KEY = "omni-composer-effort";
+const COMPOSER_MODE_STORAGE_KEY = "omni-composer-mode";
 const RUN_PATH_PATTERN = /^\/session\/([0-9a-fA-F-]{36})\/?$/;
 
 type SidebarRun = { id: string; title: string; path: string; status: string; createdAt: string };
@@ -205,7 +215,7 @@ function ErrorNotice({
   return (
     <div className={containerClass}>
       <div className="flex items-start gap-3">
-        <AlertTriangle className={iconClass} />
+        {tone === "success" ? <CheckCircle2 className={iconClass} /> : <AlertTriangle className={iconClass} />}
         <div className="min-w-0 flex-1">
           <div>
             <div className={titleClass}>{error.action || error.source || "Error"}</div>
@@ -573,18 +583,6 @@ function buildConversationPath(selectedRunId: string | null, draftProjectPath: s
 
   const query = params.toString();
   return query ? `/?${query}` : "/";
-}
-
-function buildConversationRoute(selectedRunId: string | null, draftProjectPath: string | null) {
-  if (selectedRunId) {
-    return `/session/${selectedRunId}`;
-  }
-
-  if (draftProjectPath) {
-    return `/?project=${encodeURIComponent(draftProjectPath)}`;
-  }
-
-  return "/";
 }
 
 function LlmSettingsForm({
@@ -1140,6 +1138,11 @@ function WorkerCard({
   const contextLabel = formatContextAvailability(agent.contextUsage?.fullnessPercent);
   const preview = buildWorkerPreview(agent);
 
+  const displayId = useMemo(() => {
+    const match = workerId.match(/-worker-(\d+)$/);
+    return match ? `Worker ${match[1]}` : workerId;
+  }, [workerId]);
+
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div className="overflow-hidden rounded-xl border border-white/10 bg-[#0d0f12] text-zinc-100 shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
@@ -1149,7 +1152,7 @@ function WorkerCard({
               <div className="min-w-0 flex-1 space-y-2">
                 <div className="flex items-center gap-2">
                   <div className="break-all font-mono text-xs font-semibold leading-5 text-zinc-100" title={workerId}>
-                    {workerId}
+                    {displayId}
                   </div>
                   <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-300">
                     {agent.state}
@@ -1360,6 +1363,7 @@ export default function Home() {
   const [editingMessageValue, setEditingMessageValue] = useState("");
   const [executionDetailsOpen, setExecutionDetailsOpen] = useState(false);
   const [routeReady, setRouteReady] = useState(false);
+  const [selectedConversationMode, setSelectedConversationMode] = useState<ConversationModeOption>("implementation");
   const [selectedCliAgent, setSelectedCliAgent] = useState<ComposerWorkerOption>("auto");
   const [selectedModel, setSelectedModel] = useState("GPT-5.4");
   const [selectedEffort, setSelectedEffort] = useState("High");
@@ -1401,6 +1405,7 @@ export default function Home() {
   });
 
   const authEnabled = sessionQuery.data?.enabled ?? false;
+  const authConfigurationError = sessionQuery.data?.configurationError ?? null;
   const appUnlocked = sessionQuery.data ? (!sessionQuery.data.enabled || sessionQuery.data.authenticated) : false;
 
   const loginMutation = useMutation({
@@ -1558,6 +1563,7 @@ export default function Home() {
     const params = new URLSearchParams(window.location.search);
     const routeProjectPath = params.get("project")?.trim() || "";
     const routePairToken = params.get("pair")?.trim() || "";
+    const savedMode = window.localStorage.getItem(COMPOSER_MODE_STORAGE_KEY)?.trim() || "";
     const savedWorker = window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)?.trim() || "";
     const savedModel = window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)?.trim() || "";
     const savedEffort = window.localStorage.getItem(COMPOSER_EFFORT_STORAGE_KEY)?.trim() || "";
@@ -1572,6 +1578,9 @@ export default function Home() {
       setSelectedRunId(null);
     }
 
+    if (savedMode === "planning" || savedMode === "implementation" || savedMode === "direct") {
+      setSelectedConversationMode(savedMode);
+    }
     if (savedWorker === "auto" || WORKER_OPTIONS.some((option) => option.value === savedWorker)) {
       setSelectedCliAgent(savedWorker as ComposerWorkerOption);
     }
@@ -1586,7 +1595,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!routeReady || !authEnabled || appUnlocked || !pairTokenFromUrl || redeemPairMutation.isPending || pairRedeemAttempted) {
+    if (!routeReady || !authEnabled || authConfigurationError || appUnlocked || !pairTokenFromUrl || redeemPairMutation.isPending || pairRedeemAttempted) {
       return;
     }
 
@@ -1594,6 +1603,7 @@ export default function Home() {
     void redeemPairMutation.mutateAsync(pairTokenFromUrl);
   }, [
     appUnlocked,
+    authConfigurationError,
     authEnabled,
     pairRedeemAttempted,
     pairTokenFromUrl,
@@ -1765,6 +1775,14 @@ export default function Home() {
       return;
     }
 
+    window.localStorage.setItem(COMPOSER_MODE_STORAGE_KEY, selectedConversationMode);
+  }, [selectedConversationMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
     window.localStorage.setItem(COMPOSER_WORKER_STORAGE_KEY, selectedCliAgent);
   }, [selectedCliAgent]);
 
@@ -1926,10 +1944,11 @@ export default function Home() {
     mutationFn: async (cmd: string) => {
       const isAutoWorkerSelection = selectedCliAgent === "auto";
       const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel);
-      return requestJson<{ runId?: string }>("/api/supervisor", {
+      return requestJson<{ runId?: string }>("/api/conversations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          mode: selectedConversationMode,
           command: cmd,
           projectPath: currentProjectScope,
           preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
@@ -1950,9 +1969,48 @@ export default function Home() {
     },
   });
 
+  const sendConversationMessage = useMutation({
+    mutationFn: async (payload: { runId: string; content: string }) => {
+      return requestJson<{ ok: true }>(`/api/conversations/${payload.runId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: payload.content }),
+      }, {
+        source: "Conversations",
+        action: "Send a conversation message",
+      });
+    },
+    onSuccess: () => {
+      setCommand("");
+    },
+  });
+
+  const promotePlanningConversation = useMutation({
+    mutationFn: async (payload: { runId: string; planPath: string | null }) => {
+      return requestJson<{ runId?: string }>(`/api/planning/${payload.runId}/promote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planPath: payload.planPath }),
+      }, {
+        source: "Planning",
+        action: "Promote planning conversation",
+      });
+    },
+    onSuccess: (data) => {
+      if (data.runId) {
+        setSelectedRunId(data.runId);
+      }
+    },
+  });
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (command.trim()) {
+      if (selectedRunId && (isPlanningConversation || isDirectConversation)) {
+        sendConversationMessage.mutate({ runId: selectedRunId, content: command });
+        return;
+      }
+
       runCommand.mutate(command);
     }
   };
@@ -2057,9 +2115,11 @@ export default function Home() {
   const plans = (state.plans || []) as PlanRecord[];
   const clarifications = (state.clarifications || []) as ClarificationRecord[];
   const selectedRun = selectedRunId ? runs.find((run) => run.id === selectedRunId) ?? null : null;
-  const activeConversationRoute = useMemo(() => (
-    buildConversationRoute(selectedRunId, draftProjectPath)
-  ), [draftProjectPath, selectedRunId]);
+  const selectedRunMode: ConversationModeOption = selectedRun?.mode || "implementation";
+  const isImplementationConversation = selectedRunMode === "implementation";
+  const isPlanningConversation = selectedRunMode === "planning";
+  const isDirectConversation = selectedRunMode === "direct";
+  const activeComposerMode: ConversationModeOption = selectedRun ? selectedRunMode : selectedConversationMode;
   useEffect(() => {
     setExecutionDetailsOpen(false);
   }, [selectedRunId]);
@@ -2167,6 +2227,7 @@ export default function Home() {
       };
     });
   }, [conversationAgentQueries, selectedRunWorkers, state.agents]);
+  const primaryConversationAgent = conversationAgents[0] ?? null;
   const conversationWorkerGroups = useMemo(
     () => buildWorkerLists(selectedRunWorkers),
     [selectedRunWorkers],
@@ -2509,6 +2570,7 @@ export default function Home() {
   const activePlan = selectedRunId && runs.length && plans.length
     ? plans.find((p) => p.id === runs.find((r) => r.id === selectedRunId)?.planId) ?? null
     : null;
+  const activeConversationCwd = selectedRun?.projectPath || activePlan?.path || draftProjectPath || null;
   const selectedClarifications = selectedRunId ? clarifications.filter((item) => item.runId === selectedRunId) : [];
   const appErrors = useMemo(() => {
     const errors: AppErrorDescriptor[] = [];
@@ -2728,9 +2790,20 @@ export default function Home() {
     }));
   };
 
+  const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || promotePlanningConversation.isPending;
+  const lockedDirectWorkerLabel = WORKER_OPTIONS.find((option) => option.value === (selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent))?.label
+    || WORKER_OPTIONS.find((option) => option.value === autoSelectedWorkerType)?.label
+    || "Direct worker";
+
   const composer = (className: string) => (
     <div className={`relative z-20 w-full shrink-0 bg-background p-3 sm:p-4 ${className}`}>
       <form onSubmit={handleSubmit} className="group relative mx-auto max-w-3xl">
+        {!selectedRunId ? (
+          <ConversationModePicker
+            value={selectedConversationMode}
+            onChange={setSelectedConversationMode}
+          />
+        ) : null}
         {showMentionPicker && (
           <div className="absolute inset-x-0 bottom-full mb-3 overflow-hidden rounded-2xl border border-border bg-background shadow-xl">
             <div className="border-b border-border/60 px-4 py-2 text-xs text-muted-foreground">
@@ -2807,13 +2880,17 @@ export default function Home() {
 
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                if (!runCommand.isPending && command.trim()) {
-                  runCommand.mutate(command);
+                if (!isComposerSubmitting && command.trim()) {
+                  if (selectedRunId && (isPlanningConversation || isDirectConversation)) {
+                    sendConversationMessage.mutate({ runId: selectedRunId, content: command });
+                  } else {
+                    runCommand.mutate(command);
+                  }
                 }
               }
             }}
             placeholder="Ask Omni anything. @ to refer to files"
-            disabled={runCommand.isPending}
+            disabled={isComposerSubmitting}
             rows={1}
             className={cn(
               "min-h-[56px] w-full resize-none bg-transparent text-[15px] leading-6 outline-none",
@@ -2856,44 +2933,57 @@ export default function Home() {
 
           <div className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
             <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={() => setShowAttachmentPicker(true)}
-                className={cn(
-                  "h-10 w-10 rounded-full",
-                  themeMode === "night"
-                    ? "text-muted-foreground hover:bg-background/45 hover:text-foreground"
-                    : "text-[#959595] hover:bg-black/[0.04] hover:text-[#666666]",
-                )}
-                aria-label="Attach files"
-              >
-                <Plus className="h-5 w-5" />
-              </Button>
+              {!selectedRunId ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setShowAttachmentPicker(true)}
+                  className={cn(
+                    "h-10 w-10 rounded-full",
+                    themeMode === "night"
+                      ? "text-muted-foreground hover:bg-background/45 hover:text-foreground"
+                      : "text-[#959595] hover:bg-black/[0.04] hover:text-[#666666]",
+                  )}
+                  aria-label="Attach files"
+                >
+                  <Plus className="h-5 w-5" />
+                </Button>
+              ) : null}
             </div>
 
             <div className="ml-auto flex flex-wrap items-center gap-2">
-              <div className="relative">
-                <select
-                  value={selectedCliAgent}
-                  onChange={(event) => setSelectedCliAgent(event.target.value as ComposerWorkerOption)}
-                  className={cn(
-                    "h-9 appearance-none border-0 bg-transparent pl-3 pr-8 text-sm outline-none transition-colors",
-                    themeMode === "night"
-                      ? "text-muted-foreground hover:text-foreground"
-                      : "text-[#8f8f8f] hover:text-[#5e5e5e]",
-                  )}
-                >
-                  {composerWorkerOptions.map((agent) => (
-                    <option key={agent.value} value={agent.value}>{agent.label}</option>
-                  ))}
-                </select>
-                <ChevronDown className={cn(
-                  "pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2",
-                  themeMode === "night" ? "text-muted-foreground" : "text-[#9a9a9a]",
-                )} />
-              </div>
+              {activeComposerMode === "direct" ? (
+                <div className={cn(
+                  "rounded-full border px-3 py-2 text-xs font-semibold",
+                  themeMode === "night"
+                    ? "border-border/60 bg-background/50 text-muted-foreground"
+                    : "border-[#d8d8d8] bg-white/90 text-[#6a6a6a]",
+                )}>
+                  Direct worker: {lockedDirectWorkerLabel}
+                </div>
+              ) : (
+                <div className="relative">
+                  <select
+                    value={selectedCliAgent}
+                    onChange={(event) => setSelectedCliAgent(event.target.value as ComposerWorkerOption)}
+                    className={cn(
+                      "h-9 appearance-none border-0 bg-transparent pl-3 pr-8 text-sm outline-none transition-colors",
+                      themeMode === "night"
+                        ? "text-muted-foreground hover:text-foreground"
+                        : "text-[#8f8f8f] hover:text-[#5e5e5e]",
+                    )}
+                  >
+                    {composerWorkerOptions.map((agent) => (
+                      <option key={agent.value} value={agent.value}>{agent.label}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className={cn(
+                    "pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2",
+                    themeMode === "night" ? "text-muted-foreground" : "text-[#9a9a9a]",
+                  )} />
+                </div>
+              )}
 
               <div className="relative">
                 <select
@@ -2940,7 +3030,7 @@ export default function Home() {
               <Button
                 type="submit"
                 size="icon"
-                disabled={runCommand.isPending || !command.trim()}
+                disabled={isComposerSubmitting || !command.trim()}
                 className={cn(
                   "h-10 w-10 rounded-full transition-all",
                   themeMode === "night"
@@ -2948,7 +3038,7 @@ export default function Home() {
                     : "bg-[#9d9d9d] text-white hover:bg-[#8b8b8b] disabled:bg-[#c9c9c9]",
                 )}
               >
-                {runCommand.isPending ? (
+                {isComposerSubmitting ? (
                   <LoaderCircle className="h-5 w-5 animate-spin" />
                 ) : (
                   <ArrowUp className="h-5 w-5" />
@@ -3006,21 +3096,16 @@ export default function Home() {
   };
 
   if (!routeReady || sessionQuery.isLoading || (authEnabled && !appUnlocked && Boolean(pairTokenFromUrl) && redeemPairMutation.isPending)) {
-    return (
-      <LoginShell
-        onSubmit={async () => undefined}
-        isRedeemingPair={Boolean(pairTokenFromUrl)}
-        pairError={pairRedeemError}
-      />
-    );
+    return <BootShell />;
   }
 
   if (authEnabled && !appUnlocked) {
     return (
       <LoginShell
+        configurationError={authConfigurationError}
         error={authError}
         isSubmitting={loginMutation.isPending}
-        isRedeemingPair={Boolean(pairTokenFromUrl) && !pairRedeemError}
+        isRedeemingPair={Boolean(pairTokenFromUrl) && !authConfigurationError && !pairRedeemError}
         pairError={pairRedeemError}
         onSubmit={async (password) => {
           setAuthError(null);
@@ -3099,66 +3184,34 @@ export default function Home() {
               </SheetContent>
             </Sheet>
 
-            {selectedRun ? (
-              <div className="flex min-w-0 flex-col">
-                <div className="flex items-center gap-2">
-                  <span className="truncate font-semibold text-sm">{selectedRun.title || "New conversation"}</span>
-                  {selectedRun?.status === "failed" ? (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-destructive">
-                      <AlertTriangle className="h-3 w-3" /> Failed
-                    </span>
-                  ) : null}
-                  {selectedRun?.status === "cancelling" ? (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
-                      Cancelling
-                    </span>
-                  ) : null}
-                </div>
-                <div className="flex min-w-0 items-center gap-2">
-                  <span
-                    aria-label="Conversation route"
-                    className="max-w-[18rem] truncate font-mono text-[11px] text-muted-foreground"
-                    title={activeConversationRoute}
-                  >
-                    {activeConversationRoute}
-                  </span>
-                  <span className="truncate text-xs text-muted-foreground" title={selectedRun.projectPath || activePlan?.path || undefined}>
-                    {selectedRun.projectPath || activePlan?.path || "Ad hoc request"}
-                  </span>
-                </div>
-              </div>
-            ) : draftProjectPath ? (
-              <div className="flex min-w-0 flex-col">
-                <span className="font-semibold text-sm">New Session</span>
-                <div className="flex min-w-0 items-center gap-2">
-                  <span
-                    aria-label="Conversation route"
-                    className="max-w-[18rem] truncate font-mono text-[11px] text-muted-foreground"
-                    title={activeConversationRoute}
-                  >
-                    {activeConversationRoute}
-                  </span>
-                  <span className="truncate text-xs text-muted-foreground" title={draftProjectPath}>
-                    Starting in {draftProjectPath}
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <div className="flex min-w-0 flex-col">
-                <span className="font-semibold text-sm">New Session</span>
-                <span
-                  aria-label="Conversation route"
-                  className="max-w-[24rem] truncate font-mono text-[11px] text-muted-foreground"
-                  title={activeConversationRoute}
-                >
-                  {activeConversationRoute}
+            <div className="flex min-w-0 items-center gap-2">
+              <span
+                aria-label="Current working directory"
+                className="max-w-[24rem] truncate font-mono text-[11px] text-muted-foreground"
+                title={activeConversationCwd || "No working directory"}
+              >
+                {activeConversationCwd || "No working directory"}
+              </span>
+              {selectedRun?.status === "failed" ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-destructive">
+                  <AlertTriangle className="h-3 w-3" /> Failed
                 </span>
-              </div>
-            )}
+              ) : null}
+              {selectedRun?.status === "cancelling" ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                  Cancelling
+                </span>
+              ) : null}
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {(selectedRun?.status === "failed" || showRecoverableRunningState || hasStuckWorker) && latestUserCheckpoint ? (
+            {authEnabled ? (
+              <Button variant="outline" size="sm" className="h-8" onClick={() => setShowPairDeviceDialog(true)}>
+                <Smartphone className="mr-2 h-4 w-4" /> Connect Phone
+              </Button>
+            ) : null}
+            {isImplementationConversation && (selectedRun?.status === "failed" || showRecoverableRunningState || hasStuckWorker) && latestUserCheckpoint ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -3169,7 +3222,7 @@ export default function Home() {
               </Button>
             ) : null}
             <ThemeModeToggle themeMode={themeMode} setThemeMode={setThemeMode} />
-            {selectedRunId ? (
+            {selectedRunId && isImplementationConversation ? (
               <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-muted-foreground hover:text-foreground lg:inline-flex" title="Toggle Conversation Workers" onClick={() => setRightSidebarOpen(!rightSidebarOpen)}>
                 <PanelRight className="h-4 w-4" />
               </Button>
@@ -3183,8 +3236,8 @@ export default function Home() {
                   <SheetTitle>Workers</SheetTitle>
                 </SheetHeader>
                 <WorkersSidebar
-                  workers={selectedRunWorkers}
-                  agents={conversationAgents}
+                  workers={selectedRunId && isImplementationConversation ? selectedRunWorkers : []}
+                  agents={selectedRunId && isImplementationConversation ? conversationAgents : []}
                   preferredModel={selectedRun?.preferredWorkerModel ?? null}
                   preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
                   onClose={() => setMobileWorkersOpen(false)}
@@ -3196,154 +3249,223 @@ export default function Home() {
 
         <ScrollArea className="min-h-0 flex-1" ref={scrollRef}>
           {selectedRunId ? (
-            <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 pb-24 sm:gap-6 sm:p-6 sm:pb-20">
-              {visibleMessages.length > 0 ? (
-                visibleMessages.map((msg: MessageRecord) => (
-                  <div key={msg.id} className="group flex w-full flex-col text-sm">
-                    <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
-                      <div className="flex items-center gap-2">
-                      <span className={`text-xs font-semibold capitalize tracking-wider ${msg.role === "user" ? "text-primary" : (msg.role === "system" ? "text-muted-foreground" : "text-emerald-600")}`}>
-                        {msg.role === "user" ? "You" : msg.role}
-                      </span>
-                      {msg.kind === "error" ? (
-                        <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-destructive">
-                          Run failed
+            isDirectConversation ? (
+              <div className="mx-auto flex h-full w-full max-w-6xl flex-col gap-4 p-4 pb-24 sm:p-6 sm:pb-20">
+                {appErrors.length > 0 ? (
+                  <div className="space-y-3">
+                    {appErrors.map((error) => (
+                      <ErrorNotice key={appErrorKey(error)} error={error} />
+                    ))}
+                  </div>
+                ) : null}
+                {conversationFailure ? (
+                  <ErrorNotice error={conversationFailure} />
+                ) : null}
+                <AgentSurface
+                  title={selectedRun?.title || "Direct control"}
+                  subtitle={selectedRun?.projectPath || activePlan?.path || "Direct worker session"}
+                  agent={primaryConversationAgent}
+                  className="flex-1 min-h-[32rem]"
+                />
+              </div>
+            ) : (
+              <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 pb-24 sm:gap-6 sm:p-6 sm:pb-20">
+                {isPlanningConversation ? (
+                  <PlanningArtifactsPanel
+                    specPath={selectedRun?.specPath}
+                    planPath={selectedRun?.artifactPlanPath}
+                    plannerArtifactsJson={selectedRun?.plannerArtifactsJson}
+                    isPromoting={promotePlanningConversation.isPending}
+                    onPromote={(planPath) => {
+                      if (!selectedRunId) {
+                        return;
+                      }
+
+                      promotePlanningConversation.mutate({ runId: selectedRunId, planPath });
+                    }}
+                  />
+                ) : null}
+
+                {visibleMessages.length > 0 ? (
+                  visibleMessages.map((msg: MessageRecord) => (
+                    <div key={msg.id} className="group flex w-full flex-col text-sm">
+                      <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
+                        <div className="flex items-center gap-2">
+                        <span className={`text-xs font-semibold capitalize tracking-wider ${msg.role === "user" ? "text-primary" : (msg.role === "system" ? "text-muted-foreground" : "text-emerald-600")}`}>
+                          {msg.role === "user" ? "You" : msg.role}
                         </span>
-                      ) : null}
-                      <span className="text-[10px] text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100">
-                        {new Date(msg.createdAt).toLocaleTimeString()}
-                      </span>
-                    </div>
-                      {msg.role === "user" ? (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                            aria-label="Message actions"
-                          >
-                            <MoreHorizontal className="h-4 w-4" />
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem disabled={recoverRun.isPending} onClick={() => handleRetryMessage(msg.id)}>
-                              <RotateCcw className="mr-2 h-4 w-4" /> Retry from here
-                            </DropdownMenuItem>
-                            <DropdownMenuItem disabled={recoverRun.isPending} onClick={() => handleStartEditingMessage(msg)}>
-                              <Pencil className="mr-2 h-4 w-4" /> Edit in place
-                            </DropdownMenuItem>
-                            <DropdownMenuItem disabled={recoverRun.isPending} onClick={() => handleForkMessage(msg)}>
-                              <GitBranch className="mr-2 h-4 w-4" /> Fork from here
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      ) : null}
-                    </div>
-                    {editingMessageId === msg.id ? (
-                      <div className="rounded-xl border border-primary/30 bg-background p-3">
-                        <textarea
-                          value={editingMessageValue}
-                          onChange={(event) => setEditingMessageValue(event.target.value)}
-                          className="min-h-28 w-full resize-y rounded-lg border border-border bg-background p-3 text-sm outline-none focus:ring-1 focus:ring-primary/40"
-                        />
-                        <div className="mt-3 flex items-center justify-between gap-3">
-                          <p className="text-xs text-muted-foreground">This will truncate later history and rerun from this message.</p>
-                          <div className="flex gap-2">
-                            <Button type="button" variant="ghost" size="sm" onClick={handleCancelEditingMessage}>
-                              Cancel
-                            </Button>
-                            <Button type="button" size="sm" disabled={recoverRun.isPending || !editingMessageValue.trim()} onClick={() => handleSaveEditedMessage(msg.id)}>
-                              Save and rerun
-                            </Button>
+                        {msg.kind === "error" ? (
+                          <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-destructive">
+                            Run failed
+                          </span>
+                        ) : null}
+                        <span className="text-[10px] text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100">
+                          {new Date(msg.createdAt).toLocaleTimeString()}
+                        </span>
+                      </div>
+                        {isImplementationConversation && msg.role === "user" ? (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                              aria-label="Message actions"
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem disabled={recoverRun.isPending} onClick={() => handleRetryMessage(msg.id)}>
+                                <RotateCcw className="mr-2 h-4 w-4" /> Retry from here
+                              </DropdownMenuItem>
+                              <DropdownMenuItem disabled={recoverRun.isPending} onClick={() => handleStartEditingMessage(msg)}>
+                                <Pencil className="mr-2 h-4 w-4" /> Edit in place
+                              </DropdownMenuItem>
+                              <DropdownMenuItem disabled={recoverRun.isPending} onClick={() => handleForkMessage(msg)}>
+                                <GitBranch className="mr-2 h-4 w-4" /> Fork from here
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        ) : null}
+                      </div>
+                      {editingMessageId === msg.id ? (
+                        <div className="rounded-xl border border-primary/30 bg-background p-3">
+                          <textarea
+                            value={editingMessageValue}
+                            onChange={(event) => setEditingMessageValue(event.target.value)}
+                            className="min-h-28 w-full resize-y rounded-lg border border-border bg-background p-3 text-sm outline-none focus:ring-1 focus:ring-primary/40"
+                          />
+                          <div className="mt-3 flex items-center justify-between gap-3">
+                            <p className="text-xs text-muted-foreground">This will truncate later history and rerun from this message.</p>
+                            <div className="flex gap-2">
+                              <Button type="button" variant="ghost" size="sm" onClick={handleCancelEditingMessage}>
+                                Cancel
+                              </Button>
+                              <Button type="button" size="sm" disabled={recoverRun.isPending || !editingMessageValue.trim()} onClick={() => handleSaveEditedMessage(msg.id)}>
+                                Save and rerun
+                              </Button>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ) : (
-                      <div className={`overflow-x-auto whitespace-pre-wrap rounded-xl border p-4 leading-relaxed ${msg.kind === "error"
-                        ? "border-destructive/30 bg-destructive/5 text-destructive"
-                        : msg.role === "user"
-                          ? "border-transparent bg-muted/30 text-foreground"
-                          : msg.role === "system"
-                            ? "border-border/50 bg-background font-mono text-[11px] text-muted-foreground"
-                            : msg.role === "worker"
-                              ? "border-[#333] bg-[#1e1e1e] font-mono text-[12px] text-emerald-400 shadow-sm"
-                              : "border-border bg-card"}`}>
-                        {msg.content}
-                      </div>
-                    )}
+                      ) : msg.role === "system" && msg.content.startsWith("Spawned worker.") ? (
+                        (() => {
+                          const parts = msg.content.substring(15).split(" | ").map(p => p.trim()).filter(Boolean);
+                          const workerMatch = parts.find(p => p.startsWith("Worker: "))?.substring(8);
+                          const displayId = workerMatch ? (workerMatch.match(/-worker-(\d+)$/) ? `Worker ${workerMatch.match(/-worker-(\d+)$/)![1]}` : workerMatch) : "Unknown Worker";
+                          const typeMatch = parts.find(p => p.startsWith("CLI: "))?.substring(5);
+                          const modeMatch = parts.find(p => p.startsWith("Mode: "))?.substring(6);
+                          const purposeMatch = parts.find(p => p.startsWith("Purpose: "))?.substring(9);
+                          
+                          return (
+                            <div className="flex flex-col gap-2 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 shadow-sm">
+                              <div className="flex items-center gap-2">
+                                <Cpu className="h-4 w-4 text-primary" />
+                                <span className="font-semibold text-foreground">{displayId} Spawned</span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                {typeMatch && <span className="rounded-md border border-cyan-400/30 bg-cyan-400/10 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-700 dark:text-cyan-400">{typeMatch}</span>}
+                                {modeMatch && <span className="rounded-md border border-fuchsia-400/30 bg-fuchsia-400/10 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-700 dark:text-fuchsia-400">{modeMatch} Mode</span>}
+                              </div>
+                              {purposeMatch && <div className="text-xs text-muted-foreground">{purposeMatch}</div>}
+                            </div>
+                          );
+                        })()
+                      ) : (
+                        <div className={`overflow-x-auto whitespace-pre-wrap rounded-xl border p-4 leading-relaxed ${msg.kind === "error"
+                          ? "border-destructive/30 bg-destructive/5 text-destructive"
+                          : msg.role === "user"
+                            ? "border-transparent bg-muted/30 text-foreground"
+                            : msg.role === "system"
+                              ? "border-border/30 bg-muted/20 text-[13px] text-muted-foreground"
+                              : msg.role === "worker"
+                                ? "border-[#333] bg-[#1e1e1e] font-mono text-[12px] text-emerald-400 shadow-sm"
+                                : "border-border bg-card"}`}>
+                          {msg.content}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div className="flex flex-col items-center justify-center gap-3 pt-24 text-sm text-muted-foreground sm:pt-32">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted/50">
+                      <Blocks className="h-6 w-6 opacity-50" />
+                    </div>
+                    <p>No output recorded yet for this run.</p>
                   </div>
-                ))
-              ) : (
-                <div className="flex flex-col items-center justify-center gap-3 pt-24 text-sm text-muted-foreground sm:pt-32">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted/50">
-                    <Blocks className="h-6 w-6 opacity-50" />
+                )}
+
+                {isImplementationConversation && showConversationExecution ? conversationThinking : null}
+
+                {isImplementationConversation && selectedClarifications.length > 0 && (
+                  <div className="max-w-xl">
+                    <ClarificationPanel
+                      clarifications={selectedClarifications}
+                      onAnswer={(clarificationId, answer) => answerClarification.mutate({ clarificationId, answer })}
+                      errorMessage={answerClarification.error ? buildInlineError(answerClarification.error, {
+                        source: "Clarifications",
+                        action: "Answer clarification",
+                      }).message : null}
+                    />
                   </div>
-                  <p>No output recorded yet for this run.</p>
-                </div>
-              )}
+                )}
 
-              {showConversationExecution ? conversationThinking : null}
+                {appErrors.length > 0 ? (
+                  <div className="space-y-3">
+                    {appErrors.map((error) => (
+                      <ErrorNotice key={appErrorKey(error)} error={error} />
+                    ))}
+                  </div>
+                ) : null}
 
-              {selectedClarifications.length > 0 && (
-                <div className="max-w-xl">
-                  <ClarificationPanel
-                    clarifications={selectedClarifications}
-                    onAnswer={(clarificationId, answer) => answerClarification.mutate({ clarificationId, answer })}
-                    errorMessage={answerClarification.error ? buildInlineError(answerClarification.error, {
-                      source: "Clarifications",
-                      action: "Answer clarification",
-                    }).message : null}
+                {conversationFailure ? (
+                  <ErrorNotice error={conversationFailure} />
+                ) : null}
+
+                {isPlanningConversation ? (
+                  <AgentSurface
+                    title="Planning agent"
+                    subtitle={selectedRun?.projectPath || "Using the current project root as cwd"}
+                    agent={primaryConversationAgent}
+                    className="min-h-[22rem]"
                   />
-                </div>
-              )}
+                ) : null}
 
-              {appErrors.length > 0 ? (
-                <div className="space-y-3">
-                  {appErrors.map((error) => (
-                    <ErrorNotice key={appErrorKey(error)} error={error} />
-                  ))}
-                </div>
-              ) : null}
+                {isImplementationConversation && conversationWorkerGroups.active.length > 0 && (
+                  <div className="mt-4 border-t border-border/50 pt-6 sm:mt-8">
+                    <div className="mb-4 flex items-center gap-2 pl-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <Cpu className="h-4 w-4" /> CLI Agents
+                    </div>
+                    <div className="flex flex-col gap-6">
+                      {conversationWorkerGroups.active.map((worker) => {
+                        const agent = conversationAgents.find((item) => item.name === worker.id);
+                        const activeModel = agent?.effectiveModel || agent?.requestedModel || selectedRun?.preferredWorkerModel || null;
+                        const activeEffort = agent?.effectiveEffort || agent?.requestedEffort || selectedRun?.preferredWorkerEffort || null;
+                        const pendingPermissions = agent?.pendingPermissions ?? [];
+                        const runtimeLabel = formatWorkerRuntime(agent?.type || worker.type);
+                        const fallbackAgent = agent ?? {
+                          name: worker.id,
+                          type: worker.type,
+                          state: worker.status,
+                          currentText: "",
+                          lastText: "",
+                        };
 
-              {conversationFailure ? (
-                <ErrorNotice error={conversationFailure} />
-              ) : null}
-
-              {conversationWorkerGroups.active.length > 0 && (
-                <div className="mt-4 border-t border-border/50 pt-6 sm:mt-8">
-                  <div className="mb-4 flex items-center gap-2 pl-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    <Cpu className="h-4 w-4" /> CLI Agents
+                        return (
+                          <WorkerCard
+                            key={worker.id}
+                            workerId={worker.id}
+                            agent={fallbackAgent}
+                            defaultOpen={false}
+                            runtimeLabel={runtimeLabel}
+                            activeModel={activeModel}
+                            activeEffort={activeEffort}
+                            pendingPermissions={pendingPermissions}
+                            terminalHeightClass="h-64 sm:h-[22rem]"
+                          />
+                        );
+                      })}
+                    </div>
                   </div>
-                  <div className="flex flex-col gap-6">
-                    {conversationWorkerGroups.active.map((worker) => {
-                      const agent = conversationAgents.find((item) => item.name === worker.id);
-                      const activeModel = agent?.effectiveModel || agent?.requestedModel || selectedRun?.preferredWorkerModel || null;
-                      const activeEffort = agent?.effectiveEffort || agent?.requestedEffort || selectedRun?.preferredWorkerEffort || null;
-                      const pendingPermissions = agent?.pendingPermissions ?? [];
-                      const runtimeLabel = formatWorkerRuntime(agent?.type || worker.type);
-                      const fallbackAgent = agent ?? {
-                        name: worker.id,
-                        type: worker.type,
-                        state: worker.status,
-                        currentText: "",
-                        lastText: "",
-                      };
-
-                      return (
-                        <WorkerCard
-                          key={worker.id}
-                          workerId={worker.id}
-                          agent={fallbackAgent}
-                          defaultOpen={false}
-                          runtimeLabel={runtimeLabel}
-                          activeModel={activeModel}
-                          activeEffort={activeEffort}
-                          pendingPermissions={pendingPermissions}
-                          terminalHeightClass="h-64 sm:h-[22rem]"
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )
           ) : (
             <div className="mx-auto flex h-full w-full max-w-3xl flex-col items-center justify-center px-6 text-center">
               {appErrors.length > 0 ? (
@@ -3358,7 +3480,7 @@ export default function Home() {
               </div>
               <h1 className="mb-2 text-2xl font-semibold">Welcome to OmniHarness</h1>
               <p className="mb-8 max-w-md text-sm text-muted-foreground">
-                Enter a plan path or plain-English command below to spin up a supervised pool of headless CLI agents (Claude Code, Codex) and drive the work forward.
+                {getConversationModeCopy(selectedConversationMode).description}
               </p>
               {composer("mt-6 w-full")}
             </div>
@@ -3368,7 +3490,7 @@ export default function Home() {
         {selectedRunId ? composer("w-full") : null}
       </div>
 
-      {rightSidebarOpen && selectedRunId ? (
+      {rightSidebarOpen && selectedRunId && isImplementationConversation ? (
         <div className="relative hidden h-full shrink-0 border-l border-border lg:flex" style={{ width: rightSidebarWidth }}>
           <button
             type="button"
