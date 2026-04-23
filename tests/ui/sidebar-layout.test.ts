@@ -6,6 +6,10 @@ const pageSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/app/page.tsx"),
   "utf8"
 );
+const conversationModePickerSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/components/ConversationModePicker.tsx"),
+  "utf8"
+);
 
 test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('hidden h-full w-[280px] shrink-0 overflow-hidden border-r border-border lg:flex');
@@ -60,7 +64,6 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).not.toContain("Recent output");
   expect(pageSource).not.toContain("Session ID");
   expect(pageSource).not.toContain("Attention needed");
-  expect(pageSource).not.toContain('border border-fuchsia-400/30 bg-fuchsia-400/10');
   expect(pageSource).not.toContain('border border-emerald-400/30 bg-emerald-400/10');
   expect(pageSource).not.toContain("Global Workers");
   expect(pageSource).not.toContain('<WorkersSidebar agents={state.agents ?? []} onClose={() => setRightSidebarOpen(false)} />');
@@ -72,9 +75,11 @@ test("worker detail polling skips idle workers to avoid runaway bridge traffic",
 });
 
 test("main conversation only renders active worker panes while the sidebar keeps finished workers", () => {
-  expect(pageSource).toContain('{conversationWorkerGroups.active.length > 0 && (');
+  expect(pageSource).toContain('{isImplementationConversation && conversationWorkerGroups.active.length > 0 && (');
   expect(pageSource).toContain('{conversationWorkerGroups.active.map((worker) => {');
-  expect(pageSource).toContain('<Terminal agent={agent} />');
+  expect(pageSource).toContain('<AgentSurface');
+  expect(pageSource).toContain('title="Planning agent"');
+  expect(pageSource).toContain('title={selectedRun?.title || "Direct control"}');
   expect(pageSource).toContain("<Cpu className=\"h-4 w-4\" /> CLI Agents");
   expect(pageSource).toContain('defaultOpen={false}');
   expect(pageSource).toContain('defaultOpen={activeTab === "active"}');
@@ -135,17 +140,17 @@ test("header includes a persistent day night mode toggle beside the workers side
   expect(pageSource).not.toContain(">Night<");
 });
 
-test("header exposes and syncs the active conversation route", () => {
+test("header syncs the active conversation path but only shows the cwd", () => {
   expect(pageSource).toContain('const [routeReady, setRouteReady] = useState(false)');
-  expect(pageSource).toContain('const activeConversationRoute = useMemo(() =>');
+  expect(pageSource).toContain("const activeConversationCwd = selectedRun?.projectPath || activePlan?.path || draftProjectPath || null;");
   expect(pageSource).toContain('window.location.pathname');
   expect(pageSource).toContain('window.history.replaceState(window.history.state, "", nextPath)');
   expect(pageSource).toContain('`/session/${selectedRunId}`');
   expect(pageSource).not.toContain('window.localStorage.getItem(LAST_RUN_ROUTE_STORAGE_KEY)');
   expect(pageSource).not.toContain('window.localStorage.setItem(LAST_RUN_ROUTE_STORAGE_KEY, selectedRunId)');
   expect(pageSource).not.toContain('window.localStorage.removeItem(LAST_RUN_ROUTE_STORAGE_KEY)');
-  expect(pageSource).toContain('aria-label="Conversation route"');
-  expect(pageSource).toContain('{activeConversationRoute}');
+  expect(pageSource).toContain('aria-label="Current working directory"');
+  expect(pageSource).toContain('{activeConversationCwd || "No working directory"}');
 });
 
 test("command input uses a fixed helper placeholder instead of echoing the selected directory", () => {
@@ -154,8 +159,9 @@ test("command input uses a fixed helper placeholder instead of echoing the selec
 });
 
 test("send button swaps to a spinner while a command submission is pending", () => {
-  expect(pageSource).toContain('disabled={runCommand.isPending || !command.trim()}');
-  expect(pageSource).toContain('{runCommand.isPending ? (');
+  expect(pageSource).toContain("const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || promotePlanningConversation.isPending");
+  expect(pageSource).toContain('disabled={isComposerSubmitting || !command.trim()}');
+  expect(pageSource).toContain('{isComposerSubmitting ? (');
   expect(pageSource).toContain('<LoaderCircle className="h-5 w-5 animate-spin" />');
   expect(pageSource).toContain(') : (');
   expect(pageSource).toContain('<ArrowUp className="h-5 w-5" />');
@@ -191,7 +197,17 @@ test("running conversations render an in-thread execution indicator with expanda
   expect(pageSource).toContain("No execution details yet.");
   expect(pageSource).not.toContain("Current status");
   expect(pageSource).not.toContain("Last bridge error");
-  expect(pageSource).toContain("{showConversationExecution ? conversationThinking : null}");
+  expect(pageSource).toContain("{isImplementationConversation && showConversationExecution ? conversationThinking : null}");
+});
+
+test("new conversations expose a mode picker and direct mode locks the worker type", () => {
+  expect(pageSource).toContain('import { ConversationModePicker, getConversationModeCopy, type ConversationModeOption } from "@/components/ConversationModePicker"');
+  expect(pageSource).toContain('value={selectedConversationMode}');
+  expect(conversationModePickerSource).toContain("Create plan");
+  expect(conversationModePickerSource).toContain("Implement plan");
+  expect(conversationModePickerSource).toContain("Direct control");
+  expect(pageSource).toContain("Direct worker:");
+  expect(pageSource).toContain('mode: selectedConversationMode');
 });
 
 test("starting a project-scoped conversation keeps the composer empty", () => {

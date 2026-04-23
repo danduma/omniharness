@@ -99,7 +99,7 @@ describe("Supervisor worker spawn flow", () => {
     await db.delete(plans);
 
     mockTokenCreate.mockResolvedValue({ choices: [{ message: { tool_calls: [{ id: "tool-1" }] } }] });
-    mockSpawnAgent.mockResolvedValue({ name: "worker-123456", state: "idle" });
+    mockSpawnAgent.mockResolvedValue({ name: "mocked-worker-id", state: "idle" });
     mockApprovePermission.mockResolvedValue({ ok: true });
     mockBuildSupervisorTurnContext.mockResolvedValue({
       runId: "run-id",
@@ -167,13 +167,13 @@ describe("Supervisor worker spawn flow", () => {
       expect(mockSpawnAgent).toHaveBeenCalled();
     });
 
-    const persistedWorker = await db.select().from(workers).where(eq(workers.id, "worker-123456")).get();
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, `${runId}-worker-1`)).get();
     expect(persistedWorker?.runId).toBe(runId);
     expect(persistedWorker?.status).toBe("starting");
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
       type: "opencode",
       cwd: "/tmp/project",
-      name: "worker-123456",
+      name: `${runId}-worker-1`,
       env: { OPENAI_API_KEY: "key" },
       model: "openai/gpt-5.4",
       effort: "high",
@@ -187,7 +187,7 @@ describe("Supervisor worker spawn flow", () => {
     const systemMessages = await db.select().from(messages).where(eq(messages.runId, runId));
     const spawnMessage = systemMessages.find((message) => message.role === "system" && message.content.includes("Spawned"));
     expect(spawnMessage?.content).toContain("CLI: OpenCode");
-    expect(spawnMessage?.content).toContain("Worker: worker-123456");
+    expect(spawnMessage?.content).toContain(`Worker: ${runId}-worker-1`);
     expect(spawnMessage?.content).toContain("Model: openai/gpt-5.4");
     expect(spawnMessage?.content).toContain("Effort: high");
     expect(spawnMessage?.content).toContain("Mode: full-access");
@@ -257,7 +257,7 @@ describe("Supervisor worker spawn flow", () => {
 
     await expect(new Supervisor({ runId }).run()).rejects.toThrow(/Ask failed: setSessionMode failed/i);
 
-    const persistedWorker = await db.select().from(workers).where(eq(workers.id, "worker-123456")).get();
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, `${runId}-worker-1`)).get();
     expect(persistedWorker?.status).toBe("error");
   });
 

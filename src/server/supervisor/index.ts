@@ -312,7 +312,9 @@ export class Supervisor {
           const prompt = asString(action.args.prompt, "prompt");
           const mode = resolveWorkerSpawnMode(action.args.mode, yoloModeEnabled);
           const purpose = typeof action.args.purpose === "string" ? action.args.purpose.trim() : "";
-          const workerId = `worker-${Date.now()}`;
+          const existingWorkers = await db.select({ id: workers.id }).from(workers).where(eq(workers.runId, this.runId)).all();
+          const workerIndex = existingWorkers.length + 1;
+          const workerId = `${this.runId}-worker-${workerIndex}`;
           const preferredModel = run?.preferredWorkerModel ?? null;
           const preferredEffort = run?.preferredWorkerEffort ?? null;
 
