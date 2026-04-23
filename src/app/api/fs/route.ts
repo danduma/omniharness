@@ -2,9 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { errorResponse } from "@/server/api-errors";
+import { requireApiSession } from "@/server/auth/guards";
 
 export async function GET(req: NextRequest) {
   try {
+    const auth = await requireApiSession(req, {
+      source: "Filesystem",
+      action: "Browse directories",
+    });
+    if (auth.response) {
+      return auth.response;
+    }
+
     const url = new URL(req.url);
     const rootPath = path.resolve(process.cwd(), '..');
     

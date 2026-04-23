@@ -93,6 +93,44 @@ CREATE TABLE IF NOT EXISTS settings (
   updated_at integer NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  id text PRIMARY KEY NOT NULL,
+  token_hash text NOT NULL,
+  label text,
+  user_agent text,
+  auth_method text NOT NULL,
+  created_by_session_id text,
+  last_seen_at integer NOT NULL,
+  expires_at integer NOT NULL,
+  absolute_expires_at integer NOT NULL,
+  revoked_at integer,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_pair_tokens (
+  id text PRIMARY KEY NOT NULL,
+  token_hash text NOT NULL,
+  creator_session_id text NOT NULL,
+  target_run_id text,
+  device_label text,
+  expires_at integer NOT NULL,
+  redeemed_at integer,
+  redeemed_session_id text,
+  revoked_at integer,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_events (
+  id text PRIMARY KEY NOT NULL,
+  session_id text,
+  pair_token_id text,
+  event_type text NOT NULL,
+  details text,
+  created_at integer NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS plan_items (
   id text PRIMARY KEY NOT NULL,
   plan_id text NOT NULL,

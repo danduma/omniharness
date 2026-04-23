@@ -2,12 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { errorResponse } from "@/server/api-errors";
 import { answerClarification } from "@/server/clarifications/store";
 import { resumeRunAfterClarification } from "@/server/clarifications/loop";
+import { requireApiSession } from "@/server/auth/guards";
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = await requireApiSession(req, {
+      source: "Clarifications",
+      action: "Answer clarification",
+      enforceSameOrigin: true,
+    });
+    if (auth.response) {
+      return auth.response;
+    }
+
     const { id: runId } = await params;
     const { clarificationId, answer } = await req.json();
 

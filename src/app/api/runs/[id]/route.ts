@@ -8,6 +8,7 @@ import { recoverRun } from "@/server/runs/recovery";
 import { stopRunObserver } from "@/server/supervisor/observer";
 import { cancelSupervisorWake } from "@/server/supervisor/wake";
 import { getAppDataPath } from "@/server/app-root";
+import { requireApiSession } from "@/server/auth/guards";
 import {
   plans,
   runs,
@@ -30,6 +31,15 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = await requireApiSession(req, {
+      source: "Runs",
+      action: "Rename conversation",
+      enforceSameOrigin: true,
+    });
+    if (auth.response) {
+      return auth.response;
+    }
+
     const { id: runId } = await params;
     const body = await req.json();
     const title = normalizeTitle(body?.title);
@@ -62,6 +72,15 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = await requireApiSession(req, {
+      source: "Runs",
+      action: "Recover conversation",
+      enforceSameOrigin: true,
+    });
+    if (auth.response) {
+      return auth.response;
+    }
+
     const { id: runId } = await params;
     const body = await req.json();
     const action = body?.action;
@@ -108,10 +127,19 @@ export async function POST(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = await requireApiSession(req, {
+      source: "Runs",
+      action: "Delete conversation",
+      enforceSameOrigin: true,
+    });
+    if (auth.response) {
+      return auth.response;
+    }
+
     const { id: runId } = await params;
     const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
     if (!run) {

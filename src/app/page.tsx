@@ -8,7 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
-import { Folder, Settings, Terminal as TerminalIcon, PanelRight, Plus, Search, Blocks, Clock, CheckCircle2, XCircle, Cpu, ArrowUp, FolderPlus, MoreHorizontal, Trash2, LoaderCircle, Menu, Pencil, Sun, Moon, RotateCcw, GitBranch, AlertTriangle, ChevronDown, X } from "lucide-react";
+import { Folder, Settings, Terminal as TerminalIcon, PanelRight, Plus, Search, Blocks, Clock, CheckCircle2, XCircle, Cpu, ArrowUp, FolderPlus, MoreHorizontal, Trash2, LoaderCircle, Menu, Pencil, Sun, Moon, RotateCcw, GitBranch, AlertTriangle, ChevronDown, X, Smartphone, LogOut } from "lucide-react";
 import { FolderPickerDialog } from "@/components/FolderPickerDialog";
 import { FileAttachmentPickerDialog, type AttachmentItem } from "@/components/FileAttachmentPickerDialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -21,6 +21,8 @@ import { buildConversationGroups } from "@/lib/conversations";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { LoginShell } from "@/components/LoginShell";
+import { PairDeviceDialog } from "@/components/PairDeviceDialog";
 
 type PlanRecord = { id: string; path: string };
 type RunRecord = {
@@ -101,6 +103,25 @@ type WorkerAvailability = {
 };
 type WorkerCatalogResponse = { workers: WorkerAvailability[] };
 type SettingsResponse = { values: Record<string, string>; diagnostics?: AppErrorDescriptor[] };
+type AuthSessionRecord = {
+  id: string;
+  label: string | null;
+  userAgent: string | null;
+  authMethod: string;
+  createdBySessionId: string | null;
+  lastSeenAt: string;
+  expiresAt: string;
+  absoluteExpiresAt: string;
+  revokedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+type AuthSessionResponse = {
+  enabled: boolean;
+  authenticated: boolean;
+  currentSession: AuthSessionRecord | null;
+  sessions: AuthSessionRecord[];
+};
 type EventStreamState = {
   messages: MessageRecord[];
   plans: PlanRecord[];
@@ -259,6 +280,9 @@ interface ConversationSidebarProps {
   commitRenamingRun: (runId: string) => void;
   cancelRenamingRun: () => void;
   deleteRun: (run: SidebarRun) => void;
+  authEnabled: boolean;
+  openPairDeviceDialog: () => void;
+  logout: () => void;
 }
 
 type LlmProfileTab = "supervisor" | "fallback";
@@ -760,6 +784,9 @@ function ConversationSidebar({
   commitRenamingRun,
   cancelRenamingRun,
   deleteRun,
+  authEnabled,
+  openPairDeviceDialog,
+  logout,
 }: ConversationSidebarProps) {
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-muted/30">
@@ -927,9 +954,19 @@ function ConversationSidebar({
       </div>
 
       <div className="mt-auto shrink-0 border-t border-border/60 bg-background/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        {authEnabled ? (
+          <Button variant="ghost" className="mb-1 h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground" onClick={openPairDeviceDialog}>
+            <Smartphone className="mr-2 h-4 w-4" /> Connect Phone
+          </Button>
+        ) : null}
         <Button variant="ghost" className="h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground" onClick={() => setShowSettings(!showSettings)}>
           <Settings className="mr-2 h-4 w-4" /> Settings
         </Button>
+        {authEnabled ? (
+          <Button variant="ghost" className="mt-1 h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground" onClick={logout}>
+            <LogOut className="mr-2 h-4 w-4" /> Sign Out
+          </Button>
+        ) : null}
       </div>
     </div>
   );
@@ -1145,6 +1182,7 @@ export default function Home() {
   const [command, setCommand] = useState("");
   const [themeMode, setThemeMode] = useState<"day" | "night">("day");
   const [showSettings, setShowSettings] = useState(false);
+  const [showPairDeviceDialog, setShowPairDeviceDialog] = useState(false);
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTab>("llm");
   const [activeLlmProfileTab, setActiveLlmProfileTab] = useState<LlmProfileTab>("supervisor");
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({
@@ -1186,6 +1224,10 @@ export default function Home() {
   const [selectedEffort, setSelectedEffort] = useState("High");
   const [hydratedRunSelectionId, setHydratedRunSelectionId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [pairTokenFromUrl, setPairTokenFromUrl] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [pairRedeemError, setPairRedeemError] = useState<string | null>(null);
+  const [pairRedeemAttempted, setPairRedeemAttempted] = useState(false);
   
   const [state, setState] = useState<EventStreamState>({
     messages: [],
@@ -1206,8 +1248,85 @@ export default function Home() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const commandInputRef = useRef<HTMLTextAreaElement>(null);
 
+  const sessionQuery = useQuery<AuthSessionResponse>({
+    queryKey: ["auth-session"],
+    retry: false,
+    refetchOnWindowFocus: true,
+    queryFn: async () => requestJson<AuthSessionResponse>("/api/auth/session", undefined, {
+      source: "Auth",
+      action: "Load session state",
+    }),
+  });
+
+  const authEnabled = sessionQuery.data?.enabled ?? false;
+  const appUnlocked = sessionQuery.data ? (!sessionQuery.data.enabled || sessionQuery.data.authenticated) : false;
+
+  const loginMutation = useMutation({
+    mutationFn: async (password: string) => requestJson<{ ok: true }>("/api/auth/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        password,
+        label: "Browser session",
+      }),
+    }, {
+      source: "Auth",
+      action: "Log in",
+    }),
+    onSuccess: async () => {
+      setAuthError(null);
+      await sessionQuery.refetch();
+    },
+    onError: (error) => {
+      setAuthError(error instanceof Error ? error.message : String(error));
+    },
+  });
+
+  const logoutMutation = useMutation({
+    mutationFn: async () => requestJson<{ ok: true }>("/api/auth/logout", {
+      method: "POST",
+    }, {
+      source: "Auth",
+      action: "Log out",
+    }),
+    onSuccess: () => {
+      window.location.replace("/");
+    },
+    onError: (error) => {
+      setRuntimeErrors((current) => mergeAppErrors(current, [
+        buildInlineError(error, {
+          source: "Auth",
+          action: "Log out",
+        }),
+      ]));
+    },
+  });
+
+  const redeemPairMutation = useMutation({
+    mutationFn: async (pairToken: string) => requestJson<{ ok: true; targetPath: string }>("/api/auth/pair/redeem", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ pairToken }),
+    }, {
+      source: "Auth",
+      action: "Redeem pairing token",
+    }),
+    onSuccess: (payload) => {
+      setPairRedeemError(null);
+      window.location.replace(payload.targetPath || "/");
+    },
+    onError: (error) => {
+      setPairRedeemError(error instanceof Error ? error.message : String(error));
+    },
+  });
+
   const settingsQuery = useQuery({
     queryKey: ["settings"],
+    enabled: appUnlocked,
     queryFn: async () => {
       const data = await requestJson<SettingsResponse>("/api/settings", undefined, {
         source: "Settings",
@@ -1222,6 +1341,7 @@ export default function Home() {
   const workerCatalogQuery = useQuery<WorkerCatalogResponse & { diagnostics?: AppErrorDescriptor[] }>({
     queryKey: ["worker-catalog"],
     staleTime: 60_000,
+    enabled: appUnlocked,
     queryFn: async () => {
       return requestJson<WorkerCatalogResponse & { diagnostics?: AppErrorDescriptor[] }>("/api/agents/catalog", undefined, {
         source: "Bridge",
@@ -1233,6 +1353,10 @@ export default function Home() {
   const explicitProjects = useMemo(() => parseProjectList(apiKeys.PROJECTS), [apiKeys.PROJECTS]);
 
   useEffect(() => {
+    if (!appUnlocked) {
+      return;
+    }
+
     const eventSource = new EventSource("/api/events");
     eventSource.addEventListener("update", (e) => {
       try {
@@ -1280,7 +1404,7 @@ export default function Home() {
     return () => {
       eventSource.close();
     };
-  }, []);
+  }, [appUnlocked]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1291,9 +1415,12 @@ export default function Home() {
     const routeRunId = pathnameMatch?.[1]?.trim() || "";
     const params = new URLSearchParams(window.location.search);
     const routeProjectPath = params.get("project")?.trim() || "";
+    const routePairToken = params.get("pair")?.trim() || "";
     const savedWorker = window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)?.trim() || "";
     const savedModel = window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)?.trim() || "";
     const savedEffort = window.localStorage.getItem(COMPOSER_EFFORT_STORAGE_KEY)?.trim() || "";
+
+    setPairTokenFromUrl(routePairToken || null);
 
     if (routeRunId) {
       setSelectedRunId(routeRunId);
@@ -1317,7 +1444,27 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (!routeReady || !authEnabled || appUnlocked || !pairTokenFromUrl || redeemPairMutation.isPending || pairRedeemAttempted) {
+      return;
+    }
+
+    setPairRedeemAttempted(true);
+    void redeemPairMutation.mutateAsync(pairTokenFromUrl);
+  }, [
+    appUnlocked,
+    authEnabled,
+    pairRedeemAttempted,
+    pairTokenFromUrl,
+    redeemPairMutation,
+    routeReady,
+  ]);
+
+  useEffect(() => {
     if (typeof window === "undefined" || !routeReady) {
+      return;
+    }
+
+    if (pairTokenFromUrl && !appUnlocked) {
       return;
     }
 
@@ -1326,7 +1473,7 @@ export default function Home() {
     if (currentPath !== nextPath) {
       window.history.replaceState(window.history.state, "", nextPath);
     }
-  }, [draftProjectPath, routeReady, selectedRunId]);
+  }, [appUnlocked, draftProjectPath, pairTokenFromUrl, routeReady, selectedRunId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2681,6 +2828,31 @@ export default function Home() {
     setIsResizingRightSidebar(true);
   };
 
+  if (!routeReady || sessionQuery.isLoading || (authEnabled && !appUnlocked && Boolean(pairTokenFromUrl) && redeemPairMutation.isPending)) {
+    return (
+      <LoginShell
+        onSubmit={async () => undefined}
+        isRedeemingPair={Boolean(pairTokenFromUrl)}
+        pairError={pairRedeemError}
+      />
+    );
+  }
+
+  if (authEnabled && !appUnlocked) {
+    return (
+      <LoginShell
+        error={authError}
+        isSubmitting={loginMutation.isPending}
+        isRedeemingPair={Boolean(pairTokenFromUrl) && !pairRedeemError}
+        pairError={pairRedeemError}
+        onSubmit={async (password) => {
+          setAuthError(null);
+          await loginMutation.mutateAsync(password);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-background text-foreground lg:h-screen">
       <div className="relative z-30 hidden h-full w-[280px] shrink-0 overflow-hidden border-r border-border lg:flex">
@@ -2705,6 +2877,9 @@ export default function Home() {
           commitRenamingRun={handleCommitRenamingRun}
           cancelRenamingRun={handleCancelRenamingRun}
           deleteRun={handleDeleteRun}
+          authEnabled={authEnabled}
+          openPairDeviceDialog={() => setShowPairDeviceDialog(true)}
+          logout={() => logoutMutation.mutate()}
         />
       </div>
 
@@ -2740,6 +2915,9 @@ export default function Home() {
                   commitRenamingRun={handleCommitRenamingRun}
                   cancelRenamingRun={handleCancelRenamingRun}
                   deleteRun={handleDeleteRun}
+                  authEnabled={authEnabled}
+                  openPairDeviceDialog={() => setShowPairDeviceDialog(true)}
+                  logout={() => logoutMutation.mutate()}
                 />
               </SheetContent>
             </Sheet>
@@ -2815,28 +2993,26 @@ export default function Home() {
             ) : null}
             <ThemeModeToggle themeMode={themeMode} setThemeMode={setThemeMode} />
             {selectedRunId ? (
-              <>
-                <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-muted-foreground hover:text-foreground lg:inline-flex" title="Toggle Conversation Workers" onClick={() => setRightSidebarOpen(!rightSidebarOpen)}>
-                  <PanelRight className="h-4 w-4" />
-                </Button>
-                <Sheet open={mobileWorkersOpen} onOpenChange={setMobileWorkersOpen}>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 lg:hidden" aria-label="Open workers" onClick={() => setMobileWorkersOpen(true)}>
-                    <PanelRight className="h-4 w-4" />
-                  </Button>
-                  <SheetContent side="right" className="w-[min(22rem,calc(100vw-1rem))] p-0 lg:hidden" showCloseButton={false}>
-                    <SheetHeader className="border-b border-border/60">
-                      <SheetTitle>Workers</SheetTitle>
-                    </SheetHeader>
-                    <WorkersSidebar
-                      agents={conversationAgents}
-                      preferredModel={selectedRun?.preferredWorkerModel ?? null}
-                      preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
-                      onClose={() => setMobileWorkersOpen(false)}
-                    />
-                  </SheetContent>
-                </Sheet>
-              </>
+              <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-muted-foreground hover:text-foreground lg:inline-flex" title="Toggle Conversation Workers" onClick={() => setRightSidebarOpen(!rightSidebarOpen)}>
+                <PanelRight className="h-4 w-4" />
+              </Button>
             ) : null}
+            <Sheet open={mobileWorkersOpen} onOpenChange={setMobileWorkersOpen}>
+              <Button variant="ghost" size="icon" className="h-8 w-8 lg:hidden" aria-label="Open workers" onClick={() => setMobileWorkersOpen(true)}>
+                <PanelRight className="h-4 w-4" />
+              </Button>
+              <SheetContent side="right" className="w-[min(22rem,calc(100vw-1rem))] p-0 lg:hidden" showCloseButton={false}>
+                <SheetHeader className="border-b border-border/60">
+                  <SheetTitle>Workers</SheetTitle>
+                </SheetHeader>
+                <WorkersSidebar
+                  agents={conversationAgents}
+                  preferredModel={selectedRun?.preferredWorkerModel ?? null}
+                  preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
+                  onClose={() => setMobileWorkersOpen(false)}
+                />
+              </SheetContent>
+            </Sheet>
           </div>
         </header>
 
@@ -3297,6 +3473,12 @@ export default function Home() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <PairDeviceDialog
+        open={showPairDeviceDialog}
+        onOpenChange={setShowPairDeviceDialog}
+        selectedRunId={selectedRunId}
+      />
 
       <FolderPickerDialog 
         open={showFolderPicker} 

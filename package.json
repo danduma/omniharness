@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
+    "@node-rs/argon2": "^2.0.2",
     "@tanstack/react-query": "^5.99.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
@@ -27,6 +28,7 @@
     "js-yaml": "^4.1.1",
     "lucide-react": "^1.8.0",
     "next": "15.5.15",
+    "qrcode": "^1.5.4",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "shadcn": "^4.3.0",
@@ -45,6 +47,7 @@
     "@types/blessed": "^0.1.27",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^20",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "blessed": "^0.1.81",

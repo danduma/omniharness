@@ -5,6 +5,7 @@ import { runs, workers } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
 import { errorResponse } from "@/server/api-errors";
 import { parseWorkerOutputEntries } from "@/server/workers/snapshots";
+import { requireApiSession } from "@/server/auth/guards";
 
 function formatErrorMessage(error: unknown) {
   if (error instanceof Error) {
@@ -23,6 +24,14 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ name: string }> }
 ) {
+  const auth = await requireApiSession(req, {
+    source: "Bridge",
+    action: "Load worker details",
+  });
+  if (auth.response) {
+    return auth.response;
+  }
+
   const { name } = await params;
   const worker = await db.select().from(workers).where(eq(workers.id, name)).get();
   const run = worker ? await db.select().from(runs).where(eq(runs.id, worker.runId)).get() : null;

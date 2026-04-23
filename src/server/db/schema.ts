@@ -79,6 +79,44 @@ export const settings = sqliteTable('settings', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });
 
+export const authSessions = sqliteTable('auth_sessions', {
+  id: text('id').primaryKey(),
+  tokenHash: text('token_hash').notNull(),
+  label: text('label'),
+  userAgent: text('user_agent'),
+  authMethod: text('auth_method').notNull(),
+  createdBySessionId: text('created_by_session_id'),
+  lastSeenAt: integer('last_seen_at', { mode: 'timestamp' }).notNull(),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  absoluteExpiresAt: integer('absolute_expires_at', { mode: 'timestamp' }).notNull(),
+  revokedAt: integer('revoked_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const authPairTokens = sqliteTable('auth_pair_tokens', {
+  id: text('id').primaryKey(),
+  tokenHash: text('token_hash').notNull(),
+  creatorSessionId: text('creator_session_id').notNull(),
+  targetRunId: text('target_run_id'),
+  deviceLabel: text('device_label'),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  redeemedAt: integer('redeemed_at', { mode: 'timestamp' }),
+  redeemedSessionId: text('redeemed_session_id'),
+  revokedAt: integer('revoked_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const authEvents = sqliteTable('auth_events', {
+  id: text('id').primaryKey(),
+  sessionId: text('session_id'),
+  pairTokenId: text('pair_token_id'),
+  eventType: text('event_type').notNull(),
+  details: text('details'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
+
 export const planItems = sqliteTable('plan_items', {
   id: text('id').primaryKey(),
   planId: text('plan_id').references(() => plans.id).notNull(),

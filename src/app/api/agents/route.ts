@@ -1,9 +1,18 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { BRIDGE_URL, normalizeAgentRecord } from "@/server/bridge-client";
 import { errorResponse } from "@/server/api-errors";
+import { requireApiSession } from "@/server/auth/guards";
 
-export async function GET() {
+export async function GET(req?: NextRequest) {
   try {
+    const auth = await requireApiSession(req, {
+      source: "Bridge",
+      action: "Load agents",
+    });
+    if (auth.response) {
+      return auth.response;
+    }
+
     const res = await fetch(`${BRIDGE_URL}/agents`);
     if (!res.ok) {
       return errorResponse(`Bridge agent list request failed with status ${res.status}`, {

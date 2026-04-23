@@ -3,9 +3,18 @@ import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
 import { decryptSettingValue, encryptSettingValue, shouldEncryptSetting } from "@/server/settings/crypto";
 import { buildAppError, errorResponse } from "@/server/api-errors";
+import { requireApiSession } from "@/server/auth/guards";
 
-export async function GET() {
+export async function GET(req?: NextRequest) {
   try {
+    const auth = await requireApiSession(req, {
+      source: "Settings",
+      action: "Load saved settings",
+    });
+    if (auth.response) {
+      return auth.response;
+    }
+
     const allSettings = await db.select().from(settings);
     const diagnostics: ReturnType<typeof buildAppError>[] = [];
     const values = Object.fromEntries(allSettings.flatMap((setting) => {
@@ -40,6 +49,15 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requireApiSession(req, {
+      source: "Settings",
+      action: "Save settings",
+      enforceSameOrigin: true,
+    });
+    if (auth.response) {
+      return auth.response;
+    }
+
     const body = await req.json();
     for (const [key, value] of Object.entries(body)) {
       if (typeof value === "string") {

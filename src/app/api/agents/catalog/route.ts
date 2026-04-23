@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { BRIDGE_URL } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
@@ -6,6 +6,7 @@ import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-setti
 import { isSpawnableWorkerType } from "@/server/supervisor/worker-availability";
 import { SUPPORTED_WORKER_TYPES, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
 import { buildAppError, errorResponse } from "@/server/api-errors";
+import { requireApiSession } from "@/server/auth/guards";
 
 interface BridgeDoctorResult {
   type: string;
@@ -16,8 +17,16 @@ interface BridgeDoctorResult {
   message?: string;
 }
 
-export async function GET() {
+export async function GET(req?: NextRequest) {
   try {
+    const auth = await requireApiSession(req, {
+      source: "Bridge",
+      action: "Load worker availability",
+    });
+    if (auth.response) {
+      return auth.response;
+    }
+
     const [allSettings, doctorResponse] = await Promise.all([
       db.select().from(settings),
       fetch(`${BRIDGE_URL}/doctor`),
