@@ -274,6 +274,7 @@ function extractWorkerFailureDetail(messages: MessageRecord[]) {
 
 interface ConversationSidebarProps {
   filteredProjects: SidebarGroup[];
+  isHydratingConversations: boolean;
   searchQuery: string;
   setSearchQuery: (value: string) => void;
   selectedRunId: string | null;
@@ -766,6 +767,7 @@ function LlmSettingsForm({
 
 function ConversationSidebar({
   filteredProjects,
+  isHydratingConversations,
   searchQuery,
   setSearchQuery,
   selectedRunId,
@@ -852,9 +854,16 @@ function ConversationSidebar({
                 </div>
 
                 <CollapsibleContent className="space-y-0.5">
-                  {group.runs.length === 0 && (
-                    <div className="py-1 pl-8 text-xs italic text-muted-foreground/60">No conversations</div>
-                  )}
+                  {group.runs.length === 0 ? (
+                    isHydratingConversations ? (
+                      <div className="flex items-center gap-2 py-1 pl-8 text-xs text-muted-foreground/70">
+                        <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                        <span>Loading conversations...</span>
+                      </div>
+                    ) : (
+                      <div className="py-1 pl-8 text-xs italic text-muted-foreground/60">No conversations</div>
+                    )
+                  ) : null}
                   {group.runs.map((run) => (
                     <div
                       key={run.id}
@@ -1363,6 +1372,7 @@ export default function Home() {
   const [editingMessageValue, setEditingMessageValue] = useState("");
   const [executionDetailsOpen, setExecutionDetailsOpen] = useState(false);
   const [routeReady, setRouteReady] = useState(false);
+  const [hasReceivedInitialEventStreamPayload, setHasReceivedInitialEventStreamPayload] = useState(false);
   const [selectedConversationMode, setSelectedConversationMode] = useState<ConversationModeOption>("implementation");
   const [selectedCliAgent, setSelectedCliAgent] = useState<ComposerWorkerOption>("auto");
   const [selectedModel, setSelectedModel] = useState("GPT-5.4");
@@ -1501,6 +1511,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!appUnlocked) {
+      setHasReceivedInitialEventStreamPayload(false);
       return;
     }
 
@@ -1509,6 +1520,7 @@ export default function Home() {
       try {
         const data = JSON.parse(e.data);
         setState(data);
+        setHasReceivedInitialEventStreamPayload(true);
         setRuntimeErrors((current) => mergeAppErrors(
           current.filter((error) => error.source !== "Events"),
           (data.frontendErrors ?? []).map((error: unknown) => buildInlineError(error)),
@@ -1552,6 +1564,8 @@ export default function Home() {
       eventSource.close();
     };
   }, [appUnlocked]);
+
+  const isHydratingConversations = appUnlocked && !hasReceivedInitialEventStreamPayload;
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -3120,6 +3134,7 @@ export default function Home() {
       <div className="relative z-30 hidden h-full w-[280px] shrink-0 overflow-hidden border-r border-border lg:flex">
         <ConversationSidebar
           filteredProjects={filteredProjects as SidebarGroup[]}
+          isHydratingConversations={isHydratingConversations}
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
           selectedRunId={selectedRunId}
@@ -3158,6 +3173,7 @@ export default function Home() {
                 </SheetHeader>
                 <ConversationSidebar
                   filteredProjects={filteredProjects as SidebarGroup[]}
+                  isHydratingConversations={isHydratingConversations}
                   searchQuery={searchQuery}
                   setSearchQuery={setSearchQuery}
                   selectedRunId={selectedRunId}
