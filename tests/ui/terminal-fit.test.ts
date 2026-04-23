@@ -15,7 +15,8 @@ test("terminal renders a structured activity feed instead of replaying xterm tex
 });
 
 test("terminal surfaces fetch failures in the frontend instead of silently dropping them", () => {
-  expect(terminalSource).toContain('action: `Load terminal output for ${agentName}`');
-  expect(terminalSource).toContain("normalizeAppError(error).message");
-  expect(terminalSource).toContain("border-t border-destructive/30");
+  expect(terminalSource).not.toContain('action: `Load terminal output for ${agentName}`');
+  expect(terminalSource).not.toContain("useQuery({");
+  expect(terminalSource).not.toContain("refetchInterval: 2000");
+  expect(terminalSource).not.toContain("normalizeAppError(error).message");
 });

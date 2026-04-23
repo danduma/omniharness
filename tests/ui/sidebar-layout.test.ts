@@ -59,9 +59,15 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).not.toContain('<WorkersSidebar agents={state.agents ?? []} onClose={() => setRightSidebarOpen(false)} />');
 });
 
+test("worker detail polling skips idle workers to avoid runaway bridge traffic", () => {
+  expect(pageSource).toContain('refetchInterval: ["starting", "working", "stuck"].includes(worker.status) ? 2000 : false');
+  expect(pageSource).not.toContain('refetchInterval: ["starting", "working", "idle", "stuck"].includes(worker.status) ? 2000 : false');
+});
+
 test("worker panes stay mounted for recorded run workers after live agents exit", () => {
   expect(pageSource).toContain('{selectedRunWorkers.length > 0 && (');
   expect(pageSource).toContain('{selectedRunWorkers.map((worker: any) => {');
+  expect(pageSource).toContain('<Terminal agent={agent} />');
   expect(pageSource).toContain("<Cpu className=\"h-4 w-4\" /> CLI Agents");
   expect(pageSource).not.toContain("<Cpu className=\"h-4 w-4\" /> Live CLI Agents");
   expect(pageSource).not.toContain('{conversationWorkers.length > 0 && (');
