@@ -2,10 +2,23 @@ import fs from "fs";
 import path from "path";
 import { test, expect } from "vitest";
 
-const pageSource = fs.readFileSync(
-  path.resolve(process.cwd(), "src/app/page.tsx"),
-  "utf8"
-);
+const readSource = (relativePath: string) => fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
+const pageSource = [
+  "src/app/page.tsx",
+  "src/app/home/HomeApp.tsx",
+  "src/app/home/constants.ts",
+  "src/app/home/useAppErrors.ts",
+  "src/app/home/useConversationExecutionStatus.ts",
+  "src/app/home/useHomeLifecycle.ts",
+  "src/app/home/useRunSelectionEffects.ts",
+  "src/app/home/utils.ts",
+  "src/components/home/ConversationComposer.tsx",
+  "src/components/home/ConversationMain.tsx",
+  "src/components/home/ConversationSidebar.tsx",
+  "src/components/home/HomeHeader.tsx",
+  "src/components/home/SettingsDialog.tsx",
+  "src/components/home/WorkersSidebar.tsx",
+].map(readSource).join("\n");
 const conversationModePickerSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/ConversationModePicker.tsx"),
   "utf8"
@@ -91,7 +104,6 @@ test("main conversation only renders active worker panes while the sidebar keeps
   expect(pageSource).toContain('{conversationWorkerGroups.active.map((worker) => {');
   expect(pageSource).toContain('<AgentSurface');
   expect(pageSource).toContain('title="Planning agent"');
-  expect(pageSource).toContain('title={selectedRun?.title || "Direct control"}');
   expect(pageSource).toContain("<Cpu className=\"h-4 w-4\" /> CLI Agents");
   expect(pageSource).toContain('defaultOpen={false}');
   expect(pageSource).toContain('defaultOpen={activeTab === "active"}');
@@ -100,10 +112,40 @@ test("main conversation only renders active worker panes while the sidebar keeps
   expect(pageSource).not.toContain('{conversationWorkers.map((worker: any) => {');
 });
 
+test("direct conversations render the user transcript next to the worker surface", () => {
+  expect(pageSource).toContain("const directConversationMessages = useMemo(() => {");
+  expect(pageSource).toContain("const [expandedDirectMessageIds, setExpandedDirectMessageIds] = useState<Set<string>>(() => new Set())");
+  expect(pageSource).toContain("function toggleDirectMessageExpansion(messageId: string)");
+  expect(pageSource).toContain("const primaryConversationAgent = useMemo(() => {");
+  expect(pageSource).toContain("if (!isDirectConversation) {");
+  expect(pageSource).toContain('conversationAgents.find((agent) => agent.state === "working" || Boolean(agent.currentText?.trim()))');
+  expect(pageSource).toContain('?? conversationAgents.find((agent) => agent.state !== "cancelled")');
+  expect(pageSource).toContain('{directConversationMessages.length > 0 ? (');
+  expect(pageSource).toContain('directConversationMessages.map((msg: MessageRecord) => {');
+  expect(pageSource).toContain('.filter((message) => message.role === "user")');
+  expect(pageSource).not.toContain('message.role === "user" || (message.role === "worker" && message.content.trim())');
+  expect(pageSource).toContain('const isExpanded = expandedDirectMessageIds.has(msg.id);');
+  expect(pageSource).toContain('className="flex justify-end"');
+  expect(pageSource).toContain('aria-label={isExpanded ? "Collapse message" : "Expand message"}');
+  expect(pageSource).toContain('onClick={() => toggleDirectMessageExpansion(msg.id)}');
+  expect(pageSource).toContain('maxHeight: isExpanded ? undefined : "calc(1.5rem * 6)"');
+  expect(pageSource).toContain('rounded-[1.9rem] rounded-br-lg bg-[#242424]');
+  expect(pageSource).toContain('px-4 py-2.5');
+  expect(pageSource).toContain('text-sm leading-6');
+  expect(pageSource).not.toContain('text-[1.375rem]');
+  expect(pageSource).toContain('cursor-pointer');
+  expect(pageSource).toContain('overflow-hidden');
+  expect(pageSource).toContain('<Terminal');
+  expect(pageSource).toContain('variant="native"');
+  expect(pageSource).toContain('agent={primaryConversationAgent}');
+  expect(pageSource).not.toContain('Direct transcript');
+  expect(pageSource).not.toContain('title={selectedRun?.title || "Direct control"}');
+});
+
 test("settings render as a centered app modal with supervisor llm controls", () => {
   expect(pageSource).toContain('import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox"');
   expect(pageSource).toContain('import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"');
-  expect(pageSource).toContain('<Dialog open={showSettings} onOpenChange={setShowSettings}>');
+  expect(pageSource).toContain('<Dialog open={open} onOpenChange={onOpenChange}>');
   expect(pageSource).toContain('className="sm:max-w-xl"');
   expect(pageSource).toContain("Supervisor LLM");
   expect(pageSource).toContain("Fallback LLM");
@@ -197,7 +239,7 @@ test("failed runs surface recovery UI in the header and conversation feed", () =
 });
 
 test("running conversations render an in-thread execution indicator with expandable trace details", () => {
-  expect(pageSource).toContain("const conversationThinking =");
+  expect(pageSource).toContain("function ConversationExecutionStatus");
   expect(pageSource).toContain("const isConversationThinking =");
   expect(pageSource).toContain("const liveThoughts =");
   expect(pageSource).toContain("const selectedRunExecutionEvents =");
@@ -216,11 +258,11 @@ test("running conversations render an in-thread execution indicator with expanda
   expect(pageSource).toContain("No execution details yet.");
   expect(pageSource).not.toContain("Current status");
   expect(pageSource).not.toContain("Last bridge error");
-  expect(pageSource).toContain("{isImplementationConversation && showConversationExecution ? conversationThinking : null}");
+  expect(pageSource).toContain("{isImplementationConversation && showConversationExecution ? (");
 });
 
 test("new conversations expose a mode picker and only existing direct runs lock the worker type", () => {
-  expect(pageSource).toContain('import { ConversationModePicker, getConversationModeCopy, type ConversationModeOption } from "@/components/ConversationModePicker"');
+  expect(pageSource).toContain('import { ConversationModePicker, type ConversationModeOption } from "@/components/ConversationModePicker"');
   expect(pageSource).toContain('value={selectedConversationMode}');
   expect(conversationModePickerSource).toContain("Create plan");
   expect(conversationModePickerSource).toContain("Implement plan");
@@ -238,8 +280,8 @@ test("starting a project-scoped conversation keeps the composer empty", () => {
 });
 
 test("empty state centers the composer with the welcome stack instead of docking it to the bottom", () => {
-  expect(pageSource).toContain("const composer = (");
+  expect(pageSource).toContain("const renderComposer = (");
   expect(pageSource).toContain('{selectedRunId ? (');
-  expect(pageSource).toContain('{composer("mt-6 w-full")}');
-  expect(pageSource).toContain('{selectedRunId ? composer("w-full") : null}');
+  expect(pageSource).toContain('renderComposer("mt-6 w-full")');
+  expect(pageSource).toContain('{selectedRunId ? renderComposer("w-full") : null}');
 });
