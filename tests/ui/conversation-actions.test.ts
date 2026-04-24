@@ -2,10 +2,18 @@ import fs from "fs";
 import path from "path";
 import { test, expect } from "vitest";
 
-const pageSource = fs.readFileSync(
-  path.resolve(process.cwd(), "src/app/page.tsx"),
-  "utf8"
-);
+const readSource = (relativePath: string) => fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
+const pageSource = [
+  "src/app/page.tsx",
+  "src/app/home/HomeApp.tsx",
+  "src/app/home/useAppErrors.ts",
+  "src/app/home/useConversationExecutionStatus.ts",
+  "src/app/home/useHomeLifecycle.ts",
+  "src/app/home/utils.ts",
+  "src/components/home/ConversationMain.tsx",
+  "src/components/home/ConversationSidebar.tsx",
+  "src/components/home/SettingsDialog.tsx",
+].map(readSource).join("\n");
 
 test("conversation rows expose rename and delete actions", () => {
   expect(pageSource).toContain('Rename conversation');
@@ -53,10 +61,10 @@ test("failed runs render a single persisted error in the conversation view", () 
 });
 
 test("conversation error notices render below the thread content", () => {
-  const appErrorsIndex = pageSource.indexOf("{appErrors.length > 0 ? (");
-  const failureNoticeIndex = pageSource.indexOf("{conversationFailure ? (");
   const messagesIndex = pageSource.indexOf("{visibleMessages.length > 0 ? (");
-  const executionIndex = pageSource.indexOf("{showConversationExecution ? conversationThinking : null}");
+  const executionIndex = pageSource.indexOf("{isImplementationConversation && showConversationExecution ? (");
+  const appErrorsIndex = pageSource.indexOf("{appErrors.length > 0 ? (", executionIndex);
+  const failureNoticeIndex = pageSource.indexOf("{conversationFailure ? (", appErrorsIndex);
 
   expect(messagesIndex).toBeGreaterThanOrEqual(0);
   expect(executionIndex).toBeGreaterThan(messagesIndex);
@@ -65,7 +73,7 @@ test("conversation error notices render below the thread content", () => {
 });
 
 test("frontend transport and mutation errors render as explicit notices", () => {
-  expect(pageSource).toContain("const appErrors = useMemo");
+  expect(pageSource).toContain("return useMemo(() => {");
   expect(pageSource).toContain("<ErrorNotice");
   expect(pageSource).toContain('source: "Events"');
   expect(pageSource).toContain('action: "Start a run"');
