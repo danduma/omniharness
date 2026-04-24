@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { buildAgentOutputActivity, formatActivityStatus, type AgentActivityItem, type AgentOutputEntry } from "@/lib/agent-output";
 import { cn } from "@/lib/utils";
 
@@ -14,6 +14,13 @@ export interface AgentTerminalPayload {
   outputEntries?: AgentOutputEntry[];
   currentText?: string;
   lastText?: string;
+}
+
+const TOOL_OUTPUT_PREVIEW_LINES = 3;
+const TERMINAL_TOOL_STATUSES = new Set(["completed", "done", "failed", "error", "cancelled"]);
+
+function isTerminalToolStatus(status: string) {
+  return TERMINAL_TOOL_STATUSES.has(status);
 }
 
 function statusBadgeClass(status: string, variant: "terminal" | "native") {
@@ -50,7 +57,7 @@ function statusBadgeClass(status: string, variant: "terminal" | "native") {
   }
 }
 
-function TimelineRail({
+function TimelineMarker({
   active = false,
   muted = false,
   variant,
@@ -60,15 +67,10 @@ function TimelineRail({
   variant: "terminal" | "native";
 }) {
   return (
-    <div className="absolute bottom-0 left-0 top-0 flex w-4.5 justify-center">
-      <div className={cn(
-        "h-full w-px",
-        variant === "native" ? "bg-border/70" : "bg-white/8",
-        muted && (variant === "native" ? "bg-border/45" : "bg-white/5"),
-      )} />
+    <div className="relative z-10 flex w-4 shrink-0 justify-center">
       <div
         className={cn(
-          "absolute top-0.5 h-2 w-2 rounded-full border",
+          "mt-[0.32rem] h-2 w-2 rounded-full border",
           variant === "native"
             ? muted ? "border-border bg-background" : "border-primary/40 bg-background"
             : muted ? "border-white/15 bg-[#101318]" : "border-teal-400/45 bg-[#101318]",
@@ -81,14 +83,45 @@ function TimelineRail({
   );
 }
 
-function ActivityPane({ label, text, variant }: { label: string; text: string; variant: "terminal" | "native" }) {
+function ActivityPane({
+  label,
+  text,
+  variant,
+  preview = false,
+  expanded = true,
+  onClick,
+}: {
+  label: string;
+  text: string;
+  variant: "terminal" | "native";
+  preview?: boolean;
+  expanded?: boolean;
+  onClick?: () => void;
+}) {
+  const lines = text.split("\n");
+  const canExpand = preview && lines.length > TOOL_OUTPUT_PREVIEW_LINES;
+  const clipped = canExpand && !expanded;
+
   return (
-    <div className={cn(
-      "overflow-hidden",
-      variant === "native"
-        ? "rounded-lg border border-border/60 bg-muted/25"
-        : "rounded-[0.85rem] border border-white/10 bg-[#111318] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
-    )}>
+    <div
+      className={cn(
+        "overflow-hidden",
+        canExpand && "cursor-pointer",
+        variant === "native"
+          ? "rounded-lg border border-border/60 bg-muted/25"
+          : "rounded-[0.85rem] border border-white/10 bg-[#111318] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
+      )}
+      onClick={canExpand ? onClick : undefined}
+      role={canExpand ? "button" : undefined}
+      tabIndex={canExpand ? 0 : undefined}
+      title={canExpand ? (expanded ? "Click to collapse output preview" : "Click to expand full output") : undefined}
+      onKeyDown={canExpand ? (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick?.();
+        }
+      } : undefined}
+    >
       <div className="flex items-stretch">
         <div className={cn(
           "flex w-8 shrink-0 items-start justify-center border-r px-1 py-2 font-mono text-[8px] font-semibold uppercase tracking-[0.22em]",
@@ -99,7 +132,9 @@ function ActivityPane({ label, text, variant }: { label: string; text: string; v
           {label}
         </div>
         <pre className={cn(
-          "min-w-0 flex-1 overflow-x-auto px-2.5 py-2 font-mono text-[9px] leading-[1.55] whitespace-pre-wrap break-words",
+          "min-w-0 flex-1 overflow-x-auto px-2.5 py-2 font-mono whitespace-pre-wrap break-words",
+          variant === "native" ? "text-sm leading-6" : "text-[9px] leading-[1.55]",
+          clipped && "line-clamp-[3]",
           variant === "native" ? "text-foreground" : "text-zinc-200",
         )}>
           {text}
@@ -116,9 +151,30 @@ function ToolActivity({
   activity: Extract<AgentActivityItem, { kind: "tool" }>;
   variant: "terminal" | "native";
 }) {
+  const isDone = isTerminalToolStatus(activity.status);
+  const [detailsOpen, setDetailsOpen] = useState(!isDone);
+  const [outputExpanded, setOutputExpanded] = useState(false);
+
+  useEffect(() => {
+    if (isTerminalToolStatus(activity.status)) {
+      setDetailsOpen(false);
+      setOutputExpanded(false);
+    }
+  }, [activity.status]);
+
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-1.5">
+      <button
+        type="button"
+        className="flex w-full flex-wrap items-center gap-1.5 text-left"
+        onClick={() => setDetailsOpen((open) => {
+          if (open) {
+            setOutputExpanded(false);
+          }
+          return !open;
+        })}
+        aria-expanded={detailsOpen}
+      >
         <span className={cn("text-[11px] font-semibold tracking-tight", variant === "native" ? "text-foreground" : "text-zinc-100")}>{activity.label}</span>
         <span className={cn("font-mono text-[10px] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-zinc-300/95")}>{activity.title}</span>
         <span
@@ -129,9 +185,18 @@ function ToolActivity({
         >
           {formatActivityStatus(activity.status)}
         </span>
-      </div>
-      {activity.inputPane ? <ActivityPane label={activity.inputPane.label} text={activity.inputPane.text} variant={variant} /> : null}
-      {activity.outputPane ? <ActivityPane label={activity.outputPane.label} text={activity.outputPane.text} variant={variant} /> : null}
+      </button>
+      {detailsOpen && activity.inputPane ? <ActivityPane label={activity.inputPane.label} text={activity.inputPane.text} variant={variant} /> : null}
+      {detailsOpen && activity.outputPane ? (
+        <ActivityPane
+          label={activity.outputPane.label}
+          text={activity.outputPane.text}
+          variant={variant}
+          preview
+          expanded={outputExpanded}
+          onClick={() => setOutputExpanded((open) => !open)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -141,26 +206,28 @@ function ActivityRow({ activity, variant }: { activity: AgentActivityItem; varia
   const muted = activity.kind === "thought";
 
   return (
-    <div className="relative pl-6">
-      <TimelineRail active={active} muted={muted} variant={variant} />
-      {activity.kind === "message" ? (
-        <p className={cn("max-w-none whitespace-pre-wrap text-[12px] leading-[1.55]", variant === "native" ? "text-foreground" : "text-zinc-100/95")}>{activity.text}</p>
-      ) : null}
-      {activity.kind === "thought" ? (
-        <p className={cn("max-w-none whitespace-pre-wrap text-[11px] leading-[1.5] italic", variant === "native" ? "text-muted-foreground" : "text-zinc-500")}>{activity.text}</p>
-      ) : null}
-      {activity.kind === "tool" ? <ToolActivity activity={activity} variant={variant} /> : null}
-      {activity.kind === "permission" ? (
-        <div className={cn(
-          "rounded-[0.85rem] border px-2.5 py-2",
-          variant === "native"
-            ? "border-amber-500/25 bg-amber-500/8"
-            : "border-amber-400/20 bg-[rgba(96,67,22,0.34)] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
-        )}>
-          <div className={cn("text-[11px] font-semibold tracking-tight", variant === "native" ? "text-amber-800 dark:text-amber-300" : "text-amber-100")}>{activity.title}</div>
-          <p className={cn("mt-0.5 whitespace-pre-wrap text-[10px] leading-[1.45]", variant === "native" ? "text-amber-900/85 dark:text-amber-100/85" : "text-amber-50/85")}>{activity.text}</p>
-        </div>
-      ) : null}
+    <div className="relative flex items-start gap-3">
+      <TimelineMarker active={active} muted={muted} variant={variant} />
+      <div className="min-w-0 flex-1">
+        {activity.kind === "message" ? (
+          <p className={cn("max-w-none whitespace-pre-wrap text-[12px] leading-[1.55]", variant === "native" ? "text-foreground" : "text-zinc-100/95")}>{activity.text}</p>
+        ) : null}
+        {activity.kind === "thought" ? (
+          <p className={cn("max-w-none whitespace-pre-wrap text-[11px] leading-[1.5] italic", variant === "native" ? "text-muted-foreground" : "text-zinc-500")}>{activity.text}</p>
+        ) : null}
+        {activity.kind === "tool" ? <ToolActivity activity={activity} variant={variant} /> : null}
+        {activity.kind === "permission" ? (
+          <div className={cn(
+            "rounded-[0.85rem] border px-2.5 py-2",
+            variant === "native"
+              ? "border-amber-500/25 bg-amber-500/8"
+              : "border-amber-400/20 bg-[rgba(96,67,22,0.34)] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
+          )}>
+            <div className={cn("text-[11px] font-semibold tracking-tight", variant === "native" ? "text-amber-800 dark:text-amber-300" : "text-amber-100")}>{activity.title}</div>
+            <p className={cn("mt-0.5 whitespace-pre-wrap text-[10px] leading-[1.45]", variant === "native" ? "text-amber-900/85 dark:text-amber-100/85" : "text-amber-50/85")}>{activity.text}</p>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -202,7 +269,11 @@ export function Terminal({ agent, variant = "terminal", className }: TerminalPro
         )}
       >
         {activity.length > 0 ? (
-          <div className="space-y-3">
+          <div className="relative flex flex-col gap-3">
+            <div className={cn(
+              "absolute left-2 top-0 h-full w-px",
+              variant === "native" ? "bg-border/70" : "bg-white/8",
+            )} />
             {activity.map((entry) => (
               <ActivityRow key={entry.id} activity={entry} variant={variant} />
             ))}

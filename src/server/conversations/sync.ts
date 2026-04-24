@@ -4,6 +4,41 @@ import { runs, workers } from "@/server/db/schema";
 import { collectPlannerArtifacts } from "@/server/planning/artifacts";
 import { normalizeAgentRecord } from "@/server/bridge-client";
 
+function hasPersistedWorkerOutput(worker: typeof workers.$inferSelect) {
+  if (
+    worker.outputLog.trim()
+    || worker.currentText.trim()
+    || worker.lastText.trim()
+  ) {
+    return true;
+  }
+
+  try {
+    const entries = JSON.parse(worker.outputEntriesJson) as unknown;
+    return Array.isArray(entries)
+      && entries.some((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return false;
+        }
+        const text = (entry as { text?: unknown }).text;
+        return typeof text === "string" && text.trim().length > 0;
+      });
+  } catch {
+    return false;
+  }
+}
+
+function resolvePersistedRunState(worker: typeof workers.$inferSelect) {
+  const status = worker.status.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+
+  if (status === "error") {
+    return "failed";
+  }
+
+  return ["stopped", "cancelled", "done", "completed"].includes(status)
+    || (status === "idle" && hasPersistedWorkerOutput(worker)) ? "done" : "running";
+}
+
 export async function syncConversationSessions(rawAgents: unknown[]) {
   const agents = rawAgents.map((agent) => normalizeAgentRecord(agent));
   const allRuns = await db.select().from(runs);
@@ -67,6 +102,27 @@ export async function syncConversationSessions(rawAgents: unknown[]) {
     await db.update(runs).set({
       status: nextRunState,
       lastError: agent.lastError || run.lastError,
+      updatedAt: new Date(),
+    }).where(eq(runs.id, run.id));
+  }
+
+  for (const run of allRuns) {
+    if (run.mode === "implementation" || run.status === "done" || run.status === "failed") {
+      continue;
+    }
+
+    const worker = allWorkers.find((candidate) => candidate.runId === run.id);
+    if (!worker || agents.some((agent) => agent.name === worker.id)) {
+      continue;
+    }
+
+    const nextRunState = resolvePersistedRunState(worker);
+    if (nextRunState === run.status) {
+      continue;
+    }
+
+    await db.update(runs).set({
+      status: nextRunState,
       updatedAt: new Date(),
     }).where(eq(runs.id, run.id));
   }

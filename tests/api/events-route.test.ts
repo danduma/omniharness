@@ -104,4 +104,65 @@ describe("GET /api/events", () => {
     const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     expect(persistedRun?.status).toBe("done");
   });
+
+  it("marks a direct conversation done when a persisted idle worker has output but no live bridge agent", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-persisted-idle.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: JSON.stringify([
+        {
+          id: "entry-1",
+          type: "message",
+          text: "Done and waiting for the next prompt.",
+          timestamp: now.toISOString(),
+        },
+      ]),
+      currentText: "",
+      lastText: "Done and waiting for the next prompt.",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+    const controller = new AbortController();
+    const response = await GET(new NextRequest("http://localhost/api/events", {
+      signal: controller.signal,
+    }));
+    const reader = response.body!.getReader();
+    const { value } = await reader.read();
+    controller.abort();
+    await reader.cancel();
+
+    const payload = decodeFirstEvent(value!);
+    expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("done");
+    expect(payload.workers.find((worker: { id: string }) => worker.id === workerId)?.status).toBe("idle");
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(persistedRun?.status).toBe("done");
+  });
 });
