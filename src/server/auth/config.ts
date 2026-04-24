@@ -47,8 +47,28 @@ export function getConfiguredAuthPassword() {
   return process.env.OMNIHARNESS_AUTH_PASSWORD?.trim() || null;
 }
 
-export function isAuthEnabled() {
+export function isAuthConfigured() {
   return Boolean(getConfiguredAuthPasswordHash() || getConfiguredAuthPassword());
+}
+
+export function isDevelopmentMode() {
+  return process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
+}
+
+export function isAuthRequired() {
+  return !isDevelopmentMode();
+}
+
+export function isAuthEnabled() {
+  return isAuthRequired() || isAuthConfigured();
+}
+
+export function getAuthConfigurationError() {
+  if (!isAuthRequired() || isAuthConfigured()) {
+    return null;
+  }
+
+  return "Authentication is required outside development. Set OMNIHARNESS_AUTH_PASSWORD or OMNIHARNESS_AUTH_PASSWORD_HASH before starting OmniHarness.";
 }
 
 export function getPublicOriginFromUrl(url: string) {

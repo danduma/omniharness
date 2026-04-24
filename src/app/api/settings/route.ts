@@ -5,7 +5,7 @@ import { decryptSettingValue, encryptSettingValue, shouldEncryptSetting } from "
 import { buildAppError, errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 
-export async function GET(req?: NextRequest) {
+export async function GET(req: NextRequest) {
   try {
     const auth = await requireApiSession(req, {
       source: "Settings",

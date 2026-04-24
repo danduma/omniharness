@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildAppError } from "@/server/api-errors";
-import { isAuthEnabled } from "@/server/auth/config";
+import { getAuthConfigurationError, isAuthEnabled } from "@/server/auth/config";
 import { getSessionFromRequest } from "@/server/auth/session";
 
 function jsonError(status: number, source: string, action: string, message: string) {
@@ -32,6 +32,14 @@ export async function requireApiSession(
 ) {
   if (!isAuthEnabled()) {
     return { session: null, response: null };
+  }
+
+  const configurationError = getAuthConfigurationError();
+  if (configurationError) {
+    return {
+      session: null,
+      response: jsonError(503, options.source ?? "Auth", options.action, configurationError),
+    };
   }
 
   if (!request) {

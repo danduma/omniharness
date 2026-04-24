@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 
 interface LoginShellProps {
   error?: string | null;
+  configurationError?: string | null;
   isSubmitting?: boolean;
   isRedeemingPair?: boolean;
   pairError?: string | null;
@@ -15,6 +16,7 @@ interface LoginShellProps {
 
 export function LoginShell({
   error,
+  configurationError,
   isSubmitting = false,
   isRedeemingPair = false,
   pairError,
@@ -56,6 +58,13 @@ export function LoginShell({
               </div>
             ) : null}
           </div>
+        ) : configurationError ? (
+          <div className="mt-6 rounded-2xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-foreground">
+            <div className="font-semibold text-destructive">Authentication setup required</div>
+            <div className="mt-2 leading-relaxed text-muted-foreground">
+              {configurationError}
+            </div>
+          </div>
         ) : (
           <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
             <div className="space-y-2">
@@ -79,7 +88,7 @@ export function LoginShell({
               </div>
             ) : null}
 
-            <Button type="submit" className="h-11 w-full rounded-xl" disabled={isSubmitting || password.trim().length === 0}>
+            <Button type="submit" className="h-11 w-full rounded-xl" disabled={Boolean(configurationError) || isSubmitting || password.trim().length === 0}>
               {isSubmitting ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : null}
               Unlock OmniHarness
             </Button>

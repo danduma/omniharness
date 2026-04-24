@@ -43,7 +43,7 @@ describe("/api/settings", () => {
     expect(storedApiKey?.value).not.toContain("top-secret-key");
     expect(storedModel?.value).toBe("gemini-3.1-pro-preview");
 
-    const getResponse = await GET();
+    const getResponse = await GET(new NextRequest("http://localhost/api/settings"));
     expect(getResponse.status).toBe(200);
 
     const payload = await getResponse.json();
@@ -61,7 +61,7 @@ describe("/api/settings", () => {
       { key: "TEST_CREDIT_STRATEGY", value: "swap_account", updatedAt: new Date() },
     ]);
 
-    const response = await GET();
+    const response = await GET(new NextRequest("http://localhost/api/settings"));
     expect(response.status).toBe(200);
 
     const payload = await response.json();

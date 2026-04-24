@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getPublicOriginFromUrl, isAuthEnabled } from "@/server/auth/config";
+import { getAuthConfigurationError, getPublicOriginFromUrl, isAuthEnabled } from "@/server/auth/config";
 import { createPairingToken, getPairingRecord } from "@/server/auth/pairing";
 import { insertAuthEvent } from "@/server/auth/audit";
 import { errorResponse } from "@/server/api-errors";
@@ -10,6 +10,15 @@ export async function POST(req: NextRequest) {
     if (!isAuthEnabled()) {
       return errorResponse("Authentication must be enabled before pairing devices.", {
         status: 400,
+        source: "Auth",
+        action: "Create pairing QR",
+      });
+    }
+
+    const configurationError = getAuthConfigurationError();
+    if (configurationError) {
+      return errorResponse(configurationError, {
+        status: 503,
         source: "Auth",
         action: "Create pairing QR",
       });

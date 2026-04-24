@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAuthEnabled, AUTH_SESSION_COOKIE } from "@/server/auth/config";
+import { isAuthEnabled, AUTH_SESSION_COOKIE, getAuthConfigurationError } from "@/server/auth/config";
 import { listActiveSessions, getSessionFromRequest, revokeSession, revokeAllSessions } from "@/server/auth/session";
 import { insertAuthEvent } from "@/server/auth/audit";
 import { errorResponse } from "@/server/api-errors";
@@ -13,6 +13,18 @@ export async function GET(req: NextRequest) {
         authenticated: true,
         currentSession: null,
         sessions: [],
+        configurationError: null,
+      });
+    }
+
+    const configurationError = getAuthConfigurationError();
+    if (configurationError) {
+      return NextResponse.json({
+        enabled: true,
+        authenticated: false,
+        currentSession: null,
+        sessions: [],
+        configurationError,
       });
     }
 
@@ -23,6 +35,7 @@ export async function GET(req: NextRequest) {
         authenticated: false,
         currentSession: null,
         sessions: [],
+        configurationError: null,
       });
     }
 
@@ -32,6 +45,7 @@ export async function GET(req: NextRequest) {
       authenticated: true,
       currentSession: session,
       sessions,
+      configurationError: null,
     });
   } catch (error) {
     return errorResponse(error, {

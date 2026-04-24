@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AUTH_SESSION_COOKIE, isAuthEnabled } from "@/server/auth/config";
+import { AUTH_SESSION_COOKIE, getAuthConfigurationError, isAuthEnabled } from "@/server/auth/config";
 import { verifyConfiguredAuthPassword } from "@/server/auth/password";
 import { createAuthSession } from "@/server/auth/session";
 import { insertAuthEvent } from "@/server/auth/audit";
@@ -11,6 +11,15 @@ export async function POST(req: NextRequest) {
     if (!isAuthEnabled()) {
       return errorResponse("Authentication is not enabled for this OmniHarness instance.", {
         status: 400,
+        source: "Auth",
+        action: "Log in",
+      });
+    }
+
+    const configurationError = getAuthConfigurationError();
+    if (configurationError) {
+      return errorResponse(configurationError, {
+        status: 503,
         source: "Auth",
         action: "Log in",
       });

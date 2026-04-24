@@ -11,7 +11,10 @@ function readCookie(response: Response) {
 }
 
 describe("auth routes", () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+
   beforeEach(async () => {
+    process.env.NODE_ENV = "test";
     process.env.OMNIHARNESS_AUTH_PASSWORD = "swordfish";
     delete process.env.OMNIHARNESS_AUTH_PASSWORD_HASH;
     await db.delete(authEvents);
@@ -20,6 +23,7 @@ describe("auth routes", () => {
   });
 
   afterEach(() => {
+    process.env.NODE_ENV = originalNodeEnv;
     delete process.env.OMNIHARNESS_AUTH_PASSWORD;
     delete process.env.OMNIHARNESS_AUTH_PASSWORD_HASH;
   });
@@ -117,5 +121,37 @@ describe("auth routes", () => {
     expect(revokeResponse.status).toBe(200);
     const sessions = await db.select().from(authSessions);
     expect(sessions.every((session) => session.revokedAt)).toBe(true);
+  });
+
+  it("reports a configuration error when production auth is required but not configured", async () => {
+    process.env.NODE_ENV = "production";
+    delete process.env.OMNIHARNESS_AUTH_PASSWORD;
+    delete process.env.OMNIHARNESS_AUTH_PASSWORD_HASH;
+
+    const sessionResponse = await getSessionRoute(new NextRequest("http://localhost/api/auth/session"));
+    expect(sessionResponse.status).toBe(200);
+    await expect(sessionResponse.json()).resolves.toEqual(expect.objectContaining({
+      enabled: true,
+      authenticated: false,
+      configurationError: expect.stringContaining("OMNIHARNESS_AUTH_PASSWORD"),
+    }));
+
+    const loginResponse = await loginRoute(new NextRequest("http://localhost/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ password: "anything" }),
+      headers: {
+        origin: "http://localhost",
+        "content-type": "application/json",
+      },
+    }));
+
+    expect(loginResponse.status).toBe(503);
+    await expect(loginResponse.json()).resolves.toEqual({
+      error: expect.objectContaining({
+        source: "Auth",
+        action: "Log in",
+        message: expect.stringContaining("OMNIHARNESS_AUTH_PASSWORD"),
+      }),
+    });
   });
 });

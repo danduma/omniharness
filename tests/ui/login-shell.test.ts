@@ -12,4 +12,5 @@ test("login shell exposes the unlock flow and pair redemption state", () => {
   expect(source).toContain("Redeeming pairing code...");
   expect(source).toContain("Enter instance password");
   expect(source).toContain("Connecting this phone");
+  expect(source).toContain("Authentication setup required");
 });
