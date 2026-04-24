@@ -4,11 +4,13 @@ import { db } from "@/server/db";
 import { messages as dbMessages, plans, runs, workers } from "@/server/db/schema";
 import { createAdHocPlan } from "@/server/runs/ad-hoc-plan";
 import { startSupervisorRun } from "@/server/supervisor/start";
-import { askAgent, spawnAgent } from "@/server/bridge-client";
+import { askAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
 import { queueConversationTitleGeneration } from "@/server/conversation-title";
 import { normalizeConversationMode, type ConversationMode } from "./modes";
 import { normalizeWorkerType, parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
 import { PLANNER_SYSTEM_PROMPT } from "@/server/prompts";
+import { persistRunFailure } from "@/server/runs/failures";
+import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 
 interface AttachmentInput {
   kind?: string;
@@ -22,6 +24,32 @@ function buildInitialWorkerPrompt(mode: ConversationMode, command: string) {
   }
 
   return command;
+}
+
+function hasVisibleWorkerOutput(responseText: string, snapshot: AgentRecord | null) {
+  if (responseText.trim()) {
+    return true;
+  }
+
+  if (!snapshot) {
+    return false;
+  }
+
+  return Boolean(
+    snapshot.renderedOutput?.trim()
+    || snapshot.currentText?.trim()
+    || snapshot.lastText?.trim()
+    || snapshot.outputEntries?.some((entry) => entry.text.trim()),
+  );
+}
+
+function buildEmptyWorkerOutputMessage(snapshot: AgentRecord | null, responseState: string) {
+  const stopReason = snapshot?.stopReason?.trim();
+  if (stopReason) {
+    return `Agent stopped without producing output. Stop reason: ${stopReason}.`;
+  }
+
+  return `Agent stopped without producing output. Final state: ${responseState || "unknown"}.`;
 }
 
 export async function createConversation(args: {
@@ -113,11 +141,39 @@ export async function createConversation(args: {
       effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
     });
     const response = await askAgent(workerId, buildInitialWorkerPrompt(mode, command));
+    let snapshot: AgentRecord | null = null;
+    try {
+      snapshot = await getAgent(workerId);
+      await persistWorkerSnapshot(workerId, snapshot);
+    } catch {
+      // The bridge may have already dropped a failed direct worker; the ask response still determines the visible state.
+    }
+
+    if (!hasVisibleWorkerOutput(response.response, snapshot)) {
+      const failureMessage = buildEmptyWorkerOutputMessage(snapshot, response.state);
+
+      await db.update(workers).set({
+        type: snapshot?.type || agent.type || workerType,
+        status: "error",
+        cwd: snapshot?.cwd || agent.cwd || cwd,
+        outputLog: failureMessage,
+        bridgeSessionId: snapshot?.sessionId ?? agent.sessionId ?? null,
+        bridgeSessionMode: snapshot?.sessionMode ?? agent.sessionMode ?? null,
+        updatedAt: new Date(),
+      }).where(eq(workers.id, workerId));
+
+      await persistRunFailure(runId, new Error(failureMessage));
+
+      return { planId, runId, mode };
+    }
 
     await db.update(workers).set({
       type: agent.type || workerType,
       status: response.state,
       cwd: agent.cwd || cwd,
+      outputLog: response.response.trim() ? response.response : "",
+      bridgeSessionId: snapshot?.sessionId ?? agent.sessionId ?? null,
+      bridgeSessionMode: snapshot?.sessionMode ?? agent.sessionMode ?? null,
       updatedAt: new Date(),
     }).where(eq(workers.id, workerId));
 

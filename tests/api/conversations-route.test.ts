@@ -10,6 +10,7 @@ const {
   mockEnsureSupervisorRuntimeStarted,
   mockSpawnAgent,
   mockAskAgent,
+  mockGetAgent,
 } = vi.hoisted(() => ({
   mockStartSupervisorRun: vi.fn(),
   mockQueueConversationTitleGeneration: vi.fn().mockResolvedValue(undefined),
@@ -28,6 +29,25 @@ const {
     response: "Acknowledged.",
     state: "working",
   }),
+  mockGetAgent: vi.fn().mockResolvedValue({
+    name: "worker-1",
+    type: "codex",
+    state: "working",
+    cwd: "/workspace/app",
+    lastText: "Acknowledged.",
+    currentText: "",
+    renderedOutput: "",
+    outputEntries: [
+      {
+        id: "entry-1",
+        type: "message",
+        text: "Acknowledged.",
+        timestamp: new Date(0).toISOString(),
+      },
+    ],
+    stderrBuffer: [],
+    stopReason: null,
+  }),
 }));
 
 vi.mock("@/server/supervisor/start", () => ({
@@ -45,6 +65,7 @@ vi.mock("@/server/supervisor/runtime-watchdog", () => ({
 vi.mock("@/server/bridge-client", () => ({
   spawnAgent: mockSpawnAgent,
   askAgent: mockAskAgent,
+  getAgent: mockGetAgent,
 }));
 
 import { POST } from "@/app/api/conversations/route";
@@ -56,6 +77,7 @@ describe("POST /api/conversations", () => {
     mockEnsureSupervisorRuntimeStarted.mockClear();
     mockSpawnAgent.mockClear();
     mockAskAgent.mockClear();
+    mockGetAgent.mockClear();
 
     await db.delete(messages);
     await db.delete(workers);
@@ -163,6 +185,20 @@ describe("POST /api/conversations", () => {
     mockAskAgent.mockResolvedValueOnce({
       response: "",
       state: "idle",
+    });
+    mockGetAgent.mockResolvedValueOnce({
+      name: "worker-empty",
+      type: "codex",
+      state: "idle",
+      cwd: "/workspace/app",
+      sessionId: "session-empty",
+      sessionMode: "full-access",
+      lastText: "",
+      currentText: "",
+      renderedOutput: "",
+      outputEntries: [],
+      stderrBuffer: [],
+      stopReason: "end_turn",
     });
 
     const request = new NextRequest("http://localhost/api/conversations", {
