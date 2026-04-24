@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Terminal } from "@/components/Terminal";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox";
@@ -11,17 +10,19 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/component
 import { Folder, Settings, Terminal as TerminalIcon, PanelRight, Plus, Search, Blocks, Clock, CheckCircle2, XCircle, Cpu, ArrowUp, FolderPlus, MoreHorizontal, Trash2, LoaderCircle, Menu, Pencil, Sun, Moon, RotateCcw, GitBranch, AlertTriangle, ChevronDown, X, Smartphone, LogOut } from "lucide-react";
 import { FolderPickerDialog } from "@/components/FolderPickerDialog";
 import { FileAttachmentPickerDialog, type AttachmentItem } from "@/components/FileAttachmentPickerDialog";
+import { ComposerSelect } from "@/components/composer/ComposerSelect";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ClarificationPanel } from "@/components/ClarificationPanel";
 import { AgentSurface } from "@/components/AgentSurface";
 import { ConversationModePicker, getConversationModeCopy, type ConversationModeOption } from "@/components/ConversationModePicker";
 import { PlanningArtifactsPanel } from "@/components/PlanningArtifactsPanel";
+import { WorkerCard } from "@/components/WorkerCard";
 import { type AppErrorDescriptor, appErrorKey, mergeAppErrors, normalizeAppError, requestJson } from "@/lib/app-errors";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { getRunLatestMessageTimestamp, isRunUnread } from "@/lib/conversation-state";
 import { buildConversationGroups } from "@/lib/conversations";
-import { buildWorkerLists, buildWorkerPreview, isWorkerActiveStatus, normalizeWorkerStatus, type ConversationWorkerRecord } from "@/lib/conversation-workers";
+import { buildWorkerLists, isWorkerActiveStatus, type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -92,11 +93,25 @@ type AgentSnapshot = {
     maxTokens?: number | null;
     fullnessPercent?: number | null;
   } | null;
+  outputEntries?: Array<{
+    id: string;
+    type: "message" | "thought" | "tool_call" | "tool_call_update" | "permission";
+    text: string;
+    timestamp: string;
+    toolCallId?: string | null;
+    toolKind?: string | null;
+    status?: string | null;
+    raw?: unknown;
+  }>;
   lastText?: string;
   currentText?: string;
   displayText?: string;
+  outputLog?: string;
+  bridgeLastError?: string | null;
+  runLastError?: string | null;
   stderrBuffer?: string[];
   stopReason?: string | null;
+  bridgeMissing?: boolean;
 };
 type ProjectFilesResponse = { root: string; files: string[] };
 type WorkerType = "codex" | "claude" | "gemini" | "opencode";
@@ -188,7 +203,7 @@ function ErrorNotice({
 }) {
   const tone = error.tone ?? "error";
   const containerClass = cn(
-    "rounded-2xl p-4 text-sm shadow-sm",
+    "rounded-xl p-4 text-sm shadow-sm",
     tone === "success"
       ? "border border-emerald-500/30 bg-emerald-500/5"
       : tone === "warning"
@@ -964,12 +979,10 @@ function ConversationSidebar({
       </div>
 
       <div className="mt-auto shrink-0 border-t border-border/60 bg-background/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        {authEnabled ? (
-          <Button variant="ghost" className="mb-1 h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground" onClick={openPairDeviceDialog}>
-            <Smartphone className="mr-2 h-4 w-4" /> Connect Phone
-          </Button>
-        ) : null}
-        <Button variant="ghost" className="h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground" onClick={() => setShowSettings(!showSettings)}>
+        <Button variant="ghost" className="mb-1 h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground" onClick={openPairDeviceDialog}>
+          <Smartphone className="mr-2 h-4 w-4" /> Connect Phone
+        </Button>
+        <Button variant="ghost" className="h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground" onClick={() => setShowSettings(true)}>
           <Settings className="mr-2 h-4 w-4" /> Settings
         </Button>
         {authEnabled ? (
@@ -1011,34 +1024,6 @@ function ThemeModeToggle({ themeMode, setThemeMode }: ThemeModeToggleProps) {
   );
 }
 
-function renderContextMeter(fullnessPercent: number | null | undefined) {
-  const normalized = typeof fullnessPercent === "number" && Number.isFinite(fullnessPercent)
-    ? Math.min(100, Math.max(0, Math.round(fullnessPercent)))
-    : null;
-  const meterTone = normalized === null
-    ? "#3f3f46"
-    : normalized >= 85
-      ? "#f43f5e"
-      : normalized >= 60
-        ? "#f59e0b"
-        : "#34d399";
-  const meterFill = normalized === null ? 0 : normalized;
-
-  return (
-    <div
-      aria-label={normalized === null ? "Context usage unavailable" : `Context usage ${normalized}%`}
-      className="relative h-7 w-7 shrink-0 rounded-full border border-white/10 bg-black/20"
-      title={normalized === null ? "Context usage unavailable" : `Context usage ${normalized}%`}
-    >
-      <div
-        className="absolute inset-0 rounded-full"
-        style={{ background: `conic-gradient(${meterTone} ${meterFill}%, rgba(255,255,255,0.08) ${meterFill}% 100%)` }}
-      />
-      <div className="absolute inset-[4px] rounded-full bg-[#0d0f12]" />
-    </div>
-  );
-}
-
 function formatWorkerRuntime(type: string | undefined) {
   if (!type) {
     return null;
@@ -1047,182 +1032,62 @@ function formatWorkerRuntime(type: string | undefined) {
   return WORKER_OPTIONS.find((option) => option.value === type)?.label ?? type;
 }
 
-function formatContextAvailability(fullnessPercent: number | null | undefined) {
-  if (typeof fullnessPercent !== "number" || !Number.isFinite(fullnessPercent)) {
-    return "Context unavailable";
+function parseSpawnedWorkerMessage(content: string) {
+  if (!content.startsWith("Spawned worker.")) {
+    return null;
   }
 
-  const availablePercent = Math.max(0, Math.min(100, 100 - Math.round(fullnessPercent)));
-  return `Context ${availablePercent}% available`;
+  const parts = content.substring(15).split(" | ").map((part) => part.trim()).filter(Boolean);
+  return {
+    workerId: parts.find((part) => part.startsWith("Worker: "))?.substring(8) ?? null,
+    typeLabel: parts.find((part) => part.startsWith("CLI: "))?.substring(5) ?? null,
+    purpose: parts.find((part) => part.startsWith("Purpose: "))?.substring(9) ?? null,
+  };
 }
 
-type PendingPermissionRecord = NonNullable<AgentSnapshot["pendingPermissions"]>[number];
-
-function PermissionWarning({ pendingPermissions }: { pendingPermissions: PendingPermissionRecord[] }) {
-  const [open, setOpen] = useState(false);
-  const popupRef = useRef<HTMLDivElement>(null);
-  const permissionCount = pendingPermissions.length;
-  const summary = `${permissionCount} permission request${permissionCount === 1 ? "" : "s"} waiting`;
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!popupRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-
-    window.addEventListener("pointerdown", handlePointerDown);
-    return () => window.removeEventListener("pointerdown", handlePointerDown);
-  }, [open]);
-
-  return (
-    <div ref={popupRef} className="relative">
-      <button
-        type="button"
-        aria-label={summary}
-        title={summary}
-        className="group relative flex h-7 w-7 items-center justify-center rounded-full border border-amber-400/30 bg-amber-500/12 text-amber-200 transition-colors hover:bg-amber-500/18"
-        onClick={() => setOpen((current) => !current)}
-      >
-        <AlertTriangle className="h-3.5 w-3.5" />
-        {!open ? (
-          <div className="pointer-events-none absolute right-0 top-8 hidden min-w-max rounded-md border border-amber-400/20 bg-[#17120a] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-100 shadow-lg group-hover:block">
-            Permissions waiting
-          </div>
-        ) : null}
-      </button>
-      {open ? (
-        <div className="absolute right-0 top-9 z-30 w-80 rounded-xl border border-amber-400/20 bg-[#17120a] p-3 shadow-[0_20px_60px_rgba(0,0,0,0.45)]">
-          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-200">Permissions waiting</div>
-          <div className="space-y-2">
-            {pendingPermissions.map((permission) => (
-              <div key={permission.requestId} className="rounded-lg border border-white/10 bg-black/20 p-2 text-[11px] text-zinc-200">
-                <div className="font-semibold text-amber-100">Request {permission.requestId}</div>
-                <div className="mt-1 text-zinc-400">{permission.requestedAt}</div>
-                {permission.options?.length ? (
-                  <div className="mt-2 space-y-1">
-                    {permission.options.map((option) => (
-                      <div key={option.optionId} className="rounded-md bg-white/5 px-2 py-1">
-                        <span className="font-medium text-zinc-100">{option.kind}</span>
-                        <span className="text-zinc-400"> {option.name}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="mt-2 text-zinc-400">No option details available yet.</div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function WorkerCard({
-  workerId,
+function ConversationWorkerCard({
+  worker,
   agent,
+  preferredModel,
+  preferredEffort,
   defaultOpen,
-  runtimeLabel,
-  activeModel,
-  activeEffort,
-  pendingPermissions,
   terminalHeightClass,
+  fallbackPreview,
 }: {
-  workerId: string;
-  agent: AgentSnapshot;
+  worker: ConversationWorkerRecord;
+  agent?: AgentSnapshot | null;
+  preferredModel?: string | null;
+  preferredEffort?: string | null;
   defaultOpen: boolean;
-  runtimeLabel: string | null;
-  activeModel: string | null;
-  activeEffort: string | null;
-  pendingPermissions: PendingPermissionRecord[];
   terminalHeightClass: string;
+  fallbackPreview?: string | null;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
-  const contextLabel = formatContextAvailability(agent.contextUsage?.fullnessPercent);
-  const preview = buildWorkerPreview(agent);
-
-  const displayId = useMemo(() => {
-    const match = workerId.match(/-worker-(\d+)$/);
-    return match ? `Worker ${match[1]}` : workerId;
-  }, [workerId]);
+  const configuredModel = agent?.requestedModel || preferredModel || null;
+  const configuredEffort = agent?.requestedEffort || preferredEffort || null;
+  const activeModel = agent?.effectiveModel || configuredModel;
+  const activeEffort = agent?.effectiveEffort || configuredEffort;
+  const pendingPermissions = agent?.pendingPermissions ?? [];
+  const runtimeLabel = formatWorkerRuntime(agent?.type || worker.type);
+  const fallbackAgent = agent ?? {
+    name: worker.id,
+    type: worker.type,
+    state: worker.status,
+    currentText: "",
+    lastText: "",
+    displayText: fallbackPreview ?? "",
+  };
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <div className="overflow-hidden rounded-xl border border-white/10 bg-[#0d0f12] text-zinc-100 shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
-        <CollapsibleTrigger className="w-full text-left">
-          <div className="border-b border-white/10 bg-[#13161b] p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1 space-y-2">
-                <div className="flex items-center gap-2">
-                  <div className="break-all font-mono text-xs font-semibold leading-5 text-zinc-100" title={workerId}>
-                    {displayId}
-                  </div>
-                  <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-300">
-                    {agent.state}
-                  </span>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {runtimeLabel ? (
-                    <span className="rounded-md border border-cyan-400/30 bg-cyan-400/10 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-100">
-                      {runtimeLabel}
-                    </span>
-                  ) : null}
-                  {activeModel ? (
-                    <span className="max-w-full truncate rounded-md border border-fuchsia-400/25 bg-fuchsia-400/10 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-100" title={activeModel}>
-                      {activeModel}
-                    </span>
-                  ) : null}
-                  {activeEffort ? <span className="text-[11px] text-zinc-400">{activeEffort}</span> : null}
-                  <span className="rounded-md border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-300">
-                    {contextLabel}
-                  </span>
-                </div>
-                <div className="truncate text-xs leading-5 text-zinc-400" title={preview}>
-                  {preview}
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                {pendingPermissions.length > 0 ? <PermissionWarning pendingPermissions={pendingPermissions} /> : null}
-                {renderContextMeter(agent.contextUsage?.fullnessPercent)}
-                {isWorkerActiveStatus(agent.state) ? <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" /> : null}
-                <ChevronDown className={cn("h-4 w-4 text-zinc-400 transition-transform", open && "rotate-180")} />
-              </div>
-            </div>
-          </div>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <div className="grid gap-2.5 border-b border-white/10 bg-[#101318] px-3 py-2.5 sm:grid-cols-3">
-            <div className="space-y-0.5 text-[11px]">
-              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Harness</div>
-              <div className="break-all font-mono text-[10px] leading-[1.45] text-zinc-200">{runtimeLabel || "Unknown"}</div>
-            </div>
-            <div className="space-y-0.5 text-[11px]">
-              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Model</div>
-              <div className="break-all font-mono text-[10px] leading-[1.45] text-zinc-200">{activeModel || "Default"}</div>
-            </div>
-            <div className="space-y-0.5 text-[11px]">
-              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Context</div>
-              <div className="break-all font-mono text-[10px] leading-[1.45] text-zinc-200">{contextLabel}</div>
-            </div>
-          </div>
-          {agent.lastError ? (
-            <div className="border-b border-white/10 bg-[#101318] px-3 py-2">
-              <div className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Last error</div>
-              <div className="mt-0.5 break-all font-mono text-[10px] leading-[1.45] text-zinc-300">{agent.lastError}</div>
-            </div>
-          ) : null}
-          <div className={cn("relative w-full bg-[#050607]", terminalHeightClass)}>
-            <Terminal agent={agent} />
-          </div>
-        </CollapsibleContent>
-      </div>
-    </Collapsible>
+    <WorkerCard
+      workerId={worker.id}
+      agent={fallbackAgent}
+      defaultOpen={defaultOpen}
+      runtimeLabel={runtimeLabel}
+      activeModel={activeModel}
+      activeEffort={activeEffort}
+      pendingPermissions={pendingPermissions}
+      terminalHeightClass={terminalHeightClass}
+    />
   );
 }
 
@@ -1298,23 +1163,15 @@ function WorkersSidebar({ workers, agents, preferredModel, preferredEffort, onCl
                 currentText: "",
                 lastText: "",
               };
-              const configuredModel = agent.requestedModel || preferredModel;
-              const configuredEffort = agent.requestedEffort || preferredEffort;
-              const activeModel = agent.effectiveModel || configuredModel;
-              const activeEffort = agent.effectiveEffort || configuredEffort;
-              const pendingPermissions = agent.pendingPermissions ?? [];
-              const runtimeLabel = formatWorkerRuntime(agent.type || worker.type);
 
               return (
-                <WorkerCard
+                <ConversationWorkerCard
                   key={`${activeTab}-${worker.id}`}
-                  workerId={worker.id}
+                  worker={worker}
                   agent={agent}
+                  preferredModel={preferredModel}
+                  preferredEffort={preferredEffort}
                   defaultOpen={activeTab === "active"}
-                  runtimeLabel={runtimeLabel}
-                  activeModel={activeModel}
-                  activeEffort={activeEffort}
-                  pendingPermissions={pendingPermissions}
                   terminalHeightClass="h-44"
                 />
               );
@@ -1399,7 +1256,6 @@ export default function Home() {
   });
   const [runtimeErrors, setRuntimeErrors] = useState<AppErrorDescriptor[]>([]);
   const [settingsDiagnostics, setSettingsDiagnostics] = useState<AppErrorDescriptor[]>([]);
-  const queryClient = useQueryClient();
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const commandInputRef = useRef<HTMLTextAreaElement>(null);
@@ -1417,6 +1273,9 @@ export default function Home() {
   const authEnabled = sessionQuery.data?.enabled ?? false;
   const authConfigurationError = sessionQuery.data?.configurationError ?? null;
   const appUnlocked = sessionQuery.data ? (!sessionQuery.data.enabled || sessionQuery.data.authenticated) : false;
+  const pairDeviceAvailabilityError = !authEnabled
+    ? "Phone pairing requires OmniHarness auth. Set OMNIHARNESS_AUTH_PASSWORD or OMNIHARNESS_AUTH_PASSWORD_HASH and restart, then open Connect Phone again."
+    : authConfigurationError;
 
   const loginMutation = useMutation({
     mutationFn: async (password: string) => requestJson<{ ok: true }>("/api/auth/login", {
@@ -1923,19 +1782,12 @@ export default function Home() {
     },
     onMutate: async (variables) => {
       const previousState = state;
-      const workerIds = (state.workers || [])
-        .filter((worker) => worker.runId === variables.runId)
-        .map((worker) => worker.id);
 
       if (variables.action !== "fork") {
         setState((current) => applyRunRecoveryOptimisticUpdate(
           current as RecoverableConversationState,
           variables,
         ) as typeof current);
-      }
-
-      for (const workerId of workerIds) {
-        queryClient.removeQueries({ queryKey: ["conversation-agent", workerId], exact: true });
       }
 
       return { previousState };
@@ -2173,10 +2025,13 @@ export default function Home() {
 
     return activeAllowedWorkerTypes[0] ?? null;
   }, [activeAllowedWorkerTypes, apiKeys.WORKER_DEFAULT_TYPE]);
+  const shouldOfferAutoWorkerOption = activeComposerMode !== "direct";
   const composerWorkerOptions = useMemo(() => {
     const allowedSet = new Set(activeAllowedWorkerTypes);
-    return COMPOSER_WORKER_OPTIONS.filter((option) => option.value === "auto" || allowedSet.has(option.value));
-  }, [activeAllowedWorkerTypes]);
+    return shouldOfferAutoWorkerOption
+      ? COMPOSER_WORKER_OPTIONS.filter((option) => option.value === "auto" || allowedSet.has(option.value))
+      : WORKER_OPTIONS.filter((option) => allowedSet.has(option.value));
+  }, [activeAllowedWorkerTypes, shouldOfferAutoWorkerOption]);
   const settingsWorkers = useMemo(() => {
     if (catalogWorkers.length > 0) {
       return catalogWorkers;
@@ -2212,27 +2067,14 @@ export default function Home() {
 
     return (state.workers || []).filter((worker: ConversationWorkerRecord) => worker.runId === selectedRunId);
   }, [selectedRunId, state.workers]);
-  const conversationAgentQueries = useQueries({
-    queries: selectedRunWorkers.map((worker: ConversationWorkerRecord) => ({
-      queryKey: ["conversation-agent", worker.id],
-      queryFn: async () => {
-        return requestJson<AgentSnapshot>(`/api/agents/${worker.id}`, undefined, {
-          source: "Bridge",
-          action: `Load worker details for ${worker.id}`,
-        });
-      },
-      refetchInterval: ["starting", "working", "stuck"].includes(normalizeWorkerStatus(worker.status)) ? 2000 : false,
-    })),
-  });
   const conversationAgents = useMemo(() => {
     const liveAgentsById = new Map(
       ((state.agents || []) as AgentSnapshot[]).map((agent) => [agent.name, agent]),
     );
 
-    return selectedRunWorkers.map((worker, index) => {
-      const queriedAgent = conversationAgentQueries[index]?.data;
+    return selectedRunWorkers.map((worker) => {
       const liveAgent = liveAgentsById.get(worker.id);
-      return queriedAgent ?? liveAgent ?? {
+      return liveAgent ?? {
         name: worker.id,
         type: worker.type,
         state: worker.status,
@@ -2240,7 +2082,7 @@ export default function Home() {
         lastText: "",
       };
     });
-  }, [conversationAgentQueries, selectedRunWorkers, state.agents]);
+  }, [selectedRunWorkers, state.agents]);
   const primaryConversationAgent = conversationAgents[0] ?? null;
   const conversationWorkerGroups = useMemo(
     () => buildWorkerLists(selectedRunWorkers),
@@ -2345,11 +2187,6 @@ export default function Home() {
       && message.kind === "error"
     ));
   }, [filteredMessages, selectedRun]);
-  const agentQueryErrors = conversationAgentQueries
-    .flatMap((query, index) => query.error ? [buildInlineError(query.error, {
-      source: "Bridge",
-      action: `Load worker details for ${selectedRunWorkers[index]?.id ?? "worker"}`,
-    })] : []);
   const pendingPermissionAgent = activeConversationAgents.find((agent) => (agent.pendingPermissions?.length ?? 0) > 0) ?? null;
   const erroredAgent = activeConversationAgents.find((agent) => agent.state === "error" || Boolean(agent.lastError) || Boolean(agent.stopReason)) ?? null;
   const latestWaitEvent = selectedRunExecutionEvents.find((event) => event.eventType === "supervisor_wait") ?? null;
@@ -2480,18 +2317,12 @@ export default function Home() {
       pushLine(summarizeExecutionEvent(event), event.createdAt);
     }
 
-    if (agentQueryErrors.length > 0) {
-      for (const error of agentQueryErrors.slice(0, 2)) {
-        pushLine(error.message || "Failed to load worker details");
-      }
-    }
-
     if (lines.length === 0 && selectedRun?.status === "failed" && selectedRun.lastError) {
       pushLine(selectedRun.lastError);
     }
 
     return lines.slice(0, 6);
-  }, [agentQueryErrors, conversationAgents, recentExecutionEvents, selectedRun, showRecoverableRunningState]);
+  }, [conversationAgents, recentExecutionEvents, selectedRun, showRecoverableRunningState]);
   const isConversationThinking = selectedRun?.status === "running" || conversationAgents.some((agent) => agent.state === "working");
   const showConversationExecution = Boolean(
     selectedRun && selectedRun.status !== "failed" && (isConversationThinking || selectedRunExecutionEvents.length > 0)
@@ -2591,7 +2422,6 @@ export default function Home() {
 
     errors.push(...(state.frontendErrors ?? []).map((error) => buildInlineError(error)));
     errors.push(...runtimeErrors);
-    errors.push(...agentQueryErrors);
 
     if (projectFilesQuery.error) {
       errors.push(buildInlineError(projectFilesQuery.error, {
@@ -2637,7 +2467,6 @@ export default function Home() {
 
     return mergeAppErrors([], errors);
   }, [
-    agentQueryErrors,
     deleteRun.error,
     projectFilesQuery.error,
     recoverRun.error,
@@ -2651,7 +2480,14 @@ export default function Home() {
   useEffect(() => {
     if (!selectedRunId || !selectedRun) {
       setHydratedRunSelectionId(null);
-      if (selectedCliAgent !== "auto" && !activeAllowedWorkerTypes.includes(selectedCliAgent)) {
+      if (activeComposerMode === "direct") {
+        const nextDirectWorker = selectedCliAgent === "auto" ? (autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex") : selectedCliAgent;
+        if (!activeAllowedWorkerTypes.includes(nextDirectWorker as WorkerType)) {
+          setSelectedCliAgent(autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex");
+        } else if (nextDirectWorker !== selectedCliAgent) {
+          setSelectedCliAgent(nextDirectWorker);
+        }
+      } else if (selectedCliAgent !== "auto" && !activeAllowedWorkerTypes.includes(selectedCliAgent)) {
         setSelectedCliAgent("auto");
       }
       return;
@@ -2678,7 +2514,9 @@ export default function Home() {
     }
     setHydratedRunSelectionId(selectedRunId);
   }, [
+    activeComposerMode,
     activeAllowedWorkerTypes,
+    autoSelectedWorkerType,
     hydratedRunSelectionId,
     selectedCliAgent,
     selectedEffort,
@@ -2808,6 +2646,7 @@ export default function Home() {
   const lockedDirectWorkerLabel = WORKER_OPTIONS.find((option) => option.value === (selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent))?.label
     || WORKER_OPTIONS.find((option) => option.value === autoSelectedWorkerType)?.label
     || "Direct worker";
+  const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct";
 
   const composer = (className: string) => (
     <div className={`relative z-20 w-full shrink-0 bg-background p-3 sm:p-4 ${className}`}>
@@ -2967,7 +2806,7 @@ export default function Home() {
             </div>
 
             <div className="ml-auto flex flex-wrap items-center gap-2">
-              {activeComposerMode === "direct" ? (
+              {shouldLockDirectWorker ? (
                 <div className={cn(
                   "rounded-full border px-3 py-2 text-xs font-semibold",
                   themeMode === "night"
@@ -2982,7 +2821,7 @@ export default function Home() {
                     value={selectedCliAgent}
                     onChange={(event) => setSelectedCliAgent(event.target.value as ComposerWorkerOption)}
                     className={cn(
-                      "h-9 appearance-none border-0 bg-transparent pl-3 pr-8 text-sm outline-none transition-colors",
+                      "h-9 appearance-none border-0 bg-transparent pl-2 pr-5 text-right text-sm outline-none transition-colors",
                       themeMode === "night"
                         ? "text-muted-foreground hover:text-foreground"
                         : "text-[#8f8f8f] hover:text-[#5e5e5e]",
@@ -2993,7 +2832,7 @@ export default function Home() {
                     ))}
                   </select>
                   <ChevronDown className={cn(
-                    "pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2",
+                    "pointer-events-none absolute right-1.5 top-1/2 h-4 w-4 -translate-y-1/2",
                     themeMode === "night" ? "text-muted-foreground" : "text-[#9a9a9a]",
                   )} />
                 </div>
@@ -3004,7 +2843,7 @@ export default function Home() {
                   value={selectedModel}
                   onChange={(event) => setSelectedModel(event.target.value)}
                   className={cn(
-                    "h-9 appearance-none border-0 bg-transparent pl-3 pr-8 text-sm outline-none transition-colors",
+                    "h-9 appearance-none border-0 bg-transparent pl-2 pr-5 text-right text-sm outline-none transition-colors",
                     themeMode === "night"
                       ? "text-muted-foreground hover:text-foreground"
                       : "text-[#8f8f8f] hover:text-[#5e5e5e]",
@@ -3015,7 +2854,7 @@ export default function Home() {
                   ))}
                 </select>
                 <ChevronDown className={cn(
-                  "pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2",
+                  "pointer-events-none absolute right-1.5 top-1/2 h-4 w-4 -translate-y-1/2",
                   themeMode === "night" ? "text-muted-foreground" : "text-[#9a9a9a]",
                 )} />
               </div>
@@ -3025,7 +2864,7 @@ export default function Home() {
                   value={selectedEffort}
                   onChange={(event) => setSelectedEffort(event.target.value)}
                   className={cn(
-                    "h-9 appearance-none border-0 bg-transparent pl-3 pr-8 text-sm outline-none transition-colors",
+                    "h-9 appearance-none border-0 bg-transparent pl-2 pr-5 text-right text-sm outline-none transition-colors",
                     themeMode === "night"
                       ? "text-muted-foreground hover:text-foreground"
                       : "text-[#8f8f8f] hover:text-[#5e5e5e]",
@@ -3036,7 +2875,7 @@ export default function Home() {
                   ))}
                 </select>
                 <ChevronDown className={cn(
-                  "pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2",
+                  "pointer-events-none absolute right-1.5 top-1/2 h-4 w-4 -translate-y-1/2",
                   themeMode === "night" ? "text-muted-foreground" : "text-[#9a9a9a]",
                 )} />
               </div>
@@ -3362,29 +3201,40 @@ export default function Home() {
                         </div>
                       ) : msg.role === "system" && msg.content.startsWith("Spawned worker.") ? (
                         (() => {
-                          const parts = msg.content.substring(15).split(" | ").map(p => p.trim()).filter(Boolean);
-                          const workerMatch = parts.find(p => p.startsWith("Worker: "))?.substring(8);
-                          const displayId = workerMatch ? (workerMatch.match(/-worker-(\d+)$/) ? `Worker ${workerMatch.match(/-worker-(\d+)$/)![1]}` : workerMatch) : "Unknown Worker";
-                          const typeMatch = parts.find(p => p.startsWith("CLI: "))?.substring(5);
-                          const modeMatch = parts.find(p => p.startsWith("Mode: "))?.substring(6);
-                          const purposeMatch = parts.find(p => p.startsWith("Purpose: "))?.substring(9);
-                          
+                          const parsed = parseSpawnedWorkerMessage(msg.content);
+                          const workerId = parsed?.workerId?.trim() || "";
+                          const linkedWorker = selectedRunWorkers.find((worker) => worker.id === workerId);
+                          const linkedAgent = conversationAgents.find((agent) => agent.name === workerId);
+
+                          if (!workerId) {
+                            return (
+                              <div className="overflow-x-auto whitespace-pre-wrap rounded-lg border border-border/30 bg-muted/20 p-4 text-[13px] leading-relaxed text-muted-foreground">
+                                {msg.content}
+                              </div>
+                            );
+                          }
+
+                          const resolvedWorker = linkedWorker ?? {
+                            id: workerId,
+                            runId: msg.runId,
+                            type: parsed?.typeLabel || "",
+                            status: linkedAgent?.state || "starting",
+                          };
+
                           return (
-                            <div className="flex flex-col gap-2 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 shadow-sm">
-                              <div className="flex items-center gap-2">
-                                <Cpu className="h-4 w-4 text-primary" />
-                                <span className="font-semibold text-foreground">{displayId} Spawned</span>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                {typeMatch && <span className="rounded-md border border-cyan-400/30 bg-cyan-400/10 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-700 dark:text-cyan-400">{typeMatch}</span>}
-                                {modeMatch && <span className="rounded-md border border-fuchsia-400/30 bg-fuchsia-400/10 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-700 dark:text-fuchsia-400">{modeMatch} Mode</span>}
-                              </div>
-                              {purposeMatch && <div className="text-xs text-muted-foreground">{purposeMatch}</div>}
-                            </div>
+                            <ConversationWorkerCard
+                              worker={resolvedWorker}
+                              agent={linkedAgent}
+                              preferredModel={selectedRun?.preferredWorkerModel || null}
+                              preferredEffort={selectedRun?.preferredWorkerEffort || null}
+                              defaultOpen={false}
+                              terminalHeightClass="h-64 sm:h-[22rem]"
+                              fallbackPreview={parsed?.purpose}
+                            />
                           );
                         })()
                       ) : (
-                        <div className={`overflow-x-auto whitespace-pre-wrap rounded-xl border p-4 leading-relaxed ${msg.kind === "error"
+                        <div className={`overflow-x-auto whitespace-pre-wrap rounded-lg border p-4 leading-relaxed ${msg.kind === "error"
                           ? "border-destructive/30 bg-destructive/5 text-destructive"
                           : msg.role === "user"
                             ? "border-transparent bg-muted/30 text-foreground"
@@ -3451,28 +3301,15 @@ export default function Home() {
                     <div className="flex flex-col gap-6">
                       {conversationWorkerGroups.active.map((worker) => {
                         const agent = conversationAgents.find((item) => item.name === worker.id);
-                        const activeModel = agent?.effectiveModel || agent?.requestedModel || selectedRun?.preferredWorkerModel || null;
-                        const activeEffort = agent?.effectiveEffort || agent?.requestedEffort || selectedRun?.preferredWorkerEffort || null;
-                        const pendingPermissions = agent?.pendingPermissions ?? [];
-                        const runtimeLabel = formatWorkerRuntime(agent?.type || worker.type);
-                        const fallbackAgent = agent ?? {
-                          name: worker.id,
-                          type: worker.type,
-                          state: worker.status,
-                          currentText: "",
-                          lastText: "",
-                        };
 
                         return (
-                          <WorkerCard
+                          <ConversationWorkerCard
                             key={worker.id}
-                            workerId={worker.id}
-                            agent={fallbackAgent}
+                            worker={worker}
+                            agent={agent}
+                            preferredModel={selectedRun?.preferredWorkerModel || null}
+                            preferredEffort={selectedRun?.preferredWorkerEffort || null}
                             defaultOpen={false}
-                            runtimeLabel={runtimeLabel}
-                            activeModel={activeModel}
-                            activeEffort={activeEffort}
-                            pendingPermissions={pendingPermissions}
                             terminalHeightClass="h-64 sm:h-[22rem]"
                           />
                         );
@@ -3771,6 +3608,7 @@ export default function Home() {
         open={showPairDeviceDialog}
         onOpenChange={setShowPairDeviceDialog}
         selectedRunId={selectedRunId}
+        availabilityError={pairDeviceAvailabilityError}
       />
 
       <FolderPickerDialog 

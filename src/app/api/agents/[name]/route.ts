@@ -4,16 +4,9 @@ import { db } from "@/server/db";
 import { runs, workers } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
 import { errorResponse } from "@/server/api-errors";
-import { parseWorkerOutputEntries } from "@/server/workers/snapshots";
 import { requireApiSession } from "@/server/auth/guards";
-
-function formatErrorMessage(error: unknown) {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return String(error);
-}
+import { buildLiveWorkerSnapshot } from "@/server/workers/live-snapshots";
+import { formatErrorMessage } from "@/server/runs/failures";
 
 function isMissingAgentError(error: unknown) {
   const message = formatErrorMessage(error).toLowerCase();
@@ -35,63 +28,23 @@ export async function GET(
   const { name } = await params;
   const worker = await db.select().from(workers).where(eq(workers.id, name)).get();
   const run = worker ? await db.select().from(runs).where(eq(runs.id, worker.runId)).get() : null;
-  const outputLog = worker?.outputLog ?? "";
-  const persistedOutputEntries = parseWorkerOutputEntries(worker?.outputEntriesJson);
-  const persistedLastText = worker?.lastText ?? "";
 
   try {
     const data = await getAgent(name);
-    const structuredOutput = typeof data.renderedOutput === "string" && data.renderedOutput.trim().length > 0
-      ? data.renderedOutput
-      : "";
-    const liveText = data.currentText.length > 0
-      ? data.currentText
-      : "";
-    const outputEntries = data.outputEntries?.length ? data.outputEntries : persistedOutputEntries;
-    const lastText = data.lastText || persistedLastText || outputLog;
-    const displayBase = structuredOutput || outputLog || lastText || "";
-    const displayText = liveText && !structuredOutput
-      ? displayBase
-        ? `${displayBase}${displayBase.endsWith("\n") || liveText.startsWith("\n") ? "" : "\n"}${liveText}`
-        : liveText
-      : displayBase;
-    return NextResponse.json({
-      ...data,
-      outputEntries,
-      lastText,
-      bridgeLastError: data.lastError ?? null,
-      runLastError: run?.lastError ?? null,
-      lastError: data.lastError ?? run?.lastError ?? null,
-      outputLog,
-      displayText,
+    const snapshot = buildLiveWorkerSnapshot({
+      agent: data,
+      worker,
+      run,
     });
+    return NextResponse.json(snapshot);
   } catch (error: unknown) {
     if (worker && isMissingAgentError(error)) {
-      return NextResponse.json({
-        name,
-        type: worker.type,
-        cwd: worker.cwd,
-        state: worker.status || "starting",
-        sessionId: worker.bridgeSessionId ?? null,
-        requestedModel: run?.preferredWorkerModel ?? null,
-        effectiveModel: null,
-        requestedEffort: run?.preferredWorkerEffort ?? null,
-        effectiveEffort: null,
-        sessionMode: worker.bridgeSessionMode ?? null,
-        bridgeLastError: formatErrorMessage(error),
-        runLastError: run?.lastError ?? null,
-        lastError: run?.lastError ?? null,
-        outputEntries: persistedOutputEntries,
-        outputLog,
-        displayText: outputLog,
-        renderedOutput: null,
-        currentText: worker.currentText,
-        lastText: persistedLastText || outputLog,
-        stderrBuffer: [],
-        pendingPermissions: [],
-        stopReason: null,
-        bridgeMissing: true,
+      const snapshot = buildLiveWorkerSnapshot({
+        worker,
+        run,
+        bridgeError: error,
       });
+      return NextResponse.json(snapshot);
     }
 
     return errorResponse(error, {

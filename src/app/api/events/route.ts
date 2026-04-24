@@ -4,8 +4,10 @@ import { messages, plans, runs, accounts, workers, clarifications, validationRun
 import { BRIDGE_URL } from "@/server/bridge-client";
 import { buildAppError } from "@/server/api-errors";
 import { desc } from "drizzle-orm";
+import { syncConversationSessions } from "@/server/conversations/sync";
 import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
 import { requireApiSession } from "@/server/auth/guards";
+import { buildLiveWorkerSnapshots } from "@/server/workers/live-snapshots";
 
 export const dynamic = "force-dynamic";
 
@@ -49,15 +51,30 @@ export async function GET(req: NextRequest) {
           const allValidationRuns = await db.select().from(validationRuns).orderBy(desc(validationRuns.createdAt));
           const allExecutionEvents = await db.select().from(executionEvents).orderBy(desc(executionEvents.createdAt));
           
-          let agentsData = [];
+          let agentsData = buildLiveWorkerSnapshots({
+            workers: allWorkers,
+            runs: allRuns,
+          });
           const frontendErrors = [];
           try {
             const res = await fetch(`${BRIDGE_URL}/agents`);
             if (res.ok) {
-              agentsData = await res.json();
+              const rawAgents = await res.json();
+              await syncConversationSessions(rawAgents);
+              agentsData = buildLiveWorkerSnapshots({
+                agents: rawAgents,
+                workers: allWorkers,
+                runs: allRuns,
+              });
             } else {
+              const bridgeError = new Error(`Bridge agent list request failed with status ${res.status}.`);
+              agentsData = buildLiveWorkerSnapshots({
+                workers: allWorkers,
+                runs: allRuns,
+                bridgeError,
+              });
               frontendErrors.push(buildAppError(
-                `Bridge agent list request failed with status ${res.status}.`,
+                bridgeError,
                 {
                   source: "Bridge",
                   action: "Stream live agent state",
@@ -65,6 +82,11 @@ export async function GET(req: NextRequest) {
               ));
             }
           } catch (error) {
+            agentsData = buildLiveWorkerSnapshots({
+              workers: allWorkers,
+              runs: allRuns,
+              bridgeError: error,
+            });
             frontendErrors.push(buildAppError(error, {
               source: "Bridge",
               action: "Stream live agent state",
