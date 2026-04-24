@@ -28,12 +28,14 @@ interface PairDeviceDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   selectedRunId?: string | null;
+  availabilityError?: string | null;
 }
 
 export function PairDeviceDialog({
   open,
   onOpenChange,
   selectedRunId = null,
+  availabilityError = null,
 }: PairDeviceDialogProps) {
   const [pairing, setPairing] = useState<PairCreateResponse | null>(null);
   const [pairingStatus, setPairingStatus] = useState<PairStatusResponse["pairing"]["status"] | null>(null);
@@ -95,10 +97,14 @@ export function PairDeviceDialog({
       return;
     }
 
+    if (availabilityError) {
+      return;
+    }
+
     if (!pairing && !isLoading) {
       void createPairing();
     }
-  }, [open, pairing, isLoading]);
+  }, [availabilityError, open, pairing, isLoading]);
 
   useEffect(() => {
     if (!open || !pairing?.pairingId || pairingStatus !== "pending") {
@@ -172,7 +178,13 @@ export function PairDeviceDialog({
           </div>
 
           <div className="rounded-3xl border border-border/60 bg-muted/20 p-4">
-            {isLoading ? (
+            {availabilityError ? (
+              <div className="flex min-h-[320px] items-center justify-center">
+                <div className="max-w-xs rounded-2xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
+                  {availabilityError}
+                </div>
+              </div>
+            ) : isLoading ? (
               <div className="flex min-h-[320px] items-center justify-center">
                 <div className="flex items-center gap-3 text-sm text-muted-foreground">
                   <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -232,11 +244,11 @@ export function PairDeviceDialog({
         </div>
 
         <DialogFooter showCloseButton>
-          <Button type="button" variant="outline" onClick={() => void createPairing()}>
+          <Button type="button" variant="outline" onClick={() => void createPairing()} disabled={Boolean(availabilityError)}>
             <RefreshCcw className="mr-2 h-4 w-4" />
             Refresh code
           </Button>
-          <Button type="button" onClick={() => void handleCopy()} disabled={!pairing?.pairUrl}>
+          <Button type="button" onClick={() => void handleCopy()} disabled={Boolean(availabilityError) || !pairing?.pairUrl}>
             <Copy className="mr-2 h-4 w-4" />
             Copy link
           </Button>

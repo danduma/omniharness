@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AUTH_SESSION_COOKIE, isAuthEnabled } from "@/server/auth/config";
+import { AUTH_SESSION_COOKIE, getAuthConfigurationError, isAuthEnabled } from "@/server/auth/config";
 import { insertAuthEvent } from "@/server/auth/audit";
 import { redeemPairingToken } from "@/server/auth/pairing";
 import { errorResponse } from "@/server/api-errors";
@@ -11,6 +11,15 @@ export async function POST(req: NextRequest) {
     if (!isAuthEnabled()) {
       return errorResponse("Authentication must be enabled before pairing devices.", {
         status: 400,
+        source: "Auth",
+        action: "Redeem pairing token",
+      });
+    }
+
+    const configurationError = getAuthConfigurationError();
+    if (configurationError) {
+      return errorResponse(configurationError, {
+        status: 503,
         source: "Auth",
         action: "Redeem pairing token",
       });
