@@ -13,7 +13,7 @@ const composerSelectSource = fs.readFileSync(
 
 test("composer uses a filled textarea shell with inline cli agent, model, and effort controls", () => {
   expect(pageSource).toContain('const [selectedCliAgent, setSelectedCliAgent] = useState<ComposerWorkerOption>("auto")');
-  expect(pageSource).toContain('const [selectedModel, setSelectedModel] = useState("GPT-5.4")');
+  expect(pageSource).toContain('const [selectedModel, setSelectedModel] = useState("gpt-5.4")');
   expect(pageSource).toContain('const [selectedEffort, setSelectedEffort] = useState("High")');
   expect(pageSource).toContain('themeMode === "night"');
   expect(pageSource).toContain('border border-[#d8d8d8] bg-[#fbfbfa]');
@@ -27,7 +27,8 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('{ value: "auto", label: "Auto" }');
   expect(pageSource).toContain('{ value: "codex", label: "Codex" }');
   expect(pageSource).toContain('{ value: "claude", label: "Claude Code" }');
-  expect(pageSource).toContain('const MODEL_OPTIONS = ["GPT-5.4", "GPT-5.4 Mini", "Claude Sonnet 4"]');
+  expect(pageSource).toContain("const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {");
+  expect(pageSource).toContain('workerModels?: Partial<WorkerModelCatalog>');
   expect(pageSource).toContain('const EFFORT_OPTIONS = ["Low", "Medium", "High"]');
   expect(pageSource).toContain('bg-[#9d9d9d] text-white hover:bg-[#8b8b8b] disabled:bg-[#c9c9c9]');
   expect(pageSource).toContain('placeholder:text-[#c4c4c2]');
@@ -50,6 +51,8 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_WORKER_STORAGE_KEY, selectedCliAgent)');
   expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_MODEL_STORAGE_KEY, selectedModel)');
   expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_EFFORT_STORAGE_KEY, selectedEffort)');
+  expect(pageSource).toContain("const activeWorkerModelOptions = useMemo(");
+  expect(pageSource).toContain("options={activeWorkerModelOptions}");
   expect(pageSource).not.toContain('if (selectedCliAgent !== "auto") {\n      setSelectedCliAgent("auto");');
   expect(pageSource).toContain('const [hydratedRunSelectionId, setHydratedRunSelectionId] = useState<string | null>(null)');
   expect(pageSource).toContain('if (!selectedRunId || !selectedRun) {');
