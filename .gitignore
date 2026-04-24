@@ -12,6 +12,7 @@
 
 # testing
 /coverage
+/test-results/
 
 # next.js
 /.next/
@@ -24,7 +25,8 @@
 .DS_Store
 *.pem
 sqlite.db
-/.omniharness/bridge.lock.json
+/.omniharness/
+/config/
 
 # debug
 npm-debug.log*
