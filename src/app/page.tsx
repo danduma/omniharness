@@ -127,7 +127,9 @@ type WorkerAvailability = {
     message?: string;
   };
 };
-type WorkerCatalogResponse = { workers: WorkerAvailability[] };
+type WorkerModelOption = { value: string; label: string };
+type WorkerModelCatalog = Record<WorkerType, WorkerModelOption[]>;
+type WorkerCatalogResponse = { workers: WorkerAvailability[]; workerModels?: Partial<WorkerModelCatalog> };
 type SettingsResponse = { values: Record<string, string>; diagnostics?: AppErrorDescriptor[] };
 type AuthSessionRecord = {
   id: string;
@@ -175,7 +177,28 @@ const COMPOSER_WORKER_OPTIONS: Array<{ value: ComposerWorkerOption; label: strin
   ...WORKER_OPTIONS,
 ] as const;
 const DEFAULT_ALLOWED_WORKER_TYPES = JSON.stringify(WORKER_OPTIONS.map((option) => option.value));
-const MODEL_OPTIONS = ["GPT-5.4", "GPT-5.4 Mini", "Claude Sonnet 4"];
+const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
+  codex: [
+    { value: "gpt-5.4", label: "GPT-5.4" },
+    { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
+    { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
+    { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
+  ],
+  claude: [
+    { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+    { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
+  ],
+  gemini: [
+    { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
+  ],
+  opencode: [
+    { value: "openai/gpt-5.4", label: "GPT-5.4" },
+    { value: "openai/gpt-5.4-mini", label: "GPT-5.4 Mini" },
+    { value: "openai/gpt-5.3-codex", label: "GPT-5.3 Codex" },
+    { value: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4" },
+  ],
+};
 const EFFORT_OPTIONS = ["Low", "Medium", "High"];
 const COMPOSER_WORKER_STORAGE_KEY = "omni-composer-worker";
 const COMPOSER_MODEL_STORAGE_KEY = "omni-composer-model";
@@ -534,38 +557,51 @@ function describeAgentActivity(agent: AgentSnapshot) {
 }
 
 function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel: string) {
+  const normalized = selectedModel.trim();
+  if (!normalized) {
+    return normalized;
+  }
+
+  const normalizedLower = normalized.toLowerCase();
   if (workerType === "opencode") {
-    if (selectedModel === "GPT-5.4") return "openai/gpt-5.4";
-    if (selectedModel === "GPT-5.4 Mini") return "openai/gpt-5.4-mini";
-    if (selectedModel === "Claude Sonnet 4") return "anthropic/claude-sonnet-4";
+    if (selectedModel === "GPT-5.4" || normalizedLower === "gpt-5.4") return "openai/gpt-5.4";
+    if (selectedModel === "GPT-5.4 Mini" || normalizedLower === "gpt-5.4-mini") return "openai/gpt-5.4-mini";
+    if (selectedModel === "GPT-5.3 Codex" || normalizedLower === "gpt-5.3-codex") return "openai/gpt-5.3-codex";
+    if (selectedModel === "Claude Sonnet 4" || normalizedLower === "claude-sonnet-4") return "anthropic/claude-sonnet-4";
   }
 
   if (workerType === "codex") {
-    if (selectedModel === "GPT-5.4") return "gpt-5.4";
-    if (selectedModel === "GPT-5.4 Mini") return "gpt-5.4-mini";
-    if (selectedModel === "Claude Sonnet 4") return "claude-sonnet-4";
+    if (selectedModel === "GPT-5.4" || normalizedLower === "openai/gpt-5.4") return "gpt-5.4";
+    if (selectedModel === "GPT-5.4 Mini" || normalizedLower === "openai/gpt-5.4-mini") return "gpt-5.4-mini";
+    if (selectedModel === "GPT-5.3 Codex" || normalizedLower === "openai/gpt-5.3-codex") return "gpt-5.3-codex";
+    if (selectedModel === "Claude Sonnet 4" || normalizedLower === "anthropic/claude-sonnet-4") return "claude-sonnet-4";
   }
 
-  return selectedModel;
+  return normalized;
 }
 
-function resolveComposerModelLabel(preferredModel: string | null | undefined) {
+function resolveComposerModelValue(preferredModel: string | null | undefined) {
   if (!preferredModel?.trim()) {
     return null;
   }
 
   const normalized = preferredModel.trim().toLowerCase();
   if (normalized === "gpt-5.4" || normalized === "openai/gpt-5.4") {
-    return "GPT-5.4";
+    return preferredModel.includes("/") ? "openai/gpt-5.4" : "gpt-5.4";
   }
   if (normalized === "gpt-5.4-mini" || normalized === "openai/gpt-5.4-mini") {
-    return "GPT-5.4 Mini";
+    return preferredModel.includes("/") ? "openai/gpt-5.4-mini" : "gpt-5.4-mini";
   }
   if (normalized === "claude-sonnet-4" || normalized === "anthropic/claude-sonnet-4") {
-    return "Claude Sonnet 4";
+    return preferredModel.includes("/") ? "anthropic/claude-sonnet-4" : "claude-sonnet-4";
   }
 
-  return null;
+  return preferredModel.trim();
+}
+
+function getWorkerModelOptions(catalog: Partial<WorkerModelCatalog> | undefined, workerType: WorkerType) {
+  const discoveredModels = catalog?.[workerType];
+  return discoveredModels?.length ? discoveredModels : FALLBACK_WORKER_MODEL_OPTIONS[workerType];
 }
 
 function resolveComposerEffortLabel(preferredEffort: string | null | undefined) {
@@ -1232,7 +1268,7 @@ export default function Home() {
   const [hasReceivedInitialEventStreamPayload, setHasReceivedInitialEventStreamPayload] = useState(false);
   const [selectedConversationMode, setSelectedConversationMode] = useState<ConversationModeOption>("implementation");
   const [selectedCliAgent, setSelectedCliAgent] = useState<ComposerWorkerOption>("auto");
-  const [selectedModel, setSelectedModel] = useState("GPT-5.4");
+  const [selectedModel, setSelectedModel] = useState("gpt-5.4");
   const [selectedEffort, setSelectedEffort] = useState("High");
   const [hydratedRunSelectionId, setHydratedRunSelectionId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
@@ -1457,7 +1493,7 @@ export default function Home() {
     if (savedWorker === "auto" || WORKER_OPTIONS.some((option) => option.value === savedWorker)) {
       setSelectedCliAgent(savedWorker as ComposerWorkerOption);
     }
-    if (MODEL_OPTIONS.includes(savedModel)) {
+    if (savedModel) {
       setSelectedModel(savedModel);
     }
     if (EFFORT_OPTIONS.includes(savedEffort)) {
@@ -2032,6 +2068,13 @@ export default function Home() {
       ? COMPOSER_WORKER_OPTIONS.filter((option) => option.value === "auto" || allowedSet.has(option.value))
       : WORKER_OPTIONS.filter((option) => allowedSet.has(option.value));
   }, [activeAllowedWorkerTypes, shouldOfferAutoWorkerOption]);
+  const activeWorkerModelType = selectedCliAgent === "auto"
+    ? autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex"
+    : selectedCliAgent;
+  const activeWorkerModelOptions = useMemo(
+    () => getWorkerModelOptions(workerCatalogQuery.data?.workerModels, activeWorkerModelType),
+    [activeWorkerModelType, workerCatalogQuery.data?.workerModels],
+  );
   const settingsWorkers = useMemo(() => {
     if (catalogWorkers.length > 0) {
       return catalogWorkers;
@@ -2059,6 +2102,22 @@ export default function Home() {
       : []),
     [selectedRunId, state.messages],
   );
+
+  useEffect(() => {
+    if (activeWorkerModelOptions.length === 0) {
+      return;
+    }
+
+    const resolvedSelectedModel = resolveSelectedWorkerModel(activeWorkerModelType, selectedModel);
+    if (activeWorkerModelOptions.some((option) => option.value === resolvedSelectedModel)) {
+      if (resolvedSelectedModel !== selectedModel) {
+        setSelectedModel(resolvedSelectedModel);
+      }
+      return;
+    }
+
+    setSelectedModel(activeWorkerModelOptions[0].value);
+  }, [activeWorkerModelOptions, activeWorkerModelType, selectedModel]);
 
   const selectedRunWorkers = useMemo(() => {
     if (!selectedRunId || !state.workers) {
@@ -2504,7 +2563,7 @@ export default function Home() {
     if (nextSelected !== selectedCliAgent) {
       setSelectedCliAgent(nextSelected);
     }
-    const nextModel = resolveComposerModelLabel(selectedRun.preferredWorkerModel);
+    const nextModel = resolveComposerModelValue(selectedRun.preferredWorkerModel);
     if (nextModel && nextModel !== selectedModel) {
       setSelectedModel(nextModel);
     }
@@ -2828,7 +2887,7 @@ export default function Home() {
               <ComposerSelect
                 ariaLabel="Worker model"
                 value={selectedModel}
-                options={MODEL_OPTIONS.map((model) => ({ value: model, label: model }))}
+                options={activeWorkerModelOptions}
                 onChange={setSelectedModel}
                 themeMode={themeMode}
               />

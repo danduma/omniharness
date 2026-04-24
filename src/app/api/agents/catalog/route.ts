@@ -7,6 +7,7 @@ import { isSpawnableWorkerType } from "@/server/supervisor/worker-availability";
 import { SUPPORTED_WORKER_TYPES, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
 import { buildAppError, errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
+import { buildWorkerModelCatalog } from "@/server/worker-models";
 
 interface BridgeDoctorResult {
   type: string;
@@ -27,9 +28,10 @@ export async function GET(req?: NextRequest) {
       return auth.response;
     }
 
-    const [allSettings, doctorResponse] = await Promise.all([
+    const [allSettings, doctorResponse, workerModels] = await Promise.all([
       db.select().from(settings),
       fetch(`${BRIDGE_URL}/doctor`),
+      buildWorkerModelCatalog(),
     ]);
 
     if (!doctorResponse.ok) {
@@ -53,6 +55,7 @@ export async function GET(req?: NextRequest) {
           action: "Load worker availability",
         },
       )),
+      workerModels,
       workers: SUPPORTED_WORKER_TYPES.map((type) => ({
         type,
         label: WORKER_TYPE_LABELS[type],
