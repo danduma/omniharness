@@ -2816,69 +2816,30 @@ export default function Home() {
                   Direct worker: {lockedDirectWorkerLabel}
                 </div>
               ) : (
-                <div className="relative">
-                  <select
-                    value={selectedCliAgent}
-                    onChange={(event) => setSelectedCliAgent(event.target.value as ComposerWorkerOption)}
-                    className={cn(
-                      "h-9 appearance-none border-0 bg-transparent pl-2 pr-5 text-right text-sm outline-none transition-colors",
-                      themeMode === "night"
-                        ? "text-muted-foreground hover:text-foreground"
-                        : "text-[#8f8f8f] hover:text-[#5e5e5e]",
-                    )}
-                  >
-                    {composerWorkerOptions.map((agent) => (
-                      <option key={agent.value} value={agent.value}>{agent.label}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className={cn(
-                    "pointer-events-none absolute right-1.5 top-1/2 h-4 w-4 -translate-y-1/2",
-                    themeMode === "night" ? "text-muted-foreground" : "text-[#9a9a9a]",
-                  )} />
-                </div>
+                <ComposerSelect
+                  ariaLabel="CLI harness"
+                  value={selectedCliAgent}
+                  options={composerWorkerOptions}
+                  onChange={setSelectedCliAgent}
+                  themeMode={themeMode}
+                />
               )}
 
-              <div className="relative">
-                <select
-                  value={selectedModel}
-                  onChange={(event) => setSelectedModel(event.target.value)}
-                  className={cn(
-                    "h-9 appearance-none border-0 bg-transparent pl-2 pr-5 text-right text-sm outline-none transition-colors",
-                    themeMode === "night"
-                      ? "text-muted-foreground hover:text-foreground"
-                      : "text-[#8f8f8f] hover:text-[#5e5e5e]",
-                  )}
-                >
-                  {MODEL_OPTIONS.map((model) => (
-                    <option key={model} value={model}>{model}</option>
-                  ))}
-                </select>
-                <ChevronDown className={cn(
-                  "pointer-events-none absolute right-1.5 top-1/2 h-4 w-4 -translate-y-1/2",
-                  themeMode === "night" ? "text-muted-foreground" : "text-[#9a9a9a]",
-                )} />
-              </div>
+              <ComposerSelect
+                ariaLabel="Worker model"
+                value={selectedModel}
+                options={MODEL_OPTIONS.map((model) => ({ value: model, label: model }))}
+                onChange={setSelectedModel}
+                themeMode={themeMode}
+              />
 
-              <div className="relative">
-                <select
-                  value={selectedEffort}
-                  onChange={(event) => setSelectedEffort(event.target.value)}
-                  className={cn(
-                    "h-9 appearance-none border-0 bg-transparent pl-2 pr-5 text-right text-sm outline-none transition-colors",
-                    themeMode === "night"
-                      ? "text-muted-foreground hover:text-foreground"
-                      : "text-[#8f8f8f] hover:text-[#5e5e5e]",
-                  )}
-                >
-                  {EFFORT_OPTIONS.map((effort) => (
-                    <option key={effort} value={effort}>{effort}</option>
-                  ))}
-                </select>
-                <ChevronDown className={cn(
-                  "pointer-events-none absolute right-1.5 top-1/2 h-4 w-4 -translate-y-1/2",
-                  themeMode === "night" ? "text-muted-foreground" : "text-[#9a9a9a]",
-                )} />
-              </div>
+              <ComposerSelect
+                ariaLabel="Worker effort"
+                value={selectedEffort}
+                options={EFFORT_OPTIONS.map((effort) => ({ value: effort, label: effort }))}
+                onChange={setSelectedEffort}
+                themeMode={themeMode}
+              />
 
               <Button
                 type="submit"

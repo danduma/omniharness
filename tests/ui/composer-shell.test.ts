@@ -6,6 +6,10 @@ const pageSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/app/page.tsx"),
   "utf8"
 );
+const composerSelectSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/components/composer/ComposerSelect.tsx"),
+  "utf8"
+);
 
 test("composer uses a filled textarea shell with inline cli agent, model, and effort controls", () => {
   expect(pageSource).toContain('const [selectedCliAgent, setSelectedCliAgent] = useState<ComposerWorkerOption>("auto")');
@@ -17,7 +21,7 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain("px-4 pb-0.5 pt-3");
   expect(pageSource).toContain("min-h-[56px] w-full resize-none bg-transparent");
   expect(pageSource).toContain("rows={1}");
-  expect(pageSource).toContain("appearance-none border-0 bg-transparent");
+  expect(composerSelectSource).toContain("appearance-none border-0 bg-transparent");
   expect(pageSource).toContain("const WORKER_OPTIONS: Array<{ value: WorkerType; label: string }> = [");
   expect(pageSource).toContain('const COMPOSER_WORKER_OPTIONS: Array<{ value: ComposerWorkerOption; label: string }> = [');
   expect(pageSource).toContain('{ value: "auto", label: "Auto" }');
@@ -38,7 +42,8 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain("preferredWorkerModel: resolvedSelectedModel");
   expect(pageSource).toContain("preferredWorkerEffort: selectedEffort.toLowerCase()");
   expect(pageSource).toContain("allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent]");
-  expect(pageSource).toContain("composerWorkerOptions.map((agent) => (");
+  expect(pageSource).toContain("options={composerWorkerOptions}");
+  expect(composerSelectSource).toContain("options.map((option) => (");
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)');
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)');
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_EFFORT_STORAGE_KEY)');
@@ -49,6 +54,16 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain('const [hydratedRunSelectionId, setHydratedRunSelectionId] = useState<string | null>(null)');
   expect(pageSource).toContain('if (!selectedRunId || !selectedRun) {');
   expect(pageSource).toContain('if (hydratedRunSelectionId === selectedRunId) {');
+});
+
+test("direct mode requires an explicit cli agent and tightens dropdown alignment", () => {
+  expect(pageSource).toContain('const shouldOfferAutoWorkerOption = activeComposerMode !== "direct"');
+  expect(pageSource).toContain('return shouldOfferAutoWorkerOption');
+  expect(pageSource).toContain('if (activeComposerMode === "direct") {');
+  expect(pageSource).toContain('const nextDirectWorker = selectedCliAgent === "auto" ? (autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex") : selectedCliAgent;');
+  expect(pageSource).toContain('<ComposerSelect');
+  expect(composerSelectSource).toContain('"h-9 appearance-none border-0 bg-transparent pl-2 pr-5 text-right text-sm outline-none transition-colors"');
+  expect(composerSelectSource).toContain('"pointer-events-none absolute right-1.5 top-1/2 h-4 w-4 -translate-y-1/2"');
 });
 
 test("composer exposes attachment entry and renders attached file chips", () => {
