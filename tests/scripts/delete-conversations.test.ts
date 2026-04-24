@@ -172,17 +172,21 @@ describe("delete-conversations.sh", () => {
       }),
     ).not.toThrow();
 
-    expect(db.prepare("select count(*) as count from plans").get().count).toBe(0);
-    expect(db.prepare("select count(*) as count from runs").get().count).toBe(0);
-    expect(db.prepare("select count(*) as count from messages").get().count).toBe(0);
-    expect(db.prepare("select count(*) as count from workers").get().count).toBe(0);
-    expect(db.prepare("select count(*) as count from clarifications").get().count).toBe(0);
-    expect(db.prepare("select count(*) as count from plan_items").get().count).toBe(0);
-    expect(db.prepare("select count(*) as count from validation_runs").get().count).toBe(0);
-    expect(db.prepare("select count(*) as count from execution_events").get().count).toBe(0);
-    expect(db.prepare("select count(*) as count from credit_events").get().count).toBe(0);
-    expect(db.prepare("select count(*) as count from accounts").get().count).toBe(1);
-    expect(db.prepare("select count(*) as count from settings").get().count).toBe(1);
+    const count = (table: string) => (
+      db.prepare(`select count(*) as count from ${table}`).get() as { count: number }
+    ).count;
+
+    expect(count("plans")).toBe(0);
+    expect(count("runs")).toBe(0);
+    expect(count("messages")).toBe(0);
+    expect(count("workers")).toBe(0);
+    expect(count("clarifications")).toBe(0);
+    expect(count("plan_items")).toBe(0);
+    expect(count("validation_runs")).toBe(0);
+    expect(count("execution_events")).toBe(0);
+    expect(count("credit_events")).toBe(0);
+    expect(count("accounts")).toBe(1);
+    expect(count("settings")).toBe(1);
     expect(fs.existsSync(adHocAbsPath)).toBe(false);
   });
 });

@@ -160,4 +160,63 @@ describe("buildLiveWorkerSnapshot", () => {
       lastError: null,
     }));
   });
+
+  it("surfaces a diagnostic when a live bridge agent stops without output", () => {
+    const snapshot = buildLiveWorkerSnapshot({
+      agent: {
+        name: "worker-empty",
+        type: "codex",
+        cwd: "/repo",
+        state: "idle",
+        currentText: "",
+        lastText: "",
+        renderedOutput: "",
+        outputEntries: [],
+        stopReason: "end_turn",
+      },
+      worker: {
+        id: "worker-empty",
+        runId: "run-empty",
+        type: "codex",
+        status: "idle",
+        cwd: "/repo",
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        bridgeSessionId: "session-empty",
+        bridgeSessionMode: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      run: {
+        id: "run-empty",
+        planId: "plan-empty",
+        mode: "direct",
+        projectPath: "/repo",
+        title: "Empty direct run",
+        preferredWorkerType: "codex",
+        preferredWorkerModel: "gpt-5.5",
+        preferredWorkerEffort: "high",
+        allowedWorkerTypes: "codex",
+        specPath: null,
+        artifactPlanPath: null,
+        plannerArtifactsJson: null,
+        parentRunId: null,
+        forkedFromMessageId: null,
+        status: "running",
+        failedAt: null,
+        lastError: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+
+    expect(snapshot).toEqual(expect.objectContaining({
+      name: "worker-empty",
+      state: "idle",
+      lastText: "Agent stopped without producing output. Stop reason: end_turn.",
+      displayText: "Agent stopped without producing output. Stop reason: end_turn.",
+    }));
+  });
 });

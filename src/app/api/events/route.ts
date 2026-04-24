@@ -44,9 +44,9 @@ export async function GET(req: NextRequest) {
           // Fetch data
           const msgs = await db.select().from(messages).orderBy(messages.createdAt);
           const allPlans = await db.select().from(plans).orderBy(desc(plans.createdAt));
-          const allRuns = await db.select().from(runs).orderBy(desc(runs.createdAt));
+          let allRuns = await db.select().from(runs).orderBy(desc(runs.createdAt));
           const allAccounts = await db.select().from(accounts);
-          const allWorkers = await db.select().from(workers);
+          let allWorkers = await db.select().from(workers);
           const allClarifications = await db.select().from(clarifications).orderBy(desc(clarifications.createdAt));
           const allValidationRuns = await db.select().from(validationRuns).orderBy(desc(validationRuns.createdAt));
           const allExecutionEvents = await db.select().from(executionEvents).orderBy(desc(executionEvents.createdAt));
@@ -61,6 +61,8 @@ export async function GET(req: NextRequest) {
             if (res.ok) {
               const rawAgents = await res.json();
               await syncConversationSessions(rawAgents);
+              allRuns = await db.select().from(runs).orderBy(desc(runs.createdAt));
+              allWorkers = await db.select().from(workers);
               agentsData = buildLiveWorkerSnapshots({
                 agents: rawAgents,
                 workers: allWorkers,

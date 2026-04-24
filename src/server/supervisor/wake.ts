@@ -25,7 +25,7 @@ export async function executeSupervisorWake(runId: string) {
   }
 
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
-  if (!run || run.status === "done" || run.status === "failed") {
+  if (!run || run.mode !== "implementation" || run.status === "done" || run.status === "failed") {
     stopRunObserver(runId);
     return;
   }

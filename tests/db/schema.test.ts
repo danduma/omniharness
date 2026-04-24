@@ -14,4 +14,11 @@ describe("db schema", () => {
     expect(schema.workers).toHaveProperty("currentText");
     expect(schema.workers).toHaveProperty("lastText");
   });
+
+  it("persists mode-aware conversation metadata on runs", () => {
+    expect(schema.runs).toHaveProperty("mode");
+    expect(schema.runs).toHaveProperty("specPath");
+    expect(schema.runs).toHaveProperty("artifactPlanPath");
+    expect(schema.runs).toHaveProperty("plannerArtifactsJson");
+  });
 });

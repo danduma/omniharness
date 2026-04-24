@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { runs } from "@/server/db/schema";
 import { startSupervisorRun } from "./start";
@@ -9,7 +9,10 @@ let startupPromise: Promise<void> | null = null;
 let watchdogInterval: ReturnType<typeof setInterval> | null = null;
 
 export async function syncRunningSupervision() {
-  const activeRuns = await db.select().from(runs).where(eq(runs.status, "running"));
+  const activeRuns = await db.select().from(runs).where(and(
+    eq(runs.status, "running"),
+    eq(runs.mode, "implementation"),
+  ));
   for (const run of activeRuns) {
     startSupervisorRun(run.id);
   }
@@ -31,4 +34,3 @@ export async function ensureSupervisorRuntimeStarted() {
 
   await startupPromise;
 }
-
