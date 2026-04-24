@@ -11,12 +11,16 @@ export const plans = sqliteTable('plans', {
 export const runs = sqliteTable('runs', {
   id: text('id').primaryKey(),
   planId: text('plan_id').references(() => plans.id).notNull(),
+  mode: text('mode').notNull().default('implementation'),
   projectPath: text('project_path'),
   title: text('title'),
   preferredWorkerType: text('preferred_worker_type'),
   preferredWorkerModel: text('preferred_worker_model'),
   preferredWorkerEffort: text('preferred_worker_effort'),
   allowedWorkerTypes: text('allowed_worker_types'),
+  specPath: text('spec_path'),
+  artifactPlanPath: text('artifact_plan_path'),
+  plannerArtifactsJson: text('planner_artifacts_json'),
   parentRunId: text('parent_run_id'),
   forkedFromMessageId: text('forked_from_message_id'),
   status: text('status').notNull(), // 'running', 'done', 'failed'

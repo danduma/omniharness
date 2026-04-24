@@ -178,7 +178,7 @@ export function WorkerCard({
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0 flex-1 space-y-2">
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                  <div className="break-all text-[1.05rem] font-semibold tracking-[-0.02em] text-zinc-50" title={workerId}>
+                  <div className="break-all text-[12px] font-medium text-zinc-100" title={workerId}>
                     {displayId}
                   </div>
                   <div className="inline-flex min-w-0 items-center gap-1.5 text-[11px] text-zinc-400">

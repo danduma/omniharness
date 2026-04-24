@@ -1,14 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/server/db';
-import { plans, runs, messages as dbMessages } from '@/server/db/schema';
 import { CreditManager } from '@/server/credits';
-import { queueConversationTitleGeneration } from '@/server/conversation-title';
-import { createAdHocPlan } from '@/server/runs/ad-hoc-plan';
-import { startSupervisorRun } from '@/server/supervisor/start';
+import { createConversation } from '@/server/conversations/create';
 import { ensureSupervisorRuntimeStarted } from '@/server/supervisor/runtime-watchdog';
-import { parseAllowedWorkerTypes, normalizeWorkerType } from '@/server/supervisor/worker-types';
 import { errorResponse } from '@/server/api-errors';
-import { randomUUID } from 'crypto';
 import { requireApiSession } from "@/server/auth/guards";
 interface AttachmentInput {
   kind?: string;
@@ -32,25 +26,6 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { command } = body as { command?: unknown };
     const trimmedCommand = String(command ?? '').trim();
-    const preferredWorkerType = typeof body?.preferredWorkerType === "string" && body.preferredWorkerType.trim()
-      ? normalizeWorkerType(body.preferredWorkerType)
-      : null;
-    const preferredWorkerModel = typeof body?.preferredWorkerModel === "string" && body.preferredWorkerModel.trim()
-      ? body.preferredWorkerModel.trim()
-      : null;
-    const preferredWorkerEffort = typeof body?.preferredWorkerEffort === "string" && body.preferredWorkerEffort.trim()
-      ? body.preferredWorkerEffort.trim().toLowerCase()
-      : null;
-    const allowedWorkerTypes = parseAllowedWorkerTypes(
-      Array.isArray(body?.allowedWorkerTypes)
-        ? JSON.stringify(body.allowedWorkerTypes)
-        : typeof body?.allowedWorkerTypes === "string"
-          ? body.allowedWorkerTypes
-          : null,
-    );
-    const projectPath = typeof body?.projectPath === "string" && body.projectPath.trim()
-      ? body.projectPath.trim()
-      : null;
     if (!trimmedCommand) {
       return errorResponse("Command cannot be empty", {
         status: 400,
@@ -62,52 +37,27 @@ export async function POST(req: NextRequest) {
     const attachments = Array.isArray(body?.attachments)
       ? (body.attachments as AttachmentInput[])
       : [];
-    const planPath = createAdHocPlan(trimmedCommand, attachments);
 
     // Sync accounts
     const creditManager = new CreditManager();
     await creditManager.syncAccounts();
 
-    const planId = randomUUID();
-    await db.insert(plans).values({
-      id: planId,
-      path: planPath,
-      status: 'running',
-      createdAt: new Date(),
-      updatedAt: new Date(),
+    const result = await createConversation({
+      mode: "implementation",
+      command: trimmedCommand,
+      projectPath: typeof body?.projectPath === "string" && body.projectPath.trim()
+        ? body.projectPath.trim()
+        : null,
+      preferredWorkerType: typeof body?.preferredWorkerType === "string" ? body.preferredWorkerType : null,
+      preferredWorkerModel: typeof body?.preferredWorkerModel === "string" ? body.preferredWorkerModel : null,
+      preferredWorkerEffort: typeof body?.preferredWorkerEffort === "string" ? body.preferredWorkerEffort : null,
+      allowedWorkerTypes: Array.isArray(body?.allowedWorkerTypes) || typeof body?.allowedWorkerTypes === "string"
+        ? body.allowedWorkerTypes
+        : null,
+      attachments,
     });
 
-    const runId = randomUUID();
-    await db.insert(runs).values({
-      id: runId,
-      planId,
-      projectPath,
-      title: 'New conversation',
-      preferredWorkerType,
-      preferredWorkerModel,
-      preferredWorkerEffort,
-      allowedWorkerTypes: JSON.stringify(allowedWorkerTypes),
-      status: 'running',
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-
-    await db.insert(dbMessages).values({
-      id: randomUUID(),
-      runId,
-      role: 'user',
-      kind: 'checkpoint',
-      content: trimmedCommand,
-      createdAt: new Date(),
-    });
-
-    startSupervisorRun(runId);
-
-    queueConversationTitleGeneration({ runId, command: trimmedCommand }).catch((err) => {
-      console.error('Conversation title generation failed:', err);
-    });
-
-    return NextResponse.json({ ok: true, planId, runId });
+    return NextResponse.json({ ok: true, planId: result.planId, runId: result.runId });
   } catch (error: unknown) {
     return errorResponse(error, {
       status: 500,

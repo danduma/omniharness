@@ -10,7 +10,7 @@ const dialogSource = fs.readFileSync(
 test("folder picker clears the active filter when navigating into another folder", () => {
   expect(dialogSource).toContain('const handleNavigate = (path: string) => {');
   expect(dialogSource).toContain('setSearch("")');
-  expect(dialogSource).toContain('onClick={() => canGoUp && handleNavigate(data.parent)}');
+  expect(dialogSource).toContain('if (data?.parent && canGoUp) {');
   expect(dialogSource).toContain('onClick={() => handleNavigate(data.parent)}');
   expect(dialogSource).toContain('onClick={() => handleNavigate(dir.path)}');
 });

@@ -280,6 +280,11 @@ export class Supervisor {
   }
 
   async run(): Promise<SupervisorRunResult> {
+    const currentRun = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+    if (!currentRun || currentRun.mode !== "implementation" || currentRun.status === "done" || currentRun.status === "failed") {
+      return { state: "completed" };
+    }
+
     const { tokenjs, llmConfig, envParams, yoloModeEnabled } = await this.createModel();
 
     await db.update(runs).set({
@@ -288,11 +293,6 @@ export class Supervisor {
       lastError: null,
       updatedAt: new Date(),
     }).where(eq(runs.id, this.runId));
-
-    const currentRun = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
-    if (!currentRun || currentRun.status === "done" || currentRun.status === "failed") {
-      return { state: "completed" };
-    }
 
     const pendingClarifications = await db.select().from(clarifications).where(eq(clarifications.runId, this.runId));
     if (pendingClarifications.some((clarification) => clarification.status === "pending")) {

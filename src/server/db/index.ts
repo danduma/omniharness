@@ -19,12 +19,16 @@ CREATE TABLE IF NOT EXISTS plans (
 CREATE TABLE IF NOT EXISTS runs (
   id text PRIMARY KEY NOT NULL,
   plan_id text NOT NULL,
+  mode text NOT NULL DEFAULT 'implementation',
   project_path text,
   title text,
   preferred_worker_type text,
   preferred_worker_model text,
   preferred_worker_effort text,
   allowed_worker_types text,
+  spec_path text,
+  artifact_plan_path text,
+  planner_artifacts_json text,
   parent_run_id text,
   forked_from_message_id text,
   status text NOT NULL,
@@ -189,6 +193,10 @@ if (!runColumnNames.has("project_path")) {
   sqlite.exec("ALTER TABLE runs ADD COLUMN project_path text;");
 }
 
+if (!runColumnNames.has("mode")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN mode text NOT NULL DEFAULT 'implementation';");
+}
+
 if (!runColumnNames.has("title")) {
   sqlite.exec("ALTER TABLE runs ADD COLUMN title text;");
 }
@@ -207,6 +215,18 @@ if (!runColumnNames.has("preferred_worker_effort")) {
 
 if (!runColumnNames.has("allowed_worker_types")) {
   sqlite.exec("ALTER TABLE runs ADD COLUMN allowed_worker_types text;");
+}
+
+if (!runColumnNames.has("spec_path")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN spec_path text;");
+}
+
+if (!runColumnNames.has("artifact_plan_path")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN artifact_plan_path text;");
+}
+
+if (!runColumnNames.has("planner_artifacts_json")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN planner_artifacts_json text;");
 }
 
 if (!runColumnNames.has("parent_run_id")) {

@@ -134,6 +134,37 @@ describe("Supervisor worker spawn flow", () => {
     vi.spyOn(Date, "now").mockReturnValue(123456);
   });
 
+  it("does not mutate direct conversations if a wake reaches the supervisor", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "failed",
+      lastError: "direct worker failed",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "completed" });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(run?.status).toBe("failed");
+    expect(run?.lastError).toBe("direct worker failed");
+    expect(mockTokenCreate).not.toHaveBeenCalled();
+  });
+
   it("persists the worker before awaiting the initial ask and defaults workers to full-access mode", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

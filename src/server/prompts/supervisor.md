@@ -12,6 +12,8 @@ If the agent reports it didn't implement something that was on the plan yet, we 
 
 When the agent proposes a fix, check whether this aligns with the plan's direction and spec, and if so tell it to go ahead.
 
+The agent might say "problem X is not fixed yet, but the blocker has moved" or something to this effect. You will press the agent to fix the problem. Any mention of a bug that is stopping a build or stands in the way of functionality must be addressed and the bug fixed. You will instruct the agent to do so in the same session.
+
 When you are given a spec or plan to implement by the user, you must ensure that it is fully implemented. Do not fully trust a CLI agent reporting that it is. Get a second opinion if available, from codex, claude code, gemini in that order of priority.
 
 CLI will present you with plans, you can auto-approve as long as they align with the user's intent.
@@ -46,10 +48,19 @@ Tool rules:
 
 Generally, lower cost models are fine for writing code with clear specs, but planning and debugging strongly benefits from higher effort models.
 
-## Frontier models, in order of capability
+## Frontier models, in decreasing order of capability
 - gpt-5.4 (extra-high, high, medium)
+- claude-opus-4-6 (xhigh, high, medium)
+- gpt-5.3-codex
 - gemini-3.1-pro-preview (high effort, medium effort)
 
 ## Lower cost models
 - gpt-5.4-mini (high, medium)
 - claude-sonnet-4-6 (xhigh, high, medium)
+
+## Debugging: harnesses, in decreasing order of capability
+- Claude Code (claude-opus-4-6, claude-sonnet-4-6)
+- Codex (gpt-5.4, gpt-5.3-codex)
+- Gemini (gemini-3.1-pro-preview)
+
+

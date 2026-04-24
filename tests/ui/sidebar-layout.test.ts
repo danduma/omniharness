@@ -129,6 +129,10 @@ test("direct conversations render the user transcript next to the worker surface
   expect(pageSource).toContain('aria-label={isExpanded ? "Collapse message" : "Expand message"}');
   expect(pageSource).toContain('onClick={() => toggleDirectMessageExpansion(msg.id)}');
   expect(pageSource).toContain('maxHeight: isExpanded ? undefined : "calc(1.5rem * 6)"');
+  expect(pageSource).toContain('const isLongMessage = msg.content.length > 420 || msg.content.split(/\\r\\n|\\r|\\n/).length > 6;');
+  expect(pageSource).toContain('{isExpanded || isLongMessage ? (');
+  expect(pageSource).toContain('{isExpanded ? "less" : "...more"}');
+  expect(pageSource).toContain('text-white');
   expect(pageSource).toContain('rounded-[1.9rem] rounded-br-lg bg-[#242424]');
   expect(pageSource).toContain('px-4 py-2.5');
   expect(pageSource).toContain('text-sm leading-6');

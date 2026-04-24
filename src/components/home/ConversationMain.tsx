@@ -200,6 +200,7 @@ export function ConversationMain({
             <div className="space-y-2">
               {directConversationMessages.map((msg: MessageRecord) => {
                 const isExpanded = expandedDirectMessageIds.has(msg.id);
+                const isLongMessage = msg.content.length > 420 || msg.content.split(/\r\n|\r|\n/).length > 6;
 
                 return (
                   <div key={msg.id} className="flex justify-end">
@@ -208,7 +209,7 @@ export function ConversationMain({
                       aria-expanded={isExpanded}
                       aria-label={isExpanded ? "Collapse message" : "Expand message"}
                       onClick={() => toggleDirectMessageExpansion(msg.id)}
-                      className="max-w-[min(72ch,88%)] cursor-pointer rounded-[1.9rem] rounded-br-lg bg-[#242424] px-4 py-2.5 text-left text-sm leading-6 text-white shadow-sm transition-colors hover:bg-[#2d2d2d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:max-w-[min(78ch,82%)]"
+                      className="group/direct-message relative max-w-[min(72ch,88%)] cursor-pointer overflow-hidden rounded-[1.9rem] rounded-br-lg bg-[#242424] px-4 py-2.5 text-left text-sm leading-6 text-white shadow-sm transition-colors hover:bg-[#2d2d2d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:max-w-[min(78ch,82%)]"
                       title={isExpanded ? "Collapse message" : "Expand message"}
                     >
                       <span
@@ -217,6 +218,18 @@ export function ConversationMain({
                       >
                         {msg.content}
                       </span>
+                      {isExpanded || isLongMessage ? (
+                        <span
+                          className={cn(
+                            "text-white",
+                            isExpanded
+                              ? "mt-1 block text-right text-[11px] font-semibold leading-5"
+                              : "pointer-events-none absolute inset-x-0 bottom-0 flex justify-end bg-gradient-to-t from-[#242424] via-[#242424]/95 to-transparent px-4 pb-2.5 pt-6 text-[11px] font-semibold leading-5 transition-colors group-hover/direct-message:from-[#2d2d2d] group-hover/direct-message:via-[#2d2d2d]/95",
+                          )}
+                        >
+                          {isExpanded ? "less" : "...more"}
+                        </span>
+                      ) : null}
                     </button>
                   </div>
                 );

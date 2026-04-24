@@ -46,6 +46,15 @@ function appendLiveText(base: string, liveText: string) {
   return `${base}${base.endsWith("\n") || liveText.startsWith("\n") ? "" : "\n"}${liveText}`;
 }
 
+function buildEmptyStopDiagnostic(stopReason: string | null | undefined) {
+  const normalizedStopReason = typeof stopReason === "string" ? stopReason.trim() : "";
+  if (!normalizedStopReason) {
+    return "";
+  }
+
+  return `Agent stopped without producing output. Stop reason: ${normalizedStopReason}.`;
+}
+
 export function buildLiveWorkerSnapshot(args: {
   agent?: unknown | null;
   worker?: PersistedWorkerRecord | null;
@@ -71,7 +80,10 @@ export function buildLiveWorkerSnapshot(args: {
     const structuredOutput = cleanStructuredOutput(normalizedAgent.renderedOutput);
     const liveText = normalizedAgent.currentText.length > 0 ? normalizedAgent.currentText : "";
     const outputEntries = normalizedAgent.outputEntries?.length ? normalizedAgent.outputEntries : persistedOutputEntries;
-    const lastText = normalizedAgent.lastText || persistedLastText || outputLog;
+    const emptyStopDiagnostic = !structuredOutput && !liveText && outputEntries.length === 0 && !outputLog && !normalizedAgent.lastText && !persistedLastText
+      ? buildEmptyStopDiagnostic(normalizedAgent.stopReason)
+      : "";
+    const lastText = normalizedAgent.lastText || persistedLastText || outputLog || emptyStopDiagnostic;
     const displayBase = structuredOutput || outputLog || lastText || "";
     const displayText = liveText && !structuredOutput ? appendLiveText(displayBase, liveText) : displayBase;
 
