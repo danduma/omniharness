@@ -10,6 +10,14 @@ const conversationModePickerSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/ConversationModePicker.tsx"),
   "utf8"
 );
+const agentSurfaceSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/components/AgentSurface.tsx"),
+  "utf8"
+);
+const workerCardSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/components/WorkerCard.tsx"),
+  "utf8"
+);
 
 test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('hidden h-full w-[280px] shrink-0 overflow-hidden border-r border-border lg:flex');
@@ -20,14 +28,14 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('flex w-4 shrink-0 items-center justify-center');
   expect(pageSource).not.toContain('flex w-4 shrink-0 items-start justify-center pt-0.5');
   expect(pageSource).toContain('min-w-0 flex items-center justify-between gap-2');
-  expect(pageSource).toContain('className="overflow-hidden rounded-xl border border-white/10 bg-[#0d0f12] text-zinc-100 shadow-[0_18px_60px_rgba(0,0,0,0.28)]"');
-  expect(pageSource).toContain('className="border-b border-white/10 bg-[#13161b] p-3"');
-  expect(pageSource).toContain("Permissions waiting");
-  expect(pageSource).toContain("Context usage unavailable");
-  expect(pageSource).toContain("Context usage ");
+  expect(agentSurfaceSource).toContain('className={cn("overflow-hidden rounded-2xl border border-white/10 bg-[#0d0f12] text-zinc-100 shadow-[0_24px_70px_rgba(0,0,0,0.32)]", className)}');
+  expect(agentSurfaceSource).toContain('className="border-b border-white/10 bg-[#13161b] px-4 py-3"');
+  expect(workerCardSource).toContain("Permissions waiting");
+  expect(workerCardSource).toContain("Context usage unavailable");
+  expect(workerCardSource).toContain("Context usage ");
   expect(pageSource).toContain("Claude Code");
-  expect(pageSource).toContain("Context unavailable");
-  expect(pageSource).toContain('className="truncate text-xs leading-5 text-zinc-400"');
+  expect(workerCardSource).toContain("Context unavailable");
+  expect(workerCardSource).toContain('className="truncate text-[13px] leading-5 text-zinc-400"');
   expect(pageSource).not.toContain("Recent output");
   expect(pageSource).toContain('className={cn(visibleWorkers.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col")}');
   expect(pageSource).toContain('className="flex h-full min-h-[16rem] flex-1 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground"');
@@ -45,7 +53,7 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('const [activeTab, setActiveTab] = useState<"active" | "finished">("active")');
   expect(pageSource).toContain("Active ({workerGroups.active.length})");
   expect(pageSource).toContain("Finished ({workerGroups.finished.length})");
-  expect(pageSource).toContain('queries: selectedRunWorkers.map((worker: ConversationWorkerRecord) => ({');
+  expect(pageSource).toContain('const liveAgentsById = new Map(');
   expect(pageSource).toContain('preferredModel={selectedRun?.preferredWorkerModel ?? null}');
   expect(pageSource).toContain('preferredEffort={selectedRun?.preferredWorkerEffort ?? null}');
   expect(pageSource).toContain('onClose={() => setMobileWorkersOpen(false)}');
@@ -53,11 +61,11 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('style={{ width: rightSidebarWidth }}');
   expect(pageSource).toContain('aria-label="Resize workers sidebar"');
   expect(pageSource).toContain('onPointerDown={handleRightSidebarResizeStart}');
-  expect(pageSource).toContain('queryClient.removeQueries({ queryKey: ["conversation-agent", workerId], exact: true })');
-  expect(pageSource).toContain('function renderContextMeter(fullnessPercent: number | null | undefined)');
-  expect(pageSource).toContain("Permissions waiting");
-  expect(pageSource).toContain("Context usage unavailable");
-  expect(pageSource).toContain("conic-gradient");
+  expect(pageSource).not.toContain('queryClient.removeQueries({ queryKey: ["conversation-agent", workerId], exact: true })');
+  expect(workerCardSource).toContain('function renderContextMeter(fullnessPercent: number | null | undefined)');
+  expect(workerCardSource).toContain("Permissions waiting");
+  expect(workerCardSource).toContain("Context usage unavailable");
+  expect(workerCardSource).toContain("conic-gradient");
   expect(pageSource).not.toContain("Context window");
   expect(pageSource).not.toContain("Pending permissions");
   expect(pageSource).not.toContain('filter(([, value]) => Boolean(value))');
@@ -69,9 +77,13 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).not.toContain('<WorkersSidebar agents={state.agents ?? []} onClose={() => setRightSidebarOpen(false)} />');
 });
 
-test("worker detail polling skips idle workers to avoid runaway bridge traffic", () => {
-  expect(pageSource).toContain('refetchInterval: ["starting", "working", "stuck"].includes(normalizeWorkerStatus(worker.status)) ? 2000 : false');
-  expect(pageSource).not.toContain('refetchInterval: ["starting", "working", "idle", "stuck"].includes(worker.status) ? 2000 : false');
+test("worker detail renders from streamed agent state instead of per-worker polling", () => {
+  expect(pageSource).not.toContain("const conversationAgentQueries = useQueries({");
+  expect(pageSource).not.toContain('queryKey: ["conversation-agent", worker.id]');
+  expect(pageSource).not.toContain('return requestJson<AgentSnapshot>(`/api/agents/${worker.id}`, undefined, {');
+  expect(pageSource).not.toContain('refetchInterval: ["starting", "working", "stuck"].includes(normalizeWorkerStatus(worker.status)) ? 2000 : false');
+  expect(pageSource).toContain('const liveAgentsById = new Map(');
+  expect(pageSource).toContain('const liveAgent = liveAgentsById.get(worker.id);');
 });
 
 test("main conversation only renders active worker panes while the sidebar keeps finished workers", () => {
@@ -207,13 +219,15 @@ test("running conversations render an in-thread execution indicator with expanda
   expect(pageSource).toContain("{isImplementationConversation && showConversationExecution ? conversationThinking : null}");
 });
 
-test("new conversations expose a mode picker and direct mode locks the worker type", () => {
+test("new conversations expose a mode picker and only existing direct runs lock the worker type", () => {
   expect(pageSource).toContain('import { ConversationModePicker, getConversationModeCopy, type ConversationModeOption } from "@/components/ConversationModePicker"');
   expect(pageSource).toContain('value={selectedConversationMode}');
   expect(conversationModePickerSource).toContain("Create plan");
   expect(conversationModePickerSource).toContain("Implement plan");
   expect(conversationModePickerSource).toContain("Direct control");
+  expect(pageSource).toContain('const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct"');
   expect(pageSource).toContain("Direct worker:");
+  expect(pageSource).toContain("{shouldLockDirectWorker ? (");
   expect(pageSource).toContain('mode: selectedConversationMode');
 });
 
