@@ -78,7 +78,7 @@ function ConversationExecutionStatus({
     <Collapsible open={executionDetailsOpen} onOpenChange={setExecutionDetailsOpen}>
       <CollapsibleTrigger className="mt-2 flex items-center gap-2 px-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
         <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", executionDetailsOpen ? "rotate-180" : "")} />
-        <span>{executionDetailsOpen ? "Hide details" : "Show details"}</span>
+        <span>{executionDetailsOpen ? "Hide supervisor activity" : "Show supervisor activity"}</span>
       </CollapsibleTrigger>
       <CollapsibleContent className="space-y-1 pt-2 pl-6">
         {executionDetailLines.length > 0 ? executionDetailLines.map((line, index) => {
@@ -94,6 +94,14 @@ function ConversationExecutionStatus({
       </CollapsibleContent>
     </Collapsible>
   </div>
+  );
+}
+
+function DirectControlTerminalColumn({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mx-auto w-full max-w-[min(82ch,100%)]">
+      {children}
+    </div>
   );
 }
 
@@ -267,11 +275,13 @@ export function ConversationMain({
               })}
             </div>
           ) : null}
-          <Terminal
-            agent={primaryConversationAgent}
-            variant="native"
-            className="min-h-[32rem]"
-          />
+          <DirectControlTerminalColumn>
+            <Terminal
+              agent={primaryConversationAgent}
+              variant="native"
+              className="min-h-[32rem]"
+            />
+          </DirectControlTerminalColumn>
         </div>
       ) : (
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 pb-24 sm:gap-6 sm:p-6 sm:pb-20">

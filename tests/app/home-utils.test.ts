@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterOptimisticallyDeletedRuns, getRunDurationLabel, parseCollapsedProjectPaths } from "@/app/home/utils";
+import { appendSentConversationMessageSnapshot, filterOptimisticallyDeletedRuns, getRunDurationLabel, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldShowConversationExecutionPanel } from "@/app/home/utils";
 import type { EventStreamState, RunRecord } from "@/app/home/types";
 
 function buildRun(overrides: Partial<RunRecord>): RunRecord {
@@ -29,6 +29,49 @@ describe("home utils", () => {
       null,
       new Date("2026-04-27T00:45:00.000Z").getTime(),
     )).toBe("Running for 45 minutes");
+  });
+
+  it("keeps supervisor activity visible for failed conversations with execution events", () => {
+    expect(shouldShowConversationExecutionPanel({
+      selectedRun: buildRun({ status: "failed" }),
+      isConversationThinking: false,
+      executionEventCount: 1,
+    })).toBe(true);
+  });
+
+  it("opens supervisor activity details automatically for failed conversations", () => {
+    expect(shouldOpenExecutionDetailsForRun({
+      selectedRun: buildRun({ status: "failed" }),
+      executionEventCount: 1,
+    })).toBe(true);
+  });
+
+  it("optimistically appends a sent follow-up message and revives the run status", () => {
+    const liveState: EventStreamState = {
+      messages: [],
+      plans: [],
+      runs: [buildRun({ status: "cancelled" })],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      validationRuns: [],
+      executionEvents: [],
+    };
+
+    const next = appendSentConversationMessageSnapshot(liveState, {
+      id: "message-1",
+      runId: "run-1",
+      role: "user",
+      kind: "checkpoint",
+      content: "Continue",
+      createdAt: "2026-04-27T00:01:00.000Z",
+    });
+
+    expect(next.messages.map((message) => message.content)).toEqual(["Continue"]);
+    expect(next.runs[0]?.status).toBe("running");
+    expect(appendSentConversationMessageSnapshot(next, next.messages[0]).messages).toHaveLength(1);
   });
 
   it("keeps pending deleted conversations out of live event stream snapshots", () => {

@@ -50,6 +50,52 @@ export function filterOptimisticallyDeletedRuns(
   return next;
 }
 
+export function appendSentConversationMessageSnapshot(
+  current: EventStreamState,
+  message: MessageRecord | null | undefined,
+): EventStreamState {
+  if (!message) {
+    return current;
+  }
+
+  const messages = current.messages || [];
+  if (messages.some((existing) => existing.id === message.id)) {
+    return current;
+  }
+
+  return {
+    ...current,
+    messages: [...messages, message],
+    runs: (current.runs || []).map((run) => (
+      run.id === message.runId
+        ? { ...run, status: "running", failedAt: null, lastError: null, updatedAt: message.createdAt }
+        : run
+    )),
+  };
+}
+
+export function shouldShowConversationExecutionPanel({
+  selectedRun,
+  isConversationThinking,
+  executionEventCount,
+}: {
+  selectedRun: RunRecord | null;
+  isConversationThinking: boolean;
+  executionEventCount: number;
+}) {
+  return Boolean(selectedRun && (isConversationThinking || executionEventCount > 0));
+}
+
+export function shouldOpenExecutionDetailsForRun({
+  selectedRun,
+  executionEventCount,
+}: {
+  selectedRun: RunRecord | null;
+  executionEventCount: number;
+}) {
+  return Boolean(selectedRun?.status === "failed" && executionEventCount > 0);
+}
+
 export function stripRunFailurePrefix(value: string | null | undefined) {
   if (!value) {
     return "";

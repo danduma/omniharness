@@ -111,6 +111,13 @@ describe("POST /api/conversations/[id]/messages", () => {
 
     const response = await POST(request, { params: Promise.resolve({ id: runId }) });
     expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.message).toMatchObject({
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "Continue",
+    });
 
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
     expect(storedMessages).toHaveLength(1);

@@ -22,7 +22,7 @@ import { resolveProjectScope } from "@/lib/project-scope";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
 import { COMPOSER_WORKER_OPTIONS, DEFAULT_ALLOWED_WORKER_TYPES, WORKER_OPTIONS } from "./constants";
 import type { AgentSnapshot, AuthSessionResponse, ClarificationRecord, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, LlmProfileTab, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, RunRecord, SettingsResponse, SettingsTab, SidebarGroup, SidebarRun, WorkerCatalogResponse, WorkerType } from "./types";
-import { buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getWorkerModelOptions, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, stripRunFailurePrefix, summarizeThought } from "./utils";
+import { appendSentConversationMessageSnapshot, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getWorkerModelOptions, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldOpenExecutionDetailsForRun, shouldShowConversationExecutionPanel, stripRunFailurePrefix, summarizeThought } from "./utils";
 import { useAppErrors } from "./useAppErrors";
 import { useConversationExecutionStatus } from "./useConversationExecutionStatus";
 import { useHomeLifecycle } from "./useHomeLifecycle";
@@ -415,7 +415,7 @@ export function HomeApp() {
 
   const sendConversationMessage = useMutation({
     mutationFn: async (payload: { runId: string; content: string }) => {
-      return requestJson<{ ok: true }>(`/api/conversations/${payload.runId}/messages`, {
+      return requestJson<{ ok: true; message?: MessageRecord }>(`/api/conversations/${payload.runId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: payload.content }),
@@ -424,7 +424,8 @@ export function HomeApp() {
         action: "Send a conversation message",
       });
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      setState((current) => appendSentConversationMessageSnapshot(current, data.message));
       setCommand("");
     },
   });
@@ -876,9 +877,20 @@ export function HomeApp() {
   });
 
   const isConversationThinking = selectedRun?.status === "running" || conversationAgents.some((agent) => agent.state === "working");
-  const showConversationExecution = Boolean(
-    selectedRun && selectedRun.status !== "failed" && (isConversationThinking || selectedRunExecutionEvents.length > 0)
-  );
+  const showConversationExecution = shouldShowConversationExecutionPanel({
+    selectedRun,
+    isConversationThinking,
+    executionEventCount: selectedRunExecutionEvents.length,
+  });
+
+  useEffect(() => {
+    if (shouldOpenExecutionDetailsForRun({
+      selectedRun,
+      executionEventCount: selectedRunExecutionEvents.length,
+    })) {
+      setExecutionDetailsOpen(true);
+    }
+  }, [selectedRun, selectedRunExecutionEvents.length]);
 
   const currentProjectScope = resolveProjectScope({
     draftProjectPath,

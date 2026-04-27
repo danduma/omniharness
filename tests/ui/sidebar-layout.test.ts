@@ -32,6 +32,10 @@ const workerCardSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/WorkerCard.tsx"),
   "utf8"
 );
+const workersSidebarSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/components/home/WorkersSidebar.tsx"),
+  "utf8"
+);
 
 test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('hidden h-full w-[280px] shrink-0 overflow-hidden border-r border-border lg:flex');
@@ -51,7 +55,7 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(workerCardSource).toContain("Context unavailable");
   expect(workerCardSource).toContain('className="truncate text-[13px] leading-5 text-zinc-400"');
   expect(pageSource).not.toContain("Recent output");
-  expect(pageSource).toContain('className={cn(visibleWorkers.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col")}');
+  expect(pageSource).toContain('hasSingleVisibleWorker ? "flex h-full min-h-full flex-col" : visibleWorkers.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col"');
   expect(pageSource).toContain('className="flex h-full min-h-[16rem] flex-1 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground"');
   expect(pageSource).not.toContain('className="flex h-32 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground"');
 });
@@ -94,6 +98,18 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).not.toContain('<WorkersSidebar agents={state.agents ?? []} onClose={() => setRightSidebarOpen(false)} />');
 });
 
+test("workers sidebar gives a single visible worker the full available window and scrolls multi-worker lists", () => {
+  expect(workersSidebarSource).toContain("const hasSingleVisibleWorker = visibleWorkers.length === 1;");
+  expect(workersSidebarSource).toContain('className="min-h-0 flex-1 p-4"');
+  expect(workersSidebarSource).toContain('hasSingleVisibleWorker ? "flex h-full min-h-full flex-col"');
+  expect(workersSidebarSource).toContain('const terminalHeightClass = hasSingleVisibleWorker ? "h-full min-h-[24rem]" : "h-44";');
+  expect(workersSidebarSource).toContain("fillAvailable={hasSingleVisibleWorker}");
+  expect(workersSidebarSource).toContain('defaultOpen={activeTab === "active" || hasSingleVisibleWorker}');
+  expect(workerCardSource).toContain("fillAvailable?: boolean;");
+  expect(workerCardSource).toContain('fillAvailable && "flex h-full min-h-0 flex-col"');
+  expect(workerCardSource).toContain('fillAvailable && "min-h-0 flex-1"');
+});
+
 test("worker detail renders from streamed agent state instead of per-worker polling", () => {
   expect(pageSource).not.toContain("const conversationAgentQueries = useQueries({");
   expect(pageSource).not.toContain('queryKey: ["conversation-agent", worker.id]');
@@ -124,10 +140,20 @@ test("main conversation only renders active worker panes while the sidebar keeps
   expect(pageSource).toContain('title="Planning agent"');
   expect(pageSource).toContain("<Cpu className=\"h-4 w-4\" /> CLI Agents");
   expect(pageSource).toContain('defaultOpen={false}');
-  expect(pageSource).toContain('defaultOpen={activeTab === "active"}');
+  expect(pageSource).toContain('defaultOpen={activeTab === "active" || hasSingleVisibleWorker}');
   expect(pageSource).not.toContain("<Cpu className=\"h-4 w-4\" /> Live CLI Agents");
   expect(pageSource).not.toContain('{conversationWorkers.length > 0 && (');
   expect(pageSource).not.toContain('{conversationWorkers.map((worker: any) => {');
+});
+
+test("worker card action buttons render outside the collapsible trigger button", () => {
+  const triggerCloseIndex = workerCardSource.indexOf("</CollapsibleTrigger>");
+  const permissionButtonIndex = workerCardSource.indexOf("<PermissionWarning");
+  const stopButtonIndex = workerCardSource.indexOf('aria-label={`Stop ${displayId}`}');
+
+  expect(triggerCloseIndex).toBeGreaterThan(-1);
+  expect(permissionButtonIndex).toBeGreaterThan(triggerCloseIndex);
+  expect(stopButtonIndex).toBeGreaterThan(triggerCloseIndex);
 });
 
 test("direct conversations render the user transcript next to the worker surface", () => {
@@ -292,8 +318,8 @@ test("running conversations render an in-thread execution indicator with expanda
   expect(pageSource).toContain("Thinking");
   expect(pageSource).toContain("animate-pulse");
   expect(pageSource).toContain("animationDelay:");
-  expect(pageSource).toContain("Show details");
-  expect(pageSource).toContain("Hide details");
+  expect(pageSource).toContain("Show supervisor activity");
+  expect(pageSource).toContain("Hide supervisor activity");
   expect(pageSource).toContain("Connecting to ACP bridge");
   expect(pageSource).toContain("waiting for LLM API");
   expect(pageSource).toContain("Awaiting permission");

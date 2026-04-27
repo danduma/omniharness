@@ -54,6 +54,7 @@ export function ConversationWorkerCard({
   preferredEffort,
   defaultOpen,
   terminalHeightClass,
+  fillAvailable = false,
   fallbackPreview,
   onStopWorker,
   isStopping,
@@ -64,6 +65,7 @@ export function ConversationWorkerCard({
   preferredEffort?: string | null;
   defaultOpen: boolean;
   terminalHeightClass: string;
+  fillAvailable?: boolean;
   fallbackPreview?: string | null;
   onStopWorker?: (workerId: string) => void;
   isStopping?: boolean;
@@ -97,6 +99,7 @@ export function ConversationWorkerCard({
       activeEffort={activeEffort}
       pendingPermissions={pendingPermissions}
       terminalHeightClass={terminalHeightClass}
+      fillAvailable={fillAvailable}
       onStopWorker={onStopWorker ? () => onStopWorker(worker.id) : undefined}
       isStopping={isStopping}
     />
@@ -123,6 +126,7 @@ export function WorkersSidebar({ workers, agents, preferredModel, preferredEffor
   }, [activeTab, workerGroups.active.length, workerGroups.finished.length]);
 
   const visibleWorkers = activeTab === "active" ? workerGroups.active : workerGroups.finished;
+  const hasSingleVisibleWorker = visibleWorkers.length === 1;
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col bg-muted/10">
@@ -164,8 +168,10 @@ export function WorkersSidebar({ workers, agents, preferredModel, preferredEffor
           </button>
         </div>
       </div>
-      <ScrollArea className="flex-1 p-4">
-        <div className={cn(visibleWorkers.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col")}>
+      <ScrollArea className="min-h-0 flex-1 p-4">
+        <div className={cn(
+          hasSingleVisibleWorker ? "flex h-full min-h-full flex-col" : visibleWorkers.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col",
+        )}>
           {visibleWorkers.length > 0 ? (
             visibleWorkers.map((worker) => {
               const agent = agentsById.get(worker.id) ?? {
@@ -175,6 +181,7 @@ export function WorkersSidebar({ workers, agents, preferredModel, preferredEffor
                 currentText: "",
                 lastText: "",
               };
+              const terminalHeightClass = hasSingleVisibleWorker ? "h-full min-h-[24rem]" : "h-44";
 
               return (
                 <ConversationWorkerCard
@@ -183,8 +190,9 @@ export function WorkersSidebar({ workers, agents, preferredModel, preferredEffor
                   agent={agent}
                   preferredModel={preferredModel}
                   preferredEffort={preferredEffort}
-                  defaultOpen={activeTab === "active"}
-                  terminalHeightClass="h-44"
+                  defaultOpen={activeTab === "active" || hasSingleVisibleWorker}
+                  terminalHeightClass={terminalHeightClass}
+                  fillAvailable={hasSingleVisibleWorker}
                   onStopWorker={onStopWorker}
                   isStopping={stoppingWorkerId === worker.id}
                 />

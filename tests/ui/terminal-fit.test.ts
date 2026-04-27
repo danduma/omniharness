@@ -13,7 +13,7 @@ test("terminal can render in native conversation mode without window chrome", ()
   expect(terminalSource).toContain('variant?: "terminal" | "native"');
   expect(terminalSource).toContain('variant === "native"');
   expect(terminalSource).toContain('bg-transparent text-foreground');
-  expect(terminalSource).toContain('variant === "native" ? "text-[10px] leading-[1.45]" : "text-[9px] leading-[1.55]"');
+  expect(terminalSource).toContain("text-[var(--terminal-pane-size)]");
 });
 
 test("terminal renders a structured activity feed instead of replaying xterm text", () => {
@@ -55,6 +55,18 @@ test("terminal keeps tool output compact and expandable", () => {
   expect(terminalSource).toContain('{formatActivityStatus(activity.status)}\n          </span>\n        ) : null}\n        <ChevronDown');
   expect(terminalSource).toContain('{activity.inProgress ? <ThinkingDots variant={variant} /> : null}\n        <ChevronDown');
   expect(terminalSource).toContain("motion-safe:slide-in-from-top-1");
+});
+
+test("terminal exposes a three dot text zoom menu with tiny through three notches larger", () => {
+  expect(terminalSource).toContain("TERMINAL_ZOOM_LEVELS");
+  expect(terminalSource).toContain('value: "tiny"');
+  expect(terminalSource).toContain('value: "largest"');
+  expect(terminalSource).toContain("notch: 3");
+  expect(terminalSource).toContain('aria-label="Terminal text size"');
+  expect(terminalSource).toContain("<MoreHorizontal");
+  expect(terminalSource).toContain("<DropdownMenuLabel>Text size</DropdownMenuLabel>");
+  expect(terminalSource).toContain("setTerminalZoom(level.value)");
+  expect(terminalSource).toContain("--terminal-message-size");
 });
 
 test("terminal aligns timeline markers with row text and connects the rail", () => {

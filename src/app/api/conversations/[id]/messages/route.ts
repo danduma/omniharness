@@ -43,14 +43,17 @@ export async function POST(
     }
 
     if (run.mode === "implementation") {
-      await db.insert(messages).values({
+      const createdAt = new Date();
+      const message = {
         id: randomUUID(),
         runId: id,
         role: "user",
         kind: "checkpoint",
         content,
-        createdAt: new Date(),
-      });
+        createdAt,
+      };
+
+      await db.insert(messages).values(message);
 
       await db.update(runs).set({
         status: "running",
@@ -59,7 +62,13 @@ export async function POST(
         updatedAt: new Date(),
       }).where(eq(runs.id, id));
       startSupervisorRun(id);
-      return NextResponse.json({ ok: true });
+      return NextResponse.json({
+        ok: true,
+        message: {
+          ...message,
+          createdAt: createdAt.toISOString(),
+        },
+      });
     }
 
     const worker = await db.select().from(workers).where(eq(workers.runId, id)).get();
@@ -71,14 +80,17 @@ export async function POST(
       });
     }
 
-    await db.insert(messages).values({
+    const userMessageCreatedAt = new Date();
+    const userMessage = {
       id: randomUUID(),
       runId: id,
       role: "user",
       kind: "checkpoint",
       content,
-      createdAt: new Date(),
-    });
+      createdAt: userMessageCreatedAt,
+    };
+
+    await db.insert(messages).values(userMessage);
 
     const response = await askAgent(worker.id, content);
 
@@ -87,6 +99,7 @@ export async function POST(
       updatedAt: new Date(),
     }).where(eq(workers.id, worker.id));
 
+    const workerMessageCreatedAt = new Date();
     await db.insert(messages).values({
       id: randomUUID(),
       runId: id,
@@ -94,10 +107,16 @@ export async function POST(
       kind: run.mode,
       content: response.response,
       workerId: worker.id,
-      createdAt: new Date(),
+      createdAt: workerMessageCreatedAt,
     });
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      ok: true,
+      message: {
+        ...userMessage,
+        createdAt: userMessageCreatedAt.toISOString(),
+      },
+    });
   } catch (error: unknown) {
     return errorResponse(error, {
       status: 500,
