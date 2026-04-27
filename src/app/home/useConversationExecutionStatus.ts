@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { AgentSnapshot, ExecutionEventRecord, RunRecord } from "./types";
-import { describeAgentActivity, parseExecutionEventDetails, summarizeExecutionEvent } from "./utils";
+import { describeAgentActivity, getRunDurationLabel, parseExecutionEventDetails, summarizeExecutionEvent } from "./utils";
 
 interface UseConversationExecutionStatusProps {
   selectedRun: RunRecord | null;
@@ -11,6 +11,7 @@ interface UseConversationExecutionStatusProps {
   latestStuckEvent: ExecutionEventRecord | null;
   showRecoverableRunningState: boolean;
   latestWaitEvent: ExecutionEventRecord | null;
+  completionEvent: ExecutionEventRecord | null;
   activeConversationAgents: AgentSnapshot[];
   liveThoughts: Array<{ agentName: string; snippet: string; isLive: boolean }>;
   conversationAgents: AgentSnapshot[];
@@ -26,16 +27,21 @@ export function useConversationExecutionStatus({
   latestStuckEvent,
   showRecoverableRunningState,
   latestWaitEvent,
+  completionEvent,
   activeConversationAgents,
   liveThoughts,
   conversationAgents,
   recentExecutionEvents,
 }: UseConversationExecutionStatusProps) {
   const liveExecutionStatus = useMemo(() => {
+    const durationLabel = getRunDurationLabel(selectedRun, completionEvent?.createdAt);
+
     if (selectedRun?.status === "failed") {
       return {
         label: "Bridge error",
-        detail: selectedRun.lastError || (latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The run failed."),
+        detail: [durationLabel, selectedRun.lastError || (latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The run failed.")]
+          .filter(Boolean)
+          .join(". "),
         tone: "error" as const,
       };
     }
@@ -88,7 +94,7 @@ export function useConversationExecutionStatus({
       const seconds = typeof details.seconds === "number" ? details.seconds : null;
       return {
         label: seconds ? `Waiting ${seconds}s` : "Waiting",
-        detail: summarizeExecutionEvent(latestWaitEvent),
+        detail: [durationLabel, summarizeExecutionEvent(latestWaitEvent)].filter(Boolean).join(". "),
         tone: "muted" as const,
       };
     }
@@ -96,25 +102,30 @@ export function useConversationExecutionStatus({
     if (activeConversationAgents.some((agent) => agent.state === "working" || Boolean(agent.currentText?.trim()))) {
       return {
         label: "Thinking",
-        detail: liveThoughts[0]?.snippet || "The worker is actively reasoning.",
+        detail: [durationLabel, liveThoughts[0]?.snippet || "The worker is actively reasoning."].filter(Boolean).join(". "),
         tone: "active" as const,
       };
     }
 
     if (selectedRun?.status === "done") {
+      const completionSummary = completionEvent
+        ? summarizeExecutionEvent(completionEvent).replace(/^Completed:?\s*/i, "").trim()
+        : "";
       return {
         label: "Completed",
-        detail: latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The run finished.",
+        detail: durationLabel
+          ? `${durationLabel}${completionSummary ? `: ${completionSummary}` : "."}`
+          : latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The run finished.",
         tone: "muted" as const,
       };
     }
 
     return {
       label: "Thinking",
-      detail: latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The supervisor is still checking the run.",
+      detail: [durationLabel, latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The supervisor is still checking the run."].filter(Boolean).join(". "),
       tone: "active" as const,
     };
-  }, [activeConversationAgents, erroredAgent, hasStuckWorker, latestExecutionEvent, latestStuckEvent, latestWaitEvent, liveThoughts, pendingPermissionAgent, selectedRun, showRecoverableRunningState]);
+  }, [activeConversationAgents, completionEvent, erroredAgent, hasStuckWorker, latestExecutionEvent, latestStuckEvent, latestWaitEvent, liveThoughts, pendingPermissionAgent, selectedRun, showRecoverableRunningState]);
   const executionDetailLines = useMemo(() => {
     const lines: Array<{ text: string; createdAt?: string }> = [];
 

@@ -6,11 +6,13 @@ import { acquireBridgeLock, releaseBridgeLock, resolveBridgeLockPath } from "../
 import { bridgeNeedsBuild, resolveBridgeDir, resolveBridgeUrl, shouldAutoStartBridge } from "../src/server/dev/managed-bridge";
 
 const repoRoot = process.cwd();
-process.env.PORT = process.env.PORT || "3050";
+const webPort = process.env.PORT || "3050";
+process.env.PORT = webPort;
+const webHost = process.env.OMNIHARNESS_WEB_HOST?.trim() || "0.0.0.0";
 const bridgeUrl = resolveBridgeUrl(process.env);
 const bridgeDir = resolveBridgeDir(repoRoot, process.env);
 const bridgeLockPath = resolveBridgeLockPath(repoRoot);
-const webCommand = ["pnpm", ["run", "dev:web"]] as const;
+const webCommand = ["pnpm", ["run", "dev:web", "--hostname", webHost, "--port", webPort]] as const;
 const bridgeCommand = ["pnpm", ["run", "daemon"]] as const;
 const setupCommands = [
   { label: "bridge install", command: "pnpm", args: ["install"] },
@@ -156,7 +158,7 @@ async function ensureManagedBridge() {
 }
 
 function launchWeb() {
-  console.log("[dev] Starting OmniHarness web UI");
+  console.log(`[dev] Starting OmniHarness web UI on ${webHost}:${webPort}`);
   webChild = spawnManaged(webCommand[0], [...webCommand[1]], repoRoot, "web");
 
   webChild.once("exit", (code, signal) => {
@@ -197,7 +199,7 @@ async function main() {
   launchWeb();
 
   console.log(`[dev] OmniHarness will use ACP bridge at ${bridgeUrl}`);
-  console.log("[dev] Next.js will print the local UI URL when it is ready.");
+  console.log("[dev] Next.js will print the local and network UI URLs when it is ready.");
 }
 
 process.on("SIGINT", () => shutdown(0));

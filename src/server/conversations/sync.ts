@@ -3,6 +3,18 @@ import { db } from "@/server/db";
 import { runs, workers } from "@/server/db/schema";
 import { collectPlannerArtifacts } from "@/server/planning/artifacts";
 import { normalizeAgentRecord } from "@/server/bridge-client";
+import { persistRunFailure } from "@/server/runs/failures";
+
+const MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC = "Worker is idle with no recorded output, and the bridge no longer has a live session for it.";
+
+function hasAgentOutput(agent: ReturnType<typeof normalizeAgentRecord>) {
+  return Boolean(
+    agent.renderedOutput?.trim()
+    || agent.currentText.trim()
+    || agent.lastText.trim()
+    || agent.outputEntries?.some((entry) => entry.text.trim()),
+  );
+}
 
 function hasPersistedWorkerOutput(worker: typeof workers.$inferSelect) {
   if (
@@ -28,6 +40,21 @@ function hasPersistedWorkerOutput(worker: typeof workers.$inferSelect) {
   }
 }
 
+function resolveSyncedRunState(agent: ReturnType<typeof normalizeAgentRecord>) {
+  if (agent.state === "error") {
+    return "failed";
+  }
+
+  if (
+    ["stopped", "cancelled", "done", "completed"].includes(agent.state)
+    || (agent.state === "idle" && agent.stopReason === "end_turn" && hasAgentOutput(agent))
+  ) {
+    return "done";
+  }
+
+  return "running";
+}
+
 function resolvePersistedRunState(worker: typeof workers.$inferSelect) {
   const status = worker.status.trim().toLowerCase().split(":")[0]?.trim() ?? "";
 
@@ -35,8 +62,19 @@ function resolvePersistedRunState(worker: typeof workers.$inferSelect) {
     return "failed";
   }
 
-  return ["stopped", "cancelled", "done", "completed"].includes(status)
-    || (status === "idle" && hasPersistedWorkerOutput(worker)) ? "done" : "running";
+  if (
+    ["stopped", "cancelled", "done", "completed"].includes(status)
+    || (status === "idle" && hasPersistedWorkerOutput(worker))
+  ) {
+    return "done";
+  }
+
+  return "running";
+}
+
+function isEmptyIdlePersistedWorker(worker: typeof workers.$inferSelect) {
+  const status = worker.status.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  return status === "idle" && !hasPersistedWorkerOutput(worker);
 }
 
 export async function syncConversationSessions(rawAgents: unknown[]) {
@@ -68,11 +106,7 @@ export async function syncConversationSessions(rawAgents: unknown[]) {
       updatedAt: new Date(),
     }).where(eq(workers.id, worker.id));
 
-    const nextRunState = agent.state === "error"
-      ? "failed"
-      : ["stopped", "cancelled", "done", "completed"].includes(agent.state)
-        ? "done"
-        : "running";
+    const nextRunState = resolveSyncedRunState(agent);
 
     if (run.mode === "planning") {
       const outputText = [
@@ -113,6 +147,16 @@ export async function syncConversationSessions(rawAgents: unknown[]) {
 
     const worker = allWorkers.find((candidate) => candidate.runId === run.id);
     if (!worker || agents.some((agent) => agent.name === worker.id)) {
+      continue;
+    }
+
+    if (isEmptyIdlePersistedWorker(worker)) {
+      await db.update(workers).set({
+        status: "error",
+        outputLog: MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC,
+        updatedAt: new Date(),
+      }).where(eq(workers.id, worker.id));
+      await persistRunFailure(run.id, new Error(MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC));
       continue;
     }
 

@@ -66,14 +66,24 @@ describe("POST /api/planning/[id]/promote", () => {
       updatedAt: new Date(),
     });
 
-    await db.insert(messages).values({
-      id: randomUUID(),
-      runId: planningRunId,
-      role: "user",
-      kind: "checkpoint",
-      content: "Help me create the conversation modes plan",
-      createdAt: new Date(),
-    });
+    await db.insert(messages).values([
+      {
+        id: randomUUID(),
+        runId: planningRunId,
+        role: "user",
+        kind: "checkpoint",
+        content: "Help me create the conversation modes plan",
+        createdAt: new Date("2026-04-21T10:00:00Z"),
+      },
+      {
+        id: randomUUID(),
+        runId: planningRunId,
+        role: "user",
+        kind: "checkpoint",
+        content: "The higher-level objective is to make mode switching trustworthy, not only to add controls.",
+        createdAt: new Date("2026-04-21T10:01:00Z"),
+      },
+    ]);
 
     const request = new NextRequest(`http://localhost/api/planning/${planningRunId}/promote`, {
       method: "POST",
@@ -92,6 +102,14 @@ describe("POST /api/planning/[id]/promote", () => {
     expect(promotedPlan?.path).toBe(implementationPlanPath);
     expect(promotedRun?.parentRunId).toBe(planningRunId);
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
+
+    const promotedMessages = await db.select().from(messages)
+      .where(eq(messages.runId, payload.runId))
+      .orderBy(messages.createdAt);
+    expect(promotedMessages.map((message) => message.content)).toEqual([
+      "Help me create the conversation modes plan",
+      "The higher-level objective is to make mode switching trustworthy, not only to add controls.",
+    ]);
   });
 
   it("rejects promotion when the selected plan is not ready", async () => {

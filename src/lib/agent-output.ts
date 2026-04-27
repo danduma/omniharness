@@ -19,10 +19,18 @@ const TERMINAL_TOOL_STATUSES = new Set(["completed", "failed", "cancelled", "don
 export type AgentActivityItem =
   | {
       id: string;
-      kind: "message" | "thought";
+      kind: "message";
       text: string;
       timestamp: string;
       live?: boolean;
+    }
+  | {
+      id: string;
+      kind: "thinking";
+      thoughts: string[];
+      timestamp: string;
+      inProgress: boolean;
+      durationMs?: number;
     }
   | {
       id: string;
@@ -50,6 +58,7 @@ type AgentOutputSnapshot = {
 };
 
 type MutableToolActivity = Extract<AgentActivityItem, { kind: "tool" }>;
+type MutableThinkingActivity = Extract<AgentActivityItem, { kind: "thinking" }>;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
@@ -432,6 +441,16 @@ function applyToolUpdate(target: MutableToolActivity, entry: AgentOutputEntry): 
   }
 }
 
+function timestampDeltaMs(startTimestamp: string, endTimestamp: string): number | undefined {
+  const start = Date.parse(startTimestamp);
+  const end = Date.parse(endTimestamp);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return undefined;
+  }
+
+  return Math.max(0, end - start);
+}
+
 export function formatActivityStatus(status: string): string {
   return status
     .split(/[_\s]+/)
@@ -444,20 +463,53 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
   const items: AgentActivityItem[] = [];
   const toolIndexById = new Map<string, number>();
   const outputEntries = Array.isArray(snapshot.outputEntries) ? snapshot.outputEntries : [];
+  let openThinking: MutableThinkingActivity | null = null;
+
+  const finishOpenThinking = (endTimestamp: string) => {
+    if (!openThinking) {
+      return;
+    }
+
+    openThinking.inProgress = false;
+    openThinking.durationMs = timestampDeltaMs(openThinking.timestamp, endTimestamp);
+    openThinking = null;
+  };
 
   for (const entry of outputEntries) {
     if (!entry || typeof entry !== "object") {
       continue;
     }
 
-    if (entry.type === "message" || entry.type === "thought") {
+    if (entry.type === "thought") {
       const text = normalizeMultilineText(entry.text || "").trim();
       if (!text) {
         continue;
       }
+
+      if (openThinking) {
+        openThinking.thoughts.push(text);
+      } else {
+        openThinking = {
+          id: entry.id,
+          kind: "thinking",
+          thoughts: [text],
+          timestamp: entry.timestamp,
+          inProgress: true,
+        };
+        items.push(openThinking);
+      }
+      continue;
+    }
+
+    if (entry.type === "message") {
+      const text = normalizeMultilineText(entry.text || "").trim();
+      if (!text) {
+        continue;
+      }
+      finishOpenThinking(entry.timestamp);
       items.push({
         id: entry.id,
-        kind: entry.type,
+        kind: "message",
         text,
         timestamp: entry.timestamp,
       });
@@ -469,6 +521,7 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
       if (!text) {
         continue;
       }
+      finishOpenThinking(entry.timestamp);
       items.push({
         id: entry.id,
         kind: "permission",
@@ -481,6 +534,7 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
     }
 
     if (entry.type === "tool_call") {
+      finishOpenThinking(entry.timestamp);
       const toolActivity = createToolActivity(entry);
       toolIndexById.set(entry.toolCallId || entry.id, items.length);
       items.push(toolActivity);
@@ -488,6 +542,7 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
     }
 
     if (entry.type === "tool_call_update") {
+      finishOpenThinking(entry.timestamp);
       const key = entry.toolCallId || entry.id;
       const existingIndex = toolIndexById.get(key);
       if (existingIndex != null) {

@@ -12,14 +12,22 @@ test("terminal can render in native conversation mode without window chrome", ()
   expect(terminalSource).toContain('variant?: "terminal" | "native"');
   expect(terminalSource).toContain('variant === "native"');
   expect(terminalSource).toContain('bg-transparent text-foreground');
-  expect(terminalSource).toContain('variant === "native" ? "text-sm leading-6" : "text-[9px] leading-[1.55]"');
+  expect(terminalSource).toContain('variant === "native" ? "text-[10px] leading-[1.45]" : "text-[9px] leading-[1.55]"');
 });
 
 test("terminal renders a structured activity feed instead of replaying xterm text", () => {
   expect(terminalSource).toContain("buildAgentOutputActivity");
-  expect(terminalSource).toContain('activity.kind === "thought"');
+  expect(terminalSource).toContain('activity.kind === "thinking"');
   expect(terminalSource).toContain('activity.kind === "tool"');
   expect(terminalSource).not.toContain("@xterm/xterm");
+});
+
+test("terminal renders thoughts behind a collapsible thinking summary", () => {
+  expect(terminalSource).toContain("ThoughtActivity");
+  expect(terminalSource).toContain("Thinking");
+  expect(terminalSource).toContain("Thought for");
+  expect(terminalSource).toContain("animate-pulse");
+  expect(terminalSource).toContain("useState(activity.inProgress)");
 });
 
 test("terminal keeps tool output compact and expandable", () => {
@@ -30,6 +38,8 @@ test("terminal keeps tool output compact and expandable", () => {
   expect(terminalSource).toContain("onClick={() => setDetailsOpen((open) => {");
   expect(terminalSource).toContain("line-clamp-[3]");
   expect(terminalSource).toContain("Click to expand full output");
+  expect(terminalSource).toContain("ChevronDown");
+  expect(terminalSource).toContain("motion-safe:slide-in-from-top-1");
 });
 
 test("terminal aligns timeline markers with row text and connects the rail", () => {

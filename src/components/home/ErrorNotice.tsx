@@ -9,15 +9,15 @@ export function ErrorNotice({
 }) {
   const tone = error.tone ?? "error";
   const containerClass = cn(
-    "rounded-xl p-4 text-sm shadow-sm",
+    "rounded-md px-2 py-1 text-xs",
     tone === "success"
-      ? "border border-emerald-500/30 bg-emerald-500/5"
+      ? "border border-emerald-500/20 bg-emerald-500/[0.03]"
       : tone === "warning"
-        ? "border border-amber-500/30 bg-amber-500/5"
-        : "border border-destructive/30 bg-destructive/5",
+        ? "border border-amber-500/20 bg-amber-500/[0.03]"
+        : "border border-destructive/20 bg-destructive/[0.03]",
   );
   const iconClass = cn(
-    "mt-0.5 h-4 w-4 shrink-0",
+    "mt-0.5 h-3 w-3 shrink-0",
     tone === "success"
       ? "text-emerald-600"
       : tone === "warning"
@@ -35,20 +35,20 @@ export function ErrorNotice({
 
   return (
     <div className={containerClass}>
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-1.5">
         {tone === "success" ? <CheckCircle2 className={iconClass} /> : <AlertTriangle className={iconClass} />}
         <div className="min-w-0 flex-1">
-          <div>
-            <div className={titleClass}>{error.action || error.source || "Error"}</div>
-            <div className="mt-1 whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-foreground">
+          <div className="flex flex-wrap gap-x-1.5 gap-y-0.5 leading-4">
+            <span className={titleClass}>{error.action || error.source || "Error"}</span>
+            <span className="whitespace-pre-wrap break-words text-muted-foreground">
               {error.message}
-            </div>
+            </span>
           </div>
           {error.suggestion ? (
-            <div className="mt-2 text-xs leading-relaxed text-muted-foreground">{error.suggestion}</div>
+            <div className="mt-0.5 leading-4 text-muted-foreground">{error.suggestion}</div>
           ) : null}
           {error.details?.length ? (
-            <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+            <div className="mt-0.5 space-y-0.5 text-muted-foreground">
               {error.details.map((detail) => (
                 <div key={detail} className="whitespace-pre-wrap break-words font-mono">
                   {detail}

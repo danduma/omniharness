@@ -55,6 +55,23 @@ function buildEmptyStopDiagnostic(stopReason: string | null | undefined) {
   return `Agent stopped without producing output. Stop reason: ${normalizedStopReason}.`;
 }
 
+function buildMissingBridgeEmptyDiagnostic(worker: PersistedWorkerRecord | null) {
+  if (!worker) {
+    return "";
+  }
+
+  const status = worker.status.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  if (status !== "idle") {
+    return "";
+  }
+
+  if (worker.outputLog.trim() || worker.currentText.trim() || worker.lastText.trim()) {
+    return "";
+  }
+
+  return "Worker is idle with no recorded output, and the bridge no longer has a live session for it.";
+}
+
 export function buildLiveWorkerSnapshot(args: {
   agent?: unknown | null;
   worker?: PersistedWorkerRecord | null;
@@ -110,6 +127,11 @@ export function buildLiveWorkerSnapshot(args: {
   }
 
   const bridgeLastError = args.bridgeError ? formatErrorMessage(args.bridgeError) : null;
+  const missingBridgeDiagnostic = persistedOutputEntries.length === 0
+    ? buildMissingBridgeEmptyDiagnostic(worker)
+    : "";
+  const lastText = persistedLastText || outputLog || missingBridgeDiagnostic;
+  const displayText = outputLog || missingBridgeDiagnostic;
 
   return {
     name: worker?.id ?? "",
@@ -127,10 +149,10 @@ export function buildLiveWorkerSnapshot(args: {
     runLastError,
     outputEntries: persistedOutputEntries,
     outputLog,
-    displayText: outputLog,
+    displayText,
     renderedOutput: null,
     currentText: worker?.currentText ?? "",
-    lastText: persistedLastText || outputLog,
+    lastText,
     stderrBuffer: [],
     pendingPermissions: [],
     stopReason: null,

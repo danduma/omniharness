@@ -13,10 +13,14 @@ import {
   validationRuns,
   workers,
 } from "@/server/db/schema";
-import { cancelAgent } from "@/server/bridge-client";
+import { askAgent, cancelAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
 import { createAdHocPlan, rewriteAdHocPlan } from "@/server/runs/ad-hoc-plan";
+import { persistRunFailure } from "@/server/runs/failures";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { getAppDataPath } from "@/server/app-root";
+import { PLANNER_SYSTEM_PROMPT } from "@/server/prompts";
+import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/supervisor/worker-types";
+import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 
 export type RecoveryAction = "retry" | "edit" | "fork";
 
@@ -53,6 +57,117 @@ async function clearRunDerivedState(runId: string, planId: string) {
   await db.delete(validationRuns).where(eq(validationRuns.runId, runId));
   await db.delete(executionEvents).where(eq(executionEvents.runId, runId));
   await db.delete(planItems).where(eq(planItems.planId, planId));
+}
+
+function buildDirectWorkerPrompt(mode: string, content: string) {
+  if (mode === "planning") {
+    return `${PLANNER_SYSTEM_PROMPT}\n\nUser request:\n${content}`;
+  }
+
+  return content;
+}
+
+function hasVisibleWorkerOutput(responseText: string, snapshot: AgentRecord | null) {
+  if (responseText.trim()) {
+    return true;
+  }
+
+  if (!snapshot) {
+    return false;
+  }
+
+  return Boolean(
+    snapshot.renderedOutput?.trim()
+    || snapshot.currentText?.trim()
+    || snapshot.lastText?.trim()
+    || snapshot.outputEntries?.some((entry) => entry.text.trim()),
+  );
+}
+
+function buildEmptyWorkerOutputMessage(snapshot: AgentRecord | null, responseState: string) {
+  const stopReason = snapshot?.stopReason?.trim();
+  if (stopReason) {
+    return `Agent stopped without producing output. Stop reason: ${stopReason}.`;
+  }
+
+  return `Agent stopped without producing output. Final state: ${responseState || "unknown"}.`;
+}
+
+async function startDirectRerun(run: typeof runs.$inferSelect, content: string) {
+  const workerId = randomUUID();
+  const cwd = run.projectPath || process.cwd();
+  const allowedWorkerTypes = parseAllowedWorkerTypes(run.allowedWorkerTypes);
+  const workerType = run.preferredWorkerType?.trim()
+    ? normalizeWorkerType(run.preferredWorkerType)
+    : allowedWorkerTypes[0] || "codex";
+  const now = new Date();
+
+  await db.insert(workers).values({
+    id: workerId,
+    runId: run.id,
+    type: workerType,
+    status: "starting",
+    cwd,
+    outputLog: "",
+    outputEntriesJson: "[]",
+    currentText: "",
+    lastText: "",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const agent = await spawnAgent({
+    type: workerType,
+    cwd,
+    name: workerId,
+    model: run.preferredWorkerModel?.trim() || undefined,
+    effort: run.preferredWorkerEffort?.trim().toLowerCase() || undefined,
+  });
+  const response = await askAgent(workerId, buildDirectWorkerPrompt(run.mode, content));
+  let snapshot: AgentRecord | null = null;
+  try {
+    snapshot = await getAgent(workerId);
+    await persistWorkerSnapshot(workerId, snapshot);
+  } catch {
+    // The bridge may have already dropped a failed direct worker; the ask response still determines the visible state.
+  }
+
+  if (!hasVisibleWorkerOutput(response.response, snapshot)) {
+    const failureMessage = buildEmptyWorkerOutputMessage(snapshot, response.state);
+
+    await db.update(workers).set({
+      type: snapshot?.type || agent.type || workerType,
+      status: "error",
+      cwd: snapshot?.cwd || agent.cwd || cwd,
+      outputLog: failureMessage,
+      bridgeSessionId: snapshot?.sessionId ?? agent.sessionId ?? null,
+      bridgeSessionMode: snapshot?.sessionMode ?? agent.sessionMode ?? null,
+      updatedAt: new Date(),
+    }).where(eq(workers.id, workerId));
+
+    await persistRunFailure(run.id, new Error(failureMessage));
+    return;
+  }
+
+  await db.update(workers).set({
+    type: agent.type || workerType,
+    status: response.state,
+    cwd: agent.cwd || cwd,
+    outputLog: response.response.trim() ? response.response : "",
+    bridgeSessionId: snapshot?.sessionId ?? agent.sessionId ?? null,
+    bridgeSessionMode: snapshot?.sessionMode ?? agent.sessionMode ?? null,
+    updatedAt: new Date(),
+  }).where(eq(workers.id, workerId));
+
+  await db.insert(messages).values({
+    id: randomUUID(),
+    runId: run.id,
+    role: "worker",
+    kind: run.mode,
+    content: response.response,
+    workerId,
+    createdAt: new Date(),
+  });
 }
 
 export async function recoverRun(args: RecoverRunArgs) {
@@ -166,6 +281,11 @@ export async function recoverRun(args: RecoverRunArgs) {
     updatedAt: new Date(),
   }).where(eq(runs.id, args.runId));
 
-  startSupervisorRun(args.runId);
+  if (run.mode === "implementation") {
+    startSupervisorRun(args.runId);
+  } else {
+    await startDirectRerun(run, nextContent);
+  }
+
   return { runId: args.runId };
 }

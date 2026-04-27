@@ -53,4 +53,13 @@ describe("buildSupervisorTools", () => {
     expect(approveTool?.function.parameters.properties).toHaveProperty("optionId");
     expect(denyTool?.function.parameters.properties).toHaveProperty("optionId");
   });
+
+  it("describes validator workers as independent checks for fake implementations", () => {
+    const spawnTool = buildSupervisorTools().find((tool) => tool.function.name === "worker_spawn");
+
+    expect(spawnTool?.function.description).toContain("independent validator");
+    expect(spawnTool?.function.description).toContain("mocked paths");
+    expect(spawnTool?.function.description).toContain("fake controls");
+    expect(spawnTool?.function.description).toContain("real user-facing path");
+  });
 });

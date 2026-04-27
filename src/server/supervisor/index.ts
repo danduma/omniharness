@@ -9,6 +9,7 @@ import { SUPERVISOR_SYSTEM_PROMPT } from "@/server/prompts";
 import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { buildSupervisorTools } from "@/server/supervisor/tools";
 import { buildSupervisorTurnContext } from "@/server/supervisor/context";
+import { buildSupervisorModelMessages } from "@/server/supervisor/context-window";
 import { parseSupervisorToolCall, SupervisorProtocolError } from "@/server/supervisor/protocol";
 import { retrySupervisorRequest } from "@/server/supervisor/retry";
 import { selectSpawnableWorkerType } from "@/server/supervisor/worker-availability";
@@ -243,29 +244,27 @@ export class Supervisor {
       throw new Error(`Run ${this.runId} not found`);
     }
 
-    const observationSummary = JSON.stringify({
+    const promptBundle = buildSupervisorModelMessages({
+      systemPrompt: SUPERVISOR_SYSTEM_PROMPT,
+      context,
       heartbeatCount,
-      projectPath: context.projectPath,
-      preferredWorkerType: context.preferredWorkerType,
-      allowedWorkerTypes: context.allowedWorkerTypes,
-      pendingClarifications: context.pendingClarifications,
-      answeredClarifications: context.answeredClarifications,
-      activeWorkers: context.activeWorkers,
-      recentEvents: context.recentEvents,
       runStatus: run.status,
-    }, null, 2);
+    });
+
+    if (promptBundle.stats.compacted) {
+      await insertExecutionEvent(this.runId, "supervisor_context_compacted", {
+        summary: "Compacted supervisor context before model request.",
+        estimatedTokens: promptBundle.stats.estimatedTokens,
+        budgetTokens: promptBundle.stats.budgetTokens,
+        reason: promptBundle.stats.reason,
+        memorySummary: promptBundle.stats.memorySummary,
+      });
+    }
 
     const completion = await retrySupervisorRequest(() => tokenjs.chat.completions.create({
       provider: llmConfig.provider as never,
       model: llmConfig.model as never,
-      messages: [
-        { role: "system", content: SUPERVISOR_SYSTEM_PROMPT },
-        ...context.recentUserMessages.map((content) => ({ role: "user" as const, content })),
-        {
-          role: "system" as const,
-          content: `Current supervision snapshot:\n\n${observationSummary}`,
-        },
-      ],
+      messages: promptBundle.messages,
       tools: buildSupervisorTools({
         preferredWorkerType: context.preferredWorkerType,
         allowedWorkerTypes: context.allowedWorkerTypes,

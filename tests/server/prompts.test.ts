@@ -20,5 +20,7 @@ describe("prompt markdown loading", () => {
     expect(PLANNER_SYSTEM_PROMPT).toContain("<omniharness-plan-handoff>");
     expect(PLANNER_SYSTEM_PROMPT).toContain("Do not start implementation");
     expect(PLANNER_SYSTEM_PROMPT).toContain("relative to the current cwd");
+    expect(PLANNER_SYSTEM_PROMPT).toContain("high-level objective");
+    expect(PLANNER_SYSTEM_PROMPT).toContain("as many clarification turns as needed");
   });
 });

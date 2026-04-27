@@ -114,7 +114,7 @@ describe("agent output normalization", () => {
     });
   });
 
-  it("keeps thoughts as dedicated activity items", () => {
+  it("groups active thoughts into a thinking activity", () => {
     const activity = buildAgentOutputActivity({
       outputEntries: [
         {
@@ -123,17 +123,59 @@ describe("agent output normalization", () => {
           text: "Let me inspect the current plan and memory first.",
           timestamp: "2026-04-22T00:00:00.000Z",
         },
+        {
+          id: "thought-2",
+          type: "thought",
+          text: "I should check the renderer next.",
+          timestamp: "2026-04-22T00:00:02.000Z",
+        },
       ],
     });
 
     expect(activity).toEqual([
       {
         id: "thought-1",
-        kind: "thought",
-        text: "Let me inspect the current plan and memory first.",
+        kind: "thinking",
+        thoughts: [
+          "Let me inspect the current plan and memory first.",
+          "I should check the renderer next.",
+        ],
         timestamp: "2026-04-22T00:00:00.000Z",
+        inProgress: true,
       },
     ]);
+  });
+
+  it("marks thinking complete when a following activity arrives", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        {
+          id: "thought-1",
+          type: "thought",
+          text: "Let me inspect the current plan and memory first.",
+          timestamp: "2026-04-22T00:00:00.000Z",
+        },
+        {
+          id: "msg-1",
+          type: "message",
+          text: "I found the renderer.",
+          timestamp: "2026-04-22T00:00:03.400Z",
+        },
+      ],
+    });
+
+    expect(activity[0]).toMatchObject({
+      id: "thought-1",
+      kind: "thinking",
+      thoughts: ["Let me inspect the current plan and memory first."],
+      timestamp: "2026-04-22T00:00:00.000Z",
+      inProgress: false,
+      durationMs: 3400,
+    });
+    expect(activity[1]).toMatchObject({
+      kind: "message",
+      text: "I found the renderer.",
+    });
   });
 
   it("surfaces live text as a fallback when no structured entries exist", () => {

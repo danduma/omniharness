@@ -219,4 +219,53 @@ describe("buildLiveWorkerSnapshot", () => {
       displayText: "Agent stopped without producing output. Stop reason: end_turn.",
     }));
   });
+
+  it("surfaces a diagnostic when an idle persisted worker has no bridge output", () => {
+    const snapshot = buildLiveWorkerSnapshot({
+      agent: null,
+      worker: {
+        id: "worker-missing-empty",
+        runId: "run-missing-empty",
+        type: "codex",
+        status: "idle",
+        cwd: "/repo",
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        bridgeSessionId: null,
+        bridgeSessionMode: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      run: {
+        id: "run-missing-empty",
+        planId: "plan-missing-empty",
+        mode: "direct",
+        projectPath: "/repo",
+        title: "Missing empty direct run",
+        preferredWorkerType: "codex",
+        preferredWorkerModel: "gpt-5.5",
+        preferredWorkerEffort: "high",
+        allowedWorkerTypes: "codex",
+        specPath: null,
+        artifactPlanPath: null,
+        plannerArtifactsJson: null,
+        parentRunId: null,
+        forkedFromMessageId: null,
+        status: "running",
+        failedAt: null,
+        lastError: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+
+    expect(snapshot).toEqual(expect.objectContaining({
+      name: "worker-missing-empty",
+      state: "idle",
+      lastText: "Worker is idle with no recorded output, and the bridge no longer has a live session for it.",
+      displayText: "Worker is idle with no recorded output, and the bridge no longer has a live session for it.",
+    }));
+  });
 });

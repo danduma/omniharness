@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { buildAgentOutputActivity, formatActivityStatus, type AgentActivityItem, type AgentOutputEntry } from "@/lib/agent-output";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +22,24 @@ const TERMINAL_TOOL_STATUSES = new Set(["completed", "done", "failed", "error", 
 
 function isTerminalToolStatus(status: string) {
   return TERMINAL_TOOL_STATUSES.has(status);
+}
+
+function formatThoughtDuration(durationMs: number | undefined) {
+  if (durationMs == null) {
+    return "0s";
+  }
+
+  const totalSeconds = Math.round(durationMs / 1000);
+  if (totalSeconds < 1) {
+    return "<1s";
+  }
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
 function statusBadgeClass(status: string, variant: "terminal" | "native") {
@@ -133,7 +152,7 @@ function ActivityPane({
         </div>
         <pre className={cn(
           "min-w-0 flex-1 overflow-x-auto px-2.5 py-2 font-mono whitespace-pre-wrap break-words",
-          variant === "native" ? "text-sm leading-6" : "text-[9px] leading-[1.55]",
+          variant === "native" ? "text-[10px] leading-[1.45]" : "text-[9px] leading-[1.55]",
           clipped && "line-clamp-[3]",
           variant === "native" ? "text-foreground" : "text-zinc-200",
         )}>
@@ -141,6 +160,23 @@ function ActivityPane({
         </pre>
       </div>
     </div>
+  );
+}
+
+function ThinkingDots({ variant }: { variant: "terminal" | "native" }) {
+  return (
+    <span className="inline-flex items-center gap-0.5" aria-hidden="true">
+      {[0, 1, 2].map((index) => (
+        <span
+          key={index}
+          className={cn(
+            "h-1 w-1 rounded-full animate-pulse",
+            variant === "native" ? "bg-muted-foreground" : "bg-zinc-400",
+          )}
+          style={{ animationDelay: `${index * 160}ms` }}
+        />
+      ))}
+    </span>
   );
 }
 
@@ -166,7 +202,7 @@ function ToolActivity({
     <div className="space-y-2">
       <button
         type="button"
-        className="flex w-full flex-wrap items-center gap-1.5 text-left"
+        className="group/tool flex w-full flex-wrap items-center gap-1.5 text-left"
         onClick={() => setDetailsOpen((open) => {
           if (open) {
             setOutputExpanded(false);
@@ -175,6 +211,14 @@ function ToolActivity({
         })}
         aria-expanded={detailsOpen}
       >
+        <ChevronDown
+          className={cn(
+            "h-3 w-3 shrink-0 transition-transform duration-200 ease-out",
+            detailsOpen && "rotate-180",
+            variant === "native" ? "text-muted-foreground group-hover/tool:text-foreground" : "text-zinc-500 group-hover/tool:text-zinc-200",
+          )}
+          aria-hidden="true"
+        />
         <span className={cn("text-[11px] font-semibold tracking-tight", variant === "native" ? "text-foreground" : "text-zinc-100")}>{activity.label}</span>
         <span className={cn("font-mono text-[10px] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-zinc-300/95")}>{activity.title}</span>
         <span
@@ -186,24 +230,80 @@ function ToolActivity({
           {formatActivityStatus(activity.status)}
         </span>
       </button>
-      {detailsOpen && activity.inputPane ? <ActivityPane label={activity.inputPane.label} text={activity.inputPane.text} variant={variant} /> : null}
-      {detailsOpen && activity.outputPane ? (
-        <ActivityPane
-          label={activity.outputPane.label}
-          text={activity.outputPane.text}
-          variant={variant}
-          preview
-          expanded={outputExpanded}
-          onClick={() => setOutputExpanded((open) => !open)}
+      {detailsOpen && (activity.inputPane || activity.outputPane) ? (
+        <div className="space-y-2 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1 motion-safe:duration-200 motion-safe:ease-out">
+          {activity.inputPane ? <ActivityPane label={activity.inputPane.label} text={activity.inputPane.text} variant={variant} /> : null}
+          {activity.outputPane ? (
+            <ActivityPane
+              label={activity.outputPane.label}
+              text={activity.outputPane.text}
+              variant={variant}
+              preview
+              expanded={outputExpanded}
+              onClick={() => setOutputExpanded((open) => !open)}
+            />
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ThoughtActivity({
+  activity,
+  variant,
+}: {
+  activity: Extract<AgentActivityItem, { kind: "thinking" }>;
+  variant: "terminal" | "native";
+}) {
+  const [open, setOpen] = useState(activity.inProgress);
+
+  useEffect(() => {
+    setOpen(activity.inProgress);
+  }, [activity.id, activity.inProgress]);
+
+  return (
+    <div className="space-y-1.5">
+      <button
+        type="button"
+        className="group/thought flex w-full items-center gap-1.5 text-left"
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+      >
+        <ChevronDown
+          className={cn(
+            "h-3 w-3 shrink-0 transition-transform duration-200 ease-out",
+            open && "rotate-180",
+            variant === "native" ? "text-muted-foreground group-hover/thought:text-foreground" : "text-zinc-500 group-hover/thought:text-zinc-300",
+          )}
+          aria-hidden="true"
         />
+        <span className={cn("text-[11px] font-semibold tracking-tight", variant === "native" ? "text-muted-foreground" : "text-zinc-400")}>
+          {activity.inProgress ? "Thinking" : `Thought for ${formatThoughtDuration(activity.durationMs)}`}
+        </span>
+        {activity.inProgress ? <ThinkingDots variant={variant} /> : null}
+      </button>
+      {open ? (
+        <div className="space-y-1 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1 motion-safe:duration-200 motion-safe:ease-out">
+          {activity.thoughts.map((thought, index) => (
+            <p
+              key={`${activity.id}:${index}`}
+              className={cn("max-w-none whitespace-pre-wrap text-[11px] leading-[1.5] italic", variant === "native" ? "text-muted-foreground" : "text-zinc-500")}
+            >
+              {thought}
+            </p>
+          ))}
+        </div>
       ) : null}
     </div>
   );
 }
 
 function ActivityRow({ activity, variant }: { activity: AgentActivityItem; variant: "terminal" | "native" }) {
-  const active = activity.kind === "tool" && ["pending", "in_progress", "working"].includes(activity.status);
-  const muted = activity.kind === "thought";
+  const active = activity.kind === "thinking"
+    ? activity.inProgress
+    : activity.kind === "tool" && ["pending", "in_progress", "working"].includes(activity.status);
+  const muted = activity.kind === "thinking";
 
   return (
     <div className="relative flex items-start gap-3">
@@ -212,9 +312,7 @@ function ActivityRow({ activity, variant }: { activity: AgentActivityItem; varia
         {activity.kind === "message" ? (
           <p className={cn("max-w-none whitespace-pre-wrap text-[12px] leading-[1.55]", variant === "native" ? "text-foreground" : "text-zinc-100/95")}>{activity.text}</p>
         ) : null}
-        {activity.kind === "thought" ? (
-          <p className={cn("max-w-none whitespace-pre-wrap text-[11px] leading-[1.5] italic", variant === "native" ? "text-muted-foreground" : "text-zinc-500")}>{activity.text}</p>
-        ) : null}
+        {activity.kind === "thinking" ? <ThoughtActivity activity={activity} variant={variant} /> : null}
         {activity.kind === "tool" ? <ToolActivity activity={activity} variant={variant} /> : null}
         {activity.kind === "permission" ? (
           <div className={cn(

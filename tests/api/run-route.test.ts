@@ -20,14 +20,61 @@ import {
 } from "@/server/db/schema";
 import { PATCH, DELETE, POST } from "@/app/api/runs/[id]/route";
 
-const { mockCancelAgent, mockStartSupervisorRun, mockQueueConversationTitleGeneration } = vi.hoisted(() => ({
+const {
+  mockAskAgent,
+  mockCancelAgent,
+  mockGetAgent,
+  mockSpawnAgent,
+  mockStartSupervisorRun,
+  mockQueueConversationTitleGeneration,
+} = vi.hoisted(() => ({
+  mockAskAgent: vi.fn().mockResolvedValue({
+    response: "Rerun complete.",
+    state: "working",
+  }),
   mockCancelAgent: vi.fn().mockResolvedValue(undefined),
+  mockGetAgent: vi.fn().mockResolvedValue({
+    name: "rerun-worker",
+    type: "codex",
+    state: "working",
+    cwd: "/workspace/app",
+    sessionId: "session-rerun",
+    sessionMode: "full-access",
+    renderedOutput: "",
+    currentText: "",
+    lastText: "Rerun complete.",
+    outputEntries: [
+      {
+        id: "entry-rerun",
+        type: "message",
+        text: "Rerun complete.",
+        timestamp: new Date(0).toISOString(),
+      },
+    ],
+    stderrBuffer: [],
+    stopReason: null,
+  }),
+  mockSpawnAgent: vi.fn().mockResolvedValue({
+    name: "rerun-worker",
+    type: "codex",
+    state: "idle",
+    cwd: "/workspace/app",
+    sessionId: "session-rerun",
+    sessionMode: "full-access",
+    lastText: "",
+    currentText: "",
+    stderrBuffer: [],
+    stopReason: null,
+  }),
   mockStartSupervisorRun: vi.fn(),
   mockQueueConversationTitleGeneration: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/server/bridge-client", () => ({
+  askAgent: mockAskAgent,
   cancelAgent: mockCancelAgent,
+  getAgent: mockGetAgent,
+  spawnAgent: mockSpawnAgent,
 }));
 
 vi.mock("@/server/supervisor/start", () => ({
@@ -75,7 +122,10 @@ describe("PATCH /api/runs/[id]", () => {
 
 describe("POST /api/runs/[id]", () => {
   it("retries from a user checkpoint by truncating later history and cancelling workers", async () => {
+    mockAskAgent.mockClear();
     mockCancelAgent.mockClear();
+    mockGetAgent.mockClear();
+    mockSpawnAgent.mockClear();
     mockStartSupervisorRun.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
@@ -169,6 +219,117 @@ describe("POST /api/runs/[id]", () => {
     expect(remainingWorkers[0]?.status).toBe("cancelled");
     expect(remainingClarifications).toHaveLength(0);
     expect(remainingMessages.map((message) => message.id)).toEqual([userMessageId]);
+  });
+
+  it("reruns a direct conversation from the selected user checkpoint in a fresh CLI worker", async () => {
+    mockAskAgent.mockClear();
+    mockCancelAgent.mockClear();
+    mockGetAgent.mockClear();
+    mockSpawnAgent.mockClear();
+    mockStartSupervisorRun.mockClear();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const oldWorkerId = randomUUID();
+    const firstMessageId = randomUUID();
+    const rerunMessageId = randomUUID();
+    const laterWorkerMessageId = randomUUID();
+    const adHocRelativePath = path.join("vibes", "ad-hoc", `${randomUUID()}.md`);
+    const adHocAbsolutePath = getAppDataPath(adHocRelativePath);
+
+    fs.mkdirSync(path.dirname(adHocAbsolutePath), { recursive: true });
+    fs.writeFileSync(adHocAbsolutePath, "# temp\nfirst prompt");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: adHocRelativePath,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Direct rerun",
+      projectPath: "/workspace/app",
+      preferredWorkerType: "codex",
+      preferredWorkerModel: "gpt-5.4",
+      preferredWorkerEffort: "medium",
+      allowedWorkerTypes: JSON.stringify(["codex"]),
+      status: "done",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: oldWorkerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(messages).values([
+      {
+        id: firstMessageId,
+        runId,
+        role: "user",
+        kind: "checkpoint",
+        content: "first prompt",
+        createdAt: new Date("2026-04-21T10:00:00Z"),
+      },
+      {
+        id: rerunMessageId,
+        runId,
+        role: "user",
+        kind: "checkpoint",
+        content: "rerun this direct prompt",
+        createdAt: new Date("2026-04-21T10:01:00Z"),
+      },
+      {
+        id: laterWorkerMessageId,
+        runId,
+        role: "worker",
+        kind: "direct",
+        content: "old answer",
+        workerId: oldWorkerId,
+        createdAt: new Date("2026-04-21T10:02:00Z"),
+      },
+    ]);
+
+    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "retry", targetMessageId: rerunMessageId }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    const storedWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
+
+    expect(mockCancelAgent).toHaveBeenCalledWith(oldWorkerId);
+    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      type: "codex",
+      cwd: "/workspace/app",
+      model: "gpt-5.4",
+      effort: "medium",
+    }));
+    expect(mockAskAgent).toHaveBeenCalledWith(expect.any(String), "rerun this direct prompt");
+    expect(storedWorkers.map((worker) => worker.status)).toContain("cancelled");
+    expect(storedWorkers.some((worker) => worker.status === "working" && worker.id !== oldWorkerId)).toBe(true);
+    expect(storedMessages.map((message) => message.id)).not.toContain(laterWorkerMessageId);
+    expect(storedMessages.at(-1)?.role).toBe("worker");
+    expect(storedMessages.at(-1)?.content).toBe("Rerun complete.");
+    expect(fs.readFileSync(adHocAbsolutePath, "utf-8")).toContain("rerun this direct prompt");
   });
 
   it("edits a user checkpoint in place before rerunning", async () => {

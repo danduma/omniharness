@@ -1,7 +1,10 @@
 import { desc, eq } from "drizzle-orm";
+import fs from "fs";
+import path from "path";
 import * as bridge from "@/server/bridge-client";
+import { getAppDataPath } from "@/server/app-root";
 import { db } from "@/server/db";
-import { clarifications, executionEvents, messages, runs, workers } from "@/server/db/schema";
+import { clarifications, executionEvents, messages, plans, runs, workers } from "@/server/db/schema";
 import { parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
 
 function truncate(text: string, maxLength: number) {
@@ -34,6 +37,8 @@ export interface SupervisorTurnContext {
   runId: string;
   projectPath: string | null;
   goal: string;
+  planPath: string | null;
+  planContent: string | null;
   preferredWorkerType: string | null;
   allowedWorkerTypes: string[];
   recentUserMessages: string[];
@@ -41,6 +46,42 @@ export interface SupervisorTurnContext {
   answeredClarifications: Array<{ question: string; answer: string }>;
   activeWorkers: WorkerObservation[];
   recentEvents: Array<{ eventType: string; summary: string; createdAt: string }>;
+  compactedMemory: string | null;
+}
+
+function parseCompactedMemory(details: string | null) {
+  if (!details) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(details) as Record<string, unknown>;
+    return typeof parsed.memorySummary === "string" && parsed.memorySummary.trim()
+      ? parsed.memorySummary.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolvePlanPath(planPath: string) {
+  return path.isAbsolute(planPath) ? planPath : getAppDataPath(planPath);
+}
+
+function readPlanContent(planPath: string | null) {
+  if (!planPath) {
+    return null;
+  }
+
+  try {
+    const absolutePlanPath = resolvePlanPath(planPath);
+    if (!fs.existsSync(absolutePlanPath)) {
+      return null;
+    }
+    return fs.readFileSync(absolutePlanPath, "utf8");
+  } catch {
+    return null;
+  }
 }
 
 export async function buildSupervisorTurnContext(runId: string): Promise<SupervisorTurnContext> {
@@ -49,6 +90,9 @@ export async function buildSupervisorTurnContext(runId: string): Promise<Supervi
     throw new Error(`Run ${runId} not found`);
   }
 
+  const plan = await db.select().from(plans).where(eq(plans.id, run.planId)).get();
+  const planPath = plan?.path ?? null;
+  const planContent = readPlanContent(planPath);
   const allMessages = (await db.select().from(messages).where(eq(messages.runId, runId)))
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   const userMessages = allMessages.filter((message) => message.role === "user");
@@ -97,7 +141,13 @@ export async function buildSupervisorTurnContext(runId: string): Promise<Supervi
     });
   }
 
-  const recentEvents = (await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).orderBy(desc(executionEvents.createdAt)))
+  const allEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).orderBy(desc(executionEvents.createdAt));
+  const compactedMemory =
+    allEvents
+      .filter((event) => event.eventType === "supervisor_context_compacted")
+      .map((event) => parseCompactedMemory(event.details))
+      .find((memory): memory is string => Boolean(memory)) ?? null;
+  const recentEvents = allEvents
     .slice(0, 8)
     .map((event) => {
       let summary = event.eventType;
@@ -124,6 +174,8 @@ export async function buildSupervisorTurnContext(runId: string): Promise<Supervi
     runId,
     projectPath: run.projectPath,
     goal,
+    planPath,
+    planContent,
     preferredWorkerType: run.preferredWorkerType,
     allowedWorkerTypes: parseAllowedWorkerTypes(run.allowedWorkerTypes),
     recentUserMessages: userMessages.slice(-6).map((message) => message.content),
@@ -131,5 +183,6 @@ export async function buildSupervisorTurnContext(runId: string): Promise<Supervi
     answeredClarifications,
     activeWorkers,
     recentEvents,
+    compactedMemory,
   };
 }

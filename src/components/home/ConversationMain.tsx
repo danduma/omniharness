@@ -1,5 +1,5 @@
 import type React from "react";
-import { Blocks, ChevronDown, Cpu, GitBranch, MoreHorizontal, Pencil, RotateCcw } from "lucide-react";
+import { Blocks, ChevronDown, Copy, Cpu, GitBranch, MoreHorizontal, Pencil, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -181,6 +181,14 @@ export function ConversationMain({
   conversationWorkerGroups,
   emptyComposer,
 }: ConversationMainProps) {
+  const handleCopyDirectMessage = async (content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+    } catch (error) {
+      console.error("Copy message failed:", error);
+    }
+  };
+
   return (
   <ScrollArea className="min-h-0 flex-1" ref={scrollRef}>
     {selectedRunId ? (
@@ -204,33 +212,53 @@ export function ConversationMain({
 
                 return (
                   <div key={msg.id} className="flex justify-end">
-                    <button
-                      type="button"
-                      aria-expanded={isExpanded}
-                      aria-label={isExpanded ? "Collapse message" : "Expand message"}
-                      onClick={() => toggleDirectMessageExpansion(msg.id)}
-                      className="group/direct-message relative max-w-[min(72ch,88%)] cursor-pointer overflow-hidden rounded-[1.9rem] rounded-br-lg bg-[#242424] px-4 py-2.5 text-left text-sm leading-6 text-white shadow-sm transition-colors hover:bg-[#2d2d2d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:max-w-[min(78ch,82%)]"
-                      title={isExpanded ? "Collapse message" : "Expand message"}
-                    >
-                      <span
-                        className="block overflow-hidden whitespace-pre-wrap break-words"
-                        style={{ maxHeight: isExpanded ? undefined : "calc(1.5rem * 6)" }}
-                      >
-                        {msg.content}
-                      </span>
-                      {isExpanded || isLongMessage ? (
+                    <div className="flex max-w-[min(72ch,88%)] flex-col items-end sm:max-w-[min(78ch,82%)]">
+                      <div className="group/direct-message relative w-full overflow-hidden rounded-[1.9rem] rounded-br-lg bg-[#242424] px-4 py-2.5 text-left text-sm leading-6 text-white shadow-sm transition-colors hover:bg-[#2d2d2d]">
                         <span
-                          className={cn(
-                            "text-white",
-                            isExpanded
-                              ? "mt-1 block text-right text-[11px] font-semibold leading-5"
-                              : "pointer-events-none absolute inset-x-0 bottom-0 flex justify-end bg-gradient-to-t from-[#242424] via-[#242424]/95 to-transparent px-4 pb-2.5 pt-6 text-[11px] font-semibold leading-5 transition-colors group-hover/direct-message:from-[#2d2d2d] group-hover/direct-message:via-[#2d2d2d]/95",
-                          )}
+                          className="block select-text overflow-hidden whitespace-pre-wrap break-words"
+                          style={{ maxHeight: isExpanded ? undefined : "calc(1.5rem * 6)" }}
                         >
-                          {isExpanded ? "less" : "...more"}
+                          {msg.content}
                         </span>
-                      ) : null}
-                    </button>
+                        {isExpanded || isLongMessage ? (
+                          <button
+                            type="button"
+                            aria-expanded={isExpanded}
+                            aria-label={isExpanded ? "Show less message text" : "Show more message text"}
+                            onClick={() => toggleDirectMessageExpansion(msg.id)}
+                            className={cn(
+                              "text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
+                              isExpanded
+                                ? "mt-1 block w-full text-right text-[11px] font-semibold leading-5"
+                                : "absolute inset-x-0 bottom-0 flex justify-end bg-gradient-to-t from-[#242424] via-[#242424]/95 to-transparent px-4 pb-2.5 pt-6 text-[11px] font-semibold leading-5 transition-colors group-hover/direct-message:from-[#2d2d2d] group-hover/direct-message:via-[#2d2d2d]/95",
+                            )}
+                          >
+                            {isExpanded ? "less" : "...more"}
+                          </button>
+                        ) : null}
+                      </div>
+                      <div className="mt-1 flex items-center gap-1 pr-2 text-muted-foreground/70">
+                        <button
+                          type="button"
+                          aria-label="Copy message"
+                          title="Copy message"
+                          onClick={() => void handleCopyDirectMessage(msg.content)}
+                          className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Rerun from here"
+                          title="Rerun from here"
+                          disabled={recoverRun.isPending}
+                          onClick={() => handleRetryMessage(msg.id)}
+                          className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 );
               })}

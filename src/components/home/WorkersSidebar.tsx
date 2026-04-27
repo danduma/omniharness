@@ -5,7 +5,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkerCard } from "@/components/WorkerCard";
 import { WORKER_OPTIONS } from "@/app/home/constants";
 import type { AgentSnapshot } from "@/app/home/types";
-import { buildWorkerLists, type ConversationWorkerRecord } from "@/lib/conversation-workers";
+import { buildWorkerLists, getWorkerRuntimeLabel, type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { cn } from "@/lib/utils";
 
 export interface WorkersSidebarProps {
@@ -68,6 +68,7 @@ export function ConversationWorkerCard({
   const activeEffort = agent?.effectiveEffort || configuredEffort;
   const pendingPermissions = agent?.pendingPermissions ?? [];
   const runtimeLabel = formatWorkerRuntime(agent?.type || worker.type);
+  const runtimeDurationLabel = getWorkerRuntimeLabel(worker);
   const fallbackAgent = agent ?? {
     name: worker.id,
     type: worker.type,
@@ -83,6 +84,7 @@ export function ConversationWorkerCard({
       agent={fallbackAgent}
       defaultOpen={defaultOpen}
       runtimeLabel={runtimeLabel}
+      runtimeDurationLabel={runtimeDurationLabel}
       activeModel={activeModel}
       activeEffort={activeEffort}
       pendingPermissions={pendingPermissions}

@@ -91,6 +91,7 @@ function deferred<T>() {
 describe("Supervisor worker spawn flow", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
     await db.delete(executionEvents);
     await db.delete(messages);
     await db.delete(workers);
@@ -132,6 +133,67 @@ describe("Supervisor worker spawn flow", () => {
     mockAskAgent.mockResolvedValue({ response: "ok", state: "working" });
     mockGetAgent.mockResolvedValue(null);
     vi.spyOn(Date, "now").mockReturnValue(123456);
+  });
+
+  it("compacts the supervisor prompt before calling the model when the context is near the window limit", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const largeInstruction = "old implementation detail ".repeat(1_200);
+    const latestInstruction = "Validate the final implementation now.";
+
+    vi.stubEnv("SUPERVISOR_CONTEXT_WINDOW_TOKENS", "700");
+    vi.stubEnv("SUPERVISOR_CONTEXT_RESPONSE_RESERVE_TOKENS", "100");
+    vi.stubEnv("SUPERVISOR_CONTEXT_COMPACTION_THRESHOLD", "0.6");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockBuildSupervisorTurnContext.mockResolvedValue({
+      runId,
+      projectPath: "/tmp/project",
+      goal: `${largeInstruction}\n\n${latestInstruction}`,
+      preferredWorkerType: "opencode",
+      allowedWorkerTypes: ["opencode"],
+      recentUserMessages: [
+        largeInstruction,
+        "second old instruction ".repeat(1_000),
+        latestInstruction,
+      ],
+      pendingClarifications: [],
+      answeredClarifications: [],
+      activeWorkers: [],
+      recentEvents: [],
+      compactedMemory: null,
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    const request = mockTokenCreate.mock.calls[0]?.[0];
+    const promptMessages = request.messages as Array<{ role: string; content: string }>;
+    expect(promptMessages.some((message) => message.content.includes("Prior supervision memory"))).toBe(true);
+    expect(promptMessages.filter((message) => message.role === "user")).toEqual([
+      { role: "user", content: latestInstruction },
+    ]);
+
+    const compactionEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+    expect(compactionEvent?.eventType).toBe("supervisor_context_compacted");
+    expect(compactionEvent?.details).toContain("memorySummary");
   });
 
   it("does not mutate direct conversations if a wake reaches the supervisor", async () => {

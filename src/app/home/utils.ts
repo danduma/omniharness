@@ -1,6 +1,7 @@
 import { type AppErrorDescriptor, normalizeAppError } from "@/lib/app-errors";
+import { formatHumanDuration } from "@/lib/conversation-workers";
 import { WORKER_OPTIONS, FALLBACK_WORKER_MODEL_OPTIONS } from "./constants";
-import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, WorkerModelCatalog, WorkerType } from "./types";
+import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, RunRecord, WorkerModelCatalog, WorkerType } from "./types";
 
 export function buildInlineError(
   error: unknown,
@@ -214,6 +215,49 @@ export function formatExecutionTimestamp(value: string) {
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+function parseTimestampMs(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+export function getRunDurationLabel(run: RunRecord | null, completedAt?: string | null, now = Date.now()) {
+  if (!run) {
+    return null;
+  }
+
+  const startedAt = parseTimestampMs(run.createdAt);
+  if (startedAt === null) {
+    return null;
+  }
+
+  const status = run.status.trim().toLowerCase();
+  const endCandidate = status === "done"
+    ? completedAt || run.updatedAt
+    : status === "failed"
+      ? run.failedAt || run.updatedAt
+      : null;
+  const endedAt = parseTimestampMs(endCandidate) ?? (status === "done" || status === "failed" ? parseTimestampMs(run.updatedAt) : null) ?? now;
+  const duration = formatHumanDuration(Math.max(0, endedAt - startedAt));
+
+  if (status === "done") {
+    return `Completed in ${duration}`;
+  }
+
+  if (status === "failed") {
+    return `Failed after ${duration}`;
+  }
+
+  if (status === "awaiting_user") {
+    return `Waiting after ${duration}`;
+  }
+
+  return `Running for ${duration}`;
 }
 
 export function describeAgentActivity(agent: AgentSnapshot) {

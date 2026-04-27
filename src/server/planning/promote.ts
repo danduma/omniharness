@@ -70,10 +70,9 @@ export async function promotePlanningRun(args: {
     throw new Error("The selected plan is not ready for implementation");
   }
 
-  const sourceMessage = await db.select().from(messages)
+  const sourceMessages = await db.select().from(messages)
     .where(eq(messages.runId, args.runId))
-    .orderBy(messages.createdAt)
-    .get();
+    .orderBy(messages.createdAt);
 
   const newPlanId = randomUUID();
   await db.insert(plans).values({
@@ -101,14 +100,27 @@ export async function promotePlanningRun(args: {
     updatedAt: new Date(),
   });
 
-  await db.insert(messages).values({
-    id: randomUUID(),
-    runId: newRunId,
-    role: "user",
-    kind: "checkpoint",
-    content: sourceMessage?.content || `Implement ${selectedPlanPath}`,
-    createdAt: new Date(),
-  });
+  const userIntentMessages = sourceMessages.filter((message) => message.role === "user" && message.content.trim());
+  const now = Date.now();
+  await db.insert(messages).values(
+    (userIntentMessages.length > 0
+      ? userIntentMessages.map((message, index) => ({
+          id: randomUUID(),
+          runId: newRunId,
+          role: "user",
+          kind: message.kind || "checkpoint",
+          content: message.content,
+          createdAt: new Date(now + index),
+        }))
+      : [{
+          id: randomUUID(),
+          runId: newRunId,
+          role: "user",
+          kind: "checkpoint",
+          content: `Implement ${selectedPlanPath}`,
+          createdAt: new Date(now),
+        }])
+  );
 
   startSupervisorRun(newRunId);
 

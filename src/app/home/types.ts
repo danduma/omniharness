@@ -11,6 +11,7 @@ export type RunRecord = {
   mode?: ConversationModeOption | null;
   status: string;
   createdAt: string;
+  updatedAt?: string | null;
   failedAt?: string | null;
   lastError?: string | null;
   projectPath: string | null;

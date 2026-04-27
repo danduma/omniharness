@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Bot, ChevronDown, Cpu } from "lucide-react";
+import { AlertTriangle, Bot, ChevronDown, Clock, Cpu } from "lucide-react";
 import { Terminal, type AgentTerminalPayload } from "@/components/Terminal";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { buildWorkerPreview, isWorkerActiveStatus } from "@/lib/conversation-workers";
@@ -35,6 +35,7 @@ export type WorkerCardProps = {
   agent: WorkerCardAgent;
   defaultOpen: boolean;
   runtimeLabel: string | null;
+  runtimeDurationLabel?: string | null;
   activeModel: string | null;
   activeEffort: string | null;
   pendingPermissions: PendingPermissionRecord[];
@@ -153,6 +154,7 @@ export function WorkerCard({
   agent,
   defaultOpen,
   runtimeLabel,
+  runtimeDurationLabel,
   activeModel,
   activeEffort,
   pendingPermissions,
@@ -190,6 +192,12 @@ export function WorkerCard({
                     <span className="truncate" title={activeModel || "Default"}>{activeModel || "Default"}</span>
                   </div>
                   {activeEffort ? <span className="text-[11px] text-zinc-500">{activeEffort} effort</span> : null}
+                  {runtimeDurationLabel ? (
+                    <div className="inline-flex min-w-0 items-center gap-1.5 text-[11px] text-zinc-400">
+                      <Clock className="h-3.5 w-3.5 text-zinc-500" />
+                      <span className="truncate" title={runtimeDurationLabel}>{runtimeDurationLabel}</span>
+                    </div>
+                  ) : null}
                 </div>
                 {showPreview ? (
                   <div className="truncate text-[13px] leading-5 text-zinc-400" title={preview}>

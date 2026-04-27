@@ -10,7 +10,8 @@ export function buildSupervisorTools(options?: { allowedWorkerTypes?: string[]; 
       function: {
         name: "worker_spawn",
         description:
-          `Spawn a new external coding worker. Prefer one main worker unless a distinct validator or sidecar is necessary. ` +
+          `Spawn a new external coding worker. Prefer one main worker unless a distinct independent validator or sidecar is necessary. ` +
+          `Use independent validator workers to check mocked paths, fake controls, placeholder implementations, and whether the real user-facing path works. ` +
           `Only use these worker types for this run: ${allowedWorkerTypes.join(", ")}.` +
           (preferredWorkerType ? ` Prefer ${preferredWorkerType} when it is suitable.` : ""),
         parameters: {

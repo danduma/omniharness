@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildWorkerLists,
   buildWorkerPreview,
+  formatHumanDuration,
+  getWorkerRuntimeLabel,
   isWorkerActiveStatus,
   type ConversationWorkerAgent,
   type ConversationWorkerRecord,
@@ -51,5 +53,31 @@ describe("conversation worker helpers", () => {
     expect(buildWorkerPreview(activeAgent)).toContain("Investigating the retry bug");
     expect(buildWorkerPreview(persistedAgent)).toContain("Completed a clean terminal snapshot");
     expect(buildWorkerPreview(failedAgent)).toBe("Bridge request failed");
+  });
+
+  it("formats worker runtime from start and finish timestamps", () => {
+    expect(formatHumanDuration(9_120_000)).toBe("2 hours, 32 minutes");
+    expect(formatHumanDuration(59_000)).toBe("59 seconds");
+    expect(formatHumanDuration(60_000)).toBe("1 minute");
+
+    const finishedWorker: ConversationWorkerRecord = {
+      id: "worker-done",
+      runId: "run-1",
+      type: "codex",
+      status: "cancelled",
+      createdAt: "2026-04-27T00:00:00.000Z",
+      updatedAt: "2026-04-27T02:32:00.000Z",
+    };
+    const activeWorker: ConversationWorkerRecord = {
+      id: "worker-live",
+      runId: "run-1",
+      type: "codex",
+      status: "working",
+      createdAt: "2026-04-27T00:00:00.000Z",
+      updatedAt: "2026-04-27T00:10:00.000Z",
+    };
+
+    expect(getWorkerRuntimeLabel(finishedWorker)).toBe("Worked 2 hours, 32 minutes");
+    expect(getWorkerRuntimeLabel(activeWorker, new Date("2026-04-27T01:15:00.000Z").getTime())).toBe("Working for 1 hour, 15 minutes");
   });
 });

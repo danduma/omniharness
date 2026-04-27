@@ -21,6 +21,21 @@ test("conversation rows expose rename and delete actions", () => {
   expect(pageSource).toContain('requestJson(`/api/runs/${runId}`');
 });
 
+test("deleting a conversation removes it optimistically before the request resolves", () => {
+  const deleteMutationIndex = pageSource.indexOf("const deleteRun = useMutation({");
+  const onMutateIndex = pageSource.indexOf("onMutate:", deleteMutationIndex);
+  const requestIndex = pageSource.indexOf('requestJson(`/api/runs/${runId}`', deleteMutationIndex);
+  const optimisticUpdateIndex = pageSource.indexOf("removeRunFromHomeState(current, variables.runId)", onMutateIndex);
+  const rollbackIndex = pageSource.indexOf("previousState", optimisticUpdateIndex);
+
+  expect(deleteMutationIndex).toBeGreaterThanOrEqual(0);
+  expect(onMutateIndex).toBeGreaterThan(deleteMutationIndex);
+  expect(requestIndex).toBeGreaterThan(deleteMutationIndex);
+  expect(onMutateIndex).toBeLessThan(requestIndex);
+  expect(optimisticUpdateIndex).toBeGreaterThan(onMutateIndex);
+  expect(rollbackIndex).toBeGreaterThan(optimisticUpdateIndex);
+});
+
 test("user messages expose retry, edit, and fork recovery controls", () => {
   expect(pageSource).toContain("Retry from here");
   expect(pageSource).toContain("Edit in place");
@@ -51,10 +66,10 @@ test("failed runs render a single persisted error in the conversation view", () 
   expect(pageSource).toContain('message.role === "system"');
   expect(pageSource).toContain('message.kind === "error"');
   expect(pageSource).toContain('visibleMessages.map((msg: MessageRecord) => (');
-  expect(pageSource).toContain('action: workerFailureDetail ? "Worker configuration issue" : staleFailure ? "Ready to retry" : "Run failed"');
+  expect(pageSource).toContain('action: workerFailureDetail ? "Worker setup" : staleFailure ? "Retry" : "Run failed"');
   expect(pageSource).toContain('message: workerFailureDetail || (staleFailure');
-  expect(pageSource).toContain("Retry latest after updating the worker model or account configuration.");
-  expect(pageSource).toContain("Retry latest to rerun with the current worker availability.");
+  expect(pageSource).toContain("Update the model or account, then retry.");
+  expect(pageSource).toContain('`${workerLabel || "Worker"} available.`');
   expect(pageSource).not.toContain("This failure was recorded earlier and may be stale.");
   expect(pageSource).not.toContain('<div className="font-semibold">Run failed</div>');
   expect(pageSource).toContain("Run failed");
