@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS workers (
   type text NOT NULL,
   status text NOT NULL,
   cwd text NOT NULL,
+  title text NOT NULL DEFAULT '',
+  initial_prompt text NOT NULL DEFAULT '',
   output_log text NOT NULL DEFAULT '',
   output_entries_json text NOT NULL DEFAULT '',
   current_text text NOT NULL DEFAULT '',
@@ -253,6 +255,14 @@ const workerColumnNames = new Set(workerColumns.map((column) => column.name));
 
 if (!workerColumnNames.has("output_log")) {
   sqlite.exec("ALTER TABLE workers ADD COLUMN output_log text NOT NULL DEFAULT '';");
+}
+
+if (!workerColumnNames.has("title")) {
+  sqlite.exec("ALTER TABLE workers ADD COLUMN title text NOT NULL DEFAULT '';");
+}
+
+if (!workerColumnNames.has("initial_prompt")) {
+  sqlite.exec("ALTER TABLE workers ADD COLUMN initial_prompt text NOT NULL DEFAULT '';");
 }
 
 if (!workerColumnNames.has("output_entries_json")) {

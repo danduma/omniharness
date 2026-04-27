@@ -94,6 +94,7 @@ function isMissingAgentError(error: unknown) {
 function buildWorkerSpawnSummary({
   workerId,
   workerType,
+  title,
   model,
   effort,
   mode,
@@ -102,6 +103,7 @@ function buildWorkerSpawnSummary({
 }: {
   workerId: string;
   workerType: keyof typeof WORKER_TYPE_LABELS;
+  title?: string;
   model?: string | null;
   effort?: string | null;
   mode?: string;
@@ -115,6 +117,10 @@ function buildWorkerSpawnSummary({
     `Effort: ${effort || "Default"}`,
     `Mode: ${mode || "default"}`,
   ];
+
+  if (title) {
+    details.push(`Title: ${title}.`);
+  }
 
   if (purpose) {
     details.push(`Purpose: ${purpose}.`);
@@ -188,6 +194,8 @@ async function reserveWorkerRow(args: {
   runId: string;
   workerType: string;
   cwd: string;
+  title: string;
+  initialPrompt: string;
 }) {
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const existingWorkers = await db.select({ id: workers.id }).from(workers).where(eq(workers.runId, args.runId)).all();
@@ -204,6 +212,8 @@ async function reserveWorkerRow(args: {
         type: args.workerType,
         status: "starting",
         cwd: args.cwd,
+        title: args.title,
+        initialPrompt: args.initialPrompt,
         outputLog: "",
         outputEntriesJson: "",
         currentText: "",
@@ -220,6 +230,33 @@ async function reserveWorkerRow(args: {
   }
 
   throw new Error(`Unable to reserve a unique worker id for run ${args.runId}.`);
+}
+
+function normalizeWorkerStatus(status: string | null | undefined) {
+  return (status ?? "").trim().toLowerCase().split(":")[0]?.trim() ?? "";
+}
+
+function isActiveWorkerStatus(status: string | null | undefined) {
+  return ["starting", "working", "idle", "stuck"].includes(normalizeWorkerStatus(status));
+}
+
+function describesSeparatedAllocation(...values: Array<string | null | undefined>) {
+  const text = values.join("\n").toLowerCase();
+  return /\b(validation|validator|validate|review|audit|sidecar|independent)\b/.test(text)
+    || /\bpart\s+[a-z0-9]+\b/.test(text)
+    || /\bslice\b/.test(text)
+    || /\bonly\b/.test(text);
+}
+
+async function findActiveMainWorker(runId: string) {
+  const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+  return runWorkers.find((worker) => {
+    if (!isActiveWorkerStatus(worker.status)) {
+      return false;
+    }
+
+    return !describesSeparatedAllocation(worker.title, worker.initialPrompt);
+  }) ?? null;
 }
 
 async function persistWorkerOutput(workerId: string, output: string) {
@@ -361,13 +398,32 @@ export class Supervisor {
           const allowedWorkerTypes = parseAllowedWorkerTypes(run?.allowedWorkerTypes);
           const workerType = selectSpawnableWorkerType(requestedType, envParams, allowedWorkerTypes);
           const cwd = asString(action.args.cwd, "cwd");
+          const title = asString(action.args.title, "title");
           const prompt = asString(action.args.prompt, "prompt");
           const mode = resolveWorkerSpawnMode(action.args.mode, yoloModeEnabled);
           const purpose = typeof action.args.purpose === "string" ? action.args.purpose.trim() : "";
+          const activeMainWorker = await findActiveMainWorker(this.runId);
+          if (activeMainWorker && !describesSeparatedAllocation(title, purpose, prompt)) {
+            await insertExecutionEvent(this.runId, "worker_spawn_blocked", {
+              summary: `Blocked duplicate worker spawn because ${this.runId} already has active implementation worker ${activeMainWorker.id}.`,
+              requestedTitle: title,
+              requestedPurpose: purpose,
+              activeWorkerId: activeMainWorker.id,
+            });
+            await insertRunMessage(
+              this.runId,
+              "system",
+              `Blocked duplicate worker spawn "${title}" because ${activeMainWorker.id} is already the active implementation worker.`,
+              "supervisor_action",
+            );
+            return { state: "wait", delayMs: 5_000 };
+          }
           const workerId = await reserveWorkerRow({
             runId: this.runId,
             workerType: workerType.type,
             cwd,
+            title,
+            initialPrompt: prompt,
           });
           const preferredModel = run?.preferredWorkerModel ?? null;
           const preferredEffort = run?.preferredWorkerEffort ?? null;
@@ -404,6 +460,7 @@ export class Supervisor {
           const spawnSummary = buildWorkerSpawnSummary({
             workerId,
             workerType: workerType.type,
+            title,
             model: preferredModel,
             effort: preferredEffort,
             mode,

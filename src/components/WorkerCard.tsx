@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Bot, ChevronDown, Clock, Cpu } from "lucide-react";
+import { AlertTriangle, Bot, ChevronDown, Clock, Cpu, Square } from "lucide-react";
 import { Terminal, type AgentTerminalPayload } from "@/components/Terminal";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { buildWorkerPreview, isWorkerActiveStatus } from "@/lib/conversation-workers";
@@ -32,6 +32,7 @@ type PendingPermissionRecord = NonNullable<WorkerCardAgent["pendingPermissions"]
 
 export type WorkerCardProps = {
   workerId: string;
+  workerTitle?: string | null;
   agent: WorkerCardAgent;
   defaultOpen: boolean;
   runtimeLabel: string | null;
@@ -40,6 +41,8 @@ export type WorkerCardProps = {
   activeEffort: string | null;
   pendingPermissions: PendingPermissionRecord[];
   terminalHeightClass: string;
+  onStopWorker?: () => void;
+  isStopping?: boolean;
 };
 
 function renderContextMeter(fullnessPercent: number | null | undefined) {
@@ -151,6 +154,7 @@ function PermissionWarning({ pendingPermissions }: { pendingPermissions: Pending
 
 export function WorkerCard({
   workerId,
+  workerTitle,
   agent,
   defaultOpen,
   runtimeLabel,
@@ -159,6 +163,8 @@ export function WorkerCard({
   activeEffort,
   pendingPermissions,
   terminalHeightClass,
+  onStopWorker,
+  isStopping,
 }: WorkerCardProps) {
   const [open, setOpen] = useState(defaultOpen);
   const contextLabel = formatContextAvailability(agent.contextUsage?.fullnessPercent);
@@ -168,9 +174,14 @@ export function WorkerCard({
   const showPreview = preview.length > 0 && preview !== normalizedLastError;
 
   const displayId = useMemo(() => {
+    const normalizedTitle = workerTitle?.trim();
+    if (normalizedTitle) {
+      return normalizedTitle;
+    }
+
     const match = workerId.match(/-worker-(\d+)$/);
     return match ? `Worker ${match[1]}` : workerId;
-  }, [workerId]);
+  }, [workerId, workerTitle]);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -180,7 +191,7 @@ export function WorkerCard({
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0 flex-1 space-y-2">
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                  <div className="break-all text-[12px] font-medium text-zinc-100" title={workerId}>
+                  <div className="break-words text-[12px] font-medium text-zinc-100" title={workerId}>
                     {displayId}
                   </div>
                   <div className="inline-flex min-w-0 items-center gap-1.5 text-[11px] text-zinc-400">
@@ -214,6 +225,22 @@ export function WorkerCard({
                   <span className="capitalize">{stateLabel}</span>
                 </div>
                 {pendingPermissions.length > 0 ? <PermissionWarning pendingPermissions={pendingPermissions} /> : null}
+                {onStopWorker ? (
+                  <button
+                    type="button"
+                    aria-label={`Stop ${workerTitle || workerId}`}
+                    title={`Stop ${workerTitle || workerId}`}
+                    disabled={isStopping}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-red-300/15 bg-red-400/[0.06] text-red-100/85 transition-colors hover:bg-red-400/[0.12] disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onStopWorker();
+                    }}
+                  >
+                    <Square className="h-3.5 w-3.5 fill-current" />
+                  </button>
+                ) : null}
                 <div title={contextLabel}>
                   {renderContextMeter(agent.contextUsage?.fullnessPercent)}
                 </div>

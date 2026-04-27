@@ -36,6 +36,8 @@ export const workers = sqliteTable('workers', {
   type: text('type').notNull(),
   status: text('status').notNull(), // 'idle', 'working', 'stuck', 'cred-exhausted'
   cwd: text('cwd').notNull(),
+  title: text('title').notNull().default(''),
+  initialPrompt: text('initial_prompt').notNull().default(''),
   outputLog: text('output_log').notNull().default(''),
   outputEntriesJson: text('output_entries_json').notNull().default(''),
   currentText: text('current_text').notNull().default(''),

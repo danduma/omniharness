@@ -34,4 +34,11 @@ describe("SUPERVISOR_SYSTEM_PROMPT", () => {
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("fake control");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("actually exercises the real path");
   });
+
+  it("forbids duplicate main implementers unless work is explicitly separated", () => {
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Single-worker allocation");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Do not spawn two main implementation workers for the same plan");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("part A");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("part B");
+  });
 });

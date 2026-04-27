@@ -1,5 +1,5 @@
 import type React from "react";
-import { ArrowUp, LoaderCircle, Plus, X } from "lucide-react";
+import { ArrowUp, LoaderCircle, Plus, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ComposerModelPicker } from "@/components/composer/ComposerModelPicker";
 import { ComposerSelect } from "@/components/composer/ComposerSelect";
@@ -40,10 +40,10 @@ interface ConversationComposerProps {
   selectedEffort: string;
   setSelectedEffort: (value: string) => void;
   isComposerSubmitting: boolean;
-  isPlanningConversation: boolean;
-  isDirectConversation: boolean;
+  isSupervisorRunning: boolean;
   onSendConversationMessage: (content: string) => void;
   onRunCommand: (content: string) => void;
+  onStopSupervisor: () => void;
 }
 
 export function ConversationComposer({
@@ -77,14 +77,27 @@ export function ConversationComposer({
   selectedEffort,
   setSelectedEffort,
   isComposerSubmitting,
-  isPlanningConversation,
-  isDirectConversation,
+  isSupervisorRunning,
   onSendConversationMessage,
   onRunCommand,
+  onStopSupervisor,
 }: ConversationComposerProps) {
+  const isStopButtonVisible = !command.trim() && isSupervisorRunning;
+
   return (
   <div className={`relative z-20 w-full shrink-0 bg-background p-3 sm:p-4 ${className}`}>
-    <form onSubmit={handleSubmit} className="group relative mx-auto max-w-3xl">
+    <form
+      onSubmit={(event) => {
+        if (!command.trim() && isSupervisorRunning) {
+          event.preventDefault();
+          onStopSupervisor();
+          return;
+        }
+
+        handleSubmit(event);
+      }}
+      className="group relative mx-auto max-w-3xl"
+    >
       {!selectedRunId ? (
         <ConversationModePicker
           value={selectedConversationMode}
@@ -168,7 +181,7 @@ export function ConversationComposer({
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               if (!isComposerSubmitting && command.trim()) {
-                if (selectedRunId && (isPlanningConversation || isDirectConversation)) {
+                if (selectedRunId) {
                   onSendConversationMessage(command);
                 } else {
                   onRunCommand(command);
@@ -275,7 +288,9 @@ export function ConversationComposer({
             <Button
               type="submit"
               size="icon"
-              disabled={isComposerSubmitting || !command.trim()}
+              disabled={isComposerSubmitting || (!command.trim() && !isSupervisorRunning)}
+              aria-label={isStopButtonVisible ? "Stop supervisor" : "Send message"}
+              title={isStopButtonVisible ? "Stop supervisor" : "Send message"}
               className={cn(
                 "h-9 w-9 shrink-0 rounded-full transition-all sm:h-10 sm:w-10",
                 themeMode === "night"
@@ -285,6 +300,8 @@ export function ConversationComposer({
             >
               {isComposerSubmitting ? (
                 <LoaderCircle className="h-5 w-5 animate-spin" />
+              ) : isStopButtonVisible ? (
+                <Square className="h-4 w-4 fill-current" />
               ) : (
                 <ArrowUp className="h-5 w-5" />
               )}

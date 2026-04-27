@@ -249,7 +249,7 @@ test("command input uses a fixed helper placeholder instead of echoing the selec
 
 test("send button swaps to a spinner while a command submission is pending", () => {
   expect(pageSource).toContain("const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || promotePlanningConversation.isPending");
-  expect(pageSource).toContain('disabled={isComposerSubmitting || !command.trim()}');
+  expect(pageSource).toContain('disabled={isComposerSubmitting || (!command.trim() && !isSupervisorRunning)}');
   expect(pageSource).toContain('{isComposerSubmitting ? (');
   expect(pageSource).toContain('<LoaderCircle className="h-5 w-5 animate-spin" />');
   expect(pageSource).toContain(') : (');

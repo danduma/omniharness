@@ -6,6 +6,7 @@ import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { db } from "@/server/db";
 import { messages, runs, workers } from "@/server/db/schema";
+import { startSupervisorRun } from "@/server/supervisor/start";
 
 export async function POST(
   req: NextRequest,
@@ -42,11 +43,23 @@ export async function POST(
     }
 
     if (run.mode === "implementation") {
-      return errorResponse("Implementation conversations do not accept direct worker messages", {
-        status: 400,
-        source: "Conversations",
-        action: "Send a conversation message",
+      await db.insert(messages).values({
+        id: randomUUID(),
+        runId: id,
+        role: "user",
+        kind: "checkpoint",
+        content,
+        createdAt: new Date(),
       });
+
+      await db.update(runs).set({
+        status: "running",
+        failedAt: null,
+        lastError: null,
+        updatedAt: new Date(),
+      }).where(eq(runs.id, id));
+      startSupervisorRun(id);
+      return NextResponse.json({ ok: true });
     }
 
     const worker = await db.select().from(workers).where(eq(workers.runId, id)).get();

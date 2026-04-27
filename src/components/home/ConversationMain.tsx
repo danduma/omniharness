@@ -139,6 +139,8 @@ interface ConversationMainProps {
     mutate: (payload: { clarificationId: string; answer: string }) => void;
   };
   conversationWorkerGroups: { active: ConversationWorkerRecord[] };
+  onStopWorker?: (workerId: string) => void;
+  stoppingWorkerId?: string | null;
   emptyComposer: React.ReactNode;
 }
 
@@ -178,6 +180,8 @@ export function ConversationMain({
   selectedClarifications,
   answerClarification,
   conversationWorkerGroups,
+  onStopWorker,
+  stoppingWorkerId,
   emptyComposer,
 }: ConversationMainProps) {
   const handleCopyDirectMessage = async (content: string) => {
@@ -376,6 +380,8 @@ export function ConversationMain({
                         defaultOpen={false}
                         terminalHeightClass="h-64 sm:h-[22rem]"
                         fallbackPreview={parsed?.purpose}
+                        onStopWorker={onStopWorker}
+                        isStopping={stoppingWorkerId === workerId}
                       />
                     );
                   })()
@@ -465,6 +471,8 @@ export function ConversationMain({
                       preferredEffort={selectedRun?.preferredWorkerEffort || null}
                       defaultOpen={false}
                       terminalHeightClass="h-64 sm:h-[22rem]"
+                      onStopWorker={onStopWorker}
+                      isStopping={stoppingWorkerId === worker.id}
                     />
                   );
                 })}

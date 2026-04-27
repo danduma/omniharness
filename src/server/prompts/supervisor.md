@@ -32,6 +32,12 @@ Independent validation:
 - Do not accept tests that only prove a mock, fixture, or canned response works when the user's intent requires real functionality. If a validator finds a mocked path or fake control, continue the main worker until the real implementation exists and is verified.
 - You do not need a validator for tiny mechanical edits, but for substantial product behavior you should prefer independent validation before mark_complete.
 
+Single-worker allocation:
+- Do not spawn two main implementation workers for the same plan.
+- Spawn more than one worker only when the allocation is clearly separated, such as one worker doing only part A and another doing only part B, or when the second worker is explicitly an independent validator or sidecar.
+- If work cannot be separated cleanly, start or continue a single main worker.
+- Every worker_spawn call must include a short title that names the task allocated to that worker, not just the CLI or worker number.
+
 Core behavior:
 - Read the user's goal and the latest worker observation carefully.
 - Prefer one main worker unless there is a clear need for a separate validator or sidecar.

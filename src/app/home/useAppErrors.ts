@@ -12,6 +12,8 @@ interface UseAppErrorsProps {
   recoverRunError: unknown;
   renameRunError: unknown;
   deleteRunError: unknown;
+  stopSupervisorError?: unknown;
+  stopWorkerError?: unknown;
 }
 
 export function useAppErrors({
@@ -23,6 +25,8 @@ export function useAppErrors({
   recoverRunError,
   renameRunError,
   deleteRunError,
+  stopSupervisorError,
+  stopWorkerError,
 }: UseAppErrorsProps) {
   return useMemo(() => {
     const errors: AppErrorDescriptor[] = [];
@@ -72,6 +76,20 @@ export function useAppErrors({
       }));
     }
 
+    if (stopSupervisorError) {
+      errors.push(buildInlineError(stopSupervisorError, {
+        source: "Runs",
+        action: "Stop supervisor",
+      }));
+    }
+
+    if (stopWorkerError) {
+      errors.push(buildInlineError(stopWorkerError, {
+        source: "Runs",
+        action: "Stop worker",
+      }));
+    }
+
     return mergeAppErrors([], errors);
   }, [
     deleteRunError,
@@ -80,6 +98,8 @@ export function useAppErrors({
     renameRunError,
     runCommandError,
     settingsError,
+    stopSupervisorError,
+    stopWorkerError,
     runtimeErrors,
     state.frontendErrors,
   ]);

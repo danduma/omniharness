@@ -10,6 +10,8 @@ const pageSource = [
   "src/app/home/useHomeLifecycle.ts",
   "src/app/home/useRunSelectionEffects.ts",
   "src/components/home/ConversationComposer.tsx",
+  "src/components/home/WorkersSidebar.tsx",
+  "src/components/WorkerCard.tsx",
 ].map((relativePath) => fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8")).join("\n");
 const composerSelectSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/composer/ComposerSelect.tsx"),
@@ -106,4 +108,22 @@ test("composer control row stays on one compact mobile row", () => {
   expect(pageSource).not.toContain('className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1 sm:gap-2"');
   expect(pageSource).not.toContain('className="ml-auto flex flex-wrap items-center gap-2"');
   expect(pageSource).not.toContain('className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2"');
+});
+
+test("composer submit button sends text, stops a running supervisor when empty, and disables when idle empty", () => {
+  expect(pageSource).toContain("const isSupervisorRunning = Boolean(selectedRun && selectedRun.mode === \"implementation\" && selectedRun.status === \"running\")");
+  expect(pageSource).toContain("const isStopButtonVisible = !command.trim() && isSupervisorRunning");
+  expect(pageSource).toContain("disabled={isComposerSubmitting || (!command.trim() && !isSupervisorRunning)}");
+  expect(pageSource).toContain('aria-label={isStopButtonVisible ? "Stop supervisor" : "Send message"}');
+  expect(pageSource).toContain("if (!command.trim() && isSupervisorRunning) {");
+  expect(pageSource).toContain("stopSupervisor.mutate({ runId: selectedRunId })");
+  expect(pageSource).toContain("if (selectedRunId) {");
+  expect(pageSource).toContain("sendConversationMessage.mutate({ runId: selectedRunId, content: command })");
+  expect(pageSource).toContain("<Square className=\"h-4 w-4 fill-current\" />");
+});
+
+test("worker cards expose individual stop controls", () => {
+  expect(pageSource).toContain("stopWorker.mutate({ runId: selectedRunId, workerId })");
+  expect(pageSource).toContain("onStopWorker={onStopWorker}");
+  expect(pageSource).toContain('aria-label={`Stop ${workerTitle || workerId}`}');
 });

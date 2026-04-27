@@ -26,6 +26,8 @@ const {
   mockGetAgent,
   mockSpawnAgent,
   mockStartSupervisorRun,
+  mockStopRunObserver,
+  mockCancelSupervisorWake,
   mockQueueConversationTitleGeneration,
 } = vi.hoisted(() => ({
   mockAskAgent: vi.fn().mockResolvedValue({
@@ -67,6 +69,8 @@ const {
     stopReason: null,
   }),
   mockStartSupervisorRun: vi.fn(),
+  mockStopRunObserver: vi.fn(),
+  mockCancelSupervisorWake: vi.fn(),
   mockQueueConversationTitleGeneration: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -79,6 +83,14 @@ vi.mock("@/server/bridge-client", () => ({
 
 vi.mock("@/server/supervisor/start", () => ({
   startSupervisorRun: mockStartSupervisorRun,
+}));
+
+vi.mock("@/server/supervisor/observer", () => ({
+  stopRunObserver: mockStopRunObserver,
+}));
+
+vi.mock("@/server/supervisor/wake", () => ({
+  cancelSupervisorWake: mockCancelSupervisorWake,
 }));
 
 vi.mock("@/server/conversation-title", () => ({
@@ -121,6 +133,151 @@ describe("PATCH /api/runs/[id]", () => {
 });
 
 describe("POST /api/runs/[id]", () => {
+  it("stops the supervisor run and cancels active workers", async () => {
+    mockCancelAgent.mockClear();
+    mockStopRunObserver.mockClear();
+    mockCancelSupervisorWake.mockClear();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const activeWorkerId = randomUUID();
+    const finishedWorkerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/stop-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      title: "Stop supervisor",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values([
+      {
+        id: activeWorkerId,
+        runId,
+        type: "codex",
+        status: "working",
+        cwd: process.cwd(),
+        outputLog: "",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: finishedWorkerId,
+        runId,
+        type: "codex",
+        status: "cancelled",
+        cwd: process.cwd(),
+        outputLog: "",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+
+    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "stop_supervisor" }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const updatedWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+    const stopEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+
+    expect(mockCancelSupervisorWake).toHaveBeenCalledWith(runId);
+    expect(mockStopRunObserver).toHaveBeenCalledWith(runId);
+    expect(mockCancelAgent).toHaveBeenCalledWith(activeWorkerId);
+    expect(mockCancelAgent).not.toHaveBeenCalledWith(finishedWorkerId);
+    expect(updatedRun?.status).toBe("cancelled");
+    expect(updatedWorkers.find((worker) => worker.id === activeWorkerId)?.status).toBe("cancelled");
+    expect(stopEvent?.eventType).toBe("supervisor_stopped");
+  });
+
+  it("stops a single worker without stopping the supervisor", async () => {
+    mockCancelAgent.mockClear();
+    mockStopRunObserver.mockClear();
+    mockCancelSupervisorWake.mockClear();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const targetWorkerId = randomUUID();
+    const otherWorkerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/stop-worker.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      title: "Stop worker",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values([
+      {
+        id: targetWorkerId,
+        runId,
+        type: "codex",
+        status: "working",
+        cwd: process.cwd(),
+        outputLog: "",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: otherWorkerId,
+        runId,
+        type: "codex",
+        status: "working",
+        cwd: process.cwd(),
+        outputLog: "",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+
+    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "stop_worker", workerId: targetWorkerId }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const updatedWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+    const stopEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+
+    expect(mockCancelAgent).toHaveBeenCalledWith(targetWorkerId);
+    expect(mockCancelAgent).not.toHaveBeenCalledWith(otherWorkerId);
+    expect(mockCancelSupervisorWake).not.toHaveBeenCalled();
+    expect(mockStopRunObserver).not.toHaveBeenCalled();
+    expect(updatedRun?.status).toBe("running");
+    expect(updatedWorkers.find((worker) => worker.id === targetWorkerId)?.status).toBe("cancelled");
+    expect(updatedWorkers.find((worker) => worker.id === otherWorkerId)?.status).toBe("working");
+    expect(stopEvent?.eventType).toBe("worker_cancelled");
+  });
+
   it("retries from a user checkpoint by truncating later history and cancelling workers", async () => {
     mockAskAgent.mockClear();
     mockCancelAgent.mockClear();

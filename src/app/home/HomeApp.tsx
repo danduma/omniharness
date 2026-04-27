@@ -428,6 +428,32 @@ export function HomeApp() {
     },
   });
 
+  const stopSupervisor = useMutation({
+    mutationFn: async ({ runId }: { runId: string }) => {
+      return requestJson<{ ok: true }>(`/api/runs/${runId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "stop_supervisor" }),
+      }, {
+        source: "Runs",
+        action: "Stop supervisor",
+      });
+    },
+  });
+
+  const stopWorker = useMutation({
+    mutationFn: async ({ runId, workerId }: { runId: string; workerId: string }) => {
+      return requestJson<{ ok: true }>(`/api/runs/${runId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "stop_worker", workerId }),
+      }, {
+        source: "Runs",
+        action: "Stop worker",
+      });
+    },
+  });
+
   const promotePlanningConversation = useMutation({
     mutationFn: async (payload: { runId: string; planPath: string | null }) => {
       return requestJson<{ runId?: string }>(`/api/planning/${payload.runId}/promote`, {
@@ -448,8 +474,15 @@ export function HomeApp() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!command.trim() && isSupervisorRunning) {
+      if (selectedRunId) {
+        stopSupervisor.mutate({ runId: selectedRunId });
+      }
+      return;
+    }
+
     if (command.trim()) {
-      if (selectedRunId && (isPlanningConversation || isDirectConversation)) {
+      if (selectedRunId) {
         sendConversationMessage.mutate({ runId: selectedRunId, content: command });
         return;
       }
@@ -550,6 +583,7 @@ export function HomeApp() {
   const plans = (state.plans || []) as PlanRecord[];
   const clarifications = (state.clarifications || []) as ClarificationRecord[];
   const selectedRun = selectedRunId ? runs.find((run) => run.id === selectedRunId) ?? null : null;
+  const isSupervisorRunning = Boolean(selectedRun && selectedRun.mode === "implementation" && selectedRun.status === "running");
   const selectedRunMode: ConversationModeOption = selectedRun?.mode || "implementation";
   const isImplementationConversation = selectedRunMode === "implementation";
   const isPlanningConversation = selectedRunMode === "planning";
@@ -871,7 +905,7 @@ export function HomeApp() {
     : null;
   const activeConversationCwd = selectedRun?.projectPath || activePlan?.path || draftProjectPath || null;
   const selectedClarifications = selectedRunId ? clarifications.filter((item) => item.runId === selectedRunId) : [];
-  const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, runCommandError: runCommand.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, deleteRunError: deleteRun.error });
+  const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, runCommandError: runCommand.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, deleteRunError: deleteRun.error, stopSupervisorError: stopSupervisor.error, stopWorkerError: stopWorker.error });
 
   useRunSelectionEffects({ scrollRef, state, selectedRunId, selectedRun, activeComposerMode, selectedCliAgent, setSelectedCliAgent, autoSelectedWorkerType, activeAllowedWorkerTypes, hydratedRunSelectionId, setHydratedRunSelectionId, selectedModel, setSelectedModel, selectedEffort, setSelectedEffort, availableWorkerTypes, configuredAllowedWorkerTypes, apiKeys, setApiKeys, setReadMarkers });
   const activeMention = getActiveMentionQuery(command, commandCursor);
@@ -948,7 +982,7 @@ export function HomeApp() {
     }));
   };
 
-  const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || promotePlanningConversation.isPending;
+  const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || promotePlanningConversation.isPending || stopSupervisor.isPending || stopWorker.isPending;
   const lockedDirectWorkerLabel = WORKER_OPTIONS.find((option) => option.value === (selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent))?.label
     || WORKER_OPTIONS.find((option) => option.value === autoSelectedWorkerType)?.label
     || "Direct worker";
@@ -1043,14 +1077,18 @@ export function HomeApp() {
           selectedEffort={selectedEffort}
           setSelectedEffort={setSelectedEffort}
           isComposerSubmitting={isComposerSubmitting}
-          isPlanningConversation={isPlanningConversation}
-          isDirectConversation={isDirectConversation}
+          isSupervisorRunning={isSupervisorRunning}
           onSendConversationMessage={(content) => {
             if (selectedRunId) {
               sendConversationMessage.mutate({ runId: selectedRunId, content });
             }
           }}
           onRunCommand={(content) => runCommand.mutate(content)}
+          onStopSupervisor={() => {
+            if (selectedRunId) {
+              stopSupervisor.mutate({ runId: selectedRunId });
+            }
+          }}
         />
   );
 
@@ -1127,6 +1165,12 @@ export function HomeApp() {
           setMobileWorkersOpen={setMobileWorkersOpen}
           selectedRunWorkers={selectedRunWorkers}
           conversationAgents={conversationAgents}
+          onStopWorker={(workerId) => {
+            if (selectedRunId) {
+              stopWorker.mutate({ runId: selectedRunId, workerId });
+            }
+          }}
+          stoppingWorkerId={stopWorker.variables?.workerId ?? null}
         />
 
         <ConversationMain
@@ -1165,6 +1209,12 @@ export function HomeApp() {
           selectedClarifications={selectedClarifications}
           answerClarification={answerClarification}
           conversationWorkerGroups={conversationWorkerGroups}
+          onStopWorker={(workerId) => {
+            if (selectedRunId) {
+              stopWorker.mutate({ runId: selectedRunId, workerId });
+            }
+          }}
+          stoppingWorkerId={stopWorker.variables?.workerId ?? null}
           emptyComposer={renderComposer("mt-6 w-full")}
         />
 
@@ -1187,6 +1237,12 @@ export function HomeApp() {
               agents={conversationAgents}
               preferredModel={selectedRun?.preferredWorkerModel ?? null}
               preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
+              onStopWorker={(workerId) => {
+                if (selectedRunId) {
+                  stopWorker.mutate({ runId: selectedRunId, workerId });
+                }
+              }}
+              stoppingWorkerId={stopWorker.variables?.workerId ?? null}
               onClose={() => setRightSidebarOpen(false)}
             />
           </div>

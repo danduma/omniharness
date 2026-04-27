@@ -120,6 +120,7 @@ describe("Supervisor worker spawn flow", () => {
       args: {
         type: "opencode",
         cwd: "/tmp/project",
+        title: "Main implementation",
         prompt: "start implementing",
         mode: "auto",
         purpose: "finish the task",
@@ -263,6 +264,8 @@ describe("Supervisor worker spawn flow", () => {
     const persistedWorker = await db.select().from(workers).where(eq(workers.id, `${runId}-worker-1`)).get();
     expect(persistedWorker?.runId).toBe(runId);
     expect(persistedWorker?.status).toBe("starting");
+    expect(persistedWorker?.title).toBe("Main implementation");
+    expect(persistedWorker?.initialPrompt).toBe("start implementing");
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
       type: "opencode",
       cwd: "/tmp/project",
@@ -284,7 +287,67 @@ describe("Supervisor worker spawn flow", () => {
     expect(spawnMessage?.content).toContain("Model: openai/gpt-5.4");
     expect(spawnMessage?.content).toContain("Effort: high");
     expect(spawnMessage?.content).toContain("Mode: full-access");
+    expect(spawnMessage?.content).toContain("Title: Main implementation");
     expect(spawnMessage?.content).toContain("Purpose: finish the task.");
+  });
+
+  it("blocks a second main implementation worker while another active main worker exists", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: `${runId}-worker-1`,
+      runId,
+      type: "opencode",
+      status: "working",
+      cwd: "/tmp/project",
+      title: "Main implementation",
+      initialPrompt: "implement the plan",
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-duplicate",
+      name: "worker_spawn",
+      args: {
+        type: "opencode",
+        cwd: "/tmp/project",
+        title: "Main implementation",
+        prompt: "implement the plan",
+        purpose: "Implement the plan",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    const allWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+    expect(allWorkers).toHaveLength(1);
+    const event = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+    expect(event?.eventType).toBe("worker_spawn_blocked");
+    expect(event?.details).toContain("already has active implementation worker");
   });
 
   it("reserves the worker row before awaiting bridge spawn", async () => {
@@ -424,6 +487,8 @@ describe("Supervisor worker spawn flow", () => {
       type: "claude",
       status: "working",
       cwd: "/tmp/project",
+      title: "Permission worker",
+      initialPrompt: "edit files",
       outputLog: "",
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -472,6 +537,8 @@ describe("Supervisor worker spawn flow", () => {
       type: "codex",
       status: "working",
       cwd: "/tmp/project",
+      title: "Cancel worker",
+      initialPrompt: "work until cancelled",
       outputLog: "",
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -524,6 +591,8 @@ describe("Supervisor worker spawn flow", () => {
       type: "codex",
       status: "working",
       cwd: "/tmp/project",
+      title: "Missing worker",
+      initialPrompt: "work until missing",
       outputLog: "",
       createdAt: new Date(),
       updatedAt: new Date(),

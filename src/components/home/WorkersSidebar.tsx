@@ -13,6 +13,8 @@ export interface WorkersSidebarProps {
   agents: AgentSnapshot[];
   preferredModel: string | null;
   preferredEffort: string | null;
+  onStopWorker?: (workerId: string) => void;
+  stoppingWorkerId?: string | null;
   onClose?: () => void;
 }
 
@@ -53,6 +55,8 @@ export function ConversationWorkerCard({
   defaultOpen,
   terminalHeightClass,
   fallbackPreview,
+  onStopWorker,
+  isStopping,
 }: {
   worker: ConversationWorkerRecord;
   agent?: AgentSnapshot | null;
@@ -61,6 +65,8 @@ export function ConversationWorkerCard({
   defaultOpen: boolean;
   terminalHeightClass: string;
   fallbackPreview?: string | null;
+  onStopWorker?: (workerId: string) => void;
+  isStopping?: boolean;
 }) {
   const configuredModel = agent?.requestedModel || preferredModel || null;
   const configuredEffort = agent?.requestedEffort || preferredEffort || null;
@@ -81,6 +87,7 @@ export function ConversationWorkerCard({
   return (
     <WorkerCard
       workerId={worker.id}
+      workerTitle={worker.title ?? null}
       agent={fallbackAgent}
       defaultOpen={defaultOpen}
       runtimeLabel={runtimeLabel}
@@ -89,11 +96,13 @@ export function ConversationWorkerCard({
       activeEffort={activeEffort}
       pendingPermissions={pendingPermissions}
       terminalHeightClass={terminalHeightClass}
+      onStopWorker={onStopWorker ? () => onStopWorker(worker.id) : undefined}
+      isStopping={isStopping}
     />
   );
 }
 
-export function WorkersSidebar({ workers, agents, preferredModel, preferredEffort, onClose }: WorkersSidebarProps) {
+export function WorkersSidebar({ workers, agents, preferredModel, preferredEffort, onStopWorker, stoppingWorkerId, onClose }: WorkersSidebarProps) {
   const [activeTab, setActiveTab] = useState<"active" | "finished">("active");
   const workerGroups = buildWorkerLists(workers);
   const agentsById = useMemo(
@@ -175,6 +184,8 @@ export function WorkersSidebar({ workers, agents, preferredModel, preferredEffor
                   preferredEffort={preferredEffort}
                   defaultOpen={activeTab === "active"}
                   terminalHeightClass="h-44"
+                  onStopWorker={onStopWorker}
+                  isStopping={stoppingWorkerId === worker.id}
                 />
               );
             })

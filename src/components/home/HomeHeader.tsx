@@ -50,6 +50,8 @@ interface HomeHeaderProps {
   setMobileWorkersOpen: (open: boolean) => void;
   selectedRunWorkers: ConversationWorkerRecord[];
   conversationAgents: AgentSnapshot[];
+  onStopWorker?: (workerId: string) => void;
+  stoppingWorkerId?: string | null;
 }
 
 export function HomeHeader({
@@ -94,6 +96,8 @@ export function HomeHeader({
   setMobileWorkersOpen,
   selectedRunWorkers,
   conversationAgents,
+  onStopWorker,
+  stoppingWorkerId,
 }: HomeHeaderProps) {
   return (
   <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border/50 px-3 sm:px-4">
@@ -190,6 +194,8 @@ export function HomeHeader({
             agents={selectedRunId && isImplementationConversation ? conversationAgents : []}
             preferredModel={selectedRun?.preferredWorkerModel ?? null}
             preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
+            onStopWorker={onStopWorker}
+            stoppingWorkerId={stoppingWorkerId}
             onClose={() => setMobileWorkersOpen(false)}
           />
         </SheetContent>

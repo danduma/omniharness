@@ -4,6 +4,7 @@ import { runs } from "@/server/db/schema";
 import { persistRunFailure } from "@/server/runs/failures";
 import { Supervisor } from "@/server/supervisor";
 import { stopRunObserver } from "./observer";
+import { acquireSupervisorWakeLease, releaseSupervisorWakeLease } from "./lease";
 
 const wakeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const wakeDeadlines = new Map<string, number>();
@@ -24,9 +25,15 @@ export async function executeSupervisorWake(runId: string) {
     return;
   }
 
+  const leaseId = await acquireSupervisorWakeLease(runId);
+  if (!leaseId) {
+    return;
+  }
+
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
   if (!run || run.mode !== "implementation" || run.status === "done" || run.status === "failed") {
     stopRunObserver(runId);
+    await releaseSupervisorWakeLease(runId, leaseId);
     return;
   }
 
@@ -47,6 +54,7 @@ export async function executeSupervisorWake(runId: string) {
     await persistRunFailure(runId, error);
   } finally {
     inFlight.delete(runId);
+    await releaseSupervisorWakeLease(runId, leaseId);
   }
 }
 
