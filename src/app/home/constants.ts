@@ -1,5 +1,6 @@
 import type { ComposerWorkerOption, WorkerModelCatalog, WorkerType } from "./types";
 
+export const PRODUCT_NAME = "OmniHarness";
 export const WORKER_OPTIONS: Array<{ value: WorkerType; label: string }> = [
   { value: "codex", label: "Codex" },
   { value: "claude", label: "Claude Code" },

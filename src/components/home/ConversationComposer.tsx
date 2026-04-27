@@ -217,36 +217,34 @@ export function ConversationComposer({
           </div>
         ) : null}
 
-        <div className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-          <div className="flex items-center gap-2">
-            {!selectedRunId ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={() => setShowAttachmentPicker(true)}
-                className={cn(
-                  "h-10 w-10 rounded-full",
-                  themeMode === "night"
-                    ? "text-muted-foreground hover:bg-background/45 hover:text-foreground"
-                    : "text-[#959595] hover:bg-black/[0.04] hover:text-[#666666]",
-                )}
-                aria-label="Attach files"
-              >
-                <Plus className="h-5 w-5" />
-              </Button>
-            ) : null}
-          </div>
+        <div className="mt-1 flex items-center gap-1 sm:gap-2">
+          {!selectedRunId ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowAttachmentPicker(true)}
+              className={cn(
+                "h-9 w-9 shrink-0 rounded-full sm:h-10 sm:w-10",
+                themeMode === "night"
+                  ? "text-muted-foreground hover:bg-background/45 hover:text-foreground"
+                  : "text-[#959595] hover:bg-black/[0.04] hover:text-[#666666]",
+              )}
+              aria-label="Attach files"
+            >
+              <Plus className="h-5 w-5" />
+            </Button>
+          ) : null}
 
-          <div className="ml-auto flex flex-wrap items-center gap-2">
+          <div className="ml-auto flex min-w-0 items-center justify-end gap-1 sm:gap-2">
             {shouldLockDirectWorker ? (
               <div className={cn(
-                "rounded-full border px-3 py-2 text-xs font-semibold",
+                "min-w-0 truncate rounded-full border px-2 py-1.5 text-xs font-semibold sm:px-3 sm:py-2",
                 themeMode === "night"
                   ? "border-border/60 bg-background/50 text-muted-foreground"
                   : "border-[#d8d8d8] bg-white/90 text-[#6a6a6a]",
               )}>
-                Direct worker: {lockedDirectWorkerLabel}
+                {lockedDirectWorkerLabel}
               </div>
             ) : (
               <ComposerSelect
@@ -279,7 +277,7 @@ export function ConversationComposer({
               size="icon"
               disabled={isComposerSubmitting || !command.trim()}
               className={cn(
-                "h-10 w-10 rounded-full transition-all",
+                "h-9 w-9 shrink-0 rounded-full transition-all sm:h-10 sm:w-10",
                 themeMode === "night"
                   ? "bg-foreground text-background hover:bg-foreground/90 disabled:bg-foreground/50"
                   : "bg-[#9d9d9d] text-white hover:bg-[#8b8b8b] disabled:bg-[#c9c9c9]",

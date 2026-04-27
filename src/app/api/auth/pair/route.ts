@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthConfigurationError, getPublicOriginFromUrl, isAuthEnabled } from "@/server/auth/config";
+import { getAuthConfigurationError, getPublicOriginFromRequest, isAuthEnabled } from "@/server/auth/config";
 import { createPairingToken, getPairingRecord } from "@/server/auth/pairing";
 import { insertAuthEvent } from "@/server/auth/audit";
 import { errorResponse } from "@/server/api-errors";
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     const deviceLabel = typeof body?.deviceLabel === "string" && body.deviceLabel.trim()
       ? body.deviceLabel.trim()
       : null;
-    const publicOrigin = getPublicOriginFromUrl(req.url);
+    const publicOrigin = getPublicOriginFromRequest(req.url, req.headers);
     const targetPath = targetRunId ? `/session/${targetRunId}` : "/";
     const pairing = await createPairingToken({
       creatorSessionId: auth.session!.id,

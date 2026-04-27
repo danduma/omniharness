@@ -79,3 +79,24 @@ export function getPublicOriginFromUrl(url: string) {
 
   return new URL(url).origin;
 }
+
+export function getPublicOriginFromRequest(url: string, headers: Headers) {
+  const configured = process.env.OMNIHARNESS_PUBLIC_ORIGIN?.trim();
+  if (configured) {
+    return configured.replace(/\/+$/, "");
+  }
+
+  const requestUrl = new URL(url);
+  const forwardedHost = firstHeaderValue(headers.get("x-forwarded-host"));
+  const host = forwardedHost || headers.get("host")?.trim();
+  if (!host) {
+    return requestUrl.origin;
+  }
+
+  const protocol = firstHeaderValue(headers.get("x-forwarded-proto")) || requestUrl.protocol.replace(/:$/, "");
+  return `${protocol}://${host}`;
+}
+
+function firstHeaderValue(value: string | null) {
+  return value?.split(",")[0]?.trim() || null;
+}

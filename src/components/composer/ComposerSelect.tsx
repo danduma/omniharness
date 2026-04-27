@@ -23,27 +23,32 @@ export function ComposerSelect<TValue extends string>({
   themeMode,
   ariaLabel,
 }: ComposerSelectProps<TValue>) {
+  const selectedLabel = options.find((option) => option.value === value)?.label ?? value;
+
   return (
-    <div className="relative">
+    <div
+      className={cn(
+        "relative inline-flex h-8 max-w-[6.8rem] shrink items-center justify-end gap-0.5 rounded-md pl-1 pr-0.5 text-xs outline-none transition-colors focus-within:ring-2 focus-within:ring-ring/35 sm:h-9 sm:max-w-none sm:gap-1 sm:pl-2 sm:pr-1 sm:text-sm",
+        themeMode === "night"
+          ? "text-muted-foreground hover:text-foreground"
+          : "text-[#8f8f8f] hover:text-[#5e5e5e]",
+      )}
+    >
+      <span className="min-w-0 truncate text-right">{selectedLabel}</span>
+      <ChevronDown className={cn(
+        "h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4",
+        themeMode === "night" ? "text-muted-foreground" : "text-[#9a9a9a]",
+      )} />
       <select
         aria-label={ariaLabel}
         value={value}
         onChange={(event) => onChange(event.target.value as TValue)}
-        className={cn(
-          "h-9 appearance-none border-0 bg-transparent pl-2 pr-5 text-right text-sm outline-none transition-colors",
-          themeMode === "night"
-            ? "text-muted-foreground hover:text-foreground"
-            : "text-[#8f8f8f] hover:text-[#5e5e5e]",
-        )}
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>{option.label}</option>
         ))}
       </select>
-      <ChevronDown className={cn(
-        "pointer-events-none absolute right-1.5 top-1/2 h-4 w-4 -translate-y-1/2",
-        themeMode === "night" ? "text-muted-foreground" : "text-[#9a9a9a]",
-      )} />
     </div>
   );
 }

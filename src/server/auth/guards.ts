@@ -19,7 +19,27 @@ export function isSameOriginRequest(request: NextRequest) {
     return true;
   }
 
-  return origin === new URL(request.url).origin;
+  let parsedOrigin: string;
+  try {
+    parsedOrigin = new URL(origin).origin;
+  } catch {
+    return false;
+  }
+
+  const requestUrl = new URL(request.url);
+  const allowedOrigins = new Set([requestUrl.origin]);
+  const host = firstHeaderValue(request.headers.get("x-forwarded-host")) || request.headers.get("host")?.trim();
+  const protocol = firstHeaderValue(request.headers.get("x-forwarded-proto")) || requestUrl.protocol.replace(/:$/, "");
+
+  if (host) {
+    allowedOrigins.add(`${protocol}://${host}`);
+  }
+
+  return allowedOrigins.has(parsedOrigin);
+}
+
+function firstHeaderValue(value: string | null) {
+  return value?.split(",")[0]?.trim() || null;
 }
 
 export async function requireApiSession(

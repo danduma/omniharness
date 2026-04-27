@@ -232,7 +232,7 @@ export function ConversationSidebar({
       </div>
 
       <div className="mt-auto shrink-0 border-t border-border/60 bg-background/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <Button variant="ghost" className="mb-1 h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground" onClick={openPairDeviceDialog}>
+        <Button variant="ghost" className="mb-1 hidden h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground lg:flex" onClick={openPairDeviceDialog}>
           <Smartphone className="mr-2 h-4 w-4" /> Connect Phone
         </Button>
         <Button variant="ghost" className="h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground" onClick={() => setShowSettings(true)}>

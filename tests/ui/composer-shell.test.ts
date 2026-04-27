@@ -2,10 +2,15 @@ import fs from "fs";
 import path from "path";
 import { test, expect } from "vitest";
 
-const pageSource = fs.readFileSync(
-  path.resolve(process.cwd(), "src/app/page.tsx"),
-  "utf8"
-);
+const pageSource = [
+  "src/app/page.tsx",
+  "src/app/home/HomeApp.tsx",
+  "src/app/home/constants.ts",
+  "src/app/home/types.ts",
+  "src/app/home/useHomeLifecycle.ts",
+  "src/app/home/useRunSelectionEffects.ts",
+  "src/components/home/ConversationComposer.tsx",
+].map((relativePath) => fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8")).join("\n");
 const composerSelectSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/composer/ComposerSelect.tsx"),
   "utf8"
@@ -21,7 +26,7 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain("px-4 pb-0.5 pt-3");
   expect(pageSource).toContain("min-h-[56px] w-full resize-none bg-transparent");
   expect(pageSource).toContain("rows={1}");
-  expect(composerSelectSource).toContain("appearance-none border-0 bg-transparent");
+  expect(composerSelectSource).toContain("selectedLabel");
   expect(pageSource).toContain("const WORKER_OPTIONS: Array<{ value: WorkerType; label: string }> = [");
   expect(pageSource).toContain('const COMPOSER_WORKER_OPTIONS: Array<{ value: ComposerWorkerOption; label: string }> = [');
   expect(pageSource).toContain('{ value: "auto", label: "Auto" }');
@@ -65,8 +70,8 @@ test("direct mode requires an explicit cli agent and tightens dropdown alignment
   expect(pageSource).toContain('if (activeComposerMode === "direct") {');
   expect(pageSource).toContain('const nextDirectWorker = selectedCliAgent === "auto" ? (autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex") : selectedCliAgent;');
   expect(pageSource).toContain('<ComposerSelect');
-  expect(composerSelectSource).toContain('"h-9 appearance-none border-0 bg-transparent pl-2 pr-5 text-right text-sm outline-none transition-colors"');
-  expect(composerSelectSource).toContain('"pointer-events-none absolute right-1.5 top-1/2 h-4 w-4 -translate-y-1/2"');
+  expect(composerSelectSource).toContain('"relative inline-flex h-8 max-w-[6.8rem] shrink items-center justify-end gap-0.5 rounded-md pl-1 pr-0.5 text-xs outline-none transition-colors focus-within:ring-2 focus-within:ring-ring/35 sm:h-9 sm:max-w-none sm:gap-1 sm:pl-2 sm:pr-1 sm:text-sm"');
+  expect(composerSelectSource).toContain('className="absolute inset-0 h-full w-full cursor-pointer opacity-0"');
 });
 
 test("composer exposes attachment entry and renders attached file chips", () => {
@@ -80,7 +85,12 @@ test("composer exposes attachment entry and renders attached file chips", () => 
   expect(pageSource).toContain("attachments,");
 });
 
-test("composer control row uses tighter centered spacing instead of bottom-heavy end alignment", () => {
-  expect(pageSource).toContain('className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2"');
+test("composer control row stays on one compact mobile row", () => {
+  expect(pageSource).toContain('className="mt-1 flex items-center gap-1 sm:gap-2"');
+  expect(pageSource).toContain('className="ml-auto flex min-w-0 items-center justify-end gap-1 sm:gap-2"');
+  expect(pageSource).toContain('"h-9 w-9 shrink-0 rounded-full transition-all sm:h-10 sm:w-10"');
+  expect(pageSource).not.toContain('className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2"');
+  expect(pageSource).not.toContain('className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1 sm:gap-2"');
+  expect(pageSource).not.toContain('className="ml-auto flex flex-wrap items-center gap-2"');
   expect(pageSource).not.toContain('className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2"');
 });

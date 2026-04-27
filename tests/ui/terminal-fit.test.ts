@@ -26,6 +26,8 @@ test("terminal renders thoughts behind a collapsible thinking summary", () => {
   expect(terminalSource).toContain("ThoughtActivity");
   expect(terminalSource).toContain("Thinking");
   expect(terminalSource).toContain("Thought for");
+  expect(terminalSource).toContain('return duration ? `Thought for ${duration}` : "Thought";');
+  expect(terminalSource).not.toContain('return "<1s";');
   expect(terminalSource).toContain("animate-pulse");
   expect(terminalSource).toContain("useState(activity.inProgress)");
 });
@@ -35,10 +37,14 @@ test("terminal keeps tool output compact and expandable", () => {
   expect(terminalSource).toContain("isTerminalToolStatus(activity.status)");
   expect(terminalSource).toContain("setDetailsOpen(false)");
   expect(terminalSource).toContain("setOutputExpanded(false)");
+  expect(terminalSource).toContain("shouldShowToolStatusBadge(activity.status)");
+  expect(terminalSource).toContain('return !["completed", "done"].includes(status);');
   expect(terminalSource).toContain("onClick={() => setDetailsOpen((open) => {");
   expect(terminalSource).toContain("line-clamp-[3]");
   expect(terminalSource).toContain("Click to expand full output");
   expect(terminalSource).toContain("ChevronDown");
+  expect(terminalSource).toContain('{formatActivityStatus(activity.status)}\n          </span>\n        ) : null}\n        <ChevronDown');
+  expect(terminalSource).toContain('{activity.inProgress ? <ThinkingDots variant={variant} /> : null}\n        <ChevronDown');
   expect(terminalSource).toContain("motion-safe:slide-in-from-top-1");
 });
 

@@ -76,6 +76,31 @@ describe("pairing routes", () => {
     }));
   });
 
+  it("uses the forwarded public origin for pairing links behind ngrok", async () => {
+    const desktop = await createAuthSession({
+      label: "Desktop",
+      userAgent: "Desktop browser",
+      authMethod: "password_login",
+    });
+
+    const createResponse = await pairCreateRoute(new NextRequest("http://0.0.0.0:3050/api/auth/pair", {
+      method: "POST",
+      headers: {
+        cookie: makeCookie(desktop.tokenValue),
+        host: "localhost:3050",
+        origin: "https://unsuspecting-lauri-unproscribable.ngrok-free.dev",
+        "x-forwarded-host": "unsuspecting-lauri-unproscribable.ngrok-free.dev",
+        "x-forwarded-proto": "https",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    }));
+
+    expect(createResponse.status).toBe(200);
+    const createdPayload = await createResponse.json();
+    expect(new URL(createdPayload.pairUrl).origin).toBe("https://unsuspecting-lauri-unproscribable.ngrok-free.dev");
+  });
+
   it("rejects reusing the same pairing token twice", async () => {
     const desktop = await createAuthSession({
       label: "Desktop",

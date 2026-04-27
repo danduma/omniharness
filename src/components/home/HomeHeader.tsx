@@ -2,6 +2,7 @@ import type React from "react";
 import { AlertTriangle, Menu, PanelRight, RotateCcw, Smartphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { PRODUCT_NAME } from "@/app/home/constants";
 import type { AgentSnapshot, MessageRecord, RunRecord, SidebarGroup, SidebarRun } from "@/app/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { ConversationSidebar } from "./ConversationSidebar";
@@ -103,7 +104,7 @@ export function HomeHeader({
         </Button>
         <SheetContent side="left" className="w-[min(22rem,calc(100vw-1rem))] p-0 lg:hidden" showCloseButton={false}>
           <SheetHeader className="border-b border-border/60">
-            <SheetTitle>Navigation</SheetTitle>
+            <SheetTitle>{PRODUCT_NAME}</SheetTitle>
           </SheetHeader>
           <ConversationSidebar
             filteredProjects={filteredProjects as SidebarGroup[]}
@@ -156,7 +157,7 @@ export function HomeHeader({
 
     <div className="flex items-center gap-2">
       {authEnabled ? (
-        <Button variant="outline" size="sm" className="h-8" onClick={openPairDeviceDialog}>
+        <Button variant="outline" size="sm" className="hidden h-8 lg:inline-flex" onClick={openPairDeviceDialog}>
           <Smartphone className="mr-2 h-4 w-4" /> Connect Phone
         </Button>
       ) : null}

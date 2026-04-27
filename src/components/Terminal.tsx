@@ -26,12 +26,12 @@ function isTerminalToolStatus(status: string) {
 
 function formatThoughtDuration(durationMs: number | undefined) {
   if (durationMs == null) {
-    return "0s";
+    return null;
   }
 
   const totalSeconds = Math.round(durationMs / 1000);
   if (totalSeconds < 1) {
-    return "<1s";
+    return null;
   }
   if (totalSeconds < 60) {
     return `${totalSeconds}s`;
@@ -40,6 +40,19 @@ function formatThoughtDuration(durationMs: number | undefined) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
+function formatThoughtLabel(activity: Extract<AgentActivityItem, { kind: "thinking" }>) {
+  if (activity.inProgress) {
+    return "Thinking";
+  }
+
+  const duration = formatThoughtDuration(activity.durationMs);
+  return duration ? `Thought for ${duration}` : "Thought";
+}
+
+function shouldShowToolStatusBadge(status: string) {
+  return !["completed", "done"].includes(status);
 }
 
 function statusBadgeClass(status: string, variant: "terminal" | "native") {
@@ -211,6 +224,18 @@ function ToolActivity({
         })}
         aria-expanded={detailsOpen}
       >
+        <span className={cn("text-[11px] font-semibold tracking-tight", variant === "native" ? "text-foreground" : "text-zinc-100")}>{activity.label}</span>
+        <span className={cn("font-mono text-[10px] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-zinc-300/95")}>{activity.title}</span>
+        {shouldShowToolStatusBadge(activity.status) ? (
+          <span
+            className={cn(
+              "rounded-full border px-1.5 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-[0.12em]",
+              statusBadgeClass(activity.status, variant),
+            )}
+          >
+            {formatActivityStatus(activity.status)}
+          </span>
+        ) : null}
         <ChevronDown
           className={cn(
             "h-3 w-3 shrink-0 transition-transform duration-200 ease-out",
@@ -219,16 +244,6 @@ function ToolActivity({
           )}
           aria-hidden="true"
         />
-        <span className={cn("text-[11px] font-semibold tracking-tight", variant === "native" ? "text-foreground" : "text-zinc-100")}>{activity.label}</span>
-        <span className={cn("font-mono text-[10px] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-zinc-300/95")}>{activity.title}</span>
-        <span
-          className={cn(
-            "rounded-full border px-1.5 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-[0.12em]",
-            statusBadgeClass(activity.status, variant),
-          )}
-        >
-          {formatActivityStatus(activity.status)}
-        </span>
       </button>
       {detailsOpen && (activity.inputPane || activity.outputPane) ? (
         <div className="space-y-2 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1 motion-safe:duration-200 motion-safe:ease-out">
@@ -270,6 +285,10 @@ function ThoughtActivity({
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
       >
+        <span className={cn("text-[11px] font-semibold tracking-tight", variant === "native" ? "text-muted-foreground" : "text-zinc-400")}>
+          {formatThoughtLabel(activity)}
+        </span>
+        {activity.inProgress ? <ThinkingDots variant={variant} /> : null}
         <ChevronDown
           className={cn(
             "h-3 w-3 shrink-0 transition-transform duration-200 ease-out",
@@ -278,10 +297,6 @@ function ThoughtActivity({
           )}
           aria-hidden="true"
         />
-        <span className={cn("text-[11px] font-semibold tracking-tight", variant === "native" ? "text-muted-foreground" : "text-zinc-400")}>
-          {activity.inProgress ? "Thinking" : `Thought for ${formatThoughtDuration(activity.durationMs)}`}
-        </span>
-        {activity.inProgress ? <ThinkingDots variant={variant} /> : null}
       </button>
       {open ? (
         <div className="space-y-1 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1 motion-safe:duration-200 motion-safe:ease-out">

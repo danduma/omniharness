@@ -8,10 +8,13 @@ const source = fs.readFileSync(
 );
 
 test("pair device dialog renders qr, copy-link, and refresh states", () => {
-  expect(source).toContain("Connect Phone");
+  expect(source).toContain("Connect phone");
   expect(source).toContain("QRCode.toDataURL");
   expect(source).toContain("availabilityError");
   expect(source).toContain("{availabilityError}");
+  expect(source).not.toContain("Device label");
+  expect(source).toContain("Secure pairing");
+  expect(source).toContain("Scan window");
   expect(source).toContain("Copy link");
   expect(source).toContain("Refresh code");
   expect(source).toContain('pairingStatus === "redeemed"');

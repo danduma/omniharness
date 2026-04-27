@@ -74,6 +74,9 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('style={{ width: rightSidebarWidth }}');
   expect(pageSource).toContain('aria-label="Resize workers sidebar"');
   expect(pageSource).toContain('onPointerDown={handleRightSidebarResizeStart}');
+  expect(pageSource).toContain('export const PRODUCT_NAME = "OmniHarness";');
+  expect(pageSource).toContain("<SheetTitle>{PRODUCT_NAME}</SheetTitle>");
+  expect(pageSource).not.toContain("<SheetTitle>Navigation</SheetTitle>");
   expect(pageSource).not.toContain('queryClient.removeQueries({ queryKey: ["conversation-agent", workerId], exact: true })');
   expect(workerCardSource).toContain('function renderContextMeter(fullnessPercent: number | null | undefined)');
   expect(workerCardSource).toContain("Permissions waiting");
@@ -204,6 +207,11 @@ test("header includes a persistent day night mode toggle beside the workers side
   expect(pageSource).not.toContain(">Night<");
 });
 
+test("phone pairing entry points are hidden on mobile layouts", () => {
+  expect(pageSource).toContain('className="hidden h-8 lg:inline-flex"');
+  expect(pageSource).toContain('className="mb-1 hidden h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground lg:flex"');
+});
+
 test("header syncs the active conversation path but only shows the cwd", () => {
   expect(pageSource).toContain('const [routeReady, setRouteReady] = useState(false)');
   expect(pageSource).toContain("const activeConversationCwd = selectedRun?.projectPath || activePlan?.path || draftProjectPath || null;");
@@ -278,7 +286,7 @@ test("new conversations expose a mode picker and only existing direct runs lock 
   expect(conversationModePickerSource).toContain("Implement plan");
   expect(conversationModePickerSource).toContain("Direct control");
   expect(pageSource).toContain('const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct"');
-  expect(pageSource).toContain("Direct worker:");
+  expect(pageSource).not.toContain("Direct worker:");
   expect(pageSource).toContain("{shouldLockDirectWorker ? (");
   expect(pageSource).toContain('mode: selectedConversationMode');
 });
