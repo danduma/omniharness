@@ -12,3 +12,7 @@ test("next config rewrites direct conversation ids onto the app shell", () => {
   expect(nextConfigSource).toContain('source: "/session/:runId([0-9a-fA-F-]{36})"');
   expect(nextConfigSource).toContain('destination: "/?run=:runId"');
 });
+
+test("next config keeps metadata in the initial head for PWA installability", () => {
+  expect(nextConfigSource).toContain("htmlLimitedBots: /.*/");
+});

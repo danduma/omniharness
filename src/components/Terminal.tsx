@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, LoaderCircle } from "lucide-react";
 import { buildAgentOutputActivity, formatActivityStatus, type AgentActivityItem, type AgentOutputEntry } from "@/lib/agent-output";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +19,13 @@ export interface AgentTerminalPayload {
 
 const TOOL_OUTPUT_PREVIEW_LINES = 3;
 const TERMINAL_TOOL_STATUSES = new Set(["completed", "done", "failed", "error", "cancelled"]);
+const TERMINAL_BOTTOM_THRESHOLD_PX = 4;
+
+export function shouldTerminalFollowLatest(
+  metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
+) {
+  return metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop <= TERMINAL_BOTTOM_THRESHOLD_PX;
+}
 
 function isTerminalToolStatus(status: string) {
   return TERMINAL_TOOL_STATUSES.has(status);
@@ -52,7 +59,11 @@ function formatThoughtLabel(activity: Extract<AgentActivityItem, { kind: "thinki
 }
 
 function shouldShowToolStatusBadge(status: string) {
-  return !["completed", "done"].includes(status);
+  return !["completed", "done", "in_progress", "working"].includes(status);
+}
+
+function shouldShowToolSpinner(status: string) {
+  return ["in_progress", "working"].includes(status);
 }
 
 function statusBadgeClass(status: string, variant: "terminal" | "native") {
@@ -140,8 +151,8 @@ function ActivityPane({
         "overflow-hidden",
         canExpand && "cursor-pointer",
         variant === "native"
-          ? "rounded-lg border border-border/60 bg-muted/25"
-          : "rounded-[0.85rem] border border-white/10 bg-[#111318] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
+          ? "rounded border border-border/60 bg-muted/25"
+          : "rounded border border-white/10 bg-[#111318] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
       )}
       onClick={canExpand ? onClick : undefined}
       role={canExpand ? "button" : undefined}
@@ -226,6 +237,15 @@ function ToolActivity({
       >
         <span className={cn("text-[11px] font-semibold tracking-tight", variant === "native" ? "text-foreground" : "text-zinc-100")}>{activity.label}</span>
         <span className={cn("font-mono text-[10px] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-zinc-300/95")}>{activity.title}</span>
+        {shouldShowToolSpinner(activity.status) ? (
+          <LoaderCircle
+            className={cn(
+              "h-3 w-3 shrink-0 animate-spin",
+              variant === "native" ? "text-muted-foreground" : "text-zinc-400",
+            )}
+            aria-label={formatActivityStatus(activity.status)}
+          />
+        ) : null}
         {shouldShowToolStatusBadge(activity.status) ? (
           <span
             className={cn(
@@ -347,6 +367,7 @@ function ActivityRow({ activity, variant }: { activity: AgentActivityItem; varia
 
 export function Terminal({ agent, variant = "terminal", className }: TerminalProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const shouldFollowLatestRef = useRef(true);
 
   const activity = useMemo(
     () => buildAgentOutputActivity({
@@ -359,7 +380,7 @@ export function Terminal({ agent, variant = "terminal", className }: TerminalPro
 
   useEffect(() => {
     const container = scrollRef.current;
-    if (!container) {
+    if (!container || !shouldFollowLatestRef.current) {
       return;
     }
     container.scrollTop = container.scrollHeight;
@@ -375,6 +396,9 @@ export function Terminal({ agent, variant = "terminal", className }: TerminalPro
     )}>
       <div
         ref={scrollRef}
+        onScroll={(event) => {
+          shouldFollowLatestRef.current = shouldTerminalFollowLatest(event.currentTarget);
+        }}
         className={cn(
           variant === "native"
             ? "overflow-visible px-1 py-2"

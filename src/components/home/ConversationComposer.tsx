@@ -1,6 +1,7 @@
 import type React from "react";
 import { ArrowUp, LoaderCircle, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ComposerModelPicker } from "@/components/composer/ComposerModelPicker";
 import { ComposerSelect } from "@/components/composer/ComposerSelect";
 import { ConversationModePicker, type ConversationModeOption } from "@/components/ConversationModePicker";
 import { EFFORT_OPTIONS } from "@/app/home/constants";
@@ -256,8 +257,7 @@ export function ConversationComposer({
               />
             )}
 
-            <ComposerSelect
-              ariaLabel="Worker model"
+            <ComposerModelPicker
               value={selectedModel}
               options={activeWorkerModelOptions}
               onChange={setSelectedModel}

@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { test, expect } from "vitest";
+import { shouldTerminalFollowLatest } from "@/components/Terminal";
 
 const terminalSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/Terminal.tsx"),
@@ -38,11 +39,19 @@ test("terminal keeps tool output compact and expandable", () => {
   expect(terminalSource).toContain("setDetailsOpen(false)");
   expect(terminalSource).toContain("setOutputExpanded(false)");
   expect(terminalSource).toContain("shouldShowToolStatusBadge(activity.status)");
-  expect(terminalSource).toContain('return !["completed", "done"].includes(status);');
+  expect(terminalSource).toContain("shouldShowToolSpinner(activity.status)");
+  expect(terminalSource).toContain('return !["completed", "done", "in_progress", "working"].includes(status);');
+  expect(terminalSource).toContain('return ["in_progress", "working"].includes(status);');
+  expect(terminalSource).toContain("<LoaderCircle");
+  expect(terminalSource).toContain('"h-3 w-3 shrink-0 animate-spin"');
   expect(terminalSource).toContain("onClick={() => setDetailsOpen((open) => {");
   expect(terminalSource).toContain("line-clamp-[3]");
   expect(terminalSource).toContain("Click to expand full output");
   expect(terminalSource).toContain("ChevronDown");
+  expect(terminalSource).toContain('variant === "native"\n          ? "rounded border border-border/60 bg-muted/25"\n          : "rounded border border-white/10 bg-[#111318]');
+  expect(terminalSource).not.toContain('rounded-[0.85rem] border border-white/10 bg-[#111318]');
+  expect(terminalSource).not.toContain('rounded-lg border border-border/60 bg-muted/25');
+  expect(terminalSource).toContain('{shouldShowToolSpinner(activity.status) ? (');
   expect(terminalSource).toContain('{formatActivityStatus(activity.status)}\n          </span>\n        ) : null}\n        <ChevronDown');
   expect(terminalSource).toContain('{activity.inProgress ? <ThinkingDots variant={variant} /> : null}\n        <ChevronDown');
   expect(terminalSource).toContain("motion-safe:slide-in-from-top-1");
@@ -60,4 +69,18 @@ test("terminal surfaces fetch failures in the frontend instead of silently dropp
   expect(terminalSource).not.toContain("useQuery({");
   expect(terminalSource).not.toContain("refetchInterval: 2000");
   expect(terminalSource).not.toContain("normalizeAppError(error).message");
+});
+
+test("terminal only follows live output while the viewport is already near the bottom", () => {
+  expect(shouldTerminalFollowLatest({
+    scrollTop: 700,
+    clientHeight: 300,
+    scrollHeight: 1000,
+  })).toBe(true);
+
+  expect(shouldTerminalFollowLatest({
+    scrollTop: 690,
+    clientHeight: 300,
+    scrollHeight: 1000,
+  })).toBe(false);
 });

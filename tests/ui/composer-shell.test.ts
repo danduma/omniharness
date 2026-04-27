@@ -15,6 +15,10 @@ const composerSelectSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/composer/ComposerSelect.tsx"),
   "utf8"
 );
+const composerModelPickerSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/components/composer/ComposerModelPicker.tsx"),
+  "utf8"
+);
 
 test("composer uses a filled textarea shell with inline cli agent, model, and effort controls", () => {
   expect(pageSource).toContain('const [selectedCliAgent, setSelectedCliAgent] = useState<ComposerWorkerOption>("auto")');
@@ -26,7 +30,15 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain("px-4 pb-0.5 pt-3");
   expect(pageSource).toContain("min-h-[56px] w-full resize-none bg-transparent");
   expect(pageSource).toContain("rows={1}");
-  expect(composerSelectSource).toContain("selectedLabel");
+  expect(composerSelectSource).toContain("<select");
+  expect(composerSelectSource).not.toContain("selectedLabel");
+  expect(composerSelectSource).not.toContain("opacity-0");
+  expect(composerSelectSource).not.toContain("ChevronDown");
+  expect(pageSource).toContain("<ComposerModelPicker");
+  expect(pageSource).toContain('ariaLabel="Worker effort"');
+  expect(composerModelPickerSource).toContain("Choose model");
+  expect(composerModelPickerSource).toContain('side="bottom"');
+  expect(composerModelPickerSource).toContain("Search models");
   expect(pageSource).toContain("const WORKER_OPTIONS: Array<{ value: WorkerType; label: string }> = [");
   expect(pageSource).toContain('const COMPOSER_WORKER_OPTIONS: Array<{ value: ComposerWorkerOption; label: string }> = [');
   expect(pageSource).toContain('{ value: "auto", label: "Auto" }');
@@ -58,6 +70,7 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_EFFORT_STORAGE_KEY, selectedEffort)');
   expect(pageSource).toContain("const activeWorkerModelOptions = useMemo(");
   expect(pageSource).toContain("options={activeWorkerModelOptions}");
+  expect(composerModelPickerSource).toContain("filteredOptions.map");
   expect(pageSource).not.toContain('if (selectedCliAgent !== "auto") {\n      setSelectedCliAgent("auto");');
   expect(pageSource).toContain('const [hydratedRunSelectionId, setHydratedRunSelectionId] = useState<string | null>(null)');
   expect(pageSource).toContain('if (!selectedRunId || !selectedRun) {');
@@ -70,8 +83,8 @@ test("direct mode requires an explicit cli agent and tightens dropdown alignment
   expect(pageSource).toContain('if (activeComposerMode === "direct") {');
   expect(pageSource).toContain('const nextDirectWorker = selectedCliAgent === "auto" ? (autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex") : selectedCliAgent;');
   expect(pageSource).toContain('<ComposerSelect');
-  expect(composerSelectSource).toContain('"relative inline-flex h-8 max-w-[6.8rem] shrink items-center justify-end gap-0.5 rounded-md pl-1 pr-0.5 text-xs outline-none transition-colors focus-within:ring-2 focus-within:ring-ring/35 sm:h-9 sm:max-w-none sm:gap-1 sm:pl-2 sm:pr-1 sm:text-sm"');
-  expect(composerSelectSource).toContain('className="absolute inset-0 h-full w-full cursor-pointer opacity-0"');
+  expect(pageSource).toContain('<ComposerModelPicker');
+  expect(composerSelectSource).toContain('"h-8 max-w-[6.8rem] shrink truncate appearance-none border-0 bg-transparent px-1 text-right text-xs outline-none transition-colors sm:h-9 sm:max-w-none sm:px-2 sm:text-sm"');
 });
 
 test("composer exposes attachment entry and renders attached file chips", () => {

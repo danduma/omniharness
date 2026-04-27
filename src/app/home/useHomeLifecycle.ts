@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type React from "react";
 import { type UseMutationResult } from "@tanstack/react-query";
 import { type AppErrorDescriptor, mergeAppErrors } from "@/lib/app-errors";
@@ -41,6 +41,7 @@ interface UseHomeLifecycleProps {
   selectedEffort: string;
   themeMode: "day" | "night";
   setThemeMode: React.Dispatch<React.SetStateAction<"day" | "night">>;
+  filterEventStreamState?: (state: EventStreamState) => EventStreamState;
 }
 
 export function useHomeLifecycle({
@@ -77,7 +78,10 @@ export function useHomeLifecycle({
   selectedEffort,
   themeMode,
   setThemeMode,
+  filterEventStreamState,
 }: UseHomeLifecycleProps) {
+  const didMountThemeEffectRef = useRef(false);
+
   useEffect(() => {
     if (!appUnlocked) {
       setHasReceivedInitialEventStreamPayload(false);
@@ -88,11 +92,12 @@ export function useHomeLifecycle({
     eventSource.addEventListener("update", (e) => {
       try {
         const data = JSON.parse(e.data);
-        setState(data);
+        const nextState = filterEventStreamState?.(data) ?? data;
+        setState(nextState);
         setHasReceivedInitialEventStreamPayload(true);
         setRuntimeErrors((current) => mergeAppErrors(
           current.filter((error) => error.source !== "Events"),
-          (data.frontendErrors ?? []).map((error: unknown) => buildInlineError(error)),
+          (nextState.frontendErrors ?? []).map((error: unknown) => buildInlineError(error)),
         ));
       } catch {
         setRuntimeErrors((current) => mergeAppErrors(current, [{
@@ -132,7 +137,7 @@ export function useHomeLifecycle({
     return () => {
       eventSource.close();
     };
-  }, [appUnlocked]);
+  }, [appUnlocked, filterEventStreamState]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -328,6 +333,11 @@ export function useHomeLifecycle({
 
   useEffect(() => {
     if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!didMountThemeEffectRef.current) {
+      didMountThemeEffectRef.current = true;
       return;
     }
 

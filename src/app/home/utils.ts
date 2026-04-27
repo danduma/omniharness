@@ -1,13 +1,53 @@
 import { type AppErrorDescriptor, normalizeAppError } from "@/lib/app-errors";
 import { formatHumanDuration } from "@/lib/conversation-workers";
 import { WORKER_OPTIONS, FALLBACK_WORKER_MODEL_OPTIONS } from "./constants";
-import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, RunRecord, WorkerModelCatalog, WorkerType } from "./types";
+import type { AgentSnapshot, EventStreamState, ExecutionEventRecord, MessageRecord, PlanItemRecord, PlanRecord, RunRecord, WorkerModelCatalog, WorkerType } from "./types";
 
 export function buildInlineError(
   error: unknown,
   fallback: Partial<AppErrorDescriptor> = {},
 ): AppErrorDescriptor {
   return normalizeAppError(error, fallback);
+}
+
+export function removeRunFromHomeState(current: EventStreamState, runId: string): EventStreamState {
+  const runToDelete = (current.runs || []).find((run: RunRecord) => run.id === runId);
+  const workerIds = (current.workers || [])
+    .filter((worker: { runId: string; id: string }) => worker.runId === runId)
+    .map((worker: { id: string }) => worker.id);
+
+  return {
+    ...current,
+    runs: (current.runs || []).filter((run: RunRecord) => run.id !== runId),
+    messages: (current.messages || []).filter((message: { runId: string }) => message.runId !== runId),
+    workers: (current.workers || []).filter((worker: { runId: string }) => worker.runId !== runId),
+    clarifications: (current.clarifications || []).filter((item: { runId: string }) => item.runId !== runId),
+    validationRuns: (current.validationRuns || []).filter((item: { runId: string }) => item.runId !== runId),
+    executionEvents: (current.executionEvents || []).filter((item: { runId: string; workerId?: string | null }) =>
+      item.runId !== runId && (!item.workerId || !workerIds.includes(item.workerId))
+    ),
+    plans: runToDelete
+      ? (current.plans || []).filter((plan: PlanRecord) => plan.id !== runToDelete.planId)
+      : current.plans,
+    planItems: runToDelete
+      ? (current.planItems || []).filter((item: PlanItemRecord) => item.planId !== runToDelete.planId)
+      : current.planItems,
+  };
+}
+
+export function filterOptimisticallyDeletedRuns(
+  current: EventStreamState,
+  pendingDeletedRunIds: ReadonlySet<string>,
+): EventStreamState {
+  if (pendingDeletedRunIds.size === 0) {
+    return current;
+  }
+
+  let next = current;
+  for (const runId of pendingDeletedRunIds) {
+    next = removeRunFromHomeState(next, runId);
+  }
+  return next;
 }
 
 export function stripRunFailurePrefix(value: string | null | undefined) {

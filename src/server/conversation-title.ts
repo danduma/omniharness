@@ -1,12 +1,16 @@
 import { TokenJS } from "token.js";
 import { db } from "@/server/db";
-import { executionEvents, runs } from "@/server/db/schema";
+import { executionEvents, runs, settings } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { CONVERSATION_TITLE_SYSTEM_PROMPT } from "@/server/prompts";
 import { formatErrorMessage } from "@/server/runs/failures";
-
-const tokenjs = new TokenJS();
+import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
+import {
+  configureSupervisorModel,
+  getSupervisorModelConfig,
+  validateSupervisorModelConfig,
+} from "@/server/supervisor/model-config";
 
 function fallbackTitle(command: string) {
   const cleaned = command
@@ -31,9 +35,22 @@ export async function generateConversationTitle(command: string) {
   }
 
   try {
+    const allSettings = await db.select().from(settings);
+    const { env: envParams, decryptionFailures } = hydrateRuntimeEnvFromSettings(allSettings);
+    const env = { ...process.env, ...envParams };
+    const config = validateSupervisorModelConfig(
+      getSupervisorModelConfig(env),
+      decryptionFailures,
+    );
+    const tokenjs = new TokenJS({
+      apiKey: config.apiKey,
+      baseURL: config.baseURL,
+    });
+    const llmConfig = configureSupervisorModel(env, tokenjs);
+
     const completion = await tokenjs.chat.completions.create({
-      provider: "openai",
-      model: "gpt-4o-mini",
+      provider: llmConfig.provider as never,
+      model: llmConfig.model as never,
       messages: [
         {
           role: "system",

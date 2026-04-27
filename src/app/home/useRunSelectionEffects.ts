@@ -1,9 +1,17 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type React from "react";
 import { getRunLatestMessageTimestamp } from "@/lib/conversation-state";
 import type { ConversationModeOption } from "@/components/ConversationModePicker";
 import type { ComposerWorkerOption, MessageRecord, RunRecord, WorkerType } from "./types";
 import { parseWorkerType, resolveComposerEffortLabel, resolveComposerModelValue } from "./utils";
+
+const CONVERSATION_BOTTOM_THRESHOLD_PX = 4;
+
+export function shouldConversationFollowLatest(
+  metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
+) {
+  return metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop <= CONVERSATION_BOTTOM_THRESHOLD_PX;
+}
 
 interface UseRunSelectionEffectsProps {
   scrollRef: React.RefObject<HTMLDivElement | null>;
@@ -50,13 +58,40 @@ export function useRunSelectionEffects({
   setApiKeys,
   setReadMarkers,
 }: UseRunSelectionEffectsProps) {
-  // Auto-scroll chat to bottom
+  const shouldFollowLatestRef = useRef(true);
+  const previousSelectedRunIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (scrollRef.current) {
-      const el = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]');
-      if (el) el.scrollTop = el.scrollHeight;
+    const viewport = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLDivElement | null;
+    if (!viewport) {
+      return;
     }
-  }, [state.messages, selectedRunId, state.agents]);
+
+    const updateFollowState = () => {
+      shouldFollowLatestRef.current = shouldConversationFollowLatest(viewport);
+    };
+
+    updateFollowState();
+    viewport.addEventListener("scroll", updateFollowState, { passive: true });
+    return () => viewport.removeEventListener("scroll", updateFollowState);
+  }, [scrollRef, selectedRunId]);
+
+  useEffect(() => {
+    const viewport = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLDivElement | null;
+    if (!viewport) {
+      return;
+    }
+
+    const runChanged = previousSelectedRunIdRef.current !== selectedRunId;
+    previousSelectedRunIdRef.current = selectedRunId;
+
+    if (!runChanged && !shouldFollowLatestRef.current) {
+      return;
+    }
+
+    viewport.scrollTop = viewport.scrollHeight;
+    shouldFollowLatestRef.current = true;
+  }, [scrollRef, state.messages, selectedRunId, state.agents]);
 
   useEffect(() => {
     if (!selectedRunId || !selectedRun) {

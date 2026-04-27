@@ -1,0 +1,28 @@
+{
+  "id": "/",
+  "name": "OmniHarness",
+  "short_name": "OmniHarness",
+  "description": "Supervised multi-agent coding from your phone.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
+  "orientation": "any",
+  "background_color": "#f7f5f1",
+  "theme_color": "#2f6652",
+  "prefer_related_applications": false,
+  "categories": ["productivity", "developer", "utilities"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

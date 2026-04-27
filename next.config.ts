@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ["omni.longevipedia.net"],
+  htmlLimitedBots: /.*/,
   async rewrites() {
     return [
       {

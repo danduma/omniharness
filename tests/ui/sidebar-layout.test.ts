@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { test, expect } from "vitest";
+import { shouldConversationFollowLatest } from "@/app/home/useRunSelectionEffects";
 
 const readSource = (relativePath: string) => fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 const pageSource = [
@@ -102,6 +103,20 @@ test("worker detail renders from streamed agent state instead of per-worker poll
   expect(pageSource).toContain('const liveAgent = liveAgentsById.get(worker.id);');
 });
 
+test("conversation output only follows live worker updates when already near the bottom", () => {
+  expect(shouldConversationFollowLatest({
+    scrollTop: 696,
+    clientHeight: 300,
+    scrollHeight: 1000,
+  })).toBe(true);
+
+  expect(shouldConversationFollowLatest({
+    scrollTop: 680,
+    clientHeight: 300,
+    scrollHeight: 1000,
+  })).toBe(false);
+});
+
 test("main conversation only renders active worker panes while the sidebar keeps finished workers", () => {
   expect(pageSource).toContain('{isImplementationConversation && conversationWorkerGroups.active.length > 0 && (');
   expect(pageSource).toContain('{conversationWorkerGroups.active.map((worker) => {');
@@ -195,7 +210,9 @@ test("settings render as a centered app modal with supervisor llm controls", () 
 
 test("header includes a persistent day night mode toggle beside the workers sidebar button", () => {
   expect(pageSource).toContain('const [themeMode, setThemeMode] = useState<"day" | "night">("day")');
+  expect(pageSource).toContain("const didMountThemeEffectRef = useRef(false)");
   expect(pageSource).toContain('window.localStorage.getItem("omni-theme-mode")');
+  expect(pageSource).toContain("if (!didMountThemeEffectRef.current)");
   expect(pageSource).toContain('window.localStorage.setItem("omni-theme-mode", themeMode)');
   expect(pageSource).toContain('document.documentElement.classList.toggle("dark", themeMode === "night")');
   expect(pageSource).toContain('aria-label={themeMode === "night" ? "Switch to day mode" : "Switch to night mode"}');
@@ -300,6 +317,10 @@ test("starting a project-scoped conversation keeps the composer empty", () => {
 test("empty state centers the composer with the welcome stack instead of docking it to the bottom", () => {
   expect(pageSource).toContain("const renderComposer = (");
   expect(pageSource).toContain('{selectedRunId ? (');
+  expect(pageSource).toContain("What shall we build in {welcomeRepoName}?");
+  expect(pageSource).toContain("const welcomeRepoName = resolveRepoName(currentProjectScope)");
   expect(pageSource).toContain('renderComposer("mt-6 w-full")');
   expect(pageSource).toContain('{selectedRunId ? renderComposer("w-full") : null}');
+  expect(pageSource).not.toContain("Welcome to OmniHarness");
+  expect(pageSource).not.toContain("{getConversationModeCopy(selectedConversationMode).description}");
 });

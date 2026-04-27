@@ -287,6 +287,50 @@ describe("Supervisor worker spawn flow", () => {
     expect(spawnMessage?.content).toContain("Purpose: finish the task.");
   });
 
+  it("reserves the worker row before awaiting bridge spawn", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const pendingSpawn = deferred<{ name: string; state: string; sessionId: string; sessionMode: string }>();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockSpawnAgent.mockReturnValue(pendingSpawn.promise);
+
+    const { Supervisor } = await import("@/server/supervisor");
+    const runPromise = new Supervisor({ runId }).run();
+
+    await vi.waitFor(() => {
+      expect(mockSpawnAgent).toHaveBeenCalled();
+    });
+
+    const reservedWorker = await db.select().from(workers).where(eq(workers.id, `${runId}-worker-1`)).get();
+    expect(reservedWorker?.status).toBe("starting");
+
+    pendingSpawn.resolve({
+      name: `${runId}-worker-1`,
+      state: "starting",
+      sessionId: "session-1",
+      sessionMode: "full-access",
+    });
+
+    await expect(runPromise).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+  });
+
   it("lets settings disable default yolo mode for newly spawned workers", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

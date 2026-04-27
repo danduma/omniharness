@@ -7,7 +7,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { ClarificationPanel } from "@/components/ClarificationPanel";
 import { AgentSurface } from "@/components/AgentSurface";
 import { Terminal } from "@/components/Terminal";
-import { getConversationModeCopy, type ConversationModeOption } from "@/components/ConversationModePicker";
 import { PlanningArtifactsPanel } from "@/components/PlanningArtifactsPanel";
 import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
 import { type ConversationWorkerRecord } from "@/lib/conversation-workers";
@@ -102,7 +101,7 @@ interface ConversationMainProps {
   scrollRef: React.RefObject<HTMLDivElement | null>;
   selectedRunId: string | null;
   selectedRun: RunRecord | null;
-  selectedConversationMode: ConversationModeOption;
+  welcomeRepoName: string;
   isDirectConversation: boolean;
   isPlanningConversation: boolean;
   isImplementationConversation: boolean;
@@ -147,7 +146,7 @@ export function ConversationMain({
   scrollRef,
   selectedRunId,
   selectedRun,
-  selectedConversationMode,
+  welcomeRepoName,
   isDirectConversation,
   isPlanningConversation,
   isImplementationConversation,
@@ -486,10 +485,7 @@ export function ConversationMain({
         <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
           <Blocks className="h-8 w-8 text-primary" />
         </div>
-        <h1 className="mb-2 text-2xl font-semibold">Welcome to OmniHarness</h1>
-        <p className="mb-8 max-w-md text-sm text-muted-foreground">
-          {getConversationModeCopy(selectedConversationMode).description}
-        </p>
+        <h1 className="mb-2 text-2xl font-semibold">What shall we build in {welcomeRepoName}?</h1>
         {emptyComposer}
       </div>
     )}

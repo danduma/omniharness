@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#2f6652" />
+    <title>OmniHarness Offline</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: oklch(96.8% 0.012 82);
+        --text: oklch(23% 0.025 152);
+        --muted: oklch(43% 0.026 152);
+        --accent: oklch(47% 0.086 158);
+        --line: oklch(82% 0.018 90);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      main {
+        width: min(100%, 420px);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 24px;
+        background: oklch(99% 0.006 82);
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 1.25rem;
+        line-height: 1.2;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      a {
+        color: var(--accent);
+        font-weight: 650;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>OmniHarness is offline</h1>
+      <p>
+        Reconnect to your OmniHarness instance, then
+        <a href="/">return to the app</a>.
+      </p>
+    </main>
+  </body>
+</html>

@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { BootShell } from "@/components/BootShell";
 import { FileAttachmentPickerDialog, type AttachmentItem } from "@/components/FileAttachmentPickerDialog";
@@ -21,36 +21,20 @@ import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
 import { COMPOSER_WORKER_OPTIONS, DEFAULT_ALLOWED_WORKER_TYPES, WORKER_OPTIONS } from "./constants";
-import type { AgentSnapshot, AuthSessionResponse, ClarificationRecord, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, LlmProfileTab, MessageRecord, NoticeDescriptor, PlanItemRecord, PlanRecord, ProjectFilesResponse, RunRecord, SettingsResponse, SettingsTab, SidebarGroup, SidebarRun, WorkerCatalogResponse, WorkerType } from "./types";
-import { buildInlineError, extractWorkerFailureDetail, getWorkerModelOptions, parseProjectList, parseWorkerType, parseWorkerTypes, resolveSelectedWorkerModel, stripRunFailurePrefix, summarizeThought } from "./utils";
+import type { AgentSnapshot, AuthSessionResponse, ClarificationRecord, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, LlmProfileTab, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, RunRecord, SettingsResponse, SettingsTab, SidebarGroup, SidebarRun, WorkerCatalogResponse, WorkerType } from "./types";
+import { buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getWorkerModelOptions, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, stripRunFailurePrefix, summarizeThought } from "./utils";
 import { useAppErrors } from "./useAppErrors";
 import { useConversationExecutionStatus } from "./useConversationExecutionStatus";
 import { useHomeLifecycle } from "./useHomeLifecycle";
 import { useRunSelectionEffects } from "./useRunSelectionEffects";
 
-function removeRunFromHomeState(current: EventStreamState, runId: string): EventStreamState {
-  const runToDelete = (current.runs || []).find((run: RunRecord) => run.id === runId);
-  const workerIds = (current.workers || [])
-    .filter((worker: { runId: string; id: string }) => worker.runId === runId)
-    .map((worker: { id: string }) => worker.id);
+function resolveRepoName(projectPath: string | null) {
+  const normalized = projectPath?.trim().replace(/[/\\]+$/, "");
+  if (!normalized) {
+    return "omniharness";
+  }
 
-  return {
-    ...current,
-    runs: (current.runs || []).filter((run: RunRecord) => run.id !== runId),
-    messages: (current.messages || []).filter((message: { runId: string }) => message.runId !== runId),
-    workers: (current.workers || []).filter((worker: { runId: string }) => worker.runId !== runId),
-    clarifications: (current.clarifications || []).filter((item: { runId: string }) => item.runId !== runId),
-    validationRuns: (current.validationRuns || []).filter((item: { runId: string }) => item.runId !== runId),
-    executionEvents: (current.executionEvents || []).filter((item: { runId: string; workerId?: string | null }) =>
-      item.runId !== runId && (!item.workerId || !workerIds.includes(item.workerId))
-    ),
-    plans: runToDelete
-      ? (current.plans || []).filter((plan: PlanRecord) => plan.id !== runToDelete.planId)
-      : current.plans,
-    planItems: runToDelete
-      ? (current.planItems || []).filter((item: PlanItemRecord) => item.planId !== runToDelete.planId)
-      : current.planItems,
-  };
+  return normalized.split(/[/\\]/).filter(Boolean).pop() || "omniharness";
 }
 
 export function HomeApp() {
@@ -125,6 +109,7 @@ export function HomeApp() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const commandInputRef = useRef<HTMLTextAreaElement>(null);
+  const pendingDeletedRunIdsRef = useRef<Set<string>>(new Set());
 
   const sessionQuery = useQuery<AuthSessionResponse>({
     queryKey: ["auth-session"],
@@ -234,7 +219,23 @@ export function HomeApp() {
 
   const explicitProjects = useMemo(() => parseProjectList(apiKeys.PROJECTS), [apiKeys.PROJECTS]);
 
-  useHomeLifecycle({ appUnlocked, setHasReceivedInitialEventStreamPayload, setState, setRuntimeErrors, routeReady, setRouteReady, authEnabled, authConfigurationError, pairTokenFromUrl, setPairTokenFromUrl, redeemPairMutation, pairRedeemAttempted, setPairRedeemAttempted, selectedRunId, setSelectedRunId, draftProjectPath, setDraftProjectPath, setSelectedConversationMode, setSelectedCliAgent, setSelectedModel, setSelectedEffort, setReadMarkers, readMarkers, rightSidebarWidth, setRightSidebarWidth, isResizingRightSidebar, setIsResizingRightSidebar, selectedConversationMode, selectedCliAgent, selectedModel, selectedEffort, themeMode, setThemeMode });
+  const filterDeletedRunsFromEventState = useCallback((incomingState: EventStreamState) => {
+    const pendingDeletedRunIds = pendingDeletedRunIdsRef.current;
+    if (pendingDeletedRunIds.size === 0) {
+      return incomingState;
+    }
+
+    const nextState = filterOptimisticallyDeletedRuns(incomingState, pendingDeletedRunIds);
+    const serverRunIds = new Set((incomingState.runs || []).map((run) => run.id));
+    for (const runId of Array.from(pendingDeletedRunIds)) {
+      if (!serverRunIds.has(runId)) {
+        pendingDeletedRunIds.delete(runId);
+      }
+    }
+    return nextState;
+  }, []);
+
+  useHomeLifecycle({ appUnlocked, setHasReceivedInitialEventStreamPayload, setState, setRuntimeErrors, routeReady, setRouteReady, authEnabled, authConfigurationError, pairTokenFromUrl, setPairTokenFromUrl, redeemPairMutation, pairRedeemAttempted, setPairRedeemAttempted, selectedRunId, setSelectedRunId, draftProjectPath, setDraftProjectPath, setSelectedConversationMode, setSelectedCliAgent, setSelectedModel, setSelectedEffort, setReadMarkers, readMarkers, rightSidebarWidth, setRightSidebarWidth, isResizingRightSidebar, setIsResizingRightSidebar, selectedConversationMode, selectedCliAgent, selectedModel, selectedEffort, themeMode, setThemeMode, filterEventStreamState: filterDeletedRunsFromEventState });
   const isHydratingConversations = appUnlocked && !hasReceivedInitialEventStreamPayload;
 
   useEffect(() => {
@@ -303,6 +304,7 @@ export function HomeApp() {
       const previousRenamingRunId = renamingRunId;
       const previousRenameValue = renameValue;
 
+      pendingDeletedRunIdsRef.current.add(variables.runId);
       setState((current: typeof state) => removeRunFromHomeState(current, variables.runId));
 
       if (selectedRunId === variables.runId) {
@@ -336,6 +338,7 @@ export function HomeApp() {
         return;
       }
 
+      pendingDeletedRunIdsRef.current.delete(_variables.runId);
       setState(context.previousState);
       setSelectedRunId(context.previousSelectedRunId);
       setRenamingRunId(context.previousRenamingRunId);
@@ -849,6 +852,7 @@ export function HomeApp() {
     runs,
     explicitProjects,
   });
+  const welcomeRepoName = resolveRepoName(currentProjectScope);
 
   const projectFilesQuery = useQuery<ProjectFilesResponse>({
     queryKey: ["project-files", currentProjectScope],
@@ -1129,7 +1133,7 @@ export function HomeApp() {
           scrollRef={scrollRef}
           selectedRunId={selectedRunId}
           selectedRun={selectedRun}
-          selectedConversationMode={selectedConversationMode}
+          welcomeRepoName={welcomeRepoName}
           isDirectConversation={isDirectConversation}
           isPlanningConversation={isPlanningConversation}
           isImplementationConversation={isImplementationConversation}

@@ -169,6 +169,59 @@ function appendWorkerOutput(existingLog: string | null | undefined, nextChunk: s
   return `${existingLog}${separator}${nextChunk}`;
 }
 
+function parseWorkerIndex(runId: string, workerId: string) {
+  const prefix = `${runId}-worker-`;
+  if (!workerId.startsWith(prefix)) {
+    return null;
+  }
+
+  const value = Number(workerId.slice(prefix.length));
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+function isWorkerIdCollision(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("UNIQUE constraint failed: workers.id");
+}
+
+async function reserveWorkerRow(args: {
+  runId: string;
+  workerType: string;
+  cwd: string;
+}) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const existingWorkers = await db.select({ id: workers.id }).from(workers).where(eq(workers.runId, args.runId)).all();
+    const maxWorkerIndex = existingWorkers.reduce((max, worker) => {
+      const index = parseWorkerIndex(args.runId, worker.id);
+      return index && index > max ? index : max;
+    }, 0);
+    const workerId = `${args.runId}-worker-${maxWorkerIndex + 1}`;
+
+    try {
+      await db.insert(workers).values({
+        id: workerId,
+        runId: args.runId,
+        type: args.workerType,
+        status: "starting",
+        cwd: args.cwd,
+        outputLog: "",
+        outputEntriesJson: "",
+        currentText: "",
+        lastText: "",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      return workerId;
+    } catch (error) {
+      if (!isWorkerIdCollision(error)) {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error(`Unable to reserve a unique worker id for run ${args.runId}.`);
+}
+
 async function persistWorkerOutput(workerId: string, output: string) {
   if (!output) {
     return;
@@ -311,37 +364,38 @@ export class Supervisor {
           const prompt = asString(action.args.prompt, "prompt");
           const mode = resolveWorkerSpawnMode(action.args.mode, yoloModeEnabled);
           const purpose = typeof action.args.purpose === "string" ? action.args.purpose.trim() : "";
-          const existingWorkers = await db.select({ id: workers.id }).from(workers).where(eq(workers.runId, this.runId)).all();
-          const workerIndex = existingWorkers.length + 1;
-          const workerId = `${this.runId}-worker-${workerIndex}`;
+          const workerId = await reserveWorkerRow({
+            runId: this.runId,
+            workerType: workerType.type,
+            cwd,
+          });
           const preferredModel = run?.preferredWorkerModel ?? null;
           const preferredEffort = run?.preferredWorkerEffort ?? null;
 
-          const spawnedWorker = await bridge.spawnAgent({
-            type: workerType.type,
-            cwd,
-            name: workerId,
-            ...(mode ? { mode } : {}),
-            env: envParams,
-            ...(preferredModel ? { model: preferredModel } : {}),
-            ...(preferredEffort ? { effort: preferredEffort } : {}),
-          });
+          let spawnedWorker: bridge.AgentRecord;
+          try {
+            spawnedWorker = await bridge.spawnAgent({
+              type: workerType.type,
+              cwd,
+              name: workerId,
+              ...(mode ? { mode } : {}),
+              env: envParams,
+              ...(preferredModel ? { model: preferredModel } : {}),
+              ...(preferredEffort ? { effort: preferredEffort } : {}),
+            });
+          } catch (error) {
+            await db.update(workers).set({
+              status: "error",
+              updatedAt: new Date(),
+            }).where(eq(workers.id, workerId));
+            throw error;
+          }
 
-          await db.insert(workers).values({
-            id: workerId,
-            runId: this.runId,
-            type: workerType.type,
-            status: "starting",
-            cwd,
-            outputLog: "",
-            outputEntriesJson: "",
-            currentText: "",
-            lastText: "",
+          await db.update(workers).set({
             bridgeSessionId: spawnedWorker.sessionId ?? null,
             bridgeSessionMode: spawnedWorker.sessionMode ?? mode ?? null,
-            createdAt: new Date(),
             updatedAt: new Date(),
-          });
+          }).where(eq(workers.id, workerId));
 
           const fallbackNote =
             workerType.type !== workerType.requestedType
