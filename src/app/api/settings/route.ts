@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
-import { decryptSettingValue, encryptSettingValue, shouldEncryptSetting } from "@/server/settings/crypto";
+import { encryptSettingValue, shouldEncryptSetting } from "@/server/settings/crypto";
 import { buildAppError, errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 
@@ -22,22 +23,20 @@ export async function GET(req: NextRequest) {
         return [[setting.key, setting.value]];
       }
 
-      try {
-        return [[setting.key, decryptSettingValue(setting.value)]];
-      } catch (error) {
-        console.warn(`Unable to decrypt setting "${setting.key}":`, error);
-        diagnostics.push(buildAppError(
-          `Unable to decrypt setting "${setting.key}".`,
-          {
-            source: "Settings",
-            action: "Load saved settings",
-          },
-        ));
-        return [[setting.key, ""]];
+      return [];
+    }));
+    const secrets = Object.fromEntries(allSettings.flatMap((setting) => {
+      if (!shouldEncryptSetting(setting.key)) {
+        return [];
       }
+
+      return [[setting.key, {
+        configured: setting.value.trim().length > 0,
+        updatedAt: new Date(setting.updatedAt).toISOString(),
+      }]];
     }));
 
-    return NextResponse.json({ values, diagnostics });
+    return NextResponse.json({ values, secrets, diagnostics });
   } catch (error) {
     return errorResponse(error, {
       status: 500,
@@ -61,7 +60,15 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     for (const [key, value] of Object.entries(body)) {
       if (typeof value === "string") {
-        const storedValue = shouldEncryptSetting(key) ? encryptSettingValue(value) : value;
+        const isSecret = shouldEncryptSetting(key);
+        if (isSecret && value.trim() === "") {
+          const existing = await db.select().from(settings).where(eq(settings.key, key)).get();
+          if (existing) {
+            continue;
+          }
+        }
+
+        const storedValue = isSecret ? encryptSettingValue(value) : value;
         await db.insert(settings)
           .values({ key, value: storedValue, updatedAt: new Date() })
           .onConflictDoUpdate({ target: settings.key, set: { value: storedValue, updatedAt: new Date() } });

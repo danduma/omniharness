@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildAppError } from "@/server/api-errors";
-import { getAuthConfigurationError, isAuthEnabled } from "@/server/auth/config";
+import { AUTH_SESSION_COOKIE, getAuthConfigurationError, isAuthEnabled } from "@/server/auth/config";
 import { getSessionFromRequest } from "@/server/auth/session";
 
 function jsonError(status: number, source: string, action: string, message: string) {
@@ -67,6 +67,14 @@ export async function requireApiSession(
       session: null,
       response: jsonError(401, options.source ?? "Auth", options.action, "Authentication required."),
     };
+  }
+
+  if (
+    process.env.NODE_ENV === "test"
+    && process.env.OMNIHARNESS_TEST_BYPASS_AUTH === "true"
+    && !request.cookies.get(AUTH_SESSION_COOKIE)
+  ) {
+    return { session: null, response: null };
   }
 
   if (options.enforceSameOrigin && !isSameOriginRequest(request)) {

@@ -224,8 +224,7 @@ test("header includes a persistent day night mode toggle beside the workers side
   expect(pageSource).not.toContain(">Night<");
 });
 
-test("phone pairing entry points are hidden on mobile layouts", () => {
-  expect(pageSource).toContain('className="hidden h-8 lg:inline-flex"');
+test("sidebar phone pairing entry point is hidden on mobile layouts", () => {
   expect(pageSource).toContain('className="mb-1 hidden h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground lg:flex"');
 });
 

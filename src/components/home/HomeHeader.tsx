@@ -1,5 +1,5 @@
 import type React from "react";
-import { AlertTriangle, Menu, PanelRight, RotateCcw, Smartphone } from "lucide-react";
+import { AlertTriangle, Menu, PanelRight, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { PRODUCT_NAME } from "@/app/home/constants";
@@ -160,11 +160,6 @@ export function HomeHeader({
     </div>
 
     <div className="flex items-center gap-2">
-      {authEnabled ? (
-        <Button variant="outline" size="sm" className="hidden h-8 lg:inline-flex" onClick={openPairDeviceDialog}>
-          <Smartphone className="mr-2 h-4 w-4" /> Connect Phone
-        </Button>
-      ) : null}
       {isImplementationConversation && (selectedRun?.status === "failed" || showRecoverableRunningState || hasStuckWorker) && latestUserCheckpoint ? (
         <Button
           variant="outline"

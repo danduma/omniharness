@@ -104,7 +104,11 @@ export type WorkerAvailability = {
 export type WorkerModelOption = { value: string; label: string };
 export type WorkerModelCatalog = Record<WorkerType, WorkerModelOption[]>;
 export type WorkerCatalogResponse = { workers: WorkerAvailability[]; workerModels?: Partial<WorkerModelCatalog> };
-export type SettingsResponse = { values: Record<string, string>; diagnostics?: AppErrorDescriptor[] };
+export type SettingsResponse = {
+  values: Record<string, string>;
+  secrets?: Record<string, { configured: boolean; updatedAt: string }>;
+  diagnostics?: AppErrorDescriptor[];
+};
 export type AuthSessionRecord = {
   id: string;
   label: string | null;

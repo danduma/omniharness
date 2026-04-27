@@ -5,6 +5,17 @@ import { createAuthSession } from "@/server/auth/session";
 import { insertAuthEvent } from "@/server/auth/audit";
 import { errorResponse } from "@/server/api-errors";
 import { isSameOriginRequest } from "@/server/auth/guards";
+import { getLoginRateLimitStatus, recordFailedLoginAttempt, recordSuccessfulLoginAttempt } from "@/server/auth/rate-limit";
+
+function firstHeaderValue(value: string | null) {
+  return value?.split(",")[0]?.trim() || null;
+}
+
+function getClientIp(req: NextRequest) {
+  return firstHeaderValue(req.headers.get("x-forwarded-for"))
+    || firstHeaderValue(req.headers.get("x-real-ip"))
+    || null;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -36,6 +47,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const password = typeof body?.password === "string" ? body.password : "";
     const label = typeof body?.label === "string" ? body.label : "";
+    const ipAddress = getClientIp(req);
+    const userAgent = req.headers.get("user-agent") ?? null;
 
     if (!password.trim()) {
       return errorResponse("Password is required.", {
@@ -45,12 +58,33 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    const rateLimitStatus = getLoginRateLimitStatus(ipAddress);
+    if (rateLimitStatus.locked) {
+      const response = errorResponse("Too many login attempts. Try again later.", {
+        status: 429,
+        source: "Auth",
+        action: "Log in",
+      });
+      response.headers.set("Retry-After", String(rateLimitStatus.retryAfterSeconds));
+      await insertAuthEvent({
+        eventType: "auth.login_rate_limited",
+        details: {
+          ipAddress,
+          userAgent,
+          retryAfterSeconds: rateLimitStatus.retryAfterSeconds,
+        },
+      });
+      return response;
+    }
+
     const valid = await verifyConfiguredAuthPassword(password);
     if (!valid) {
+      recordFailedLoginAttempt(ipAddress);
       await insertAuthEvent({
         eventType: "auth.login_failed",
         details: {
-          userAgent: req.headers.get("user-agent") ?? null,
+          ipAddress,
+          userAgent,
         },
       });
       return errorResponse("Incorrect password.", {
@@ -60,9 +94,10 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    recordSuccessfulLoginAttempt(ipAddress);
     const session = await createAuthSession({
       label: label.trim() || "Browser session",
-      userAgent: req.headers.get("user-agent"),
+      userAgent,
       authMethod: "password_login",
     });
 
@@ -71,6 +106,8 @@ export async function POST(req: NextRequest) {
       sessionId: session.sessionId,
       details: {
         label: label.trim() || "Browser session",
+        ipAddress,
+        userAgent,
       },
     });
 

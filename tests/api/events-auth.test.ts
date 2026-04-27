@@ -10,6 +10,7 @@ describe("GET /api/events auth", () => {
 
   it("rejects unauthenticated event streams when auth is enabled", async () => {
     process.env.OMNIHARNESS_AUTH_PASSWORD = "swordfish";
+    delete process.env.OMNIHARNESS_TEST_BYPASS_AUTH;
 
     const response = await GET(new NextRequest("http://localhost/api/events"));
     expect(response.status).toBe(401);

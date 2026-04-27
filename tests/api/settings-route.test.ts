@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { settings } from "@/server/db/schema";
+import { authEvents, authPairTokens, authSessions, settings } from "@/server/db/schema";
+import { createAuthSession } from "@/server/auth/session";
 
 vi.mock("@/server/settings/crypto", () => ({
   shouldEncryptSetting: (key: string) => key.endsWith("_API_KEY"),
@@ -21,11 +22,35 @@ import { GET, POST } from "@/app/api/settings/route";
 
 describe("/api/settings", () => {
   beforeEach(async () => {
+    process.env.OMNIHARNESS_AUTH_PASSWORD = "swordfish";
+    delete process.env.OMNIHARNESS_AUTH_PASSWORD_HASH;
+    await db.delete(authEvents);
+    await db.delete(authPairTokens);
+    await db.delete(authSessions);
     await db.delete(settings);
   });
 
-  it("stores encrypted values and returns decrypted values to the client", async () => {
-    const saveRequest = new NextRequest("http://localhost/api/settings", {
+  afterEach(() => {
+    delete process.env.OMNIHARNESS_AUTH_PASSWORD;
+    delete process.env.OMNIHARNESS_AUTH_PASSWORD_HASH;
+  });
+
+  async function makeAuthenticatedRequest(url: string, init: RequestInit = {}) {
+    const session = await createAuthSession({
+      label: "Settings test",
+      userAgent: "Vitest",
+      authMethod: "password_login",
+    });
+    const headers = new Headers(init.headers);
+    headers.set("cookie", `omni_session=${session.tokenValue}`);
+    if (init.method && init.method !== "GET") {
+      headers.set("origin", "http://localhost");
+    }
+    return new NextRequest(url, { ...init, headers });
+  }
+
+  it("stores encrypted values and returns only secret presence metadata to the client", async () => {
+    const saveRequest = await makeAuthenticatedRequest("http://localhost/api/settings", {
       method: "POST",
       body: JSON.stringify({
         TEST_SUPERVISOR_API_KEY: "top-secret-key",
@@ -43,12 +68,16 @@ describe("/api/settings", () => {
     expect(storedApiKey?.value).not.toContain("top-secret-key");
     expect(storedModel?.value).toBe("gemini-3.1-pro-preview");
 
-    const getResponse = await GET(new NextRequest("http://localhost/api/settings"));
+    const getResponse = await GET(await makeAuthenticatedRequest("http://localhost/api/settings"));
     expect(getResponse.status).toBe(200);
 
     const payload = await getResponse.json();
-    expect(payload.values.TEST_SUPERVISOR_API_KEY).toBe("top-secret-key");
+    expect(payload.values.TEST_SUPERVISOR_API_KEY).toBeUndefined();
     expect(payload.values.TEST_SUPERVISOR_MODEL).toBe("gemini-3.1-pro-preview");
+    expect(payload.secrets.TEST_SUPERVISOR_API_KEY).toEqual({
+      configured: true,
+      updatedAt: expect.any(String),
+    });
     expect(payload.diagnostics).toEqual([]);
   });
 
@@ -61,20 +90,18 @@ describe("/api/settings", () => {
       { key: "TEST_CREDIT_STRATEGY", value: "swap_account", updatedAt: new Date() },
     ]);
 
-    const response = await GET(new NextRequest("http://localhost/api/settings"));
+    const response = await GET(await makeAuthenticatedRequest("http://localhost/api/settings"));
     expect(response.status).toBe(200);
 
     const payload = await response.json();
-    expect(payload.values.TEST_SUPERVISOR_API_KEY).toBe("");
+    expect(payload.values.TEST_SUPERVISOR_API_KEY).toBeUndefined();
     expect(payload.values.TEST_SUPERVISOR_MODEL).toBe("enc:v1:invalid-payload");
     expect(payload.values.TEST_CREDIT_STRATEGY).toBe("swap_account");
-    expect(payload.diagnostics).toEqual([
-      expect.objectContaining({
-        source: "Settings",
-        action: "Load saved settings",
-        message: 'Unable to decrypt setting "TEST_SUPERVISOR_API_KEY".',
-      }),
-    ]);
+    expect(payload.secrets.TEST_SUPERVISOR_API_KEY).toEqual({
+      configured: true,
+      updatedAt: expect.any(String),
+    });
+    expect(payload.diagnostics).toEqual([]);
 
     warnSpy.mockRestore();
   });

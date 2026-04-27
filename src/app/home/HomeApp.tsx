@@ -1258,6 +1258,7 @@ export function HomeApp() {
         setActiveLlmProfileTab={setActiveLlmProfileTab}
         apiKeys={apiKeys}
         setApiKeys={setApiKeys}
+        secretStates={settingsQuery.data?.secrets}
         settingsWorkers={settingsWorkers}
         configuredAllowedWorkerSet={configuredAllowedWorkerSet}
         configuredAllowedWorkerTypes={configuredAllowedWorkerTypes}

@@ -5,6 +5,7 @@ import { authEvents, authPairTokens, authSessions } from "@/server/db/schema";
 import { GET as getSessionRoute, DELETE as deleteSessionRoute } from "@/app/api/auth/session/route";
 import { POST as loginRoute } from "@/app/api/auth/login/route";
 import { POST as logoutRoute } from "@/app/api/auth/logout/route";
+import { resetLoginRateLimitsForTests } from "@/server/auth/rate-limit";
 
 function readCookie(response: Response) {
   return response.headers.get("set-cookie")?.split(";")[0] ?? "";
@@ -20,12 +21,14 @@ describe("auth routes", () => {
     await db.delete(authEvents);
     await db.delete(authPairTokens);
     await db.delete(authSessions);
+    resetLoginRateLimitsForTests();
   });
 
   afterEach(() => {
     process.env.NODE_ENV = originalNodeEnv;
     delete process.env.OMNIHARNESS_AUTH_PASSWORD;
     delete process.env.OMNIHARNESS_AUTH_PASSWORD_HASH;
+    resetLoginRateLimitsForTests();
   });
 
   it("reports unauthenticated state before login and authenticated state after login", async () => {
@@ -123,8 +126,8 @@ describe("auth routes", () => {
     expect(sessions.every((session) => session.revokedAt)).toBe(true);
   });
 
-  it("reports a configuration error when production auth is required but not configured", async () => {
-    process.env.NODE_ENV = "production";
+  it("reports a configuration error whenever auth credentials are not configured", async () => {
+    process.env.NODE_ENV = "test";
     delete process.env.OMNIHARNESS_AUTH_PASSWORD;
     delete process.env.OMNIHARNESS_AUTH_PASSWORD_HASH;
 
@@ -153,5 +156,64 @@ describe("auth routes", () => {
         message: expect.stringContaining("OMNIHARNESS_AUTH_PASSWORD"),
       }),
     });
+  });
+
+  it("locks out repeated failed password attempts and does not verify the password during lockout", async () => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const response = await loginRoute(new NextRequest("http://localhost/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ password: "wrong-password" }),
+        headers: {
+          origin: "http://localhost",
+          "content-type": "application/json",
+          "x-forwarded-for": "203.0.113.10",
+        },
+      }));
+      expect(response.status).toBe(401);
+    }
+
+    const lockedResponse = await loginRoute(new NextRequest("http://localhost/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ password: "swordfish" }),
+      headers: {
+        origin: "http://localhost",
+        "content-type": "application/json",
+        "x-forwarded-for": "203.0.113.10",
+      },
+    }));
+
+    expect(lockedResponse.status).toBe(429);
+    expect(lockedResponse.headers.get("retry-after")).toBeTruthy();
+    await expect(lockedResponse.json()).resolves.toEqual({
+      error: expect.objectContaining({
+        message: expect.stringContaining("Too many login attempts"),
+      }),
+    });
+  });
+
+  it("logs successful password logins with request metadata", async () => {
+    const loginResponse = await loginRoute(new NextRequest("http://localhost/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ password: "swordfish", label: "Desktop" }),
+      headers: {
+        origin: "http://localhost",
+        "content-type": "application/json",
+        "user-agent": "Vitest Browser",
+        "x-forwarded-for": "198.51.100.24",
+      },
+    }));
+
+    expect(loginResponse.status).toBe(200);
+
+    const events = await db.select().from(authEvents);
+    expect(events).toContainEqual(expect.objectContaining({
+      eventType: "auth.login_succeeded",
+    }));
+    const success = events.find((event) => event.eventType === "auth.login_succeeded");
+    expect(JSON.parse(success?.details ?? "{}")).toEqual(expect.objectContaining({
+      label: "Desktop",
+      ipAddress: "198.51.100.24",
+      userAgent: "Vitest Browser",
+    }));
   });
 });

@@ -18,12 +18,14 @@ function LlmSettingsForm({
   description,
   apiKeys,
   setApiKeys,
+  secretStates,
 }: {
   prefix: LlmFieldPrefix;
   title: string;
   description: string;
   apiKeys: Record<string, string>;
   setApiKeys: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  secretStates?: Record<string, { configured: boolean; updatedAt: string }>;
 }) {
   const providerKey = `${prefix}_PROVIDER`;
   const modelKey = `${prefix}_MODEL`;
@@ -33,6 +35,7 @@ function LlmSettingsForm({
   const provider = apiKeys[providerKey] || defaultProvider;
   const apiKey = apiKeys[apiKeyKey] || "";
   const currentModel = apiKeys[modelKey] || "";
+  const apiKeyConfigured = secretStates?.[apiKeyKey]?.configured ?? false;
 
   const geminiModelsQuery = useQuery({
     queryKey: ["llm-models", prefix, provider, apiKey],
@@ -182,9 +185,14 @@ function LlmSettingsForm({
             type="password"
             value={apiKeys[apiKeyKey] || ""}
             onChange={(e) => setApiKeys((previous) => ({ ...previous, [apiKeyKey]: e.target.value }))}
-            placeholder="Provider credential"
+            placeholder={apiKeyConfigured ? "Saved credential" : "Provider credential"}
             className="h-8 bg-muted/50 text-xs"
           />
+          {apiKeyConfigured && !apiKeys[apiKeyKey]?.trim() ? (
+            <p className="text-[11px] text-muted-foreground">
+              Credential saved. Enter a new value to replace it.
+            </p>
+          ) : null}
         </div>
       </div>
     </div>
@@ -200,6 +208,7 @@ interface SettingsDialogProps {
   setActiveLlmProfileTab: React.Dispatch<React.SetStateAction<LlmProfileTab>>;
   apiKeys: Record<string, string>;
   setApiKeys: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  secretStates?: Record<string, { configured: boolean; updatedAt: string }>;
   settingsWorkers: WorkerAvailability[];
   configuredAllowedWorkerSet: Set<WorkerType>;
   configuredAllowedWorkerTypes: WorkerType[];
@@ -226,6 +235,7 @@ export function SettingsDialog({
   setActiveLlmProfileTab,
   apiKeys,
   setApiKeys,
+  secretStates,
   settingsWorkers,
   configuredAllowedWorkerSet,
   configuredAllowedWorkerTypes,
@@ -313,6 +323,7 @@ export function SettingsDialog({
                     description="Configure the provider, model, endpoint, and credentials used first for supervisor turns."
                     apiKeys={apiKeys}
                     setApiKeys={setApiKeys}
+                    secretStates={secretStates}
                   />
                 ) : (
                   <LlmSettingsForm
@@ -321,6 +332,7 @@ export function SettingsDialog({
                     description="Use a second provider profile if the primary supervisor credentials are unavailable."
                     apiKeys={apiKeys}
                     setApiKeys={setApiKeys}
+                    secretStates={secretStates}
                   />
                 )}
               </div>

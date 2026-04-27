@@ -56,7 +56,7 @@ export function isDevelopmentMode() {
 }
 
 export function isAuthRequired() {
-  return !isDevelopmentMode();
+  return true;
 }
 
 export function isAuthEnabled() {
@@ -68,7 +68,7 @@ export function getAuthConfigurationError() {
     return null;
   }
 
-  return "Authentication is required outside development. Set OMNIHARNESS_AUTH_PASSWORD or OMNIHARNESS_AUTH_PASSWORD_HASH before starting OmniHarness.";
+  return "Authentication is required. Set OMNIHARNESS_AUTH_PASSWORD or OMNIHARNESS_AUTH_PASSWORD_HASH before starting OmniHarness.";
 }
 
 export function getPublicOriginFromUrl(url: string) {
