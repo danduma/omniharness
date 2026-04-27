@@ -5,7 +5,7 @@ import { type AppErrorDescriptor, mergeAppErrors } from "@/lib/app-errors";
 import type { ConversationModeOption } from "@/components/ConversationModePicker";
 import { COMPOSER_EFFORT_STORAGE_KEY, COMPOSER_MODE_STORAGE_KEY, COMPOSER_MODEL_STORAGE_KEY, COMPOSER_WORKER_STORAGE_KEY, EFFORT_OPTIONS, RUN_PATH_PATTERN, WORKER_OPTIONS } from "./constants";
 import type { ComposerWorkerOption, EventStreamState } from "./types";
-import { buildConversationPath, buildInlineError } from "./utils";
+import { buildConversationPath, buildInlineError, parseCollapsedProjectPaths } from "./utils";
 
 interface UseHomeLifecycleProps {
   appUnlocked: boolean;
@@ -31,6 +31,8 @@ interface UseHomeLifecycleProps {
   setSelectedEffort: React.Dispatch<React.SetStateAction<string>>;
   setReadMarkers: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   readMarkers: Record<string, string>;
+  collapsedProjectPaths: Set<string>;
+  setCollapsedProjectPaths: React.Dispatch<React.SetStateAction<Set<string>>>;
   rightSidebarWidth: number;
   setRightSidebarWidth: React.Dispatch<React.SetStateAction<number>>;
   isResizingRightSidebar: boolean;
@@ -68,6 +70,8 @@ export function useHomeLifecycle({
   setSelectedEffort,
   setReadMarkers,
   readMarkers,
+  collapsedProjectPaths,
+  setCollapsedProjectPaths,
   rightSidebarWidth,
   setRightSidebarWidth,
   isResizingRightSidebar,
@@ -81,6 +85,8 @@ export function useHomeLifecycle({
   filterEventStreamState,
 }: UseHomeLifecycleProps) {
   const didMountThemeEffectRef = useRef(false);
+  const didHydrateCollapsedProjectsRef = useRef(false);
+  const didSkipCollapsedProjectsInitialPersistRef = useRef(false);
 
   useEffect(() => {
     if (!appUnlocked) {
@@ -231,7 +237,26 @@ export function useHomeLifecycle({
         suggestion: "Clear the omni-read-markers localStorage entry and reload the page if unread markers look wrong.",
       }]));
     }
-  }, []);
+  }, [setReadMarkers, setRuntimeErrors]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      setCollapsedProjectPaths(parseCollapsedProjectPaths(window.localStorage.getItem("omni-collapsed-projects")));
+    } catch {
+      setRuntimeErrors((current) => mergeAppErrors(current, [{
+        message: "The saved project group state in localStorage is malformed.",
+        source: "Frontend",
+        action: "Restore local navigation state",
+        suggestion: "Clear the omni-collapsed-projects localStorage entry and reload the page if project expansion looks wrong.",
+      }]));
+    } finally {
+      didHydrateCollapsedProjectsRef.current = true;
+    }
+  }, [setCollapsedProjectPaths, setRuntimeErrors]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -288,6 +313,27 @@ export function useHomeLifecycle({
       }]));
     }
   }, [rightSidebarWidth]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !didHydrateCollapsedProjectsRef.current) {
+      return;
+    }
+
+    if (!didSkipCollapsedProjectsInitialPersistRef.current) {
+      didSkipCollapsedProjectsInitialPersistRef.current = true;
+      return;
+    }
+
+    try {
+      window.localStorage.setItem("omni-collapsed-projects", JSON.stringify(Array.from(collapsedProjectPaths)));
+    } catch {
+      setRuntimeErrors((current) => mergeAppErrors(current, [{
+        message: "Failed to persist project group state to localStorage.",
+        source: "Frontend",
+        action: "Persist local navigation state",
+      }]));
+    }
+  }, [collapsedProjectPaths, setRuntimeErrors]);
 
   useEffect(() => {
     if (!isResizingRightSidebar || typeof window === "undefined") {

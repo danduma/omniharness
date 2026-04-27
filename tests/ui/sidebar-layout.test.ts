@@ -262,6 +262,15 @@ test("project groups show a loading indicator while conversations are still hydr
   expect(pageSource).toContain("Loading conversations...");
 });
 
+test("project group collapsed state survives page reloads", () => {
+  expect(pageSource).toContain("const [collapsedProjectPaths, setCollapsedProjectPaths] = useState<Set<string>>(() => new Set())");
+  expect(pageSource).toContain('window.localStorage.getItem("omni-collapsed-projects")');
+  expect(pageSource).toContain('window.localStorage.setItem("omni-collapsed-projects", JSON.stringify(Array.from(collapsedProjectPaths)))');
+  expect(pageSource).toContain("collapsedProjectPaths={collapsedProjectPaths}");
+  expect(pageSource).toContain("onProjectOpenChange: handleProjectOpenChange,");
+  expect(pageSource).toContain("open={!collapsedProjectPaths.has(group.path)}");
+});
+
 test("failed runs surface recovery UI in the header and conversation feed", () => {
   expect(pageSource).toContain('selectedRun?.status === "failed"');
   expect(pageSource).toContain("Retry latest");

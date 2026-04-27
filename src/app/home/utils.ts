@@ -117,6 +117,23 @@ export function parseProjectList(value: string | null | undefined) {
   }
 }
 
+export function parseCollapsedProjectPaths(value: string | null | undefined) {
+  if (!value?.trim()) {
+    return new Set<string>();
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      return new Set<string>();
+    }
+
+    return new Set(parsed.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0));
+  } catch {
+    return new Set<string>();
+  }
+}
+
 export function parseWorkerType(value: string | null | undefined): WorkerType | null {
   if (!value?.trim()) {
     return null;

@@ -72,6 +72,7 @@ export function HomeApp() {
   const [commandCursor, setCommandCursor] = useState(0);
   const [mentionIndex, setMentionIndex] = useState(0);
   const [readMarkers, setReadMarkers] = useState<Record<string, string>>({});
+  const [collapsedProjectPaths, setCollapsedProjectPaths] = useState<Set<string>>(() => new Set());
   const [renamingRunId, setRenamingRunId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -235,7 +236,7 @@ export function HomeApp() {
     return nextState;
   }, []);
 
-  useHomeLifecycle({ appUnlocked, setHasReceivedInitialEventStreamPayload, setState, setRuntimeErrors, routeReady, setRouteReady, authEnabled, authConfigurationError, pairTokenFromUrl, setPairTokenFromUrl, redeemPairMutation, pairRedeemAttempted, setPairRedeemAttempted, selectedRunId, setSelectedRunId, draftProjectPath, setDraftProjectPath, setSelectedConversationMode, setSelectedCliAgent, setSelectedModel, setSelectedEffort, setReadMarkers, readMarkers, rightSidebarWidth, setRightSidebarWidth, isResizingRightSidebar, setIsResizingRightSidebar, selectedConversationMode, selectedCliAgent, selectedModel, selectedEffort, themeMode, setThemeMode, filterEventStreamState: filterDeletedRunsFromEventState });
+  useHomeLifecycle({ appUnlocked, setHasReceivedInitialEventStreamPayload, setState, setRuntimeErrors, routeReady, setRouteReady, authEnabled, authConfigurationError, pairTokenFromUrl, setPairTokenFromUrl, redeemPairMutation, pairRedeemAttempted, setPairRedeemAttempted, selectedRunId, setSelectedRunId, draftProjectPath, setDraftProjectPath, setSelectedConversationMode, setSelectedCliAgent, setSelectedModel, setSelectedEffort, setReadMarkers, readMarkers, collapsedProjectPaths, setCollapsedProjectPaths, rightSidebarWidth, setRightSidebarWidth, isResizingRightSidebar, setIsResizingRightSidebar, selectedConversationMode, selectedCliAgent, selectedModel, selectedEffort, themeMode, setThemeMode, filterEventStreamState: filterDeletedRunsFromEventState });
   const isHydratingConversations = appUnlocked && !hasReceivedInitialEventStreamPayload;
 
   useEffect(() => {
@@ -1044,6 +1045,18 @@ export function HomeApp() {
     setIsResizingRightSidebar(true);
   };
 
+  const handleProjectOpenChange = (projectPath: string, open: boolean) => {
+    setCollapsedProjectPaths((current) => {
+      const next = new Set(current);
+      if (open) {
+        next.delete(projectPath);
+      } else {
+        next.add(projectPath);
+      }
+      return next;
+    });
+  };
+
 
   const renderComposer = (className: string) => (
 <ConversationComposer
@@ -1120,6 +1133,8 @@ export function HomeApp() {
     selectedRunId,
     messages: state.messages,
     readMarkers,
+    collapsedProjectPaths,
+    onProjectOpenChange: handleProjectOpenChange,
     setShowSettings,
     openFolderPicker: () => setShowFolderPicker(true),
     startNewPlan: handleStartNewPlan,

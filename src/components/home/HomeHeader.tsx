@@ -18,6 +18,8 @@ interface HomeHeaderProps {
   selectedRunId: string | null;
   messages: MessageRecord[];
   readMarkers: Record<string, string>;
+  collapsedProjectPaths: Set<string>;
+  onProjectOpenChange: (projectPath: string, open: boolean) => void;
   setShowSettings: React.Dispatch<React.SetStateAction<boolean>>;
   openFolderPicker: () => void;
   startNewPlan: () => void;
@@ -64,6 +66,8 @@ export function HomeHeader({
   selectedRunId,
   messages,
   readMarkers,
+  collapsedProjectPaths,
+  onProjectOpenChange,
   setShowSettings,
   openFolderPicker,
   startNewPlan,
@@ -118,6 +122,8 @@ export function HomeHeader({
             selectedRunId={selectedRunId}
             messages={messages}
             readMarkers={readMarkers}
+            collapsedProjectPaths={collapsedProjectPaths}
+            onProjectOpenChange={onProjectOpenChange}
             setShowSettings={setShowSettings}
             openFolderPicker={openFolderPicker}
             startNewPlan={startNewPlan}

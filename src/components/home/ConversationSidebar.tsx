@@ -16,6 +16,8 @@ export interface ConversationSidebarProps {
   selectedRunId: string | null;
   messages: Array<{ runId: string; createdAt: string }> | undefined;
   readMarkers: Record<string, string>;
+  collapsedProjectPaths: Set<string>;
+  onProjectOpenChange: (projectPath: string, open: boolean) => void;
   setShowSettings: React.Dispatch<React.SetStateAction<boolean>>;
   openFolderPicker: () => void;
   startNewPlan: () => void;
@@ -42,6 +44,8 @@ export function ConversationSidebar({
   selectedRunId,
   messages,
   readMarkers,
+  collapsedProjectPaths,
+  onProjectOpenChange,
   setShowSettings,
   openFolderPicker,
   startNewPlan,
@@ -89,7 +93,11 @@ export function ConversationSidebar({
 
           {filteredProjects.length > 0 ? (
             filteredProjects.map((group) => (
-              <Collapsible key={group.path} defaultOpen>
+              <Collapsible
+                key={group.path}
+                open={!collapsedProjectPaths.has(group.path)}
+                onOpenChange={(open) => onProjectOpenChange(group.path, open)}
+              >
                 <div className="group mb-1 flex items-center justify-between rounded px-2 hover:bg-muted/30">
                   <CollapsibleTrigger className="flex flex-1 items-center gap-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
                     <Folder className="h-4 w-4 shrink-0 text-primary/70" />

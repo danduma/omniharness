@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterOptimisticallyDeletedRuns, getRunDurationLabel } from "@/app/home/utils";
+import { filterOptimisticallyDeletedRuns, getRunDurationLabel, parseCollapsedProjectPaths } from "@/app/home/utils";
 import type { EventStreamState, RunRecord } from "@/app/home/types";
 
 function buildRun(overrides: Partial<RunRecord>): RunRecord {
@@ -77,5 +77,10 @@ describe("home utils", () => {
     expect(filtered.clarifications).toEqual([]);
     expect(filtered.validationRuns).toEqual([]);
     expect(filtered.executionEvents.map((event) => event.id)).toEqual(["event-1"]);
+  });
+
+  it("restores persisted collapsed project paths from localStorage JSON", () => {
+    expect(parseCollapsedProjectPaths('["/workspace/app","other",42,""]')).toEqual(new Set(["/workspace/app", "other"]));
+    expect(parseCollapsedProjectPaths("{bad json")).toEqual(new Set());
   });
 });
