@@ -28,6 +28,31 @@ import { useConversationExecutionStatus } from "./useConversationExecutionStatus
 import { useHomeLifecycle } from "./useHomeLifecycle";
 import { useRunSelectionEffects } from "./useRunSelectionEffects";
 
+function removeRunFromHomeState(current: EventStreamState, runId: string): EventStreamState {
+  const runToDelete = (current.runs || []).find((run: RunRecord) => run.id === runId);
+  const workerIds = (current.workers || [])
+    .filter((worker: { runId: string; id: string }) => worker.runId === runId)
+    .map((worker: { id: string }) => worker.id);
+
+  return {
+    ...current,
+    runs: (current.runs || []).filter((run: RunRecord) => run.id !== runId),
+    messages: (current.messages || []).filter((message: { runId: string }) => message.runId !== runId),
+    workers: (current.workers || []).filter((worker: { runId: string }) => worker.runId !== runId),
+    clarifications: (current.clarifications || []).filter((item: { runId: string }) => item.runId !== runId),
+    validationRuns: (current.validationRuns || []).filter((item: { runId: string }) => item.runId !== runId),
+    executionEvents: (current.executionEvents || []).filter((item: { runId: string; workerId?: string | null }) =>
+      item.runId !== runId && (!item.workerId || !workerIds.includes(item.workerId))
+    ),
+    plans: runToDelete
+      ? (current.plans || []).filter((plan: PlanRecord) => plan.id !== runToDelete.planId)
+      : current.plans,
+    planItems: runToDelete
+      ? (current.planItems || []).filter((item: PlanItemRecord) => item.planId !== runToDelete.planId)
+      : current.planItems,
+  };
+}
+
 export function HomeApp() {
   const [command, setCommand] = useState("");
   const [themeMode, setThemeMode] = useState<"day" | "night">("day");
@@ -272,6 +297,29 @@ export function HomeApp() {
   });
 
   const deleteRun = useMutation({
+    onMutate: (variables: { runId: string }) => {
+      const previousState = state;
+      const previousSelectedRunId = selectedRunId;
+      const previousRenamingRunId = renamingRunId;
+      const previousRenameValue = renameValue;
+
+      setState((current: typeof state) => removeRunFromHomeState(current, variables.runId));
+
+      if (selectedRunId === variables.runId) {
+        setSelectedRunId(null);
+      }
+      if (renamingRunId === variables.runId) {
+        setRenamingRunId(null);
+        setRenameValue("");
+      }
+
+      return {
+        previousState,
+        previousSelectedRunId,
+        previousRenamingRunId,
+        previousRenameValue,
+      };
+    },
     mutationFn: async ({ runId }: { runId: string }) => {
       return requestJson(`/api/runs/${runId}`, {
         method: "DELETE",
@@ -281,36 +329,17 @@ export function HomeApp() {
       });
     },
     onSuccess: (_data, variables) => {
-      const runToDelete = (state.runs || []).find((run: RunRecord) => run.id === variables.runId);
-      const workerIds = (state.workers || [])
-        .filter((worker: { runId: string; id: string }) => worker.runId === variables.runId)
-        .map((worker: { id: string }) => worker.id);
-
-      setState((current: typeof state) => ({
-        ...current,
-        runs: (current.runs || []).filter((run: RunRecord) => run.id !== variables.runId),
-        messages: (current.messages || []).filter((message: { runId: string }) => message.runId !== variables.runId),
-        workers: (current.workers || []).filter((worker: { runId: string }) => worker.runId !== variables.runId),
-        clarifications: (current.clarifications || []).filter((item: { runId: string }) => item.runId !== variables.runId),
-        validationRuns: (current.validationRuns || []).filter((item: { runId: string }) => item.runId !== variables.runId),
-        executionEvents: (current.executionEvents || []).filter((item: { runId: string; workerId?: string | null }) =>
-          item.runId !== variables.runId && (!item.workerId || !workerIds.includes(item.workerId))
-        ),
-        plans: runToDelete
-          ? (current.plans || []).filter((plan: PlanRecord) => plan.id !== runToDelete.planId)
-          : current.plans,
-        planItems: runToDelete
-          ? (current.planItems || []).filter((item: PlanItemRecord) => item.planId !== runToDelete.planId)
-          : current.planItems,
-      }));
-
-      if (selectedRunId === variables.runId) {
-        setSelectedRunId(null);
+      setState((current: typeof state) => removeRunFromHomeState(current, variables.runId));
+    },
+    onError: (_error, _variables, context) => {
+      if (!context) {
+        return;
       }
-      if (renamingRunId === variables.runId) {
-        setRenamingRunId(null);
-        setRenameValue("");
-      }
+
+      setState(context.previousState);
+      setSelectedRunId(context.previousSelectedRunId);
+      setRenamingRunId(context.previousRenamingRunId);
+      setRenameValue(context.previousRenameValue);
     },
   });
 

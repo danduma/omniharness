@@ -21,6 +21,21 @@ test("conversation rows expose rename and delete actions", () => {
   expect(pageSource).toContain('requestJson(`/api/runs/${runId}`');
 });
 
+test("deleting a conversation removes it optimistically before the request resolves", () => {
+  const deleteMutationIndex = pageSource.indexOf("const deleteRun = useMutation({");
+  const onMutateIndex = pageSource.indexOf("onMutate:", deleteMutationIndex);
+  const requestIndex = pageSource.indexOf('requestJson(`/api/runs/${runId}`', deleteMutationIndex);
+  const optimisticUpdateIndex = pageSource.indexOf("removeRunFromHomeState(current, variables.runId)", onMutateIndex);
+  const rollbackIndex = pageSource.indexOf("previousState", optimisticUpdateIndex);
+
+  expect(deleteMutationIndex).toBeGreaterThanOrEqual(0);
+  expect(onMutateIndex).toBeGreaterThan(deleteMutationIndex);
+  expect(requestIndex).toBeGreaterThan(deleteMutationIndex);
+  expect(onMutateIndex).toBeLessThan(requestIndex);
+  expect(optimisticUpdateIndex).toBeGreaterThan(onMutateIndex);
+  expect(rollbackIndex).toBeGreaterThan(optimisticUpdateIndex);
+});
+
 test("user messages expose retry, edit, and fork recovery controls", () => {
   expect(pageSource).toContain("Retry from here");
   expect(pageSource).toContain("Edit in place");
