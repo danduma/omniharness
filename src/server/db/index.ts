@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS workers (
   type text NOT NULL,
   status text NOT NULL,
   cwd text NOT NULL,
+  worker_number integer,
   title text NOT NULL DEFAULT '',
   initial_prompt text NOT NULL DEFAULT '',
   output_log text NOT NULL DEFAULT '',
@@ -54,6 +55,13 @@ CREATE TABLE IF NOT EXISTS workers (
   bridge_session_id text,
   bridge_session_mode text,
   created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE IF NOT EXISTS worker_counters (
+  run_id text PRIMARY KEY NOT NULL,
+  next_number integer NOT NULL,
   updated_at integer NOT NULL,
   FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action
 );
@@ -255,6 +263,10 @@ const workerColumnNames = new Set(workerColumns.map((column) => column.name));
 
 if (!workerColumnNames.has("output_log")) {
   sqlite.exec("ALTER TABLE workers ADD COLUMN output_log text NOT NULL DEFAULT '';");
+}
+
+if (!workerColumnNames.has("worker_number")) {
+  sqlite.exec("ALTER TABLE workers ADD COLUMN worker_number integer;");
 }
 
 if (!workerColumnNames.has("title")) {

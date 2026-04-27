@@ -125,5 +125,5 @@ test("composer submit button sends text, stops a running supervisor when empty, 
 test("worker cards expose individual stop controls", () => {
   expect(pageSource).toContain("stopWorker.mutate({ runId: selectedRunId, workerId })");
   expect(pageSource).toContain("onStopWorker={onStopWorker}");
-  expect(pageSource).toContain('aria-label={`Stop ${workerTitle || workerId}`}');
+  expect(pageSource).toContain('aria-label={`Stop ${displayId}`}');
 });

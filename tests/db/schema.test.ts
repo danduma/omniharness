@@ -10,6 +10,8 @@ describe("db schema", () => {
   });
 
   it("persists durable worker terminal snapshots", () => {
+    expect(schema).toHaveProperty("workerCounters");
+    expect(schema.workers).toHaveProperty("workerNumber");
     expect(schema.workers).toHaveProperty("outputEntriesJson");
     expect(schema.workers).toHaveProperty("currentText");
     expect(schema.workers).toHaveProperty("lastText");

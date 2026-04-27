@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { executionEvents, messages, plans, runs, workers } from "@/server/db/schema";
+import { executionEvents, messages, plans, runs, workerCounters, workers } from "@/server/db/schema";
 
 const { mockGetAgent } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
@@ -26,6 +26,7 @@ describe("deriveWorkerEvents", () => {
     await db.delete(executionEvents);
     await db.delete(messages);
     await db.delete(workers);
+    await db.delete(workerCounters);
     await db.delete(runs);
     await db.delete(plans);
   });

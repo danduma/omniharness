@@ -87,6 +87,7 @@ export function ConversationWorkerCard({
   return (
     <WorkerCard
       workerId={worker.id}
+      workerNumber={worker.workerNumber ?? null}
       workerTitle={worker.title ?? null}
       agent={fallbackAgent}
       defaultOpen={defaultOpen}

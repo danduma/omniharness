@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { executionEvents, messages, plans, runs, settings, workers } from "@/server/db/schema";
+import { executionEvents, messages, plans, runs, settings, workerCounters, workers } from "@/server/db/schema";
 
 const {
   mockTokenCreate,
@@ -95,6 +95,7 @@ describe("Supervisor worker spawn flow", () => {
     await db.delete(executionEvents);
     await db.delete(messages);
     await db.delete(workers);
+    await db.delete(workerCounters);
     await db.delete(settings);
     await db.delete(runs);
     await db.delete(plans);
@@ -264,6 +265,7 @@ describe("Supervisor worker spawn flow", () => {
     const persistedWorker = await db.select().from(workers).where(eq(workers.id, `${runId}-worker-1`)).get();
     expect(persistedWorker?.runId).toBe(runId);
     expect(persistedWorker?.status).toBe("starting");
+    expect(persistedWorker?.workerNumber).toBe(1);
     expect(persistedWorker?.title).toBe("Main implementation");
     expect(persistedWorker?.initialPrompt).toBe("start implementing");
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
@@ -348,6 +350,66 @@ describe("Supervisor worker spawn flow", () => {
     const event = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
     expect(event?.eventType).toBe("worker_spawn_blocked");
     expect(event?.details).toContain("already has active implementation worker");
+  });
+
+  it("blocks duplicate verification workers that are checking the same plan", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: `${runId}-worker-1`,
+      runId,
+      type: "opencode",
+      status: "working",
+      cwd: "/tmp/project",
+      workerNumber: 1,
+      title: "Verify Plan Implementation",
+      initialPrompt: "Read the plan and check whether we fully implemented it.",
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-duplicate-verify",
+      name: "worker_spawn",
+      args: {
+        type: "opencode",
+        cwd: "/tmp/project",
+        title: "Verify mobile ultrapilot copilot hardening plan",
+        prompt: "Check if the mobile ultrapilot copilot hardening plan is fully implemented.",
+        purpose: "Check implementation status of the mobile ultrapilot copilot hardening plan.",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    const allWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+    expect(allWorkers).toHaveLength(1);
+    const event = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+    expect(event?.eventType).toBe("worker_spawn_blocked");
+    expect(event?.details).toContain("Verify mobile ultrapilot copilot hardening plan");
   });
 
   it("reserves the worker row before awaiting bridge spawn", async () => {

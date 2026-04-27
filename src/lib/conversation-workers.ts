@@ -3,6 +3,7 @@ export type ConversationWorkerRecord = {
   runId: string;
   type: string;
   status: string;
+  workerNumber?: number | null;
   title?: string | null;
   initialPrompt?: string | null;
   createdAt?: string;

@@ -16,6 +16,7 @@ import { selectSpawnableWorkerType } from "@/server/supervisor/worker-availabili
 import { parseAllowedWorkerTypes, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
 import { persistRunFailure } from "@/server/runs/failures";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
+import { allocateWorkerIdentity } from "@/server/workers/ids";
 
 export interface SupervisorOptions {
   runId: string;
@@ -175,21 +176,6 @@ function appendWorkerOutput(existingLog: string | null | undefined, nextChunk: s
   return `${existingLog}${separator}${nextChunk}`;
 }
 
-function parseWorkerIndex(runId: string, workerId: string) {
-  const prefix = `${runId}-worker-`;
-  if (!workerId.startsWith(prefix)) {
-    return null;
-  }
-
-  const value = Number(workerId.slice(prefix.length));
-  return Number.isSafeInteger(value) && value > 0 ? value : null;
-}
-
-function isWorkerIdCollision(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes("UNIQUE constraint failed: workers.id");
-}
-
 async function reserveWorkerRow(args: {
   runId: string;
   workerType: string;
@@ -197,39 +183,26 @@ async function reserveWorkerRow(args: {
   title: string;
   initialPrompt: string;
 }) {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const existingWorkers = await db.select({ id: workers.id }).from(workers).where(eq(workers.runId, args.runId)).all();
-    const maxWorkerIndex = existingWorkers.reduce((max, worker) => {
-      const index = parseWorkerIndex(args.runId, worker.id);
-      return index && index > max ? index : max;
-    }, 0);
-    const workerId = `${args.runId}-worker-${maxWorkerIndex + 1}`;
+  const { workerId, workerNumber } = await allocateWorkerIdentity(args.runId);
 
-    try {
-      await db.insert(workers).values({
-        id: workerId,
-        runId: args.runId,
-        type: args.workerType,
-        status: "starting",
-        cwd: args.cwd,
-        title: args.title,
-        initialPrompt: args.initialPrompt,
-        outputLog: "",
-        outputEntriesJson: "",
-        currentText: "",
-        lastText: "",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-      return workerId;
-    } catch (error) {
-      if (!isWorkerIdCollision(error)) {
-        throw error;
-      }
-    }
-  }
+  await db.insert(workers).values({
+    id: workerId,
+    runId: args.runId,
+    type: args.workerType,
+    status: "starting",
+    cwd: args.cwd,
+    workerNumber,
+    title: args.title,
+    initialPrompt: args.initialPrompt,
+    outputLog: "",
+    outputEntriesJson: "",
+    currentText: "",
+    lastText: "",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
 
-  throw new Error(`Unable to reserve a unique worker id for run ${args.runId}.`);
+  return workerId;
 }
 
 function normalizeWorkerStatus(status: string | null | undefined) {
@@ -242,10 +215,11 @@ function isActiveWorkerStatus(status: string | null | undefined) {
 
 function describesSeparatedAllocation(...values: Array<string | null | undefined>) {
   const text = values.join("\n").toLowerCase();
-  return /\b(validation|validator|validate|review|audit|sidecar|independent)\b/.test(text)
-    || /\bpart\s+[a-z0-9]+\b/.test(text)
-    || /\bslice\b/.test(text)
-    || /\bonly\b/.test(text);
+  const hasExplicitOnly = /\bonly\b/.test(text);
+  const hasConcreteSlice = /\b(part\s+[a-z0-9]+|slice|component|module|file|area|phase|section)\b/.test(text);
+  const reviewsExistingWorker = /\b(review|audit|validate|validator|validation)\b/.test(text)
+    && /\b(worker|output|result|diff|patch)\b/.test(text);
+  return (hasExplicitOnly && hasConcreteSlice) || reviewsExistingWorker;
 }
 
 async function findActiveMainWorker(runId: string) {

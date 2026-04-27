@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/server/db";
-import { plans, runs } from "@/server/db/schema";
+import { plans, runs, workerCounters } from "@/server/db/schema";
 
 const { mockStartSupervisorRun } = vi.hoisted(() => ({
   mockStartSupervisorRun: vi.fn(),
@@ -14,6 +14,7 @@ vi.mock("@/server/supervisor/start", () => ({
 describe("supervisor runtime watchdog", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    await db.delete(workerCounters);
     await db.delete(runs);
     await db.delete(plans);
   });

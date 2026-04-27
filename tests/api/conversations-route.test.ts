@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { db } from "@/server/db";
 import { eq } from "drizzle-orm";
-import { messages, plans, runs, workers } from "@/server/db/schema";
+import { messages, plans, runs, workerCounters, workers } from "@/server/db/schema";
 
 const {
   mockStartSupervisorRun,
@@ -81,6 +81,7 @@ describe("POST /api/conversations", () => {
 
     await db.delete(messages);
     await db.delete(workers);
+    await db.delete(workerCounters);
     await db.delete(runs);
     await db.delete(plans);
   });

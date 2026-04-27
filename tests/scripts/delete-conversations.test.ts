@@ -35,7 +35,15 @@ function setupTempDb(dbPath: string, rootDir: string) {
       type text NOT NULL,
       status text NOT NULL,
       cwd text NOT NULL,
+      worker_number integer,
       created_at integer NOT NULL,
+      updated_at integer NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES runs(id)
+    );
+
+    CREATE TABLE worker_counters (
+      run_id text PRIMARY KEY NOT NULL,
+      next_number integer NOT NULL,
       updated_at integer NOT NULL,
       FOREIGN KEY (run_id) REFERENCES runs(id)
     );
@@ -133,6 +141,8 @@ function setupTempDb(dbPath: string, rootDir: string) {
     .run(runId, planId, rootDir, "Test conversation", "running", now, now);
   db.prepare("insert into workers (id, run_id, type, status, cwd, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?)")
     .run(workerId, runId, "codex", "idle", rootDir, now, now);
+  db.prepare("insert into worker_counters (run_id, next_number, updated_at) values (?, ?, ?)")
+    .run(runId, 2, now);
   db.prepare("insert into messages (id, run_id, role, content, worker_id, created_at) values (?, ?, ?, ?, ?, ?)")
     .run(randomUUID(), runId, "user", "hello", workerId, now);
   db.prepare("insert into clarifications (id, run_id, question, answer, status, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?)")
@@ -180,6 +190,7 @@ describe("delete-conversations.sh", () => {
     expect(count("runs")).toBe(0);
     expect(count("messages")).toBe(0);
     expect(count("workers")).toBe(0);
+    expect(count("worker_counters")).toBe(0);
     expect(count("clarifications")).toBe(0);
     expect(count("plan_items")).toBe(0);
     expect(count("validation_runs")).toBe(0);

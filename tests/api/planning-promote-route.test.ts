@@ -6,7 +6,7 @@ import os from "os";
 import path from "path";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { plans, runs, messages } from "@/server/db/schema";
+import { plans, runs, messages, workerCounters } from "@/server/db/schema";
 
 const { mockStartSupervisorRun } = vi.hoisted(() => ({
   mockStartSupervisorRun: vi.fn(),
@@ -22,6 +22,7 @@ describe("POST /api/planning/[id]/promote", () => {
   beforeEach(async () => {
     mockStartSupervisorRun.mockClear();
     await db.delete(messages);
+    await db.delete(workerCounters);
     await db.delete(runs);
     await db.delete(plans);
   });

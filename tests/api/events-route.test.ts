@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { messages, plans, runs, workers } from "@/server/db/schema";
+import { messages, plans, runs, workerCounters, workers } from "@/server/db/schema";
 
 const { mockEnsureSupervisorRuntimeStarted } = vi.hoisted(() => ({
   mockEnsureSupervisorRuntimeStarted: vi.fn().mockResolvedValue(undefined),
@@ -31,6 +31,7 @@ describe("GET /api/events", () => {
     mockEnsureSupervisorRuntimeStarted.mockClear();
     await db.delete(messages);
     await db.delete(workers);
+    await db.delete(workerCounters);
     await db.delete(runs);
     await db.delete(plans);
   });

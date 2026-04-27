@@ -32,6 +32,7 @@ type PendingPermissionRecord = NonNullable<WorkerCardAgent["pendingPermissions"]
 
 export type WorkerCardProps = {
   workerId: string;
+  workerNumber?: number | null;
   workerTitle?: string | null;
   agent: WorkerCardAgent;
   defaultOpen: boolean;
@@ -154,6 +155,7 @@ function PermissionWarning({ pendingPermissions }: { pendingPermissions: Pending
 
 export function WorkerCard({
   workerId,
+  workerNumber,
   workerTitle,
   agent,
   defaultOpen,
@@ -179,9 +181,13 @@ export function WorkerCard({
       return normalizedTitle;
     }
 
+    if (typeof workerNumber === "number" && Number.isFinite(workerNumber)) {
+      return `Worker ${workerNumber}`;
+    }
+
     const match = workerId.match(/-worker-(\d+)$/);
     return match ? `Worker ${match[1]}` : workerId;
-  }, [workerId, workerTitle]);
+  }, [workerId, workerNumber, workerTitle]);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -228,8 +234,8 @@ export function WorkerCard({
                 {onStopWorker ? (
                   <button
                     type="button"
-                    aria-label={`Stop ${workerTitle || workerId}`}
-                    title={`Stop ${workerTitle || workerId}`}
+                    aria-label={`Stop ${displayId}`}
+                    title={`Stop ${displayId}`}
                     disabled={isStopping}
                     className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-red-300/15 bg-red-400/[0.06] text-red-100/85 transition-colors hover:bg-red-400/[0.12] disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={(event) => {

@@ -36,6 +36,7 @@ export const workers = sqliteTable('workers', {
   type: text('type').notNull(),
   status: text('status').notNull(), // 'idle', 'working', 'stuck', 'cred-exhausted'
   cwd: text('cwd').notNull(),
+  workerNumber: integer('worker_number'),
   title: text('title').notNull().default(''),
   initialPrompt: text('initial_prompt').notNull().default(''),
   outputLog: text('output_log').notNull().default(''),
@@ -45,6 +46,12 @@ export const workers = sqliteTable('workers', {
   bridgeSessionId: text('bridge_session_id'),
   bridgeSessionMode: text('bridge_session_mode'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const workerCounters = sqliteTable('worker_counters', {
+  runId: text('run_id').primaryKey().references(() => runs.id),
+  nextNumber: integer('next_number').notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });
 

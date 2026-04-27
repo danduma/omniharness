@@ -2,12 +2,13 @@ import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { messages, plans, runs } from "@/server/db/schema";
+import { messages, plans, runs, workerCounters } from "@/server/db/schema";
 import { persistRunFailure } from "@/server/runs/failures";
 
 describe("persistRunFailure", () => {
   beforeEach(async () => {
     await db.delete(messages);
+    await db.delete(workerCounters);
     await db.delete(runs);
     await db.delete(plans);
   });

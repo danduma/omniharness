@@ -20,6 +20,7 @@ import { startSupervisorRun } from "@/server/supervisor/start";
 import { getAppDataPath } from "@/server/app-root";
 import { PLANNER_SYSTEM_PROMPT } from "@/server/prompts";
 import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/supervisor/worker-types";
+import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 
 export type RecoveryAction = "retry" | "edit" | "fork";
@@ -94,7 +95,7 @@ function buildEmptyWorkerOutputMessage(snapshot: AgentRecord | null, responseSta
 }
 
 async function startDirectRerun(run: typeof runs.$inferSelect, content: string) {
-  const workerId = randomUUID();
+  const { workerId, workerNumber } = await allocateWorkerIdentity(run.id);
   const cwd = run.projectPath || process.cwd();
   const allowedWorkerTypes = parseAllowedWorkerTypes(run.allowedWorkerTypes);
   const workerType = run.preferredWorkerType?.trim()
@@ -108,6 +109,7 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string) 
     type: workerType,
     status: "starting",
     cwd,
+    workerNumber,
     outputLog: "",
     outputEntriesJson: "[]",
     currentText: "",

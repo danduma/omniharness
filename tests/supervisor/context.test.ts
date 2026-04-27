@@ -3,7 +3,7 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/server/db";
-import { messages, plans, runs } from "@/server/db/schema";
+import { messages, plans, runs, workerCounters } from "@/server/db/schema";
 import { getAppDataPath } from "@/server/app-root";
 import { buildSupervisorTurnContext } from "@/server/supervisor/context";
 
@@ -14,6 +14,7 @@ vi.mock("@/server/bridge-client", () => ({
 describe("buildSupervisorTurnContext", () => {
   beforeEach(async () => {
     await db.delete(messages);
+    await db.delete(workerCounters);
     await db.delete(runs);
     await db.delete(plans);
   });

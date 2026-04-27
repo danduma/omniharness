@@ -10,6 +10,7 @@ import { normalizeConversationMode, type ConversationMode } from "./modes";
 import { normalizeWorkerType, parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
 import { PLANNER_SYSTEM_PROMPT } from "@/server/prompts";
 import { persistRunFailure } from "@/server/runs/failures";
+import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 
 interface AttachmentInput {
@@ -115,7 +116,7 @@ export async function createConversation(args: {
   if (mode === "implementation") {
     startSupervisorRun(runId);
   } else {
-    const workerId = randomUUID();
+    const { workerId, workerNumber } = await allocateWorkerIdentity(runId);
     const cwd = projectPath || process.cwd();
     const workerType = preferredWorkerType || allowedWorkerTypes[0] || "codex";
 
@@ -125,6 +126,7 @@ export async function createConversation(args: {
       type: workerType,
       status: "starting",
       cwd,
+      workerNumber,
       outputLog: "",
       outputEntriesJson: "[]",
       currentText: "",

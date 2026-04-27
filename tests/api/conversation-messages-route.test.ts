@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { messages, plans, runs, workers } from "@/server/db/schema";
+import { messages, plans, runs, workerCounters, workers } from "@/server/db/schema";
 
 const { mockAskAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
   mockAskAgent: vi.fn().mockResolvedValue({
@@ -29,6 +29,7 @@ describe("POST /api/conversations/[id]/messages", () => {
     mockStartSupervisorRun.mockClear();
     await db.delete(messages);
     await db.delete(workers);
+    await db.delete(workerCounters);
     await db.delete(runs);
     await db.delete(plans);
   });

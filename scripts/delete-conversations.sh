@@ -18,6 +18,12 @@ const bridgeUrl = process.env.BRIDGE_URL;
 const db = new Database(dbPath);
 db.pragma("foreign_keys = ON");
 
+const tables = new Set(
+  db.prepare("select name from sqlite_master where type = 'table'")
+    .all()
+    .map((row) => row.name),
+);
+
 const workerIds = db.prepare("select id from workers").all().map((row) => row.id);
 const adHocPlanPaths = db
   .prepare("select path from plans where path like 'vibes/ad-hoc/%'")
@@ -42,6 +48,9 @@ function deleteConversationRows() {
     db.prepare("delete from validation_runs where run_id in (select id from runs)").run();
     db.prepare("delete from execution_events where run_id in (select id from runs)").run();
     db.prepare("delete from workers where run_id in (select id from runs)").run();
+    if (tables.has("worker_counters")) {
+      db.prepare("delete from worker_counters where run_id in (select id from runs)").run();
+    }
     db.prepare("delete from runs").run();
 
     db.prepare("delete from validation_runs where plan_item_id in (select id from plan_items)").run();
