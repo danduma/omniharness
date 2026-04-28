@@ -25,7 +25,8 @@ test("app uses a neutral boot shell while auth state is still loading", () => {
 });
 
 test("loading and login shells keep the page background dark when dark mode is active", () => {
-  expect(bootShellSource).toContain("dark:bg-[radial-gradient");
+  expect(bootShellSource).toContain("bg-background");
+  expect(bootShellSource).toContain("animate-spin");
   expect(loginShellSource).toContain("dark:bg-[radial-gradient");
   expect(globalsSource).toContain("@apply bg-background text-foreground");
 });
