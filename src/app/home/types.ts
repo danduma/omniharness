@@ -32,6 +32,7 @@ export type MessageRecord = {
   role: string;
   kind?: string | null;
   content: string;
+  workerId?: string | null;
   createdAt: string;
 };
 export type ExecutionEventRecord = {

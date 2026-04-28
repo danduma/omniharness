@@ -24,6 +24,9 @@ describe("conversation worker helpers", () => {
     expect(isWorkerActiveStatus("working")).toBe(true);
     expect(isWorkerActiveStatus("stuck")).toBe(true);
     expect(isWorkerActiveStatus("cancelled")).toBe(false);
+    expect(isWorkerActiveStatus("stopped")).toBe(false);
+    expect(isWorkerActiveStatus("finished")).toBe(false);
+    expect(isWorkerActiveStatus("done")).toBe(false);
 
     expect(buildWorkerLists(workers)).toEqual({
       active: [workers[0], workers[1], workers[2]],

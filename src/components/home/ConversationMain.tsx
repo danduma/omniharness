@@ -1,4 +1,5 @@
 import type React from "react";
+import { useState } from "react";
 import { Blocks, ChevronDown, Copy, Cpu, GitBranch, MoreHorizontal, Pencil, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -9,6 +10,7 @@ import { AgentSurface } from "@/components/AgentSurface";
 import { Terminal } from "@/components/Terminal";
 import { PlanningArtifactsPanel } from "@/components/PlanningArtifactsPanel";
 import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
+import { extractLatestPlainTextTurn } from "@/lib/agent-output";
 import { type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { AgentSnapshot, ClarificationRecord, MessageRecord, NoticeDescriptor, RunRecord } from "@/app/home/types";
 import { buildInlineError, formatExecutionTimestamp, parseSpawnedWorkerMessage } from "@/app/home/utils";
@@ -102,6 +104,64 @@ function DirectControlTerminalColumn({ children }: { children: React.ReactNode }
     <div className="mx-auto w-full max-w-[min(82ch,100%)]">
       {children}
     </div>
+  );
+}
+
+function inferWorkerIdFromMessage(message: MessageRecord) {
+  if (message.workerId?.trim()) {
+    return message.workerId.trim();
+  }
+
+  const promptedMatch = message.content.match(/^Prompted\s+([^\s:]+):/);
+  return promptedMatch?.[1] ?? null;
+}
+
+function WorkerOutputMessage({
+  message,
+  agent,
+}: {
+  message: MessageRecord;
+  agent: AgentSnapshot | null;
+}) {
+  const [fullOutputOpen, setFullOutputOpen] = useState(false);
+  const inferredWorkerId = inferWorkerIdFromMessage(message);
+  const summaryText = extractLatestPlainTextTurn({
+    outputEntries: agent?.outputEntries,
+    currentText: agent?.currentText,
+    lastText: agent?.lastText || message.content,
+  }) || message.content.trim();
+  const fullOutputAgent = agent ?? {
+    name: inferredWorkerId ?? "worker",
+    state: "done",
+    currentText: "",
+    lastText: message.content,
+  };
+
+  return (
+    <Collapsible open={fullOutputOpen} onOpenChange={setFullOutputOpen}>
+      <div className="overflow-hidden rounded-xl border border-emerald-600/20 bg-emerald-950/[0.08] shadow-sm">
+        <div className="space-y-3 p-4">
+          <div className="whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
+            {summaryText}
+          </div>
+          <CollapsibleTrigger
+            className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium text-emerald-700 transition-colors hover:text-emerald-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-emerald-300 dark:hover:text-emerald-100"
+            aria-label={fullOutputOpen ? "Hide full worker output" : "Show full worker output"}
+          >
+            <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", fullOutputOpen && "rotate-180")} />
+            {fullOutputOpen ? "Hide full output" : "Show full output"}
+          </CollapsibleTrigger>
+        </div>
+        <CollapsibleContent>
+          <div className="border-t border-emerald-600/15 bg-[#0b0d10] p-2">
+            <Terminal
+              agent={fullOutputAgent}
+              className="h-72"
+            />
+          </div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
   );
 }
 
@@ -395,6 +455,11 @@ export function ConversationMain({
                       />
                     );
                   })()
+                ) : msg.role === "worker" ? (
+                  <WorkerOutputMessage
+                    message={msg}
+                    agent={conversationAgents.find((agent) => agent.name === inferWorkerIdFromMessage(msg)) ?? null}
+                  />
                 ) : (
                   <div className={`overflow-x-auto whitespace-pre-wrap rounded-lg border p-4 leading-relaxed ${msg.kind === "error"
                     ? "border-destructive/30 bg-destructive/5 text-destructive"
@@ -402,8 +467,6 @@ export function ConversationMain({
                       ? "border-transparent bg-muted/30 text-foreground"
                       : msg.role === "system"
                         ? "border-border/30 bg-muted/20 text-[13px] text-muted-foreground"
-                        : msg.role === "worker"
-                          ? "border-[#333] bg-[#1e1e1e] font-mono text-[12px] text-emerald-400 shadow-sm"
                           : "border-border bg-card"}`}>
                     {msg.content}
                   </div>

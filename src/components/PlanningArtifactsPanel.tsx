@@ -48,7 +48,9 @@ export function PlanningArtifactsPanel({
   isPromoting?: boolean;
 }) {
   const artifacts = useMemo(() => normalizeArtifacts(plannerArtifactsJson), [plannerArtifactsJson]);
-  const planCandidates = (artifacts.candidates ?? []).filter((candidate) => candidate.kind === "plan");
+  const allPlanCandidates = (artifacts.candidates ?? []).filter((candidate) => candidate.kind === "plan");
+  const handoffPlanCandidates = allPlanCandidates.filter((candidate) => candidate.source === "handoff");
+  const planCandidates = handoffPlanCandidates.length > 0 ? handoffPlanCandidates : allPlanCandidates;
   const [selectedPlanPath, setSelectedPlanPath] = useState<string | null>(planPath || artifacts.planPath || planCandidates[0]?.path || null);
 
   const selectedCandidate = planCandidates.find((candidate) => candidate.path === selectedPlanPath) ?? null;

@@ -177,6 +177,7 @@ export function WorkerCard({
   const promptPreviewText = promptPreview?.trim() ?? "";
   const stateLabel = formatWorkerStateLabel(agent.state);
   const showPromptPreview = promptPreviewText.length > 0;
+  const showStopWorker = Boolean(onStopWorker) && isWorkerActiveStatus(agent.state);
 
   const displayId = useMemo(() => {
     const normalizedTitle = workerTitle?.trim();
@@ -233,7 +234,7 @@ export function WorkerCard({
                 ) : null}
               </div>
             </CollapsibleTrigger>
-            <div className="flex shrink-0 items-center gap-2.5">
+            <div className="flex shrink-0 items-start gap-2.5">
               <div className="inline-flex items-center gap-2 text-[11px] font-medium text-zinc-400">
                 <span className={cn(
                   "h-1.5 w-1.5 rounded-full",
@@ -242,20 +243,20 @@ export function WorkerCard({
                 <span className="capitalize">{stateLabel}</span>
               </div>
               {pendingPermissions.length > 0 ? <PermissionWarning pendingPermissions={pendingPermissions} /> : null}
-              {onStopWorker ? (
+              {showStopWorker ? (
                 <button
                   type="button"
                   aria-label={`Stop ${displayId}`}
                   title={`Stop ${displayId}`}
                   disabled={isStopping}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-red-300/15 bg-red-400/[0.06] text-red-100/85 transition-colors hover:bg-red-400/[0.12] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-red-300/15 bg-red-400/[0.06] text-red-100/85 transition-colors hover:bg-red-400/[0.12] disabled:cursor-not-allowed disabled:opacity-50"
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    onStopWorker();
+                    onStopWorker?.();
                   }}
                 >
-                  <Square className="h-3.5 w-3.5 fill-current" />
+                  <Square className="h-3 w-3 fill-current" />
                 </button>
               ) : null}
               <CollapsibleTrigger

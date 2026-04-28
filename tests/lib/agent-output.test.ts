@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAgentOutputActivity } from "@/lib/agent-output";
+import { buildAgentOutputActivity, extractLatestPlainTextTurn } from "@/lib/agent-output";
 
 describe("agent output normalization", () => {
   it("conflates tool call updates into a single tool activity item", () => {
@@ -193,5 +193,43 @@ describe("agent output normalization", () => {
         live: true,
       },
     ]);
+  });
+
+  it("extracts the latest plain text worker turn instead of the initial chatter", () => {
+    const summary = extractLatestPlainTextTurn({
+      outputEntries: [
+        {
+          id: "msg-1",
+          type: "message",
+          text: "I will inspect the worker renderer first.",
+          timestamp: "2026-04-22T00:00:00.000Z",
+        },
+        {
+          id: "tool-1",
+          type: "tool_call",
+          text: "Terminal",
+          timestamp: "2026-04-22T00:00:01.000Z",
+          toolCallId: "tool-1",
+          status: "completed",
+        },
+        {
+          id: "msg-2",
+          type: "message",
+          text: "Updated the worker summary card and verified the focused tests.",
+          timestamp: "2026-04-22T00:00:02.000Z",
+        },
+      ],
+      lastText: "Prompted worker-1:\nDo the thing\n\nResponse:\nUpdated the worker summary card and verified the focused tests.",
+    });
+
+    expect(summary).toBe("Updated the worker summary card and verified the focused tests.");
+  });
+
+  it("falls back to the response section from legacy worker output messages", () => {
+    const summary = extractLatestPlainTextTurn({
+      lastText: "Prompted run-worker-1:\nPlease fix the UI\n\nInitial response:\nImplemented the compact worker summary.",
+    });
+
+    expect(summary).toBe("Implemented the compact worker summary.");
   });
 });

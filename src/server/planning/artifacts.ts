@@ -115,15 +115,20 @@ export async function collectPlannerArtifacts(args: {
   const candidates: PlannerArtifactCandidate[] = [];
   const seenPaths = new Set<string>();
 
-  const candidateInputs = [
+  const handoffInputs = [
     ...(handoff?.specPath ? [{ rawPath: handoff.specPath, source: "handoff" as const, evidence: "spec_path in handoff block", confidence: 1 }] : []),
     ...(handoff?.planPath ? [{ rawPath: handoff.planPath, source: "handoff" as const, evidence: "plan_path in handoff block", confidence: 1 }] : []),
-    ...extractMarkdownPaths(args.outputText).map((rawPath) => ({
-      rawPath,
-      source: "output_text" as const,
-      evidence: `mentioned in output: ${rawPath}`,
-      confidence: 0.65,
-    })),
+  ];
+  const candidateInputs = [
+    ...handoffInputs,
+    ...(handoffInputs.length > 0
+      ? []
+      : extractMarkdownPaths(args.outputText).map((rawPath) => ({
+        rawPath,
+        source: "output_text" as const,
+        evidence: `mentioned in output: ${rawPath}`,
+        confidence: 0.65,
+      }))),
   ];
 
   for (const input of candidateInputs) {

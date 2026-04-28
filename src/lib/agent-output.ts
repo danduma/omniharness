@@ -113,6 +113,32 @@ function cleanPaneText(value: string | null): string | null {
   return stripped.trim().length > 0 ? stripped : null;
 }
 
+function extractLegacyWorkerResponse(value: string | null | undefined): string | null {
+  const text = normalizeMultilineText(value ?? "");
+  const match = text.match(/(?:^|\n\n)(?:Initial response|Response):\n([\s\S]*)$/i);
+  return cleanPaneText(match?.[1] ?? text);
+}
+
+export function extractLatestPlainTextTurn(snapshot: AgentOutputSnapshot): string {
+  const outputEntries = Array.isArray(snapshot.outputEntries) ? snapshot.outputEntries : [];
+
+  for (let index = outputEntries.length - 1; index >= 0; index -= 1) {
+    const entry = outputEntries[index];
+    if (entry?.type !== "message") {
+      continue;
+    }
+
+    const text = cleanPaneText(entry.text);
+    if (text) {
+      return text;
+    }
+  }
+
+  return extractLegacyWorkerResponse(snapshot.currentText)
+    || extractLegacyWorkerResponse(snapshot.lastText)
+    || "";
+}
+
 function stringifyUnknown(value: unknown): string | null {
   if (typeof value === "string") {
     return value;

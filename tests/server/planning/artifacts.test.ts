@@ -55,6 +55,37 @@ ready: yes
     expect(artifacts.candidates.some((candidate) => candidate.kind === "plan" && candidate.exists)).toBe(true);
   });
 
+  it("does not mix unrelated transcript paths into an explicit handoff", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "omni-planning-"));
+    const specPath = path.join(cwd, "docs/superpowers/specs/current-design.md");
+    const planPath = path.join(cwd, "docs/superpowers/plans/current-plan.md");
+    const unrelatedPlanPath = path.join(cwd, "docs/superpowers/plans/old-plan.md");
+
+    fs.mkdirSync(path.dirname(specPath), { recursive: true });
+    fs.mkdirSync(path.dirname(planPath), { recursive: true });
+    fs.writeFileSync(specPath, "# Spec\n");
+    fs.writeFileSync(planPath, "## Phase 1\n- [ ] Build current workflow\n");
+    fs.writeFileSync(unrelatedPlanPath, "## Phase 1\n- [ ] Build old workflow\n");
+
+    const artifacts = await collectPlannerArtifacts({
+      cwd,
+      outputText: `
+Earlier repo search found docs/superpowers/plans/old-plan.md.
+
+<omniharness-plan-handoff>
+spec_path: docs/superpowers/specs/current-design.md
+plan_path: docs/superpowers/plans/current-plan.md
+ready: yes
+</omniharness-plan-handoff>
+`,
+    });
+
+    expect(artifacts.specPath).toBe(specPath);
+    expect(artifacts.planPath).toBe(planPath);
+    expect(artifacts.candidates.map((candidate) => candidate.path)).toEqual([specPath, planPath]);
+    expect(artifacts.candidates.every((candidate) => candidate.source === "handoff")).toBe(true);
+  });
+
   it("keeps multiple candidates when output is ambiguous", async () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "omni-planning-"));
     const firstPlan = path.join(cwd, "docs/superpowers/plans/first.md");

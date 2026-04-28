@@ -91,7 +91,9 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(workerCardSource).toContain('function renderContextMeter(fullnessPercent: number | null | undefined)');
   expect(workerCardSource).toContain('className="inline-flex items-center gap-1.5"');
   expect(workerCardSource).toContain('className="h-3.5 w-3.5"');
-  expect(workerCardSource).toContain('className="inline-flex h-6 w-6 items-center justify-center rounded-full');
+  expect(workerCardSource).toContain('const showStopWorker = Boolean(onStopWorker) && isWorkerActiveStatus(agent.state);');
+  expect(workerCardSource).toContain('className="flex shrink-0 items-start gap-2.5"');
+  expect(workerCardSource).toContain('className="inline-flex h-5 w-5 items-center justify-center rounded-full');
   expect(workerCardSource).toContain('className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")}');
   expect(workerCardSource).toContain("Permissions waiting");
   expect(workerCardSource).toContain("Context usage unavailable");
@@ -163,6 +165,15 @@ test("worker card action buttons render outside the collapsible trigger button",
   expect(triggerCloseIndex).toBeGreaterThan(-1);
   expect(permissionButtonIndex).toBeGreaterThan(triggerCloseIndex);
   expect(stopButtonIndex).toBeGreaterThan(triggerCloseIndex);
+});
+
+test("implementation worker messages show a compact latest turn with expandable full output", () => {
+  expect(pageSource).toContain("function WorkerOutputMessage");
+  expect(pageSource).toContain("extractLatestPlainTextTurn");
+  expect(pageSource).toContain('aria-label={fullOutputOpen ? "Hide full worker output" : "Show full worker output"}');
+  expect(pageSource).toContain('{fullOutputOpen ? "Hide full output" : "Show full output"}');
+  expect(pageSource).toContain("agent={fullOutputAgent}");
+  expect(pageSource).not.toContain('msg.role === "worker"\n                          ? "border-[#333] bg-[#1e1e1e] font-mono text-[12px] text-emerald-400 shadow-sm"');
 });
 
 test("direct conversations render the user transcript next to the worker surface", () => {
