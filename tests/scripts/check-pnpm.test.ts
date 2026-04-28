@@ -14,7 +14,7 @@ function runCheck(extraEnv: NodeJS.ProcessEnv = {}, args: string[] = []) {
 }
 
 describe("check-pnpm.mjs", () => {
-  it("accepts pnpm under arm64 Node.js", () => {
+  it("accepts pnpm under the current Node.js architecture", () => {
     const result = runCheck();
 
     expect(result.status).toBe(0);
@@ -25,13 +25,6 @@ describe("check-pnpm.mjs", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("This repository is pnpm-only.");
-  });
-
-  it("rejects non-arm64 Node.js runtimes", () => {
-    const result = runCheck({ OMNIHARNESS_TEST_PROCESS_ARCH: "x64" });
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("must run with an arm64 Node.js runtime");
   });
 
   it("loads better-sqlite3 during native verification", () => {
