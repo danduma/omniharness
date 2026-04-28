@@ -54,6 +54,26 @@ function buildEmptyWorkerOutputMessage(snapshot: AgentRecord | null, responseSta
   return `Agent stopped without producing output. Final state: ${responseState || "unknown"}.`;
 }
 
+async function buildCreatedConversationResponse(args: {
+  planId: string;
+  runId: string;
+  messageId: string;
+  mode: ConversationMode;
+}) {
+  const plan = await db.select().from(plans).where(eq(plans.id, args.planId)).get();
+  const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
+  const message = await db.select().from(dbMessages).where(eq(dbMessages.id, args.messageId)).get();
+
+  return {
+    planId: args.planId,
+    runId: args.runId,
+    mode: args.mode,
+    plan,
+    run,
+    message,
+  };
+}
+
 export async function createConversation(args: {
   mode?: unknown;
   command: string;
@@ -105,8 +125,9 @@ export async function createConversation(args: {
     updatedAt: new Date(),
   });
 
+  const initialMessageId = randomUUID();
   await db.insert(dbMessages).values({
-    id: randomUUID(),
+    id: initialMessageId,
     runId,
     role: "user",
     kind: "checkpoint",
@@ -169,7 +190,7 @@ export async function createConversation(args: {
       await persistRunFailure(runId, new Error(failureMessage));
       notifyEventStreamSubscribers();
 
-      return { planId, runId, mode };
+      return buildCreatedConversationResponse({ planId, runId, messageId: initialMessageId, mode });
     }
 
     await db.update(workers).set({
@@ -198,5 +219,5 @@ export async function createConversation(args: {
     console.error("Conversation title generation failed:", error);
   });
 
-  return { planId, runId, mode };
+  return buildCreatedConversationResponse({ planId, runId, messageId: initialMessageId, mode });
 }

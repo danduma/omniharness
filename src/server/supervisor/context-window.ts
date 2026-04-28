@@ -31,6 +31,7 @@ export interface SupervisorTurnContextForPrompt {
   goal: string;
   planPath?: string | null;
   planContent?: string | null;
+  readFiles?: Array<{ path: string; content: string; truncated: boolean }>;
   preferredWorkerType: string | null;
   allowedWorkerTypes: string[];
   recentUserMessages: string[];
@@ -161,6 +162,15 @@ function summarizeUserMessages(messages: string[], goal: string) {
 }
 
 function buildObjectiveAndPlanContext(context: SupervisorTurnContextForPrompt, maxLength = 16_000) {
+  const readFileSection = context.readFiles?.length
+    ? [
+        "Supervisor-read files:",
+        ...context.readFiles.map((file) => [
+          `File: ${file.path}${file.truncated ? " (truncated)" : ""}`,
+          truncate(file.content.trim(), 8_000),
+        ].join("\n")),
+      ].join("\n\n")
+    : "";
   const sections = [
     context.goal.trim()
       ? `Supervisor-owned objective:\n${truncate(context.goal.trim(), 4_000)}`
@@ -173,6 +183,7 @@ function buildObjectiveAndPlanContext(context: SupervisorTurnContextForPrompt, m
       : context.planPath
         ? `Plan artifact: ${context.planPath}`
         : "",
+    readFileSection,
   ].filter(Boolean);
 
   if (sections.length === 0) {

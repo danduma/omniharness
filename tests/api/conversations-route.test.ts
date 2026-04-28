@@ -112,6 +112,22 @@ describe("POST /api/conversations", () => {
     const run = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
 
     expect(run?.mode).toBe("implementation");
+    expect(payload.plan).toEqual(expect.objectContaining({
+      id: payload.planId,
+      path: expect.any(String),
+    }));
+    expect(payload.run).toEqual(expect.objectContaining({
+      id: payload.runId,
+      planId: payload.planId,
+      mode: "implementation",
+      title: "New conversation",
+    }));
+    expect(payload.message).toEqual(expect.objectContaining({
+      runId: payload.runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "Implement docs/superpowers/plans/foo.md",
+    }));
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
     expect(mockSpawnAgent).not.toHaveBeenCalled();
     expect(mockNotifyEventStreamSubscribers).toHaveBeenCalledTimes(1);

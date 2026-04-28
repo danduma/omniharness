@@ -42,6 +42,7 @@ describe("buildSupervisorTools", () => {
 
     expect(toolNames).toContain("wait_until");
     expect(toolNames).toContain("mark_complete");
+    expect(toolNames).toContain("read_file");
     expect(toolNames).not.toContain("plan_read");
     expect(toolNames).not.toContain("plan_mark_done");
   });
@@ -61,5 +62,24 @@ describe("buildSupervisorTools", () => {
     expect(spawnTool?.function.description).toContain("mocked paths");
     expect(spawnTool?.function.description).toContain("fake controls");
     expect(spawnTool?.function.description).toContain("real user-facing path");
+  });
+
+  it("describes ask_user as the preflight intent confirmation path", () => {
+    const askUserTool = buildSupervisorTools().find((tool) => tool.function.name === "ask_user");
+
+    expect(askUserTool?.function.description).toContain("preflight intent confirmation");
+    expect(askUserTool?.function.description).toContain("summarize the understood job");
+    expect(askUserTool?.function.description).toContain("clarifying question");
+    expect(askUserTool?.function.description).toContain("specific outcomes");
+    expect(askUserTool?.function.description).toContain("not just the artifact title");
+  });
+
+  it("lets the supervisor read referenced local files before asking the user", () => {
+    const readFileTool = buildSupervisorTools().find((tool) => tool.function.name === "read_file");
+
+    expect(readFileTool?.function.description).toContain("Read a local repository file");
+    expect(readFileTool?.function.description).toContain("spec");
+    expect(readFileTool?.function.description).toContain("plan");
+    expect(readFileTool?.function.parameters.required).toEqual(["path"]);
   });
 });

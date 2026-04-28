@@ -240,17 +240,24 @@ export function ConversationSidebar({
       </div>
 
       <div className="mt-auto shrink-0 border-t border-border/60 bg-background/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <Button variant="ghost" className="mb-1 hidden h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground lg:flex" onClick={openPairDeviceDialog}>
-          <Smartphone className="mr-2 h-4 w-4" /> Connect Phone
-        </Button>
-        <Button variant="ghost" className="h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground" onClick={() => setShowSettings(true)}>
-          <Settings className="mr-2 h-4 w-4" /> Settings
-        </Button>
-        {authEnabled ? (
-          <Button variant="ghost" className="mt-1 h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground" onClick={logout}>
-            <LogOut className="mr-2 h-4 w-4" /> Sign Out
-          </Button>
-        ) : null}
+        <DropdownMenu>
+          <DropdownMenuTrigger className="inline-flex h-9 w-full items-center justify-start rounded-md px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50">
+            <Settings className="mr-2 h-4 w-4" /> Settings
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" side="top" className="w-56">
+            <DropdownMenuItem className="cursor-pointer whitespace-nowrap" onClick={() => setShowSettings(true)}>
+              <Settings className="mr-2 h-4 w-4" /> Settings
+            </DropdownMenuItem>
+            <DropdownMenuItem className="cursor-pointer whitespace-nowrap" onClick={openPairDeviceDialog}>
+              <Smartphone className="mr-2 h-4 w-4" /> Connect Phone
+            </DropdownMenuItem>
+            {authEnabled ? (
+              <DropdownMenuItem variant="destructive" className="cursor-pointer whitespace-nowrap" onClick={logout}>
+                <LogOut className="mr-2 h-4 w-4" /> Sign Out
+              </DropdownMenuItem>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );

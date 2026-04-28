@@ -77,6 +77,63 @@ export function appendSentConversationMessageSnapshot(
   };
 }
 
+export type CreatedConversationSnapshot = {
+  plan?: PlanRecord | null;
+  run?: RunRecord | null;
+  message?: MessageRecord | null;
+};
+
+export function appendCreatedConversationSnapshot(
+  current: EventStreamState,
+  snapshot: CreatedConversationSnapshot | null | undefined,
+): EventStreamState {
+  const run = snapshot?.run;
+  if (!run) {
+    return current;
+  }
+
+  const plan = snapshot.plan;
+  const message = snapshot.message;
+  const nextPlans = plan && !(current.plans || []).some((existingPlan) => existingPlan.id === plan.id)
+    ? [...(current.plans || []), plan]
+    : current.plans || [];
+  const nextRuns = (current.runs || []).some((existingRun) => existingRun.id === run.id)
+    ? (current.runs || []).map((existingRun) => existingRun.id === run.id ? { ...existingRun, ...run } : existingRun)
+    : [run, ...(current.runs || [])];
+  const nextMessages = message && !(current.messages || []).some((existingMessage) => existingMessage.id === message.id)
+    ? [...(current.messages || []), message]
+    : current.messages || [];
+
+  return {
+    ...current,
+    plans: nextPlans,
+    runs: nextRuns,
+    messages: nextMessages,
+  };
+}
+
+export function mergePendingCreatedConversationSnapshots(
+  incomingState: EventStreamState,
+  pendingSnapshots: Map<string, CreatedConversationSnapshot>,
+): EventStreamState {
+  if (pendingSnapshots.size === 0) {
+    return incomingState;
+  }
+
+  const serverRunIds = new Set((incomingState.runs || []).map((run) => run.id));
+  let nextState = incomingState;
+
+  for (const [runId, snapshot] of Array.from(pendingSnapshots.entries())) {
+    if (serverRunIds.has(runId)) {
+      pendingSnapshots.delete(runId);
+    } else {
+      nextState = appendCreatedConversationSnapshot(nextState, snapshot);
+    }
+  }
+
+  return nextState;
+}
+
 export function shouldShowConversationExecutionPanel({
   selectedRun,
   isConversationThinking,
@@ -87,6 +144,53 @@ export function shouldShowConversationExecutionPanel({
   executionEventCount: number;
 }) {
   return Boolean(selectedRun && (isConversationThinking || executionEventCount > 0));
+}
+
+const RECOVERABLE_RUNNING_GRACE_MS = 30_000;
+
+export function shouldShowRecoverableRunningState({
+  selectedRun,
+  latestUserCheckpoint,
+  hasPendingPermission,
+  hasActiveWorker,
+  hasStuckWorker,
+  activeWorkerCount,
+  latestExecutionEventCreatedAt,
+  nowMs = Date.now(),
+}: {
+  selectedRun: RunRecord | null;
+  latestUserCheckpoint: MessageRecord | null;
+  hasPendingPermission: boolean;
+  hasActiveWorker: boolean;
+  hasStuckWorker: boolean;
+  activeWorkerCount: number;
+  latestExecutionEventCreatedAt: string | null | undefined;
+  nowMs?: number;
+}) {
+  if (
+    selectedRun?.status !== "running"
+    || !latestUserCheckpoint
+    || hasPendingPermission
+    || hasActiveWorker
+  ) {
+    return false;
+  }
+
+  if (hasStuckWorker) {
+    return true;
+  }
+
+  if (activeWorkerCount > 0) {
+    return false;
+  }
+
+  const referenceTimestamp = latestExecutionEventCreatedAt || selectedRun.createdAt;
+  const referenceTimeMs = new Date(referenceTimestamp).getTime();
+  if (!Number.isFinite(referenceTimeMs)) {
+    return false;
+  }
+
+  return nowMs - referenceTimeMs >= RECOVERABLE_RUNNING_GRACE_MS;
 }
 
 export function shouldOpenExecutionDetailsForRun({
@@ -280,6 +384,10 @@ export function summarizeExecutionEvent(event: ExecutionEventRecord) {
     return `Resumed ${workerLabel} from saved session`;
   }
 
+  if (event.eventType === "worker_session_missing") {
+    return `${workerLabel} session is no longer available`;
+  }
+
   if (event.eventType === "worker_permission_denied") {
     return `Denied permission for ${workerLabel}`;
   }
@@ -309,10 +417,14 @@ export function summarizeExecutionEvent(event: ExecutionEventRecord) {
   }
 
   if (event.eventType === "clarification_requested") {
-    return `Waiting for your reply${summary ? `: ${summary}` : ""}`;
+    return "Waiting for your reply";
   }
 
   return summary || reason || error || event.eventType.replace(/_/g, " ");
+}
+
+export function shouldHideMessageForClarificationPanel(message: MessageRecord, hasClarificationPanel: boolean) {
+  return hasClarificationPanel && message.role === "supervisor" && message.kind === "clarification";
 }
 
 export function formatExecutionTimestamp(value: string) {

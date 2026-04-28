@@ -7,6 +7,7 @@ import { shouldAutoApprove } from "@/server/permissions";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { isActiveImplementationRun } from "@/server/runs/status";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
+import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 
 const OBSERVER_INTERVAL_MS = 5_000;
 const IDLE_THRESHOLD_MS = 30_000;
@@ -331,6 +332,7 @@ async function insertExecutionEvent(
     details: JSON.stringify(details),
     createdAt: new Date(),
   });
+  notifyEventStreamSubscribers();
 }
 
 async function loadActiveRun(runId: string) {
@@ -373,6 +375,7 @@ async function reviveWorkerFromSavedSession(args: {
     bridgeSessionMode: resumedWorker.sessionMode ?? args.worker.bridgeSessionMode,
     updatedAt: new Date(args.now),
   }).where(eq(workers.id, args.worker.id));
+  notifyEventStreamSubscribers();
 
   return normalizeSnapshot(resumedWorker).snapshot;
 }
@@ -443,6 +446,22 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
             stopRunObserver(runId);
             return;
           }
+          if (isMissingAgentError(resumeError)) {
+            await insertExecutionEvent(runId, worker.id, "worker_session_missing", {
+              summary: `Saved bridge session for ${worker.id} is no longer available`,
+              reason: formatErrorMessage(resumeError),
+              sessionId: worker.bridgeSessionId,
+            });
+            await db.update(workers).set({
+              status: "cancelled",
+              bridgeSessionId: null,
+              bridgeSessionMode: null,
+              updatedAt: new Date(now),
+            }).where(eq(workers.id, worker.id));
+            notifyEventStreamSubscribers();
+            wakeSupervisor(runId, 0);
+            continue;
+          }
           await insertExecutionEvent(runId, worker.id, "worker_resume_failed", {
             summary: `Failed to resume ${worker.id} from saved session`,
             reason: formatErrorMessage(resumeError),
@@ -502,6 +521,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
         bridgeSessionMode: snapshot.sessionMode ?? worker.bridgeSessionMode,
         updatedAt: activityEvent ? new Date(now) : worker.updatedAt,
       }).where(eq(workers.id, worker.id));
+      notifyEventStreamSubscribers();
 
       for (const event of filteredEvents) {
         await insertExecutionEvent(runId, worker.id, event.type, {

@@ -22,7 +22,7 @@ import { resolveProjectScope } from "@/lib/project-scope";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
 import { COMPOSER_WORKER_OPTIONS, DEFAULT_ALLOWED_WORKER_TYPES, WORKER_OPTIONS } from "./constants";
 import type { AgentSnapshot, AuthSessionResponse, ClarificationRecord, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, LlmProfileTab, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, RunRecord, SettingsResponse, SettingsTab, SidebarGroup, SidebarRun, WorkerCatalogResponse, WorkerType } from "./types";
-import { appendSentConversationMessageSnapshot, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getWorkerModelOptions, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldOpenExecutionDetailsForRun, shouldShowConversationExecutionPanel, stripRunFailurePrefix, summarizeThought } from "./utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldHideMessageForClarificationPanel, shouldOpenExecutionDetailsForRun, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
 import { useAppErrors } from "./useAppErrors";
 import { useConversationExecutionStatus } from "./useConversationExecutionStatus";
 import { useHomeLifecycle } from "./useHomeLifecycle";
@@ -112,6 +112,7 @@ export function HomeApp() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const commandInputRef = useRef<HTMLTextAreaElement>(null);
   const pendingDeletedRunIdsRef = useRef<Set<string>>(new Set());
+  const pendingCreatedConversationSnapshotsRef = useRef<Map<string, CreatedConversationSnapshot>>(new Map());
 
   const sessionQuery = useQuery<AuthSessionResponse>({
     queryKey: ["auth-session"],
@@ -221,13 +222,18 @@ export function HomeApp() {
 
   const explicitProjects = useMemo(() => parseProjectList(apiKeys.PROJECTS), [apiKeys.PROJECTS]);
 
-  const filterDeletedRunsFromEventState = useCallback((incomingState: EventStreamState) => {
+  const filterEventStreamState = useCallback((incomingState: EventStreamState) => {
+    let nextState = mergePendingCreatedConversationSnapshots(
+      incomingState,
+      pendingCreatedConversationSnapshotsRef.current,
+    );
+
     const pendingDeletedRunIds = pendingDeletedRunIdsRef.current;
     if (pendingDeletedRunIds.size === 0) {
-      return incomingState;
+      return nextState;
     }
 
-    const nextState = filterOptimisticallyDeletedRuns(incomingState, pendingDeletedRunIds);
+    nextState = filterOptimisticallyDeletedRuns(nextState, pendingDeletedRunIds);
     const serverRunIds = new Set((incomingState.runs || []).map((run) => run.id));
     for (const runId of Array.from(pendingDeletedRunIds)) {
       if (!serverRunIds.has(runId)) {
@@ -237,7 +243,7 @@ export function HomeApp() {
     return nextState;
   }, []);
 
-  useHomeLifecycle({ appUnlocked, setHasReceivedInitialEventStreamPayload, setState, setRuntimeErrors, routeReady, setRouteReady, authEnabled, authConfigurationError, pairTokenFromUrl, setPairTokenFromUrl, redeemPairMutation, pairRedeemAttempted, setPairRedeemAttempted, selectedRunId, setSelectedRunId, draftProjectPath, setDraftProjectPath, setSelectedConversationMode, setSelectedCliAgent, setSelectedModel, setSelectedEffort, setReadMarkers, readMarkers, collapsedProjectPaths, setCollapsedProjectPaths, rightSidebarWidth, setRightSidebarWidth, isResizingRightSidebar, setIsResizingRightSidebar, selectedConversationMode, selectedCliAgent, selectedModel, selectedEffort, themeMode, setThemeMode, filterEventStreamState: filterDeletedRunsFromEventState });
+  useHomeLifecycle({ appUnlocked, setHasReceivedInitialEventStreamPayload, setState, setRuntimeErrors, routeReady, setRouteReady, authEnabled, authConfigurationError, pairTokenFromUrl, setPairTokenFromUrl, redeemPairMutation, pairRedeemAttempted, setPairRedeemAttempted, selectedRunId, setSelectedRunId, draftProjectPath, setDraftProjectPath, setSelectedConversationMode, setSelectedCliAgent, setSelectedModel, setSelectedEffort, setReadMarkers, readMarkers, collapsedProjectPaths, setCollapsedProjectPaths, rightSidebarWidth, setRightSidebarWidth, isResizingRightSidebar, setIsResizingRightSidebar, selectedConversationMode, selectedCliAgent, selectedModel, selectedEffort, themeMode, setThemeMode, filterEventStreamState });
   const isHydratingConversations = appUnlocked && !hasReceivedInitialEventStreamPayload;
 
   useEffect(() => {
@@ -389,7 +395,7 @@ export function HomeApp() {
     mutationFn: async (cmd: string) => {
       const isAutoWorkerSelection = selectedCliAgent === "auto";
       const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel);
-      return requestJson<{ runId?: string }>("/api/conversations", {
+      return requestJson<({ runId?: string } & CreatedConversationSnapshot)>("/api/conversations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -410,7 +416,17 @@ export function HomeApp() {
     onSuccess: (data) => {
       setCommand("");
       setAttachments([]);
-      if (data.runId) setSelectedRunId(data.runId);
+      if (data.runId) {
+        if (data.run) {
+          pendingCreatedConversationSnapshotsRef.current.set(data.runId, {
+            plan: data.plan,
+            run: data.run,
+            message: data.message,
+          });
+          setState((current) => appendCreatedConversationSnapshot(current, data));
+        }
+        setSelectedRunId(data.runId);
+      }
     },
   });
 
@@ -818,16 +834,22 @@ export function HomeApp() {
       details: staleFailure ? [] : workerLabel && workerStatus ? [`Current ${workerLabel} status: ${workerStatus}`] : [],
     } satisfies NoticeDescriptor;
   }, [failedWorkerAvailability, filteredMessages, selectedRun]);
+  const selectedClarifications = selectedRunId ? clarifications.filter((item) => item.runId === selectedRunId) : [];
+  const hasClarificationPanel = selectedClarifications.length > 0;
+  const hasPendingClarifications = selectedClarifications.some((item) => item.status === "pending");
   const visibleMessages = useMemo(() => {
+    const messages = ((filteredMessages || []) as MessageRecord[])
+      .filter((message) => !shouldHideMessageForClarificationPanel(message, hasClarificationPanel));
+
     if (!selectedRun || selectedRun.status !== "failed" || !selectedRun.lastError) {
-      return (filteredMessages || []) as MessageRecord[];
+      return messages;
     }
 
-    return ((filteredMessages || []) as MessageRecord[]).filter((message) => !(
+    return messages.filter((message) => !(
       message.role === "system"
       && message.kind === "error"
     ));
-  }, [filteredMessages, selectedRun]);
+  }, [filteredMessages, hasClarificationPanel, selectedRun]);
   const directConversationMessages = useMemo(() => {
     if (!isDirectConversation) {
       return [] as MessageRecord[];
@@ -848,19 +870,15 @@ export function HomeApp() {
     isWorkerActiveStatus(agent.state)
     || Boolean(agent.currentText?.trim())
   ));
-  const latestExecutionAgeMs = latestExecutionEvent
-    ? Date.now() - new Date(latestExecutionEvent.createdAt).getTime()
-    : Number.POSITIVE_INFINITY;
-  const showRecoverableRunningState = Boolean(
-    selectedRun?.status === "running"
-      && latestUserCheckpoint
-      && !pendingPermissionAgent
-      && !hasActiveWorker
-      && (
-        hasStuckWorker
-        || (conversationWorkerGroups.active.length === 0 && latestExecutionAgeMs >= 30_000)
-      )
-  );
+  const showRecoverableRunningState = shouldShowRecoverableRunningState({
+    selectedRun,
+    latestUserCheckpoint,
+    hasPendingPermission: Boolean(pendingPermissionAgent),
+    hasActiveWorker,
+    hasStuckWorker,
+    activeWorkerCount: conversationWorkerGroups.active.length,
+    latestExecutionEventCreatedAt: latestExecutionEvent?.createdAt,
+  });
   const { liveExecutionStatus, executionDetailLines } = useConversationExecutionStatus({
     selectedRun,
     latestExecutionEvent,
@@ -878,7 +896,7 @@ export function HomeApp() {
   });
 
   const isConversationThinking = selectedRun?.status === "running" || conversationAgents.some((agent) => agent.state === "working");
-  const showConversationExecution = shouldShowConversationExecutionPanel({
+  const showConversationExecution = !hasPendingClarifications && shouldShowConversationExecutionPanel({
     selectedRun,
     isConversationThinking,
     executionEventCount: selectedRunExecutionEvents.length,
@@ -918,7 +936,6 @@ export function HomeApp() {
     ? plans.find((p) => p.id === runs.find((r) => r.id === selectedRunId)?.planId) ?? null
     : null;
   const activeConversationCwd = selectedRun?.projectPath || activePlan?.path || draftProjectPath || null;
-  const selectedClarifications = selectedRunId ? clarifications.filter((item) => item.runId === selectedRunId) : [];
   const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, runCommandError: runCommand.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, deleteRunError: deleteRun.error, stopSupervisorError: stopSupervisor.error, stopWorkerError: stopWorker.error });
 
   useRunSelectionEffects({ scrollRef, state, selectedRunId, selectedRun, activeComposerMode, selectedCliAgent, setSelectedCliAgent, autoSelectedWorkerType, activeAllowedWorkerTypes, hydratedRunSelectionId, setHydratedRunSelectionId, selectedModel, setSelectedModel, selectedEffort, setSelectedEffort, availableWorkerTypes, configuredAllowedWorkerTypes, apiKeys, setApiKeys, setReadMarkers });
@@ -1180,11 +1197,6 @@ export function HomeApp() {
           activeConversationCwd={activeConversationCwd}
           selectedRun={selectedRun}
           isImplementationConversation={isImplementationConversation}
-          showRecoverableRunningState={showRecoverableRunningState}
-          hasStuckWorker={hasStuckWorker}
-          latestUserCheckpoint={latestUserCheckpoint}
-          handleRetryMessage={handleRetryMessage}
-          recoverRun={recoverRun}
           themeMode={themeMode}
           setThemeMode={setThemeMode}
           rightSidebarOpen={rightSidebarOpen}
@@ -1218,6 +1230,9 @@ export function HomeApp() {
           promotePlanningConversation={promotePlanningConversation}
           visibleMessages={visibleMessages}
           recoverRun={recoverRun}
+          showRecoverableRunningState={showRecoverableRunningState}
+          hasStuckWorker={hasStuckWorker}
+          latestUserCheckpoint={latestUserCheckpoint}
           handleRetryMessage={handleRetryMessage}
           handleStartEditingMessage={handleStartEditingMessage}
           handleForkMessage={handleForkMessage}

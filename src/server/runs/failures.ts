@@ -3,6 +3,7 @@ import { desc, eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { messages, runs } from "@/server/db/schema";
 import { isTerminalRunStatus, normalizeRunStatus } from "@/server/runs/status";
+import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 
 function describeErrorValue(error: unknown, seen: Set<unknown>): string {
   if (error == null) {
@@ -66,6 +67,7 @@ export async function persistRunFailure(runId: string, error: unknown) {
     lastError: errorMessage,
     updatedAt: now,
   }).where(eq(runs.id, runId));
+  notifyEventStreamSubscribers();
 
   const latestMessage = await db.select().from(messages)
     .where(eq(messages.runId, runId))
@@ -88,4 +90,5 @@ export async function persistRunFailure(runId: string, error: unknown) {
     content,
     createdAt: now,
   });
+  notifyEventStreamSubscribers();
 }

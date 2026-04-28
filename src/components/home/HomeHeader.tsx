@@ -1,5 +1,5 @@
 import type React from "react";
-import { AlertTriangle, Menu, PanelRight, RotateCcw } from "lucide-react";
+import { AlertTriangle, Menu, PanelRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { PRODUCT_NAME } from "@/app/home/constants";
@@ -39,11 +39,6 @@ interface HomeHeaderProps {
   activeConversationCwd: string | null;
   selectedRun: RunRecord | null;
   isImplementationConversation: boolean;
-  showRecoverableRunningState: boolean;
-  hasStuckWorker: boolean;
-  latestUserCheckpoint: MessageRecord | null;
-  handleRetryMessage: (messageId: string) => void;
-  recoverRun: { isPending: boolean };
   themeMode: "day" | "night";
   setThemeMode: React.Dispatch<React.SetStateAction<"day" | "night">>;
   rightSidebarOpen: boolean;
@@ -87,11 +82,6 @@ export function HomeHeader({
   activeConversationCwd,
   selectedRun,
   isImplementationConversation,
-  showRecoverableRunningState,
-  hasStuckWorker,
-  latestUserCheckpoint,
-  handleRetryMessage,
-  recoverRun,
   themeMode,
   setThemeMode,
   rightSidebarOpen,
@@ -103,6 +93,12 @@ export function HomeHeader({
   onStopWorker,
   stoppingWorkerId,
 }: HomeHeaderProps) {
+  const conversationTitle = selectedRun?.title?.trim() || "New conversation";
+  const titleLabel = selectedRun ? conversationTitle : "No conversation selected";
+  const rootFolderLabel = activeConversationCwd
+    ? activeConversationCwd.split(/[\\/]/).filter(Boolean).pop() || activeConversationCwd
+    : "No working directory";
+
   return (
   <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border/50 px-3 sm:px-4">
     <div className="flex min-w-0 items-center gap-2 sm:gap-3">
@@ -145,13 +141,22 @@ export function HomeHeader({
       </Sheet>
 
       <div className="flex min-w-0 items-center gap-2">
-        <span
-          aria-label="Current working directory"
-          className="max-w-[24rem] truncate font-mono text-[11px] text-muted-foreground"
-          title={activeConversationCwd || "No working directory"}
-        >
-          {activeConversationCwd || "No working directory"}
-        </span>
+        <div className="flex min-w-0 items-baseline gap-2">
+          <span
+            aria-label="Conversation title"
+            className="max-w-[18rem] truncate text-sm font-semibold text-foreground sm:max-w-[26rem]"
+            title={titleLabel}
+          >
+            {titleLabel}
+          </span>
+          <span
+            aria-label="Root repository folder"
+            className="max-w-[10rem] shrink-0 truncate font-mono text-[10px] text-muted-foreground"
+            title={activeConversationCwd || rootFolderLabel}
+          >
+            {rootFolderLabel}
+          </span>
+        </div>
         {selectedRun?.status === "failed" ? (
           <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-destructive">
             <AlertTriangle className="h-3 w-3" /> Failed
@@ -166,16 +171,6 @@ export function HomeHeader({
     </div>
 
     <div className="flex items-center gap-2">
-      {isImplementationConversation && (selectedRun?.status === "failed" || showRecoverableRunningState || hasStuckWorker) && latestUserCheckpoint ? (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => handleRetryMessage(latestUserCheckpoint.id)}
-          disabled={recoverRun.isPending}
-        >
-          <RotateCcw className="mr-2 h-4 w-4" /> {selectedRun?.status === "failed" ? "Retry latest" : "Unstick latest"}
-        </Button>
-      ) : null}
       <ThemeModeToggle themeMode={themeMode} setThemeMode={setThemeMode} />
       {selectedRunId && isImplementationConversation ? (
         <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-muted-foreground hover:text-foreground lg:inline-flex" title="Toggle Conversation Workers" onClick={() => setRightSidebarOpen(!rightSidebarOpen)}>

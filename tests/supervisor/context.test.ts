@@ -3,7 +3,7 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/server/db";
-import { messages, plans, runs, workerCounters } from "@/server/db/schema";
+import { executionEvents, messages, plans, runs, workerCounters } from "@/server/db/schema";
 import { getAppDataPath } from "@/server/app-root";
 import { buildSupervisorTurnContext } from "@/server/supervisor/context";
 
@@ -14,6 +14,7 @@ vi.mock("@/server/bridge-client", () => ({
 describe("buildSupervisorTurnContext", () => {
   beforeEach(async () => {
     await db.delete(messages);
+    await db.delete(executionEvents);
     await db.delete(workerCounters);
     await db.delete(runs);
     await db.delete(plans);
@@ -58,5 +59,52 @@ describe("buildSupervisorTurnContext", () => {
     expect(context.goal).toBe("Ensure completion is gated by the original intent.");
     expect(context.planPath).toBe(planPath);
     expect(context.planContent).toBe(planContent);
+  });
+
+  it("includes files read by the supervisor as reusable context", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/objective-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      projectPath: "/workspace/app",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(executionEvents).values({
+      id: randomUUID(),
+      runId,
+      workerId: null,
+      planItemId: null,
+      eventType: "supervisor_file_read",
+      details: JSON.stringify({
+        summary: "Read docs/spec.md for preflight intent extraction.",
+        path: "docs/spec.md",
+        content: "# Spec\n\nThe goal is to stop asking users to paste readable files.",
+        truncated: false,
+      }),
+      createdAt: now,
+    });
+
+    const context = await buildSupervisorTurnContext(runId);
+
+    expect(context.readFiles).toEqual([
+      {
+        path: "docs/spec.md",
+        content: "# Spec\n\nThe goal is to stop asking users to paste readable files.",
+        truncated: false,
+      },
+    ]);
   });
 });

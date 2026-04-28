@@ -115,13 +115,29 @@ export function buildSupervisorTools(options?: { allowedWorkerTypes?: string[]; 
       type: "function",
       function: {
         name: "ask_user",
-        description: "Pause the run and ask the user a clarification question.",
+        description:
+          "Pause the run for preflight intent confirmation, summarize the understood job as specific outcomes and not just the artifact title, or ask the user a clarifying question.",
         parameters: {
           type: "object",
           properties: {
             question: { type: "string" },
           },
           required: ["question"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "read_file",
+        description:
+          "Read a local repository file, such as a referenced spec or plan, before asking the user to summarize content the supervisor can inspect itself.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Absolute path or path relative to the run project directory." },
+          },
+          required: ["path"],
         },
       },
     },

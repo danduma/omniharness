@@ -41,4 +41,27 @@ describe("SUPERVISOR_SYSTEM_PROMPT", () => {
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("part A");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("part B");
   });
+
+  it("requires preflight intent confirmation before starting workers", () => {
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Preflight intent confirmation");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("before the first worker_spawn");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("extract the user's intent from the plan");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("summarize what you understand the job to be");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("ask_user");
+  });
+
+  it("requires preflight to summarize why-level outcomes instead of the artifact title", () => {
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("why-level intent");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("specific outcomes");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("success conditions");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Do not ask the user to confirm");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("implement this spec");
+  });
+
+  it("requires reading referenced files before asking the user to summarize them", () => {
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("use read_file");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("referenced spec");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Do not ask the user to summarize");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("file you can read");
+  });
 });

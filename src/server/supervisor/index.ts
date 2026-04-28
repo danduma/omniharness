@@ -1,4 +1,6 @@
 import { randomUUID } from "crypto";
+import fs from "fs";
+import path from "path";
 import { TokenJS } from "token.js";
 import { eq } from "drizzle-orm";
 import * as bridge from "@/server/bridge-client";
@@ -19,6 +21,7 @@ import { isActiveImplementationRun } from "@/server/runs/status";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
+import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 
 export interface SupervisorOptions {
   runId: string;
@@ -58,6 +61,7 @@ function normalizeBridgeWorkerMode(value: unknown) {
 }
 
 const WORKER_YOLO_MODE_SETTING = "WORKER_YOLO_MODE";
+const SUPERVISOR_FILE_READ_LIMIT = 60_000;
 
 function parseBooleanSettingValue(value: string | null | undefined, defaultValue: boolean) {
   if (typeof value !== "string") {
@@ -92,6 +96,30 @@ function resolveWorkerSpawnMode(requestedMode: unknown, yoloModeEnabled: boolean
 function isMissingAgentError(error: unknown) {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   return message.includes("404") || message.includes("not_found") || message.includes("agent not found");
+}
+
+function resolveSupervisorReadPath(requestedPath: string, projectPath: string | null | undefined) {
+  if (path.isAbsolute(requestedPath)) {
+    return requestedPath;
+  }
+
+  return path.resolve(projectPath || process.cwd(), requestedPath);
+}
+
+function readSupervisorFile(requestedPath: string, projectPath: string | null | undefined) {
+  const absolutePath = resolveSupervisorReadPath(requestedPath, projectPath);
+  const stat = fs.statSync(absolutePath);
+  if (!stat.isFile()) {
+    throw new SupervisorProtocolError(`Path "${requestedPath}" is not a file.`);
+  }
+
+  const rawContent = fs.readFileSync(absolutePath, "utf8");
+  const truncated = rawContent.length > SUPERVISOR_FILE_READ_LIMIT;
+  return {
+    absolutePath,
+    content: truncated ? rawContent.slice(0, SUPERVISOR_FILE_READ_LIMIT) : rawContent,
+    truncated,
+  };
 }
 
 function buildWorkerSpawnSummary({
@@ -146,6 +174,7 @@ async function insertRunMessage(runId: string, role: string, content: string, ki
     workerId: workerId ?? null,
     createdAt: new Date(),
   });
+  notifyEventStreamSubscribers();
 }
 
 async function insertExecutionEvent(
@@ -163,6 +192,7 @@ async function insertExecutionEvent(
     details: JSON.stringify(details),
     createdAt: new Date(),
   });
+  notifyEventStreamSubscribers();
 }
 
 function appendWorkerOutput(existingLog: string | null | undefined, nextChunk: string) {
@@ -203,6 +233,7 @@ async function reserveWorkerRow(args: {
     createdAt: new Date(),
     updatedAt: new Date(),
   });
+  notifyEventStreamSubscribers();
 
   return workerId;
 }
@@ -249,6 +280,7 @@ async function persistWorkerOutput(workerId: string, output: string) {
     outputLog: appendWorkerOutput(worker.outputLog, output),
     updatedAt: new Date(),
   }).where(eq(workers.id, workerId));
+  notifyEventStreamSubscribers();
 }
 
 async function cancelRunWorkers(runId: string) {
@@ -656,6 +688,26 @@ export class Supervisor {
           });
           await insertRunMessage(this.runId, "supervisor", question, "clarification");
           return { state: "paused" };
+        }
+
+        case "read_file": {
+          const requestedPath = asString(action.args.path, "path");
+          const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+          const { absolutePath, content, truncated } = readSupervisorFile(requestedPath, run?.projectPath);
+          await insertExecutionEvent(this.runId, "supervisor_file_read", {
+            summary: `Read ${requestedPath} for supervisor context.`,
+            path: requestedPath,
+            absolutePath,
+            content,
+            truncated,
+          });
+          await insertRunMessage(
+            this.runId,
+            "system",
+            `Read ${requestedPath} for supervisor context${truncated ? " (truncated)." : "."}`,
+            "supervisor_action",
+          );
+          return { state: "wait", delayMs: 1_000 };
         }
 
         case "wait_until": {

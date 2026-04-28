@@ -18,6 +18,7 @@ const pageSource = [
   "src/components/home/ConversationSidebar.tsx",
   "src/components/home/HomeHeader.tsx",
   "src/components/home/SettingsDialog.tsx",
+  "src/components/home/UserInputMessage.tsx",
   "src/components/home/WorkersSidebar.tsx",
 ].map(readSource).join("\n");
 const conversationModePickerSource = fs.readFileSync(
@@ -194,15 +195,16 @@ test("direct conversations render the user transcript next to the worker surface
   expect(pageSource).toContain('await navigator.clipboard.writeText(content);');
   expect(pageSource).toContain('select-text');
   expect(pageSource).toContain('aria-label={isExpanded ? "Show less message text" : "Show more message text"}');
-  expect(pageSource).toContain('onClick={() => toggleDirectMessageExpansion(msg.id)}');
+  expect(pageSource).toContain('onToggleExpanded={() => toggleDirectMessageExpansion(msg.id)}');
   expect(pageSource).toContain('maxHeight: isExpanded ? undefined : "calc(1.5rem * 6)"');
-  expect(pageSource).toContain('const isLongMessage = msg.content.length > 420 || msg.content.split(/\\r\\n|\\r|\\n/).length > 6;');
+  expect(pageSource).toContain('const isLongMessage = content.length > 420 || content.split(/\\r\\n|\\r|\\n/).length > 6;');
   expect(pageSource).toContain('{isExpanded || isLongMessage ? (');
   expect(pageSource).toContain('{isExpanded ? "less" : "...more"}');
   expect(pageSource).toContain('text-white');
   expect(pageSource).toContain('aria-label="Copy message"');
-  expect(pageSource).toContain('aria-label="Rerun from here"');
-  expect(pageSource).toContain('onClick={() => handleRetryMessage(msg.id)}');
+  expect(pageSource).toContain('label: "Rerun from here"');
+  expect(pageSource).toContain('aria-label={action.label}');
+  expect(pageSource).toContain('onClick: () => handleRetryMessage(msg.id)');
   expect(pageSource).toContain('rounded-[1.9rem] rounded-br-lg bg-[#242424]');
   expect(pageSource).toContain('px-4 py-2.5');
   expect(pageSource).toContain('text-sm leading-6');
@@ -284,7 +286,8 @@ test("header syncs the active conversation path but only shows the cwd", () => {
   expect(pageSource).not.toContain('window.localStorage.setItem(LAST_RUN_ROUTE_STORAGE_KEY, selectedRunId)');
   expect(pageSource).not.toContain('window.localStorage.removeItem(LAST_RUN_ROUTE_STORAGE_KEY)');
   expect(pageSource).toContain('aria-label="Current working directory"');
-  expect(pageSource).toContain('{activeConversationCwd || "No working directory"}');
+  expect(pageSource).toContain('const cwdLabel = activeConversationCwd || "No working directory";');
+  expect(pageSource).toContain('{cwdLabel}');
 });
 
 test("command input uses a fixed helper placeholder instead of echoing the selected directory", () => {

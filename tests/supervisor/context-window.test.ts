@@ -19,6 +19,7 @@ function baseContext(overrides: Partial<SupervisorTurnContextForPrompt> = {}): S
     answeredClarifications: [],
     activeWorkers: [],
     recentEvents: [],
+    readFiles: [],
     compactedMemory: null,
     ...overrides,
   };
@@ -68,6 +69,31 @@ describe("supervisor context window compaction", () => {
     expect(rendered).toContain("Plan artifact");
     expect(rendered).toContain("/tmp/project/docs/plans/importer.md");
     expect(rendered).toContain("Support resumable uploads.");
+  });
+
+  it("includes supervisor-read file contents in the model context", () => {
+    const bundle = buildSupervisorModelMessages({
+      systemPrompt: "system",
+      context: baseContext({
+        readFiles: [{
+          path: "docs/superpowers/specs/handoff.md",
+          content: "# Handoff\n\nThe outcome is a reviewed plan handoff before implementation.",
+          truncated: false,
+        }],
+      }),
+      heartbeatCount: 1,
+      runStatus: "running",
+      budget: {
+        maxContextTokens: 4_000,
+        responseReserveTokens: 200,
+        compactionThreshold: 0.8,
+      },
+    });
+
+    const rendered = bundle.messages.map((message) => message.content).join("\n\n");
+    expect(rendered).toContain("Supervisor-read files");
+    expect(rendered).toContain("docs/superpowers/specs/handoff.md");
+    expect(rendered).toContain("reviewed plan handoff before implementation");
   });
 
   it("compacts old user messages into memory and keeps the latest instruction when near the budget", () => {

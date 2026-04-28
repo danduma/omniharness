@@ -1,9 +1,8 @@
 import type React from "react";
 import { useState } from "react";
-import { Blocks, ChevronDown, Copy, Cpu, GitBranch, MoreHorizontal, Pencil, RotateCcw } from "lucide-react";
+import { Blocks, ChevronDown, Cpu, GitBranch, Pencil, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ClarificationPanel } from "@/components/ClarificationPanel";
 import { AgentSurface } from "@/components/AgentSurface";
@@ -17,6 +16,7 @@ import { buildInlineError, formatExecutionTimestamp, parseSpawnedWorkerMessage }
 import { cn } from "@/lib/utils";
 import { ErrorNotice } from "./ErrorNotice";
 import { ConversationWorkerCard } from "./WorkersSidebar";
+import { UserInputMessage, type UserInputMessageAction } from "./UserInputMessage";
 
 interface ConversationExecutionStatusProps {
   liveExecutionStatus: { label: string; detail: string; tone: "error" | "warning" | "muted" | "active" };
@@ -185,6 +185,9 @@ interface ConversationMainProps {
   };
   visibleMessages: MessageRecord[];
   recoverRun: { isPending: boolean };
+  showRecoverableRunningState: boolean;
+  hasStuckWorker: boolean;
+  latestUserCheckpoint: MessageRecord | null;
   handleRetryMessage: (messageId: string) => void;
   handleStartEditingMessage: (message: MessageRecord) => void;
   handleForkMessage: (message: MessageRecord) => void;
@@ -212,6 +215,46 @@ interface ConversationMainProps {
   emptyComposer: React.ReactNode;
 }
 
+function LatestRecoveryAction({
+  selectedRun,
+  isImplementationConversation,
+  recoverRun,
+  showRecoverableRunningState,
+  hasStuckWorker,
+  latestUserCheckpoint,
+  handleRetryMessage,
+}: {
+  selectedRun: RunRecord | null;
+  isImplementationConversation: boolean;
+  recoverRun: { isPending: boolean };
+  showRecoverableRunningState: boolean;
+  hasStuckWorker: boolean;
+  latestUserCheckpoint: MessageRecord | null;
+  handleRetryMessage: (messageId: string) => void;
+}) {
+  if (!isImplementationConversation || !latestUserCheckpoint) {
+    return null;
+  }
+
+  const canRecover = selectedRun?.status === "failed" || showRecoverableRunningState || hasStuckWorker;
+  if (!canRecover) {
+    return null;
+  }
+
+  return (
+    <div className="flex justify-start">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => handleRetryMessage(latestUserCheckpoint.id)}
+        disabled={recoverRun.isPending}
+      >
+        <RotateCcw className="mr-2 h-4 w-4" /> {selectedRun?.status === "failed" ? "Retry latest" : "Unstick latest"}
+      </Button>
+    </div>
+  );
+}
+
 export function ConversationMain({
   scrollRef,
   selectedRunId,
@@ -229,6 +272,9 @@ export function ConversationMain({
   promotePlanningConversation,
   visibleMessages,
   recoverRun,
+  showRecoverableRunningState,
+  hasStuckWorker,
+  latestUserCheckpoint,
   handleRetryMessage,
   handleStartEditingMessage,
   handleForkMessage,
@@ -273,64 +319,41 @@ export function ConversationMain({
             </div>
           ) : null}
           {conversationFailure ? (
-            <ErrorNotice error={conversationFailure} />
+            <div className="space-y-3">
+              <ErrorNotice error={conversationFailure} />
+              <LatestRecoveryAction
+                selectedRun={selectedRun}
+                isImplementationConversation={isImplementationConversation}
+                recoverRun={recoverRun}
+                showRecoverableRunningState={showRecoverableRunningState}
+                hasStuckWorker={hasStuckWorker}
+                latestUserCheckpoint={latestUserCheckpoint}
+                handleRetryMessage={handleRetryMessage}
+              />
+            </div>
           ) : null}
           {directConversationMessages.length > 0 ? (
             <div className="space-y-2">
               {directConversationMessages.map((msg: MessageRecord) => {
                 const isExpanded = expandedDirectMessageIds.has(msg.id);
-                const isLongMessage = msg.content.length > 420 || msg.content.split(/\r\n|\r|\n/).length > 6;
+                const actions: UserInputMessageAction[] = [
+                  {
+                    label: "Rerun from here",
+                    icon: <RotateCcw className="h-3.5 w-3.5" />,
+                    disabled: recoverRun.isPending,
+                    onClick: () => handleRetryMessage(msg.id),
+                  },
+                ];
 
                 return (
-                  <div key={msg.id} className="flex justify-end">
-                    <div className="flex max-w-[min(72ch,88%)] flex-col items-end sm:max-w-[min(78ch,82%)]">
-                      <div className="group/direct-message relative w-full overflow-hidden rounded-[1.9rem] rounded-br-lg bg-[#242424] px-4 py-2.5 text-left text-sm leading-6 text-white shadow-sm transition-colors hover:bg-[#2d2d2d]">
-                        <span
-                          className="block select-text overflow-hidden whitespace-pre-wrap break-words"
-                          style={{ maxHeight: isExpanded ? undefined : "calc(1.5rem * 6)" }}
-                        >
-                          {msg.content}
-                        </span>
-                        {isExpanded || isLongMessage ? (
-                          <button
-                            type="button"
-                            aria-expanded={isExpanded}
-                            aria-label={isExpanded ? "Show less message text" : "Show more message text"}
-                            onClick={() => toggleDirectMessageExpansion(msg.id)}
-                            className={cn(
-                              "text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
-                              isExpanded
-                                ? "mt-1 block w-full text-right text-[11px] font-semibold leading-5"
-                                : "absolute inset-x-0 bottom-0 flex justify-end bg-gradient-to-t from-[#242424] via-[#242424]/95 to-transparent px-4 pb-2.5 pt-6 text-[11px] font-semibold leading-5 transition-colors group-hover/direct-message:from-[#2d2d2d] group-hover/direct-message:via-[#2d2d2d]/95",
-                            )}
-                          >
-                            {isExpanded ? "less" : "...more"}
-                          </button>
-                        ) : null}
-                      </div>
-                      <div className="mt-1 flex items-center gap-1 pr-2 text-muted-foreground/70">
-                        <button
-                          type="button"
-                          aria-label="Copy message"
-                          title="Copy message"
-                          onClick={() => void handleCopyDirectMessage(msg.content)}
-                          className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        >
-                          <Copy className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="Rerun from here"
-                          title="Rerun from here"
-                          disabled={recoverRun.isPending}
-                          onClick={() => handleRetryMessage(msg.id)}
-                          className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          <RotateCcw className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
+                  <UserInputMessage
+                    key={msg.id}
+                    content={msg.content}
+                    isExpanded={isExpanded}
+                    onToggleExpanded={() => toggleDirectMessageExpansion(msg.id)}
+                    onCopy={handleCopyDirectMessage}
+                    actions={actions}
+                  />
                 );
               })}
             </div>
@@ -362,44 +385,51 @@ export function ConversationMain({
           ) : null}
 
           {visibleMessages.length > 0 ? (
-            visibleMessages.map((msg: MessageRecord) => (
+            visibleMessages.map((msg: MessageRecord) => {
+              const isUserMessage = msg.role === "user";
+              const isExpanded = expandedDirectMessageIds.has(msg.id);
+              const userMessageActions: UserInputMessageAction[] = isImplementationConversation
+                ? [
+                  {
+                    label: "Retry from here",
+                    icon: <RotateCcw className="h-3.5 w-3.5" />,
+                    disabled: recoverRun.isPending,
+                    onClick: () => handleRetryMessage(msg.id),
+                  },
+                  {
+                    label: "Edit in place",
+                    icon: <Pencil className="h-3.5 w-3.5" />,
+                    disabled: recoverRun.isPending,
+                    onClick: () => handleStartEditingMessage(msg),
+                  },
+                  {
+                    label: "Fork from here",
+                    icon: <GitBranch className="h-3.5 w-3.5" />,
+                    disabled: recoverRun.isPending,
+                    onClick: () => handleForkMessage(msg),
+                  },
+                ]
+                : [];
+
+              return (
               <div key={msg.id} className="group flex w-full flex-col text-sm">
-                <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
-                  <div className="flex items-center gap-2">
-                  <span className={`text-xs font-semibold capitalize tracking-wider ${msg.role === "user" ? "text-primary" : (msg.role === "system" ? "text-muted-foreground" : "text-emerald-600")}`}>
-                    {msg.role === "user" ? "You" : msg.role}
-                  </span>
-                  {msg.kind === "error" ? (
-                    <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-destructive">
-                      Run failed
+                {!isUserMessage ? (
+                  <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
+                    <div className="flex items-center gap-2">
+                    <span className={`text-xs font-semibold capitalize tracking-wider ${msg.role === "system" ? "text-muted-foreground" : "text-emerald-600"}`}>
+                      {msg.role}
                     </span>
-                  ) : null}
-                  <span className="text-[10px] text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100">
-                    {new Date(msg.createdAt).toLocaleTimeString()}
-                  </span>
+                    {msg.kind === "error" ? (
+                      <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-destructive">
+                        Run failed
+                      </span>
+                    ) : null}
+                    <span className="text-[10px] text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100">
+                      {new Date(msg.createdAt).toLocaleTimeString()}
+                    </span>
+                  </div>
                 </div>
-                  {isImplementationConversation && msg.role === "user" ? (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                        aria-label="Message actions"
-                      >
-                        <MoreHorizontal className="h-4 w-4" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem disabled={recoverRun.isPending} onClick={() => handleRetryMessage(msg.id)}>
-                          <RotateCcw className="mr-2 h-4 w-4" /> Retry from here
-                        </DropdownMenuItem>
-                        <DropdownMenuItem disabled={recoverRun.isPending} onClick={() => handleStartEditingMessage(msg)}>
-                          <Pencil className="mr-2 h-4 w-4" /> Edit in place
-                        </DropdownMenuItem>
-                        <DropdownMenuItem disabled={recoverRun.isPending} onClick={() => handleForkMessage(msg)}>
-                          <GitBranch className="mr-2 h-4 w-4" /> Fork from here
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  ) : null}
-                </div>
+                ) : null}
                 {editingMessageId === msg.id ? (
                   <div className="rounded-xl border border-primary/30 bg-background p-3">
                     <textarea
@@ -419,6 +449,14 @@ export function ConversationMain({
                       </div>
                     </div>
                   </div>
+                ) : isUserMessage ? (
+                  <UserInputMessage
+                    content={msg.content}
+                    isExpanded={isExpanded}
+                    onToggleExpanded={() => toggleDirectMessageExpansion(msg.id)}
+                    onCopy={handleCopyDirectMessage}
+                    actions={userMessageActions}
+                  />
                 ) : msg.role === "system" && msg.content.startsWith("Spawned worker.") ? (
                   (() => {
                     const parsed = parseSpawnedWorkerMessage(msg.content);
@@ -463,16 +501,15 @@ export function ConversationMain({
                 ) : (
                   <div className={`overflow-x-auto whitespace-pre-wrap rounded-lg border p-4 leading-relaxed ${msg.kind === "error"
                     ? "border-destructive/30 bg-destructive/5 text-destructive"
-                    : msg.role === "user"
-                      ? "border-transparent bg-muted/30 text-foreground"
-                      : msg.role === "system"
+                    : msg.role === "system"
                         ? "border-border/30 bg-muted/20 text-[13px] text-muted-foreground"
                           : "border-border bg-card"}`}>
                     {msg.content}
                   </div>
                 )}
               </div>
-            ))
+              );
+            })
           ) : (
             <div className="flex flex-col items-center justify-center gap-3 pt-24 text-sm text-muted-foreground sm:pt-32">
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted/50">
@@ -491,6 +528,18 @@ export function ConversationMain({
             executionDetailLines={executionDetailLines}
           />
         ) : null}
+
+          {!conversationFailure && (showRecoverableRunningState || hasStuckWorker) ? (
+            <LatestRecoveryAction
+              selectedRun={selectedRun}
+              isImplementationConversation={isImplementationConversation}
+              recoverRun={recoverRun}
+              showRecoverableRunningState={showRecoverableRunningState}
+              hasStuckWorker={hasStuckWorker}
+              latestUserCheckpoint={latestUserCheckpoint}
+              handleRetryMessage={handleRetryMessage}
+            />
+          ) : null}
 
           {isImplementationConversation && selectedClarifications.length > 0 && (
             <div className="max-w-xl">
@@ -514,7 +563,18 @@ export function ConversationMain({
           ) : null}
 
           {conversationFailure ? (
-            <ErrorNotice error={conversationFailure} />
+            <div className="space-y-3">
+              <ErrorNotice error={conversationFailure} />
+              <LatestRecoveryAction
+                selectedRun={selectedRun}
+                isImplementationConversation={isImplementationConversation}
+                recoverRun={recoverRun}
+                showRecoverableRunningState={showRecoverableRunningState}
+                hasStuckWorker={hasStuckWorker}
+                latestUserCheckpoint={latestUserCheckpoint}
+                handleRetryMessage={handleRetryMessage}
+              />
+            </div>
           ) : null}
 
           {isPlanningConversation ? (

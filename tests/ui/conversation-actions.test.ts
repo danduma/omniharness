@@ -43,6 +43,24 @@ test("user messages expose retry, edit, and fork recovery controls", () => {
   expect(pageSource).toContain('body: JSON.stringify({ action, targetMessageId, content })');
 });
 
+test("user input messages share the direct-control bubble renderer", () => {
+  const userInputPath = path.resolve(process.cwd(), "src/components/home/UserInputMessage.tsx");
+  expect(fs.existsSync(userInputPath)).toBe(true);
+
+  const userInputSource = fs.readFileSync(userInputPath, "utf8");
+  const conversationMainSource = readSource("src/components/home/ConversationMain.tsx");
+
+  expect(userInputSource).toContain("export function UserInputMessage");
+  expect(userInputSource).toContain('rounded-[1.9rem] rounded-br-lg bg-[#242424]');
+  expect(userInputSource).toContain('maxHeight: isExpanded ? undefined : "calc(1.5rem * 6)"');
+  expect(userInputSource).toContain('aria-label={isExpanded ? "Show less message text" : "Show more message text"}');
+  expect(userInputSource).toContain('aria-label="Copy message"');
+  expect(conversationMainSource).toContain('from "./UserInputMessage";');
+  expect(conversationMainSource).toContain('<UserInputMessage');
+  expect(conversationMainSource).not.toContain('rounded-[1.9rem] rounded-br-lg bg-[#242424]');
+  expect(conversationMainSource).not.toContain('msg.role === "user"\n                      ? "border-transparent bg-muted/30 text-foreground"');
+});
+
 test("saving an edited message closes the inline editor before the rerun request resolves", () => {
   const handleSaveStart = pageSource.indexOf("const handleSaveEditedMessage = (messageId: string) => {");
   const clearEditorIndex = pageSource.indexOf("setEditingMessageId(null);", handleSaveStart);
@@ -65,7 +83,7 @@ test("failed runs render a single persisted error in the conversation view", () 
   expect(pageSource).toContain("const visibleMessages = useMemo(() => {");
   expect(pageSource).toContain('message.role === "system"');
   expect(pageSource).toContain('message.kind === "error"');
-  expect(pageSource).toContain('visibleMessages.map((msg: MessageRecord) => (');
+  expect(pageSource).toContain('visibleMessages.map((msg: MessageRecord) => {');
   expect(pageSource).toContain('action: workerFailureDetail ? "Worker setup" : staleFailure ? "Retry" : "Run failed"');
   expect(pageSource).toContain('message: workerFailureDetail || (staleFailure');
   expect(pageSource).toContain("Update the model or account, then retry.");
@@ -73,6 +91,15 @@ test("failed runs render a single persisted error in the conversation view", () 
   expect(pageSource).not.toContain("This failure was recorded earlier and may be stale.");
   expect(pageSource).not.toContain('<div className="font-semibold">Run failed</div>');
   expect(pageSource).toContain("Run failed");
+});
+
+test("clarification requests render in only the clarification panel", () => {
+  expect(pageSource).toContain("shouldHideMessageForClarificationPanel");
+  expect(pageSource).toContain("const hasClarificationPanel = selectedClarifications.length > 0");
+  expect(pageSource).toContain("const hasPendingClarifications = selectedClarifications.some");
+  expect(pageSource).toContain("!hasPendingClarifications && shouldShowConversationExecutionPanel");
+  expect(pageSource).toContain('return "Waiting for your reply";');
+  expect(pageSource).not.toContain("Waiting for your reply${summary");
 });
 
 test("conversation error notices render below the thread content", () => {

@@ -39,6 +39,7 @@ export interface SupervisorTurnContext {
   goal: string;
   planPath: string | null;
   planContent: string | null;
+  readFiles: Array<{ path: string; content: string; truncated: boolean }>;
   preferredWorkerType: string | null;
   allowedWorkerTypes: string[];
   recentUserMessages: string[];
@@ -79,6 +80,26 @@ function readPlanContent(planPath: string | null) {
       return null;
     }
     return fs.readFileSync(absolutePlanPath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function parseReadFileEvent(details: string | null) {
+  if (!details) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(details) as Record<string, unknown>;
+    if (typeof parsed.path !== "string" || typeof parsed.content !== "string") {
+      return null;
+    }
+    return {
+      path: parsed.path,
+      content: parsed.content,
+      truncated: parsed.truncated === true,
+    };
   } catch {
     return null;
   }
@@ -147,6 +168,11 @@ export async function buildSupervisorTurnContext(runId: string): Promise<Supervi
       .filter((event) => event.eventType === "supervisor_context_compacted")
       .map((event) => parseCompactedMemory(event.details))
       .find((memory): memory is string => Boolean(memory)) ?? null;
+  const readFiles = allEvents
+    .filter((event) => event.eventType === "supervisor_file_read")
+    .map((event) => parseReadFileEvent(event.details))
+    .filter((file): file is { path: string; content: string; truncated: boolean } => Boolean(file))
+    .slice(0, 6);
   const recentEvents = allEvents
     .slice(0, 8)
     .map((event) => {
@@ -176,6 +202,7 @@ export async function buildSupervisorTurnContext(runId: string): Promise<Supervi
     goal,
     planPath,
     planContent,
+    readFiles,
     preferredWorkerType: run.preferredWorkerType,
     allowedWorkerTypes: parseAllowedWorkerTypes(run.allowedWorkerTypes),
     recentUserMessages: userMessages.slice(-6).map((message) => message.content),

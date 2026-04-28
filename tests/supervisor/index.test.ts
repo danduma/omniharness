@@ -1,4 +1,7 @@
 import { randomUUID } from "crypto";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
@@ -14,6 +17,7 @@ const {
   mockBuildSupervisorTurnContext,
   mockParseSupervisorToolCall,
   mockSelectSpawnableWorkerType,
+  mockNotifyEventStreamSubscribers,
 } = vi.hoisted(() => ({
   mockTokenCreate: vi.fn(),
   mockSpawnAgent: vi.fn(),
@@ -24,6 +28,7 @@ const {
   mockBuildSupervisorTurnContext: vi.fn(),
   mockParseSupervisorToolCall: vi.fn(),
   mockSelectSpawnableWorkerType: vi.fn(),
+  mockNotifyEventStreamSubscribers: vi.fn(),
 }));
 
 vi.mock("token.js", () => ({
@@ -76,6 +81,10 @@ vi.mock("@/server/supervisor/protocol", async () => {
 
 vi.mock("@/server/supervisor/worker-availability", () => ({
   selectSpawnableWorkerType: mockSelectSpawnableWorkerType,
+}));
+
+vi.mock("@/server/events/live-updates", () => ({
+  notifyEventStreamSubscribers: mockNotifyEventStreamSubscribers,
 }));
 
 function deferred<T>() {
@@ -136,6 +145,35 @@ describe("Supervisor worker spawn flow", () => {
     mockAskAgent.mockResolvedValue({ response: "ok", state: "working" });
     mockGetAgent.mockResolvedValue(null);
     vi.spyOn(Date, "now").mockReturnValue(123456);
+  });
+
+  it("notifies live event subscribers when supervisor state changes", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    expect(mockNotifyEventStreamSubscribers).toHaveBeenCalled();
   });
 
   it("compacts the supervisor prompt before calling the model when the context is near the window limit", async () => {
@@ -310,6 +348,51 @@ describe("Supervisor worker spawn flow", () => {
     const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
     expect(run?.status).toBe("failed");
     expect(run?.lastError).toBe("Get agent failed: not_found");
+  });
+
+  it("reads a referenced file into supervisor context without spawning a worker", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "omniharness-supervisor-read-"));
+    const specPath = path.join(workspace, "docs", "spec.md");
+    fs.mkdirSync(path.dirname(specPath), { recursive: true });
+    fs.writeFileSync(specPath, "# Spec\n\nOutcome: understand the why before implementation.", "utf8");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      projectPath: workspace,
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-read-file",
+      name: "read_file",
+      args: {
+        path: "docs/spec.md",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 1_000 });
+
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    const event = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+    expect(event?.eventType).toBe("supervisor_file_read");
+    expect(event?.details).toContain("docs/spec.md");
+    expect(event?.details).toContain("understand the why before implementation");
   });
 
   it("cancels a spawned bridge agent if the run fails while spawn is in flight", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendSentConversationMessageSnapshot, filterOptimisticallyDeletedRuns, getRunDurationLabel, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldShowConversationExecutionPanel } from "@/app/home/utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, filterOptimisticallyDeletedRuns, getRunDurationLabel, mergePendingCreatedConversationSnapshots, parseCollapsedProjectPaths, shouldHideMessageForClarificationPanel, shouldOpenExecutionDetailsForRun, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, summarizeExecutionEvent } from "@/app/home/utils";
 import type { EventStreamState, RunRecord } from "@/app/home/types";
 
 function buildRun(overrides: Partial<RunRecord>): RunRecord {
@@ -46,6 +46,82 @@ describe("home utils", () => {
     })).toBe(true);
   });
 
+  it("summarizes clarification activity without repeating the full question", () => {
+    expect(summarizeExecutionEvent({
+      id: "event-1",
+      runId: "run-1",
+      eventType: "clarification_requested",
+      details: JSON.stringify({ summary: "Do you want me to implement the design?" }),
+      createdAt: "2026-04-27T00:00:00.000Z",
+    })).toBe("Waiting for your reply");
+  });
+
+  it("hides persisted supervisor clarification messages when the clarification panel is visible", () => {
+    expect(shouldHideMessageForClarificationPanel({
+      id: "message-1",
+      runId: "run-1",
+      role: "supervisor",
+      kind: "clarification",
+      content: "Do you want me to implement the design?",
+      createdAt: "2026-04-27T00:00:00.000Z",
+    }, true)).toBe(true);
+
+    expect(shouldHideMessageForClarificationPanel({
+      id: "message-2",
+      runId: "run-1",
+      role: "supervisor",
+      kind: "completion",
+      content: "Done.",
+      createdAt: "2026-04-27T00:00:00.000Z",
+    }, true)).toBe(false);
+  });
+
+  it("does not show recovery for a freshly created running conversation before execution events hydrate", () => {
+    expect(shouldShowRecoverableRunningState({
+      selectedRun: buildRun({
+        status: "running",
+        createdAt: "2026-04-27T00:00:00.000Z",
+      }),
+      latestUserCheckpoint: {
+        id: "message-1",
+        runId: "run-1",
+        role: "user",
+        kind: "checkpoint",
+        content: "Start this",
+        createdAt: "2026-04-27T00:00:00.000Z",
+      },
+      hasPendingPermission: false,
+      hasActiveWorker: false,
+      hasStuckWorker: false,
+      activeWorkerCount: 0,
+      latestExecutionEventCreatedAt: null,
+      nowMs: new Date("2026-04-27T00:00:02.000Z").getTime(),
+    })).toBe(false);
+  });
+
+  it("shows recovery when a running conversation has had no attached execution long enough", () => {
+    expect(shouldShowRecoverableRunningState({
+      selectedRun: buildRun({
+        status: "running",
+        createdAt: "2026-04-27T00:00:00.000Z",
+      }),
+      latestUserCheckpoint: {
+        id: "message-1",
+        runId: "run-1",
+        role: "user",
+        kind: "checkpoint",
+        content: "Start this",
+        createdAt: "2026-04-27T00:00:00.000Z",
+      },
+      hasPendingPermission: false,
+      hasActiveWorker: false,
+      hasStuckWorker: false,
+      activeWorkerCount: 0,
+      latestExecutionEventCreatedAt: null,
+      nowMs: new Date("2026-04-27T00:00:31.000Z").getTime(),
+    })).toBe(true);
+  });
+
   it("optimistically appends a sent follow-up message and revives the run status", () => {
     const liveState: EventStreamState = {
       messages: [],
@@ -73,6 +149,96 @@ describe("home utils", () => {
     expect(next.messages.map((message) => message.content)).toEqual(["Continue"]);
     expect(next.runs[0]?.status).toBe("running");
     expect(appendSentConversationMessageSnapshot(next, next.messages[0]).messages).toHaveLength(1);
+  });
+
+  it("optimistically appends a newly created conversation with its sidebar records", () => {
+    const liveState: EventStreamState = {
+      messages: [],
+      plans: [],
+      runs: [],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      validationRuns: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+    };
+
+    const next = appendCreatedConversationSnapshot(liveState, {
+      plan: {
+        id: "plan-1",
+        path: "vibes/ad-hoc/new.md",
+      },
+      run: buildRun({
+        id: "run-1",
+        planId: "plan-1",
+        mode: "implementation",
+        projectPath: "/workspace/app",
+        title: "New conversation",
+      }),
+      message: {
+        id: "message-1",
+        runId: "run-1",
+        role: "user",
+        kind: "checkpoint",
+        content: "Start this",
+        createdAt: "2026-04-27T00:01:00.000Z",
+      },
+    });
+
+    expect(next.plans.map((plan) => plan.id)).toEqual(["plan-1"]);
+    expect(next.runs.map((run) => run.id)).toEqual(["run-1"]);
+    expect(next.messages.map((message) => message.content)).toEqual(["Start this"]);
+    expect(appendCreatedConversationSnapshot(next, {
+      plan: next.plans[0],
+      run: next.runs[0],
+      message: next.messages[0],
+    }).runs).toHaveLength(1);
+  });
+
+  it("keeps a newly created conversation through stale event payloads until the server includes it", () => {
+    const pendingSnapshots = new Map([
+      ["run-1", {
+        plan: { id: "plan-1", path: "vibes/ad-hoc/new.md" },
+        run: buildRun({ id: "run-1", planId: "plan-1" }),
+        message: {
+          id: "message-1",
+          runId: "run-1",
+          role: "user",
+          kind: "checkpoint",
+          content: "Start this",
+          createdAt: "2026-04-27T00:01:00.000Z",
+        },
+      }],
+    ]);
+    const staleState: EventStreamState = {
+      messages: [],
+      plans: [],
+      runs: [],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      validationRuns: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+    };
+
+    const preserved = mergePendingCreatedConversationSnapshots(staleState, pendingSnapshots);
+
+    expect(preserved.runs.map((run) => run.id)).toEqual(["run-1"]);
+    expect(pendingSnapshots.has("run-1")).toBe(true);
+
+    const caughtUp = mergePendingCreatedConversationSnapshots({
+      ...staleState,
+      runs: [buildRun({ id: "run-1", planId: "plan-1" })],
+    }, pendingSnapshots);
+
+    expect(caughtUp.runs.map((run) => run.id)).toEqual(["run-1"]);
+    expect(pendingSnapshots.has("run-1")).toBe(false);
   });
 
   it("keeps pending deleted conversations out of live event stream snapshots", () => {
@@ -131,5 +297,18 @@ describe("home utils", () => {
   it("restores persisted collapsed project paths from localStorage JSON", () => {
     expect(parseCollapsedProjectPaths('["/workspace/app","other",42,""]')).toEqual(new Set(["/workspace/app", "other"]));
     expect(parseCollapsedProjectPaths("{bad json")).toEqual(new Set());
+  });
+
+  it("summarizes missing saved worker sessions without presenting them as bridge failures", () => {
+    expect(summarizeExecutionEvent({
+      id: "event-1",
+      runId: "run-1",
+      workerId: "worker-1",
+      eventType: "worker_session_missing",
+      details: JSON.stringify({
+        summary: "Saved bridge session for worker-1 is no longer available",
+      }),
+      createdAt: "2026-04-27T00:00:00.000Z",
+    })).toBe("worker-1 session is no longer available");
   });
 });
