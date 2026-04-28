@@ -21,8 +21,8 @@ import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
 import { COMPOSER_WORKER_OPTIONS, DEFAULT_ALLOWED_WORKER_TYPES, WORKER_OPTIONS } from "./constants";
-import type { AgentSnapshot, AuthSessionResponse, ClarificationRecord, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, LlmProfileTab, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, RunRecord, SettingsResponse, SettingsTab, SidebarGroup, SidebarRun, WorkerCatalogResponse, WorkerType } from "./types";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldHideMessageForClarificationPanel, shouldOpenExecutionDetailsForRun, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
+import type { AgentSnapshot, AuthSessionResponse, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, LlmProfileTab, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, RunRecord, SettingsResponse, SettingsTab, SidebarGroup, SidebarRun, WorkerCatalogResponse, WorkerType } from "./types";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldOpenExecutionDetailsForRun, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
 import { useAppErrors } from "./useAppErrors";
 import { useConversationExecutionStatus } from "./useConversationExecutionStatus";
 import { useHomeLifecycle } from "./useHomeLifecycle";
@@ -266,20 +266,6 @@ export function HomeApp() {
       });
     },
     onSuccess: () => setShowSettings(false),
-  });
-
-  const answerClarification = useMutation({
-    mutationFn: async ({ clarificationId, answer }: { clarificationId: string; answer: string }) => {
-      if (!selectedRunId) throw new Error("No run selected");
-      return requestJson(`/api/runs/${selectedRunId}/answer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clarificationId, answer }),
-      }, {
-        source: "Clarifications",
-        action: "Answer clarification",
-      });
-    },
   });
 
   const renameRun = useMutation({
@@ -600,7 +586,6 @@ export function HomeApp() {
 
   const runs = (state.runs || []) as RunRecord[];
   const plans = (state.plans || []) as PlanRecord[];
-  const clarifications = (state.clarifications || []) as ClarificationRecord[];
   const selectedRun = selectedRunId ? runs.find((run) => run.id === selectedRunId) ?? null : null;
   const isSupervisorRunning = Boolean(selectedRun && selectedRun.mode === "implementation" && selectedRun.status === "running");
   const selectedRunMode: ConversationModeOption = selectedRun?.mode || "implementation";
@@ -834,12 +819,8 @@ export function HomeApp() {
       details: staleFailure ? [] : workerLabel && workerStatus ? [`Current ${workerLabel} status: ${workerStatus}`] : [],
     } satisfies NoticeDescriptor;
   }, [failedWorkerAvailability, filteredMessages, selectedRun]);
-  const selectedClarifications = selectedRunId ? clarifications.filter((item) => item.runId === selectedRunId) : [];
-  const hasClarificationPanel = selectedClarifications.length > 0;
-  const hasPendingClarifications = selectedClarifications.some((item) => item.status === "pending");
   const visibleMessages = useMemo(() => {
-    const messages = ((filteredMessages || []) as MessageRecord[])
-      .filter((message) => !shouldHideMessageForClarificationPanel(message, hasClarificationPanel));
+    const messages = (filteredMessages || []) as MessageRecord[];
 
     if (!selectedRun || selectedRun.status !== "failed" || !selectedRun.lastError) {
       return messages;
@@ -849,7 +830,7 @@ export function HomeApp() {
       message.role === "system"
       && message.kind === "error"
     ));
-  }, [filteredMessages, hasClarificationPanel, selectedRun]);
+  }, [filteredMessages, selectedRun]);
   const directConversationMessages = useMemo(() => {
     if (!isDirectConversation) {
       return [] as MessageRecord[];
@@ -896,7 +877,7 @@ export function HomeApp() {
   });
 
   const isConversationThinking = selectedRun?.status === "running" || conversationAgents.some((agent) => agent.state === "working");
-  const showConversationExecution = !hasPendingClarifications && shouldShowConversationExecutionPanel({
+  const showConversationExecution = shouldShowConversationExecutionPanel({
     selectedRun,
     isConversationThinking,
     executionEventCount: selectedRunExecutionEvents.length,
@@ -1249,8 +1230,6 @@ export function HomeApp() {
           executionDetailsOpen={executionDetailsOpen}
           setExecutionDetailsOpen={setExecutionDetailsOpen}
           executionDetailLines={executionDetailLines}
-          selectedClarifications={selectedClarifications}
-          answerClarification={answerClarification}
           conversationWorkerGroups={conversationWorkerGroups}
           onStopWorker={(workerId) => {
             if (selectedRunId) {

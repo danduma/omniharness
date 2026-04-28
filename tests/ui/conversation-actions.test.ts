@@ -14,6 +14,7 @@ const pageSource = [
   "src/components/home/ConversationSidebar.tsx",
   "src/components/home/SettingsDialog.tsx",
 ].map(readSource).join("\n");
+const markdownContentSource = readSource("src/components/MarkdownContent.tsx");
 
 test("conversation rows expose rename and delete actions", () => {
   expect(pageSource).toContain('Rename conversation');
@@ -93,13 +94,20 @@ test("failed runs render a single persisted error in the conversation view", () 
   expect(pageSource).toContain("Run failed");
 });
 
-test("clarification requests render in only the clarification panel", () => {
-  expect(pageSource).toContain("shouldHideMessageForClarificationPanel");
-  expect(pageSource).toContain("const hasClarificationPanel = selectedClarifications.length > 0");
-  expect(pageSource).toContain("const hasPendingClarifications = selectedClarifications.some");
-  expect(pageSource).toContain("!hasPendingClarifications && shouldShowConversationExecutionPanel");
+test("clarification requests stay in the normal supervisor conversation", () => {
+  expect(pageSource).not.toContain("shouldHideMessageForClarificationPanel");
+  expect(pageSource).not.toContain("selectedClarifications");
+  expect(pageSource).not.toContain("ClarificationPanel");
   expect(pageSource).toContain('return "Waiting for your reply";');
   expect(pageSource).not.toContain("Waiting for your reply${summary");
+});
+
+test("supervisor conversation messages render markdown", () => {
+  expect(pageSource).toContain('msg.role === "supervisor"');
+  expect(pageSource).toContain("<MarkdownContent content={msg.content}");
+  expect(markdownContentSource).toContain("function renderInlineMarkdown");
+  expect(markdownContentSource).toContain("export function MarkdownContent");
+  expect(markdownContentSource).not.toContain("dangerouslySetInnerHTML");
 });
 
 test("conversation error notices render below the thread content", () => {

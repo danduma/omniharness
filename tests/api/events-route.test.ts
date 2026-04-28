@@ -102,6 +102,46 @@ describe("GET /api/events", () => {
     expect(payload.messages.find((message: { runId: string }) => message.runId === runId)?.content).toBe("Start this conversation");
   });
 
+  it("returns a JSON live snapshot for polling fallback", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/live-snapshot.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      title: "Snapshot conversation",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "Start snapshot conversation",
+      createdAt: now,
+    });
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+    const response = await GET(new NextRequest("http://localhost/api/events?snapshot=1"));
+    expect(response.headers.get("content-type")).toContain("application/json");
+
+    const payload = await response.json();
+    expect(payload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Snapshot conversation");
+    expect(payload.messages.find((message: { runId: string }) => message.runId === runId)?.content).toBe("Start snapshot conversation");
+  });
+
   it("streams run and worker state after conversation session sync", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

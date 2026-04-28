@@ -423,10 +423,6 @@ export function summarizeExecutionEvent(event: ExecutionEventRecord) {
   return summary || reason || error || event.eventType.replace(/_/g, " ");
 }
 
-export function shouldHideMessageForClarificationPanel(message: MessageRecord, hasClarificationPanel: boolean) {
-  return hasClarificationPanel && message.role === "supervisor" && message.kind === "clarification";
-}
-
 export function formatExecutionTimestamp(value: string) {
   return new Date(value).toLocaleTimeString([], {
     hour: "numeric",

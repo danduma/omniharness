@@ -1,11 +1,13 @@
 import { randomUUID } from "crypto";
-import { eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { askAgent } from "@/server/bridge-client";
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { db } from "@/server/db";
-import { messages, runs, workers } from "@/server/db/schema";
+import { clarifications, messages, runs, workers } from "@/server/db/schema";
+import { answerClarification } from "@/server/clarifications/store";
+import { resumeRunAfterClarification } from "@/server/clarifications/loop";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 
@@ -44,17 +46,37 @@ export async function POST(
     }
 
     if (run.mode === "implementation") {
+      const pendingClarification = await db
+        .select()
+        .from(clarifications)
+        .where(and(eq(clarifications.runId, id), eq(clarifications.status, "pending")))
+        .orderBy(asc(clarifications.createdAt))
+        .get();
       const createdAt = new Date();
       const message = {
         id: randomUUID(),
         runId: id,
         role: "user",
-        kind: "checkpoint",
+        kind: pendingClarification ? "clarification_answer" : "checkpoint",
         content,
         createdAt,
       };
 
       await db.insert(messages).values(message);
+
+      if (pendingClarification) {
+        await answerClarification(pendingClarification.id, content);
+        const resumeResult = await resumeRunAfterClarification(id);
+        notifyEventStreamSubscribers();
+        return NextResponse.json({
+          ok: true,
+          message: {
+            ...message,
+            createdAt: createdAt.toISOString(),
+          },
+          ...resumeResult,
+        });
+      }
 
       await db.update(runs).set({
         status: "running",

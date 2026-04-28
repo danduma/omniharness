@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, filterOptimisticallyDeletedRuns, getRunDurationLabel, mergePendingCreatedConversationSnapshots, parseCollapsedProjectPaths, shouldHideMessageForClarificationPanel, shouldOpenExecutionDetailsForRun, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, summarizeExecutionEvent } from "@/app/home/utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, filterOptimisticallyDeletedRuns, getRunDurationLabel, mergePendingCreatedConversationSnapshots, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, summarizeExecutionEvent } from "@/app/home/utils";
 import type { EventStreamState, RunRecord } from "@/app/home/types";
 
 function buildRun(overrides: Partial<RunRecord>): RunRecord {
@@ -54,26 +54,6 @@ describe("home utils", () => {
       details: JSON.stringify({ summary: "Do you want me to implement the design?" }),
       createdAt: "2026-04-27T00:00:00.000Z",
     })).toBe("Waiting for your reply");
-  });
-
-  it("hides persisted supervisor clarification messages when the clarification panel is visible", () => {
-    expect(shouldHideMessageForClarificationPanel({
-      id: "message-1",
-      runId: "run-1",
-      role: "supervisor",
-      kind: "clarification",
-      content: "Do you want me to implement the design?",
-      createdAt: "2026-04-27T00:00:00.000Z",
-    }, true)).toBe(true);
-
-    expect(shouldHideMessageForClarificationPanel({
-      id: "message-2",
-      runId: "run-1",
-      role: "supervisor",
-      kind: "completion",
-      content: "Done.",
-      createdAt: "2026-04-27T00:00:00.000Z",
-    }, true)).toBe(false);
   });
 
   it("does not show recovery for a freshly created running conversation before execution events hydrate", () => {

@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/server/db";
 import { messages, plans, runs, accounts, workers, clarifications, validationRuns, executionEvents, supervisorInterventions } from "@/server/db/schema";
 import { BRIDGE_URL } from "@/server/bridge-client";
@@ -152,6 +152,10 @@ export async function GET(req: NextRequest) {
   }
 
   await ensureSupervisorRuntimeStarted();
+
+  if (req.nextUrl.searchParams.get("snapshot") === "1") {
+    return NextResponse.json(await buildBridgeEnrichedEventPayload());
+  }
 
   const stream = new ReadableStream({
     async start(controller) {

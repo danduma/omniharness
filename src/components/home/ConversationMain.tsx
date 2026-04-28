@@ -4,15 +4,15 @@ import { Blocks, ChevronDown, Cpu, GitBranch, Pencil, RotateCcw } from "lucide-r
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ClarificationPanel } from "@/components/ClarificationPanel";
 import { AgentSurface } from "@/components/AgentSurface";
+import { MarkdownContent } from "@/components/MarkdownContent";
 import { Terminal } from "@/components/Terminal";
 import { PlanningArtifactsPanel } from "@/components/PlanningArtifactsPanel";
 import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
 import { extractLatestPlainTextTurn } from "@/lib/agent-output";
 import { type ConversationWorkerRecord } from "@/lib/conversation-workers";
-import type { AgentSnapshot, ClarificationRecord, MessageRecord, NoticeDescriptor, RunRecord } from "@/app/home/types";
-import { buildInlineError, formatExecutionTimestamp, parseSpawnedWorkerMessage } from "@/app/home/utils";
+import type { AgentSnapshot, MessageRecord, NoticeDescriptor, RunRecord } from "@/app/home/types";
+import { formatExecutionTimestamp, parseSpawnedWorkerMessage } from "@/app/home/utils";
 import { cn } from "@/lib/utils";
 import { ErrorNotice } from "./ErrorNotice";
 import { ConversationWorkerCard } from "./WorkersSidebar";
@@ -204,11 +204,6 @@ interface ConversationMainProps {
   executionDetailsOpen: boolean;
   setExecutionDetailsOpen: (open: boolean) => void;
   executionDetailLines: ConversationExecutionStatusProps["executionDetailLines"];
-  selectedClarifications: ClarificationRecord[];
-  answerClarification: {
-    error: unknown;
-    mutate: (payload: { clarificationId: string; answer: string }) => void;
-  };
   conversationWorkerGroups: { active: ConversationWorkerRecord[] };
   onStopWorker?: (workerId: string) => void;
   stoppingWorkerId?: string | null;
@@ -291,8 +286,6 @@ export function ConversationMain({
   executionDetailsOpen,
   setExecutionDetailsOpen,
   executionDetailLines,
-  selectedClarifications,
-  answerClarification,
   conversationWorkerGroups,
   onStopWorker,
   stoppingWorkerId,
@@ -499,12 +492,18 @@ export function ConversationMain({
                     agent={conversationAgents.find((agent) => agent.name === inferWorkerIdFromMessage(msg)) ?? null}
                   />
                 ) : (
-                  <div className={`overflow-x-auto whitespace-pre-wrap rounded-lg border p-4 leading-relaxed ${msg.kind === "error"
-                    ? "border-destructive/30 bg-destructive/5 text-destructive"
-                    : msg.role === "system"
+                  <div className={cn(
+                    "overflow-x-auto rounded-lg border p-4 leading-relaxed",
+                    msg.role !== "supervisor" && "whitespace-pre-wrap",
+                    msg.kind === "error"
+                      ? "border-destructive/30 bg-destructive/5 text-destructive"
+                      : msg.role === "system"
                         ? "border-border/30 bg-muted/20 text-[13px] text-muted-foreground"
-                          : "border-border bg-card"}`}>
-                    {msg.content}
+                        : "border-border bg-card",
+                  )}>
+                    {msg.role === "supervisor" ? (
+                      <MarkdownContent content={msg.content} className="text-foreground" />
+                    ) : msg.content}
                   </div>
                 )}
               </div>
@@ -540,19 +539,6 @@ export function ConversationMain({
               handleRetryMessage={handleRetryMessage}
             />
           ) : null}
-
-          {isImplementationConversation && selectedClarifications.length > 0 && (
-            <div className="max-w-xl">
-              <ClarificationPanel
-                clarifications={selectedClarifications}
-                onAnswer={(clarificationId, answer) => answerClarification.mutate({ clarificationId, answer })}
-                errorMessage={answerClarification.error ? buildInlineError(answerClarification.error, {
-                  source: "Clarifications",
-                  action: "Answer clarification",
-                }).message : null}
-              />
-            </div>
-          )}
 
           {appErrors.length > 0 ? (
             <div className="space-y-3">

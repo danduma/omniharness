@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type React from "react";
 import { type UseMutationResult } from "@tanstack/react-query";
-import { type AppErrorDescriptor, mergeAppErrors } from "@/lib/app-errors";
+import { type AppErrorDescriptor, mergeAppErrors, requestJson } from "@/lib/app-errors";
 import type { ConversationModeOption } from "@/components/ConversationModePicker";
 import { COMPOSER_EFFORT_STORAGE_KEY, COMPOSER_MODE_STORAGE_KEY, COMPOSER_MODEL_STORAGE_KEY, COMPOSER_WORKER_STORAGE_KEY, EFFORT_OPTIONS, RUN_PATH_PATTERN, WORKER_OPTIONS } from "./constants";
 import type { ComposerWorkerOption, EventStreamState } from "./types";
@@ -94,17 +94,55 @@ export function useHomeLifecycle({
       return;
     }
 
+    let isActive = true;
+    let isPollingSnapshot = false;
+
+    const applyEventStreamUpdate = (data: EventStreamState) => {
+      if (!isActive) {
+        return;
+      }
+
+      const nextState = filterEventStreamState?.(data) ?? data;
+      setState(nextState);
+      setHasReceivedInitialEventStreamPayload(true);
+      setRuntimeErrors((current) => mergeAppErrors(
+        current.filter((error) => error.source !== "Events"),
+        (nextState.frontendErrors ?? []).map((error: unknown) => buildInlineError(error)),
+      ));
+    };
+
+    const pollSnapshot = async () => {
+      if (isPollingSnapshot) {
+        return;
+      }
+
+      isPollingSnapshot = true;
+      try {
+        const data = await requestJson<EventStreamState>("/api/events?snapshot=1", undefined, {
+          source: "Events",
+          action: "Load live state snapshot",
+        });
+        applyEventStreamUpdate(data);
+      } catch (error) {
+        if (!isActive) {
+          return;
+        }
+        setRuntimeErrors((current) => mergeAppErrors(current, [
+          buildInlineError(error, {
+            source: "Events",
+            action: "Load live state snapshot",
+          }),
+        ]));
+      } finally {
+        isPollingSnapshot = false;
+      }
+    };
+
     const eventSource = new EventSource("/api/events");
     eventSource.addEventListener("update", (e) => {
       try {
         const data = JSON.parse(e.data);
-        const nextState = filterEventStreamState?.(data) ?? data;
-        setState(nextState);
-        setHasReceivedInitialEventStreamPayload(true);
-        setRuntimeErrors((current) => mergeAppErrors(
-          current.filter((error) => error.source !== "Events"),
-          (nextState.frontendErrors ?? []).map((error: unknown) => buildInlineError(error)),
-        ));
+        applyEventStreamUpdate(data);
       } catch {
         setRuntimeErrors((current) => mergeAppErrors(current, [{
           message: "The frontend received a malformed update payload from /api/events.",
@@ -138,9 +176,16 @@ export function useHomeLifecycle({
         action: "Stream live updates",
         suggestion: "Keep this page open while the app reconnects. If the error persists, refresh the page and inspect the server logs for the events route.",
       }]));
+      void pollSnapshot();
     };
+    const snapshotPollInterval = window.setInterval(() => {
+      void pollSnapshot();
+    }, 1_500);
+    void pollSnapshot();
 
     return () => {
+      isActive = false;
+      window.clearInterval(snapshotPollInterval);
       eventSource.close();
     };
   }, [appUnlocked, filterEventStreamState]);
