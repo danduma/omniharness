@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Check, ChevronDown, LoaderCircle, MoreHorizontal } from "lucide-react";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { buildAgentOutputActivity, formatActivityStatus, type AgentActivityItem, type AgentOutputEntry } from "@/lib/agent-output";
 import { cn } from "@/lib/utils";
 
@@ -212,7 +212,7 @@ function ActivityPane({
     >
       <div className="flex items-stretch">
         <div className={cn(
-          "flex w-8 shrink-0 items-start justify-center border-r px-1 py-2 font-mono text-[var(--terminal-pane-label-size)] font-semibold uppercase tracking-[0.18em]",
+          "flex w-8 shrink-0 items-start justify-center border-r px-1 py-2 font-mono text-[length:var(--terminal-pane-label-size)] font-semibold uppercase tracking-[0.18em]",
           variant === "native"
             ? "border-border/60 bg-background/40 text-muted-foreground"
             : "border-white/8 bg-black/20 text-zinc-500",
@@ -221,7 +221,7 @@ function ActivityPane({
         </div>
         <pre className={cn(
           "min-w-0 flex-1 overflow-x-auto px-2.5 py-2 font-mono whitespace-pre-wrap break-words",
-          "text-[var(--terminal-pane-size)]",
+          "text-[length:var(--terminal-pane-size)]",
           variant === "native" ? "leading-[1.5]" : "leading-[1.55]",
           clipped && "line-clamp-[3]",
           variant === "native" ? "text-foreground" : "text-zinc-200",
@@ -281,8 +281,8 @@ function ToolActivity({
         })}
         aria-expanded={detailsOpen}
       >
-        <span className={cn("text-[var(--terminal-tool-label-size)] font-semibold tracking-tight", variant === "native" ? "text-foreground" : "text-zinc-100")}>{activity.label}</span>
-        <span className={cn("font-mono text-[var(--terminal-tool-title-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-zinc-300/95")}>{activity.title}</span>
+        <span className={cn("text-[length:var(--terminal-tool-label-size)] font-semibold tracking-tight", variant === "native" ? "text-foreground" : "text-zinc-100")}>{activity.label}</span>
+        <span className={cn("font-mono text-[length:var(--terminal-tool-title-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-zinc-300/95")}>{activity.title}</span>
         {shouldShowToolSpinner(activity.status) ? (
           <LoaderCircle
             className={cn(
@@ -295,7 +295,7 @@ function ToolActivity({
         {shouldShowToolStatusBadge(activity.status) ? (
           <span
             className={cn(
-              "rounded-full border px-1.5 py-0.5 font-mono text-[var(--terminal-badge-size)] font-semibold uppercase tracking-[0.1em]",
+              "rounded-full border px-1.5 py-0.5 font-mono text-[length:var(--terminal-badge-size)] font-semibold uppercase tracking-[0.1em]",
               statusBadgeClass(activity.status, variant),
             )}
           >
@@ -351,7 +351,7 @@ function ThoughtActivity({
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
       >
-        <span className={cn("text-[var(--terminal-thought-label-size)] font-semibold tracking-tight", variant === "native" ? "text-muted-foreground" : "text-zinc-400")}>
+        <span className={cn("text-[length:var(--terminal-thought-label-size)] font-semibold tracking-tight", variant === "native" ? "text-muted-foreground" : "text-zinc-400")}>
           {formatThoughtLabel(activity)}
         </span>
         {activity.inProgress ? <ThinkingDots variant={variant} /> : null}
@@ -369,7 +369,7 @@ function ThoughtActivity({
           {activity.thoughts.map((thought, index) => (
             <p
               key={`${activity.id}:${index}`}
-              className={cn("max-w-none whitespace-pre-wrap text-[var(--terminal-thought-size)] leading-[1.5] italic", variant === "native" ? "text-muted-foreground" : "text-zinc-500")}
+              className={cn("max-w-none whitespace-pre-wrap text-[length:var(--terminal-thought-size)] leading-[1.5] italic", variant === "native" ? "text-muted-foreground" : "text-zinc-500")}
             >
               {thought}
             </p>
@@ -391,7 +391,7 @@ function ActivityRow({ activity, variant }: { activity: AgentActivityItem; varia
       <TimelineMarker active={active} muted={muted} variant={variant} />
       <div className="min-w-0 flex-1">
         {activity.kind === "message" ? (
-          <p className={cn("max-w-none whitespace-pre-wrap text-[var(--terminal-message-size)] leading-[1.55]", variant === "native" ? "text-foreground" : "text-zinc-100/95")}>{activity.text}</p>
+          <p className={cn("max-w-none whitespace-pre-wrap text-[length:var(--terminal-message-size)] leading-[1.55]", variant === "native" ? "text-foreground" : "text-zinc-100/95")}>{activity.text}</p>
         ) : null}
         {activity.kind === "thinking" ? <ThoughtActivity activity={activity} variant={variant} /> : null}
         {activity.kind === "tool" ? <ToolActivity activity={activity} variant={variant} /> : null}
@@ -402,8 +402,8 @@ function ActivityRow({ activity, variant }: { activity: AgentActivityItem; varia
               ? "border-amber-500/25 bg-amber-500/8"
               : "border-amber-400/20 bg-[rgba(96,67,22,0.34)] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
           )}>
-            <div className={cn("text-[var(--terminal-permission-title-size)] font-semibold tracking-tight", variant === "native" ? "text-amber-800 dark:text-amber-300" : "text-amber-100")}>{activity.title}</div>
-            <p className={cn("mt-0.5 whitespace-pre-wrap text-[var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/85 dark:text-amber-100/85" : "text-amber-50/85")}>{activity.text}</p>
+            <div className={cn("text-[length:var(--terminal-permission-title-size)] font-semibold tracking-tight", variant === "native" ? "text-amber-800 dark:text-amber-300" : "text-amber-100")}>{activity.title}</div>
+            <p className={cn("mt-0.5 whitespace-pre-wrap text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/85 dark:text-amber-100/85" : "text-amber-50/85")}>{activity.text}</p>
           </div>
         ) : null}
       </div>
@@ -454,20 +454,22 @@ export function Terminal({ agent, variant = "terminal", className }: TerminalPro
             <MoreHorizontal className="h-4 w-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-36">
-            <DropdownMenuLabel>Text size</DropdownMenuLabel>
-            {TERMINAL_ZOOM_LEVELS.map((level) => (
-              <DropdownMenuItem
-                key={level.value}
-                onClick={() => setTerminalZoom(level.value)}
-                className="text-xs"
-              >
-                <span className="w-4">
-                  {terminalZoom === level.value ? <Check className="h-3.5 w-3.5" /> : null}
-                </span>
-                <span>{level.label}</span>
-                {level.notch > 0 ? <span className="ml-auto text-muted-foreground">+{level.notch}</span> : null}
-              </DropdownMenuItem>
-            ))}
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Text size</DropdownMenuLabel>
+              {TERMINAL_ZOOM_LEVELS.map((level) => (
+                <DropdownMenuItem
+                  key={level.value}
+                  onClick={() => setTerminalZoom(level.value)}
+                  className="text-xs"
+                >
+                  <span className="w-4">
+                    {terminalZoom === level.value ? <Check className="h-3.5 w-3.5" /> : null}
+                  </span>
+                  <span>{level.label}</span>
+                  {level.notch > 0 ? <span className="ml-auto text-muted-foreground">+{level.notch}</span> : null}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
       ) : null}

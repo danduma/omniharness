@@ -3,7 +3,7 @@ import { TokenJS } from "token.js";
 import { eq } from "drizzle-orm";
 import * as bridge from "@/server/bridge-client";
 import { db } from "@/server/db";
-import { clarifications, executionEvents, messages as dbMessages, runs, settings, workers } from "@/server/db/schema";
+import { clarifications, executionEvents, messages as dbMessages, runs, settings, supervisorInterventions, workers } from "@/server/db/schema";
 import { configureSupervisorModel, getSupervisorModelConfig, validateSupervisorModelConfig } from "@/server/supervisor/model-config";
 import { SUPERVISOR_SYSTEM_PROMPT } from "@/server/prompts";
 import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
@@ -15,8 +15,10 @@ import { retrySupervisorRequest } from "@/server/supervisor/retry";
 import { selectSpawnableWorkerType } from "@/server/supervisor/worker-availability";
 import { parseAllowedWorkerTypes, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
 import { persistRunFailure } from "@/server/runs/failures";
+import { isActiveImplementationRun } from "@/server/runs/status";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
+import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
 
 export interface SupervisorOptions {
   runId: string;
@@ -301,7 +303,7 @@ export class Supervisor {
     };
   }
 
-  private async requestAction(tokenjs: TokenJS, llmConfig: ReturnType<typeof configureSupervisorModel>, heartbeatCount: number) {
+  private async requestToolCalls(tokenjs: TokenJS, llmConfig: ReturnType<typeof configureSupervisorModel>, heartbeatCount: number) {
     const context = await buildSupervisorTurnContext(this.runId);
     const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
     if (!run) {
@@ -336,19 +338,40 @@ export class Supervisor {
       tool_choice: "required",
     }));
 
-    return {
-      context,
-      action: parseSupervisorToolCall(completion.choices[0]?.message?.tool_calls),
-    };
+    return completion.choices[0]?.message?.tool_calls as Parameters<typeof parseSupervisorToolCall>[0];
+  }
+
+  private async loadActiveRun() {
+    const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+    return isActiveImplementationRun(run) ? run : null;
+  }
+
+  private async cleanupWorkerAfterInactiveRun(workerId: string, snapshot?: bridge.AgentRecord | null) {
+    try {
+      await bridge.cancelAgent(workerId);
+    } catch {
+      // best-effort cleanup after another actor has terminally closed the run
+    }
+
+    await db.update(workers).set({
+      status: "cancelled",
+      ...(snapshot?.sessionId ? { bridgeSessionId: snapshot.sessionId } : {}),
+      ...(snapshot?.sessionMode ? { bridgeSessionMode: snapshot.sessionMode } : {}),
+      updatedAt: new Date(),
+    }).where(eq(workers.id, workerId));
   }
 
   async run(): Promise<SupervisorRunResult> {
     const currentRun = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
-    if (!currentRun || currentRun.mode !== "implementation" || currentRun.status === "done" || currentRun.status === "failed") {
+    if (!isActiveImplementationRun(currentRun)) {
       return { state: "completed" };
     }
 
     const { tokenjs, llmConfig, envParams, yoloModeEnabled } = await this.createModel();
+
+    if (!await this.loadActiveRun()) {
+      return { state: "completed" };
+    }
 
     await db.update(runs).set({
       status: "running",
@@ -359,11 +382,19 @@ export class Supervisor {
 
     const pendingClarifications = await db.select().from(clarifications).where(eq(clarifications.runId, this.runId));
     if (pendingClarifications.some((clarification) => clarification.status === "pending")) {
+      if (!await this.loadActiveRun()) {
+        return { state: "completed" };
+      }
       await db.update(runs).set({ status: "awaiting_user", updatedAt: new Date() }).where(eq(runs.id, this.runId));
       return { state: "paused" };
     }
 
-    const { action } = await this.requestAction(tokenjs, llmConfig, 0);
+    const toolCalls = await this.requestToolCalls(tokenjs, llmConfig, 0);
+    if (!await this.loadActiveRun()) {
+      return { state: "completed" };
+    }
+
+    const action = parseSupervisorToolCall(toolCalls);
 
     switch (action.name) {
         case "worker_spawn": {
@@ -421,6 +452,11 @@ export class Supervisor {
             throw error;
           }
 
+          if (!await this.loadActiveRun()) {
+            await this.cleanupWorkerAfterInactiveRun(workerId, spawnedWorker);
+            return { state: "completed" };
+          }
+
           await db.update(workers).set({
             bridgeSessionId: spawnedWorker.sessionId ?? null,
             bridgeSessionMode: spawnedWorker.sessionMode ?? mode ?? null,
@@ -459,6 +495,10 @@ export class Supervisor {
 
           try {
             const response = await bridge.askAgent(workerId, prompt);
+            if (!await this.loadActiveRun()) {
+              await this.cleanupWorkerAfterInactiveRun(workerId, spawnedWorker);
+              return { state: "completed" };
+            }
             await persistWorkerOutput(workerId, response.response);
 
             await db.update(workers).set({
@@ -492,7 +532,12 @@ export class Supervisor {
         case "worker_continue": {
           const workerId = asString(action.args.workerId, "workerId");
           const prompt = asString(action.args.prompt, "prompt");
+          const interventionType = typeof action.args.interventionType === "string" ? action.args.interventionType : null;
           const response = await bridge.askAgent(workerId, prompt);
+          if (!await this.loadActiveRun()) {
+            await this.cleanupWorkerAfterInactiveRun(workerId);
+            return { state: "completed" };
+          }
           await persistWorkerOutput(workerId, response.response);
 
           await db.update(workers).set({
@@ -504,6 +549,13 @@ export class Supervisor {
             summary: `Sent follow-up to ${workerId}`,
             prompt,
           }, workerId);
+          await recordSupervisorIntervention({
+            runId: this.runId,
+            workerId,
+            prompt,
+            summary: `Sent follow-up to ${workerId}`,
+            interventionType,
+          });
           await insertRunMessage(this.runId, "worker", `Prompted ${workerId}:\n${prompt}\n\nResponse:\n${response.response}`.slice(0, 4000), "worker_output", workerId);
           return { state: "wait", delayMs: 5_000 };
         }
@@ -620,15 +672,40 @@ export class Supervisor {
         case "mark_complete": {
           const summary = asString(action.args.summary, "summary");
           await cancelRunWorkers(this.runId);
+          if (!await this.loadActiveRun()) {
+            return { state: "completed" };
+          }
+          const interventions = await db
+            .select()
+            .from(supervisorInterventions)
+            .where(eq(supervisorInterventions.runId, this.runId));
+          const interventionSummary = interventions
+            .map((intervention, index) => `${index + 1}. ${intervention.workerId ?? "worker"}: ${intervention.prompt}`)
+            .join("\n");
+          const completionSummary = interventionSummary
+            ? `${summary}\n\nSupervisor interventions (${interventions.length}):\n${interventionSummary}`
+            : summary;
           await db.update(runs).set({ status: "done", updatedAt: new Date() }).where(eq(runs.id, this.runId));
-          await insertExecutionEvent(this.runId, "run_completed", { summary });
-          await insertRunMessage(this.runId, "supervisor", summary, "completion");
+          await insertExecutionEvent(this.runId, "run_completed", {
+            summary,
+            interventionCount: interventions.length,
+            interventions: interventions.map((intervention) => ({
+              workerId: intervention.workerId,
+              interventionType: intervention.interventionType,
+              prompt: intervention.prompt,
+              createdAt: intervention.createdAt.toISOString(),
+            })),
+          });
+          await insertRunMessage(this.runId, "supervisor", completionSummary, "completion");
           return { state: "completed" };
         }
 
         case "mark_failed": {
           const reason = asString(action.args.reason, "reason");
           await cancelRunWorkers(this.runId);
+          if (!await this.loadActiveRun()) {
+            return { state: "completed" };
+          }
           await insertExecutionEvent(this.runId, "run_failed", { reason });
           await persistRunFailure(this.runId, reason);
           return { state: "failed" };

@@ -43,6 +43,7 @@ describe("applyRunRecoveryOptimisticUpdate", () => {
         { id: "event-1", runId: "run-1", workerId: "worker-1", eventType: "worker_error" },
         { id: "event-2", runId: "run-1", eventType: "run_failed" },
       ],
+      supervisorInterventions: [{ id: "intervention-1", runId: "run-1" }],
     };
 
     const nextState = applyRunRecoveryOptimisticUpdate(state, {
@@ -68,6 +69,7 @@ describe("applyRunRecoveryOptimisticUpdate", () => {
     expect(nextState.clarifications).toEqual([]);
     expect(nextState.validationRuns).toEqual([]);
     expect(nextState.executionEvents).toEqual([]);
+    expect(nextState.supervisorInterventions).toEqual([]);
   });
 
   it("updates the checkpoint content when rerunning from an edited user message", () => {
@@ -87,6 +89,7 @@ describe("applyRunRecoveryOptimisticUpdate", () => {
       clarifications: [],
       validationRuns: [],
       executionEvents: [],
+      supervisorInterventions: [],
     };
 
     const nextState = applyRunRecoveryOptimisticUpdate(state, {

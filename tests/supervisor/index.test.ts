@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { executionEvents, messages, plans, runs, settings, workerCounters, workers } from "@/server/db/schema";
+import { executionEvents, messages, plans, runs, settings, supervisorInterventions, workerCounters, workers } from "@/server/db/schema";
 
 const {
   mockTokenCreate,
@@ -92,6 +92,7 @@ describe("Supervisor worker spawn flow", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
+    await db.delete(supervisorInterventions);
     await db.delete(executionEvents);
     await db.delete(messages);
     await db.delete(workers);
@@ -227,6 +228,148 @@ describe("Supervisor worker spawn flow", () => {
     expect(run?.status).toBe("failed");
     expect(run?.lastError).toBe("direct worker failed");
     expect(mockTokenCreate).not.toHaveBeenCalled();
+  });
+
+  it("does not resurrect a cancelled implementation run", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/cancelled.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "cancelled",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "completed" });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(run?.status).toBe("cancelled");
+    expect(mockTokenCreate).not.toHaveBeenCalled();
+  });
+
+  it("does not execute a tool call if the run fails while the model request is in flight", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const pendingCompletion = deferred<{ choices: Array<{ message: { tool_calls: Array<{ id: string }> } }> }>();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockTokenCreate.mockReturnValue(pendingCompletion.promise);
+
+    const { Supervisor } = await import("@/server/supervisor");
+    const runPromise = new Supervisor({ runId }).run();
+
+    await vi.waitFor(() => {
+      expect(mockTokenCreate).toHaveBeenCalled();
+    });
+
+    await db.update(runs).set({
+      status: "failed",
+      lastError: "Get agent failed: not_found",
+      failedAt: new Date(),
+      updatedAt: new Date(),
+    }).where(eq(runs.id, runId));
+
+    pendingCompletion.resolve({ choices: [{ message: { tool_calls: [{ id: "tool-1" }] } }] });
+
+    await expect(runPromise).resolves.toEqual({ state: "completed" });
+
+    expect(mockParseSupervisorToolCall).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    const allWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+    expect(allWorkers).toHaveLength(0);
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(run?.status).toBe("failed");
+    expect(run?.lastError).toBe("Get agent failed: not_found");
+  });
+
+  it("cancels a spawned bridge agent if the run fails while spawn is in flight", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const pendingSpawn = deferred<{ name: string; state: string; sessionId: string; sessionMode: string }>();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockSpawnAgent.mockReturnValue(pendingSpawn.promise);
+
+    const { Supervisor } = await import("@/server/supervisor");
+    const runPromise = new Supervisor({ runId }).run();
+
+    await vi.waitFor(() => {
+      expect(mockSpawnAgent).toHaveBeenCalled();
+    });
+
+    await db.update(runs).set({
+      status: "failed",
+      lastError: "observer failed the run",
+      failedAt: new Date(),
+      updatedAt: new Date(),
+    }).where(eq(runs.id, runId));
+
+    pendingSpawn.resolve({
+      name: `${runId}-worker-1`,
+      state: "starting",
+      sessionId: "session-after-failure",
+      sessionMode: "full-access",
+    });
+
+    await expect(runPromise).resolves.toEqual({ state: "completed" });
+
+    expect(mockAskAgent).not.toHaveBeenCalled();
+    expect(mockCancelAgent).toHaveBeenCalledWith(`${runId}-worker-1`);
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, `${runId}-worker-1`)).get();
+    expect(persistedWorker?.status).toBe("cancelled");
+    expect(persistedWorker?.bridgeSessionId).toBe("session-after-failure");
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(events.some((event) => event.eventType === "worker_spawned")).toBe(false);
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(run?.status).toBe("failed");
+    expect(run?.lastError).toBe("observer failed the run");
   });
 
   it("persists the worker before awaiting the initial ask and defaults workers to full-access mode", async () => {
@@ -571,6 +714,130 @@ describe("Supervisor worker spawn flow", () => {
     await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 1_000 });
 
     expect(mockApprovePermission).toHaveBeenCalledWith("worker-claude", "allow-once");
+  });
+
+  it("records supervisor interventions when a worker is prompted to continue", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: "worker-needs-steering",
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/tmp/project",
+      title: "Main implementation",
+      initialPrompt: "implement the plan",
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-continue",
+      name: "worker_continue",
+      args: {
+        workerId: "worker-needs-steering",
+        prompt: "The plan is not fully implemented yet. Continue and finish the remaining checklist items.",
+      },
+    });
+    mockAskAgent.mockResolvedValue({ response: "Continuing now", state: "working" });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    const interventions = await db.select().from(supervisorInterventions).where(eq(supervisorInterventions.runId, runId));
+    expect(interventions).toHaveLength(1);
+    expect(interventions[0]).toMatchObject({
+      runId,
+      workerId: "worker-needs-steering",
+      interventionType: "completion_gap",
+      prompt: "The plan is not fully implemented yet. Continue and finish the remaining checklist items.",
+    });
+  });
+
+  it("lists recorded supervisor interventions when completing the run", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: "worker-steered",
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/tmp/project",
+      title: "Main implementation",
+      initialPrompt: "implement the plan",
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(supervisorInterventions).values({
+      id: randomUUID(),
+      runId,
+      workerId: "worker-steered",
+      interventionType: "completion_gap",
+      prompt: "The plan is not fully implemented yet. Continue.",
+      summary: "Sent follow-up to worker-steered",
+      createdAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-complete",
+      name: "mark_complete",
+      args: {
+        summary: "Done.",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "completed" });
+
+    const completionMessage = await db.select().from(messages).where(eq(messages.runId, runId)).get();
+    expect(completionMessage?.content).toContain("Done.");
+    expect(completionMessage?.content).toContain("Supervisor interventions (1):");
+    expect(completionMessage?.content).toContain("worker-steered: The plan is not fully implemented yet. Continue.");
+
+    const completionEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+    expect(completionEvent?.details).toContain('"interventionCount":1');
+    expect(completionEvent?.details).toContain('"interventionType":"completion_gap"');
   });
 
   it("records worker cancellation without deleting the worker before writing events", async () => {

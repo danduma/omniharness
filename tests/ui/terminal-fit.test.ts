@@ -13,7 +13,8 @@ test("terminal can render in native conversation mode without window chrome", ()
   expect(terminalSource).toContain('variant?: "terminal" | "native"');
   expect(terminalSource).toContain('variant === "native"');
   expect(terminalSource).toContain('bg-transparent text-foreground');
-  expect(terminalSource).toContain("text-[var(--terminal-pane-size)]");
+  expect(terminalSource).toContain("text-[length:var(--terminal-pane-size)]");
+  expect(terminalSource).not.toContain("text-[var(--terminal-pane-size)]");
 });
 
 test("terminal renders a structured activity feed instead of replaying xterm text", () => {
@@ -64,9 +65,13 @@ test("terminal exposes a three dot text zoom menu with tiny through three notche
   expect(terminalSource).toContain("notch: 3");
   expect(terminalSource).toContain('aria-label="Terminal text size"');
   expect(terminalSource).toContain("<MoreHorizontal");
+  expect(terminalSource).toContain("<DropdownMenuGroup>");
   expect(terminalSource).toContain("<DropdownMenuLabel>Text size</DropdownMenuLabel>");
+  expect(terminalSource).toContain("</DropdownMenuGroup>");
   expect(terminalSource).toContain("setTerminalZoom(level.value)");
   expect(terminalSource).toContain("--terminal-message-size");
+  expect(terminalSource).toContain("text-[length:var(--terminal-message-size)]");
+  expect(terminalSource).not.toContain("text-[var(--terminal-message-size)]");
 });
 
 test("terminal aligns timeline markers with row text and connects the rail", () => {

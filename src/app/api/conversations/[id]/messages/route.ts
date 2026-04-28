@@ -7,6 +7,7 @@ import { requireApiSession } from "@/server/auth/guards";
 import { db } from "@/server/db";
 import { messages, runs, workers } from "@/server/db/schema";
 import { startSupervisorRun } from "@/server/supervisor/start";
+import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 
 export async function POST(
   req: NextRequest,
@@ -62,6 +63,7 @@ export async function POST(
         updatedAt: new Date(),
       }).where(eq(runs.id, id));
       startSupervisorRun(id);
+      notifyEventStreamSubscribers();
       return NextResponse.json({
         ok: true,
         message: {
@@ -91,6 +93,7 @@ export async function POST(
     };
 
     await db.insert(messages).values(userMessage);
+    notifyEventStreamSubscribers();
 
     const response = await askAgent(worker.id, content);
 
@@ -109,6 +112,7 @@ export async function POST(
       workerId: worker.id,
       createdAt: workerMessageCreatedAt,
     });
+    notifyEventStreamSubscribers();
 
     return NextResponse.json({
       ok: true,

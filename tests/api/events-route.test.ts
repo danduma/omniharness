@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { messages, plans, runs, workerCounters, workers } from "@/server/db/schema";
+import { messages, plans, runs, supervisorInterventions, workerCounters, workers } from "@/server/db/schema";
 
 const { mockEnsureSupervisorRuntimeStarted } = vi.hoisted(() => ({
   mockEnsureSupervisorRuntimeStarted: vi.fn().mockResolvedValue(undefined),
@@ -24,11 +24,27 @@ function decodeFirstEvent(chunk: Uint8Array) {
   return JSON.parse(dataLine.slice("data: ".length));
 }
 
+async function readWithTimeout(reader: ReadableStreamDefaultReader<Uint8Array>, timeoutMs: number) {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`Timed out waiting ${timeoutMs}ms for SSE update`)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([reader.read(), timeout]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 describe("GET /api/events", () => {
   const originalFetch = global.fetch;
 
   beforeEach(async () => {
     mockEnsureSupervisorRuntimeStarted.mockClear();
+    await db.delete(supervisorInterventions);
     await db.delete(messages);
     await db.delete(workers);
     await db.delete(workerCounters);
@@ -38,6 +54,52 @@ describe("GET /api/events", () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+  });
+
+  it("streams persisted conversation state even when bridge agent polling is unresponsive", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/live-stream.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      title: "New conversation",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "Start this conversation",
+      createdAt: now,
+    });
+
+    global.fetch = vi.fn(() => new Promise<Response>(() => {}));
+
+    const controller = new AbortController();
+    const response = await GET(new NextRequest("http://localhost/api/events", {
+      signal: controller.signal,
+    }));
+    const reader = response.body!.getReader();
+    const { value } = await readWithTimeout(reader, 600);
+    controller.abort();
+    await reader.cancel();
+
+    const payload = decodeFirstEvent(value!);
+    expect(payload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("New conversation");
+    expect(payload.messages.find((message: { runId: string }) => message.runId === runId)?.content).toBe("Start this conversation");
   });
 
   it("streams run and worker state after conversation session sync", async () => {
@@ -104,6 +166,141 @@ describe("GET /api/events", () => {
 
     const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     expect(persistedRun?.status).toBe("done");
+  });
+
+  it("streams supervisor interventions with the live conversation payload", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/interventions.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(supervisorInterventions).values({
+      id: randomUUID(),
+      runId,
+      workerId,
+      interventionType: "continue",
+      prompt: "Please continue from the stopping point.",
+      summary: "Sent follow-up to worker",
+      createdAt: now,
+    });
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+    const controller = new AbortController();
+    const response = await GET(new NextRequest("http://localhost/api/events", {
+      signal: controller.signal,
+    }));
+    const reader = response.body!.getReader();
+    const { value } = await reader.read();
+    controller.abort();
+    await reader.cancel();
+
+    const payload = decodeFirstEvent(value!);
+    expect(payload.supervisorInterventions).toEqual([
+      expect.objectContaining({
+        runId,
+        workerId,
+        interventionType: "continue",
+        prompt: "Please continue from the stopping point.",
+      }),
+    ]);
+  });
+
+  it("does not rewrite a cancelled direct conversation during session sync", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-cancelled.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "cancelled",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "cancelled",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      {
+        name: workerId,
+        type: "codex",
+        cwd: "/workspace/app",
+        state: "working",
+        currentText: "late bridge output",
+        lastText: "late bridge output",
+        outputEntries: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    ]), { status: 200 }));
+
+    const controller = new AbortController();
+    const response = await GET(new NextRequest("http://localhost/api/events", {
+      signal: controller.signal,
+    }));
+    const reader = response.body!.getReader();
+    const { value } = await reader.read();
+    controller.abort();
+    await reader.cancel();
+
+    const payload = decodeFirstEvent(value!);
+    expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("cancelled");
+    expect(payload.workers.find((worker: { id: string }) => worker.id === workerId)?.status).toBe("cancelled");
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(persistedRun?.status).toBe("cancelled");
+    expect(persistedWorker?.status).toBe("cancelled");
+    expect(persistedWorker?.currentText).toBe("");
   });
 
   it("marks a direct conversation done when the worker ends its turn while idle", async () => {

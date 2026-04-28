@@ -97,6 +97,7 @@ export function ConversationWorkerCard({
       runtimeDurationLabel={runtimeDurationLabel}
       activeModel={activeModel}
       activeEffort={activeEffort}
+      promptPreview={worker.initialPrompt}
       pendingPermissions={pendingPermissions}
       terminalHeightClass={terminalHeightClass}
       fillAvailable={fillAvailable}

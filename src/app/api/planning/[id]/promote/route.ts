@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { promotePlanningRun } from "@/server/planning/promote";
+import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 
 export async function POST(
   req: NextRequest,
@@ -23,6 +24,7 @@ export async function POST(
       runId: id,
       planPath: typeof body?.planPath === "string" ? body.planPath : null,
     });
+    notifyEventStreamSubscribers();
 
     return NextResponse.json({ ok: true, ...result });
   } catch (error: unknown) {

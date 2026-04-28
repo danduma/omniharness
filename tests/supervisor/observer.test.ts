@@ -286,6 +286,56 @@ describe("deriveWorkerEvents", () => {
     expect(runMessages.some((message) => message.content.includes("ACP bridge is not running"))).toBe(true);
   });
 
+  it("does not poll workers for a cancelled run", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "cancelled",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "opencode",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockGetAgent.mockResolvedValue({
+      state: "working",
+      currentText: "should not be observed",
+      lastText: "should not be observed",
+      pendingPermissions: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    await pollRunWorkers(runId, wakeSupervisor);
+
+    expect(mockGetAgent).not.toHaveBeenCalled();
+    expect(wakeSupervisor).not.toHaveBeenCalled();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(worker?.status).toBe("working");
+  });
+
   it("fails the run when worker stderr reports a fatal bridge pipe error", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

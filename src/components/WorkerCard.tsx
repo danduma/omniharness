@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Bot, ChevronDown, Clock, Cpu, Square } from "lucide-react";
 import { Terminal, type AgentTerminalPayload } from "@/components/Terminal";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { buildWorkerPreview, isWorkerActiveStatus } from "@/lib/conversation-workers";
+import { isWorkerActiveStatus } from "@/lib/conversation-workers";
 import { cn } from "@/lib/utils";
 
 export type WorkerCardAgent = AgentTerminalPayload & {
@@ -40,6 +40,7 @@ export type WorkerCardProps = {
   runtimeDurationLabel?: string | null;
   activeModel: string | null;
   activeEffort: string | null;
+  promptPreview?: string | null;
   pendingPermissions: PendingPermissionRecord[];
   terminalHeightClass: string;
   fillAvailable?: boolean;
@@ -63,7 +64,7 @@ function renderContextMeter(fullnessPercent: number | null | undefined) {
   return (
     <div
       aria-label={normalized === null ? "Context usage unavailable" : `Context usage ${normalized}%`}
-      className="relative h-3.5 w-3.5 shrink-0 rounded-full border border-white/10 bg-white/[0.03]"
+      className="relative h-4 w-4 shrink-0 rounded-full border border-white/10 bg-white/[0.03]"
       title={normalized === null ? "Context usage unavailable" : `Context usage ${normalized}%`}
     >
       <div
@@ -164,6 +165,7 @@ export function WorkerCard({
   runtimeDurationLabel,
   activeModel,
   activeEffort,
+  promptPreview,
   pendingPermissions,
   terminalHeightClass,
   fillAvailable = false,
@@ -172,10 +174,9 @@ export function WorkerCard({
 }: WorkerCardProps) {
   const [open, setOpen] = useState(defaultOpen);
   const contextLabel = formatContextAvailability(agent.contextUsage?.fullnessPercent);
-  const preview = buildWorkerPreview(agent);
+  const promptPreviewText = promptPreview?.trim() ?? "";
   const stateLabel = formatWorkerStateLabel(agent.state);
-  const normalizedLastError = agent.lastError?.trim() ?? "";
-  const showPreview = preview.length > 0 && preview !== normalizedLastError;
+  const showPromptPreview = promptPreviewText.length > 0;
 
   const displayId = useMemo(() => {
     const normalizedTitle = workerTitle?.trim();
@@ -214,6 +215,10 @@ export function WorkerCard({
                     <span className="truncate" title={activeModel || "Default"}>{activeModel || "Default"}</span>
                   </div>
                   {activeEffort ? <span className="text-[11px] text-zinc-500">{activeEffort} effort</span> : null}
+                  <div className="inline-flex items-center gap-1.5" title={contextLabel}>
+                    {renderContextMeter(agent.contextUsage?.fullnessPercent)}
+                    <span className="text-[11px] text-zinc-500">{contextLabel}</span>
+                  </div>
                   {runtimeDurationLabel ? (
                     <div className="inline-flex min-w-0 items-center gap-1.5 text-[11px] text-zinc-400">
                       <Clock className="h-3.5 w-3.5 text-zinc-500" />
@@ -221,9 +226,9 @@ export function WorkerCard({
                     </div>
                   ) : null}
                 </div>
-                {showPreview ? (
-                  <div className="truncate text-[13px] leading-5 text-zinc-400" title={preview}>
-                    {preview}
+                {showPromptPreview ? (
+                  <div className="line-clamp-2 text-[11px] leading-[1.35] text-zinc-500" title={promptPreviewText}>
+                    {promptPreviewText}
                   </div>
                 ) : null}
               </div>
@@ -243,7 +248,7 @@ export function WorkerCard({
                   aria-label={`Stop ${displayId}`}
                   title={`Stop ${displayId}`}
                   disabled={isStopping}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-red-300/15 bg-red-400/[0.06] text-red-100/85 transition-colors hover:bg-red-400/[0.12] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-red-300/15 bg-red-400/[0.06] text-red-100/85 transition-colors hover:bg-red-400/[0.12] disabled:cursor-not-allowed disabled:opacity-50"
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -254,14 +259,11 @@ export function WorkerCard({
                 </button>
               ) : null}
               <CollapsibleTrigger
-                className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 transition-colors hover:bg-white/[0.04] hover:text-zinc-300"
+                className="flex h-6 w-6 items-center justify-center rounded-full text-zinc-500 transition-colors hover:bg-white/[0.04] hover:text-zinc-300"
                 aria-label={open ? `Collapse ${displayId}` : `Expand ${displayId}`}
               >
-                <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} />
+                <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
               </CollapsibleTrigger>
-              <div title={contextLabel}>
-                {renderContextMeter(agent.contextUsage?.fullnessPercent)}
-              </div>
             </div>
           </div>
         </div>

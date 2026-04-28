@@ -3,6 +3,7 @@ import { errorResponse } from "@/server/api-errors";
 import { answerClarification } from "@/server/clarifications/store";
 import { resumeRunAfterClarification } from "@/server/clarifications/loop";
 import { requireApiSession } from "@/server/auth/guards";
+import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 
 export async function POST(
   req: NextRequest,
@@ -31,6 +32,7 @@ export async function POST(
 
     await answerClarification(clarificationId, answer);
     const resumeResult = await resumeRunAfterClarification(runId);
+    notifyEventStreamSubscribers();
 
     return NextResponse.json({ ok: true, runId, ...resumeResult });
   } catch (error: unknown) {

@@ -103,6 +103,18 @@ function setupTempDb(dbPath: string, rootDir: string) {
       FOREIGN KEY (plan_item_id) REFERENCES plan_items(id)
     );
 
+    CREATE TABLE supervisor_interventions (
+      id text PRIMARY KEY NOT NULL,
+      run_id text NOT NULL,
+      worker_id text,
+      intervention_type text NOT NULL,
+      prompt text NOT NULL,
+      summary text,
+      created_at integer NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES runs(id),
+      FOREIGN KEY (worker_id) REFERENCES workers(id)
+    );
+
     CREATE TABLE credit_events (
       id text PRIMARY KEY NOT NULL,
       account_id text NOT NULL,
@@ -153,6 +165,8 @@ function setupTempDb(dbPath: string, rootDir: string) {
     .run(randomUUID(), runId, planItemId, "failed", now, now);
   db.prepare("insert into execution_events (id, run_id, worker_id, plan_item_id, event_type, created_at) values (?, ?, ?, ?, ?, ?)")
     .run(randomUUID(), runId, workerId, planItemId, "spawned", now);
+  db.prepare("insert into supervisor_interventions (id, run_id, worker_id, intervention_type, prompt, summary, created_at) values (?, ?, ?, ?, ?, ?, ?)")
+    .run(randomUUID(), runId, workerId, "continue", "keep going", "nudged worker", now);
   db.prepare("insert into accounts (id, provider) values (?, ?)")
     .run(randomUUID(), "openai");
   db.prepare("insert into settings (key, value, updated_at) values (?, ?, ?)")
@@ -195,6 +209,7 @@ describe("delete-conversations.sh", () => {
     expect(count("plan_items")).toBe(0);
     expect(count("validation_runs")).toBe(0);
     expect(count("execution_events")).toBe(0);
+    expect(count("supervisor_interventions")).toBe(0);
     expect(count("credit_events")).toBe(0);
     expect(count("accounts")).toBe(1);
     expect(count("settings")).toBe(1);

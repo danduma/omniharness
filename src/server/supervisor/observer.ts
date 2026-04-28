@@ -5,6 +5,7 @@ import { db } from "@/server/db";
 import { executionEvents, runs, workers } from "@/server/db/schema";
 import { shouldAutoApprove } from "@/server/permissions";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
+import { isActiveImplementationRun } from "@/server/runs/status";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 
 const OBSERVER_INTERVAL_MS = 5_000;
@@ -332,6 +333,11 @@ async function insertExecutionEvent(
   });
 }
 
+async function loadActiveRun(runId: string) {
+  const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+  return isActiveImplementationRun(run) ? run : null;
+}
+
 function isMissingAgentError(error: unknown) {
   const message = formatErrorMessage(error).toLowerCase();
   return message.includes("404") || message.includes("not_found") || message.includes("agent not found");
@@ -372,8 +378,8 @@ async function reviveWorkerFromSavedSession(args: {
 }
 
 export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: string, delayMs?: number) => void) {
-  const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
-  if (!run || run.mode !== "implementation" || run.status === "done" || run.status === "failed") {
+  const run = await loadActiveRun(runId);
+  if (!isActiveImplementationRun(run)) {
     stopRunObserver(runId);
     return;
   }
@@ -392,6 +398,12 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
       const normalized = normalizeSnapshot(rawSnapshot);
       snapshot = normalized.snapshot;
 
+      const latestRun = await loadActiveRun(runId);
+      if (!latestRun) {
+        stopRunObserver(runId);
+        return;
+      }
+
       if (normalized.issues.length > 0) {
         const error = new Error(
           `Invalid worker snapshot for ${worker.id}: ${normalized.issues.join("; ")}`,
@@ -409,6 +421,11 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
         return;
       }
     } catch (error) {
+      if (!await loadActiveRun(runId)) {
+        stopRunObserver(runId);
+        return;
+      }
+
       if (run && isMissingAgentError(error)) {
         try {
           const revivedSnapshot = await reviveWorkerFromSavedSession({
@@ -422,6 +439,10 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
             throw error;
           }
         } catch (resumeError) {
+          if (!await loadActiveRun(runId)) {
+            stopRunObserver(runId);
+            return;
+          }
           await insertExecutionEvent(runId, worker.id, "worker_resume_failed", {
             summary: `Failed to resume ${worker.id} from saved session`,
             reason: formatErrorMessage(resumeError),
@@ -443,6 +464,12 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
     }
 
     try {
+      const latestRun = await loadActiveRun(runId);
+      if (!latestRun) {
+        stopRunObserver(runId);
+        return;
+      }
+
       const key = stateKey(runId, worker.id);
       const previous = observerState.get(key);
       const { nextState, events } = deriveWorkerEvents({
@@ -484,11 +511,15 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
           currentText: snapshot.currentText.slice(-1000),
           lastText: snapshot.lastText.slice(-1000),
         });
-        if (event.shouldWakeSupervisor && run.status !== "awaiting_user") {
+        if (event.shouldWakeSupervisor && latestRun.status !== "awaiting_user") {
           wakeSupervisor(runId, 0);
         }
       }
     } catch (error) {
+      if (!await loadActiveRun(runId)) {
+        stopRunObserver(runId);
+        return;
+      }
       await insertExecutionEvent(runId, worker.id, "worker_observer_failed", {
         summary: `Observer failed while processing ${worker.id}`,
         reason: formatErrorMessage(error),

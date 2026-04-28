@@ -38,6 +38,11 @@ export function buildSupervisorTools(options?: { allowedWorkerTypes?: string[]; 
           properties: {
             workerId: { type: "string" },
             prompt: { type: "string" },
+            interventionType: {
+              type: "string",
+              description: "Why the supervisor is steering the worker. Use continue, completion_gap, or recovery when applicable.",
+              enum: ["continue", "completion_gap", "recovery"],
+            },
           },
           required: ["workerId", "prompt"],
         },

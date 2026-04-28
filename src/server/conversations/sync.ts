@@ -4,6 +4,7 @@ import { runs, workers } from "@/server/db/schema";
 import { collectPlannerArtifacts } from "@/server/planning/artifacts";
 import { normalizeAgentRecord } from "@/server/bridge-client";
 import { persistRunFailure } from "@/server/runs/failures";
+import { isTerminalRunStatus } from "@/server/runs/status";
 
 const MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC = "Worker is idle with no recorded output, and the bridge no longer has a live session for it.";
 
@@ -83,7 +84,7 @@ export async function syncConversationSessions(rawAgents: unknown[]) {
   const allWorkers = await db.select().from(workers);
 
   for (const run of allRuns) {
-    if (run.mode === "implementation") {
+    if (run.mode === "implementation" || isTerminalRunStatus(run.status)) {
       continue;
     }
 
@@ -141,7 +142,7 @@ export async function syncConversationSessions(rawAgents: unknown[]) {
   }
 
   for (const run of allRuns) {
-    if (run.mode === "implementation" || run.status === "done" || run.status === "failed") {
+    if (run.mode === "implementation" || isTerminalRunStatus(run.status)) {
       continue;
     }
 

@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { runs } from "@/server/db/schema";
 import { persistRunFailure } from "@/server/runs/failures";
+import { isActiveImplementationRun } from "@/server/runs/status";
 import { Supervisor } from "@/server/supervisor";
 import { stopRunObserver } from "./observer";
 import { acquireSupervisorWakeLease, releaseSupervisorWakeLease } from "./lease";
@@ -31,7 +32,7 @@ export async function executeSupervisorWake(runId: string) {
   }
 
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
-  if (!run || run.mode !== "implementation" || run.status === "done" || run.status === "failed") {
+  if (!isActiveImplementationRun(run)) {
     stopRunObserver(runId);
     await releaseSupervisorWakeLease(runId, leaseId);
     return;
@@ -41,7 +42,11 @@ export async function executeSupervisorWake(runId: string) {
   try {
     const supervisor = new Supervisor({ runId });
     const result = await supervisor.run();
-    if (result.state === "wait") {
+    const latestRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    if (!isActiveImplementationRun(latestRun)) {
+      clearWake(runId);
+      stopRunObserver(runId);
+    } else if (result.state === "wait") {
       scheduleSupervisorWake(runId, result.delayMs);
     } else if (result.state === "completed" || result.state === "failed" || result.state === "paused") {
       clearWake(runId);

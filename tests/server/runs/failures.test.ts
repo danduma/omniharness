@@ -77,4 +77,34 @@ describe("persistRunFailure", () => {
     expect(persistedMessages).toHaveLength(1);
     expect(persistedMessages[0]?.content).toBe("Run failed: codex ACP adapter is not installed");
   });
+
+  it("does not overwrite a cancelled run with a late failure", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "cancelled",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await persistRunFailure(runId, new Error("late observer failure"));
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+
+    expect(persistedRun?.status).toBe("cancelled");
+    expect(persistedRun?.lastError).toBeNull();
+    expect(persistedMessages).toHaveLength(0);
+  });
 });

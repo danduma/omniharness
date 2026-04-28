@@ -53,7 +53,12 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(workerCardSource).toContain("Context usage ");
   expect(pageSource).toContain("Claude Code");
   expect(workerCardSource).toContain("Context unavailable");
-  expect(workerCardSource).toContain('className="truncate text-[13px] leading-5 text-zinc-400"');
+  expect(workerCardSource).toContain('promptPreview?: string | null;');
+  expect(workersSidebarSource).toContain('promptPreview={worker.initialPrompt}');
+  expect(workerCardSource).toContain('const promptPreviewText = promptPreview?.trim() ?? "";');
+  expect(workerCardSource).toContain('line-clamp-2 text-[11px] leading-[1.35] text-zinc-500');
+  expect(workerCardSource).not.toContain('const preview = buildWorkerPreview(agent);');
+  expect(workerCardSource).not.toContain('className="truncate text-[13px] leading-5 text-zinc-400"');
   expect(pageSource).not.toContain("Recent output");
   expect(pageSource).toContain('hasSingleVisibleWorker ? "flex h-full min-h-full flex-col" : visibleWorkers.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col"');
   expect(pageSource).toContain('className="flex h-full min-h-[16rem] flex-1 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground"');
@@ -84,6 +89,10 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).not.toContain("<SheetTitle>Navigation</SheetTitle>");
   expect(pageSource).not.toContain('queryClient.removeQueries({ queryKey: ["conversation-agent", workerId], exact: true })');
   expect(workerCardSource).toContain('function renderContextMeter(fullnessPercent: number | null | undefined)');
+  expect(workerCardSource).toContain('className="inline-flex items-center gap-1.5"');
+  expect(workerCardSource).toContain('className="h-3.5 w-3.5"');
+  expect(workerCardSource).toContain('className="inline-flex h-6 w-6 items-center justify-center rounded-full');
+  expect(workerCardSource).toContain('className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")}');
   expect(workerCardSource).toContain("Permissions waiting");
   expect(workerCardSource).toContain("Context usage unavailable");
   expect(workerCardSource).toContain("conic-gradient");

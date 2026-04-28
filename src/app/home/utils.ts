@@ -26,6 +26,9 @@ export function removeRunFromHomeState(current: EventStreamState, runId: string)
     executionEvents: (current.executionEvents || []).filter((item: { runId: string; workerId?: string | null }) =>
       item.runId !== runId && (!item.workerId || !workerIds.includes(item.workerId))
     ),
+    supervisorInterventions: (current.supervisorInterventions || []).filter((item: { runId: string; workerId?: string | null }) =>
+      item.runId !== runId && (!item.workerId || !workerIds.includes(item.workerId))
+    ),
     plans: runToDelete
       ? (current.plans || []).filter((plan: PlanRecord) => plan.id !== runToDelete.planId)
       : current.plans,

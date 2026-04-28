@@ -103,6 +103,7 @@ export function HomeApp() {
     clarifications: [],
     validationRuns: [],
     executionEvents: [],
+    supervisorInterventions: [],
     frontendErrors: [],
   });
   const [runtimeErrors, setRuntimeErrors] = useState<AppErrorDescriptor[]>([]);

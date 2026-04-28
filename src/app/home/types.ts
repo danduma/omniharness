@@ -43,6 +43,15 @@ export type ExecutionEventRecord = {
   details?: string | null;
   createdAt: string;
 };
+export type SupervisorInterventionRecord = {
+  id: string;
+  runId: string;
+  workerId?: string | null;
+  interventionType: string;
+  prompt: string;
+  summary?: string | null;
+  createdAt: string;
+};
 export type AgentSnapshot = {
   name: string;
   type?: string;
@@ -140,6 +149,7 @@ export type EventStreamState = {
   clarifications: ClarificationRecord[];
   validationRuns: Array<{ runId: string }>;
   executionEvents: ExecutionEventRecord[];
+  supervisorInterventions: SupervisorInterventionRecord[];
   frontendErrors?: AppErrorDescriptor[];
 };
 export type SettingsTab = "llm" | "workers";

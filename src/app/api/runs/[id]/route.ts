@@ -10,6 +10,7 @@ import { stopRunObserver } from "@/server/supervisor/observer";
 import { cancelSupervisorWake } from "@/server/supervisor/wake";
 import { getAppDataPath } from "@/server/app-root";
 import { requireApiSession } from "@/server/auth/guards";
+import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import {
   plans,
   runs,
@@ -19,6 +20,7 @@ import {
   planItems,
   validationRuns,
   executionEvents,
+  supervisorInterventions,
   creditEvents,
   workerCounters,
 } from "@/server/db/schema";
@@ -96,6 +98,7 @@ export async function PATCH(
       .update(runs)
       .set({ title, updatedAt: new Date() })
       .where(eq(runs.id, runId));
+    notifyEventStreamSubscribers();
 
     return NextResponse.json({ ok: true, runId, title });
   } catch (error: unknown) {
@@ -151,6 +154,7 @@ export async function POST(
         summary: "Stopped supervisor and cancelled active workers.",
         cancelledWorkerIds: activeWorkers.map((worker) => worker.id),
       });
+      notifyEventStreamSubscribers();
 
       return NextResponse.json({ ok: true, runId });
     }
@@ -179,6 +183,7 @@ export async function POST(
         summary: `Stopped ${workerId}`,
         reason: "User stopped this worker.",
       }, workerId);
+      notifyEventStreamSubscribers();
 
       return NextResponse.json({ ok: true, runId, workerId });
     }
@@ -208,6 +213,7 @@ export async function POST(
       targetMessageId,
       content,
     });
+    notifyEventStreamSubscribers();
 
     return NextResponse.json({ ok: true, ...result });
   } catch (error: unknown) {
@@ -276,6 +282,7 @@ export async function DELETE(
     await db.delete(clarifications).where(eq(clarifications.runId, runId));
     await db.delete(validationRuns).where(eq(validationRuns.runId, runId));
     await db.delete(executionEvents).where(eq(executionEvents.runId, runId));
+    await db.delete(supervisorInterventions).where(eq(supervisorInterventions.runId, runId));
     await db.delete(workers).where(eq(workers.runId, runId));
     await db.delete(workerCounters).where(eq(workerCounters.runId, runId));
     await db.delete(runs).where(eq(runs.id, runId));
@@ -294,6 +301,7 @@ export async function DELETE(
         fs.rmSync(absolutePlanPath);
       }
     }
+    notifyEventStreamSubscribers();
 
     return NextResponse.json({ ok: true, runId });
   } catch (error: unknown) {

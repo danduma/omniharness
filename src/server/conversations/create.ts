@@ -12,6 +12,7 @@ import { PLANNER_SYSTEM_PROMPT } from "@/server/prompts";
 import { persistRunFailure } from "@/server/runs/failures";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
+import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 
 interface AttachmentInput {
   kind?: string;
@@ -112,6 +113,7 @@ export async function createConversation(args: {
     content: command,
     createdAt: new Date(),
   });
+  notifyEventStreamSubscribers();
 
   if (mode === "implementation") {
     startSupervisorRun(runId);
@@ -165,6 +167,7 @@ export async function createConversation(args: {
       }).where(eq(workers.id, workerId));
 
       await persistRunFailure(runId, new Error(failureMessage));
+      notifyEventStreamSubscribers();
 
       return { planId, runId, mode };
     }
@@ -188,6 +191,7 @@ export async function createConversation(args: {
       workerId,
       createdAt: new Date(),
     });
+    notifyEventStreamSubscribers();
   }
 
   queueConversationTitleGeneration({ runId, command }).catch((error) => {

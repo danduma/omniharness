@@ -48,6 +48,7 @@ export type RecoverableConversationState = {
   clarifications: RecoverableRunScoped[];
   validationRuns: RecoverableRunScoped[];
   executionEvents: RecoverableExecutionEvent[];
+  supervisorInterventions: RecoverableRunScoped[];
 };
 
 export function applyRunRecoveryOptimisticUpdate(
@@ -114,5 +115,6 @@ export function applyRunRecoveryOptimisticUpdate(
     clarifications: state.clarifications.filter((item) => item.runId !== args.runId),
     validationRuns: state.validationRuns.filter((item) => item.runId !== args.runId),
     executionEvents: state.executionEvents.filter((item) => item.runId !== args.runId),
+    supervisorInterventions: state.supervisorInterventions.filter((item) => item.runId !== args.runId),
   };
 }

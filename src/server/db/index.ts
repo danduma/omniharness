@@ -194,6 +194,18 @@ CREATE TABLE IF NOT EXISTS execution_events (
   FOREIGN KEY (worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE no action,
   FOREIGN KEY (plan_item_id) REFERENCES plan_items(id) ON UPDATE no action ON DELETE no action
 );
+
+CREATE TABLE IF NOT EXISTS supervisor_interventions (
+  id text PRIMARY KEY NOT NULL,
+  run_id text NOT NULL,
+  worker_id text,
+  intervention_type text NOT NULL,
+  prompt text NOT NULL,
+  summary text,
+  created_at integer NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action,
+  FOREIGN KEY (worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE no action
+);
 `);
 
 const runColumns = sqlite.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>;

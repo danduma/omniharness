@@ -172,3 +172,13 @@ export const executionEvents = sqliteTable('execution_events', {
   details: text('details'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
+
+export const supervisorInterventions = sqliteTable('supervisor_interventions', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').references(() => runs.id).notNull(),
+  workerId: text('worker_id').references(() => workers.id),
+  interventionType: text('intervention_type').notNull(),
+  prompt: text('prompt').notNull(),
+  summary: text('summary'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+});

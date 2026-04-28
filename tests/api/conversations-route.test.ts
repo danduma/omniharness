@@ -11,10 +11,12 @@ const {
   mockSpawnAgent,
   mockAskAgent,
   mockGetAgent,
+  mockNotifyEventStreamSubscribers,
 } = vi.hoisted(() => ({
   mockStartSupervisorRun: vi.fn(),
   mockQueueConversationTitleGeneration: vi.fn().mockResolvedValue(undefined),
   mockEnsureSupervisorRuntimeStarted: vi.fn().mockResolvedValue(undefined),
+  mockNotifyEventStreamSubscribers: vi.fn(),
   mockSpawnAgent: vi.fn().mockResolvedValue({
     name: "worker-1",
     type: "codex",
@@ -68,6 +70,10 @@ vi.mock("@/server/bridge-client", () => ({
   getAgent: mockGetAgent,
 }));
 
+vi.mock("@/server/events/live-updates", () => ({
+  notifyEventStreamSubscribers: mockNotifyEventStreamSubscribers,
+}));
+
 import { POST } from "@/app/api/conversations/route";
 
 describe("POST /api/conversations", () => {
@@ -78,6 +84,7 @@ describe("POST /api/conversations", () => {
     mockSpawnAgent.mockClear();
     mockAskAgent.mockClear();
     mockGetAgent.mockClear();
+    mockNotifyEventStreamSubscribers.mockClear();
 
     await db.delete(messages);
     await db.delete(workers);
@@ -107,6 +114,7 @@ describe("POST /api/conversations", () => {
     expect(run?.mode).toBe("implementation");
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
     expect(mockSpawnAgent).not.toHaveBeenCalled();
+    expect(mockNotifyEventStreamSubscribers).toHaveBeenCalledTimes(1);
   });
 
   it("starts a planning conversation with one direct worker and no supervisor", async () => {

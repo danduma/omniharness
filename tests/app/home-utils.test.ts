@@ -58,6 +58,7 @@ describe("home utils", () => {
       clarifications: [],
       validationRuns: [],
       executionEvents: [],
+      supervisorInterventions: [],
     };
 
     const next = appendSentConversationMessageSnapshot(liveState, {
@@ -108,6 +109,10 @@ describe("home utils", () => {
         { id: "event-1", runId: "run-1", workerId: "worker-1", eventType: "keep", createdAt: "" },
         { id: "event-2", runId: "run-2", workerId: "worker-2", eventType: "delete", createdAt: "" },
       ],
+      supervisorInterventions: [
+        { id: "intervention-1", runId: "run-1", workerId: "worker-1", interventionType: "continue", prompt: "keep", createdAt: "" },
+        { id: "intervention-2", runId: "run-2", workerId: "worker-2", interventionType: "continue", prompt: "delete", createdAt: "" },
+      ],
     };
 
     const filtered = filterOptimisticallyDeletedRuns(liveState, new Set(["run-2"]));
@@ -120,6 +125,7 @@ describe("home utils", () => {
     expect(filtered.clarifications).toEqual([]);
     expect(filtered.validationRuns).toEqual([]);
     expect(filtered.executionEvents.map((event) => event.id)).toEqual(["event-1"]);
+    expect(filtered.supervisorInterventions.map((event) => event.id)).toEqual(["intervention-1"]);
   });
 
   it("restores persisted collapsed project paths from localStorage JSON", () => {

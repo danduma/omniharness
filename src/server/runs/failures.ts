@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { messages, runs } from "@/server/db/schema";
+import { isTerminalRunStatus, normalizeRunStatus } from "@/server/runs/status";
 
 function describeErrorValue(error: unknown, seen: Set<unknown>): string {
   if (error == null) {
@@ -54,6 +55,10 @@ export async function persistRunFailure(runId: string, error: unknown) {
   const errorMessage = formatErrorMessage(error);
   const now = new Date();
   const content = `Run failed: ${errorMessage}`;
+  const currentRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+  if (!currentRun || (isTerminalRunStatus(currentRun.status) && normalizeRunStatus(currentRun.status) !== "failed")) {
+    return;
+  }
 
   await db.update(runs).set({
     status: "failed",

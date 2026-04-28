@@ -7,6 +7,7 @@ describe("db schema", () => {
     expect(schema).toHaveProperty("clarifications");
     expect(schema).toHaveProperty("validationRuns");
     expect(schema).toHaveProperty("executionEvents");
+    expect(schema).toHaveProperty("supervisorInterventions");
   });
 
   it("persists durable worker terminal snapshots", () => {

@@ -3,9 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@9.6.0",
+  "cpu": [
+    "arm64"
+  ],
   "scripts": {
     "preinstall": "node ./scripts/check-pnpm.mjs",
+    "predev": "node ./scripts/check-pnpm.mjs --verify-native",
     "dev": "pnpm exec tsx scripts/dev.ts",
+    "prebuild": "node ./scripts/check-pnpm.mjs --verify-native",
     "dev:web": "next dev",
     "setup:agents": "./scripts/install-agent-acp.sh",
     "build": "next build --turbopack",
