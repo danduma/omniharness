@@ -94,10 +94,10 @@ export function HomeHeader({
   stoppingWorkerId,
 }: HomeHeaderProps) {
   const conversationTitle = selectedRun?.title?.trim() || "New conversation";
-  const titleLabel = selectedRun ? conversationTitle : "No conversation selected";
+  const titleLabel = selectedRun ? conversationTitle : "";
   const rootFolderLabel = activeConversationCwd
     ? activeConversationCwd.split(/[\\/]/).filter(Boolean).pop() || activeConversationCwd
-    : "No working directory";
+    : "";
 
   return (
   <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border/50 px-3 sm:px-4">
@@ -141,22 +141,28 @@ export function HomeHeader({
       </Sheet>
 
       <div className="flex min-w-0 items-center gap-2">
-        <div className="flex min-w-0 items-baseline gap-2">
-          <span
-            aria-label="Conversation title"
-            className="max-w-[18rem] truncate text-sm font-semibold text-foreground sm:max-w-[26rem]"
-            title={titleLabel}
-          >
-            {titleLabel}
-          </span>
-          <span
-            aria-label="Root repository folder"
-            className="max-w-[10rem] shrink-0 truncate font-mono text-[10px] text-muted-foreground"
-            title={activeConversationCwd || rootFolderLabel}
-          >
-            {rootFolderLabel}
-          </span>
-        </div>
+        {titleLabel || rootFolderLabel ? (
+          <div className="flex min-w-0 items-baseline gap-2">
+            {titleLabel ? (
+              <span
+                aria-label="Conversation title"
+                className="max-w-[18rem] truncate text-sm font-semibold text-foreground sm:max-w-[26rem]"
+                title={titleLabel}
+              >
+                {titleLabel}
+              </span>
+            ) : null}
+            {rootFolderLabel ? (
+              <span
+                aria-label="Root repository folder"
+                className="max-w-[10rem] shrink-0 truncate font-mono text-[10px] text-muted-foreground"
+                title={activeConversationCwd || rootFolderLabel}
+              >
+                {rootFolderLabel}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         {selectedRun?.status === "failed" ? (
           <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-destructive">
             <AlertTriangle className="h-3 w-3" /> Failed

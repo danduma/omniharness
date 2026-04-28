@@ -12,7 +12,7 @@ import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
 import { extractLatestPlainTextTurn } from "@/lib/agent-output";
 import { type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { AgentSnapshot, MessageRecord, NoticeDescriptor, RunRecord } from "@/app/home/types";
-import { formatExecutionTimestamp, parseSpawnedWorkerMessage } from "@/app/home/utils";
+import { formatExecutionTimestamp, parseSpawnedWorkerMessage, type ConversationTimelineItem } from "@/app/home/utils";
 import { cn } from "@/lib/utils";
 import { ErrorNotice } from "./ErrorNotice";
 import { ConversationWorkerCard } from "./WorkersSidebar";
@@ -21,17 +21,11 @@ import { UserInputMessage, type UserInputMessageAction } from "./UserInputMessag
 interface ConversationExecutionStatusProps {
   liveExecutionStatus: { label: string; detail: string; tone: "error" | "warning" | "muted" | "active" };
   liveThoughts: Array<{ agentName: string; snippet: string; isLive: boolean }>;
-  executionDetailsOpen: boolean;
-  setExecutionDetailsOpen: (open: boolean) => void;
-  executionDetailLines: Array<{ text: string; createdAt?: string }>;
 }
 
 function ConversationExecutionStatus({
   liveExecutionStatus,
   liveThoughts,
-  executionDetailsOpen,
-  setExecutionDetailsOpen,
-  executionDetailLines,
 }: ConversationExecutionStatusProps) {
   return (
   <div className="group flex w-full flex-col text-sm">
@@ -77,24 +71,6 @@ function ConversationExecutionStatus({
         ))}
       </div>
     ) : null}
-    <Collapsible open={executionDetailsOpen} onOpenChange={setExecutionDetailsOpen}>
-      <CollapsibleTrigger className="mt-2 flex items-center gap-2 px-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
-        <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", executionDetailsOpen ? "rotate-180" : "")} />
-        <span>{executionDetailsOpen ? "Hide supervisor activity" : "Show supervisor activity"}</span>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="space-y-1 pt-2 pl-6">
-        {executionDetailLines.length > 0 ? executionDetailLines.map((line, index) => {
-          return (
-            <p key={`${line.text}-${index}`} className="text-xs leading-relaxed text-muted-foreground">
-              {line.createdAt ? `${formatExecutionTimestamp(line.createdAt)} ` : ""}
-              {line.text}
-            </p>
-          );
-        }) : (
-          <p className="text-xs leading-relaxed text-muted-foreground">No execution details yet.</p>
-        )}
-      </CollapsibleContent>
-    </Collapsible>
   </div>
   );
 }
@@ -114,6 +90,25 @@ function inferWorkerIdFromMessage(message: MessageRecord) {
 
   const promptedMatch = message.content.match(/^Prompted\s+([^\s:]+):/);
   return promptedMatch?.[1] ?? null;
+}
+
+function SupervisorActivityMessage({ item }: { item: Extract<ConversationTimelineItem, { type: "activity" }> }) {
+  return (
+    <div className="group flex w-full flex-col text-sm">
+      <div className="mb-1.5 flex items-center gap-2 px-1">
+        <span className="text-xs font-semibold capitalize tracking-wider text-emerald-600">supervisor</span>
+        {item.event.workerId ? (
+          <span className="truncate text-[10px] font-medium text-muted-foreground/60">{item.event.workerId}</span>
+        ) : null}
+        <span className="shrink-0 text-[10px] text-muted-foreground/50">
+          {formatExecutionTimestamp(item.createdAt)}
+        </span>
+      </div>
+      <div className="overflow-x-auto whitespace-pre-wrap rounded-lg border border-border/30 bg-muted/20 p-4 text-[13px] leading-relaxed text-muted-foreground">
+        {item.text}
+      </div>
+    </div>
+  );
 }
 
 function WorkerOutputMessage({
@@ -183,7 +178,7 @@ interface ConversationMainProps {
     isPending: boolean;
     mutate: (payload: { runId: string; planPath: string | null }) => void;
   };
-  visibleMessages: MessageRecord[];
+  conversationTimelineItems: ConversationTimelineItem[];
   recoverRun: { isPending: boolean };
   showRecoverableRunningState: boolean;
   hasStuckWorker: boolean;
@@ -201,9 +196,6 @@ interface ConversationMainProps {
   showConversationExecution: boolean;
   liveExecutionStatus: ConversationExecutionStatusProps["liveExecutionStatus"];
   liveThoughts: ConversationExecutionStatusProps["liveThoughts"];
-  executionDetailsOpen: boolean;
-  setExecutionDetailsOpen: (open: boolean) => void;
-  executionDetailLines: ConversationExecutionStatusProps["executionDetailLines"];
   conversationWorkerGroups: { active: ConversationWorkerRecord[] };
   onStopWorker?: (workerId: string) => void;
   stoppingWorkerId?: string | null;
@@ -265,7 +257,7 @@ export function ConversationMain({
   toggleDirectMessageExpansion,
   primaryConversationAgent,
   promotePlanningConversation,
-  visibleMessages,
+  conversationTimelineItems,
   recoverRun,
   showRecoverableRunningState,
   hasStuckWorker,
@@ -283,9 +275,6 @@ export function ConversationMain({
   showConversationExecution,
   liveExecutionStatus,
   liveThoughts,
-  executionDetailsOpen,
-  setExecutionDetailsOpen,
-  executionDetailLines,
   conversationWorkerGroups,
   onStopWorker,
   stoppingWorkerId,
@@ -377,8 +366,13 @@ export function ConversationMain({
             />
           ) : null}
 
-          {visibleMessages.length > 0 ? (
-            visibleMessages.map((msg: MessageRecord) => {
+          {conversationTimelineItems.length > 0 ? (
+            conversationTimelineItems.map((item: ConversationTimelineItem) => {
+              if (item.type === "activity") {
+                return <SupervisorActivityMessage key={item.id} item={item} />;
+              }
+
+              const msg = item.message;
               const isUserMessage = msg.role === "user";
               const isExpanded = expandedDirectMessageIds.has(msg.id);
               const userMessageActions: UserInputMessageAction[] = isImplementationConversation
@@ -522,9 +516,6 @@ export function ConversationMain({
           <ConversationExecutionStatus
             liveExecutionStatus={liveExecutionStatus}
             liveThoughts={liveThoughts}
-            executionDetailsOpen={executionDetailsOpen}
-            setExecutionDetailsOpen={setExecutionDetailsOpen}
-            executionDetailLines={executionDetailLines}
           />
         ) : null}
 

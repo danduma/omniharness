@@ -34,6 +34,17 @@ describe("install-agent-acp.sh", () => {
     createFakeBin("opencode", binDir);
     createFakeBin("npm", binDir);
     createFakeBin("cargo", binDir);
+    createFakeBin("rg", binDir);
+    createFakeBin("git", binDir);
+    createFakeBin("node", binDir);
+    createFakeBin("bash", binDir);
+    createFakeBin("pnpm", binDir);
+    createFakeBin("python3", binDir);
+    createFakeBin("zsh", binDir);
+    createFakeBin("jq", binDir);
+    createFakeBin("gh", binDir);
+    createFakeBin("uv", binDir);
+    createFakeBin("fd", binDir);
 
     const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh", "--dry-run"], {
       cwd: process.cwd(),
@@ -53,6 +64,10 @@ describe("install-agent-acp.sh", () => {
     expect(result.stdout).toContain("native ACP support via `gemini --experimental-acp`");
     expect(result.stdout).toContain("opencode: detected");
     expect(result.stdout).toContain("native ACP support via `opencode acp`");
+    expect(result.stdout).toContain("Checking agent tool environment");
+    expect(result.stdout).toContain("rg: detected");
+    expect(result.stdout).toContain("git: detected");
+    expect(result.stdout).toContain("node: detected");
   });
 
   it("installs the missing Codex and Claude ACP adapters when their CLIs are present", () => {

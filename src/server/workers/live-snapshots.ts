@@ -15,14 +15,30 @@ type PersistedWorkerRecord = {
   lastText: string;
   bridgeSessionId: string | null;
   bridgeSessionMode: string | null;
+  createdAt?: Date | string | null;
   updatedAt?: Date | string | null;
 };
 
 type PersistedRunRecord = {
   id: string;
+  planId?: string | null;
+  mode?: string | null;
+  projectPath?: string | null;
+  title?: string | null;
+  preferredWorkerType?: string | null;
   preferredWorkerModel: string | null;
   preferredWorkerEffort: string | null;
+  allowedWorkerTypes?: string | null;
+  specPath?: string | null;
+  artifactPlanPath?: string | null;
+  plannerArtifactsJson?: string | null;
+  parentRunId?: string | null;
+  forkedFromMessageId?: string | null;
+  status?: string | null;
+  failedAt?: Date | string | null;
   lastError: string | null;
+  createdAt?: Date | string | null;
+  updatedAt?: Date | string | null;
 };
 
 export type LiveWorkerSnapshot = AgentRecord & {

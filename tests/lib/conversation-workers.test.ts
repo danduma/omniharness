@@ -5,6 +5,7 @@ import {
   formatHumanDuration,
   getWorkerRuntimeLabel,
   isWorkerActiveStatus,
+  mergeWorkerLiveStatus,
   type ConversationWorkerAgent,
   type ConversationWorkerRecord,
 } from "@/lib/conversation-workers";
@@ -31,6 +32,29 @@ describe("conversation worker helpers", () => {
     expect(buildWorkerLists(workers)).toEqual({
       active: [workers[0], workers[1], workers[2]],
       finished: [workers[3], workers[4]],
+    });
+  });
+
+  it("lets live bridge state keep a stale persisted worker active", () => {
+    const workers: ConversationWorkerRecord[] = [
+      { id: "worker-live", runId: "run-1", type: "codex", status: "cancelled" },
+      { id: "worker-done", runId: "run-1", type: "codex", status: "cancelled" },
+    ];
+    const agents: ConversationWorkerAgent[] = [
+      {
+        name: "worker-live",
+        state: "working",
+        currentText: "Still applying changes.",
+      },
+    ];
+
+    const merged = mergeWorkerLiveStatus(workers, agents);
+
+    expect(merged[0]).toEqual(expect.objectContaining({ id: "worker-live", status: "working" }));
+    expect(merged[1]).toBe(workers[1]);
+    expect(buildWorkerLists(merged)).toEqual({
+      active: [merged[0]],
+      finished: [workers[1]],
     });
   });
 

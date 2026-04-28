@@ -3,7 +3,7 @@ import { db } from '@/server/db';
 import { accounts } from '@/server/db/schema';
 import { requireApiSession } from "@/server/auth/guards";
 
-export async function GET(req?: NextRequest) {
+export async function GET(req: NextRequest) {
   const auth = await requireApiSession(req, {
     source: "Accounts",
     action: "Load accounts",

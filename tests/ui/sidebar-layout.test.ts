@@ -72,7 +72,7 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('window.localStorage.setItem("omni-workers-sidebar-width", String(rightSidebarWidth))');
   expect(pageSource).toContain('title="Toggle Conversation Workers"');
   expect(pageSource).toContain('<WorkersSidebar');
-  expect(pageSource).toContain('workers={selectedRunWorkers}');
+  expect(pageSource).toContain('workers={selectedRunWorkersForDisplay}');
   expect(pageSource).toContain('agents={conversationAgents}');
   expect(pageSource).toContain('const [activeTab, setActiveTab] = useState<"active" | "finished">("active")');
   expect(pageSource).toContain("Active ({workerGroups.active.length})");
@@ -285,9 +285,12 @@ test("header syncs the active conversation path but only shows the cwd", () => {
   expect(pageSource).not.toContain('window.localStorage.getItem(LAST_RUN_ROUTE_STORAGE_KEY)');
   expect(pageSource).not.toContain('window.localStorage.setItem(LAST_RUN_ROUTE_STORAGE_KEY, selectedRunId)');
   expect(pageSource).not.toContain('window.localStorage.removeItem(LAST_RUN_ROUTE_STORAGE_KEY)');
-  expect(pageSource).toContain('aria-label="Current working directory"');
-  expect(pageSource).toContain('const cwdLabel = activeConversationCwd || "No working directory";');
-  expect(pageSource).toContain('{cwdLabel}');
+  expect(pageSource).toContain('aria-label="Root repository folder"');
+  expect(pageSource).toContain('const titleLabel = selectedRun ? conversationTitle : "";');
+  expect(pageSource).toContain(': "";');
+  expect(pageSource).toContain("{titleLabel || rootFolderLabel ? (");
+  expect(pageSource).not.toContain("No conversation selected");
+  expect(pageSource).not.toContain("No working directory");
 });
 
 test("command input uses a fixed helper placeholder instead of echoing the selected directory", () => {
@@ -330,24 +333,25 @@ test("failed runs surface recovery UI in the header and conversation feed", () =
   expect(pageSource).toContain("Run failed");
 });
 
-test("running conversations render an in-thread execution indicator with expandable trace details", () => {
+test("running conversations render an in-thread execution indicator and timeline activity rows", () => {
   expect(pageSource).toContain("function ConversationExecutionStatus");
+  expect(pageSource).toContain("function SupervisorActivityMessage");
   expect(pageSource).toContain("const isConversationThinking =");
   expect(pageSource).toContain("const liveThoughts =");
   expect(pageSource).toContain("const selectedRunExecutionEvents =");
+  expect(pageSource).toContain("const conversationTimelineItems =");
   expect(pageSource).toContain("const liveExecutionStatus =");
-  expect(pageSource).toContain("const executionDetailLines =");
-  expect(pageSource).toContain("const [executionDetailsOpen, setExecutionDetailsOpen] = useState(false)");
+  expect(pageSource).toContain("buildConversationTimelineItems");
+  expect(pageSource).toContain('item.type === "activity"');
   expect(pageSource).toContain("Thinking");
   expect(pageSource).toContain("animate-pulse");
   expect(pageSource).toContain("animationDelay:");
-  expect(pageSource).toContain("Show supervisor activity");
-  expect(pageSource).toContain("Hide supervisor activity");
-  expect(pageSource).toContain("Connecting to ACP bridge");
-  expect(pageSource).toContain("waiting for LLM API");
+  expect(pageSource).toContain("activity");
   expect(pageSource).toContain("Awaiting permission");
   expect(pageSource).toContain("Waiting ");
-  expect(pageSource).toContain("No execution details yet.");
+  expect(pageSource).not.toContain("Show supervisor activity");
+  expect(pageSource).not.toContain("Hide supervisor activity");
+  expect(pageSource).not.toContain("No execution details yet.");
   expect(pageSource).not.toContain("Current status");
   expect(pageSource).not.toContain("Last bridge error");
   expect(pageSource).toContain("{isImplementationConversation && showConversationExecution ? (");

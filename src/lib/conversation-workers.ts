@@ -96,6 +96,28 @@ export function buildWorkerLists<T extends ConversationWorkerRecord>(workers: T[
   }, { active: [], finished: [] });
 }
 
+export function mergeWorkerLiveStatus<T extends ConversationWorkerRecord>(
+  workers: T[],
+  agents: ConversationWorkerAgent[],
+) {
+  const agentsByName = new Map(agents.map((agent) => [agent.name, agent]));
+
+  return workers.map((worker) => {
+    const agent = agentsByName.get(worker.id);
+    if (!agent) {
+      return worker;
+    }
+
+    const hasLiveOutput = Boolean(agent.currentText?.trim());
+    if (!isWorkerActiveStatus(agent.state) && !hasLiveOutput) {
+      return worker;
+    }
+
+    const status = isWorkerActiveStatus(agent.state) ? agent.state : "working";
+    return status === worker.status ? worker : { ...worker, status };
+  });
+}
+
 export function buildWorkerPreview(agent: ConversationWorkerAgent) {
   const previewSource = agent.currentText?.trim()
     || agent.displayText?.trim()

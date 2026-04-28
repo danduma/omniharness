@@ -46,7 +46,12 @@ describe("/api/settings", () => {
     if (init.method && init.method !== "GET") {
       headers.set("origin", "http://localhost");
     }
-    return new NextRequest(url, { ...init, headers });
+    const { signal, ...requestInit } = init;
+    const nextRequestInit: ConstructorParameters<typeof NextRequest>[1] = { ...requestInit, headers };
+    if (signal) {
+      nextRequestInit.signal = signal;
+    }
+    return new NextRequest(url, nextRequestInit);
   }
 
   it("stores encrypted values and returns only secret presence metadata to the client", async () => {

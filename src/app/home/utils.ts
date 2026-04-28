@@ -77,6 +77,28 @@ export function appendSentConversationMessageSnapshot(
   };
 }
 
+export function mergePendingSentConversationMessages(
+  incomingState: EventStreamState,
+  pendingMessages: Map<string, MessageRecord>,
+): EventStreamState {
+  if (pendingMessages.size === 0) {
+    return incomingState;
+  }
+
+  const serverMessageIds = new Set((incomingState.messages || []).map((message) => message.id));
+  let nextState = incomingState;
+
+  for (const [messageId, message] of Array.from(pendingMessages.entries())) {
+    if (serverMessageIds.has(messageId)) {
+      pendingMessages.delete(messageId);
+    } else {
+      nextState = appendSentConversationMessageSnapshot(nextState, message);
+    }
+  }
+
+  return nextState;
+}
+
 export type CreatedConversationSnapshot = {
   plan?: PlanRecord | null;
   run?: RunRecord | null;
@@ -201,6 +223,111 @@ export function shouldOpenExecutionDetailsForRun({
   executionEventCount: number;
 }) {
   return Boolean(selectedRun?.status === "failed" && executionEventCount > 0);
+}
+
+export type ConversationTimelineItem =
+  | { type: "message"; id: string; createdAt: string; message: MessageRecord }
+  | { type: "activity"; id: string; createdAt: string; event: ExecutionEventRecord; text: string };
+
+const HIDDEN_CONVERSATION_TIMELINE_EVENT_TYPES = new Set([
+  "auth.login_failed",
+  "auth.login_rate_limited",
+  "auth.login_succeeded",
+  "auth.logout",
+  "auth.logout_all",
+  "auth.pairing_created",
+  "auth.pairing_redeemed",
+  "auth.pairing_rejected",
+  "auth.session_revoked",
+  "conversation_title_generation_failed",
+  "supervisor_context_compacted",
+  "worker_idle",
+  "worker_output_changed",
+  "worker_stopped",
+]);
+
+const MESSAGE_MIRRORED_CONVERSATION_TIMELINE_EVENT_TYPES = new Set([
+  "clarification_requested",
+  "run_completed",
+  "supervisor_file_read",
+  "supervisor_wait",
+  "worker_cancelled",
+  "worker_mode_changed",
+  "worker_permission_approved",
+  "worker_permission_denied",
+  "worker_spawn_blocked",
+  "worker_spawned",
+]);
+
+function timestampMs(value: string) {
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function hasNearbyMirroredMessage(event: ExecutionEventRecord, messages: MessageRecord[]) {
+  if (!MESSAGE_MIRRORED_CONVERSATION_TIMELINE_EVENT_TYPES.has(event.eventType)) {
+    return false;
+  }
+
+  const eventTime = timestampMs(event.createdAt);
+  return messages.some((message) => (
+    message.runId === event.runId
+    && (message.kind === "supervisor_action" || message.kind === "clarification" || message.kind === "completion")
+    && Math.abs(timestampMs(message.createdAt) - eventTime) <= 2_000
+  ));
+}
+
+function shouldShowExecutionEventInTimeline(event: ExecutionEventRecord, messages: MessageRecord[]) {
+  if (HIDDEN_CONVERSATION_TIMELINE_EVENT_TYPES.has(event.eventType)) {
+    return false;
+  }
+
+  return !hasNearbyMirroredMessage(event, messages);
+}
+
+export function buildConversationTimelineItems({
+  messages,
+  executionEvents,
+}: {
+  messages: MessageRecord[];
+  executionEvents: ExecutionEventRecord[];
+}): ConversationTimelineItem[] {
+  const items: ConversationTimelineItem[] = messages.map((message) => ({
+    type: "message",
+    id: message.id,
+    createdAt: message.createdAt,
+    message,
+  }));
+
+  for (const event of executionEvents) {
+    if (!shouldShowExecutionEventInTimeline(event, messages)) {
+      continue;
+    }
+
+    const text = summarizeExecutionEvent(event).trim();
+    if (!text) {
+      continue;
+    }
+
+    items.push({
+      type: "activity",
+      id: event.id,
+      createdAt: event.createdAt,
+      event,
+      text,
+    });
+  }
+
+  return items.sort((a, b) => {
+    const timeDelta = timestampMs(a.createdAt) - timestampMs(b.createdAt);
+    if (timeDelta !== 0) {
+      return timeDelta;
+    }
+    if (a.type !== b.type) {
+      return a.type === "message" ? -1 : 1;
+    }
+    return a.id.localeCompare(b.id);
+  });
 }
 
 export function stripRunFailurePrefix(value: string | null | undefined) {

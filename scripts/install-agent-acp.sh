@@ -21,6 +21,22 @@ have_command() {
   command -v "$1" >/dev/null 2>&1
 }
 
+report_tool() {
+  local tool_name="$1"
+  local requirement="$2"
+
+  if have_command "$tool_name"; then
+    echo "  -> $tool_name: detected ($(command -v "$tool_name"))"
+    return 0
+  fi
+
+  if [ "$requirement" = "required" ]; then
+    echo "  -> $tool_name: missing (recommended for full agent capability)" >&2
+  else
+    echo "  -> $tool_name: missing (optional)" >&2
+  fi
+}
+
 run_install_npm() {
   local package_name="$1"
 
@@ -94,5 +110,16 @@ if have_command opencode; then
 else
   echo "opencode: not detected"
 fi
+
+echo ""
+echo "Checking agent tool environment..."
+echo "The ACP bridge builds a managed worker PATH from common developer tool locations,"
+echo "but installing these tools globally still gives agents the best local capability."
+for tool in rg git node bash sh sed awk grep find xargs cat ls mkdir rm cp mv; do
+  report_tool "$tool" "required"
+done
+for tool in pnpm npm python3 python zsh jq gh cargo uv fd make; do
+  report_tool "$tool" "optional"
+done
 
 echo "Done."

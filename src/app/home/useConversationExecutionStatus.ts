@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { AgentSnapshot, ExecutionEventRecord, RunRecord } from "./types";
-import { describeAgentActivity, getRunDurationLabel, parseExecutionEventDetails, summarizeExecutionEvent } from "./utils";
+import { getRunDurationLabel, parseExecutionEventDetails, summarizeExecutionEvent } from "./utils";
 
 interface UseConversationExecutionStatusProps {
   selectedRun: RunRecord | null;
@@ -14,8 +14,6 @@ interface UseConversationExecutionStatusProps {
   completionEvent: ExecutionEventRecord | null;
   activeConversationAgents: AgentSnapshot[];
   liveThoughts: Array<{ agentName: string; snippet: string; isLive: boolean }>;
-  conversationAgents: AgentSnapshot[];
-  recentExecutionEvents: ExecutionEventRecord[];
 }
 
 export function useConversationExecutionStatus({
@@ -30,8 +28,6 @@ export function useConversationExecutionStatus({
   completionEvent,
   activeConversationAgents,
   liveThoughts,
-  conversationAgents,
-  recentExecutionEvents,
 }: UseConversationExecutionStatusProps) {
   const liveExecutionStatus = useMemo(() => {
     const durationLabel = getRunDurationLabel(selectedRun, completionEvent?.createdAt);
@@ -126,34 +122,5 @@ export function useConversationExecutionStatus({
       tone: "active" as const,
     };
   }, [activeConversationAgents, completionEvent, erroredAgent, hasStuckWorker, latestExecutionEvent, latestStuckEvent, latestWaitEvent, liveThoughts, pendingPermissionAgent, selectedRun, showRecoverableRunningState]);
-  const executionDetailLines = useMemo(() => {
-    const lines: Array<{ text: string; createdAt?: string }> = [];
-
-    const pushLine = (text: string, createdAt?: string) => {
-      if (!text || lines.some((line) => line.text === text)) {
-        return;
-      }
-      lines.push({ text, createdAt });
-    };
-
-    if (conversationAgents.length === 0 && selectedRun?.status === "running" && !showRecoverableRunningState) {
-      pushLine("Connecting to ACP bridge");
-    }
-
-    for (const agent of conversationAgents) {
-      pushLine(describeAgentActivity(agent));
-    }
-
-    for (const event of recentExecutionEvents) {
-      pushLine(summarizeExecutionEvent(event), event.createdAt);
-    }
-
-    if (lines.length === 0 && selectedRun?.status === "failed" && selectedRun.lastError) {
-      pushLine(selectedRun.lastError);
-    }
-
-    return lines.slice(0, 6);
-  }, [conversationAgents, recentExecutionEvents, selectedRun, showRecoverableRunningState]);
-
-  return { liveExecutionStatus, executionDetailLines };
+  return { liveExecutionStatus };
 }

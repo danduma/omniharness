@@ -84,7 +84,7 @@ test("failed runs render a single persisted error in the conversation view", () 
   expect(pageSource).toContain("const visibleMessages = useMemo(() => {");
   expect(pageSource).toContain('message.role === "system"');
   expect(pageSource).toContain('message.kind === "error"');
-  expect(pageSource).toContain('visibleMessages.map((msg: MessageRecord) => {');
+  expect(pageSource).toContain('conversationTimelineItems.map((item: ConversationTimelineItem) => {');
   expect(pageSource).toContain('action: workerFailureDetail ? "Worker setup" : staleFailure ? "Retry" : "Run failed"');
   expect(pageSource).toContain('message: workerFailureDetail || (staleFailure');
   expect(pageSource).toContain("Update the model or account, then retry.");
@@ -111,7 +111,7 @@ test("supervisor conversation messages render markdown", () => {
 });
 
 test("conversation error notices render below the thread content", () => {
-  const messagesIndex = pageSource.indexOf("{visibleMessages.length > 0 ? (");
+  const messagesIndex = pageSource.indexOf("{conversationTimelineItems.length > 0 ? (");
   const executionIndex = pageSource.indexOf("{isImplementationConversation && showConversationExecution ? (");
   const appErrorsIndex = pageSource.indexOf("{appErrors.length > 0 ? (", executionIndex);
   const failureNoticeIndex = pageSource.indexOf("{conversationFailure ? (", appErrorsIndex);

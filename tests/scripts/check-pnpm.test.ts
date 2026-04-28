@@ -1,7 +1,7 @@
 import { spawnSync } from "child_process";
 import { describe, expect, it } from "vitest";
 
-function runCheck(extraEnv: NodeJS.ProcessEnv = {}, args: string[] = []) {
+function runCheck(extraEnv: Partial<NodeJS.ProcessEnv> = {}, args: string[] = []) {
   return spawnSync(process.execPath, ["scripts/check-pnpm.mjs", ...args], {
     cwd: process.cwd(),
     env: {

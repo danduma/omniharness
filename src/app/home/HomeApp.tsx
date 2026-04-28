@@ -16,13 +16,13 @@ import { SettingsDialog } from "@/components/home/SettingsDialog";
 import { WorkersSidebar } from "@/components/home/WorkersSidebar";
 import { type AppErrorDescriptor, mergeAppErrors, requestJson } from "@/lib/app-errors";
 import { buildConversationGroups } from "@/lib/conversations";
-import { buildWorkerLists, isWorkerActiveStatus, type ConversationWorkerRecord } from "@/lib/conversation-workers";
+import { buildWorkerLists, isWorkerActiveStatus, mergeWorkerLiveStatus, type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
 import { COMPOSER_WORKER_OPTIONS, DEFAULT_ALLOWED_WORKER_TYPES, WORKER_OPTIONS } from "./constants";
 import type { AgentSnapshot, AuthSessionResponse, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, LlmProfileTab, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, RunRecord, SettingsResponse, SettingsTab, SidebarGroup, SidebarRun, WorkerCatalogResponse, WorkerType } from "./types";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldOpenExecutionDetailsForRun, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
 import { useAppErrors } from "./useAppErrors";
 import { useConversationExecutionStatus } from "./useConversationExecutionStatus";
 import { useHomeLifecycle } from "./useHomeLifecycle";
@@ -77,7 +77,6 @@ export function HomeApp() {
   const [renameValue, setRenameValue] = useState("");
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingMessageValue, setEditingMessageValue] = useState("");
-  const [executionDetailsOpen, setExecutionDetailsOpen] = useState(false);
   const [expandedDirectMessageIds, setExpandedDirectMessageIds] = useState<Set<string>>(() => new Set());
   const [routeReady, setRouteReady] = useState(false);
   const [hasReceivedInitialEventStreamPayload, setHasReceivedInitialEventStreamPayload] = useState(false);
@@ -113,6 +112,7 @@ export function HomeApp() {
   const commandInputRef = useRef<HTMLTextAreaElement>(null);
   const pendingDeletedRunIdsRef = useRef<Set<string>>(new Set());
   const pendingCreatedConversationSnapshotsRef = useRef<Map<string, CreatedConversationSnapshot>>(new Map());
+  const pendingSentConversationMessagesRef = useRef<Map<string, MessageRecord>>(new Map());
 
   const sessionQuery = useQuery<AuthSessionResponse>({
     queryKey: ["auth-session"],
@@ -226,6 +226,10 @@ export function HomeApp() {
     let nextState = mergePendingCreatedConversationSnapshots(
       incomingState,
       pendingCreatedConversationSnapshotsRef.current,
+    );
+    nextState = mergePendingSentConversationMessages(
+      nextState,
+      pendingSentConversationMessagesRef.current,
     );
 
     const pendingDeletedRunIds = pendingDeletedRunIdsRef.current;
@@ -428,6 +432,9 @@ export function HomeApp() {
       });
     },
     onSuccess: (data) => {
+      if (data.message) {
+        pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
+      }
       setState((current) => appendSentConversationMessageSnapshot(current, data.message));
       setCommand("");
     },
@@ -593,9 +600,6 @@ export function HomeApp() {
   const isPlanningConversation = selectedRunMode === "planning";
   const isDirectConversation = selectedRunMode === "direct";
   const activeComposerMode: ConversationModeOption = selectedRun ? selectedRunMode : selectedConversationMode;
-  useEffect(() => {
-    setExecutionDetailsOpen(false);
-  }, [selectedRunId]);
   const catalogWorkers = useMemo(
     () => workerCatalogQuery.data?.workers ?? [],
     [workerCatalogQuery.data?.workers],
@@ -713,6 +717,10 @@ export function HomeApp() {
       };
     });
   }, [selectedRunWorkers, state.agents]);
+  const selectedRunWorkersForDisplay = useMemo(
+    () => mergeWorkerLiveStatus(selectedRunWorkers, conversationAgents),
+    [conversationAgents, selectedRunWorkers],
+  );
   const primaryConversationAgent = useMemo(() => {
     if (!isDirectConversation) {
       return conversationAgents[0] ?? null;
@@ -726,8 +734,8 @@ export function HomeApp() {
     );
   }, [conversationAgents, isDirectConversation]);
   const conversationWorkerGroups = useMemo(
-    () => buildWorkerLists(selectedRunWorkers),
-    [selectedRunWorkers],
+    () => buildWorkerLists(selectedRunWorkersForDisplay),
+    [selectedRunWorkersForDisplay],
   );
   const activeConversationWorkerIds = useMemo(
     () => new Set(conversationWorkerGroups.active.map((worker) => worker.id)),
@@ -773,7 +781,6 @@ export function HomeApp() {
       .filter((event) => event.runId === selectedRunId)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   ), [selectedRunId, state.executionEvents]);
-  const recentExecutionEvents = selectedRunExecutionEvents.slice(0, 6);
   const latestExecutionEvent = selectedRunExecutionEvents[0] ?? null;
   const completionEvent = selectedRunExecutionEvents.find((event) => event.eventType === "run_completed") ?? null;
   const failedWorkerAvailability = useMemo(() => {
@@ -831,6 +838,10 @@ export function HomeApp() {
       && message.kind === "error"
     ));
   }, [filteredMessages, selectedRun]);
+  const conversationTimelineItems = useMemo(() => buildConversationTimelineItems({
+    messages: visibleMessages,
+    executionEvents: selectedRunExecutionEvents,
+  }), [selectedRunExecutionEvents, visibleMessages]);
   const directConversationMessages = useMemo(() => {
     if (!isDirectConversation) {
       return [] as MessageRecord[];
@@ -860,7 +871,7 @@ export function HomeApp() {
     activeWorkerCount: conversationWorkerGroups.active.length,
     latestExecutionEventCreatedAt: latestExecutionEvent?.createdAt,
   });
-  const { liveExecutionStatus, executionDetailLines } = useConversationExecutionStatus({
+  const { liveExecutionStatus } = useConversationExecutionStatus({
     selectedRun,
     latestExecutionEvent,
     erroredAgent,
@@ -872,8 +883,6 @@ export function HomeApp() {
     completionEvent,
     activeConversationAgents,
     liveThoughts,
-    conversationAgents,
-    recentExecutionEvents,
   });
 
   const isConversationThinking = selectedRun?.status === "running" || conversationAgents.some((agent) => agent.state === "working");
@@ -882,15 +891,6 @@ export function HomeApp() {
     isConversationThinking,
     executionEventCount: selectedRunExecutionEvents.length,
   });
-
-  useEffect(() => {
-    if (shouldOpenExecutionDetailsForRun({
-      selectedRun,
-      executionEventCount: selectedRunExecutionEvents.length,
-    })) {
-      setExecutionDetailsOpen(true);
-    }
-  }, [selectedRun, selectedRunExecutionEvents.length]);
 
   const currentProjectScope = resolveProjectScope({
     draftProjectPath,
@@ -1184,7 +1184,7 @@ export function HomeApp() {
           setRightSidebarOpen={setRightSidebarOpen}
           mobileWorkersOpen={mobileWorkersOpen}
           setMobileWorkersOpen={setMobileWorkersOpen}
-          selectedRunWorkers={selectedRunWorkers}
+          selectedRunWorkers={selectedRunWorkersForDisplay}
           conversationAgents={conversationAgents}
           onStopWorker={(workerId) => {
             if (selectedRunId) {
@@ -1209,7 +1209,7 @@ export function HomeApp() {
           toggleDirectMessageExpansion={toggleDirectMessageExpansion}
           primaryConversationAgent={primaryConversationAgent}
           promotePlanningConversation={promotePlanningConversation}
-          visibleMessages={visibleMessages}
+          conversationTimelineItems={conversationTimelineItems}
           recoverRun={recoverRun}
           showRecoverableRunningState={showRecoverableRunningState}
           hasStuckWorker={hasStuckWorker}
@@ -1222,14 +1222,11 @@ export function HomeApp() {
           setEditingMessageValue={setEditingMessageValue}
           handleCancelEditingMessage={handleCancelEditingMessage}
           handleSaveEditedMessage={handleSaveEditedMessage}
-          selectedRunWorkers={selectedRunWorkers}
+          selectedRunWorkers={selectedRunWorkersForDisplay}
           conversationAgents={conversationAgents}
           showConversationExecution={showConversationExecution}
           liveExecutionStatus={liveExecutionStatus}
           liveThoughts={liveThoughts}
-          executionDetailsOpen={executionDetailsOpen}
-          setExecutionDetailsOpen={setExecutionDetailsOpen}
-          executionDetailLines={executionDetailLines}
           conversationWorkerGroups={conversationWorkerGroups}
           onStopWorker={(workerId) => {
             if (selectedRunId) {
@@ -1255,7 +1252,7 @@ export function HomeApp() {
           </button>
           <div className="flex h-full min-w-0 flex-1 pl-2">
             <WorkersSidebar
-              workers={selectedRunWorkers}
+              workers={selectedRunWorkersForDisplay}
               agents={conversationAgents}
               preferredModel={selectedRun?.preferredWorkerModel ?? null}
               preferredEffort={selectedRun?.preferredWorkerEffort ?? null}

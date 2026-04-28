@@ -13,7 +13,7 @@ test("page shell exposes connect-phone as a first menu action and trims route-on
   expect(source).toContain("Connect Phone");
   expect(source).toContain("<Smartphone className=\"mr-2 h-4 w-4\" /> Connect Phone");
   expect(source).toContain("<Settings className=\"mr-2 h-4 w-4\" /> Settings");
-  expect(source).toContain('aria-label="Current working directory"');
+  expect(source).toContain('aria-label="Root repository folder"');
   expect(source).not.toContain("Starting in {draftProjectPath}");
   expect(source).not.toContain('aria-label="Conversation route"');
 });

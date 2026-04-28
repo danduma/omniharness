@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, filterOptimisticallyDeletedRuns, getRunDurationLabel, mergePendingCreatedConversationSnapshots, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, summarizeExecutionEvent } from "@/app/home/utils";
-import type { EventStreamState, RunRecord } from "@/app/home/types";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, filterOptimisticallyDeletedRuns, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, summarizeExecutionEvent } from "@/app/home/utils";
+import type { EventStreamState, ExecutionEventRecord, RunRecord } from "@/app/home/types";
 
 function buildRun(overrides: Partial<RunRecord>): RunRecord {
   return {
@@ -11,6 +11,17 @@ function buildRun(overrides: Partial<RunRecord>): RunRecord {
     updatedAt: "2026-04-27T00:00:00.000Z",
     projectPath: null,
     title: null,
+    ...overrides,
+  };
+}
+
+function buildExecutionEvent(overrides: Partial<ExecutionEventRecord>): ExecutionEventRecord {
+  return {
+    id: "event-1",
+    runId: "run-1",
+    eventType: "worker_prompted",
+    details: JSON.stringify({ summary: "Sent follow-up to worker-1" }),
+    createdAt: "2026-04-27T00:00:10.000Z",
     ...overrides,
   };
 }
@@ -54,6 +65,52 @@ describe("home utils", () => {
       details: JSON.stringify({ summary: "Do you want me to implement the design?" }),
       createdAt: "2026-04-27T00:00:00.000Z",
     })).toBe("Waiting for your reply");
+  });
+
+  it("intersperses supervisor activity with conversation messages by timestamp", () => {
+    const timeline = buildConversationTimelineItems({
+      messages: [
+        {
+          id: "message-1",
+          runId: "run-1",
+          role: "user",
+          kind: "checkpoint",
+          content: "Start this",
+          createdAt: "2026-04-27T00:00:00.000Z",
+        },
+        {
+          id: "message-2",
+          runId: "run-1",
+          role: "worker",
+          kind: "worker_output",
+          workerId: "worker-1",
+          content: "Prompted worker-1:\nDo the thing\n\nResponse:\nDone",
+          createdAt: "2026-04-27T00:00:20.000Z",
+        },
+      ],
+      executionEvents: [
+        buildExecutionEvent({
+          id: "event-1",
+          workerId: "worker-1",
+          eventType: "worker_prompted",
+          details: JSON.stringify({ summary: "Sent follow-up to worker-1" }),
+          createdAt: "2026-04-27T00:00:10.000Z",
+        }),
+        buildExecutionEvent({
+          id: "event-2",
+          workerId: "worker-1",
+          eventType: "worker_output_changed",
+          details: JSON.stringify({ summary: "worker-1 produced new output" }),
+          createdAt: "2026-04-27T00:00:15.000Z",
+        }),
+      ],
+    });
+
+    expect(timeline.map((item) => `${item.type}:${item.id}`)).toEqual([
+      "message:message-1",
+      "activity:event-1",
+      "message:message-2",
+    ]);
   });
 
   it("does not show recovery for a freshly created running conversation before execution events hydrate", () => {
@@ -129,6 +186,45 @@ describe("home utils", () => {
     expect(next.messages.map((message) => message.content)).toEqual(["Continue"]);
     expect(next.runs[0]?.status).toBe("running");
     expect(appendSentConversationMessageSnapshot(next, next.messages[0]).messages).toHaveLength(1);
+  });
+
+  it("preserves sent conversation messages until the event stream catches up", () => {
+    const message = {
+      id: "message-1",
+      runId: "run-1",
+      role: "user",
+      kind: "clarification_answer",
+      content: "Use the existing API.",
+      createdAt: "2026-04-27T00:00:05.000Z",
+    };
+    const pendingMessages = new Map([[message.id, message]]);
+    const staleState: EventStreamState = {
+      messages: [],
+      runs: [buildRun({ id: "run-1", status: "awaiting_user" })],
+      plans: [],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      validationRuns: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+    };
+
+    const preserved = mergePendingSentConversationMessages(staleState, pendingMessages);
+
+    expect(preserved.messages).toEqual([message]);
+    expect(preserved.runs[0]?.status).toBe("running");
+    expect(pendingMessages.has(message.id)).toBe(true);
+
+    const caughtUp = mergePendingSentConversationMessages({
+      ...staleState,
+      messages: [message],
+    }, pendingMessages);
+
+    expect(caughtUp.messages).toEqual([message]);
+    expect(pendingMessages.has(message.id)).toBe(false);
   });
 
   it("optimistically appends a newly created conversation with its sidebar records", () => {

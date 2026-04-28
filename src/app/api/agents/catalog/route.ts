@@ -18,7 +18,7 @@ interface BridgeDoctorResult {
   message?: string;
 }
 
-export async function GET(req?: NextRequest) {
+export async function GET(req: NextRequest) {
   try {
     const auth = await requireApiSession(req, {
       source: "Bridge",

@@ -13,9 +13,12 @@ function readCookie(response: Response) {
 
 describe("auth routes", () => {
   const originalNodeEnv = process.env.NODE_ENV;
+  const setNodeEnv = (value: string | undefined) => {
+    (process.env as Record<string, string | undefined>).NODE_ENV = value;
+  };
 
   beforeEach(async () => {
-    process.env.NODE_ENV = "test";
+    setNodeEnv("test");
     process.env.OMNIHARNESS_AUTH_PASSWORD = "swordfish";
     delete process.env.OMNIHARNESS_AUTH_PASSWORD_HASH;
     await db.delete(authEvents);
@@ -25,7 +28,7 @@ describe("auth routes", () => {
   });
 
   afterEach(() => {
-    process.env.NODE_ENV = originalNodeEnv;
+    setNodeEnv(originalNodeEnv);
     delete process.env.OMNIHARNESS_AUTH_PASSWORD;
     delete process.env.OMNIHARNESS_AUTH_PASSWORD_HASH;
     resetLoginRateLimitsForTests();
@@ -127,7 +130,7 @@ describe("auth routes", () => {
   });
 
   it("reports a configuration error whenever auth credentials are not configured", async () => {
-    process.env.NODE_ENV = "test";
+    setNodeEnv("test");
     delete process.env.OMNIHARNESS_AUTH_PASSWORD;
     delete process.env.OMNIHARNESS_AUTH_PASSWORD_HASH;
 
