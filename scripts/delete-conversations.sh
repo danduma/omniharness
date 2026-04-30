@@ -4,16 +4,16 @@ set -euo pipefail
 
 ROOT_DIR="${OMNIHARNESS_ROOT:-$(pwd)}"
 DB_PATH="${OMNIHARNESS_DB_PATH:-$ROOT_DIR/sqlite.db}"
-BRIDGE_URL="${OMNIHARNESS_BRIDGE_URL:-http://127.0.0.1:7800}"
+RUNTIME_URL="${OMNIHARNESS_BRIDGE_URL:-http://127.0.0.1:7800}"
 
-ROOT_DIR="$ROOT_DIR" DB_PATH="$DB_PATH" BRIDGE_URL="$BRIDGE_URL" node <<'NODE'
-const Database = require("better-sqlite3");
-const fs = require("fs");
-const path = require("path");
+ROOT_DIR="$ROOT_DIR" DB_PATH="$DB_PATH" RUNTIME_URL="$RUNTIME_URL" node --input-type=module <<'NODE'
+import Database from "better-sqlite3";
+import fs from "node:fs";
+import path from "node:path";
 
 const rootDir = path.resolve(process.env.ROOT_DIR);
 const dbPath = path.resolve(process.env.DB_PATH);
-const bridgeUrl = process.env.BRIDGE_URL;
+const runtimeUrl = process.env.RUNTIME_URL;
 
 const db = new Database(dbPath);
 db.pragma("foreign_keys = ON");
@@ -33,9 +33,9 @@ const adHocPlanPaths = db
 async function cancelWorkers() {
   for (const id of workerIds) {
     try {
-      await fetch(`${bridgeUrl}/agents/${encodeURIComponent(id)}`, { method: "DELETE" });
+      await fetch(`${runtimeUrl}/agents/${encodeURIComponent(id)}`, { method: "DELETE" });
     } catch {
-      // best effort: keep cleanup going if the bridge is offline
+      // best effort: keep cleanup going if the runtime is offline
     }
   }
 }

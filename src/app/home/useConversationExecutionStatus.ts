@@ -34,7 +34,7 @@ export function useConversationExecutionStatus({
 
     if (selectedRun?.status === "failed") {
       return {
-        label: "Bridge error",
+        label: "Runtime error",
         detail: [durationLabel, selectedRun.lastError || (latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The run failed.")]
           .filter(Boolean)
           .join(". "),
@@ -44,7 +44,7 @@ export function useConversationExecutionStatus({
 
     if (erroredAgent) {
       return {
-        label: "Bridge error",
+        label: "Runtime error",
         detail: erroredAgent.lastError || erroredAgent.stopReason || "A worker reported an error.",
         tone: "error" as const,
       };

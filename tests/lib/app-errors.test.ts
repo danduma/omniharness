@@ -5,10 +5,10 @@ describe("app error helpers", () => {
   it("normalizes structured error payloads from API responses", async () => {
     const response = new Response(JSON.stringify({
       error: {
-        message: "ACP bridge is not running",
-        source: "Bridge",
+        message: "OmniHarness agent runtime is not running",
+        source: "Agent runtime",
         action: "Load agents",
-        suggestion: "Start the bridge.",
+        suggestion: "Start the runtime.",
       },
     }), {
       status: 503,
@@ -16,10 +16,10 @@ describe("app error helpers", () => {
     });
 
     await expect(parseErrorResponse(response)).resolves.toEqual({
-      message: "ACP bridge is not running",
-      source: "Bridge",
+      message: "OmniHarness agent runtime is not running",
+      source: "Agent runtime",
       action: "Load agents",
-      suggestion: "Start the bridge.",
+      suggestion: "Start the runtime.",
       status: 503,
     });
   });

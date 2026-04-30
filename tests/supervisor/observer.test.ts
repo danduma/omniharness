@@ -274,7 +274,7 @@ describe("deriveWorkerEvents", () => {
       updatedAt: new Date(),
     });
 
-    mockGetAgent.mockRejectedValue(new Error("ACP bridge is not running at http://127.0.0.1:7800"));
+    mockGetAgent.mockRejectedValue(new Error("OmniHarness agent runtime is not running at http://127.0.0.1:7800"));
 
     await pollRunWorkers(runId, vi.fn());
 
@@ -282,8 +282,8 @@ describe("deriveWorkerEvents", () => {
     const runMessages = await db.select().from(messages).where(eq(messages.runId, runId));
 
     expect(failedRun?.status).toBe("failed");
-    expect(failedRun?.lastError).toContain("ACP bridge is not running");
-    expect(runMessages.some((message) => message.content.includes("ACP bridge is not running"))).toBe(true);
+    expect(failedRun?.lastError).toContain("agent runtime is not running");
+    expect(runMessages.some((message) => message.content.includes("agent runtime is not running"))).toBe(true);
   });
 
   it("does not poll workers for a cancelled run", async () => {

@@ -4,6 +4,30 @@ import { SUPPORTED_WORKER_TYPES } from "./worker-types";
 
 const queuedToolResult = async () => ({ queued: true });
 
+const mcpEnvVariableSchema = z.object({
+  name: z.string(),
+  value: z.string(),
+  _meta: z.record(z.string(), z.unknown()).nullable().optional(),
+});
+
+const mcpServerSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("stdio"),
+    name: z.string(),
+    command: z.string(),
+    args: z.array(z.string()).optional(),
+    env: z.array(mcpEnvVariableSchema).optional(),
+    _meta: z.record(z.string(), z.unknown()).nullable().optional(),
+  }),
+  z.object({
+    type: z.enum(["http", "sse"]),
+    name: z.string(),
+    url: z.string(),
+    headers: z.array(mcpEnvVariableSchema).optional(),
+    _meta: z.record(z.string(), z.unknown()).nullable().optional(),
+  }),
+]);
+
 export function buildSupervisorTools(options?: { allowedWorkerTypes?: string[]; preferredWorkerType?: string | null }) {
   const allowedWorkerTypes = options?.allowedWorkerTypes?.length ? options.allowedWorkerTypes : [...SUPPORTED_WORKER_TYPES];
   const preferredWorkerType = options?.preferredWorkerType?.trim() || null;
@@ -22,6 +46,8 @@ export function buildSupervisorTools(options?: { allowedWorkerTypes?: string[]; 
         mode: z.string().optional().describe("Worker permission mode such as auto, full-access, or read-only."),
         title: z.string().describe("Short user-visible title for this worker based on the exact task allocated to it."),
         purpose: z.string().optional().describe("Short purpose for why this worker exists."),
+        skillRoots: z.array(z.string()).optional().describe("Absolute skill root directories to expose to this worker."),
+        mcpServers: z.array(mcpServerSchema).optional().describe("MCP servers to expose to this worker session."),
         prompt: z.string().describe("Initial prompt to send immediately after spawn."),
       }),
       execute: queuedToolResult,

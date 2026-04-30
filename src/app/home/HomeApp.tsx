@@ -244,7 +244,7 @@ export function HomeApp() {
     enabled: appUnlocked,
     queryFn: async () => {
       return requestJson<WorkerCatalogResponse & { diagnostics?: AppErrorDescriptor[] }>("/api/agents/catalog", undefined, {
-        source: "Bridge",
+        source: "Agent runtime",
         action: "Load worker availability",
       });
     },

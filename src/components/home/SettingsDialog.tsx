@@ -427,7 +427,7 @@ export function SettingsDialog({
                 <div className="min-w-0 space-y-1">
                   <div className="text-sm font-medium">YOLO Worker Mode</div>
                   <p className="text-xs text-muted-foreground">
-                    Default new workers to the bridge&apos;s most permissive mode so routine approvals rarely interrupt execution.
+                    Default new workers to the runtime&apos;s most permissive mode so routine approvals rarely interrupt execution.
                   </p>
                 </div>
                 <input
@@ -445,7 +445,7 @@ export function SettingsDialog({
               {workerCatalogQuery.isError ? (
                 <ErrorNotice
                   error={buildInlineError(workerCatalogQuery.error, {
-                    source: "Bridge",
+                    source: "Agent runtime",
                     action: "Load worker availability",
                   })}
                 />

@@ -567,6 +567,66 @@ describe("Supervisor worker spawn flow", () => {
     expect(spawnMessage?.content).toContain("Purpose: finish the task.");
   });
 
+  it("passes worker-requested skill roots and MCP servers to the bridge spawn call", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-1",
+      name: "worker_spawn",
+      args: {
+        type: "opencode",
+        cwd: "/tmp/project",
+        title: "Main implementation",
+        prompt: "start implementing",
+        purpose: "finish the task",
+        skillRoots: ["/tmp/shared-skills"],
+        mcpServers: [
+          {
+            type: "stdio",
+            name: "chrome-devtools",
+            command: "npx",
+            args: ["chrome-devtools-mcp@latest"],
+            env: [{ name: "SAMPLE", value: "1" }],
+          },
+        ],
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+    await new Supervisor({ runId }).run();
+
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      skillRoots: ["/tmp/shared-skills"],
+      mcpServers: [
+        {
+          type: "stdio",
+          name: "chrome-devtools",
+          command: "npx",
+          args: ["chrome-devtools-mcp@latest"],
+          env: [{ name: "SAMPLE", value: "1" }],
+        },
+      ],
+    }));
+  });
+
   it("blocks a second main implementation worker while another active main worker exists", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

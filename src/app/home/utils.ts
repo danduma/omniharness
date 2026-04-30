@@ -630,7 +630,7 @@ export function describeAgentActivity(agent: AgentSnapshot) {
   }
 
   if (agent.state === "starting") {
-    return `${agent.name}: connecting to ACP bridge`;
+    return `${agent.name}: connecting to agent runtime`;
   }
 
   if (agent.state === "working" && agent.currentText?.trim()) {

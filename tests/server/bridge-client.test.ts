@@ -26,7 +26,7 @@ describe("bridge client", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("surfaces a clear daemon message when the local bridge is down", async () => {
+  it("surfaces a clear runtime message when the local runtime is down", async () => {
     const refused = new TypeError(
       "fetch failed",
       { cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:7800"), { code: "ECONNREFUSED" }) },
@@ -36,7 +36,7 @@ describe("bridge client", () => {
 
     const { askAgent } = await import("@/server/bridge-client");
 
-    await expect(askAgent("worker-1", "hello")).rejects.toThrow(/ACP bridge is not running at http:\/\/127\.0\.0\.1:7800/i);
+    await expect(askAgent("worker-1", "hello")).rejects.toThrow(/OmniHarness agent runtime is not running at http:\/\/127\.0\.0\.1:7800/i);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
@@ -182,6 +182,46 @@ describe("bridge client", () => {
 
     const [, init] = fetchMock.mock.calls[0] ?? [];
     expect(init?.body).toContain('"resumeSessionId":"session-123"');
+  });
+
+  it("passes skill roots and MCP servers through when spawning a worker", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ name: "worker-1", state: "idle" }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { spawnAgent } = await import("@/server/bridge-client");
+    await spawnAgent({
+      type: "codex",
+      cwd: "/tmp/project",
+      name: "worker-1",
+      skillRoots: ["/tmp/shared-skills"],
+      mcpServers: [
+        {
+          type: "stdio",
+          name: "chrome-devtools",
+          command: "npx",
+          args: ["chrome-devtools-mcp@latest"],
+          env: [{ name: "SAMPLE", value: "1" }],
+        },
+      ],
+    });
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const body = JSON.parse(String(init?.body));
+    expect(body.skillRoots).toEqual(["/tmp/shared-skills"]);
+    expect(body.mcpServers).toEqual([
+      {
+        type: "stdio",
+        name: "chrome-devtools",
+        command: "npx",
+        args: ["chrome-devtools-mcp@latest"],
+        env: [{ name: "SAMPLE", value: "1" }],
+      },
+    ]);
   });
 
   it("normalizes sparse agent snapshots so missing text buffers do not crash callers", async () => {

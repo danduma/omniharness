@@ -9,7 +9,7 @@ import { buildAppError, errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { buildWorkerModelCatalog } from "@/server/worker-models";
 
-interface BridgeDoctorResult {
+interface RuntimeDoctorResult {
   type: string;
   status: "ok" | "warning" | "error";
   binary: boolean;
@@ -21,7 +21,7 @@ interface BridgeDoctorResult {
 export async function GET(req: NextRequest) {
   try {
     const auth = await requireApiSession(req, {
-      source: "Bridge",
+      source: "Agent runtime",
       action: "Load worker availability",
     });
     if (auth.response) {
@@ -35,14 +35,14 @@ export async function GET(req: NextRequest) {
     ]);
 
     if (!doctorResponse.ok) {
-      return errorResponse(`Bridge doctor request failed with status ${doctorResponse.status}`, {
+      return errorResponse(`Agent runtime doctor request failed with status ${doctorResponse.status}`, {
         status: doctorResponse.status,
-        source: "Bridge",
+        source: "Agent runtime",
         action: "Load worker availability",
       });
     }
 
-    const payload = await doctorResponse.json() as { results?: BridgeDoctorResult[] };
+    const payload = await doctorResponse.json() as { results?: RuntimeDoctorResult[] };
     const results = payload.results ?? [];
     const byType = new Map(results.map((result) => [result.type, result]));
     const { decryptionFailures } = hydrateRuntimeEnvFromSettings(allSettings);
@@ -80,7 +80,7 @@ export async function GET(req: NextRequest) {
             binary: false,
             apiKey: null,
             endpoint: null,
-            message: localAvailability.reason || "Bridge doctor did not report this worker type.",
+            message: localAvailability.reason || "Agent runtime doctor did not report this worker type.",
           };
         })(),
       })),
@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
   } catch (error: unknown) {
     return errorResponse(error, {
       status: 500,
-      source: "Bridge",
+      source: "Agent runtime",
       action: "Load worker availability",
     });
   }

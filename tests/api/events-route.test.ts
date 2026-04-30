@@ -315,6 +315,37 @@ describe("GET /api/events", () => {
     expect(payload.frontendErrors).toEqual([]);
   });
 
+  it("does not surface timed-out bridge agent-list requests as frontend errors", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/bridge-list-timeout.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      title: "Bridge list timeout",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    global.fetch = vi.fn().mockRejectedValue(new Error("Agent runtime list request timed out after 5000ms."));
+
+    const response = await GET(new NextRequest("http://localhost/api/events?snapshot=1"));
+    const payload = await response.json();
+
+    expect(payload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Bridge list timeout");
+    expect(payload.frontendErrors).toEqual([]);
+  });
+
   it("streams run and worker state after conversation session sync", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

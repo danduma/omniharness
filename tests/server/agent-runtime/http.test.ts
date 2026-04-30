@@ -1,0 +1,193 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import type { Server } from "http";
+import { dirname } from "path";
+import { createAgentRuntimeServer } from "@/server/agent-runtime/http";
+
+const tempDirs: string[] = [];
+const servers: Server[] = [];
+
+function createTempDir(prefix: string) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function createExecutable(dir: string, name: string, contents: string) {
+  const filePath = join(dir, name);
+  writeFileSync(filePath, contents, { mode: 0o755 });
+  return filePath;
+}
+
+function listen(server: Server) {
+  servers.push(server);
+  return new Promise<number>((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (typeof address === "object" && address) {
+        resolve(address.port);
+      }
+    });
+  });
+}
+
+async function closeServer(server: Server) {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
+}
+
+afterEach(async () => {
+  for (const server of servers.splice(0)) {
+    await closeServer(server);
+  }
+  for (const dir of tempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+const fakeAcpAgentScript = `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const logPath = process.env.FAKE_ACP_REQUEST_LOG;
+process.stdin.setEncoding('utf8');
+let buffer = '';
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + '\\n');
+}
+
+function append(event) {
+  if (logPath) fs.appendFileSync(logPath, JSON.stringify(event) + '\\n');
+}
+
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\\r?\\n/g);
+  buffer = lines.pop() ?? '';
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === 'initialize') {
+      append({ method: message.method, params: message.params });
+      write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+    }
+    if (message.method === 'session/new') {
+      const skillsDir = path.join(message.params.cwd, '.agents', 'skills');
+      append({
+        method: message.method,
+        params: message.params,
+        skillEntries: fs.existsSync(skillsDir) ? fs.readdirSync(skillsDir).sort() : [],
+      });
+      write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-1' } });
+    }
+    if (message.method === 'session/prompt') {
+      append({ method: message.method, params: message.params });
+      write({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: message.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'fake response' },
+          },
+        },
+      });
+      write({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+    }
+  }
+});
+`;
+
+describe("internal agent runtime HTTP API", () => {
+  it("spawns ACP agents, forwards MCP servers, exposes skill roots, and serves agent output", async () => {
+    const projectDir = createTempDir("omni-runtime-project-");
+    const binDir = createTempDir("omni-runtime-bin-");
+    const skillsRoot = createTempDir("omni-runtime-skills-");
+    const skillDir = join(skillsRoot, "reviewer");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: reviewer\ndescription: Review changes.\n---\n");
+    const requestLog = join(projectDir, "requests.jsonl");
+    const fakeAgent = createExecutable(binDir, "fake-acp-agent", fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "worker-1",
+        env: { FAKE_ACP_REQUEST_LOG: requestLog },
+        skillRoots: [skillsRoot],
+        mcpServers: [
+          {
+            type: "stdio",
+            name: "chrome-devtools",
+            command: "npx",
+            args: ["chrome-devtools-mcp@latest"],
+            env: [{ name: "SAMPLE", value: "1" }],
+          },
+        ],
+      }),
+    });
+
+    expect(spawnResponse.status).toBe(201);
+    const spawned = await spawnResponse.json();
+    expect(spawned).toMatchObject({ name: "worker-1", type: "custom", state: "idle" });
+
+    const askResponse = await fetch(`${baseUrl}/agents/worker-1/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "hello" }),
+    });
+    expect(askResponse.status).toBe(200);
+    await expect(askResponse.json()).resolves.toMatchObject({
+      name: "worker-1",
+      response: "fake response",
+      state: "idle",
+    });
+
+    const agentResponse = await fetch(`${baseUrl}/agents/worker-1`);
+    await expect(agentResponse.json()).resolves.toMatchObject({
+      name: "worker-1",
+      currentText: "fake response",
+      lastText: "fake response",
+    });
+
+    const doctorResponse = await fetch(`${baseUrl}/doctor`);
+    expect(doctorResponse.status).toBe(200);
+    await expect(doctorResponse.json()).resolves.toMatchObject({ results: expect.any(Array) });
+
+    const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
+    const sessionNew = events.find((event) => event.method === "session/new");
+    expect(sessionNew.params.mcpServers).toEqual([
+      {
+        type: "stdio",
+        name: "chrome-devtools",
+        command: "npx",
+        args: ["chrome-devtools-mcp@latest"],
+        env: [{ name: "SAMPLE", value: "1" }],
+      },
+    ]);
+    expect(sessionNew.params._meta["omniharness/skillRoots"]).toEqual([skillsRoot]);
+    expect(sessionNew.skillEntries.some((entry: string) => entry.includes("reviewer"))).toBe(true);
+    expect(readdirSync(join(projectDir, ".agents", "skills")).some((entry) => entry.includes("reviewer"))).toBe(true);
+
+    const stopResponse = await fetch(`${baseUrl}/agents/worker-1`, { method: "DELETE" });
+    expect(stopResponse.status).toBe(200);
+    expect(readdirSync(join(projectDir, ".agents", "skills")).some((entry) => entry.includes("reviewer"))).toBe(false);
+  }, 15_000);
+});

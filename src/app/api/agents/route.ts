@@ -6,7 +6,7 @@ import { requireApiSession } from "@/server/auth/guards";
 export async function GET(req: NextRequest) {
   try {
     const auth = await requireApiSession(req, {
-      source: "Bridge",
+      source: "Agent runtime",
       action: "Load agents",
     });
     if (auth.response) {
@@ -15,9 +15,9 @@ export async function GET(req: NextRequest) {
 
     const res = await fetch(`${BRIDGE_URL}/agents`);
     if (!res.ok) {
-      return errorResponse(`Bridge agent list request failed with status ${res.status}`, {
+      return errorResponse(`Agent runtime list request failed with status ${res.status}`, {
         status: res.status,
-        source: "Bridge",
+        source: "Agent runtime",
         action: "Load agents",
       });
     }
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
   } catch (error: unknown) {
     return errorResponse(error, {
       status: 500,
-      source: "Bridge",
+      source: "Agent runtime",
       action: "Load agents",
     });
   }

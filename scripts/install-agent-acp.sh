@@ -113,7 +113,7 @@ fi
 
 echo ""
 echo "Checking agent tool environment..."
-echo "The ACP bridge builds a managed worker PATH from common developer tool locations,"
+echo "The OmniHarness agent runtime builds a managed worker PATH from common developer tool locations,"
 echo "but installing these tools globally still gives agents the best local capability."
 for tool in rg git node bash sh sed awk grep find xargs cat ls mkdir rm cp mv; do
   report_tool "$tool" "required"

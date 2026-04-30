@@ -1,12 +1,11 @@
 # OmniHarness
 
-OmniHarness is a local web UI for supervising ACP-backed coding agents such as Codex, Claude, Gemini, and OpenCode. It starts a Next.js app and talks to a sibling `acp-bridge` daemon that owns the actual agent processes.
+OmniHarness is a local web UI for supervising ACP-backed coding agents such as Codex, Claude, Gemini, and OpenCode. It starts a Next.js app and an in-repo agent runtime that owns the actual agent processes.
 
 ## Requirements
 
 - Node.js 20+
 - `pnpm`
-- A sibling checkout of `acp-bridge` at `../acp-bridge`, or set `OMNIHARNESS_BRIDGE_DIR`
 - At least one supported coding agent installed:
   - Codex CLI plus `codex-acp`
   - Claude CLI plus `claude-agent-acp`
@@ -37,7 +36,7 @@ The setup script checks common tools that coding agents expect to use, including
 
 ## Development
 
-Start OmniHarness and the managed ACP bridge:
+Start OmniHarness and the managed agent runtime:
 
 ```bash
 pnpm dev
@@ -45,10 +44,10 @@ pnpm dev
 
 Open [http://localhost:3050](http://localhost:3050).
 
-By default, `pnpm dev` starts the sibling bridge from `../acp-bridge` on `http://127.0.0.1:7800`. Override with:
+By default, `pnpm dev` starts the in-repo runtime on `http://127.0.0.1:7800`. Override with:
 
 ```bash
-OMNIHARNESS_BRIDGE_DIR=/path/to/acp-bridge pnpm dev
+OMNIHARNESS_RUNTIME_DIR=/path/to/omniharness pnpm dev
 OMNIHARNESS_BRIDGE_URL=http://127.0.0.1:7801 pnpm dev
 ```
 
@@ -62,13 +61,13 @@ For this repository in normal local development, inspect runs, messages, workers
 sqlite3 sqlite.db
 ```
 
-`.omniharness/` is used for local runtime side files such as the managed bridge lock, but it is not the default conversation database location.
+`.omniharness/` is used for local runtime side files such as the managed runtime lock, but it is not the default conversation database location.
 
 ## Agent Tool Environment
 
 ACP workers may be launched from a GUI app, service manager, editor integration, or other non-login process. Those environments often do not inherit the same `PATH` as your normal terminal.
 
-The ACP bridge builds a managed worker `PATH` before spawning agents. It includes:
+The OmniHarness agent runtime builds a managed worker `PATH` before spawning agents. It includes:
 
 - project `node_modules/.bin`
 - common user bins such as `~/.cargo/bin`, `~/.local/bin`, `~/.bun/bin`, `~/.opencode/bin`, and pyenv shims
@@ -76,9 +75,9 @@ The ACP bridge builds a managed worker `PATH` before spawning agents. It include
 - the inherited environment `PATH`
 - login-shell `PATH` when available
 
-This keeps agents from losing essential functionality just because the bridge was started from a thin environment. Installing tools globally is still recommended, but the bridge no longer depends only on the parent process `PATH`.
+This keeps agents from losing essential functionality just because the runtime was started from a thin environment. Installing tools globally is still recommended, but the runtime no longer depends only on the parent process `PATH`.
 
-To inspect bridge-side agent health:
+To inspect runtime-side agent health:
 
 ```bash
 curl http://127.0.0.1:7800/doctor

@@ -11,6 +11,10 @@ describe("isTransientSupervisorError", () => {
     expect(isTransientSupervisorError(error)).toBe(true);
   });
 
+  it("treats timed-out runtime list requests as transient", () => {
+    expect(isTransientSupervisorError(new Error("Agent runtime list request timed out after 5000ms."))).toBe(true);
+  });
+
   it("does not retry clear configuration errors", () => {
     expect(isTransientSupervisorError(new Error("API key not valid"))).toBe(false);
   });

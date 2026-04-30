@@ -64,6 +64,23 @@ function asStringArray(value: unknown, field: string) {
   return value.map((item) => item.trim()).filter(Boolean);
 }
 
+function asOptionalStringArray(value: unknown, field: string) {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return asStringArray(value, field);
+}
+
+function asOptionalMcpServers(value: unknown, field: string): bridge.BridgeMcpServer[] | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "object" || item === null || Array.isArray(item))) {
+    throw new SupervisorProtocolError(`Tool argument "${field}" must be an array of MCP server objects.`);
+  }
+  return value as bridge.BridgeMcpServer[];
+}
+
 function normalizeBridgeWorkerMode(value: unknown) {
   if (typeof value !== "string") {
     return undefined;
@@ -554,6 +571,8 @@ export class Supervisor {
           const prompt = asString(action.args.prompt, "prompt");
           const mode = resolveWorkerSpawnMode(action.args.mode, yoloModeEnabled);
           const purpose = typeof action.args.purpose === "string" ? action.args.purpose.trim() : "";
+          const skillRoots = asOptionalStringArray(action.args.skillRoots, "skillRoots");
+          const mcpServers = asOptionalMcpServers(action.args.mcpServers, "mcpServers");
           const activeMainWorker = await findActiveMainWorker(this.runId);
           if (activeMainWorker && !describesSeparatedAllocation(title, purpose, prompt)) {
             await insertExecutionEvent(this.runId, "worker_spawn_blocked", {
@@ -590,6 +609,8 @@ export class Supervisor {
               env: envParams,
               ...(preferredModel ? { model: preferredModel } : {}),
               ...(preferredEffort ? { effort: preferredEffort } : {}),
+              ...(skillRoots?.length ? { skillRoots } : {}),
+              ...(mcpServers?.length ? { mcpServers } : {}),
             });
           } catch (error) {
             await db.update(workers).set({

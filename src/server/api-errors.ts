@@ -15,8 +15,8 @@ function uniqueDetails(details: Array<string | null | undefined>) {
 }
 
 export function inferErrorSuggestion(message: string) {
-  if (/ACP bridge is not running/i.test(message) || /\bECONNREFUSED\b/i.test(message)) {
-    return "Start the ACP bridge and retry. If it is already running, verify OMNIHARNESS_BRIDGE_URL points to the active daemon.";
+  if (/agent runtime is not running/i.test(message) || /ACP bridge is not running/i.test(message) || /\bECONNREFUSED\b/i.test(message)) {
+    return "Start the OmniHarness agent runtime and retry. If it is already running, verify OMNIHARNESS_BRIDGE_URL points to the active runtime.";
   }
 
   if (/API key/i.test(message)) {

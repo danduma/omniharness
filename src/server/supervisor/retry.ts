@@ -16,6 +16,7 @@ const RETRYABLE_MESSAGE_PATTERNS = [
   /\bfetch failed\b/i,
   /\brate limit\b/i,
   /\btemporar(?:y|ily)\b/i,
+  /\btimed out\b/i,
   /\btimeout\b/i,
   /\btoo many requests\b/i,
   /\bservice unavailable\b/i,

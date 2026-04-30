@@ -18,7 +18,7 @@ export async function GET(
   { params }: { params: Promise<{ name: string }> }
 ) {
   const auth = await requireApiSession(req, {
-    source: "Bridge",
+    source: "Agent runtime",
     action: "Load worker details",
   });
   if (auth.response) {
@@ -49,7 +49,7 @@ export async function GET(
 
     return errorResponse(error, {
       status: 500,
-      source: "Bridge",
+      source: "Agent runtime",
       action: "Load worker details",
     });
   }

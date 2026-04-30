@@ -52,6 +52,23 @@ export interface TaskRecord {
   subtasks: unknown[];
 }
 
+export type BridgeMcpServer =
+  | {
+      type: "stdio";
+      name: string;
+      command: string;
+      args?: string[];
+      env?: Array<{ name: string; value: string; _meta?: Record<string, unknown> | null }>;
+      _meta?: Record<string, unknown> | null;
+    }
+  | {
+      type: "http" | "sse";
+      name: string;
+      url: string;
+      headers?: Array<{ name: string; value: string; _meta?: Record<string, unknown> | null }>;
+      _meta?: Record<string, unknown> | null;
+    };
+
 function describeError(error: unknown, seen = new Set<unknown>()): string {
   if (error == null) {
     return "Unknown error";
@@ -241,8 +258,8 @@ async function requestBridge<T>(path: string, init: RequestInit, action: string)
   } catch (error) {
     if (isBridgeConnectionRefused(error)) {
       throw new Error(
-        `ACP bridge is not running at ${BRIDGE_URL}. Start it first ` +
-        `(for example: cd ../acp-bridge && pnpm run daemon). Original error: ${describeError(error)}`,
+        `OmniHarness agent runtime is not running at ${BRIDGE_URL}. Start it with pnpm dev or ` +
+        `pnpm exec tsx scripts/agent-runtime.ts. Original error: ${describeError(error)}`,
       );
     }
 
@@ -261,6 +278,8 @@ export async function spawnAgent(params: {
   env?: Record<string, string>;
   model?: string;
   effort?: string;
+  skillRoots?: string[];
+  mcpServers?: BridgeMcpServer[];
   resumeSessionId?: string;
 }) {
   const normalizedParams = {

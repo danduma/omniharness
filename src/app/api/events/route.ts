@@ -14,8 +14,8 @@ import { isTransientSupervisorError } from "@/server/supervisor/retry";
 export const dynamic = "force-dynamic";
 
 const STREAM_REFRESH_INTERVAL_MS = 15_000;
-const BRIDGE_AGENT_GRACE_MS = 150;
-const BRIDGE_AGENT_TIMEOUT_MS = 5000;
+const RUNTIME_AGENT_GRACE_MS = 150;
+const RUNTIME_AGENT_TIMEOUT_MS = 5000;
 
 async function fetchWithTimeout(url: string, timeoutMs: number) {
   const controller = new AbortController();
@@ -27,7 +27,7 @@ async function fetchWithTimeout(url: string, timeoutMs: number) {
       new Promise<Response>((_, reject) => {
         timeout = setTimeout(() => {
           controller.abort();
-          reject(new Error(`Bridge agent list request timed out after ${timeoutMs}ms.`));
+          reject(new Error(`Agent runtime list request timed out after ${timeoutMs}ms.`));
         }, timeoutMs);
       }),
     ]);
@@ -187,7 +187,7 @@ function compactAgentSnapshot(agent: ReturnType<typeof buildLiveWorkerSnapshots>
   };
 }
 
-function filterBridgeAgentsForWorkers(rawAgents: unknown[], scopedWorkers: PersistedEventRecords["allWorkers"]) {
+function filterRuntimeAgentsForWorkers(rawAgents: unknown[], scopedWorkers: PersistedEventRecords["allWorkers"]) {
   const workerIds = new Set(scopedWorkers.map((worker) => worker.id));
   if (workerIds.size === 0) {
     return [];
@@ -245,7 +245,7 @@ async function buildPersistedEventPayload(options: EventPayloadOptions = {}) {
   );
 }
 
-async function buildBridgeEnrichedEventPayload(options: EventPayloadOptions = {}) {
+async function buildRuntimeEnrichedEventPayload(options: EventPayloadOptions = {}) {
   let records = await readPersistedEventRecords();
   let agentsData = buildLiveWorkerSnapshots({
     workers: selectedRunWorkers(records, options),
@@ -254,7 +254,7 @@ async function buildBridgeEnrichedEventPayload(options: EventPayloadOptions = {}
   const frontendErrors = [];
 
   try {
-    const res = await fetchWithTimeout(`${BRIDGE_URL}/agents`, BRIDGE_AGENT_TIMEOUT_MS);
+    const res = await fetchWithTimeout(`${BRIDGE_URL}/agents`, RUNTIME_AGENT_TIMEOUT_MS);
     if (res.ok) {
       const rawAgentsPayload = await res.json();
       const rawAgents = Array.isArray(rawAgentsPayload) ? rawAgentsPayload : [];
@@ -262,12 +262,12 @@ async function buildBridgeEnrichedEventPayload(options: EventPayloadOptions = {}
       records = await readPersistedEventRecords();
       const scopedWorkers = selectedRunWorkers(records, options);
       agentsData = buildLiveWorkerSnapshots({
-        agents: filterBridgeAgentsForWorkers(rawAgents, scopedWorkers),
+        agents: filterRuntimeAgentsForWorkers(rawAgents, scopedWorkers),
         workers: scopedWorkers,
         runs: records.allRuns,
       });
     } else {
-      const bridgeError = new Error(`Bridge agent list request failed with status ${res.status}.`);
+      const bridgeError = new Error(`Agent runtime list request failed with status ${res.status}.`);
       agentsData = buildLiveWorkerSnapshots({
         workers: selectedRunWorkers(records, options),
         runs: records.allRuns,
@@ -277,7 +277,7 @@ async function buildBridgeEnrichedEventPayload(options: EventPayloadOptions = {}
         frontendErrors.push(buildAppError(
           bridgeError,
           {
-            source: "Bridge",
+            source: "Agent runtime",
             action: "Stream live agent state",
           },
         ));
@@ -291,7 +291,7 @@ async function buildBridgeEnrichedEventPayload(options: EventPayloadOptions = {}
     });
     if (!isTransientSupervisorError(error)) {
       frontendErrors.push(buildAppError(error, {
-        source: "Bridge",
+        source: "Agent runtime",
         action: "Stream live agent state",
       }));
     }
@@ -320,7 +320,7 @@ export async function GET(req: NextRequest) {
   } satisfies EventPayloadOptions;
 
   if (req.nextUrl.searchParams.get("snapshot") === "1") {
-    return NextResponse.json(await buildBridgeEnrichedEventPayload(eventPayloadOptions));
+    return NextResponse.json(await buildRuntimeEnrichedEventPayload(eventPayloadOptions));
   }
 
   const stream = new ReadableStream({
@@ -328,7 +328,7 @@ export async function GET(req: NextRequest) {
       const encoder = new TextEncoder();
       let isClosed = false;
       let lastUpdatePayload = "";
-      let lastBridgeEnrichedPayload: Awaited<ReturnType<typeof buildBridgeEnrichedEventPayload>> | null = null;
+      let lastRuntimeEnrichedPayload: Awaited<ReturnType<typeof buildRuntimeEnrichedEventPayload>> | null = null;
 
       const sendSerializedEvent = (event: string, serializedData: string) => {
         try {
@@ -365,22 +365,22 @@ export async function GET(req: NextRequest) {
 
       while (!isClosed) {
         try {
-          const bridgePayloadPromise = buildBridgeEnrichedEventPayload(eventPayloadOptions);
-          const bridgePayload = await Promise.race([
-            bridgePayloadPromise,
-            delay(BRIDGE_AGENT_GRACE_MS).then(() => null),
+          const runtimePayloadPromise = buildRuntimeEnrichedEventPayload(eventPayloadOptions);
+          const runtimePayload = await Promise.race([
+            runtimePayloadPromise,
+            delay(RUNTIME_AGENT_GRACE_MS).then(() => null),
           ]);
 
-          if (bridgePayload) {
-            lastBridgeEnrichedPayload = bridgePayload;
-            sendUpdateIfChanged(bridgePayload);
+          if (runtimePayload) {
+            lastRuntimeEnrichedPayload = runtimePayload;
+            sendUpdateIfChanged(runtimePayload);
           } else {
-            if (!lastBridgeEnrichedPayload) {
+            if (!lastRuntimeEnrichedPayload) {
               sendUpdateIfChanged(await buildPersistedEventPayload(eventPayloadOptions));
             }
-            const enrichedPayload = await bridgePayloadPromise;
+            const enrichedPayload = await runtimePayloadPromise;
             if (!isClosed) {
-              lastBridgeEnrichedPayload = enrichedPayload;
+              lastRuntimeEnrichedPayload = enrichedPayload;
               sendUpdateIfChanged(enrichedPayload);
             }
           }

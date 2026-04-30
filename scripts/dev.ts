@@ -13,10 +13,10 @@ const bridgeUrl = resolveBridgeUrl(process.env);
 const bridgeDir = resolveBridgeDir(repoRoot, process.env);
 const bridgeLockPath = resolveBridgeLockPath(repoRoot);
 const webCommand = ["pnpm", ["run", "dev:web", "--hostname", webHost, "--port", webPort]] as const;
-const bridgeCommand = ["pnpm", ["run", "daemon"]] as const;
+const bridgeCommand = ["pnpm", ["exec", "tsx", "scripts/agent-runtime.ts"]] as const;
 const setupCommands = [
-  { label: "bridge install", command: "pnpm", args: ["install"] },
-  { label: "bridge build", command: "pnpm", args: ["build"] },
+  { label: "runtime install", command: "pnpm", args: ["install"] },
+  { label: "runtime build", command: "pnpm", args: ["build"] },
 ] as const;
 
 let managedBridgeChild: ChildProcess | null = null;
@@ -91,26 +91,26 @@ async function waitForBridgeReady(timeoutMs: number) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 
-  throw new Error(`Timed out waiting for ACP bridge at ${bridgeUrl}.`);
+  throw new Error(`Timed out waiting for OmniHarness agent runtime at ${bridgeUrl}.`);
 }
 
 async function ensureManagedBridge() {
   if (await isBridgeReady()) {
-    console.log(`[dev] Reusing running ACP bridge at ${bridgeUrl}`);
+    console.log(`[dev] Reusing running agent runtime at ${bridgeUrl}`);
     return;
   }
 
   if (!shouldAutoStartBridge(process.env, bridgeUrl)) {
     throw new Error(
-      `ACP bridge is not reachable at ${bridgeUrl}. ` +
-      `Start it yourself or point OMNIHARNESS_BRIDGE_URL at a running bridge.`,
+      `OmniHarness agent runtime is not reachable at ${bridgeUrl}. ` +
+      `Start it yourself or point OMNIHARNESS_BRIDGE_URL at a running runtime.`,
     );
   }
 
   if (!fs.existsSync(bridgeDir)) {
     throw new Error(
-      `ACP bridge directory not found at ${bridgeDir}. ` +
-      `Set OMNIHARNESS_BRIDGE_DIR or start the bridge manually.`,
+      `OmniHarness runtime directory not found at ${bridgeDir}. ` +
+      `Set OMNIHARNESS_RUNTIME_DIR or start the runtime manually.`,
     );
   }
 
@@ -122,7 +122,7 @@ async function ensureManagedBridge() {
 
   if (lockResult.status === "locked") {
     console.log(
-      `[dev] Another OmniHarness dev process (${lockResult.owner?.pid}) is starting the ACP bridge. Waiting for ${bridgeUrl}...`,
+      `[dev] Another OmniHarness dev process (${lockResult.owner?.pid}) is starting the agent runtime. Waiting for ${bridgeUrl}...`,
     );
     await waitForBridgeReady(30_000);
     return;
@@ -139,12 +139,12 @@ async function ensureManagedBridge() {
       await runSetupCommand(setupCommands[1].command, [...setupCommands[1].args], bridgeDir, setupCommands[1].label);
     }
 
-    console.log(`[dev] Starting ACP bridge from ${bridgeDir}`);
+    console.log(`[dev] Starting OmniHarness agent runtime from ${bridgeDir}`);
     managedBridgeChild = spawnManaged(bridgeCommand[0], [...bridgeCommand[1]], bridgeDir, "bridge");
 
     managedBridgeChild.once("exit", (code, signal) => {
       if (!shuttingDown) {
-        console.error(`[dev] ACP bridge exited unexpectedly with ${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}.`);
+        console.error(`[dev] OmniHarness agent runtime exited unexpectedly with ${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}.`);
         shutdown(code ?? 1);
       }
     });
@@ -198,7 +198,7 @@ async function main() {
   await ensureManagedBridge();
   launchWeb();
 
-  console.log(`[dev] OmniHarness will use ACP bridge at ${bridgeUrl}`);
+  console.log(`[dev] OmniHarness will use agent runtime at ${bridgeUrl}`);
   console.log("[dev] Next.js will print the local and network UI URLs when it is ready.");
 }
 
