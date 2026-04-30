@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { configureSupervisorModel, getSupervisorModelConfig, validateSupervisorModelConfig } from "@/server/supervisor/model-config";
+import { describe, expect, it } from "vitest";
+import { buildMastraModelConfig, getSupervisorModelConfig, validateSupervisorModelConfig } from "@/server/supervisor/model-config";
 
 describe("supervisor model config", () => {
   it("defaults to Gemini with the requested preview model", () => {
@@ -101,36 +101,29 @@ describe("supervisor model config", () => {
     expect(() => validateSupervisorModelConfig(config, [{ key: "SUPERVISOR_LLM_API_KEY" }])).not.toThrow();
   });
 
-  it("registers unsupported Gemini preview models with TokenJS", () => {
-    const extendModelList = vi.fn();
-
-    configureSupervisorModel(
-      {
-        SUPERVISOR_LLM_PROVIDER: "gemini",
-        SUPERVISOR_LLM_MODEL: "gemini-3.1-pro-preview",
-      },
-      { extendModelList } as { extendModelList: typeof extendModelList },
-    );
-
-    expect(extendModelList).toHaveBeenCalledWith("gemini", "gemini-3.1-pro-preview", {
-      streaming: true,
-      json: true,
-      toolCalls: true,
-      images: true,
+  it("maps supervisor config to Mastra model config", () => {
+    expect(buildMastraModelConfig({
+      provider: "gemini",
+      model: "gemini-3.1-pro-preview",
+      apiKey: "gemini-key",
+      baseURL: "https://gemini.example.com",
+      source: "primary",
+    })).toEqual({
+      id: "google/gemini-3.1-pro-preview",
+      apiKey: "gemini-key",
+      url: "https://gemini.example.com",
     });
-  });
 
-  it("does not extend non-Gemini models", () => {
-    const extendModelList = vi.fn();
-
-    configureSupervisorModel(
-      {
-        SUPERVISOR_LLM_PROVIDER: "anthropic",
-        SUPERVISOR_LLM_MODEL: "claude-3-7-sonnet-latest",
-      },
-      { extendModelList } as { extendModelList: typeof extendModelList },
-    );
-
-    expect(extendModelList).not.toHaveBeenCalled();
+    expect(buildMastraModelConfig({
+      provider: "anthropic",
+      model: "claude-opus-4-6",
+      apiKey: "anthropic-key",
+      baseURL: undefined,
+      source: "primary",
+    })).toEqual({
+      id: "anthropic/claude-opus-4-6",
+      apiKey: "anthropic-key",
+      url: undefined,
+    });
   });
 });

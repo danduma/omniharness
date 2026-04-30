@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import QRCode from "qrcode";
 import { CheckCircle2, Copy, LoaderCircle, RefreshCcw, ShieldCheck, Smartphone } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { pairDeviceManager, type PairingState } from "@/components/component-state-managers";
 import { requestJson } from "@/lib/app-errors";
+import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 
 type PairCreateResponse = {
   pairingId: string;
@@ -37,13 +39,15 @@ export function PairDeviceDialog({
   selectedRunId = null,
   availabilityError = null,
 }: PairDeviceDialogProps) {
-  const [pairing, setPairing] = useState<PairCreateResponse | null>(null);
-  const [pairingStatus, setPairingStatus] = useState<PairStatusResponse["pairing"]["status"] | null>(null);
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [copyNotice, setCopyNotice] = useState<string | null>(null);
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const {
+    pairing,
+    pairingStatus,
+    qrDataUrl,
+    isLoading,
+    error,
+    copyNotice,
+    nowMs,
+  } = useManagerSnapshot(pairDeviceManager) as PairingState<PairCreateResponse, PairStatusResponse["pairing"]["status"]>;
 
   const expiresInSeconds = useMemo(() => {
     if (!pairing?.expiresAt) {
@@ -53,11 +57,13 @@ export function PairDeviceDialog({
   }, [nowMs, pairing?.expiresAt]);
 
   const createPairing = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    setCopyNotice(null);
-    setPairingStatus(null);
-    setNowMs(Date.now());
+    pairDeviceManager.patch({
+      isLoading: true,
+      error: null,
+      copyNotice: null,
+      pairingStatus: null,
+      nowMs: Date.now(),
+    });
 
     try {
       const data = await requestJson<PairCreateResponse>("/api/auth/pair", {
@@ -73,22 +79,27 @@ export function PairDeviceDialog({
         action: "Create pairing QR",
       });
 
-      setPairing(data);
-      setPairingStatus("pending");
-      setQrDataUrl(await QRCode.toDataURL(data.pairUrl, {
+      const nextQrDataUrl = await QRCode.toDataURL(data.pairUrl, {
         margin: 1,
         width: 320,
         color: {
           dark: "#18211d",
           light: "#fbfdf9",
         },
-      }));
+      });
+      pairDeviceManager.patch({
+        pairing: data,
+        pairingStatus: "pending",
+        qrDataUrl: nextQrDataUrl,
+      });
     } catch (pairError) {
-      setError(pairError instanceof Error ? pairError.message : String(pairError));
-      setPairing(null);
-      setQrDataUrl(null);
+      pairDeviceManager.patch({
+        error: pairError instanceof Error ? pairError.message : String(pairError),
+        pairing: null,
+        qrDataUrl: null,
+      });
     } finally {
-      setIsLoading(false);
+      pairDeviceManager.setKey("isLoading", false);
     }
   }, [selectedRunId]);
 
@@ -111,7 +122,7 @@ export function PairDeviceDialog({
       return;
     }
 
-    const interval = window.setInterval(() => setNowMs(Date.now()), 1000);
+    const interval = window.setInterval(() => pairDeviceManager.setKey("nowMs", Date.now()), 1000);
     return () => window.clearInterval(interval);
   }, [open, pairing?.expiresAt, pairingStatus]);
 
@@ -127,9 +138,9 @@ export function PairDeviceDialog({
           action: "Load pairing status",
         });
 
-        setPairingStatus(data.pairing.status);
+        pairDeviceManager.setKey("pairingStatus", data.pairing.status);
       } catch (pollError) {
-        setError(pollError instanceof Error ? pollError.message : String(pollError));
+        pairDeviceManager.setKey("error", pollError instanceof Error ? pollError.message : String(pollError));
       }
     }, 2000);
 
@@ -138,11 +149,7 @@ export function PairDeviceDialog({
 
   useEffect(() => {
     if (!open) {
-      setPairing(null);
-      setPairingStatus(null);
-      setQrDataUrl(null);
-      setError(null);
-      setCopyNotice(null);
+      pairDeviceManager.reset();
     }
   }, [open]);
 
@@ -151,7 +158,7 @@ export function PairDeviceDialog({
       return;
     }
     await navigator.clipboard.writeText(pairing.pairUrl);
-    setCopyNotice("Link copied.");
+    pairDeviceManager.setKey("copyNotice", "Link copied.");
   }
 
   const statusLabel = pairingStatus === "redeemed"

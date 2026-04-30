@@ -107,4 +107,55 @@ describe("buildSupervisorTurnContext", () => {
       },
     ]);
   });
+
+  it("includes repository inspection output as reusable context", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/objective-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      projectPath: "/workspace/app",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(executionEvents).values({
+      id: randomUUID(),
+      runId,
+      workerId: null,
+      planItemId: null,
+      eventType: "supervisor_repo_inspected",
+      details: JSON.stringify({
+        summary: "Inspected repository with sed -n 1,20p docs/spec.md.",
+        command: "sed",
+        args: ["-n", "1,20p", "docs/spec.md"],
+        cwd: "/workspace/app",
+        exitCode: 0,
+        output: "# Spec\n\nAcceptance criteria are here.",
+      }),
+      createdAt: now,
+    });
+
+    const context = await buildSupervisorTurnContext(runId);
+
+    expect(context.repoInspections).toEqual([
+      {
+        command: "sed",
+        args: ["-n", "1,20p", "docs/spec.md"],
+        cwd: "/workspace/app",
+        exitCode: 0,
+        output: "# Spec\n\nAcceptance criteria are here.",
+      },
+    ]);
+  });
 });

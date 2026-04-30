@@ -1,4 +1,3 @@
-import type { TokenJS } from "token.js";
 import { getSettingsKeyPath } from "@/server/settings/crypto";
 import type { RuntimeSettingDecryptionFailure } from "@/server/supervisor/runtime-settings";
 
@@ -109,17 +108,16 @@ export function validateSupervisorModelConfig(
   );
 }
 
-export function configureSupervisorModel(env: EnvLike, tokenjs: Pick<TokenJS, "extendModelList">) {
-  const config = getSupervisorModelConfig(env);
+function toMastraProvider(provider: string) {
+  return provider === "gemini" ? "google" : provider;
+}
 
-  if (config.provider === "gemini") {
-    tokenjs.extendModelList("gemini", config.model, {
-      streaming: true,
-      json: true,
-      toolCalls: true,
-      images: true,
-    });
-  }
+export function buildMastraModelConfig(config: ReturnType<typeof getSupervisorModelConfig>) {
+  const id = `${toMastraProvider(config.provider)}/${config.model}` as `${string}/${string}`;
 
-  return config;
+  return {
+    id,
+    apiKey: config.apiKey,
+    url: config.baseURL,
+  };
 }

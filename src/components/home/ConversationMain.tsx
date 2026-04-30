@@ -1,6 +1,5 @@
 import type React from "react";
-import { useState } from "react";
-import { Blocks, ChevronDown, Cpu, GitBranch, Pencil, RotateCcw } from "lucide-react";
+import { Blocks, ChevronDown, GitBranch, Pencil, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -8,12 +7,14 @@ import { AgentSurface } from "@/components/AgentSurface";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { Terminal } from "@/components/Terminal";
 import { PlanningArtifactsPanel } from "@/components/PlanningArtifactsPanel";
+import { conversationMainManager } from "@/components/component-state-managers";
 import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
 import { extractLatestPlainTextTurn } from "@/lib/agent-output";
 import { type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { AgentSnapshot, MessageRecord, NoticeDescriptor, RunRecord } from "@/app/home/types";
 import { formatExecutionTimestamp, parseSpawnedWorkerMessage, type ConversationTimelineItem } from "@/app/home/utils";
 import { cn } from "@/lib/utils";
+import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { ErrorNotice } from "./ErrorNotice";
 import { ConversationWorkerCard } from "./WorkersSidebar";
 import { UserInputMessage, type UserInputMessageAction } from "./UserInputMessage";
@@ -96,7 +97,7 @@ function SupervisorActivityMessage({ item }: { item: Extract<ConversationTimelin
   return (
     <div className="group flex w-full flex-col text-sm">
       <div className="mb-1.5 flex items-center gap-2 px-1">
-        <span className="text-xs font-semibold capitalize tracking-wider text-emerald-600">supervisor</span>
+        <span className="text-xs font-semibold capitalize tracking-wider text-muted-foreground">System</span>
         {item.event.workerId ? (
           <span className="truncate text-[10px] font-medium text-muted-foreground/60">{item.event.workerId}</span>
         ) : null}
@@ -104,9 +105,9 @@ function SupervisorActivityMessage({ item }: { item: Extract<ConversationTimelin
           {formatExecutionTimestamp(item.createdAt)}
         </span>
       </div>
-      <div className="overflow-x-auto whitespace-pre-wrap rounded-lg border border-border/30 bg-muted/20 p-4 text-[13px] leading-relaxed text-muted-foreground">
+      <p className="px-1 text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
         {item.text}
-      </div>
+      </p>
     </div>
   );
 }
@@ -118,7 +119,8 @@ function WorkerOutputMessage({
   message: MessageRecord;
   agent: AgentSnapshot | null;
 }) {
-  const [fullOutputOpen, setFullOutputOpen] = useState(false);
+  const { fullOutputOpenByMessageId } = useManagerSnapshot(conversationMainManager);
+  const fullOutputOpen = Boolean(fullOutputOpenByMessageId[message.id]);
   const inferredWorkerId = inferWorkerIdFromMessage(message);
   const summaryText = extractLatestPlainTextTurn({
     outputEntries: agent?.outputEntries,
@@ -133,7 +135,7 @@ function WorkerOutputMessage({
   };
 
   return (
-    <Collapsible open={fullOutputOpen} onOpenChange={setFullOutputOpen}>
+    <Collapsible open={fullOutputOpen} onOpenChange={(open) => conversationMainManager.setFullOutputOpen(message.id, open)}>
       <div className="overflow-hidden rounded-xl border border-emerald-600/20 bg-emerald-950/[0.08] shadow-sm">
         <div className="space-y-3 p-4">
           <div className="whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
@@ -196,7 +198,6 @@ interface ConversationMainProps {
   showConversationExecution: boolean;
   liveExecutionStatus: ConversationExecutionStatusProps["liveExecutionStatus"];
   liveThoughts: ConversationExecutionStatusProps["liveThoughts"];
-  conversationWorkerGroups: { active: ConversationWorkerRecord[] };
   onStopWorker?: (workerId: string) => void;
   stoppingWorkerId?: string | null;
   emptyComposer: React.ReactNode;
@@ -275,7 +276,6 @@ export function ConversationMain({
   showConversationExecution,
   liveExecutionStatus,
   liveThoughts,
-  conversationWorkerGroups,
   onStopWorker,
   stoppingWorkerId,
   emptyComposer,
@@ -314,35 +314,10 @@ export function ConversationMain({
               />
             </div>
           ) : null}
-          {directConversationMessages.length > 0 ? (
-            <div className="space-y-2">
-              {directConversationMessages.map((msg: MessageRecord) => {
-                const isExpanded = expandedDirectMessageIds.has(msg.id);
-                const actions: UserInputMessageAction[] = [
-                  {
-                    label: "Rerun from here",
-                    icon: <RotateCcw className="h-3.5 w-3.5" />,
-                    disabled: recoverRun.isPending,
-                    onClick: () => handleRetryMessage(msg.id),
-                  },
-                ];
-
-                return (
-                  <UserInputMessage
-                    key={msg.id}
-                    content={msg.content}
-                    isExpanded={isExpanded}
-                    onToggleExpanded={() => toggleDirectMessageExpansion(msg.id)}
-                    onCopy={handleCopyDirectMessage}
-                    actions={actions}
-                  />
-                );
-              })}
-            </div>
-          ) : null}
           <DirectControlTerminalColumn>
             <Terminal
               agent={primaryConversationAgent}
+              userMessages={directConversationMessages}
               variant="native"
               className="min-h-[32rem]"
             />
@@ -453,9 +428,9 @@ export function ConversationMain({
 
                     if (!workerId) {
                       return (
-                        <div className="overflow-x-auto whitespace-pre-wrap rounded-lg border border-border/30 bg-muted/20 p-4 text-[13px] leading-relaxed text-muted-foreground">
+                        <p className="px-1 text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
                           {msg.content}
-                        </div>
+                        </p>
                       );
                     }
 
@@ -485,15 +460,17 @@ export function ConversationMain({
                     message={msg}
                     agent={conversationAgents.find((agent) => agent.name === inferWorkerIdFromMessage(msg)) ?? null}
                   />
+                ) : msg.role === "system" ? (
+                  <p className="px-1 text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
+                    {msg.content}
+                  </p>
                 ) : (
                   <div className={cn(
                     "overflow-x-auto rounded-lg border p-4 leading-relaxed",
                     msg.role !== "supervisor" && "whitespace-pre-wrap",
                     msg.kind === "error"
                       ? "border-destructive/30 bg-destructive/5 text-destructive"
-                      : msg.role === "system"
-                        ? "border-border/30 bg-muted/20 text-[13px] text-muted-foreground"
-                        : "border-border bg-card",
+                      : "border-border bg-card",
                   )}>
                     {msg.role === "supervisor" ? (
                       <MarkdownContent content={msg.content} className="text-foreground" />
@@ -563,32 +540,6 @@ export function ConversationMain({
             />
           ) : null}
 
-          {isImplementationConversation && conversationWorkerGroups.active.length > 0 && (
-            <div className="mt-4 border-t border-border/50 pt-6 sm:mt-8">
-              <div className="mb-4 flex items-center gap-2 pl-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                <Cpu className="h-4 w-4" /> CLI Agents
-              </div>
-              <div className="flex flex-col gap-6">
-                {conversationWorkerGroups.active.map((worker) => {
-                  const agent = conversationAgents.find((item) => item.name === worker.id);
-
-                  return (
-                    <ConversationWorkerCard
-                      key={worker.id}
-                      worker={worker}
-                      agent={agent}
-                      preferredModel={selectedRun?.preferredWorkerModel || null}
-                      preferredEffort={selectedRun?.preferredWorkerEffort || null}
-                      defaultOpen={false}
-                      terminalHeightClass="h-64 sm:h-[22rem]"
-                      onStopWorker={onStopWorker}
-                      isStopping={stoppingWorkerId === worker.id}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          )}
         </div>
       )
     ) : (

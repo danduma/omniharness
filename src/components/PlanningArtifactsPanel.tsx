@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
+import { planningArtifactsManager } from "@/components/component-state-managers";
 import { cn } from "@/lib/utils";
+import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 
 type Candidate = {
   path: string;
@@ -51,7 +53,8 @@ export function PlanningArtifactsPanel({
   const allPlanCandidates = (artifacts.candidates ?? []).filter((candidate) => candidate.kind === "plan");
   const handoffPlanCandidates = allPlanCandidates.filter((candidate) => candidate.source === "handoff");
   const planCandidates = handoffPlanCandidates.length > 0 ? handoffPlanCandidates : allPlanCandidates;
-  const [selectedPlanPath, setSelectedPlanPath] = useState<string | null>(planPath || artifacts.planPath || planCandidates[0]?.path || null);
+  const { selectedPlanPath: managerSelectedPlanPath } = useManagerSnapshot(planningArtifactsManager);
+  const selectedPlanPath = managerSelectedPlanPath || planPath || artifacts.planPath || planCandidates[0]?.path || null;
 
   const selectedCandidate = planCandidates.find((candidate) => candidate.path === selectedPlanPath) ?? null;
   const ready = Boolean(selectedCandidate?.readiness?.ready || (!selectedCandidate && selectedPlanPath));
@@ -88,7 +91,7 @@ export function PlanningArtifactsPanel({
                 <button
                   key={candidate.path}
                   type="button"
-                  onClick={() => setSelectedPlanPath(candidate.path)}
+                  onClick={() => planningArtifactsManager.setSelectedPlanPath(candidate.path)}
                   className={cn(
                     "w-full rounded-lg border px-3 py-2 text-left transition-colors",
                     selectedPlanPath === candidate.path

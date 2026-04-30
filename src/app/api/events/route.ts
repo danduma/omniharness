@@ -9,12 +9,13 @@ import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watc
 import { requireApiSession } from "@/server/auth/guards";
 import { buildLiveWorkerSnapshots } from "@/server/workers/live-snapshots";
 import { waitForEventStreamNotification } from "@/server/events/live-updates";
+import { isTransientSupervisorError } from "@/server/supervisor/retry";
 
 export const dynamic = "force-dynamic";
 
-const STREAM_POLL_INTERVAL_MS = 1000;
+const STREAM_REFRESH_INTERVAL_MS = 15_000;
 const BRIDGE_AGENT_GRACE_MS = 150;
-const BRIDGE_AGENT_TIMEOUT_MS = 750;
+const BRIDGE_AGENT_TIMEOUT_MS = 5000;
 
 async function fetchWithTimeout(url: string, timeoutMs: number) {
   const controller = new AbortController();
@@ -61,38 +62,146 @@ async function readPersistedEventRecords() {
   };
 }
 
+
+type EventPayloadOptions = {
+  selectedRunId?: string | null;
+};
+
+type PersistedEventRecords = Awaited<ReturnType<typeof readPersistedEventRecords>>;
+
+const WORKER_INITIAL_PROMPT_PREVIEW_LIMIT = 1_000;
+const AGENT_TEXT_FIELD_LIMIT = 24_000;
+const AGENT_ENTRY_TEXT_LIMIT = 6_000;
+const AGENT_OUTPUT_ENTRY_LIMIT = 160;
+
+function truncateText(value: string | null | undefined, limit: number) {
+  if (!value || value.length <= limit) {
+    return value ?? "";
+  }
+
+  return `${value.slice(0, limit)}
+
+[Truncated ${value.length - limit} characters in live payload]`;
+}
+
+function compactWorkerRecord(worker: PersistedEventRecords["allWorkers"][number]) {
+  return {
+    id: worker.id,
+    runId: worker.runId,
+    type: worker.type,
+    status: worker.status,
+    workerNumber: worker.workerNumber,
+    title: worker.title,
+    initialPrompt: truncateText(worker.initialPrompt, WORKER_INITIAL_PROMPT_PREVIEW_LIMIT),
+    createdAt: worker.createdAt,
+    updatedAt: worker.updatedAt,
+  };
+}
+
+function selectedRunWorkers(
+  records: PersistedEventRecords,
+  options: EventPayloadOptions,
+) {
+  const selectedRunId = options.selectedRunId?.trim();
+  if (!selectedRunId) {
+    return [];
+  }
+
+  return records.allWorkers.filter((worker) => worker.runId === selectedRunId);
+}
+
+function selectedRunIds(options: EventPayloadOptions) {
+  const selectedRunId = options.selectedRunId?.trim();
+  return selectedRunId ? new Set([selectedRunId]) : null;
+}
+
+function filterRunScopedRecords<T extends { runId: string }>(
+  records: T[],
+  runIds: Set<string> | null,
+) {
+  return runIds ? records.filter((record) => runIds.has(record.runId)) : records;
+}
+
+function compactAgentSnapshot(agent: ReturnType<typeof buildLiveWorkerSnapshots>[number]) {
+  return {
+    ...agent,
+    outputEntries: (agent.outputEntries ?? []).slice(-AGENT_OUTPUT_ENTRY_LIMIT).map((entry) => ({
+      id: entry.id,
+      type: entry.type,
+      text: truncateText(entry.text, AGENT_ENTRY_TEXT_LIMIT),
+      timestamp: entry.timestamp,
+      toolCallId: entry.toolCallId,
+      toolKind: entry.toolKind,
+      status: entry.status,
+    })),
+    renderedOutput: null,
+    currentText: truncateText(agent.currentText, AGENT_TEXT_FIELD_LIMIT),
+    lastText: truncateText(agent.lastText, AGENT_TEXT_FIELD_LIMIT),
+    outputLog: truncateText(agent.outputLog, AGENT_TEXT_FIELD_LIMIT),
+    displayText: truncateText(agent.displayText, AGENT_TEXT_FIELD_LIMIT),
+    stderrBuffer: (agent.stderrBuffer ?? []).slice(-10).map((line) => truncateText(line, 2_000)),
+  };
+}
+
+function filterBridgeAgentsForWorkers(rawAgents: unknown[], scopedWorkers: PersistedEventRecords["allWorkers"]) {
+  const workerIds = new Set(scopedWorkers.map((worker) => worker.id));
+  if (workerIds.size === 0) {
+    return [];
+  }
+
+  return rawAgents.filter((agent) => {
+    if (typeof agent !== "object" || agent === null) {
+      return false;
+    }
+
+    const name = (agent as { name?: unknown }).name;
+    return typeof name === "string" && workerIds.has(name);
+  });
+}
+
 function buildEventPayload(
-  records: Awaited<ReturnType<typeof readPersistedEventRecords>>,
+  records: PersistedEventRecords,
   agentsData = buildLiveWorkerSnapshots({
-    workers: records.allWorkers,
+    workers: selectedRunWorkers(records, {}),
     runs: records.allRuns,
   }),
   frontendErrors: unknown[] = [],
+  options: EventPayloadOptions = {},
 ) {
+  const runIds = selectedRunIds(options);
+
   return {
     messages: records.msgs,
     plans: records.allPlans,
     runs: records.allRuns,
     accounts: records.allAccounts,
-    agents: agentsData,
-    workers: records.allWorkers,
-    clarifications: records.allClarifications,
-    validationRuns: records.allValidationRuns,
-    executionEvents: records.allExecutionEvents,
-    supervisorInterventions: records.allSupervisorInterventions,
+    agents: agentsData.map(compactAgentSnapshot),
+    workers: records.allWorkers.map(compactWorkerRecord),
+    clarifications: filterRunScopedRecords(records.allClarifications, runIds),
+    validationRuns: filterRunScopedRecords(records.allValidationRuns, runIds),
+    executionEvents: filterRunScopedRecords(records.allExecutionEvents, runIds),
+    supervisorInterventions: filterRunScopedRecords(records.allSupervisorInterventions, runIds),
     frontendErrors,
   };
 }
 
-async function buildPersistedEventPayload() {
+async function buildPersistedEventPayload(options: EventPayloadOptions = {}) {
   const records = await readPersistedEventRecords();
-  return buildEventPayload(records);
+  return buildEventPayload(
+    records,
+    buildLiveWorkerSnapshots({
+      workers: selectedRunWorkers(records, options),
+      runs: records.allRuns,
+    }),
+    undefined,
+    options,
+  );
 }
 
-async function buildBridgeEnrichedEventPayload() {
+async function buildBridgeEnrichedEventPayload(options: EventPayloadOptions = {}) {
   let records = await readPersistedEventRecords();
   let agentsData = buildLiveWorkerSnapshots({
-    workers: records.allWorkers,
+    workers: selectedRunWorkers(records, options),
     runs: records.allRuns,
   });
   const frontendErrors = [];
@@ -100,42 +209,48 @@ async function buildBridgeEnrichedEventPayload() {
   try {
     const res = await fetchWithTimeout(`${BRIDGE_URL}/agents`, BRIDGE_AGENT_TIMEOUT_MS);
     if (res.ok) {
-      const rawAgents = await res.json();
+      const rawAgentsPayload = await res.json();
+      const rawAgents = Array.isArray(rawAgentsPayload) ? rawAgentsPayload : [];
       await syncConversationSessions(rawAgents);
       records = await readPersistedEventRecords();
+      const scopedWorkers = selectedRunWorkers(records, options);
       agentsData = buildLiveWorkerSnapshots({
-        agents: rawAgents,
-        workers: records.allWorkers,
+        agents: filterBridgeAgentsForWorkers(rawAgents, scopedWorkers),
+        workers: scopedWorkers,
         runs: records.allRuns,
       });
     } else {
       const bridgeError = new Error(`Bridge agent list request failed with status ${res.status}.`);
       agentsData = buildLiveWorkerSnapshots({
-        workers: records.allWorkers,
+        workers: selectedRunWorkers(records, options),
         runs: records.allRuns,
         bridgeError,
       });
-      frontendErrors.push(buildAppError(
-        bridgeError,
-        {
-          source: "Bridge",
-          action: "Stream live agent state",
-        },
-      ));
+      if (!isTransientSupervisorError(bridgeError)) {
+        frontendErrors.push(buildAppError(
+          bridgeError,
+          {
+            source: "Bridge",
+            action: "Stream live agent state",
+          },
+        ));
+      }
     }
   } catch (error) {
     agentsData = buildLiveWorkerSnapshots({
-      workers: records.allWorkers,
+      workers: selectedRunWorkers(records, options),
       runs: records.allRuns,
       bridgeError: error,
     });
-    frontendErrors.push(buildAppError(error, {
-      source: "Bridge",
-      action: "Stream live agent state",
-    }));
+    if (!isTransientSupervisorError(error)) {
+      frontendErrors.push(buildAppError(error, {
+        source: "Bridge",
+        action: "Stream live agent state",
+      }));
+    }
   }
 
-  return buildEventPayload(records, agentsData, frontendErrors);
+  return buildEventPayload(records, agentsData, frontendErrors, options);
 }
 
 function delay(ms: number) {
@@ -153,42 +268,73 @@ export async function GET(req: NextRequest) {
 
   await ensureSupervisorRuntimeStarted();
 
+  const eventPayloadOptions = {
+    selectedRunId: req.nextUrl.searchParams.get("runId"),
+  } satisfies EventPayloadOptions;
+
   if (req.nextUrl.searchParams.get("snapshot") === "1") {
-    return NextResponse.json(await buildBridgeEnrichedEventPayload());
+    return NextResponse.json(await buildBridgeEnrichedEventPayload(eventPayloadOptions));
   }
 
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const sendEvent = (event: string, data: any) => {
+      let isClosed = false;
+      let lastUpdatePayload = "";
+      let lastBridgeEnrichedPayload: Awaited<ReturnType<typeof buildBridgeEnrichedEventPayload>> | null = null;
+
+      const sendSerializedEvent = (event: string, serializedData: string) => {
         try {
-          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${serializedData}\n\n`));
         } catch {
           // Stream might be closed
         }
       };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sendEvent = (event: string, data: any) => {
+        sendSerializedEvent(event, JSON.stringify(data));
+      };
+      const sendHeartbeat = () => {
+        try {
+          controller.enqueue(encoder.encode(": heartbeat\n\n"));
+        } catch {
+          // Stream might be closed
+        }
+      };
+      const sendUpdateIfChanged = (payload: Awaited<ReturnType<typeof buildPersistedEventPayload>>) => {
+        const serializedPayload = JSON.stringify(payload);
+        if (serializedPayload === lastUpdatePayload) {
+          sendHeartbeat();
+          return;
+        }
 
-      let isClosed = false;
+        lastUpdatePayload = serializedPayload;
+        sendSerializedEvent("update", serializedPayload);
+      };
+
       req.signal.addEventListener("abort", () => {
         isClosed = true;
       });
 
       while (!isClosed) {
         try {
-          const bridgePayloadPromise = buildBridgeEnrichedEventPayload();
+          const bridgePayloadPromise = buildBridgeEnrichedEventPayload(eventPayloadOptions);
           const bridgePayload = await Promise.race([
             bridgePayloadPromise,
             delay(BRIDGE_AGENT_GRACE_MS).then(() => null),
           ]);
 
           if (bridgePayload) {
-            sendEvent("update", bridgePayload);
+            lastBridgeEnrichedPayload = bridgePayload;
+            sendUpdateIfChanged(bridgePayload);
           } else {
-            sendEvent("update", await buildPersistedEventPayload());
+            if (!lastBridgeEnrichedPayload) {
+              sendUpdateIfChanged(await buildPersistedEventPayload(eventPayloadOptions));
+            }
             const enrichedPayload = await bridgePayloadPromise;
             if (!isClosed) {
-              sendEvent("update", enrichedPayload);
+              lastBridgeEnrichedPayload = enrichedPayload;
+              sendUpdateIfChanged(enrichedPayload);
             }
           }
         } catch (e) {
@@ -199,9 +345,8 @@ export async function GET(req: NextRequest) {
           }));
         }
 
-        // Wait before next poll
         if (!isClosed) {
-          await waitForEventStreamNotification(STREAM_POLL_INTERVAL_MS);
+          await waitForEventStreamNotification(STREAM_REFRESH_INTERVAL_MS);
         }
       }
     }

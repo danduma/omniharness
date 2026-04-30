@@ -55,6 +55,7 @@ type AgentOutputSnapshot = {
   outputEntries?: AgentOutputEntry[] | null;
   currentText?: string | null;
   lastText?: string | null;
+  displayText?: string | null;
 };
 
 type MutableToolActivity = Extract<AgentActivityItem, { kind: "tool" }>;
@@ -586,7 +587,7 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
   }
 
   if (items.length === 0) {
-    const liveText = cleanPaneText(snapshot.currentText || snapshot.lastText || null);
+    const liveText = cleanPaneText(snapshot.currentText || snapshot.lastText || snapshot.displayText || null);
     if (liveText) {
       items.push({
         id: "live-fallback",

@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { AlertTriangle, Bot, ChevronDown, Clock, Cpu, Square } from "lucide-react";
 import { Terminal, type AgentTerminalPayload } from "@/components/Terminal";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { workerCardManager } from "@/components/component-state-managers";
 import { isWorkerActiveStatus } from "@/lib/conversation-workers";
 import { cn } from "@/lib/utils";
+import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 
 export type WorkerCardAgent = AgentTerminalPayload & {
   name: string;
@@ -89,8 +91,9 @@ function formatWorkerStateLabel(state: string) {
   return state.replace(/[_-]+/g, " ");
 }
 
-function PermissionWarning({ pendingPermissions }: { pendingPermissions: PendingPermissionRecord[] }) {
-  const [open, setOpen] = useState(false);
+function PermissionWarning({ workerId, pendingPermissions }: { workerId: string; pendingPermissions: PendingPermissionRecord[] }) {
+  const { permissionOpenByWorkerId } = useManagerSnapshot(workerCardManager);
+  const open = Boolean(permissionOpenByWorkerId[workerId]);
   const popupRef = useRef<HTMLDivElement>(null);
   const permissionCount = pendingPermissions.length;
   const summary = `${permissionCount} permission request${permissionCount === 1 ? "" : "s"} waiting`;
@@ -102,13 +105,13 @@ function PermissionWarning({ pendingPermissions }: { pendingPermissions: Pending
 
     const handlePointerDown = (event: PointerEvent) => {
       if (!popupRef.current?.contains(event.target as Node)) {
-        setOpen(false);
+        workerCardManager.closePermission(workerId);
       }
     };
 
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
-  }, [open]);
+  }, [open, workerId]);
 
   return (
     <div ref={popupRef} className="relative">
@@ -117,7 +120,7 @@ function PermissionWarning({ pendingPermissions }: { pendingPermissions: Pending
         aria-label={summary}
         title={summary}
         className="group relative flex h-8 w-8 items-center justify-center rounded-full border border-amber-200/12 bg-amber-50/[0.04] text-amber-100/85 transition-colors hover:bg-amber-50/[0.08]"
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => workerCardManager.togglePermission(workerId)}
       >
         <AlertTriangle className="h-3.5 w-3.5" />
         {!open ? (
@@ -172,7 +175,8 @@ export function WorkerCard({
   onStopWorker,
   isStopping,
 }: WorkerCardProps) {
-  const [open, setOpen] = useState(defaultOpen);
+  const { openByWorkerId } = useManagerSnapshot(workerCardManager);
+  const open = openByWorkerId[workerId] ?? defaultOpen;
   const contextLabel = formatContextAvailability(agent.contextUsage?.fullnessPercent);
   const promptPreviewText = promptPreview?.trim() ?? "";
   const stateLabel = formatWorkerStateLabel(agent.state);
@@ -194,7 +198,7 @@ export function WorkerCard({
   }, [workerId, workerNumber, workerTitle]);
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className={cn(fillAvailable && "flex h-full min-h-0 flex-col")}>
+    <Collapsible open={open} onOpenChange={(nextOpen) => workerCardManager.setOpen(workerId, nextOpen)} className={cn(fillAvailable && "flex h-full min-h-0 flex-col")}>
       <div className={cn(
         "overflow-hidden rounded-[18px] border border-white/8 bg-[#111315] text-zinc-100 shadow-[0_20px_60px_rgba(0,0,0,0.24)]",
         fillAvailable && "flex min-h-0 flex-1 flex-col",
@@ -242,7 +246,7 @@ export function WorkerCard({
                 )} />
                 <span className="capitalize">{stateLabel}</span>
               </div>
-              {pendingPermissions.length > 0 ? <PermissionWarning pendingPermissions={pendingPermissions} /> : null}
+              {pendingPermissions.length > 0 ? <PermissionWarning workerId={workerId} pendingPermissions={pendingPermissions} /> : null}
               {showStopWorker ? (
                 <button
                   type="button"

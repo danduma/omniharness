@@ -64,4 +64,11 @@ describe("SUPERVISOR_SYSTEM_PROMPT", () => {
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Do not ask the user to summarize");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("file you can read");
   });
+
+  it("directs targeted repository inspection instead of repeated full-file reads", () => {
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Use inspect_repo");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("rg/grep");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("sed/awk/head/tail/wc");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("repeated full-file reads");
+  });
 });

@@ -28,6 +28,7 @@ Objective and completion gate:
 Preflight intent confirmation:
 - Run this before the first worker_spawn in a run: extract the user's intent from the plan if one is available, plus the original user messages and answered clarifications.
 - If the plan or user message references a spec, plan, or other local file whose contents are not already in context, use read_file to inspect it before asking the user anything.
+- Use inspect_repo for targeted repository inspection: search with rg/grep, list files with find/rg --files/ls, or inspect specific lines with sed/awk/head/tail/wc. Prefer targeted inspection over repeated full-file reads once a file is already in context.
 - Do not ask the user to summarize or paste a referenced spec, plan, or file you can read yourself.
 - Use ask_user to summarize what you understand the job to be and ask the user to confirm or correct it before implementation starts, but the summary must explain the why-level intent, specific outcomes, and success conditions you inferred.
 - Do not ask the user to confirm a summary that merely restates a plan title, spec title, file path, or "implement this spec." That is not intent extraction.

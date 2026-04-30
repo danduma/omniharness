@@ -5,6 +5,7 @@ import { test, expect } from "vitest";
 const pageSource = [
   "src/app/page.tsx",
   "src/app/home/HomeApp.tsx",
+  "src/app/home/HomeUiStateManager.ts",
   "src/app/home/constants.ts",
   "src/app/home/types.ts",
   "src/app/home/useHomeLifecycle.ts",
@@ -23,9 +24,9 @@ const composerModelPickerSource = fs.readFileSync(
 );
 
 test("composer uses a filled textarea shell with inline cli agent, model, and effort controls", () => {
-  expect(pageSource).toContain('const [selectedCliAgent, setSelectedCliAgent] = useState<ComposerWorkerOption>("auto")');
-  expect(pageSource).toContain('const [selectedModel, setSelectedModel] = useState("gpt-5.4")');
-  expect(pageSource).toContain('const [selectedEffort, setSelectedEffort] = useState("High")');
+  expect(pageSource).toContain('selectedCliAgent: "auto"');
+  expect(pageSource).toContain('selectedModel: "gpt-5.4"');
+  expect(pageSource).toContain('selectedEffort: "High"');
   expect(pageSource).toContain('themeMode === "night"');
   expect(pageSource).toContain('border border-[#d8d8d8] bg-[#fbfbfa]');
   expect(pageSource).toContain('focus-within:bg-white');
@@ -74,7 +75,8 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain("options={activeWorkerModelOptions}");
   expect(composerModelPickerSource).toContain("filteredOptions.map");
   expect(pageSource).not.toContain('if (selectedCliAgent !== "auto") {\n      setSelectedCliAgent("auto");');
-  expect(pageSource).toContain('const [hydratedRunSelectionId, setHydratedRunSelectionId] = useState<string | null>(null)');
+  expect(pageSource).toContain('hydratedRunSelectionId: null');
+  expect(pageSource).toContain('setHydratedRunSelectionId: homeUiStateManager.createSetter("hydratedRunSelectionId")');
   expect(pageSource).toContain('if (!selectedRunId || !selectedRun) {');
   expect(pageSource).toContain('if (hydratedRunSelectionId === selectedRunId) {');
 });
@@ -90,8 +92,8 @@ test("direct mode requires an explicit cli agent and tightens dropdown alignment
 });
 
 test("composer exposes attachment entry and renders attached file chips", () => {
-  expect(pageSource).toContain('const [showAttachmentPicker, setShowAttachmentPicker] = useState(false)');
-  expect(pageSource).toContain('const [attachments, setAttachments] = useState<AttachmentItem[]>([])');
+  expect(pageSource).toContain('showAttachmentPicker: false');
+  expect(pageSource).toContain('attachments: []');
   expect(pageSource).toContain('setShowAttachmentPicker(true)');
   expect(pageSource).toContain('attachments.map((attachment) => (');
   expect(pageSource).toContain('aria-label={`Remove ${attachment.name}`}');

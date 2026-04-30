@@ -45,6 +45,26 @@ export function parseSupervisorToolCall(toolCalls: SupervisorToolCall[] | undefi
   };
 }
 
+export function parseSupervisorToolCallFromMastra(toolCalls: unknown[] | undefined) {
+  if (!toolCalls || toolCalls.length === 0) {
+    throw new SupervisorProtocolError("Supervisor response did not include a tool call.");
+  }
+
+  const [toolCall] = toolCalls as Array<{ payload?: { toolCallId?: unknown; toolName?: unknown; args?: unknown } }>;
+  const payload = toolCall?.payload;
+  if (!payload || typeof payload.toolName !== "string") {
+    throw new SupervisorProtocolError("Supervisor response included an invalid Mastra tool call.");
+  }
+
+  return {
+    id: typeof payload.toolCallId === "string" ? payload.toolCallId : payload.toolName,
+    name: payload.toolName,
+    args: payload.args && typeof payload.args === "object" && !Array.isArray(payload.args)
+      ? payload.args as Record<string, unknown>
+      : {},
+  };
+}
+
 export function stringifyToolResult(payload: Record<string, unknown>) {
   return JSON.stringify(payload);
 }

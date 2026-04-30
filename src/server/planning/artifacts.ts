@@ -48,7 +48,8 @@ function extractMarkdownPaths(outputText: string) {
 }
 
 export function extractPlannerHandoffBlock(outputText: string): PlannerHandoff | null {
-  const match = outputText.match(/<omniharness-plan-handoff>([\s\S]*?)<\/omniharness-plan-handoff>/i);
+  const matches = Array.from(outputText.matchAll(/<omniharness-plan-handoff>([\s\S]*?)<\/omniharness-plan-handoff>/gi));
+  const match = matches.at(-1);
   if (!match) {
     return null;
   }

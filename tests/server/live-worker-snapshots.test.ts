@@ -161,6 +161,64 @@ describe("buildLiveWorkerSnapshot", () => {
     }));
   });
 
+  it("builds display text from persisted structured entries when the bridge is missing", () => {
+    const snapshot = buildLiveWorkerSnapshot({
+      agent: null,
+      worker: {
+        id: "worker-structured-only",
+        runId: "run-structured-only",
+        type: "codex",
+        status: "cancelled",
+        cwd: "/repo",
+        outputLog: "",
+        outputEntriesJson: JSON.stringify([
+          {
+            id: "message-structured",
+            type: "message",
+            text: "The worker already finished this implementation.",
+            timestamp: new Date(0).toISOString(),
+          },
+        ]),
+        currentText: "",
+        lastText: "",
+        bridgeSessionId: "session-structured",
+        bridgeSessionMode: "full-access",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      run: {
+        id: "run-structured-only",
+        planId: "plan-structured-only",
+        mode: "implementation",
+        projectPath: "/repo",
+        title: "Recovered structured output",
+        preferredWorkerType: "codex",
+        preferredWorkerModel: "gpt-5.4",
+        preferredWorkerEffort: "high",
+        allowedWorkerTypes: "codex",
+        specPath: null,
+        artifactPlanPath: null,
+        plannerArtifactsJson: null,
+        parentRunId: null,
+        forkedFromMessageId: null,
+        status: "running",
+        failedAt: null,
+        lastError: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      bridgeError: new Error("Get agent failed: 404 not_found"),
+    });
+
+    expect(snapshot).toEqual(expect.objectContaining({
+      lastText: "The worker already finished this implementation.",
+      displayText: "The worker already finished this implementation.",
+      outputEntries: [
+        expect.objectContaining({ id: "message-structured" }),
+      ],
+    }));
+  });
+
   it("surfaces a diagnostic when a live bridge agent stops without output", () => {
     const snapshot = buildLiveWorkerSnapshot({
       agent: {

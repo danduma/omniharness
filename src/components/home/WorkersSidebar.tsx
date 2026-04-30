@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Cpu, Moon, Sun, Terminal as TerminalIcon, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkerCard } from "@/components/WorkerCard";
+import { workersSidebarManager } from "@/components/component-state-managers";
 import { WORKER_OPTIONS } from "@/app/home/constants";
 import type { AgentSnapshot } from "@/app/home/types";
 import { buildWorkerLists, getWorkerRuntimeLabel, type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { cn } from "@/lib/utils";
+import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 
 export interface WorkersSidebarProps {
   workers: ConversationWorkerRecord[];
@@ -108,24 +110,18 @@ export function ConversationWorkerCard({
 }
 
 export function WorkersSidebar({ workers, agents, preferredModel, preferredEffort, onStopWorker, stoppingWorkerId, onClose }: WorkersSidebarProps) {
-  const [activeTab, setActiveTab] = useState<"active" | "finished">("active");
+  const { activeTab: requestedActiveTab } = useManagerSnapshot(workersSidebarManager);
   const workerGroups = buildWorkerLists(workers);
   const agentsById = useMemo(
     () => new Map(agents.map((agent) => [agent.name, agent])),
     [agents],
   );
 
-  useEffect(() => {
-    if (activeTab === "active" && workerGroups.active.length === 0 && workerGroups.finished.length > 0) {
-      setActiveTab("finished");
-      return;
-    }
-
-    if (activeTab === "finished" && workerGroups.finished.length === 0 && workerGroups.active.length > 0) {
-      setActiveTab("active");
-    }
-  }, [activeTab, workerGroups.active.length, workerGroups.finished.length]);
-
+  const activeTab = requestedActiveTab === "active" && workerGroups.active.length === 0 && workerGroups.finished.length > 0
+    ? "finished"
+    : requestedActiveTab === "finished" && workerGroups.finished.length === 0 && workerGroups.active.length > 0
+      ? "active"
+      : requestedActiveTab;
   const visibleWorkers = activeTab === "active" ? workerGroups.active : workerGroups.finished;
   const hasSingleVisibleWorker = visibleWorkers.length === 1;
 
@@ -151,7 +147,7 @@ export function WorkersSidebar({ workers, agents, preferredModel, preferredEffor
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
             )}
-            onClick={() => setActiveTab("active")}
+            onClick={() => workersSidebarManager.setActiveTab("active")}
           >
             Active ({workerGroups.active.length})
           </button>
@@ -163,7 +159,7 @@ export function WorkersSidebar({ workers, agents, preferredModel, preferredEffor
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
             )}
-            onClick={() => setActiveTab("finished")}
+            onClick={() => workersSidebarManager.setActiveTab("finished")}
           >
             Finished ({workerGroups.finished.length})
           </button>

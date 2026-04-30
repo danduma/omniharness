@@ -7,6 +7,7 @@ const readSource = (relativePath: string) => fs.readFileSync(path.resolve(proces
 const pageSource = [
   "src/app/page.tsx",
   "src/app/home/HomeApp.tsx",
+  "src/app/home/HomeUiStateManager.ts",
   "src/app/home/constants.ts",
   "src/app/home/useAppErrors.ts",
   "src/app/home/useConversationExecutionStatus.ts",
@@ -20,6 +21,7 @@ const pageSource = [
   "src/components/home/SettingsDialog.tsx",
   "src/components/home/UserInputMessage.tsx",
   "src/components/home/WorkersSidebar.tsx",
+  "src/components/component-state-managers.ts",
 ].map(readSource).join("\n");
 const conversationModePickerSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/ConversationModePicker.tsx"),
@@ -67,14 +69,15 @@ test("desktop conversation rail constrains overflowing run content", () => {
 });
 
 test("workers sidebar is conversation-scoped and resizable", () => {
-  expect(pageSource).toContain('const [rightSidebarWidth, setRightSidebarWidth] = useState(420)');
+  expect(pageSource).toContain('rightSidebarWidth: 420');
   expect(pageSource).toContain('window.localStorage.getItem("omni-workers-sidebar-width")');
   expect(pageSource).toContain('window.localStorage.setItem("omni-workers-sidebar-width", String(rightSidebarWidth))');
   expect(pageSource).toContain('title="Toggle Conversation Workers"');
   expect(pageSource).toContain('<WorkersSidebar');
   expect(pageSource).toContain('workers={selectedRunWorkersForDisplay}');
   expect(pageSource).toContain('agents={conversationAgents}');
-  expect(pageSource).toContain('const [activeTab, setActiveTab] = useState<"active" | "finished">("active")');
+  expect(pageSource).toContain('workersSidebarManager');
+  expect(pageSource).toContain('activeTab: "active"');
   expect(pageSource).toContain("Active ({workerGroups.active.length})");
   expect(pageSource).toContain("Finished ({workerGroups.finished.length})");
   expect(pageSource).toContain('const liveAgentsById = new Map(');
@@ -82,6 +85,8 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('preferredEffort={selectedRun?.preferredWorkerEffort ?? null}');
   expect(pageSource).toContain('onClose={() => setMobileWorkersOpen(false)}');
   expect(pageSource).toContain('onClose={() => setRightSidebarOpen(false)}');
+  expect(pageSource).toContain('if (selectedRunId && isImplementationConversation && selectedRunWorkersForDisplay.length > 0) {');
+  expect(pageSource).toContain('setRightSidebarOpen(true);');
   expect(pageSource).toContain('style={{ width: rightSidebarWidth }}');
   expect(pageSource).toContain('aria-label="Resize workers sidebar"');
   expect(pageSource).toContain('onPointerDown={handleRightSidebarResizeStart}');
@@ -145,12 +150,12 @@ test("conversation output only follows live worker updates when already near the
   })).toBe(false);
 });
 
-test("main conversation only renders active worker panes while the sidebar keeps finished workers", () => {
-  expect(pageSource).toContain('{isImplementationConversation && conversationWorkerGroups.active.length > 0 && (');
-  expect(pageSource).toContain('{conversationWorkerGroups.active.map((worker) => {');
+test("main conversation does not duplicate worker panes from the sidebar", () => {
   expect(pageSource).toContain('<AgentSurface');
   expect(pageSource).toContain('title="Planning agent"');
-  expect(pageSource).toContain("<Cpu className=\"h-4 w-4\" /> CLI Agents");
+  expect(pageSource).not.toContain("<Cpu className=\"h-4 w-4\" /> CLI Agents");
+  expect(pageSource).not.toContain('{isImplementationConversation && conversationWorkerGroups.active.length > 0 && (');
+  expect(pageSource).not.toContain('{conversationWorkerGroups.active.map((worker) => {');
   expect(pageSource).toContain('defaultOpen={false}');
   expect(pageSource).toContain('defaultOpen={activeTab === "active" || hasSingleVisibleWorker}');
   expect(pageSource).not.toContain("<Cpu className=\"h-4 w-4\" /> Live CLI Agents");
@@ -179,14 +184,14 @@ test("implementation worker messages show a compact latest turn with expandable 
 
 test("direct conversations render the user transcript next to the worker surface", () => {
   expect(pageSource).toContain("const directConversationMessages = useMemo(() => {");
-  expect(pageSource).toContain("const [expandedDirectMessageIds, setExpandedDirectMessageIds] = useState<Set<string>>(() => new Set())");
+  expect(pageSource).toContain("expandedDirectMessageIds: new Set()");
   expect(pageSource).toContain("function toggleDirectMessageExpansion(messageId: string)");
   expect(pageSource).toContain("const primaryConversationAgent = useMemo(() => {");
   expect(pageSource).toContain("if (!isDirectConversation) {");
   expect(pageSource).toContain('conversationAgents.find((agent) => agent.state === "working" || Boolean(agent.currentText?.trim()))');
   expect(pageSource).toContain('?? conversationAgents.find((agent) => agent.state !== "cancelled")');
-  expect(pageSource).toContain('{directConversationMessages.length > 0 ? (');
-  expect(pageSource).toContain('directConversationMessages.map((msg: MessageRecord) => {');
+  expect(pageSource).toContain('userMessages={directConversationMessages}');
+  expect(pageSource).toContain('variant="native"');
   expect(pageSource).toContain('.filter((message) => message.role === "user")');
   expect(pageSource).not.toContain('message.role === "user" || (message.role === "worker" && message.content.trim())');
   expect(pageSource).toContain('const isExpanded = expandedDirectMessageIds.has(msg.id);');
@@ -202,7 +207,7 @@ test("direct conversations render the user transcript next to the worker surface
   expect(pageSource).toContain('{isExpanded ? "less" : "...more"}');
   expect(pageSource).toContain('text-white');
   expect(pageSource).toContain('aria-label="Copy message"');
-  expect(pageSource).toContain('label: "Rerun from here"');
+  expect(pageSource).toContain('label: "Retry from here"');
   expect(pageSource).toContain('aria-label={action.label}');
   expect(pageSource).toContain('onClick: () => handleRetryMessage(msg.id)');
   expect(pageSource).toContain('rounded-[1.9rem] rounded-br-lg bg-[#242424]');
@@ -257,7 +262,7 @@ test("settings render as a centered app modal with supervisor llm controls", () 
 });
 
 test("header includes a persistent day night mode toggle beside the workers sidebar button", () => {
-  expect(pageSource).toContain('const [themeMode, setThemeMode] = useState<"day" | "night">("day")');
+  expect(pageSource).toContain('themeMode: "day"');
   expect(pageSource).toContain("const didMountThemeEffectRef = useRef(false)");
   expect(pageSource).toContain('window.localStorage.getItem("omni-theme-mode")');
   expect(pageSource).toContain("if (!didMountThemeEffectRef.current)");
@@ -272,12 +277,14 @@ test("header includes a persistent day night mode toggle beside the workers side
   expect(pageSource).not.toContain(">Night<");
 });
 
-test("sidebar phone pairing entry point is hidden on mobile layouts", () => {
-  expect(pageSource).toContain('className="mb-1 hidden h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground lg:flex"');
+test("sidebar phone pairing entry point lives in the settings menu", () => {
+  expect(pageSource).toContain('<DropdownMenuItem className="cursor-pointer whitespace-nowrap" onClick={openPairDeviceDialog}>');
+  expect(pageSource).toContain('<Smartphone className="mr-2 h-4 w-4" /> Connect Phone');
+  expect(pageSource).not.toContain('className="mb-1 hidden h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground lg:flex"');
 });
 
 test("header syncs the active conversation path but only shows the cwd", () => {
-  expect(pageSource).toContain('const [routeReady, setRouteReady] = useState(false)');
+  expect(pageSource).toContain('routeReady: false');
   expect(pageSource).toContain("const activeConversationCwd = selectedRun?.projectPath || activePlan?.path || draftProjectPath || null;");
   expect(pageSource).toContain('window.location.pathname');
   expect(pageSource).toContain('window.history.replaceState(window.history.state, "", nextPath)');
@@ -308,14 +315,14 @@ test("send button swaps to a spinner while a command submission is pending", () 
 });
 
 test("project groups show a loading indicator while conversations are still hydrating", () => {
-  expect(pageSource).toContain("const [hasReceivedInitialEventStreamPayload, setHasReceivedInitialEventStreamPayload] = useState(false)");
+  expect(pageSource).toContain("hasReceivedInitialEventStreamPayload: false");
   expect(pageSource).toContain("const isHydratingConversations = appUnlocked && !hasReceivedInitialEventStreamPayload;");
   expect(pageSource).toContain("isHydratingConversations={isHydratingConversations}");
   expect(pageSource).toContain("Loading conversations...");
 });
 
 test("project group collapsed state survives page reloads", () => {
-  expect(pageSource).toContain("const [collapsedProjectPaths, setCollapsedProjectPaths] = useState<Set<string>>(() => new Set())");
+  expect(pageSource).toContain("collapsedProjectPaths: new Set()");
   expect(pageSource).toContain('window.localStorage.getItem("omni-collapsed-projects")');
   expect(pageSource).toContain('window.localStorage.setItem("omni-collapsed-projects", JSON.stringify(Array.from(collapsedProjectPaths)))');
   expect(pageSource).toContain("collapsedProjectPaths={collapsedProjectPaths}");

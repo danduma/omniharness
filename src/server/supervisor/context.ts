@@ -40,6 +40,7 @@ export interface SupervisorTurnContext {
   planPath: string | null;
   planContent: string | null;
   readFiles: Array<{ path: string; content: string; truncated: boolean }>;
+  repoInspections: Array<{ command: string; args: string[]; cwd: string | null; output: string; exitCode: number | null }>;
   preferredWorkerType: string | null;
   allowedWorkerTypes: string[];
   recentUserMessages: string[];
@@ -99,6 +100,29 @@ function parseReadFileEvent(details: string | null) {
       path: parsed.path,
       content: parsed.content,
       truncated: parsed.truncated === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseRepoInspectionEvent(details: string | null) {
+  if (!details) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(details) as Record<string, unknown>;
+    if (typeof parsed.command !== "string" || typeof parsed.output !== "string") {
+      return null;
+    }
+
+    return {
+      command: parsed.command,
+      args: Array.isArray(parsed.args) ? parsed.args.filter((item): item is string => typeof item === "string") : [],
+      cwd: typeof parsed.cwd === "string" ? parsed.cwd : null,
+      output: parsed.output,
+      exitCode: typeof parsed.exitCode === "number" ? parsed.exitCode : null,
     };
   } catch {
     return null;
@@ -173,6 +197,11 @@ export async function buildSupervisorTurnContext(runId: string): Promise<Supervi
     .map((event) => parseReadFileEvent(event.details))
     .filter((file): file is { path: string; content: string; truncated: boolean } => Boolean(file))
     .slice(0, 6);
+  const repoInspections = allEvents
+    .filter((event) => event.eventType === "supervisor_repo_inspected")
+    .map((event) => parseRepoInspectionEvent(event.details))
+    .filter((inspection): inspection is { command: string; args: string[]; cwd: string | null; output: string; exitCode: number | null } => Boolean(inspection))
+    .slice(0, 6);
   const recentEvents = allEvents
     .slice(0, 8)
     .map((event) => {
@@ -203,6 +232,7 @@ export async function buildSupervisorTurnContext(runId: string): Promise<Supervi
     planPath,
     planContent,
     readFiles,
+    repoInspections,
     preferredWorkerType: run.preferredWorkerType,
     allowedWorkerTypes: parseAllowedWorkerTypes(run.allowedWorkerTypes),
     recentUserMessages: userMessages.slice(-6).map((message) => message.content),

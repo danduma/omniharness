@@ -8,7 +8,7 @@ import { db } from "@/server/db";
 import { executionEvents, messages, plans, runs, settings, supervisorInterventions, workerCounters, workers } from "@/server/db/schema";
 
 const {
-  mockTokenCreate,
+  mockAgentGenerate,
   mockSpawnAgent,
   mockAskAgent,
   mockCancelAgent,
@@ -19,7 +19,7 @@ const {
   mockSelectSpawnableWorkerType,
   mockNotifyEventStreamSubscribers,
 } = vi.hoisted(() => ({
-  mockTokenCreate: vi.fn(),
+  mockAgentGenerate: vi.fn(),
   mockSpawnAgent: vi.fn(),
   mockAskAgent: vi.fn(),
   mockCancelAgent: vi.fn(),
@@ -31,13 +31,11 @@ const {
   mockNotifyEventStreamSubscribers: vi.fn(),
 }));
 
-vi.mock("token.js", () => ({
-  TokenJS: class MockTokenJS {
-    chat = {
-      completions: {
-        create: mockTokenCreate,
-      },
-    };
+vi.mock("@mastra/core/agent", () => ({
+  Agent: class MockAgent {
+    constructor(public config: unknown) {}
+
+    generate = mockAgentGenerate;
   },
 }));
 
@@ -57,7 +55,11 @@ vi.mock("@/server/supervisor/model-config", () => ({
     baseURL: undefined,
   })),
   validateSupervisorModelConfig: vi.fn(),
-  configureSupervisorModel: vi.fn(),
+  buildMastraModelConfig: vi.fn((config) => ({
+    id: `${config.provider}/${config.model}`,
+    apiKey: config.apiKey,
+    url: config.baseURL,
+  })),
 }));
 
 vi.mock("@/server/supervisor/runtime-settings", () => ({
@@ -75,7 +77,7 @@ vi.mock("@/server/supervisor/protocol", async () => {
   const actual = await vi.importActual<typeof import("@/server/supervisor/protocol")>("@/server/supervisor/protocol");
   return {
     ...actual,
-    parseSupervisorToolCall: mockParseSupervisorToolCall,
+    parseSupervisorToolCallFromMastra: mockParseSupervisorToolCall,
   };
 });
 
@@ -110,7 +112,7 @@ describe("Supervisor worker spawn flow", () => {
     await db.delete(runs);
     await db.delete(plans);
 
-    mockTokenCreate.mockResolvedValue({ choices: [{ message: { tool_calls: [{ id: "tool-1" }] } }] });
+    mockAgentGenerate.mockResolvedValue({ toolCalls: [{ payload: { toolCallId: "tool-1", toolName: "worker_spawn", args: {} } }] });
     mockSpawnAgent.mockResolvedValue({ name: "mocked-worker-id", state: "idle" });
     mockApprovePermission.mockResolvedValue({ ok: true });
     mockBuildSupervisorTurnContext.mockResolvedValue({
@@ -225,8 +227,7 @@ describe("Supervisor worker spawn flow", () => {
 
     await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
 
-    const request = mockTokenCreate.mock.calls[0]?.[0];
-    const promptMessages = request.messages as Array<{ role: string; content: string }>;
+    const promptMessages = mockAgentGenerate.mock.calls[0]?.[0] as Array<{ role: string; content: string }>;
     expect(promptMessages.some((message) => message.content.includes("Prior supervision memory"))).toBe(true);
     expect(promptMessages.filter((message) => message.role === "user")).toEqual([
       { role: "user", content: latestInstruction },
@@ -265,7 +266,7 @@ describe("Supervisor worker spawn flow", () => {
     const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
     expect(run?.status).toBe("failed");
     expect(run?.lastError).toBe("direct worker failed");
-    expect(mockTokenCreate).not.toHaveBeenCalled();
+    expect(mockAgentGenerate).not.toHaveBeenCalled();
   });
 
   it("does not resurrect a cancelled implementation run", async () => {
@@ -295,13 +296,13 @@ describe("Supervisor worker spawn flow", () => {
 
     const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
     expect(run?.status).toBe("cancelled");
-    expect(mockTokenCreate).not.toHaveBeenCalled();
+    expect(mockAgentGenerate).not.toHaveBeenCalled();
   });
 
   it("does not execute a tool call if the run fails while the model request is in flight", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
-    const pendingCompletion = deferred<{ choices: Array<{ message: { tool_calls: Array<{ id: string }> } }> }>();
+    const pendingCompletion = deferred<{ toolCalls: Array<{ payload: { toolCallId: string; toolName: string; args: Record<string, unknown> } }> }>();
     const now = new Date();
 
     await db.insert(plans).values({
@@ -321,13 +322,13 @@ describe("Supervisor worker spawn flow", () => {
       updatedAt: now,
     });
 
-    mockTokenCreate.mockReturnValue(pendingCompletion.promise);
+    mockAgentGenerate.mockReturnValue(pendingCompletion.promise);
 
     const { Supervisor } = await import("@/server/supervisor");
     const runPromise = new Supervisor({ runId }).run();
 
     await vi.waitFor(() => {
-      expect(mockTokenCreate).toHaveBeenCalled();
+      expect(mockAgentGenerate).toHaveBeenCalled();
     });
 
     await db.update(runs).set({
@@ -337,7 +338,7 @@ describe("Supervisor worker spawn flow", () => {
       updatedAt: new Date(),
     }).where(eq(runs.id, runId));
 
-    pendingCompletion.resolve({ choices: [{ message: { tool_calls: [{ id: "tool-1" }] } }] });
+    pendingCompletion.resolve({ toolCalls: [{ payload: { toolCallId: "tool-1", toolName: "worker_spawn", args: {} } }] });
 
     await expect(runPromise).resolves.toEqual({ state: "completed" });
 
@@ -393,6 +394,53 @@ describe("Supervisor worker spawn flow", () => {
     expect(event?.eventType).toBe("supervisor_file_read");
     expect(event?.details).toContain("docs/spec.md");
     expect(event?.details).toContain("understand the why before implementation");
+  });
+
+  it("runs targeted repository inspection without spawning a worker", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "omniharness-supervisor-inspect-"));
+    const specPath = path.join(workspace, "docs", "spec.md");
+    fs.mkdirSync(path.dirname(specPath), { recursive: true });
+    fs.writeFileSync(specPath, "# Spec\n\nOutcome: inspect only the needed lines.", "utf8");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      projectPath: workspace,
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-inspect-repo",
+      name: "inspect_repo",
+      args: {
+        command: "sed",
+        args: ["-n", "1,3p", "docs/spec.md"],
+        reason: "read the heading and first outcome only",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 1_000 });
+
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    const event = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+    expect(event?.eventType).toBe("supervisor_repo_inspected");
+    expect(event?.details).toContain('"command":"sed"');
+    expect(event?.details).toContain("Outcome: inspect only the needed lines");
   });
 
   it("cancels a spawned bridge agent if the run fails while spawn is in flight", async () => {
@@ -855,6 +903,63 @@ describe("Supervisor worker spawn flow", () => {
       interventionType: "completion_gap",
       prompt: "The plan is not fully implemented yet. Continue and finish the remaining checklist items.",
     });
+  });
+
+  it("defers worker follow-ups when the bridge reports the agent is busy", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: "worker-already-running",
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/tmp/project",
+      title: "Main implementation",
+      initialPrompt: "implement the plan",
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-continue",
+      name: "worker_continue",
+      args: {
+        workerId: "worker-already-running",
+        prompt: "Keep going and report back.",
+      },
+    });
+    mockAskAgent.mockRejectedValue(new Error("Ask failed: Agent is busy: worker-already-running"));
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, "worker-already-running")).get();
+    expect(persistedWorker?.status).toBe("working");
+
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    const deferredEvent = events.find((event) => event.eventType === "worker_prompt_deferred");
+    expect(deferredEvent?.workerId).toBe("worker-already-running");
+    expect(deferredEvent?.details).toContain("Agent is busy");
   });
 
   it("lists recorded supervisor interventions when completing the run", async () => {

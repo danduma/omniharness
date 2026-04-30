@@ -74,6 +74,12 @@ export async function promotePlanningRun(args: {
     .where(eq(messages.runId, args.runId))
     .orderBy(messages.createdAt);
 
+  const previousPlanningStatus = planningRun.status;
+  await db.update(runs).set({
+    status: "promoting",
+    updatedAt: new Date(),
+  }).where(eq(runs.id, planningRun.id));
+
   const newPlanId = randomUUID();
   await db.insert(plans).values({
     id: newPlanId,
@@ -122,7 +128,22 @@ export async function promotePlanningRun(args: {
         }])
   );
 
-  startSupervisorRun(newRunId);
+  try {
+    startSupervisorRun(newRunId);
+  } catch (error) {
+    await db.update(runs).set({
+      status: previousPlanningStatus,
+      updatedAt: new Date(),
+    }).where(eq(runs.id, planningRun.id));
+    throw error;
+  }
+
+  await db.update(runs).set({
+    status: "promoted",
+    specPath: planningRun.specPath || artifacts.specPath || null,
+    artifactPlanPath: selectedPlanPath,
+    updatedAt: new Date(),
+  }).where(eq(runs.id, planningRun.id));
 
   return {
     runId: newRunId,

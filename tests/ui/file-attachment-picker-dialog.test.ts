@@ -11,7 +11,7 @@ test("file attachment picker supports searching and attaching multiple files fro
   expect(dialogSource).toContain('queryKey: ["attachable-files", rootPath]');
   expect(dialogSource).toContain('placeholder="Search files..."');
   expect(dialogSource).toContain("selectedFiles.includes(filePath)");
-  expect(dialogSource).toContain("setSelectedFiles((current) =>");
+  expect(dialogSource).toContain("fileAttachmentPickerManager.toggleFile(filePath)");
   expect(dialogSource).toContain("Attach Selected Files");
   expect(dialogSource).toContain("onSelect(selectedFiles.map");
 });

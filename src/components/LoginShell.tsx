@@ -1,9 +1,11 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent } from "react";
 import { LoaderCircle, Lock, Smartphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { loginShellManager } from "@/components/component-state-managers";
+import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 
 interface LoginShellProps {
   error?: string | null;
@@ -22,7 +24,7 @@ export function LoginShell({
   pairError,
   onSubmit,
 }: LoginShellProps) {
-  const [password, setPassword] = useState("");
+  const { password } = useManagerSnapshot(loginShellManager);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -76,7 +78,7 @@ export function LoginShell({
                 type="password"
                 autoComplete="current-password"
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={(event) => loginShellManager.setPassword(event.target.value)}
                 placeholder="Enter instance password"
                 className="h-11 rounded-xl"
               />

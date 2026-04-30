@@ -142,6 +142,38 @@ describe("GET /api/events", () => {
     expect(payload.messages.find((message: { runId: string }) => message.runId === runId)?.content).toBe("Start snapshot conversation");
   });
 
+  it("does not surface transient bridge agent-list failures as frontend errors", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/transient-bridge-list.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      title: "Transient bridge list failure",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const networkError = Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
+    global.fetch = vi.fn().mockRejectedValue(new TypeError("fetch failed", { cause: networkError }));
+
+    const response = await GET(new NextRequest("http://localhost/api/events?snapshot=1"));
+    const payload = await response.json();
+
+    expect(payload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Transient bridge list failure");
+    expect(payload.frontendErrors).toEqual([]);
+  });
+
   it("streams run and worker state after conversation session sync", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

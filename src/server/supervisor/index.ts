@@ -1,18 +1,19 @@
 import { randomUUID } from "crypto";
+import { spawnSync } from "child_process";
 import fs from "fs";
 import path from "path";
-import { TokenJS } from "token.js";
+import { Agent } from "@mastra/core/agent";
 import { eq } from "drizzle-orm";
 import * as bridge from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { clarifications, executionEvents, messages as dbMessages, runs, settings, supervisorInterventions, workers } from "@/server/db/schema";
-import { configureSupervisorModel, getSupervisorModelConfig, validateSupervisorModelConfig } from "@/server/supervisor/model-config";
+import { buildMastraModelConfig, getSupervisorModelConfig, validateSupervisorModelConfig } from "@/server/supervisor/model-config";
 import { SUPERVISOR_SYSTEM_PROMPT } from "@/server/prompts";
 import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { buildSupervisorTools } from "@/server/supervisor/tools";
 import { buildSupervisorTurnContext } from "@/server/supervisor/context";
 import { buildSupervisorModelMessages } from "@/server/supervisor/context-window";
-import { parseSupervisorToolCall, SupervisorProtocolError } from "@/server/supervisor/protocol";
+import { parseSupervisorToolCallFromMastra, SupervisorProtocolError } from "@/server/supervisor/protocol";
 import { retrySupervisorRequest } from "@/server/supervisor/retry";
 import { selectSpawnableWorkerType } from "@/server/supervisor/worker-availability";
 import { parseAllowedWorkerTypes, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
@@ -47,6 +48,22 @@ function asNumber(value: unknown, field: string) {
   return value;
 }
 
+function asOptionalString(value: unknown, field: string) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  return asString(value, field);
+}
+
+function asStringArray(value: unknown, field: string) {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new SupervisorProtocolError(`Tool argument "${field}" must be an array of strings.`);
+  }
+
+  return value.map((item) => item.trim()).filter(Boolean);
+}
+
 function normalizeBridgeWorkerMode(value: unknown) {
   if (typeof value !== "string") {
     return undefined;
@@ -62,6 +79,10 @@ function normalizeBridgeWorkerMode(value: unknown) {
 
 const WORKER_YOLO_MODE_SETTING = "WORKER_YOLO_MODE";
 const SUPERVISOR_FILE_READ_LIMIT = 60_000;
+const SUPERVISOR_INSPECT_OUTPUT_LIMIT = 20_000;
+const SUPERVISOR_INSPECT_TIMEOUT_MS = 10_000;
+const WORKER_BUSY_RETRY_DELAY_MS = 5_000;
+const SUPERVISOR_INSPECT_COMMANDS = new Set(["rg", "grep", "find", "sed", "awk", "head", "tail", "wc", "ls", "pwd"]);
 
 function parseBooleanSettingValue(value: string | null | undefined, defaultValue: boolean) {
   if (typeof value !== "string") {
@@ -98,6 +119,18 @@ function isMissingAgentError(error: unknown) {
   return message.includes("404") || message.includes("not_found") || message.includes("agent not found");
 }
 
+function formatSupervisorError(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function truncate(text: string, maxLength: number) {
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function isAgentBusyError(error: unknown) {
+  return /\bagent is busy\b/i.test(formatSupervisorError(error));
+}
+
 function resolveSupervisorReadPath(requestedPath: string, projectPath: string | null | undefined) {
   if (path.isAbsolute(requestedPath)) {
     return requestedPath;
@@ -119,6 +152,70 @@ function readSupervisorFile(requestedPath: string, projectPath: string | null | 
     absolutePath,
     content: truncated ? rawContent.slice(0, SUPERVISOR_FILE_READ_LIMIT) : rawContent,
     truncated,
+  };
+}
+
+function isPathInside(childPath: string, parentPath: string) {
+  const relative = path.relative(parentPath, childPath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function resolveSupervisorInspectionCwd(cwd: string | null, projectPath: string | null | undefined) {
+  const projectRoot = path.resolve(projectPath || process.cwd());
+  const requestedCwd = cwd
+    ? path.isAbsolute(cwd)
+      ? path.resolve(cwd)
+      : path.resolve(projectRoot, cwd)
+    : projectRoot;
+
+  if (!isPathInside(requestedCwd, projectRoot)) {
+    throw new SupervisorProtocolError(`Inspection cwd must stay inside the run project directory: ${requestedCwd}`);
+  }
+
+  return requestedCwd;
+}
+
+function validateSupervisorInspectArgs(command: string, args: string[]) {
+  if (!SUPERVISOR_INSPECT_COMMANDS.has(command)) {
+    throw new SupervisorProtocolError(`Unsupported inspection command "${command}".`);
+  }
+
+  if (args.some((arg) => arg.includes("\0"))) {
+    throw new SupervisorProtocolError("Inspection arguments cannot contain NUL bytes.");
+  }
+
+  if (command === "find" && args.some((arg) => ["-delete", "-exec", "-execdir", "-ok", "-okdir"].includes(arg))) {
+    throw new SupervisorProtocolError("find inspection cannot use mutation or execution flags.");
+  }
+
+  if (command === "sed" && args.some((arg) => arg === "-i" || arg.startsWith("-i"))) {
+    throw new SupervisorProtocolError("sed inspection cannot edit files in place.");
+  }
+
+  if (command === "awk" && args.some((arg) => /\bsystem\s*\(/.test(arg))) {
+    throw new SupervisorProtocolError("awk inspection cannot execute shell commands.");
+  }
+}
+
+function runSupervisorInspection(command: string, args: string[], cwd: string) {
+  validateSupervisorInspectArgs(command, args);
+
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding: "utf8",
+    shell: false,
+    timeout: SUPERVISOR_INSPECT_TIMEOUT_MS,
+    maxBuffer: SUPERVISOR_INSPECT_OUTPUT_LIMIT * 4,
+  });
+
+  const stdout = typeof result.stdout === "string" ? result.stdout : "";
+  const stderr = typeof result.stderr === "string" ? result.stderr : "";
+  const output = truncate([stdout, stderr ? `stderr:\n${stderr}` : ""].filter(Boolean).join("\n"), SUPERVISOR_INSPECT_OUTPUT_LIMIT);
+
+  return {
+    exitCode: result.status ?? (result.error ? 1 : 0),
+    output,
+    error: result.error instanceof Error ? result.error.message : null,
   };
 }
 
@@ -283,6 +380,24 @@ async function persistWorkerOutput(workerId: string, output: string) {
   notifyEventStreamSubscribers();
 }
 
+async function deferBusyWorkerPrompt(runId: string, workerId: string, prompt: string, error: unknown): Promise<SupervisorRunResult> {
+  const errorMessage = formatSupervisorError(error);
+  const summary = `${workerId} is already busy; waiting before sending another prompt.`;
+
+  await db.update(workers).set({
+    status: "working",
+    updatedAt: new Date(),
+  }).where(eq(workers.id, workerId));
+  await insertExecutionEvent(runId, "worker_prompt_deferred", {
+    summary,
+    prompt,
+    error: errorMessage,
+  }, workerId);
+  await insertRunMessage(runId, "system", summary, "supervisor_action");
+
+  return { state: "wait", delayMs: WORKER_BUSY_RETRY_DELAY_MS };
+}
+
 async function cancelRunWorkers(runId: string) {
   const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
   for (const worker of runWorkers) {
@@ -321,21 +436,15 @@ export class Supervisor {
 
     const llmConfig = getSupervisorModelConfig(process.env);
     validateSupervisorModelConfig(llmConfig, decryptionFailures);
-    const tokenjs = new TokenJS({
-      apiKey: llmConfig.apiKey,
-      baseURL: llmConfig.baseURL,
-    });
-    configureSupervisorModel(process.env, tokenjs);
 
     return {
-      tokenjs,
       llmConfig,
       envParams,
       yoloModeEnabled: parseBooleanSettingValue(settingValues.get(WORKER_YOLO_MODE_SETTING), true),
     };
   }
 
-  private async requestToolCalls(tokenjs: TokenJS, llmConfig: ReturnType<typeof configureSupervisorModel>, heartbeatCount: number) {
+  private async requestToolCalls(llmConfig: ReturnType<typeof getSupervisorModelConfig>, heartbeatCount: number) {
     const context = await buildSupervisorTurnContext(this.runId);
     const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
     if (!run) {
@@ -359,18 +468,24 @@ export class Supervisor {
       });
     }
 
-    const completion = await retrySupervisorRequest(() => tokenjs.chat.completions.create({
-      provider: llmConfig.provider as never,
-      model: llmConfig.model as never,
-      messages: promptBundle.messages,
+    const agent = new Agent({
+      id: "omniharness-supervisor",
+      name: "OmniHarness Supervisor",
+      instructions: SUPERVISOR_SYSTEM_PROMPT,
+      model: buildMastraModelConfig(llmConfig),
       tools: buildSupervisorTools({
         preferredWorkerType: context.preferredWorkerType,
         allowedWorkerTypes: context.allowedWorkerTypes,
       }),
-      tool_choice: "required",
+    });
+
+    const completion = await retrySupervisorRequest(() => agent.generate(promptBundle.messages, {
+      maxSteps: 1,
+      toolChoice: "required",
+      runId: `${this.runId}:heartbeat:${heartbeatCount}`,
     }));
 
-    return completion.choices[0]?.message?.tool_calls as Parameters<typeof parseSupervisorToolCall>[0];
+    return completion.toolCalls;
   }
 
   private async loadActiveRun() {
@@ -399,7 +514,7 @@ export class Supervisor {
       return { state: "completed" };
     }
 
-    const { tokenjs, llmConfig, envParams, yoloModeEnabled } = await this.createModel();
+    const { llmConfig, envParams, yoloModeEnabled } = await this.createModel();
 
     if (!await this.loadActiveRun()) {
       return { state: "completed" };
@@ -421,12 +536,12 @@ export class Supervisor {
       return { state: "paused" };
     }
 
-    const toolCalls = await this.requestToolCalls(tokenjs, llmConfig, 0);
+    const toolCalls = await this.requestToolCalls(llmConfig, 0);
     if (!await this.loadActiveRun()) {
       return { state: "completed" };
     }
 
-    const action = parseSupervisorToolCall(toolCalls);
+    const action = parseSupervisorToolCallFromMastra(toolCalls);
 
     switch (action.name) {
         case "worker_spawn": {
@@ -546,6 +661,10 @@ export class Supervisor {
               workerId,
             );
           } catch (error) {
+            if (isAgentBusyError(error)) {
+              return deferBusyWorkerPrompt(this.runId, workerId, prompt, error);
+            }
+
             const errorMessage = error instanceof Error ? error.message : String(error);
             await db.update(workers).set({
               status: "error",
@@ -565,7 +684,16 @@ export class Supervisor {
           const workerId = asString(action.args.workerId, "workerId");
           const prompt = asString(action.args.prompt, "prompt");
           const interventionType = typeof action.args.interventionType === "string" ? action.args.interventionType : null;
-          const response = await bridge.askAgent(workerId, prompt);
+          let response: Awaited<ReturnType<typeof bridge.askAgent>>;
+          try {
+            response = await bridge.askAgent(workerId, prompt);
+          } catch (error) {
+            if (isAgentBusyError(error)) {
+              return deferBusyWorkerPrompt(this.runId, workerId, prompt, error);
+            }
+
+            throw error;
+          }
           if (!await this.loadActiveRun()) {
             await this.cleanupWorkerAfterInactiveRun(workerId);
             return { state: "completed" };
@@ -705,6 +833,35 @@ export class Supervisor {
             this.runId,
             "system",
             `Read ${requestedPath} for supervisor context${truncated ? " (truncated)." : "."}`,
+            "supervisor_action",
+          );
+          return { state: "wait", delayMs: 1_000 };
+        }
+
+        case "inspect_repo": {
+          const command = asString(action.args.command, "command");
+          const args = asStringArray(action.args.args, "args");
+          const requestedCwd = asOptionalString(action.args.cwd, "cwd");
+          const reason = asOptionalString(action.args.reason, "reason");
+          const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+          const cwd = resolveSupervisorInspectionCwd(requestedCwd, run?.projectPath);
+          const result = runSupervisorInspection(command, args, cwd);
+          const displayCommand = [command, ...args].join(" ");
+          const summary = `Inspected repository with ${displayCommand}${reason ? `: ${reason}` : "."}`;
+          await insertExecutionEvent(this.runId, "supervisor_repo_inspected", {
+            summary,
+            command,
+            args,
+            cwd,
+            reason,
+            exitCode: result.exitCode,
+            output: result.output,
+            error: result.error,
+          });
+          await insertRunMessage(
+            this.runId,
+            "system",
+            `${summary}\n\nExit code: ${result.exitCode}\n${result.output || result.error || "(no output)"}`,
             "supervisor_action",
           );
           return { state: "wait", delayMs: 1_000 };

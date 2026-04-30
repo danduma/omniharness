@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Folder, ArrowUpCircle } from "lucide-react";
 import { normalizeAppError, requestJson } from "@/lib/app-errors";
+import { folderPickerManager } from "@/components/component-state-managers";
+import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 
 export function FolderPickerDialog({ 
   open, 
@@ -18,8 +20,7 @@ export function FolderPickerDialog({
   onOpenChange: (o: boolean) => void; 
   onSelect: (path: string) => void; 
 }) {
-  const [currentPath, setCurrentPath] = useState("");
-  const [search, setSearch] = useState("");
+  const { currentPath, search } = useManagerSnapshot(folderPickerManager);
 
   const { data, error, refetch } = useQuery({
     queryKey: ["fs", currentPath],
@@ -50,8 +51,7 @@ export function FolderPickerDialog({
 
   const canGoUp = Boolean(data && data.parent && data.parent !== data.current);
   const handleNavigate = (path: string) => {
-    setCurrentPath(path);
-    setSearch("");
+    folderPickerManager.navigate(path);
   };
 
   return (
@@ -82,7 +82,7 @@ export function FolderPickerDialog({
           </div>
           <Input
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => folderPickerManager.setSearch(event.target.value)}
             placeholder="Search folders..."
             className="h-9"
           />

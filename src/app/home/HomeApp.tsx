@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { BootShell } from "@/components/BootShell";
 import { FileAttachmentPickerDialog, type AttachmentItem } from "@/components/FileAttachmentPickerDialog";
@@ -20,12 +20,15 @@ import { buildWorkerLists, isWorkerActiveStatus, mergeWorkerLiveStatus, type Con
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
-import { COMPOSER_WORKER_OPTIONS, DEFAULT_ALLOWED_WORKER_TYPES, WORKER_OPTIONS } from "./constants";
-import type { AgentSnapshot, AuthSessionResponse, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, LlmProfileTab, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, RunRecord, SettingsResponse, SettingsTab, SidebarGroup, SidebarRun, WorkerCatalogResponse, WorkerType } from "./types";
+import { COMPOSER_WORKER_OPTIONS, WORKER_OPTIONS } from "./constants";
+import type { AgentSnapshot, AuthSessionResponse, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, RunRecord, SettingsResponse, SidebarGroup, SidebarRun, WorkerCatalogResponse, WorkerType } from "./types";
+import { EventStreamStateManager } from "./EventStreamStateManager";
+import { homeUiSetters, homeUiStateManager, INITIAL_EVENT_STREAM_STATE } from "./HomeUiStateManager";
 import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
 import { useAppErrors } from "./useAppErrors";
 import { useConversationExecutionStatus } from "./useConversationExecutionStatus";
 import { useHomeLifecycle } from "./useHomeLifecycle";
+import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { useRunSelectionEffects } from "./useRunSelectionEffects";
 
 function resolveRepoName(projectPath: string | null) {
@@ -38,76 +41,103 @@ function resolveRepoName(projectPath: string | null) {
 }
 
 export function HomeApp() {
-  const [command, setCommand] = useState("");
-  const [themeMode, setThemeMode] = useState<"day" | "night">("day");
-  const [showSettings, setShowSettings] = useState(false);
-  const [showPairDeviceDialog, setShowPairDeviceDialog] = useState(false);
-  const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTab>("llm");
-  const [activeLlmProfileTab, setActiveLlmProfileTab] = useState<LlmProfileTab>("supervisor");
-  const [apiKeys, setApiKeys] = useState<Record<string, string>>({
-    SUPERVISOR_LLM_PROVIDER: 'gemini',
-    SUPERVISOR_LLM_MODEL: 'gemini-3.1-pro-preview',
-    SUPERVISOR_LLM_BASE_URL: '',
-    SUPERVISOR_LLM_API_KEY: '',
-    SUPERVISOR_FALLBACK_LLM_PROVIDER: 'openai',
-    SUPERVISOR_FALLBACK_LLM_MODEL: 'gpt-5.4-mini',
-    SUPERVISOR_FALLBACK_LLM_BASE_URL: '',
-    SUPERVISOR_FALLBACK_LLM_API_KEY: '',
-    CREDIT_STRATEGY: 'swap_account',
-    WORKER_DEFAULT_TYPE: 'codex',
-    WORKER_ALLOWED_TYPES: DEFAULT_ALLOWED_WORKER_TYPES,
-    WORKER_YOLO_MODE: 'true',
-    PROJECTS: '[]',
-  });
-  const [showFolderPicker, setShowFolderPicker] = useState(false);
-  const [showAttachmentPicker, setShowAttachmentPicker] = useState(false);
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
-  const [rightSidebarWidth, setRightSidebarWidth] = useState(420);
-  const [isResizingRightSidebar, setIsResizingRightSidebar] = useState(false);
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [mobileWorkersOpen, setMobileWorkersOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [draftProjectPath, setDraftProjectPath] = useState<string | null>(null);
-  const [commandCursor, setCommandCursor] = useState(0);
-  const [mentionIndex, setMentionIndex] = useState(0);
-  const [readMarkers, setReadMarkers] = useState<Record<string, string>>({});
-  const [collapsedProjectPaths, setCollapsedProjectPaths] = useState<Set<string>>(() => new Set());
-  const [renamingRunId, setRenamingRunId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState("");
-  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  const [editingMessageValue, setEditingMessageValue] = useState("");
-  const [expandedDirectMessageIds, setExpandedDirectMessageIds] = useState<Set<string>>(() => new Set());
-  const [routeReady, setRouteReady] = useState(false);
-  const [hasReceivedInitialEventStreamPayload, setHasReceivedInitialEventStreamPayload] = useState(false);
-  const [selectedConversationMode, setSelectedConversationMode] = useState<ConversationModeOption>("implementation");
-  const [selectedCliAgent, setSelectedCliAgent] = useState<ComposerWorkerOption>("auto");
-  const [selectedModel, setSelectedModel] = useState("gpt-5.4");
-  const [selectedEffort, setSelectedEffort] = useState("High");
-  const [hydratedRunSelectionId, setHydratedRunSelectionId] = useState<string | null>(null);
-  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
-  const [pairTokenFromUrl, setPairTokenFromUrl] = useState<string | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [pairRedeemError, setPairRedeemError] = useState<string | null>(null);
-  const [pairRedeemAttempted, setPairRedeemAttempted] = useState(false);
+  const {
+    command,
+    themeMode,
+    showSettings,
+    showPairDeviceDialog,
+    activeSettingsTab,
+    activeLlmProfileTab,
+    apiKeys,
+    showFolderPicker,
+    showAttachmentPicker,
+    selectedRunId,
+    rightSidebarOpen,
+    rightSidebarWidth,
+    isResizingRightSidebar,
+    mobileNavOpen,
+    mobileWorkersOpen,
+    searchQuery,
+    draftProjectPath,
+    commandCursor,
+    mentionIndex,
+    readMarkers,
+    collapsedProjectPaths,
+    renamingRunId,
+    renameValue,
+    editingMessageId,
+    editingMessageValue,
+    expandedDirectMessageIds,
+    routeReady,
+    hasReceivedInitialEventStreamPayload,
+    selectedConversationMode,
+    selectedCliAgent,
+    selectedModel,
+    selectedEffort,
+    hydratedRunSelectionId,
+    attachments,
+    pairTokenFromUrl,
+    authError,
+    pairRedeemError,
+    pairRedeemAttempted,
+    runtimeErrors,
+    settingsDiagnostics,
+  } = useManagerSnapshot(homeUiStateManager);
+  const {
+    setCommand,
+    setThemeMode,
+    setShowSettings,
+    setShowPairDeviceDialog,
+    setActiveSettingsTab,
+    setActiveLlmProfileTab,
+    setApiKeys,
+    setShowFolderPicker,
+    setShowAttachmentPicker,
+    setSelectedRunId,
+    setRightSidebarOpen,
+    setRightSidebarWidth,
+    setIsResizingRightSidebar,
+    setMobileNavOpen,
+    setMobileWorkersOpen,
+    setSearchQuery,
+    setDraftProjectPath,
+    setCommandCursor,
+    setMentionIndex,
+    setReadMarkers,
+    setCollapsedProjectPaths,
+    setRenamingRunId,
+    setRenameValue,
+    setEditingMessageId,
+    setEditingMessageValue,
+    setExpandedDirectMessageIds,
+    setRouteReady,
+    setHasReceivedInitialEventStreamPayload,
+    setSelectedConversationMode,
+    setSelectedCliAgent,
+    setSelectedModel,
+    setSelectedEffort,
+    setHydratedRunSelectionId,
+    setAttachments,
+    setPairTokenFromUrl,
+    setAuthError,
+    setPairRedeemError,
+    setPairRedeemAttempted,
+    setRuntimeErrors,
+    setSettingsDiagnostics,
+  } = homeUiSetters;
   
-  const [state, setState] = useState<EventStreamState>({
-    messages: [],
-    plans: [],
-    runs: [],
-    accounts: [],
-    agents: [],
-    workers: [],
-    planItems: [],
-    clarifications: [],
-    validationRuns: [],
-    executionEvents: [],
-    supervisorInterventions: [],
-    frontendErrors: [],
-  });
-  const [runtimeErrors, setRuntimeErrors] = useState<AppErrorDescriptor[]>([]);
-  const [settingsDiagnostics, setSettingsDiagnostics] = useState<AppErrorDescriptor[]>([]);
-
+  const stateManager = useMemo(() => new EventStreamStateManager(INITIAL_EVENT_STREAM_STATE), []);
+  const state = useSyncExternalStore(
+    useCallback((listener) => stateManager.subscribe(listener), [stateManager]),
+    useCallback(() => stateManager.getSnapshot(), [stateManager]),
+    () => INITIAL_EVENT_STREAM_STATE,
+  );
+  const setState = useCallback<React.Dispatch<React.SetStateAction<EventStreamState>>>(
+    (action) => {
+      stateManager.update(action);
+    },
+    [stateManager],
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
   const commandInputRef = useRef<HTMLTextAreaElement>(null);
   const pendingDeletedRunIdsRef = useRef<Set<string>>(new Set());
@@ -256,7 +286,7 @@ export function HomeApp() {
       setMobileWorkersOpen(false);
     }
     setExpandedDirectMessageIds(new Set());
-  }, [selectedRunId]);
+  }, [selectedRunId, setExpandedDirectMessageIds, setMobileWorkersOpen, setRightSidebarOpen]);
 
   const saveSettings = useMutation({
     mutationFn: async () => {
@@ -301,8 +331,11 @@ export function HomeApp() {
       const previousSelectedRunId = selectedRunId;
       const previousRenamingRunId = renamingRunId;
       const previousRenameValue = renameValue;
+      const previousPendingCreatedSnapshot = pendingCreatedConversationSnapshotsRef.current.get(variables.runId);
+      const hadPendingCreatedSnapshot = pendingCreatedConversationSnapshotsRef.current.has(variables.runId);
 
       pendingDeletedRunIdsRef.current.add(variables.runId);
+      pendingCreatedConversationSnapshotsRef.current.delete(variables.runId);
       setState((current: typeof state) => removeRunFromHomeState(current, variables.runId));
 
       if (selectedRunId === variables.runId) {
@@ -318,6 +351,8 @@ export function HomeApp() {
         previousSelectedRunId,
         previousRenamingRunId,
         previousRenameValue,
+        previousPendingCreatedSnapshot,
+        hadPendingCreatedSnapshot,
       };
     },
     mutationFn: async ({ runId }: { runId: string }) => {
@@ -337,6 +372,9 @@ export function HomeApp() {
       }
 
       pendingDeletedRunIdsRef.current.delete(_variables.runId);
+      if (context.hadPendingCreatedSnapshot && context.previousPendingCreatedSnapshot) {
+        pendingCreatedConversationSnapshotsRef.current.set(_variables.runId, context.previousPendingCreatedSnapshot);
+      }
       setState(context.previousState);
       setSelectedRunId(context.previousSelectedRunId);
       setRenamingRunId(context.previousRenamingRunId);
@@ -692,7 +730,7 @@ export function HomeApp() {
     }
 
     setSelectedModel(activeWorkerModelOptions[0].value);
-  }, [activeWorkerModelOptions, activeWorkerModelType, selectedModel]);
+  }, [activeWorkerModelOptions, activeWorkerModelType, selectedModel, setSelectedModel]);
 
   const selectedRunWorkers = useMemo(() => {
     if (!selectedRunId || !state.workers) {
@@ -721,6 +759,11 @@ export function HomeApp() {
     () => mergeWorkerLiveStatus(selectedRunWorkers, conversationAgents),
     [conversationAgents, selectedRunWorkers],
   );
+  useEffect(() => {
+    if (selectedRunId && isImplementationConversation && selectedRunWorkersForDisplay.length > 0) {
+      setRightSidebarOpen(true);
+    }
+  }, [isImplementationConversation, selectedRunId, selectedRunWorkersForDisplay.length, setRightSidebarOpen]);
   const primaryConversationAgent = useMemo(() => {
     if (!isDirectConversation) {
       return conversationAgents[0] ?? null;
@@ -938,7 +981,7 @@ export function HomeApp() {
 
   useEffect(() => {
     setMentionIndex(0);
-  }, [activeMention?.query, currentProjectScope]);
+  }, [activeMention?.query, currentProjectScope, setMentionIndex]);
 
   const applyMention = (filePath: string) => {
     if (!activeMention) {
@@ -1227,7 +1270,6 @@ export function HomeApp() {
           showConversationExecution={showConversationExecution}
           liveExecutionStatus={liveExecutionStatus}
           liveThoughts={liveThoughts}
-          conversationWorkerGroups={conversationWorkerGroups}
           onStopWorker={(workerId) => {
             if (selectedRunId) {
               stopWorker.mutate({ runId: selectedRunId, workerId });

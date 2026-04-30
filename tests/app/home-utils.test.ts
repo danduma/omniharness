@@ -308,13 +308,88 @@ describe("home utils", () => {
     expect(preserved.runs.map((run) => run.id)).toEqual(["run-1"]);
     expect(pendingSnapshots.has("run-1")).toBe(true);
 
+    const caughtUpAtMs = 1_000;
     const caughtUp = mergePendingCreatedConversationSnapshots({
       ...staleState,
+      plans: [{ id: "plan-1", path: "vibes/ad-hoc/new.md" }],
       runs: [buildRun({ id: "run-1", planId: "plan-1" })],
-    }, pendingSnapshots);
+      messages: [{
+        id: "message-1",
+        runId: "run-1",
+        role: "user",
+        kind: "checkpoint",
+        content: "Start this",
+        createdAt: "2026-04-27T00:01:00.000Z",
+      }],
+    }, pendingSnapshots, caughtUpAtMs);
 
     expect(caughtUp.runs.map((run) => run.id)).toEqual(["run-1"]);
+    expect(pendingSnapshots.has("run-1")).toBe(true);
+
+    mergePendingCreatedConversationSnapshots({
+      ...staleState,
+      plans: [{ id: "plan-1", path: "vibes/ad-hoc/new.md" }],
+      runs: [buildRun({ id: "run-1", planId: "plan-1" })],
+      messages: [{
+        id: "message-1",
+        runId: "run-1",
+        role: "user",
+        kind: "checkpoint",
+        content: "Start this",
+        createdAt: "2026-04-27T00:01:00.000Z",
+      }],
+    }, pendingSnapshots, caughtUpAtMs + 10_000);
+
     expect(pendingSnapshots.has("run-1")).toBe(false);
+  });
+
+  it("keeps a newly created conversation through late stale payloads after the server first includes it", () => {
+    const pendingSnapshots = new Map([
+      ["run-1", {
+        plan: { id: "plan-1", path: "vibes/ad-hoc/new.md" },
+        run: buildRun({ id: "run-1", planId: "plan-1" }),
+        message: {
+          id: "message-1",
+          runId: "run-1",
+          role: "user",
+          kind: "checkpoint",
+          content: "Start this",
+          createdAt: "2026-04-27T00:01:00.000Z",
+        },
+      }],
+    ]);
+    const staleState: EventStreamState = {
+      messages: [],
+      plans: [],
+      runs: [],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      validationRuns: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+    };
+
+    mergePendingCreatedConversationSnapshots({
+      ...staleState,
+      plans: [{ id: "plan-1", path: "vibes/ad-hoc/new.md" }],
+      runs: [buildRun({ id: "run-1", planId: "plan-1" })],
+      messages: [{
+        id: "message-1",
+        runId: "run-1",
+        role: "user",
+        kind: "checkpoint",
+        content: "Start this",
+        createdAt: "2026-04-27T00:01:00.000Z",
+      }],
+    }, pendingSnapshots);
+
+    const lateStale = mergePendingCreatedConversationSnapshots(staleState, pendingSnapshots);
+
+    expect(lateStale.runs.map((run) => run.id)).toEqual(["run-1"]);
+    expect(pendingSnapshots.has("run-1")).toBe(true);
   });
 
   it("keeps pending deleted conversations out of live event stream snapshots", () => {

@@ -11,7 +11,7 @@ test("dev:web does not opt into Turbopack while Next dev HMR ping messages are i
   expect(packageJson.scripts?.["dev:web"]).toBe("next dev");
 });
 
-test("webpack config aliases optional token.js encoding support away for local dev", () => {
+test("webpack config aliases optional encoding package away for local dev", () => {
   expect(typeof nextConfig.webpack).toBe("function");
 
   const config = { resolve: { alias: {} as Record<string, false | string> } };

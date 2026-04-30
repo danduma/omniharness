@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, FileText } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { normalizeAppError, requestJson } from "@/lib/app-errors";
+import { fileAttachmentPickerManager } from "@/components/component-state-managers";
+import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 
 export interface AttachmentItem {
   kind: "file";
@@ -36,8 +38,7 @@ export function FileAttachmentPickerDialog({
   rootPath?: string | null;
   onSelect: (attachments: AttachmentItem[]) => void;
 }) {
-  const [search, setSearch] = useState("");
-  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
+  const { search, selectedFiles } = useManagerSnapshot(fileAttachmentPickerManager);
 
   const { data, error } = useQuery<ProjectFilesResponse>({
     queryKey: ["attachable-files", rootPath],
@@ -54,8 +55,7 @@ export function FileAttachmentPickerDialog({
 
   useEffect(() => {
     if (!open) {
-      setSearch("");
-      setSelectedFiles([]);
+      fileAttachmentPickerManager.reset();
     }
   }, [open]);
 
@@ -70,11 +70,7 @@ export function FileAttachmentPickerDialog({
   }, [data?.files, search]);
 
   const toggleFile = (filePath: string) => {
-    setSelectedFiles((current) =>
-      current.includes(filePath)
-        ? current.filter((candidate) => candidate !== filePath)
-        : [...current, filePath]
-    );
+    fileAttachmentPickerManager.toggleFile(filePath);
   };
 
   return (
@@ -89,7 +85,7 @@ export function FileAttachmentPickerDialog({
           </div>
           <Input
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => fileAttachmentPickerManager.setSearch(event.target.value)}
             placeholder="Search files..."
             className="h-10"
           />

@@ -88,6 +88,13 @@ function buildMissingBridgeEmptyDiagnostic(worker: PersistedWorkerRecord | null)
   return "Worker is idle with no recorded output, and the bridge no longer has a live session for it.";
 }
 
+function outputEntriesText(entries: NonNullable<AgentRecord["outputEntries"]>) {
+  return entries
+    .map((entry) => entry.text.trim())
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 export function buildLiveWorkerSnapshot(args: {
   agent?: unknown | null;
   worker?: PersistedWorkerRecord | null;
@@ -113,11 +120,12 @@ export function buildLiveWorkerSnapshot(args: {
     const structuredOutput = cleanStructuredOutput(normalizedAgent.renderedOutput);
     const liveText = normalizedAgent.currentText.length > 0 ? normalizedAgent.currentText : "";
     const outputEntries = normalizedAgent.outputEntries?.length ? normalizedAgent.outputEntries : persistedOutputEntries;
+    const structuredEntriesText = outputEntriesText(outputEntries);
     const emptyStopDiagnostic = !structuredOutput && !liveText && outputEntries.length === 0 && !outputLog && !normalizedAgent.lastText && !persistedLastText
       ? buildEmptyStopDiagnostic(normalizedAgent.stopReason)
       : "";
-    const lastText = normalizedAgent.lastText || persistedLastText || outputLog || emptyStopDiagnostic;
-    const displayBase = structuredOutput || outputLog || lastText || "";
+    const lastText = normalizedAgent.lastText || persistedLastText || outputLog || structuredEntriesText || emptyStopDiagnostic;
+    const displayBase = structuredOutput || outputLog || lastText || structuredEntriesText || "";
     const displayText = liveText && !structuredOutput ? appendLiveText(displayBase, liveText) : displayBase;
 
     return {
@@ -146,8 +154,9 @@ export function buildLiveWorkerSnapshot(args: {
   const missingBridgeDiagnostic = persistedOutputEntries.length === 0
     ? buildMissingBridgeEmptyDiagnostic(worker)
     : "";
-  const lastText = persistedLastText || outputLog || missingBridgeDiagnostic;
-  const displayText = outputLog || missingBridgeDiagnostic;
+  const structuredEntriesText = outputEntriesText(persistedOutputEntries);
+  const lastText = persistedLastText || outputLog || structuredEntriesText || missingBridgeDiagnostic;
+  const displayText = outputLog || persistedLastText || structuredEntriesText || missingBridgeDiagnostic;
 
   return {
     name: worker?.id ?? "",

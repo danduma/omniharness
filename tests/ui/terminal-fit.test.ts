@@ -31,21 +31,21 @@ test("terminal renders thoughts behind a collapsible thinking summary", () => {
   expect(terminalSource).toContain('return duration ? `Thought for ${duration}` : "Thought";');
   expect(terminalSource).not.toContain('return "<1s";');
   expect(terminalSource).toContain("animate-pulse");
-  expect(terminalSource).toContain("useState(activity.inProgress)");
+  expect(terminalSource).toContain("thoughtOpenById[activity.id] ?? activity.inProgress");
 });
 
 test("terminal keeps tool output compact and expandable", () => {
   expect(terminalSource).toContain("const TOOL_OUTPUT_PREVIEW_LINES = 3");
   expect(terminalSource).toContain("isTerminalToolStatus(activity.status)");
-  expect(terminalSource).toContain("setDetailsOpen(false)");
-  expect(terminalSource).toContain("setOutputExpanded(false)");
+  expect(terminalSource).toContain("isDone ? false : toolDetailsOpenById[activity.id] ?? true");
+  expect(terminalSource).toContain("isDone ? false : toolOutputExpandedById[activity.id] ?? false");
   expect(terminalSource).toContain("shouldShowToolStatusBadge(activity.status)");
   expect(terminalSource).toContain("shouldShowToolSpinner(activity.status)");
   expect(terminalSource).toContain('return !["completed", "done", "in_progress", "working"].includes(status);');
   expect(terminalSource).toContain('return ["in_progress", "working"].includes(status);');
   expect(terminalSource).toContain("<LoaderCircle");
   expect(terminalSource).toContain('"h-3 w-3 shrink-0 animate-spin"');
-  expect(terminalSource).toContain("onClick={() => setDetailsOpen((open) => {");
+  expect(terminalSource).toContain("terminalUiManager.setToolDetailsOpen(activity.id, !detailsOpen)");
   expect(terminalSource).toContain("line-clamp-[3]");
   expect(terminalSource).toContain("Click to expand full output");
   expect(terminalSource).toContain("ChevronDown");

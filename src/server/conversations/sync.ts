@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { runs, workers } from "@/server/db/schema";
-import { collectPlannerArtifacts } from "@/server/planning/artifacts";
+import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { normalizeAgentRecord } from "@/server/bridge-client";
 import { persistRunFailure } from "@/server/runs/failures";
 import { isTerminalRunStatus } from "@/server/runs/status";
@@ -110,27 +110,12 @@ export async function syncConversationSessions(rawAgents: unknown[]) {
     const nextRunState = resolveSyncedRunState(agent);
 
     if (run.mode === "planning") {
-      const outputText = [
-        agent.renderedOutput,
-        agent.currentText,
-        agent.lastText,
-        ...(agent.outputEntries ?? []).map((entry) => entry.text),
-      ]
-        .filter(Boolean)
-        .join("\n\n");
-      const artifacts = await collectPlannerArtifacts({
-        cwd: agent.cwd || worker.cwd,
-        outputText,
+      await refreshPlanningArtifactsForRun({
+        run,
+        worker,
+        snapshot: agent,
+        status: nextRunState === "running" ? "working" : undefined,
       });
-
-      await db.update(runs).set({
-        status: nextRunState,
-        lastError: agent.lastError || run.lastError,
-        specPath: artifacts.specPath,
-        artifactPlanPath: artifacts.planPath,
-        plannerArtifactsJson: JSON.stringify(artifacts),
-        updatedAt: new Date(),
-      }).where(eq(runs.id, run.id));
       continue;
     }
 
@@ -162,6 +147,15 @@ export async function syncConversationSessions(rawAgents: unknown[]) {
     }
 
     const nextRunState = resolvePersistedRunState(worker);
+    if (run.mode === "planning") {
+      await refreshPlanningArtifactsForRun({
+        run,
+        worker,
+        status: nextRunState === "running" ? "working" : undefined,
+      });
+      continue;
+    }
+
     if (nextRunState === run.status) {
       continue;
     }

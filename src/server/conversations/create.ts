@@ -13,6 +13,7 @@ import { persistRunFailure } from "@/server/runs/failures";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 
 interface AttachmentInput {
   kind?: string;
@@ -104,7 +105,7 @@ export async function createConversation(args: {
   await db.insert(plans).values({
     id: planId,
     path: planPath,
-    status: "running",
+    status: mode === "planning" ? "starting" : "running",
     createdAt: new Date(),
     updatedAt: new Date(),
   });
@@ -120,7 +121,7 @@ export async function createConversation(args: {
     preferredWorkerModel: args.preferredWorkerModel?.trim() || null,
     preferredWorkerEffort: args.preferredWorkerEffort?.trim().toLowerCase() || null,
     allowedWorkerTypes: JSON.stringify(allowedWorkerTypes),
-    status: "running",
+    status: mode === "planning" ? "starting" : "running",
     createdAt: new Date(),
     updatedAt: new Date(),
   });
@@ -165,6 +166,15 @@ export async function createConversation(args: {
       model: args.preferredWorkerModel?.trim() || undefined,
       effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
     });
+
+    if (mode === "planning") {
+      await db.update(runs).set({
+        status: "working",
+        updatedAt: new Date(),
+      }).where(eq(runs.id, runId));
+      notifyEventStreamSubscribers();
+    }
+
     const response = await askAgent(workerId, buildInitialWorkerPrompt(mode, command));
     let snapshot: AgentRecord | null = null;
     try {
@@ -212,6 +222,20 @@ export async function createConversation(args: {
       workerId,
       createdAt: new Date(),
     });
+
+    if (mode === "planning") {
+      const latestRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+      const latestWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+      if (latestRun) {
+        await refreshPlanningArtifactsForRun({
+          run: latestRun,
+          worker: latestWorker,
+          snapshot,
+          responseText: response.response,
+        });
+      }
+    }
+
     notifyEventStreamSubscribers();
   }
 

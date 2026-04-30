@@ -1,22 +1,40 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, type CSSProperties } from "react";
 import { Check, ChevronDown, LoaderCircle, MoreHorizontal } from "lucide-react";
+import { MarkdownContent } from "@/components/MarkdownContent";
+import { terminalUiManager } from "@/components/component-state-managers";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { buildAgentOutputActivity, formatActivityStatus, type AgentActivityItem, type AgentOutputEntry } from "@/lib/agent-output";
 import { cn } from "@/lib/utils";
+import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 
 interface TerminalProps {
   agent?: AgentTerminalPayload | null;
+  userMessages?: TerminalUserMessage[];
   variant?: "terminal" | "native";
   className?: string;
+}
+
+interface TerminalUserMessage {
+  id: string;
+  content: string;
+  createdAt: string;
 }
 
 export interface AgentTerminalPayload {
   outputEntries?: AgentOutputEntry[];
   currentText?: string;
   lastText?: string;
+  displayText?: string;
 }
+
+type TerminalActivityItem = AgentActivityItem | {
+  id: string;
+  kind: "user_message";
+  text: string;
+  timestamp: string;
+};
 
 const TOOL_OUTPUT_PREVIEW_LINES = 3;
 const TERMINAL_TOOL_STATUSES = new Set(["completed", "done", "failed", "error", "cancelled"]);
@@ -42,7 +60,7 @@ export const TERMINAL_ZOOM_LEVELS = [
   { value: "largest", label: "Largest", notch: 3, scale: 1.36 },
 ] as const;
 
-type TerminalZoomLevel = (typeof TERMINAL_ZOOM_LEVELS)[number]["value"];
+export type TerminalZoomLevel = (typeof TERMINAL_ZOOM_LEVELS)[number]["value"];
 
 function toScaledPx(baseSize: number, scale: number) {
   return `${Math.round(baseSize * scale * 10) / 10}px`;
@@ -70,6 +88,28 @@ export function shouldTerminalFollowLatest(
   metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
 ) {
   return metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop <= TERMINAL_BOTTOM_THRESHOLD_PX;
+}
+
+function activityTimestampMs(timestamp: string) {
+  const value = new Date(timestamp).getTime();
+  return Number.isFinite(value) ? value : 0;
+}
+
+function activityKindOrder(activity: TerminalActivityItem) {
+  switch (activity.kind) {
+    case "user_message":
+      return 0;
+    case "thinking":
+      return 1;
+    case "tool":
+      return 2;
+    case "permission":
+      return 3;
+    case "message":
+      return 4;
+    default:
+      return 5;
+  }
 }
 
 function isTerminalToolStatus(status: string) {
@@ -111,6 +151,14 @@ function shouldShowToolSpinner(status: string) {
   return ["in_progress", "working"].includes(status);
 }
 
+function isRunningActivityStatus(status: string) {
+  return ["pending", "in_progress", "working"].includes(status);
+}
+
+function isErrorActivityStatus(status: string) {
+  return ["failed", "error", "cancelled"].includes(status);
+}
+
 function statusBadgeClass(status: string, variant: "terminal" | "native") {
   if (variant === "native") {
     switch (status) {
@@ -146,25 +194,49 @@ function statusBadgeClass(status: string, variant: "terminal" | "native") {
 }
 
 function TimelineMarker({
-  active = false,
-  muted = false,
+  running = false,
+  tone,
   variant,
 }: {
-  active?: boolean;
-  muted?: boolean;
+  running?: boolean;
+  tone: "thought" | "tool" | "error" | "user";
   variant: "terminal" | "native";
 }) {
+  const toneClass = {
+    thought: variant === "native"
+      ? "border-muted-foreground/55 bg-muted-foreground/75"
+      : "border-zinc-400/60 bg-zinc-400/80",
+    tool: variant === "native"
+      ? "border-emerald-500/75 bg-emerald-500"
+      : "border-emerald-400/75 bg-emerald-400",
+    error: variant === "native"
+      ? "border-destructive/80 bg-destructive"
+      : "border-red-400/80 bg-red-400",
+    user: variant === "native"
+      ? "border-primary/75 bg-primary"
+      : "border-cyan-400/75 bg-cyan-400",
+  }[tone];
+  const runningClass = {
+    thought: variant === "native"
+      ? "border-muted-foreground/55 bg-transparent"
+      : "border-zinc-400/60 bg-transparent",
+    tool: variant === "native"
+      ? "border-emerald-500/75 bg-transparent"
+      : "border-emerald-400/75 bg-transparent",
+    error: variant === "native"
+      ? "border-destructive/80 bg-transparent"
+      : "border-red-400/80 bg-transparent",
+    user: variant === "native"
+      ? "border-primary/75 bg-transparent"
+      : "border-cyan-400/75 bg-transparent",
+  }[tone];
+
   return (
     <div className="relative z-10 flex w-4 shrink-0 justify-center">
       <div
         className={cn(
           "mt-[0.32rem] h-2 w-2 rounded-full border",
-          variant === "native"
-            ? muted ? "border-border bg-background" : "border-primary/40 bg-background"
-            : muted ? "border-white/15 bg-[#101318]" : "border-teal-400/45 bg-[#101318]",
-          active && (variant === "native"
-            ? "border-primary bg-primary/10 shadow-[0_0_0_4px_hsl(var(--primary)/0.08)]"
-            : "border-cyan-300/55 bg-cyan-400/12 shadow-[0_0_0_4px_rgba(56,189,248,0.06)]"),
+          running ? runningClass : toneClass,
         )}
       />
     </div>
@@ -258,31 +330,36 @@ function ToolActivity({
   variant: "terminal" | "native";
 }) {
   const isDone = isTerminalToolStatus(activity.status);
-  const [detailsOpen, setDetailsOpen] = useState(!isDone);
-  const [outputExpanded, setOutputExpanded] = useState(false);
-
-  useEffect(() => {
-    if (isTerminalToolStatus(activity.status)) {
-      setDetailsOpen(false);
-      setOutputExpanded(false);
-    }
-  }, [activity.status]);
+  const showToolLabel = activity.label !== "Tool";
+  const { toolDetailsOpenById, toolOutputExpandedById } = useManagerSnapshot(terminalUiManager);
+  const detailsOpen = isDone ? false : toolDetailsOpenById[activity.id] ?? true;
+  const outputExpanded = isDone ? false : toolOutputExpandedById[activity.id] ?? false;
 
   return (
     <div className="space-y-2">
       <button
         type="button"
         className="group/tool flex w-full flex-wrap items-center gap-1.5 text-left"
-        onClick={() => setDetailsOpen((open) => {
-          if (open) {
-            setOutputExpanded(false);
+        onClick={() => {
+          if (detailsOpen) {
+            terminalUiManager.setToolOutputExpanded(activity.id, false);
           }
-          return !open;
-        })}
+          terminalUiManager.setToolDetailsOpen(activity.id, !detailsOpen);
+        }}
         aria-expanded={detailsOpen}
       >
-        <span className={cn("text-[length:var(--terminal-tool-label-size)] font-semibold tracking-tight", variant === "native" ? "text-foreground" : "text-zinc-100")}>{activity.label}</span>
-        <span className={cn("font-mono text-[length:var(--terminal-tool-title-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-zinc-300/95")}>{activity.title}</span>
+        {showToolLabel ? (
+          <span className={cn("text-[length:var(--terminal-tool-label-size)] font-semibold tracking-tight", variant === "native" ? "text-foreground" : "text-zinc-100")}>{activity.label}</span>
+        ) : null}
+        <span
+          className={cn(
+            "font-mono leading-[1.45]",
+            showToolLabel ? "text-[length:var(--terminal-tool-title-size)]" : "text-[length:var(--terminal-tool-label-size)]",
+            variant === "native" ? "text-muted-foreground" : "text-zinc-300/95",
+          )}
+        >
+          {activity.title}
+        </span>
         {shouldShowToolSpinner(activity.status) ? (
           <LoaderCircle
             className={cn(
@@ -321,7 +398,7 @@ function ToolActivity({
               variant={variant}
               preview
               expanded={outputExpanded}
-              onClick={() => setOutputExpanded((open) => !open)}
+              onClick={() => terminalUiManager.setToolOutputExpanded(activity.id, !outputExpanded)}
             />
           ) : null}
         </div>
@@ -337,18 +414,15 @@ function ThoughtActivity({
   activity: Extract<AgentActivityItem, { kind: "thinking" }>;
   variant: "terminal" | "native";
 }) {
-  const [open, setOpen] = useState(activity.inProgress);
-
-  useEffect(() => {
-    setOpen(activity.inProgress);
-  }, [activity.id, activity.inProgress]);
+  const { thoughtOpenById } = useManagerSnapshot(terminalUiManager);
+  const open = thoughtOpenById[activity.id] ?? activity.inProgress;
 
   return (
     <div className="space-y-1.5">
       <button
         type="button"
         className="group/thought flex w-full items-center gap-1.5 text-left"
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => terminalUiManager.setThoughtOpen(activity.id, !open)}
         aria-expanded={open}
       >
         <span className={cn("text-[length:var(--terminal-thought-label-size)] font-semibold tracking-tight", variant === "native" ? "text-muted-foreground" : "text-zinc-400")}>
@@ -380,18 +454,41 @@ function ThoughtActivity({
   );
 }
 
-function ActivityRow({ activity, variant }: { activity: AgentActivityItem; variant: "terminal" | "native" }) {
-  const active = activity.kind === "thinking"
+function ActivityRow({ activity, variant }: { activity: TerminalActivityItem; variant: "terminal" | "native" }) {
+  const running = activity.kind === "thinking"
     ? activity.inProgress
-    : activity.kind === "tool" && ["pending", "in_progress", "working"].includes(activity.status);
-  const muted = activity.kind === "thinking";
+    : activity.kind === "tool" && isRunningActivityStatus(activity.status);
+  const markerTone = activity.kind === "user_message"
+    ? "user"
+    : activity.kind === "tool"
+      ? isErrorActivityStatus(activity.status) ? "error" : "tool"
+      : "thought";
 
   return (
     <div className="relative flex items-start gap-3">
-      <TimelineMarker active={active} muted={muted} variant={variant} />
+      <TimelineMarker running={running} tone={markerTone} variant={variant} />
       <div className="min-w-0 flex-1">
         {activity.kind === "message" ? (
-          <p className={cn("max-w-none whitespace-pre-wrap text-[length:var(--terminal-message-size)] leading-[1.55]", variant === "native" ? "text-foreground" : "text-zinc-100/95")}>{activity.text}</p>
+          <MarkdownContent
+            content={activity.text}
+            className={cn(
+              "text-[length:var(--terminal-message-size)] leading-[1.55]",
+              variant === "native"
+                ? "text-foreground"
+                : "text-zinc-100/95 [&_blockquote]:border-white/10 [&_blockquote]:bg-white/5 [&_blockquote]:text-zinc-300 [&_code]:bg-white/10 [&_code]:text-inherit [&_h3]:text-inherit [&_h4]:text-inherit [&_pre]:border-white/10 [&_pre]:bg-white/5 [&_pre]:text-inherit [&_strong]:text-inherit",
+            )}
+          />
+        ) : null}
+        {activity.kind === "user_message" ? (
+          <div className={cn(
+            "rounded-[0.95rem] border px-3 py-2",
+            variant === "native"
+              ? "border-primary/20 bg-primary/8 text-foreground"
+              : "border-cyan-400/20 bg-cyan-400/8 text-zinc-100",
+          )}>
+            <div className={cn("mb-1 text-[10px] font-semibold uppercase tracking-[0.14em]", variant === "native" ? "text-primary" : "text-cyan-200")}>You</div>
+            <p className="max-w-none whitespace-pre-wrap text-[length:var(--terminal-message-size)] leading-[1.55]">{activity.text}</p>
+          </div>
         ) : null}
         {activity.kind === "thinking" ? <ThoughtActivity activity={activity} variant={variant} /> : null}
         {activity.kind === "tool" ? <ToolActivity activity={activity} variant={variant} /> : null}
@@ -411,19 +508,33 @@ function ActivityRow({ activity, variant }: { activity: AgentActivityItem; varia
   );
 }
 
-export function Terminal({ agent, variant = "terminal", className }: TerminalProps) {
+export function Terminal({ agent, userMessages = [], variant = "terminal", className }: TerminalProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldFollowLatestRef = useRef(true);
-  const [terminalZoom, setTerminalZoom] = useState<TerminalZoomLevel>("default");
+  const { terminalZoom } = useManagerSnapshot(terminalUiManager);
 
-  const activity = useMemo(
-    () => buildAgentOutputActivity({
+  const activity = useMemo(() => {
+    const agentActivity = buildAgentOutputActivity({
       outputEntries: agent?.outputEntries,
       currentText: agent?.currentText,
       lastText: agent?.lastText,
-    }),
-    [agent],
-  );
+      displayText: agent?.displayText,
+    });
+    const userActivity: TerminalActivityItem[] = userMessages.map((message) => ({
+      id: `user:${message.id}`,
+      kind: "user_message",
+      text: message.content,
+      timestamp: message.createdAt,
+    }));
+
+    return [...userActivity, ...agentActivity].sort((a, b) => {
+      const timeDelta = activityTimestampMs(a.timestamp) - activityTimestampMs(b.timestamp);
+      if (timeDelta !== 0) {
+        return timeDelta;
+      }
+      return activityKindOrder(a) - activityKindOrder(b) || a.id.localeCompare(b.id);
+    });
+  }, [agent, userMessages]);
   const terminalZoomStyle = useMemo(() => getTerminalZoomStyle(terminalZoom), [terminalZoom]);
 
   useEffect(() => {
@@ -459,7 +570,7 @@ export function Terminal({ agent, variant = "terminal", className }: TerminalPro
               {TERMINAL_ZOOM_LEVELS.map((level) => (
                 <DropdownMenuItem
                   key={level.value}
-                  onClick={() => setTerminalZoom(level.value)}
+                  onClick={() => terminalUiManager.setTerminalZoom(level.value)}
                   className="text-xs"
                 >
                   <span className="w-4">

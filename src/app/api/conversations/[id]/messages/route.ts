@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { and, asc, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
-import { askAgent } from "@/server/bridge-client";
+import { askAgent, getAgent } from "@/server/bridge-client";
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { db } from "@/server/db";
@@ -10,6 +10,68 @@ import { answerClarification } from "@/server/clarifications/store";
 import { resumeRunAfterClarification } from "@/server/clarifications/loop";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { persistWorkerSnapshot } from "@/server/workers/snapshots";
+import { persistRunFailure } from "@/server/runs/failures";
+import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
+
+type RunRecord = typeof runs.$inferSelect;
+type WorkerRecord = typeof workers.$inferSelect;
+
+async function continueWorkerConversation({
+  run,
+  worker,
+  content,
+}: {
+  run: RunRecord;
+  worker: WorkerRecord;
+  content: string;
+}) {
+  try {
+    const response = await askAgent(worker.id, content);
+    const snapshot = await getAgent(worker.id).catch(() => null);
+    if (snapshot) {
+      await persistWorkerSnapshot(worker.id, snapshot);
+    }
+
+    await db.update(workers).set({
+      status: snapshot?.state ?? response.state,
+      updatedAt: new Date(),
+    }).where(eq(workers.id, worker.id));
+
+    const workerMessageCreatedAt = new Date();
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId: run.id,
+      role: "worker",
+      kind: run.mode,
+      content: response.response,
+      workerId: worker.id,
+      createdAt: workerMessageCreatedAt,
+    });
+
+    if (run.mode === "planning") {
+      const latestRun = await db.select().from(runs).where(eq(runs.id, run.id)).get();
+      const latestWorker = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
+      if (latestRun) {
+        await refreshPlanningArtifactsForRun({
+          run: latestRun,
+          worker: latestWorker,
+          snapshot,
+          responseText: response.response,
+        });
+      }
+    }
+
+    notifyEventStreamSubscribers();
+  } catch (error) {
+    await db.update(workers).set({
+      status: "error",
+      updatedAt: new Date(),
+    }).where(eq(workers.id, worker.id));
+    await persistRunFailure(run.id, error);
+    throw error;
+  }
+}
 
 export async function POST(
   req: NextRequest,
@@ -115,26 +177,29 @@ export async function POST(
     };
 
     await db.insert(messages).values(userMessage);
+    await db.update(runs).set({
+      status: run.mode === "planning" ? "working" : "running",
+      failedAt: null,
+      lastError: null,
+      updatedAt: userMessageCreatedAt,
+    }).where(eq(runs.id, id));
     notifyEventStreamSubscribers();
 
-    const response = await askAgent(worker.id, content);
+    if (run.mode === "direct") {
+      continueWorkerConversation({ run, worker, content }).catch((error) => {
+        console.error("Direct conversation follow-up failed:", error);
+      });
 
-    await db.update(workers).set({
-      status: response.state,
-      updatedAt: new Date(),
-    }).where(eq(workers.id, worker.id));
+      return NextResponse.json({
+        ok: true,
+        message: {
+          ...userMessage,
+          createdAt: userMessageCreatedAt.toISOString(),
+        },
+      });
+    }
 
-    const workerMessageCreatedAt = new Date();
-    await db.insert(messages).values({
-      id: randomUUID(),
-      runId: id,
-      role: "worker",
-      kind: run.mode,
-      content: response.response,
-      workerId: worker.id,
-      createdAt: workerMessageCreatedAt,
-    });
-    notifyEventStreamSubscribers();
+    await continueWorkerConversation({ run, worker, content });
 
     return NextResponse.json({
       ok: true,

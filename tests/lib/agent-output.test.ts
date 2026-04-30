@@ -146,6 +146,23 @@ describe("agent output normalization", () => {
     ]);
   });
 
+  it("falls back to display text when structured activity fields are empty", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [],
+      currentText: "",
+      lastText: "",
+      displayText: "Recovered worker output",
+    });
+
+    expect(activity).toEqual([
+      expect.objectContaining({
+        kind: "message",
+        text: "Recovered worker output",
+        live: true,
+      }),
+    ]);
+  });
+
   it("marks thinking complete when a following activity arrives", () => {
     const activity = buildAgentOutputActivity({
       outputEntries: [

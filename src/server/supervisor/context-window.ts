@@ -32,6 +32,7 @@ export interface SupervisorTurnContextForPrompt {
   planPath?: string | null;
   planContent?: string | null;
   readFiles?: Array<{ path: string; content: string; truncated: boolean }>;
+  repoInspections?: Array<{ command: string; args: string[]; cwd: string | null; output: string; exitCode: number | null }>;
   preferredWorkerType: string | null;
   allowedWorkerTypes: string[];
   recentUserMessages: string[];
@@ -171,6 +172,16 @@ function buildObjectiveAndPlanContext(context: SupervisorTurnContextForPrompt, m
         ].join("\n")),
       ].join("\n\n")
     : "";
+  const inspectionSection = context.repoInspections?.length
+    ? [
+        "Supervisor repository inspections:",
+        ...context.repoInspections.map((inspection) => [
+          `Command: ${[inspection.command, ...inspection.args].join(" ")}${inspection.cwd ? ` (cwd: ${inspection.cwd})` : ""}`,
+          `Exit code: ${inspection.exitCode ?? "unknown"}`,
+          truncate(inspection.output.trim() || "(no output)", 4_000),
+        ].join("\n")),
+      ].join("\n\n")
+    : "";
   const sections = [
     context.goal.trim()
       ? `Supervisor-owned objective:\n${truncate(context.goal.trim(), 4_000)}`
@@ -184,6 +195,7 @@ function buildObjectiveAndPlanContext(context: SupervisorTurnContextForPrompt, m
         ? `Plan artifact: ${context.planPath}`
         : "",
     readFileSection,
+    inspectionSection,
   ].filter(Boolean);
 
   if (sections.length === 0) {

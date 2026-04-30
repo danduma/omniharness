@@ -1,188 +1,135 @@
-import type { SupervisorToolDefinition } from "./protocol";
+import { createTool } from "@mastra/core/tools";
+import { z } from "zod";
 import { SUPPORTED_WORKER_TYPES } from "./worker-types";
 
-export function buildSupervisorTools(options?: { allowedWorkerTypes?: string[]; preferredWorkerType?: string | null }): SupervisorToolDefinition[] {
+const queuedToolResult = async () => ({ queued: true });
+
+export function buildSupervisorTools(options?: { allowedWorkerTypes?: string[]; preferredWorkerType?: string | null }) {
   const allowedWorkerTypes = options?.allowedWorkerTypes?.length ? options.allowedWorkerTypes : [...SUPPORTED_WORKER_TYPES];
   const preferredWorkerType = options?.preferredWorkerType?.trim() || null;
-  return [
-    {
-      type: "function",
-      function: {
-        name: "worker_spawn",
-        description:
-          `Spawn a new external coding worker. Prefer one main worker unless a distinct independent validator or sidecar is necessary. ` +
-          `Use independent validator workers to check mocked paths, fake controls, placeholder implementations, and whether the real user-facing path works. ` +
-          `Only use these worker types for this run: ${allowedWorkerTypes.join(", ")}.` +
-          (preferredWorkerType ? ` Prefer ${preferredWorkerType} when it is suitable.` : ""),
-        parameters: {
-          type: "object",
-          properties: {
-            type: { type: "string", description: `External harness type. Valid values for this run: ${allowedWorkerTypes.join(", ")}.` },
-            cwd: { type: "string", description: "Working directory for the worker." },
-            mode: { type: "string", description: "Worker permission mode such as auto, full-access, or read-only." },
-            title: { type: "string", description: "Short user-visible title for this worker based on the exact task allocated to it." },
-            purpose: { type: "string", description: "Short purpose for why this worker exists." },
-            prompt: { type: "string", description: "Initial prompt to send immediately after spawn." },
-          },
-          required: ["type", "cwd", "title", "prompt"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "worker_continue",
-        description: "Send a follow-up prompt to an existing worker when it needs direction, validation, or a push to continue.",
-        parameters: {
-          type: "object",
-          properties: {
-            workerId: { type: "string" },
-            prompt: { type: "string" },
-            interventionType: {
-              type: "string",
-              description: "Why the supervisor is steering the worker. Use continue, completion_gap, or recovery when applicable.",
-              enum: ["continue", "completion_gap", "recovery"],
-            },
-          },
-          required: ["workerId", "prompt"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "worker_cancel",
-        description: "Cancel a worker that is no longer needed, has gone off track, or should be replaced.",
-        parameters: {
-          type: "object",
-          properties: {
-            workerId: { type: "string" },
-            reason: { type: "string" },
-            optionId: { type: "string", description: "Explicit permission option id such as allow_always, allow_once, or reject_once when the bridge exposes one." },
-          },
-          required: ["workerId", "reason"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "worker_set_mode",
-        description: "Change an existing worker's mode.",
-        parameters: {
-          type: "object",
-          properties: {
-            workerId: { type: "string" },
-            mode: { type: "string" },
-          },
-          required: ["workerId", "mode"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "worker_approve",
-        description: "Approve a worker permission request when it is safe and expected.",
-        parameters: {
-          type: "object",
-          properties: {
-            workerId: { type: "string" },
-            reason: { type: "string" },
-            optionId: { type: "string", description: "Explicit permission option id such as allow_always, allow_once, or reject_once when the bridge exposes one." },
-          },
-          required: ["workerId", "reason"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "worker_deny",
-        description: "Deny a worker permission request when it should not proceed.",
-        parameters: {
-          type: "object",
-          properties: {
-            workerId: { type: "string" },
-            reason: { type: "string" },
-            optionId: { type: "string", description: "Explicit permission option id such as reject_once or reject_always when the bridge exposes one." },
-          },
-          required: ["workerId", "reason"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "ask_user",
-        description:
-          "Pause the run for preflight intent confirmation, summarize the understood job as specific outcomes and not just the artifact title, or ask the user a clarifying question.",
-        parameters: {
-          type: "object",
-          properties: {
-            question: { type: "string" },
-          },
-          required: ["question"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "read_file",
-        description:
-          "Read a local repository file, such as a referenced spec or plan, before asking the user to summarize content the supervisor can inspect itself.",
-        parameters: {
-          type: "object",
-          properties: {
-            path: { type: "string", description: "Absolute path or path relative to the run project directory." },
-          },
-          required: ["path"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "wait_until",
-        description: "Take no intervention right now and check again later.",
-        parameters: {
-          type: "object",
-          properties: {
-            seconds: { type: "number", description: "How long to wait before the next supervisory heartbeat." },
-            reason: { type: "string" },
-          },
-          required: ["seconds", "reason"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "mark_complete",
-        description: "Mark the run complete once the goal is fully achieved and any live workers can be torn down.",
-        parameters: {
-          type: "object",
-          properties: {
-            summary: { type: "string" },
-          },
-          required: ["summary"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "mark_failed",
-        description: "Mark the run failed when the supervisor cannot continue without intervention.",
-        parameters: {
-          type: "object",
-          properties: {
-            reason: { type: "string" },
-          },
-          required: ["reason"],
-        },
-      },
-    },
-  ];
+
+  return {
+    worker_spawn: createTool({
+      id: "worker_spawn",
+      description:
+        `Spawn a new external coding worker. Prefer one main worker unless a distinct independent validator or sidecar is necessary. ` +
+        `Use independent validator workers to check mocked paths, fake controls, placeholder implementations, and whether the real user-facing path works. ` +
+        `Only use these worker types for this run: ${allowedWorkerTypes.join(", ")}.` +
+        (preferredWorkerType ? ` Prefer ${preferredWorkerType} when it is suitable.` : ""),
+      inputSchema: z.object({
+        type: z.string().describe(`External harness type. Valid values for this run: ${allowedWorkerTypes.join(", ")}.`),
+        cwd: z.string().describe("Working directory for the worker."),
+        mode: z.string().optional().describe("Worker permission mode such as auto, full-access, or read-only."),
+        title: z.string().describe("Short user-visible title for this worker based on the exact task allocated to it."),
+        purpose: z.string().optional().describe("Short purpose for why this worker exists."),
+        prompt: z.string().describe("Initial prompt to send immediately after spawn."),
+      }),
+      execute: queuedToolResult,
+    }),
+    worker_continue: createTool({
+      id: "worker_continue",
+      description: "Send a follow-up prompt to an existing worker when it needs direction, validation, or a push to continue.",
+      inputSchema: z.object({
+        workerId: z.string(),
+        prompt: z.string(),
+        interventionType: z.enum(["continue", "completion_gap", "recovery"]).optional()
+          .describe("Why the supervisor is steering the worker."),
+      }),
+      execute: queuedToolResult,
+    }),
+    worker_cancel: createTool({
+      id: "worker_cancel",
+      description: "Cancel a worker that is no longer needed, has gone off track, or should be replaced.",
+      inputSchema: z.object({
+        workerId: z.string(),
+        reason: z.string(),
+        optionId: z.string().optional().describe("Explicit permission option id when the bridge exposes one."),
+      }),
+      execute: queuedToolResult,
+    }),
+    worker_set_mode: createTool({
+      id: "worker_set_mode",
+      description: "Change an existing worker's mode.",
+      inputSchema: z.object({
+        workerId: z.string(),
+        mode: z.string(),
+      }),
+      execute: queuedToolResult,
+    }),
+    worker_approve: createTool({
+      id: "worker_approve",
+      description: "Approve a worker permission request when it is safe and expected.",
+      inputSchema: z.object({
+        workerId: z.string(),
+        reason: z.string(),
+        optionId: z.string().optional().describe("Explicit permission option id such as allow_always, allow_once, or reject_once."),
+      }),
+      execute: queuedToolResult,
+    }),
+    worker_deny: createTool({
+      id: "worker_deny",
+      description: "Deny a worker permission request when it should not proceed.",
+      inputSchema: z.object({
+        workerId: z.string(),
+        reason: z.string(),
+        optionId: z.string().optional().describe("Explicit permission option id such as reject_once or reject_always."),
+      }),
+      execute: queuedToolResult,
+    }),
+    ask_user: createTool({
+      id: "ask_user",
+      description:
+        "Pause the run for preflight intent confirmation, summarize the understood job as specific outcomes and not just the artifact title, or ask the user a clarifying question.",
+      inputSchema: z.object({
+        question: z.string(),
+      }),
+      execute: queuedToolResult,
+    }),
+    read_file: createTool({
+      id: "read_file",
+      description:
+        "Read a local repository file, such as a referenced spec or plan, before asking the user to summarize content the supervisor can inspect itself. Use inspect_repo for targeted searching or line-range inspection instead of rereading a whole file.",
+      inputSchema: z.object({
+        path: z.string().describe("Absolute path or path relative to the run project directory."),
+      }),
+      execute: queuedToolResult,
+    }),
+    inspect_repo: createTool({
+      id: "inspect_repo",
+      description:
+        "Run a read-only repository inspection command for targeted searching, listing, or line-oriented inspection. Prefer this over repeated full-file reads. Allowed commands: rg, grep, find, sed, awk, head, tail, wc, ls, pwd.",
+      inputSchema: z.object({
+        command: z.enum(["rg", "grep", "find", "sed", "awk", "head", "tail", "wc", "ls", "pwd"]),
+        args: z.array(z.string()).describe("Arguments passed directly to the command without a shell."),
+        cwd: z.string().optional().describe("Optional working directory. Relative paths resolve under the run project directory."),
+        reason: z.string().optional().describe("Short explanation of what information this inspection is looking for."),
+      }),
+      execute: queuedToolResult,
+    }),
+    wait_until: createTool({
+      id: "wait_until",
+      description: "Take no intervention right now and check again later.",
+      inputSchema: z.object({
+        seconds: z.number().describe("How long to wait before the next supervisory heartbeat."),
+        reason: z.string(),
+      }),
+      execute: queuedToolResult,
+    }),
+    mark_complete: createTool({
+      id: "mark_complete",
+      description: "Mark the run complete once the goal is fully achieved and any live workers can be torn down.",
+      inputSchema: z.object({
+        summary: z.string(),
+      }),
+      execute: queuedToolResult,
+    }),
+    mark_failed: createTool({
+      id: "mark_failed",
+      description: "Mark the run failed when the supervisor cannot continue without intervention.",
+      inputSchema: z.object({
+        reason: z.string(),
+      }),
+      execute: queuedToolResult,
+    }),
+  };
 }

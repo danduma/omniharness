@@ -103,6 +103,7 @@ export type CreatedConversationSnapshot = {
   plan?: PlanRecord | null;
   run?: RunRecord | null;
   message?: MessageRecord | null;
+  serverVisibleAtMs?: number;
 };
 
 export function appendCreatedConversationSnapshot(
@@ -134,23 +135,45 @@ export function appendCreatedConversationSnapshot(
   };
 }
 
+const PENDING_CREATED_CONVERSATION_STABLE_MS = 10_000;
+
+function isCreatedConversationSnapshotServerVisible(
+  incomingState: EventStreamState,
+  snapshot: CreatedConversationSnapshot,
+) {
+  const run = snapshot.run;
+  if (!run) {
+    return false;
+  }
+
+  const hasRun = (incomingState.runs || []).some((existingRun) => existingRun.id === run.id);
+  const hasPlan = !snapshot.plan || (incomingState.plans || []).some((existingPlan) => existingPlan.id === snapshot.plan?.id);
+  const hasMessage = !snapshot.message || (incomingState.messages || []).some((existingMessage) => existingMessage.id === snapshot.message?.id);
+
+  return hasRun && hasPlan && hasMessage;
+}
+
 export function mergePendingCreatedConversationSnapshots(
   incomingState: EventStreamState,
   pendingSnapshots: Map<string, CreatedConversationSnapshot>,
+  nowMs = Date.now(),
 ): EventStreamState {
   if (pendingSnapshots.size === 0) {
     return incomingState;
   }
 
-  const serverRunIds = new Set((incomingState.runs || []).map((run) => run.id));
   let nextState = incomingState;
 
   for (const [runId, snapshot] of Array.from(pendingSnapshots.entries())) {
-    if (serverRunIds.has(runId)) {
-      pendingSnapshots.delete(runId);
-    } else {
-      nextState = appendCreatedConversationSnapshot(nextState, snapshot);
+    if (isCreatedConversationSnapshotServerVisible(incomingState, snapshot)) {
+      snapshot.serverVisibleAtMs ??= nowMs;
+      if (nowMs - snapshot.serverVisibleAtMs >= PENDING_CREATED_CONVERSATION_STABLE_MS) {
+        pendingSnapshots.delete(runId);
+      }
+      continue;
     }
+
+    nextState = appendCreatedConversationSnapshot(nextState, snapshot);
   }
 
   return nextState;

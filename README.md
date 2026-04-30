@@ -1,30 +1,107 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# OmniHarness
 
-## Getting Started
+OmniHarness is a local web UI for supervising ACP-backed coding agents such as Codex, Claude, Gemini, and OpenCode. It starts a Next.js app and talks to a sibling `acp-bridge` daemon that owns the actual agent processes.
 
-First, run the development server:
+## Requirements
+
+- Node.js 20+
+- `pnpm`
+- A sibling checkout of `acp-bridge` at `../acp-bridge`, or set `OMNIHARNESS_BRIDGE_DIR`
+- At least one supported coding agent installed:
+  - Codex CLI plus `codex-acp`
+  - Claude CLI plus `claude-agent-acp`
+  - Gemini CLI with native ACP mode
+  - OpenCode with native ACP mode
+
+## Setup
+
+Install app dependencies:
+
+```bash
+pnpm install
+```
+
+Install or check local ACP adapters and common agent tools:
+
+```bash
+pnpm setup:agents
+```
+
+Preview what setup would do without installing adapters:
+
+```bash
+scripts/install-agent-acp.sh --dry-run
+```
+
+The setup script checks common tools that coding agents expect to use, including `rg`, `git`, `node`, shell/file utilities, package managers, Python, `jq`, `gh`, `cargo`, `uv`, `fd`, and `make`.
+
+## Development
+
+Start OmniHarness and the managed ACP bridge:
 
 ```bash
 pnpm dev
 ```
 
-Open [http://localhost:3050](http://localhost:3050) with your browser to see the result.
+Open [http://localhost:3050](http://localhost:3050).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+By default, `pnpm dev` starts the sibling bridge from `../acp-bridge` on `http://127.0.0.1:7800`. Override with:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+OMNIHARNESS_BRIDGE_DIR=/path/to/acp-bridge pnpm dev
+OMNIHARNESS_BRIDGE_URL=http://127.0.0.1:7801 pnpm dev
+```
 
-## Learn More
+## Runtime Data
 
-To learn more about Next.js, take a look at the following resources:
+OmniHarness stores persisted conversation state in SQLite at `sqlite.db` under the app root. The app root is `OMNIHARNESS_ROOT` when set, otherwise the current working directory used to start the app.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+For this repository in normal local development, inspect runs, messages, workers, execution events, settings, and auth records in:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+sqlite3 sqlite.db
+```
 
-## Deploy on Vercel
+`.omniharness/` is used for local runtime side files such as the managed bridge lock, but it is not the default conversation database location.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Agent Tool Environment
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+ACP workers may be launched from a GUI app, service manager, editor integration, or other non-login process. Those environments often do not inherit the same `PATH` as your normal terminal.
+
+The ACP bridge builds a managed worker `PATH` before spawning agents. It includes:
+
+- project `node_modules/.bin`
+- common user bins such as `~/.cargo/bin`, `~/.local/bin`, `~/.bun/bin`, `~/.opencode/bin`, and pyenv shims
+- Homebrew, MacPorts, and system bins
+- the inherited environment `PATH`
+- login-shell `PATH` when available
+
+This keeps agents from losing essential functionality just because the bridge was started from a thin environment. Installing tools globally is still recommended, but the bridge no longer depends only on the parent process `PATH`.
+
+To inspect bridge-side agent health:
+
+```bash
+curl http://127.0.0.1:7800/doctor
+```
+
+The doctor response reports adapter availability, API key status, endpoint reachability, and tool diagnostics.
+
+## Useful Scripts
+
+Run tests:
+
+```bash
+pnpm test
+```
+
+Build:
+
+```bash
+pnpm build
+```
+
+Delete all conversations and associated persisted artifacts:
+
+```bash
+scripts/delete-conversations.sh
+```

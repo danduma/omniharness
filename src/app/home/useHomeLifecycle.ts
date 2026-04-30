@@ -7,6 +7,8 @@ import { COMPOSER_EFFORT_STORAGE_KEY, COMPOSER_MODE_STORAGE_KEY, COMPOSER_MODEL_
 import type { ComposerWorkerOption, EventStreamState } from "./types";
 import { buildConversationPath, buildInlineError, parseCollapsedProjectPaths } from "./utils";
 
+const SNAPSHOT_FALLBACK_COOLDOWN_MS = 15_000;
+
 interface UseHomeLifecycleProps {
   appUnlocked: boolean;
   setHasReceivedInitialEventStreamPayload: React.Dispatch<React.SetStateAction<boolean>>;
@@ -96,6 +98,10 @@ export function useHomeLifecycle({
 
     let isActive = true;
     let isPollingSnapshot = false;
+    let lastSnapshotPollAt = 0;
+    const runParam = selectedRunId ? `&runId=${encodeURIComponent(selectedRunId)}` : "";
+    const snapshotUrl = `/api/events?snapshot=1${runParam}`;
+    const streamUrl = selectedRunId ? `/api/events?runId=${encodeURIComponent(selectedRunId)}` : "/api/events";
 
     const applyEventStreamUpdate = (data: EventStreamState) => {
       if (!isActive) {
@@ -112,13 +118,15 @@ export function useHomeLifecycle({
     };
 
     const pollSnapshot = async () => {
-      if (isPollingSnapshot) {
+      const now = Date.now();
+      if (isPollingSnapshot || now - lastSnapshotPollAt < SNAPSHOT_FALLBACK_COOLDOWN_MS) {
         return;
       }
 
+      lastSnapshotPollAt = now;
       isPollingSnapshot = true;
       try {
-        const data = await requestJson<EventStreamState>("/api/events?snapshot=1", undefined, {
+        const data = await requestJson<EventStreamState>(snapshotUrl, undefined, {
           source: "Events",
           action: "Load live state snapshot",
         });
@@ -138,7 +146,7 @@ export function useHomeLifecycle({
       }
     };
 
-    const eventSource = new EventSource("/api/events");
+    const eventSource = new EventSource(streamUrl);
     eventSource.addEventListener("update", (e) => {
       try {
         const data = JSON.parse(e.data);
@@ -178,17 +186,11 @@ export function useHomeLifecycle({
       }]));
       void pollSnapshot();
     };
-    const snapshotPollInterval = window.setInterval(() => {
-      void pollSnapshot();
-    }, 1_500);
-    void pollSnapshot();
-
     return () => {
       isActive = false;
-      window.clearInterval(snapshotPollInterval);
       eventSource.close();
     };
-  }, [appUnlocked, filterEventStreamState]);
+  }, [appUnlocked, filterEventStreamState, selectedRunId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {

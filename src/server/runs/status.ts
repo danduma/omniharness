@@ -1,4 +1,4 @@
-const TERMINAL_RUN_STATUSES = new Set(["done", "failed", "cancelled"]);
+const TERMINAL_RUN_STATUSES = new Set(["done", "failed", "cancelled", "promoting", "promoted"]);
 
 export function normalizeRunStatus(status: string | null | undefined) {
   return (status ?? "").trim().toLowerCase();

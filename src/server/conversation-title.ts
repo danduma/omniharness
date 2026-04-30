@@ -1,4 +1,5 @@
-import { TokenJS } from "token.js";
+import { Agent } from "@mastra/core/agent";
+import { z } from "zod";
 import { db } from "@/server/db";
 import { executionEvents, runs, settings } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
@@ -7,7 +8,7 @@ import { CONVERSATION_TITLE_SYSTEM_PROMPT } from "@/server/prompts";
 import { formatErrorMessage } from "@/server/runs/failures";
 import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import {
-  configureSupervisorModel,
+  buildMastraModelConfig,
   getSupervisorModelConfig,
   validateSupervisorModelConfig,
 } from "@/server/supervisor/model-config";
@@ -42,54 +43,26 @@ export async function generateConversationTitle(command: string) {
       getSupervisorModelConfig(env),
       decryptionFailures,
     );
-    const tokenjs = new TokenJS({
-      apiKey: config.apiKey,
-      baseURL: config.baseURL,
+    const agent = new Agent({
+      id: "omniharness-title-generator",
+      name: "OmniHarness Title Generator",
+      instructions: CONVERSATION_TITLE_SYSTEM_PROMPT,
+      model: buildMastraModelConfig(config),
     });
-    const llmConfig = configureSupervisorModel(env, tokenjs);
 
-    const completion = await tokenjs.chat.completions.create({
-      provider: llmConfig.provider as never,
-      model: llmConfig.model as never,
-      messages: [
-        {
-          role: "system",
-          content: CONVERSATION_TITLE_SYSTEM_PROMPT,
-        },
-        {
-          role: "user",
-          content: command,
-        },
-      ],
-      tools: [
-        {
-          type: "function",
-          function: {
-            name: "conversation_title_set",
-            description: "Set the human-readable title for the conversation.",
-            parameters: {
-              type: "object",
-              properties: {
-                title: { type: "string" },
-              },
-              required: ["title"],
-            },
-          },
-        },
-      ],
-      tool_choice: {
-        type: "function",
-        function: { name: "conversation_title_set" },
+    const completion = await agent.generate(command, {
+      structuredOutput: {
+        schema: z.object({
+          title: z.string(),
+        }),
       },
     });
 
-    const toolCall = completion.choices[0]?.message?.tool_calls?.[0];
-    if (!toolCall) {
+    if (!completion.object?.title) {
       return { title: fallbackTitle(command), error: null };
     }
 
-    const args = JSON.parse(toolCall.function.arguments) as { title?: string };
-    return { title: (args.title || fallbackTitle(command)).trim(), error: null };
+    return { title: (completion.object.title || fallbackTitle(command)).trim(), error: null };
   } catch (error) {
     return { title: fallbackTitle(command), error: formatErrorMessage(error) };
   }
