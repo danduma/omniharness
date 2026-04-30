@@ -16,7 +16,7 @@ import { SettingsDialog } from "@/components/home/SettingsDialog";
 import { WorkersSidebar } from "@/components/home/WorkersSidebar";
 import { type AppErrorDescriptor, mergeAppErrors, requestJson } from "@/lib/app-errors";
 import { buildConversationGroups } from "@/lib/conversations";
-import { buildWorkerLists, isWorkerActiveStatus, mergeWorkerLiveStatus, type ConversationWorkerRecord } from "@/lib/conversation-workers";
+import { buildWorkerLists, isWorkerActiveStatus, mergeWorkerLiveStatus, normalizeWorkerStatus, type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
@@ -524,9 +524,18 @@ export function HomeApp() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!command.trim() && isSupervisorRunning) {
-      if (selectedRunId) {
+    if (!command.trim() && isConversationStoppable) {
+      if (!selectedRunId) {
+        return;
+      }
+
+      if (isSupervisorRunning) {
         stopSupervisor.mutate({ runId: selectedRunId });
+        return;
+      }
+
+      if (stoppableConversationWorkerId) {
+        stopWorker.mutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId });
       }
       return;
     }
@@ -788,6 +797,17 @@ export function HomeApp() {
     () => conversationAgents.filter((agent) => activeConversationWorkerIds.has(agent.name)),
     [activeConversationWorkerIds, conversationAgents],
   );
+  const busyConversationWorkerId = !isImplementationConversation
+    ? conversationWorkerGroups.active.find((worker) => {
+        const status = normalizeWorkerStatus(worker.status);
+        return status === "starting" || status === "working" || status === "stuck";
+      })?.id ?? null
+    : null;
+  const pendingConversationWorkerId = !isImplementationConversation && sendConversationMessage.isPending
+    ? selectedRunWorkersForDisplay[0]?.id ?? null
+    : null;
+  const stoppableConversationWorkerId = busyConversationWorkerId ?? pendingConversationWorkerId;
+  const isConversationStoppable = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
   const latestUserCheckpoint = selectedRunId
     ? [...((filteredMessages || []) as MessageRecord[])]
         .filter((message) => message.role === "user")
@@ -1038,6 +1058,7 @@ export function HomeApp() {
   };
 
   const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || promotePlanningConversation.isPending || stopSupervisor.isPending || stopWorker.isPending;
+  const isStoppingConversation = stopSupervisor.isPending || stopWorker.isPending;
   const lockedDirectWorkerLabel = WORKER_OPTIONS.find((option) => option.value === (selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent))?.label
     || WORKER_OPTIONS.find((option) => option.value === autoSelectedWorkerType)?.label
     || "Direct worker";
@@ -1144,16 +1165,26 @@ export function HomeApp() {
           selectedEffort={selectedEffort}
           setSelectedEffort={setSelectedEffort}
           isComposerSubmitting={isComposerSubmitting}
-          isSupervisorRunning={isSupervisorRunning}
+          isConversationStoppable={isConversationStoppable}
+          isStoppingConversation={isStoppingConversation}
           onSendConversationMessage={(content) => {
             if (selectedRunId) {
               sendConversationMessage.mutate({ runId: selectedRunId, content });
             }
           }}
           onRunCommand={(content) => runCommand.mutate(content)}
-          onStopSupervisor={() => {
-            if (selectedRunId) {
+          onStopConversation={() => {
+            if (!selectedRunId) {
+              return;
+            }
+
+            if (isSupervisorRunning) {
               stopSupervisor.mutate({ runId: selectedRunId });
+              return;
+            }
+
+            if (stoppableConversationWorkerId) {
+              stopWorker.mutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId });
             }
           }}
         />

@@ -37,8 +37,10 @@ test("terminal renders thoughts behind a collapsible thinking summary", () => {
 test("terminal keeps tool output compact and expandable", () => {
   expect(terminalSource).toContain("const TOOL_OUTPUT_PREVIEW_LINES = 3");
   expect(terminalSource).toContain("isTerminalToolStatus(activity.status)");
-  expect(terminalSource).toContain("isDone ? false : toolDetailsOpenById[activity.id] ?? true");
-  expect(terminalSource).toContain("isDone ? false : toolOutputExpandedById[activity.id] ?? false");
+  expect(terminalSource).toContain("toolDetailsOpenById[activity.id] ?? !isDone");
+  expect(terminalSource).toContain("toolOutputExpandedById[activity.id] ?? false");
+  expect(terminalSource).not.toContain("isDone ? false : toolDetailsOpenById[activity.id]");
+  expect(terminalSource).not.toContain("isDone ? false : toolOutputExpandedById[activity.id]");
   expect(terminalSource).toContain("shouldShowToolStatusBadge(activity.status)");
   expect(terminalSource).toContain("shouldShowToolSpinner(activity.status)");
   expect(terminalSource).toContain('return !["completed", "done", "in_progress", "working"].includes(status);');
@@ -79,6 +81,14 @@ test("terminal aligns timeline markers with row text and connects the rail", () 
   expect(terminalSource).toContain("mt-[0.32rem]");
   expect(terminalSource).toContain("absolute left-2 top-0 h-full w-px");
   expect(terminalSource).not.toContain("space-y-3");
+});
+
+test("terminal user messages render as left-indented transcript blocks outside the rail", () => {
+  expect(terminalSource).toContain('if (activity.kind === "user_message")');
+  expect(terminalSource).toContain('relative z-10 pl-4 sm:pl-6');
+  expect(terminalSource).toContain('rounded-lg bg-[#3a3a3a]');
+  expect(terminalSource).toContain('text-[#d8d8d8]');
+  expect(terminalSource).not.toContain('>You</div>');
 });
 
 test("terminal surfaces fetch failures in the frontend instead of silently dropping them", () => {

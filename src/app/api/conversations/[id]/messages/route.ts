@@ -27,6 +27,12 @@ async function continueWorkerConversation({
   content: string;
 }) {
   try {
+    await db.update(workers).set({
+      status: "working",
+      updatedAt: new Date(),
+    }).where(eq(workers.id, worker.id));
+    notifyEventStreamSubscribers();
+
     const response = await askAgent(worker.id, content);
     const snapshot = await getAgent(worker.id).catch(() => null);
     if (snapshot) {

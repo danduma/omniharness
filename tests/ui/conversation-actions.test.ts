@@ -52,7 +52,8 @@ test("user input messages share the direct-control bubble renderer", () => {
   const conversationMainSource = readSource("src/components/home/ConversationMain.tsx");
 
   expect(userInputSource).toContain("export function UserInputMessage");
-  expect(userInputSource).toContain('rounded-[1.9rem] rounded-br-lg bg-[#242424]');
+  expect(userInputSource).toContain('flex justify-start pl-4 sm:pl-6');
+  expect(userInputSource).toContain('rounded-lg bg-[#3a3a3a]');
   expect(userInputSource).toContain('maxHeight: isExpanded ? undefined : "calc(1.5rem * 6)"');
   expect(userInputSource).toContain('aria-label={isExpanded ? "Show less message text" : "Show more message text"}');
   expect(userInputSource).toContain('aria-label="Copy message"');

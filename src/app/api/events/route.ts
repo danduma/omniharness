@@ -70,9 +70,12 @@ type EventPayloadOptions = {
 type PersistedEventRecords = Awaited<ReturnType<typeof readPersistedEventRecords>>;
 
 const WORKER_INITIAL_PROMPT_PREVIEW_LIMIT = 1_000;
-const AGENT_TEXT_FIELD_LIMIT = 24_000;
-const AGENT_ENTRY_TEXT_LIMIT = 6_000;
-const AGENT_OUTPUT_ENTRY_LIMIT = 160;
+const AGENT_TEXT_FIELD_LIMIT = 4_000;
+const AGENT_ENTRY_TEXT_LIMIT = 2_000;
+const AGENT_OUTPUT_ENTRY_LIMIT = 24;
+const EXECUTION_EVENT_LIMIT = 100;
+const EXECUTION_EVENT_DETAIL_LIMIT = 1_000;
+const SUPERVISOR_INTERVENTION_TEXT_LIMIT = 2_000;
 
 function truncateText(value: string | null | undefined, limit: number) {
   if (!value || value.length <= limit) {
@@ -115,11 +118,52 @@ function selectedRunIds(options: EventPayloadOptions) {
   return selectedRunId ? new Set([selectedRunId]) : null;
 }
 
-function filterRunScopedRecords<T extends { runId: string }>(
+function filterSelectedRunScopedRecords<T extends { runId: string }>(
   records: T[],
   runIds: Set<string> | null,
 ) {
-  return runIds ? records.filter((record) => runIds.has(record.runId)) : records;
+  return runIds ? records.filter((record) => runIds.has(record.runId)) : [];
+}
+
+function compactExecutionEvent(event: PersistedEventRecords["allExecutionEvents"][number]) {
+  return {
+    ...event,
+    details: compactExecutionEventDetails(event.details),
+  };
+}
+
+function compactExecutionEventDetails(details: string | null) {
+  if (!details?.trim()) {
+    return details ?? null;
+  }
+
+  try {
+    const parsed = JSON.parse(details) as Record<string, unknown>;
+    const compacted: Record<string, unknown> = {};
+
+    for (const key of ["summary", "reason", "error", "mode", "seconds"]) {
+      const value = parsed[key];
+      if (typeof value === "string") {
+        compacted[key] = truncateText(value, EXECUTION_EVENT_DETAIL_LIMIT);
+      } else if (typeof value === "number") {
+        compacted[key] = value;
+      }
+    }
+
+    return Object.keys(compacted).length > 0 ? JSON.stringify(compacted) : "{}";
+  } catch {
+    return JSON.stringify({
+      summary: truncateText(details, EXECUTION_EVENT_DETAIL_LIMIT),
+    });
+  }
+}
+
+function compactSupervisorIntervention(intervention: PersistedEventRecords["allSupervisorInterventions"][number]) {
+  return {
+    ...intervention,
+    prompt: truncateText(intervention.prompt, SUPERVISOR_INTERVENTION_TEXT_LIMIT),
+    summary: truncateText(intervention.summary, SUPERVISOR_INTERVENTION_TEXT_LIMIT),
+  };
 }
 
 function compactAgentSnapshot(agent: ReturnType<typeof buildLiveWorkerSnapshots>[number]) {
@@ -171,16 +215,19 @@ function buildEventPayload(
   const runIds = selectedRunIds(options);
 
   return {
-    messages: records.msgs,
+    messages: filterSelectedRunScopedRecords(records.msgs, runIds),
     plans: records.allPlans,
     runs: records.allRuns,
     accounts: records.allAccounts,
     agents: agentsData.map(compactAgentSnapshot),
     workers: records.allWorkers.map(compactWorkerRecord),
-    clarifications: filterRunScopedRecords(records.allClarifications, runIds),
-    validationRuns: filterRunScopedRecords(records.allValidationRuns, runIds),
-    executionEvents: filterRunScopedRecords(records.allExecutionEvents, runIds),
-    supervisorInterventions: filterRunScopedRecords(records.allSupervisorInterventions, runIds),
+    clarifications: filterSelectedRunScopedRecords(records.allClarifications, runIds),
+    validationRuns: filterSelectedRunScopedRecords(records.allValidationRuns, runIds),
+    executionEvents: filterSelectedRunScopedRecords(records.allExecutionEvents, runIds)
+      .slice(0, EXECUTION_EVENT_LIMIT)
+      .map(compactExecutionEvent),
+    supervisorInterventions: filterSelectedRunScopedRecords(records.allSupervisorInterventions, runIds)
+      .map(compactSupervisorIntervention),
     frontendErrors,
   };
 }

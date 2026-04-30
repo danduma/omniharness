@@ -154,6 +154,15 @@ function stringifyUnknown(value: unknown): string | null {
   }
 }
 
+function stringifyToolRawOutput(value: unknown): string | null {
+  const rawOutput = asRecord(value);
+  if (rawOutput && typeof rawOutput.formatted_output === "string") {
+    return asNonEmptyString(rawOutput.formatted_output);
+  }
+
+  return stringifyUnknown(value);
+}
+
 function extractContentText(value: unknown): string | null {
   if (!Array.isArray(value)) {
     return null;
@@ -407,7 +416,7 @@ function deriveToolOutputPane(entry: AgentOutputEntry): AgentOutputPane | undefi
   const stderr = asNonEmptyString(toolResponse?.stderr);
   const rawOutput = raw ? raw.rawOutput : undefined;
   const contentText = extractContentText(raw?.content);
-  const rawOutputText = stringifyUnknown(rawOutput);
+  const rawOutputText = stringifyToolRawOutput(rawOutput);
   const metaOutputText = stringifyUnknown(file?.content) || stdout || stderr;
   const summaryTail = extractSummaryTail(entry);
   const isTerminal = entry.status ? TERMINAL_TOOL_STATUSES.has(entry.status) : false;

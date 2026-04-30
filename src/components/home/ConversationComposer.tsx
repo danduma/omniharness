@@ -40,10 +40,11 @@ interface ConversationComposerProps {
   selectedEffort: string;
   setSelectedEffort: (value: string) => void;
   isComposerSubmitting: boolean;
-  isSupervisorRunning: boolean;
+  isConversationStoppable: boolean;
+  isStoppingConversation: boolean;
   onSendConversationMessage: (content: string) => void;
   onRunCommand: (content: string) => void;
-  onStopSupervisor: () => void;
+  onStopConversation: () => void;
 }
 
 export function ConversationComposer({
@@ -77,20 +78,26 @@ export function ConversationComposer({
   selectedEffort,
   setSelectedEffort,
   isComposerSubmitting,
-  isSupervisorRunning,
+  isConversationStoppable,
+  isStoppingConversation,
   onSendConversationMessage,
   onRunCommand,
-  onStopSupervisor,
+  onStopConversation,
 }: ConversationComposerProps) {
-  const isStopButtonVisible = !command.trim() && isSupervisorRunning;
+  const trimmedCommand = command.trim();
+  const isStopButtonVisible = isConversationStoppable;
+  const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;
+  const isSubmitButtonDisabled = isStopButtonVisible
+    ? isStoppingConversation
+    : isComposerSubmitting || !trimmedCommand;
 
   return (
   <div className={`relative z-20 w-full shrink-0 bg-background p-3 sm:p-4 ${className}`}>
     <form
       onSubmit={(event) => {
-        if (!command.trim() && isSupervisorRunning) {
+        if (isStopButtonVisible) {
           event.preventDefault();
-          onStopSupervisor();
+          onStopConversation();
           return;
         }
 
@@ -180,7 +187,14 @@ export function ConversationComposer({
 
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              if (!isComposerSubmitting && command.trim()) {
+              if (isStopButtonVisible) {
+                if (!trimmedCommand) {
+                  onStopConversation();
+                }
+                return;
+              }
+
+              if (!isComposerSubmitting && trimmedCommand) {
                 if (selectedRunId) {
                   onSendConversationMessage(command);
                 } else {
@@ -288,9 +302,9 @@ export function ConversationComposer({
             <Button
               type="submit"
               size="icon"
-              disabled={isComposerSubmitting || (!command.trim() && !isSupervisorRunning)}
-              aria-label={isStopButtonVisible ? "Stop supervisor" : "Send message"}
-              title={isStopButtonVisible ? "Stop supervisor" : "Send message"}
+              disabled={isSubmitButtonDisabled}
+              aria-label={isStopButtonVisible ? "Stop conversation" : "Send message"}
+              title={isStopButtonVisible ? "Stop conversation" : "Send message"}
               className={cn(
                 "h-9 w-9 shrink-0 rounded-full transition-all sm:h-10 sm:w-10",
                 themeMode === "night"
@@ -298,7 +312,7 @@ export function ConversationComposer({
                   : "bg-[#9d9d9d] text-white hover:bg-[#8b8b8b] disabled:bg-[#c9c9c9]",
               )}
             >
-              {isComposerSubmitting ? (
+              {isStoppingConversation || isSendButtonBusy ? (
                 <LoaderCircle className="h-5 w-5 animate-spin" />
               ) : isStopButtonVisible ? (
                 <Square className="h-4 w-4 fill-current" />

@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { messages, plans, runs, supervisorInterventions, workerCounters, workers } from "@/server/db/schema";
+import { executionEvents, messages, plans, runs, supervisorInterventions, workerCounters, workers } from "@/server/db/schema";
 
 const { mockEnsureSupervisorRuntimeStarted } = vi.hoisted(() => ({
   mockEnsureSupervisorRuntimeStarted: vi.fn().mockResolvedValue(undefined),
@@ -45,11 +45,152 @@ describe("GET /api/events", () => {
   beforeEach(async () => {
     mockEnsureSupervisorRuntimeStarted.mockClear();
     await db.delete(supervisorInterventions);
+    await db.delete(executionEvents);
     await db.delete(messages);
     await db.delete(workers);
     await db.delete(workerCounters);
     await db.delete(runs);
     await db.delete(plans);
+  });
+
+  it("keeps unselected live snapshots free of run-scoped transcript history", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/mobile-budget-unselected.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      title: "Mobile payload budget",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: JSON.stringify([{ id: "entry-1", type: "message", text: "x".repeat(50_000), timestamp: now.toISOString() }]),
+      currentText: "Live text",
+      lastText: "Last text",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "worker",
+      kind: "worker_output",
+      content: "message body that belongs to the selected conversation only",
+      workerId,
+      createdAt: now,
+    });
+    await db.insert(executionEvents).values({
+      id: randomUUID(),
+      runId,
+      workerId,
+      planItemId: null,
+      eventType: "worker_output_changed",
+      details: JSON.stringify({ summary: "Worker output changed", raw: "x".repeat(100_000) }),
+      createdAt: now,
+    });
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+    const response = await GET(new NextRequest("http://localhost/api/events?snapshot=1"));
+    const payload = await response.json();
+
+    expect(payload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Mobile payload budget");
+    expect(payload.workers.find((worker: { id: string }) => worker.id === workerId)?.status).toBe("working");
+    expect(payload.messages).toEqual([]);
+    expect(payload.agents).toEqual([]);
+    expect(payload.executionEvents).toEqual([]);
+    expect(payload.supervisorInterventions).toEqual([]);
+  });
+
+  it("bounds selected-run live snapshots to recent compact terminal and event data", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+    const outputEntries = Array.from({ length: 80 }, (_, index) => ({
+      id: `entry-${index}`,
+      type: "message",
+      text: `${index}: ${"x".repeat(8_000)}`,
+      timestamp: new Date(now.getTime() + index).toISOString(),
+    }));
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/mobile-budget-selected.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      title: "Selected mobile payload budget",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "x".repeat(20_000),
+      outputEntriesJson: JSON.stringify(outputEntries),
+      currentText: "x".repeat(20_000),
+      lastText: "x".repeat(20_000),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    for (let index = 0; index < 30; index += 1) {
+      await db.insert(executionEvents).values({
+        id: randomUUID(),
+        runId,
+        workerId,
+        planItemId: null,
+        eventType: "worker_prompted",
+        details: JSON.stringify({
+          summary: `Event ${index}`,
+          raw: "x".repeat(10_000),
+        }),
+        createdAt: new Date(now.getTime() + index * 1000),
+      });
+    }
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    const text = await response.text();
+    const payload = JSON.parse(text);
+
+    expect(Buffer.byteLength(text)).toBeLessThan(150_000);
+    expect(payload.agents[0].outputEntries).toHaveLength(24);
+    expect(payload.agents[0].outputEntries[0].id).toBe("entry-56");
+    expect(payload.agents[0].outputEntries.every((entry: { text: string }) => entry.text.length < 2_100)).toBe(true);
+    expect(payload.agents[0].currentText.length).toBeLessThan(4_100);
+    expect(payload.executionEvents).toHaveLength(30);
+    expect(payload.executionEvents[0].details).toContain("Event 29");
+    expect(payload.executionEvents[0].details).not.toContain("xxxxx");
   });
 
   afterEach(() => {
@@ -89,7 +230,7 @@ describe("GET /api/events", () => {
     global.fetch = vi.fn(() => new Promise<Response>(() => {}));
 
     const controller = new AbortController();
-    const response = await GET(new NextRequest("http://localhost/api/events", {
+    const response = await GET(new NextRequest(`http://localhost/api/events?runId=${runId}`, {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
@@ -134,7 +275,7 @@ describe("GET /api/events", () => {
 
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
 
-    const response = await GET(new NextRequest("http://localhost/api/events?snapshot=1"));
+    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
     expect(response.headers.get("content-type")).toContain("application/json");
 
     const payload = await response.json();
@@ -224,7 +365,7 @@ describe("GET /api/events", () => {
     ]), { status: 200 }));
 
     const controller = new AbortController();
-    const response = await GET(new NextRequest("http://localhost/api/events", {
+    const response = await GET(new NextRequest(`http://localhost/api/events?runId=${runId}`, {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
@@ -287,7 +428,7 @@ describe("GET /api/events", () => {
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
 
     const controller = new AbortController();
-    const response = await GET(new NextRequest("http://localhost/api/events", {
+    const response = await GET(new NextRequest(`http://localhost/api/events?runId=${runId}`, {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();

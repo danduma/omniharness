@@ -332,8 +332,8 @@ function ToolActivity({
   const isDone = isTerminalToolStatus(activity.status);
   const showToolLabel = activity.label !== "Tool";
   const { toolDetailsOpenById, toolOutputExpandedById } = useManagerSnapshot(terminalUiManager);
-  const detailsOpen = isDone ? false : toolDetailsOpenById[activity.id] ?? true;
-  const outputExpanded = isDone ? false : toolOutputExpandedById[activity.id] ?? false;
+  const detailsOpen = toolDetailsOpenById[activity.id] ?? !isDone;
+  const outputExpanded = toolOutputExpandedById[activity.id] ?? false;
 
   return (
     <div className="space-y-2">
@@ -455,14 +455,22 @@ function ThoughtActivity({
 }
 
 function ActivityRow({ activity, variant }: { activity: TerminalActivityItem; variant: "terminal" | "native" }) {
+  if (activity.kind === "user_message") {
+    return (
+      <div className="relative z-10 pl-4 sm:pl-6">
+        <div className="max-w-[min(72ch,calc(100%-1rem))] rounded-lg bg-[#3a3a3a] px-3 py-2 text-[length:var(--terminal-message-size)] leading-[1.55] text-[#d8d8d8] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:max-w-[min(78ch,calc(100%-1.5rem))]">
+          <p className="max-w-none whitespace-pre-wrap">{activity.text}</p>
+        </div>
+      </div>
+    );
+  }
+
   const running = activity.kind === "thinking"
     ? activity.inProgress
     : activity.kind === "tool" && isRunningActivityStatus(activity.status);
-  const markerTone = activity.kind === "user_message"
-    ? "user"
-    : activity.kind === "tool"
-      ? isErrorActivityStatus(activity.status) ? "error" : "tool"
-      : "thought";
+  const markerTone = activity.kind === "tool"
+    ? isErrorActivityStatus(activity.status) ? "error" : "tool"
+    : "thought";
 
   return (
     <div className="relative flex items-start gap-3">
@@ -478,17 +486,6 @@ function ActivityRow({ activity, variant }: { activity: TerminalActivityItem; va
                 : "text-zinc-100/95 [&_blockquote]:border-white/10 [&_blockquote]:bg-white/5 [&_blockquote]:text-zinc-300 [&_code]:bg-white/10 [&_code]:text-inherit [&_h3]:text-inherit [&_h4]:text-inherit [&_pre]:border-white/10 [&_pre]:bg-white/5 [&_pre]:text-inherit [&_strong]:text-inherit",
             )}
           />
-        ) : null}
-        {activity.kind === "user_message" ? (
-          <div className={cn(
-            "rounded-[0.95rem] border px-3 py-2",
-            variant === "native"
-              ? "border-primary/20 bg-primary/8 text-foreground"
-              : "border-cyan-400/20 bg-cyan-400/8 text-zinc-100",
-          )}>
-            <div className={cn("mb-1 text-[10px] font-semibold uppercase tracking-[0.14em]", variant === "native" ? "text-primary" : "text-cyan-200")}>You</div>
-            <p className="max-w-none whitespace-pre-wrap text-[length:var(--terminal-message-size)] leading-[1.55]">{activity.text}</p>
-          </div>
         ) : null}
         {activity.kind === "thinking" ? <ThoughtActivity activity={activity} variant={variant} /> : null}
         {activity.kind === "tool" ? <ToolActivity activity={activity} variant={variant} /> : null}

@@ -114,6 +114,54 @@ describe("agent output normalization", () => {
     });
   });
 
+  it("does not render empty formatted command output as expandable metadata", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        {
+          id: "start-1",
+          type: "tool_call",
+          text: "Terminal",
+          timestamp: "2026-04-22T00:00:00.000Z",
+          toolCallId: "tool-1",
+          toolKind: "execute",
+          status: "in_progress",
+          raw: {
+            kind: "execute",
+            rawInput: {
+              command: "true",
+            },
+          },
+        },
+        {
+          id: "update-1",
+          type: "tool_call_update",
+          text: "Tool call tool-1 completed",
+          timestamp: "2026-04-22T00:00:01.000Z",
+          toolCallId: "tool-1",
+          status: "completed",
+          raw: {
+            rawOutput: {
+              duration_ms: 12,
+              exit_code: 0,
+              formatted_output: "",
+            },
+          },
+        },
+      ],
+    });
+
+    expect(activity).toHaveLength(1);
+    expect(activity[0]).toMatchObject({
+      kind: "tool",
+      status: "completed",
+      inputPane: {
+        label: "IN",
+        text: "true",
+      },
+    });
+    expect(activity[0]?.kind === "tool" ? activity[0].outputPane : null).toBeUndefined();
+  });
+
   it("groups active thoughts into a thinking activity", () => {
     const activity = buildAgentOutputActivity({
       outputEntries: [

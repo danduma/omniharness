@@ -195,7 +195,7 @@ test("direct conversations render the user transcript next to the worker surface
   expect(pageSource).toContain('.filter((message) => message.role === "user")');
   expect(pageSource).not.toContain('message.role === "user" || (message.role === "worker" && message.content.trim())');
   expect(pageSource).toContain('const isExpanded = expandedDirectMessageIds.has(msg.id);');
-  expect(pageSource).toContain('className="flex justify-end"');
+  expect(pageSource).toContain('className="flex justify-start pl-4 sm:pl-6"');
   expect(pageSource).toContain('const handleCopyDirectMessage = async (content: string) => {');
   expect(pageSource).toContain('await navigator.clipboard.writeText(content);');
   expect(pageSource).toContain('select-text');
@@ -205,13 +205,13 @@ test("direct conversations render the user transcript next to the worker surface
   expect(pageSource).toContain('const isLongMessage = content.length > 420 || content.split(/\\r\\n|\\r|\\n/).length > 6;');
   expect(pageSource).toContain('{isExpanded || isLongMessage ? (');
   expect(pageSource).toContain('{isExpanded ? "less" : "...more"}');
-  expect(pageSource).toContain('text-white');
+  expect(pageSource).toContain('text-[#d8d8d8]');
   expect(pageSource).toContain('aria-label="Copy message"');
   expect(pageSource).toContain('label: "Retry from here"');
   expect(pageSource).toContain('aria-label={action.label}');
   expect(pageSource).toContain('onClick: () => handleRetryMessage(msg.id)');
-  expect(pageSource).toContain('rounded-[1.9rem] rounded-br-lg bg-[#242424]');
-  expect(pageSource).toContain('px-4 py-2.5');
+  expect(pageSource).toContain('rounded-lg bg-[#3a3a3a]');
+  expect(pageSource).toContain('px-3 py-2');
   expect(pageSource).toContain('text-sm leading-6');
   expect(pageSource).not.toContain('text-[1.375rem]');
   expect(pageSource).toContain('cursor-pointer');
@@ -307,10 +307,12 @@ test("command input uses a fixed helper placeholder instead of echoing the selec
 
 test("send button swaps to a spinner while a command submission is pending", () => {
   expect(pageSource).toContain("const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || promotePlanningConversation.isPending");
-  expect(pageSource).toContain('disabled={isComposerSubmitting || (!command.trim() && !isSupervisorRunning)}');
-  expect(pageSource).toContain('{isComposerSubmitting ? (');
+  expect(pageSource).toContain("const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;");
+  expect(pageSource).toContain('disabled={isSubmitButtonDisabled}');
+  expect(pageSource).toContain('{isStoppingConversation || isSendButtonBusy ? (');
   expect(pageSource).toContain('<LoaderCircle className="h-5 w-5 animate-spin" />');
-  expect(pageSource).toContain(') : (');
+  expect(pageSource).toContain(') : isStopButtonVisible ? (');
+  expect(pageSource).toContain('<Square className="h-4 w-4 fill-current" />');
   expect(pageSource).toContain('<ArrowUp className="h-5 w-5" />');
 });
 
