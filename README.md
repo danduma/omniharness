@@ -4,7 +4,7 @@ OmniHarness is a local web UI for supervising ACP-backed coding agents such as C
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 22.x. Use `nvm use` from the repo root to match `.nvmrc`.
 - `pnpm`
 - At least one supported coding agent installed:
   - Codex CLI plus `codex-acp`

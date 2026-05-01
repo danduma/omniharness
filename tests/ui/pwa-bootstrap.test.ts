@@ -53,6 +53,8 @@ describe("PWA installability", () => {
     expect(bootstrapSource).toContain('"use client"');
     expect(bootstrapSource).toContain("registerServiceWorker");
     expect(pwaSource).toContain('"serviceWorker" in navigator');
+    expect(pwaSource).toContain('process.env.NODE_ENV !== "production"');
+    expect(pwaSource).toContain("getRegistrations");
     expect(pwaSource).toContain('navigator.serviceWorker.register("/sw.js"');
   });
 

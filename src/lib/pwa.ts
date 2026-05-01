@@ -1,4 +1,5 @@
 const SERVICE_WORKER_URL = "/sw.js";
+const DEV_CACHE_PREFIX = "omniharness-";
 
 function isLocalhost(hostname: string) {
   return (
@@ -24,6 +25,11 @@ export async function registerServiceWorker() {
     return null;
   }
 
+  if (process.env.NODE_ENV !== "production") {
+    await unregisterDevelopmentServiceWorkers();
+    return null;
+  }
+
   try {
     return await navigator.serviceWorker.register("/sw.js", {
       scope: "/",
@@ -35,3 +41,21 @@ export async function registerServiceWorker() {
 }
 
 export { SERVICE_WORKER_URL };
+
+async function unregisterDevelopmentServiceWorkers() {
+  try {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map((registration) => registration.unregister()));
+
+    if ("caches" in window) {
+      const cacheNames = await window.caches.keys();
+      await Promise.all(
+        cacheNames
+          .filter((name) => name.startsWith(DEV_CACHE_PREFIX))
+          .map((name) => window.caches.delete(name)),
+      );
+    }
+  } catch (error) {
+    console.error("Failed to clear OmniHarness development service worker state", error);
+  }
+}

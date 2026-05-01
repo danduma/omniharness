@@ -37,6 +37,11 @@ type TerminalActivityItem = AgentActivityItem | {
 };
 
 const TOOL_OUTPUT_PREVIEW_LINES = 3;
+const TOOL_OUTPUT_COLLAPSED_MAX_HEIGHT = "calc(var(--terminal-pane-size) * 4.65 + 1rem)";
+const TOOL_OUTPUT_EXPANDED_MAX_HEIGHT = "min(72vh, 42rem)";
+const TERMINAL_REVEAL_CLASS = "grid transition-[grid-template-rows,opacity,transform] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none";
+const TERMINAL_REVEAL_OPEN_CLASS = "grid-rows-[1fr] opacity-100 translate-y-0";
+const TERMINAL_REVEAL_CLOSED_CLASS = "grid-rows-[0fr] opacity-0 -translate-y-1 pointer-events-none";
 const TERMINAL_TOOL_STATUSES = new Set(["completed", "done", "failed", "error", "cancelled"]);
 const TERMINAL_BOTTOM_THRESHOLD_PX = 4;
 const TERMINAL_BASE_FONT_SIZES = {
@@ -249,6 +254,7 @@ function ActivityPane({
   variant,
   preview = false,
   expanded = true,
+  interactive = true,
   onClick,
 }: {
   label: string;
@@ -256,26 +262,33 @@ function ActivityPane({
   variant: "terminal" | "native";
   preview?: boolean;
   expanded?: boolean;
+  interactive?: boolean;
   onClick?: () => void;
 }) {
   const lines = text.split("\n");
   const canExpand = preview && lines.length > TOOL_OUTPUT_PREVIEW_LINES;
+  const canInteract = canExpand && interactive;
   const clipped = canExpand && !expanded;
+  const previewStyle: CSSProperties | undefined = canExpand
+    ? { maxHeight: clipped ? TOOL_OUTPUT_COLLAPSED_MAX_HEIGHT : TOOL_OUTPUT_EXPANDED_MAX_HEIGHT }
+    : undefined;
 
   return (
     <div
+      style={previewStyle}
       className={cn(
         "overflow-hidden",
-        canExpand && "cursor-pointer",
+        canInteract && "cursor-pointer",
+        canExpand && "transition-[max-height,background-color,border-color,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
         variant === "native"
           ? "rounded border border-border/60 bg-muted/25"
           : "rounded border border-white/10 bg-[#111318] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
       )}
-      onClick={canExpand ? onClick : undefined}
-      role={canExpand ? "button" : undefined}
-      tabIndex={canExpand ? 0 : undefined}
-      title={canExpand ? (expanded ? "Click to collapse output preview" : "Click to expand full output") : undefined}
-      onKeyDown={canExpand ? (event) => {
+      onClick={canInteract ? onClick : undefined}
+      role={canInteract ? "button" : undefined}
+      tabIndex={canInteract ? 0 : undefined}
+      title={canInteract ? (expanded ? "Click to collapse output preview" : "Click to expand full output") : undefined}
+      onKeyDown={canInteract ? (event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           onClick?.();
@@ -292,7 +305,7 @@ function ActivityPane({
           {label}
         </div>
         <pre className={cn(
-          "min-w-0 flex-1 overflow-x-auto px-2.5 py-2 font-mono whitespace-pre-wrap break-words",
+          "min-w-0 flex-1 overflow-auto px-2.5 py-2 font-mono whitespace-pre-wrap break-words",
           "text-[length:var(--terminal-pane-size)]",
           variant === "native" ? "leading-[1.5]" : "leading-[1.55]",
           clipped && "line-clamp-[3]",
@@ -334,6 +347,7 @@ function ToolActivity({
   const { toolDetailsOpenById, toolOutputExpandedById } = useManagerSnapshot(terminalUiManager);
   const detailsOpen = toolDetailsOpenById[activity.id] ?? !isDone;
   const outputExpanded = toolOutputExpandedById[activity.id] ?? false;
+  const hasToolPanes = Boolean(activity.inputPane || activity.outputPane);
 
   return (
     <div className="space-y-2">
@@ -388,19 +402,30 @@ function ToolActivity({
           aria-hidden="true"
         />
       </button>
-      {detailsOpen && (activity.inputPane || activity.outputPane) ? (
-        <div className="space-y-2 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1 motion-safe:duration-200 motion-safe:ease-out">
-          {activity.inputPane ? <ActivityPane label={activity.inputPane.label} text={activity.inputPane.text} variant={variant} /> : null}
-          {activity.outputPane ? (
-            <ActivityPane
-              label={activity.outputPane.label}
-              text={activity.outputPane.text}
-              variant={variant}
-              preview
-              expanded={outputExpanded}
-              onClick={() => terminalUiManager.setToolOutputExpanded(activity.id, !outputExpanded)}
-            />
-          ) : null}
+      {hasToolPanes ? (
+        <div
+          className={cn(
+            TERMINAL_REVEAL_CLASS,
+            detailsOpen ? TERMINAL_REVEAL_OPEN_CLASS : TERMINAL_REVEAL_CLOSED_CLASS,
+          )}
+          aria-hidden={!detailsOpen}
+        >
+          <div className="min-h-0 overflow-hidden">
+            <div className="space-y-2 pb-0.5 pt-0.5">
+              {activity.inputPane ? <ActivityPane label={activity.inputPane.label} text={activity.inputPane.text} variant={variant} /> : null}
+              {activity.outputPane ? (
+                <ActivityPane
+                  label={activity.outputPane.label}
+                  text={activity.outputPane.text}
+                  variant={variant}
+                  preview
+                  expanded={outputExpanded}
+                  interactive={detailsOpen}
+                  onClick={() => terminalUiManager.setToolOutputExpanded(activity.id, !outputExpanded)}
+                />
+              ) : null}
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
@@ -438,18 +463,26 @@ function ThoughtActivity({
           aria-hidden="true"
         />
       </button>
-      {open ? (
-        <div className="space-y-1 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1 motion-safe:duration-200 motion-safe:ease-out">
-          {activity.thoughts.map((thought, index) => (
-            <p
-              key={`${activity.id}:${index}`}
-              className={cn("max-w-none whitespace-pre-wrap text-[length:var(--terminal-thought-size)] leading-[1.5] italic", variant === "native" ? "text-muted-foreground" : "text-zinc-500")}
-            >
-              {thought}
-            </p>
-          ))}
+      <div
+        className={cn(
+          TERMINAL_REVEAL_CLASS,
+          open ? TERMINAL_REVEAL_OPEN_CLASS : TERMINAL_REVEAL_CLOSED_CLASS,
+        )}
+        aria-hidden={!open}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div className="space-y-1 pb-0.5 pt-0.5">
+            {activity.thoughts.map((thought, index) => (
+              <p
+                key={`${activity.id}:${index}`}
+                className={cn("max-w-none whitespace-pre-wrap text-[length:var(--terminal-thought-size)] leading-[1.5] italic", variant === "native" ? "text-muted-foreground" : "text-zinc-500")}
+              >
+                {thought}
+              </p>
+            ))}
+          </div>
         </div>
-      ) : null}
+      </div>
     </div>
   );
 }

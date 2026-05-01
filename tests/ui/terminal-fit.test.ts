@@ -57,7 +57,36 @@ test("terminal keeps tool output compact and expandable", () => {
   expect(terminalSource).toContain('{shouldShowToolSpinner(activity.status) ? (');
   expect(terminalSource).toContain('{formatActivityStatus(activity.status)}\n          </span>\n        ) : null}\n        <ChevronDown');
   expect(terminalSource).toContain('{activity.inProgress ? <ThinkingDots variant={variant} /> : null}\n        <ChevronDown');
-  expect(terminalSource).toContain("motion-safe:slide-in-from-top-1");
+  expect(terminalSource).toContain("TERMINAL_REVEAL_CLASS");
+});
+
+test("terminal uses a measured v0-style expansion animation for tool call details", () => {
+  expect(terminalSource).toContain("const TOOL_OUTPUT_COLLAPSED_MAX_HEIGHT = \"calc(var(--terminal-pane-size) * 4.65 + 1rem)\"");
+  expect(terminalSource).toContain("grid transition-[grid-template-rows,opacity,transform]");
+  expect(terminalSource).toContain("grid-rows-[1fr] opacity-100 translate-y-0");
+  expect(terminalSource).toContain("grid-rows-[0fr] opacity-0 -translate-y-1 pointer-events-none");
+  expect(terminalSource).toContain("ease-[cubic-bezier(0.16,1,0.3,1)]");
+  expect(terminalSource).toContain('aria-hidden={!detailsOpen}');
+  expect(terminalSource).toContain('maxHeight: clipped ? TOOL_OUTPUT_COLLAPSED_MAX_HEIGHT : TOOL_OUTPUT_EXPANDED_MAX_HEIGHT');
+  expect(terminalSource).toContain("transition-[max-height,background-color,border-color,box-shadow]");
+  expect(terminalSource).toContain("motion-reduce:transition-none");
+});
+
+test("terminal removes hidden animated tool panes from keyboard interaction", () => {
+  expect(terminalSource).toContain("interactive = true");
+  expect(terminalSource).toContain("const canInteract = canExpand && interactive");
+  expect(terminalSource).toContain('tabIndex={canInteract ? 0 : undefined}');
+  expect(terminalSource).toContain("interactive={detailsOpen}");
+});
+
+test("terminal uses the same measured expansion animation for thoughts", () => {
+  expect(terminalSource).toContain("const TERMINAL_REVEAL_CLASS = \"grid transition-[grid-template-rows,opacity,transform]");
+  expect(terminalSource).toContain("const TERMINAL_REVEAL_OPEN_CLASS = \"grid-rows-[1fr] opacity-100 translate-y-0\"");
+  expect(terminalSource).toContain("const TERMINAL_REVEAL_CLOSED_CLASS = \"grid-rows-[0fr] opacity-0 -translate-y-1 pointer-events-none\"");
+  expect(terminalSource).toContain("open ? TERMINAL_REVEAL_OPEN_CLASS : TERMINAL_REVEAL_CLOSED_CLASS");
+  expect(terminalSource).toContain('aria-hidden={!open}');
+  expect(terminalSource).toContain("min-h-0 overflow-hidden");
+  expect(terminalSource).not.toContain("space-y-1 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1");
 });
 
 test("terminal exposes a three dot text zoom menu with tiny through three notches larger", () => {
