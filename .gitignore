@@ -23,10 +23,21 @@
 # misc
 .DS_Store
 *.pem
-sqlite.db
-/.omniharness/bridge.lock.json
+*.db
+*.db-journal
+*.sqlite
+*.sqlite-journal
+*.sqlite3
+*.sqlite3-journal
+/.omniharness/
+.omniharness-auth.key
+.node-version
+.npmrc
+.nvmrc
+.tmp-*
 
 # debug
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
