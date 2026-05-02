@@ -492,7 +492,17 @@ function ThoughtActivity({
   );
 }
 
-function ActivityRow({ activity, variant }: { activity: TerminalActivityItem; variant: "terminal" | "native" }) {
+function ActivityRow({
+  activity,
+  connectorExtendsAfter = false,
+  connectorExtendsBefore = false,
+  variant,
+}: {
+  activity: TerminalActivityItem;
+  connectorExtendsAfter?: boolean;
+  connectorExtendsBefore?: boolean;
+  variant: "terminal" | "native";
+}) {
   if (activity.kind === "user_message") {
     return (
       <div className="relative z-10 pl-4 sm:pl-6">
@@ -512,6 +522,18 @@ function ActivityRow({ activity, variant }: { activity: TerminalActivityItem; va
 
   return (
     <div className="relative flex items-start gap-3">
+      {connectorExtendsBefore ? (
+        <div className={cn(
+          "absolute left-2 top-0 h-[0.57rem] w-px",
+          variant === "native" ? "bg-border/80" : "bg-white/14",
+        )} />
+      ) : null}
+      {connectorExtendsAfter ? (
+        <div className={cn(
+          "absolute -bottom-3 left-2 top-[0.57rem] w-px",
+          variant === "native" ? "bg-border/80" : "bg-white/14",
+        )} />
+      ) : null}
       <TimelineMarker running={running} tone={markerTone} variant={variant} />
       <div className="min-w-0 flex-1">
         {activity.kind === "message" ? (
@@ -632,13 +654,21 @@ export function Terminal({ agent, userMessages = [], variant = "terminal", class
       >
         {activity.length > 0 ? (
           <div className="relative flex flex-col gap-3">
-            <div className={cn(
-              "absolute left-2 top-0 h-full w-px",
-              variant === "native" ? "bg-border/70" : "bg-white/8",
-            )} />
-            {activity.map((entry) => (
-              <ActivityRow key={entry.id} activity={entry} variant={variant} />
-            ))}
+            {activity.map((entry, index) => {
+              const previousEntry = activity[index - 1];
+              const nextEntry = activity[index + 1];
+              const isUserMessage = entry.kind === "user_message";
+
+              return (
+                <ActivityRow
+                  key={entry.id}
+                  activity={entry}
+                  connectorExtendsBefore={!isUserMessage && previousEntry?.kind !== "user_message"}
+                  connectorExtendsAfter={!isUserMessage && nextEntry?.kind !== "user_message"}
+                  variant={variant}
+                />
+              );
+            })}
           </div>
         ) : (
           <div className={cn(

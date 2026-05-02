@@ -142,7 +142,7 @@ export function buildLiveWorkerSnapshot(args: {
       lastText,
       bridgeLastError: normalizedAgent.lastError ?? null,
       runLastError,
-      lastError: normalizedAgent.lastError ?? runLastError,
+      lastError: normalizedAgent.lastError ?? null,
       outputLog,
       displayText,
       bridgeMissing: false,

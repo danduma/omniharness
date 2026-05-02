@@ -15,6 +15,12 @@ describe("isTransientSupervisorError", () => {
     expect(isTransientSupervisorError(new Error("Agent runtime list request timed out after 5000ms."))).toBe(true);
   });
 
+  it("treats wrapped DNS lookup failures from model providers as transient", () => {
+    expect(isTransientSupervisorError(new Error(
+      "Cannot connect to API: getaddrinfo ENOTFOUND generativelanguage.googleapis.com (caused by: getaddrinfo ENOTFOUND generativelanguage.googleapis.com)",
+    ))).toBe(true);
+  });
+
   it("does not retry clear configuration errors", () => {
     expect(isTransientSupervisorError(new Error("API key not valid"))).toBe(false);
   });

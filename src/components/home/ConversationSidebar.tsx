@@ -26,6 +26,7 @@ export interface ConversationSidebarProps {
   selectRun: (runId: string) => void;
   renamingRunId: string | null;
   renameValue: string;
+  renameSource: "sidebar" | "topbar" | null;
   setRenameValue: (value: string) => void;
   startRenamingRun: (run: SidebarRun) => void;
   commitRenamingRun: (runId: string) => void;
@@ -54,6 +55,7 @@ export function ConversationSidebar({
   selectRun,
   renamingRunId,
   renameValue,
+  renameSource,
   setRenameValue,
   startRenamingRun,
   commitRenamingRun,
@@ -157,7 +159,7 @@ export function ConversationSidebar({
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="min-w-0 flex items-center justify-between gap-2" title={run.path}>
-                          {renamingRunId === run.id ? (
+                          {renamingRunId === run.id && renameSource !== "topbar" ? (
                             <Input
                               value={renameValue}
                               onChange={(event) => setRenameValue(event.target.value)}

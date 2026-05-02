@@ -1,10 +1,12 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { runs, workers } from "@/server/db/schema";
+import { messages, runs, workers } from "@/server/db/schema";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { normalizeAgentRecord } from "@/server/bridge-client";
 import { persistRunFailure } from "@/server/runs/failures";
 import { isTerminalRunStatus } from "@/server/runs/status";
+import { startSupervisorRun } from "@/server/supervisor/start";
+import { isTransientSupervisorError } from "@/server/supervisor/retry";
 
 const MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC = "Worker is idle with no recorded output, and the bridge no longer has a live session for it.";
 
@@ -78,13 +80,77 @@ function isEmptyIdlePersistedWorker(worker: typeof workers.$inferSelect) {
   return status === "idle" && !hasPersistedWorkerOutput(worker);
 }
 
+function isAgentBusyRunFailure(run: typeof runs.$inferSelect) {
+  return run.status === "failed" && /\bagent is busy\b/i.test(run.lastError ?? "");
+}
+
+function isRecoverableImplementationSupervisorFailure(run: typeof runs.$inferSelect) {
+  const lastError = run.lastError ?? "";
+  return run.mode === "implementation"
+    && run.status === "failed"
+    && Boolean(lastError.trim())
+    && (/^get agent failed:/i.test(lastError) || /^cannot connect to api:/i.test(lastError))
+    && isTransientSupervisorError(new Error(lastError));
+}
+
+function isCleanLiveAgent(agent: ReturnType<typeof normalizeAgentRecord>) {
+  return agent.state !== "error" && !agent.lastError?.trim();
+}
+
+async function clearMatchingRunFailureMessage(run: typeof runs.$inferSelect) {
+  if (!run.lastError) {
+    return;
+  }
+
+  await db.delete(messages).where(and(
+    eq(messages.runId, run.id),
+    eq(messages.role, "system"),
+    eq(messages.kind, "error"),
+    eq(messages.content, `Run failed: ${run.lastError}`),
+  ));
+}
+
 export async function syncConversationSessions(rawAgents: unknown[]) {
   const agents = rawAgents.map((agent) => normalizeAgentRecord(agent));
   const allRuns = await db.select().from(runs);
   const allWorkers = await db.select().from(workers);
 
   for (const run of allRuns) {
-    if (run.mode === "implementation" || isTerminalRunStatus(run.status)) {
+    const staleBusyFailure = isAgentBusyRunFailure(run);
+    const staleImplementationSupervisorFailure = isRecoverableImplementationSupervisorFailure(run);
+    if (run.mode === "implementation") {
+      if (!staleImplementationSupervisorFailure) {
+        continue;
+      }
+
+      const implementationWorker = allWorkers.find((candidate) => candidate.runId === run.id);
+      const implementationAgent = implementationWorker
+        ? agents.find((candidate) => candidate.name === implementationWorker.id)
+        : null;
+      if (!implementationWorker || !implementationAgent || !isCleanLiveAgent(implementationAgent)) {
+        continue;
+      }
+
+      await db.update(workers).set({
+        status: implementationAgent.state,
+        cwd: implementationAgent.cwd || implementationWorker.cwd,
+        outputEntriesJson: JSON.stringify(implementationAgent.outputEntries ?? []),
+        currentText: implementationAgent.currentText,
+        lastText: implementationAgent.lastText,
+        updatedAt: new Date(),
+      }).where(eq(workers.id, implementationWorker.id));
+      await db.update(runs).set({
+        status: "running",
+        failedAt: null,
+        lastError: null,
+        updatedAt: new Date(),
+      }).where(eq(runs.id, run.id));
+      await clearMatchingRunFailureMessage(run);
+      startSupervisorRun(run.id);
+      continue;
+    }
+
+    if (isTerminalRunStatus(run.status) && !staleBusyFailure) {
       continue;
     }
 
@@ -110,24 +176,32 @@ export async function syncConversationSessions(rawAgents: unknown[]) {
     const nextRunState = resolveSyncedRunState(agent);
 
     if (run.mode === "planning") {
-      await refreshPlanningArtifactsForRun({
+      const result = await refreshPlanningArtifactsForRun({
         run,
         worker,
         snapshot: agent,
         status: nextRunState === "running" ? "working" : undefined,
       });
+      if (staleBusyFailure && result.status !== "failed") {
+        await clearMatchingRunFailureMessage(run);
+      }
       continue;
     }
 
     await db.update(runs).set({
       status: nextRunState,
-      lastError: agent.lastError || run.lastError,
+      lastError: nextRunState === "failed" ? agent.lastError || run.lastError : null,
+      failedAt: nextRunState === "failed" ? run.failedAt : null,
       updatedAt: new Date(),
     }).where(eq(runs.id, run.id));
+    if (staleBusyFailure && nextRunState !== "failed") {
+      await clearMatchingRunFailureMessage(run);
+    }
   }
 
   for (const run of allRuns) {
-    if (run.mode === "implementation" || isTerminalRunStatus(run.status)) {
+    const staleBusyFailure = isAgentBusyRunFailure(run);
+    if (run.mode === "implementation" || (isTerminalRunStatus(run.status) && !staleBusyFailure)) {
       continue;
     }
 

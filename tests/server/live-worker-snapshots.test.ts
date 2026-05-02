@@ -85,8 +85,67 @@ describe("buildLiveWorkerSnapshot", () => {
       displayText: "Persisted output\nApplying patch",
       bridgeLastError: null,
       runLastError: "Run-level fallback",
-      lastError: "Run-level fallback",
+      lastError: null,
       bridgeMissing: false,
+    }));
+  });
+
+  it("does not show supervisor run failures as live worker errors", () => {
+    const snapshot = buildLiveWorkerSnapshot({
+      agent: {
+        name: "worker-clean",
+        type: "codex",
+        cwd: "/repo",
+        state: "idle",
+        currentText: "",
+        lastText: "Implemented the feature.",
+        outputEntries: [],
+        stderrBuffer: [],
+        stopReason: "end_turn",
+        lastError: null,
+      },
+      worker: {
+        id: "worker-clean",
+        runId: "run-supervisor-error",
+        type: "codex",
+        status: "idle",
+        cwd: "/repo",
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        bridgeSessionId: "session-clean",
+        bridgeSessionMode: "full-access",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      run: {
+        id: "run-supervisor-error",
+        planId: "plan-supervisor-error",
+        mode: "implementation",
+        projectPath: "/repo",
+        title: "Supervisor DNS failure",
+        preferredWorkerType: "codex",
+        preferredWorkerModel: "gpt-5.5",
+        preferredWorkerEffort: "high",
+        allowedWorkerTypes: "codex",
+        specPath: null,
+        artifactPlanPath: null,
+        plannerArtifactsJson: null,
+        parentRunId: null,
+        forkedFromMessageId: null,
+        status: "failed",
+        failedAt: new Date(),
+        lastError: "Cannot connect to API: getaddrinfo ENOTFOUND generativelanguage.googleapis.com",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+
+    expect(snapshot).toEqual(expect.objectContaining({
+      bridgeLastError: null,
+      runLastError: "Cannot connect to API: getaddrinfo ENOTFOUND generativelanguage.googleapis.com",
+      lastError: null,
     }));
   });
 

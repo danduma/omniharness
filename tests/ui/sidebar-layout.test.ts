@@ -55,7 +55,6 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(workerCardSource).toContain("Context usage unavailable");
   expect(workerCardSource).toContain("Context usage ");
   expect(pageSource).toContain("Claude Code");
-  expect(workerCardSource).toContain("Context unavailable");
   expect(workerCardSource).toContain('promptPreview?: string | null;');
   expect(workerCardSource).toContain('userMessages?: TerminalUserMessage[];');
   expect(workersSidebarSource).toContain('promptPreview={worker.initialPrompt}');
@@ -399,7 +398,7 @@ test("empty state centers the composer with the welcome stack instead of docking
   expect(pageSource).toContain('{selectedRunId ? (');
   expect(pageSource).toContain("What shall we build in {welcomeRepoName}?");
   expect(pageSource).toContain("const welcomeRepoName = resolveRepoName(currentProjectScope)");
-  expect(pageSource).toContain('renderComposer("mt-6 w-full")');
+  expect(pageSource).toContain('renderComposer("mt-2 w-full pt-0 sm:pt-0")');
   expect(pageSource).toContain('{selectedRunId ? renderComposer("w-full") : null}');
   expect(pageSource).not.toContain("Welcome to OmniHarness");
   expect(pageSource).not.toContain("{getConversationModeCopy(selectedConversationMode).description}");

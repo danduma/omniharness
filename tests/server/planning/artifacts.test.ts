@@ -105,6 +105,45 @@ ready: yes
     expect(artifacts.planPath).toBeNull();
   });
 
+  it("detects artifact paths listed immediately after an intentional artifact reference", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "omni-planning-"));
+    const planPath = path.join(cwd, "docs/superpowers/plans/current-plan.md");
+
+    fs.mkdirSync(path.dirname(planPath), { recursive: true });
+    fs.writeFileSync(planPath, "## Phase 1\n- [ ] Build current workflow\n");
+
+    const artifacts = await collectPlannerArtifacts({
+      cwd,
+      outputText: `
+I created these planning artifacts:
+- docs/superpowers/plans/current-plan.md
+`,
+    });
+
+    expect(artifacts.planPath).toBe(planPath);
+  });
+
+  it("ignores incidental markdown paths that were not presented as planner artifacts", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "omni-planning-"));
+    const oldPlan = path.join(cwd, "docs/superpowers/plans/old-plan.md");
+
+    fs.mkdirSync(path.dirname(oldPlan), { recursive: true });
+    fs.writeFileSync(oldPlan, "## Phase 1\n- [ ] Keep old behavior\n");
+
+    const artifacts = await collectPlannerArtifacts({
+      cwd,
+      outputText: `
+Search results:
+docs/superpowers/plans/old-plan.md
+docs/superpowers/specs/old-design.md
+`,
+    });
+
+    expect(artifacts.candidates).toEqual([]);
+    expect(artifacts.planPath).toBeNull();
+    expect(artifacts.specPath).toBeNull();
+  });
+
   it("reports readiness gaps for invalid plan candidates", async () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "omni-planning-"));
     const planPath = path.join(cwd, "docs/superpowers/plans/invalid.md");

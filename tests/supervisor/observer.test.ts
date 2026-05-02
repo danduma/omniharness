@@ -286,6 +286,55 @@ describe("deriveWorkerEvents", () => {
     expect(runMessages.some((message) => message.content.includes("agent runtime is not running"))).toBe(true);
   });
 
+  it("keeps the run active when bridge status polling hits a retryable transport reset", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockGetAgent.mockRejectedValue(Object.assign(
+      new Error("Get agent failed: fetch failed"),
+      { cause: Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }) },
+    ));
+
+    await pollRunWorkers(runId, vi.fn());
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const runMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+
+    expect(persistedRun?.status).toBe("running");
+    expect(persistedRun?.lastError).toBeNull();
+    expect(runMessages.some((message) => message.kind === "error")).toBe(false);
+    expect(workerEvents.some((event) => event.eventType === "worker_poll_failed")).toBe(true);
+  });
+
   it("does not poll workers for a cancelled run", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

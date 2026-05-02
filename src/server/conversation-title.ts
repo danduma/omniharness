@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { CONVERSATION_TITLE_SYSTEM_PROMPT } from "@/server/prompts";
 import { formatErrorMessage } from "@/server/runs/failures";
+import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import {
   buildMastraModelConfig,
@@ -43,11 +44,12 @@ export async function generateConversationTitle(command: string) {
       getSupervisorModelConfig(env),
       decryptionFailures,
     );
+    const model = buildMastraModelConfig(config);
     const agent = new Agent({
       id: "omniharness-title-generator",
       name: "OmniHarness Title Generator",
       instructions: CONVERSATION_TITLE_SYSTEM_PROMPT,
-      model: buildMastraModelConfig(config),
+      model,
     });
 
     const completion = await agent.generate(command, {
@@ -55,6 +57,8 @@ export async function generateConversationTitle(command: string) {
         schema: z.object({
           title: z.string(),
         }),
+        model,
+        jsonPromptInjection: true,
       },
     });
 
@@ -93,4 +97,6 @@ export async function queueConversationTitleGeneration(args: { runId: string; co
       createdAt: new Date(),
     });
   }
+
+  notifyEventStreamSubscribers();
 }

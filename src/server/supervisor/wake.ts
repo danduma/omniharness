@@ -4,6 +4,7 @@ import { runs } from "@/server/db/schema";
 import { persistRunFailure } from "@/server/runs/failures";
 import { isActiveImplementationRun } from "@/server/runs/status";
 import { Supervisor } from "@/server/supervisor";
+import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { stopRunObserver } from "./observer";
 import { acquireSupervisorWakeLease, releaseSupervisorWakeLease } from "./lease";
 
@@ -55,6 +56,10 @@ export async function executeSupervisorWake(runId: string) {
       }
     }
   } catch (error) {
+    if (isTransientSupervisorError(error)) {
+      scheduleSupervisorWake(runId, 5_000);
+      return;
+    }
     stopRunObserver(runId);
     await persistRunFailure(runId, error);
   } finally {

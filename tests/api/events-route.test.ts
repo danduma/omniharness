@@ -1,16 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { executionEvents, messages, plans, runs, supervisorInterventions, workerCounters, workers } from "@/server/db/schema";
 
-const { mockEnsureSupervisorRuntimeStarted } = vi.hoisted(() => ({
+const { mockEnsureSupervisorRuntimeStarted, mockStartSupervisorRun } = vi.hoisted(() => ({
   mockEnsureSupervisorRuntimeStarted: vi.fn().mockResolvedValue(undefined),
+  mockStartSupervisorRun: vi.fn(),
 }));
 
 vi.mock("@/server/supervisor/runtime-watchdog", () => ({
   ensureSupervisorRuntimeStarted: mockEnsureSupervisorRuntimeStarted,
+}));
+
+vi.mock("@/server/supervisor/start", () => ({
+  startSupervisorRun: mockStartSupervisorRun,
 }));
 
 import { GET } from "@/app/api/events/route";
@@ -44,6 +52,7 @@ describe("GET /api/events", () => {
 
   beforeEach(async () => {
     mockEnsureSupervisorRuntimeStarted.mockClear();
+    mockStartSupervisorRun.mockClear();
     await db.delete(supervisorInterventions);
     await db.delete(executionEvents);
     await db.delete(messages);
@@ -659,6 +668,292 @@ describe("GET /api/events", () => {
 
     const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     expect(persistedRun?.status).toBe("done");
+  });
+
+  it("recovers a direct conversation when an old busy failure is followed by clean worker output", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-busy-recovered.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "failed",
+      lastError: `Ask failed: Agent is busy: ${workerId}`,
+      failedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "error",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "Still working.",
+      lastText: "Still working.",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "system",
+      kind: "error",
+      content: `Run failed: Ask failed: Agent is busy: ${workerId}`,
+      createdAt: now,
+    });
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      {
+        name: workerId,
+        type: "codex",
+        cwd: "/workspace/app",
+        state: "idle",
+        currentText: "",
+        lastText: "Done",
+        outputEntries: [
+          {
+            id: "entry-1",
+            type: "message",
+            text: "Done",
+            timestamp: now.toISOString(),
+          },
+        ],
+        stderrBuffer: [],
+        stopReason: "end_turn",
+      },
+    ]), { status: 200 }));
+
+    const controller = new AbortController();
+    const response = await GET(new NextRequest("http://localhost/api/events", {
+      signal: controller.signal,
+    }));
+    const reader = response.body!.getReader();
+    const { value } = await reader.read();
+    controller.abort();
+    await reader.cancel();
+
+    const payload = decodeFirstEvent(value!);
+    expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("done");
+    expect(payload.workers.find((worker: { id: string }) => worker.id === workerId)?.status).toBe("idle");
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    expect(persistedRun?.status).toBe("done");
+    expect(persistedRun?.lastError).toBeNull();
+    expect(persistedWorker?.status).toBe("idle");
+    expect(persistedMessages.filter((message) => message.kind === "error")).toHaveLength(0);
+  });
+
+  it("recovers a planning conversation when an old busy failure is followed by a ready handoff", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "omni-events-planning-ready-"));
+    const specPath = path.join(workspace, "docs/superpowers/specs/ready-spec.md");
+    const planPath = path.join(workspace, "docs/superpowers/plans/ready-plan.md");
+
+    fs.mkdirSync(path.dirname(specPath), { recursive: true });
+    fs.mkdirSync(path.dirname(planPath), { recursive: true });
+    fs.writeFileSync(specPath, "# Ready Spec\n");
+    fs.writeFileSync(planPath, "## Phase 1\n- [ ] Implement the thing\n");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/planning-busy-recovered.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "planning",
+      projectPath: workspace,
+      status: "failed",
+      lastError: `Ask failed: Agent is busy: ${workerId}`,
+      failedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "error",
+      cwd: workspace,
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "Still planning.",
+      lastText: "Still planning.",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "system",
+      kind: "error",
+      content: `Run failed: Ask failed: Agent is busy: ${workerId}`,
+      createdAt: now,
+    });
+
+    const handoff = `<omniharness-plan-handoff>
+spec_path: docs/superpowers/specs/ready-spec.md
+plan_path: docs/superpowers/plans/ready-plan.md
+ready: yes
+summary: Plan is ready.
+</omniharness-plan-handoff>`;
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      {
+        name: workerId,
+        type: "codex",
+        cwd: workspace,
+        state: "idle",
+        currentText: "",
+        lastText: handoff,
+        outputEntries: [
+          {
+            id: "entry-1",
+            type: "message",
+            text: handoff,
+            timestamp: now.toISOString(),
+          },
+        ],
+        stderrBuffer: [],
+        stopReason: "end_turn",
+        lastError: null,
+      },
+    ]), { status: 200 }));
+
+    const controller = new AbortController();
+    const response = await GET(new NextRequest("http://localhost/api/events", {
+      signal: controller.signal,
+    }));
+    const reader = response.body!.getReader();
+    const { value } = await reader.read();
+    controller.abort();
+    await reader.cancel();
+
+    const payload = decodeFirstEvent(value!);
+    expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("ready");
+    expect(payload.workers.find((worker: { id: string }) => worker.id === workerId)?.status).toBe("idle");
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    expect(persistedRun?.status).toBe("ready");
+    expect(persistedRun?.lastError).toBeNull();
+    expect(persistedRun?.failedAt).toBeNull();
+    expect(persistedRun?.artifactPlanPath).toBe(planPath);
+    expect(persistedRun?.specPath).toBe(specPath);
+    expect(persistedMessages.filter((message) => message.kind === "error")).toHaveLength(0);
+  });
+
+  it("recovers an implementation conversation when an old bridge poll reset is followed by a clean live worker", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+    const errorMessage = "Get agent failed: fetch failed (caused by: read ECONNRESET)";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/implementation-poll-reset.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "failed",
+      lastError: errorMessage,
+      failedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "Running validation.",
+      lastText: "Running validation.",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "system",
+      kind: "error",
+      content: `Run failed: ${errorMessage}`,
+      createdAt: now,
+    });
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      {
+        name: workerId,
+        type: "codex",
+        cwd: "/workspace/app",
+        state: "idle",
+        currentText: "",
+        lastText: "Implemented the feature and ran focused checks.",
+        outputEntries: [
+          {
+            id: "entry-1",
+            type: "message",
+            text: "Implemented the feature and ran focused checks.",
+            timestamp: now.toISOString(),
+          },
+        ],
+        stderrBuffer: [],
+        stopReason: "end_turn",
+        lastError: null,
+      },
+    ]), { status: 200 }));
+
+    const controller = new AbortController();
+    const response = await GET(new NextRequest("http://localhost/api/events", {
+      signal: controller.signal,
+    }));
+    const reader = response.body!.getReader();
+    const { value } = await reader.read();
+    controller.abort();
+    await reader.cancel();
+
+    const payload = decodeFirstEvent(value!);
+    expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("running");
+    expect(payload.workers.find((worker: { id: string }) => worker.id === workerId)?.status).toBe("idle");
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    expect(persistedRun?.status).toBe("running");
+    expect(persistedRun?.lastError).toBeNull();
+    expect(persistedRun?.failedAt).toBeNull();
+    expect(persistedWorker?.status).toBe("idle");
+    expect(persistedMessages.filter((message) => message.kind === "error")).toHaveLength(0);
+    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
   });
 
   it("marks a direct conversation done when a persisted idle worker has output but no live bridge agent", async () => {

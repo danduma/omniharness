@@ -6,6 +6,7 @@ import { executionEvents, runs, workers } from "@/server/db/schema";
 import { shouldAutoApprove } from "@/server/permissions";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { isActiveImplementationRun } from "@/server/runs/status";
+import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 
@@ -472,13 +473,17 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
           return;
         }
       } else {
-      await insertExecutionEvent(runId, worker.id, "worker_poll_failed", {
-        summary: `Observer polling failed for ${worker.id}`,
-        reason: formatErrorMessage(error),
-      });
-      stopRunObserver(runId);
-      await persistRunFailure(runId, error);
-      return;
+        await insertExecutionEvent(runId, worker.id, "worker_poll_failed", {
+          summary: `Observer polling failed for ${worker.id}`,
+          reason: formatErrorMessage(error),
+          retryable: isTransientSupervisorError(error),
+        });
+        if (isTransientSupervisorError(error)) {
+          continue;
+        }
+        stopRunObserver(runId);
+        await persistRunFailure(runId, error);
+        return;
       }
     }
 

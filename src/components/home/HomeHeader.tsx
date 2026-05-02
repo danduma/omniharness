@@ -1,6 +1,7 @@
 import type React from "react";
 import { AlertTriangle, Menu, PanelRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { PRODUCT_NAME } from "@/app/home/constants";
 import type { AgentSnapshot, MessageRecord, RunRecord, SidebarGroup, SidebarRun, SupervisorInterventionRecord } from "@/app/home/types";
@@ -28,6 +29,7 @@ interface HomeHeaderProps {
   selectRun: (runId: string) => void;
   renamingRunId: string | null;
   renameValue: string;
+  renameSource: "sidebar" | "topbar" | null;
   setRenameValue: (value: string) => void;
   startRenamingRun: (run: SidebarRun) => void;
   commitRenamingRun: (runId: string) => void;
@@ -72,6 +74,7 @@ export function HomeHeader({
   selectRun,
   renamingRunId,
   renameValue,
+  renameSource,
   setRenameValue,
   startRenamingRun,
   commitRenamingRun,
@@ -97,9 +100,26 @@ export function HomeHeader({
 }: HomeHeaderProps) {
   const conversationTitle = selectedRun?.title?.trim() || "New conversation";
   const titleLabel = selectedRun ? conversationTitle : "";
+  const isEditingTitle = Boolean(selectedRun && renamingRunId === selectedRun.id && renameSource === "topbar");
   const rootFolderLabel = activeConversationCwd
     ? activeConversationCwd.split(/[\\/]/).filter(Boolean).pop() || activeConversationCwd
     : "";
+
+  const beginTopBarTitleEdit = () => {
+    if (!selectedRun) {
+      return;
+    }
+
+    startRenamingRun({
+      id: selectedRun.id,
+      title: conversationTitle,
+      path: activeConversationCwd || selectedRun.projectPath || "",
+      status: selectedRun.status,
+      createdAt: selectedRun.createdAt,
+    });
+  };
+
+  const titleInputValue = isEditingTitle ? renameValue : titleLabel;
 
   return (
   <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border/50 px-3 sm:px-4">
@@ -130,6 +150,7 @@ export function HomeHeader({
             selectRun={selectRun}
             renamingRunId={renamingRunId}
             renameValue={renameValue}
+            renameSource={renameSource}
             setRenameValue={setRenameValue}
             startRenamingRun={startRenamingRun}
             commitRenamingRun={commitRenamingRun}
@@ -145,14 +166,54 @@ export function HomeHeader({
       <div className="flex min-w-0 items-center gap-2">
         {titleLabel || rootFolderLabel ? (
           <div className="flex min-w-0 items-baseline gap-2">
-            {titleLabel ? (
-              <span
-                aria-label="Conversation title"
-                className="max-w-[18rem] truncate text-sm font-semibold text-foreground sm:max-w-[26rem]"
-                title={titleLabel}
-              >
-                {titleLabel}
-              </span>
+            {titleLabel && selectedRun ? (
+              <Input
+                aria-label="Edit conversation title"
+                value={titleInputValue}
+                readOnly={!isEditingTitle}
+                onPointerDown={(event) => {
+                  if (!isEditingTitle) {
+                    event.currentTarget.focus();
+                    beginTopBarTitleEdit();
+                  }
+                }}
+                onFocus={(event) => {
+                  if (!isEditingTitle) {
+                    beginTopBarTitleEdit();
+                  }
+                  event.currentTarget.select();
+                }}
+                onChange={(event) => {
+                  if (isEditingTitle) {
+                    setRenameValue(event.target.value);
+                  }
+                }}
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    if (isEditingTitle) {
+                      commitRenamingRun(selectedRun.id);
+                    } else {
+                      beginTopBarTitleEdit();
+                    }
+                  } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    cancelRenamingRun();
+                  }
+                }}
+                onBlur={() => {
+                  if (isEditingTitle) {
+                    commitRenamingRun(selectedRun.id);
+                  }
+                }}
+                title={`${titleLabel} — tap to rename`}
+                className={
+                  isEditingTitle
+                    ? "h-8 w-[18rem] max-w-[calc(100vw-10rem)] rounded-md border-border/70 bg-background px-2 text-sm font-semibold sm:w-[26rem]"
+                    : "h-8 w-[18rem] max-w-[calc(100vw-10rem)] cursor-text truncate border-transparent bg-transparent px-1 text-sm font-semibold text-foreground shadow-none hover:bg-muted focus-visible:border-ring sm:w-[26rem]"
+                }
+              />
             ) : null}
             {rootFolderLabel ? (
               <span

@@ -416,6 +416,7 @@ export function ConversationMain({
                 ) : isUserMessage ? (
                   <UserInputMessage
                     content={msg.content}
+                    attachments={msg.attachments}
                     isExpanded={isExpanded}
                     onToggleExpanded={() => toggleDirectMessageExpansion(msg.id)}
                     onCopy={handleCopyDirectMessage}
@@ -557,7 +558,7 @@ export function ConversationMain({
         <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
           <Blocks className="h-8 w-8 text-primary" />
         </div>
-        <h1 className="mb-2 text-2xl font-semibold">What shall we build in {welcomeRepoName}?</h1>
+        <h1 className="mb-1 text-2xl font-semibold">What shall we build in {welcomeRepoName}?</h1>
         {emptyComposer}
       </div>
     )}

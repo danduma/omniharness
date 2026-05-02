@@ -10,6 +10,7 @@ import { requireApiSession } from "@/server/auth/guards";
 import { buildLiveWorkerSnapshots } from "@/server/workers/live-snapshots";
 import { waitForEventStreamNotification } from "@/server/events/live-updates";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
+import { serializeMessageRecord } from "@/server/conversations/message-records";
 
 export const dynamic = "force-dynamic";
 
@@ -237,7 +238,7 @@ function buildEventPayload(
   const planIds = selectedPlanIds(records, runIds);
 
   return {
-    messages: filterSelectedRunScopedRecords(records.msgs, runIds),
+    messages: filterSelectedRunScopedRecords(records.msgs, runIds).map(serializeMessageRecord),
     plans: records.allPlans,
     runs: records.allRuns,
     accounts: records.allAccounts,

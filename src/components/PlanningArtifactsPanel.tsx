@@ -50,14 +50,24 @@ export function PlanningArtifactsPanel({
   isPromoting?: boolean;
 }) {
   const artifacts = useMemo(() => normalizeArtifacts(plannerArtifactsJson), [plannerArtifactsJson]);
+  const allCandidates = artifacts.candidates ?? [];
   const allPlanCandidates = (artifacts.candidates ?? []).filter((candidate) => candidate.kind === "plan");
   const handoffPlanCandidates = allPlanCandidates.filter((candidate) => candidate.source === "handoff");
   const planCandidates = handoffPlanCandidates.length > 0 ? handoffPlanCandidates : allPlanCandidates;
   const { selectedPlanPath: managerSelectedPlanPath } = useManagerSnapshot(planningArtifactsManager);
-  const selectedPlanPath = managerSelectedPlanPath || planPath || artifacts.planPath || planCandidates[0]?.path || null;
+  const hasArtifactSignal = Boolean(specPath || planPath || artifacts.specPath || artifacts.planPath || allCandidates.length > 0);
+  const candidatePaths = new Set(planCandidates.map((candidate) => candidate.path));
+  const currentManagerSelectedPlanPath = managerSelectedPlanPath && candidatePaths.has(managerSelectedPlanPath)
+    ? managerSelectedPlanPath
+    : null;
+  const selectedPlanPath = currentManagerSelectedPlanPath || planPath || artifacts.planPath || planCandidates[0]?.path || null;
 
   const selectedCandidate = planCandidates.find((candidate) => candidate.path === selectedPlanPath) ?? null;
   const ready = Boolean(selectedCandidate?.readiness?.ready || (!selectedCandidate && selectedPlanPath));
+
+  if (!hasArtifactSignal) {
+    return null;
+  }
 
   return (
     <div className="rounded-2xl border border-border/60 bg-card/80 p-4 shadow-sm">

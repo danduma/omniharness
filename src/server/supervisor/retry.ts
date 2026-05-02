@@ -13,6 +13,8 @@ const RETRYABLE_ERROR_CODES = new Set([
   "UND_ERR_SOCKET",
 ]);
 const RETRYABLE_MESSAGE_PATTERNS = [
+  /\bENOTFOUND\b/i,
+  /\bgetaddrinfo\b/i,
   /\bfetch failed\b/i,
   /\brate limit\b/i,
   /\btemporar(?:y|ily)\b/i,

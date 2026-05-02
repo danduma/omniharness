@@ -31,7 +31,7 @@ export function ConversationModePicker({
   onChange: (mode: ConversationModeOption) => void;
 }) {
   return (
-    <div className="mb-3 space-y-2">
+    <div className="mb-5 space-y-2.5">
       <div className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-1">
         {(Object.entries(MODE_COPY) as Array<[ConversationModeOption, { label: string }]>).map(([mode, config]) => (
           <button
@@ -50,7 +50,7 @@ export function ConversationModePicker({
           </button>
         ))}
       </div>
-      <p className="text-xs leading-relaxed text-muted-foreground">{MODE_COPY[value].description}</p>
+      <p className="text-sm leading-relaxed text-muted-foreground">{MODE_COPY[value].description}</p>
     </div>
   );
 }

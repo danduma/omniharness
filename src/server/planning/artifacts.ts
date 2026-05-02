@@ -43,7 +43,28 @@ function inferKind(candidatePath: string) {
 }
 
 function extractMarkdownPaths(outputText: string) {
-  const matches = outputText.match(/(?:\/[\w./-]+|(?:docs|vibes)[\w./-]*|\.?\.?\/[\w./-]+)\.md\b/g) ?? [];
+  const artifactReferencePattern = /\b(?:created|drafted|finalized|generated|handoff|prepared|saved|updated|wrote|spec_path|plan_path)\b/i;
+  const markdownPathPattern = /(?:\/[\w./-]+|(?:docs|vibes)[\w./-]*|\.?\.?\/[\w./-]+)\.md\b/g;
+  const matches: string[] = [];
+  let artifactReferenceContextLines = 0;
+
+  for (const line of outputText.split(/\r?\n/)) {
+    const hasArtifactReference = artifactReferencePattern.test(line);
+    if (hasArtifactReference) {
+      artifactReferenceContextLines = 3;
+    }
+
+    if (!hasArtifactReference && artifactReferenceContextLines === 0) {
+      continue;
+    }
+
+    matches.push(...line.matchAll(markdownPathPattern).map((match) => match[0]));
+
+    if (!hasArtifactReference && artifactReferenceContextLines > 0) {
+      artifactReferenceContextLines -= 1;
+    }
+  }
+
   return Array.from(new Set(matches));
 }
 

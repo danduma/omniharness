@@ -5,6 +5,7 @@ import * as bridge from "@/server/bridge-client";
 import { getAppDataPath } from "@/server/app-root";
 import { db } from "@/server/db";
 import { clarifications, executionEvents, messages, plans, runs, workers } from "@/server/db/schema";
+import { appendAttachmentContext, parseChatAttachmentsJson } from "@/lib/chat-attachments";
 import { parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
 
 function truncate(text: string, maxLength: number) {
@@ -141,7 +142,10 @@ export async function buildSupervisorTurnContext(runId: string): Promise<Supervi
   const allMessages = (await db.select().from(messages).where(eq(messages.runId, runId)))
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   const userMessages = allMessages.filter((message) => message.role === "user");
-  const goal = userMessages.map((message) => message.content).join("\n\n").trim();
+  const goal = userMessages.map((message) => appendAttachmentContext(
+    message.content,
+    parseChatAttachmentsJson(message.attachmentsJson),
+  )).join("\n\n").trim();
   const allClarifications = await db.select().from(clarifications).where(eq(clarifications.runId, runId));
   const pendingClarifications = allClarifications
     .filter((clarification) => clarification.status === "pending")

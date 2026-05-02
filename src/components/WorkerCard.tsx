@@ -81,7 +81,7 @@ function renderContextMeter(fullnessPercent: number | null | undefined) {
 
 function formatContextAvailability(fullnessPercent: number | null | undefined) {
   if (typeof fullnessPercent !== "number" || !Number.isFinite(fullnessPercent)) {
-    return "Context unavailable";
+    return null;
   }
 
   const availablePercent = Math.max(0, Math.min(100, 100 - Math.round(fullnessPercent)));
@@ -222,10 +222,12 @@ export function WorkerCard({
                     <span className="truncate" title={activeModel || "Default"}>{activeModel || "Default"}</span>
                   </div>
                   {activeEffort ? <span className="text-[11px] text-zinc-500">{activeEffort} effort</span> : null}
-                  <div className="inline-flex items-center gap-1.5" title={contextLabel}>
-                    {renderContextMeter(agent.contextUsage?.fullnessPercent)}
-                    <span className="text-[11px] text-zinc-500">{contextLabel}</span>
-                  </div>
+                  {contextLabel ? (
+                    <div className="inline-flex items-center gap-1.5" title={contextLabel}>
+                      {renderContextMeter(agent.contextUsage?.fullnessPercent)}
+                      <span className="text-[11px] text-zinc-500">{contextLabel}</span>
+                    </div>
+                  ) : null}
                   {runtimeDurationLabel ? (
                     <div className="inline-flex min-w-0 items-center gap-1.5 text-[11px] text-zinc-400">
                       <Clock className="h-3.5 w-3.5 text-zinc-500" />
