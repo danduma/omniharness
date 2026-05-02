@@ -26,6 +26,7 @@ export type RunRecord = {
 };
 export type PlanItemRecord = { id: string; planId: string; title: string; phase: string | null; status: string };
 export type ClarificationRecord = { id: string; runId: string; question: string; answer: string | null; status: string };
+export type ValidationRunRecord = { id: string; runId: string; planItemId?: string | null; status: string; summary: string | null; evidence: string | null };
 export type MessageRecord = {
   id: string;
   runId: string;
@@ -113,7 +114,11 @@ export type WorkerAvailability = {
 };
 export type WorkerModelOption = { value: string; label: string };
 export type WorkerModelCatalog = Record<WorkerType, WorkerModelOption[]>;
-export type WorkerCatalogResponse = { workers: WorkerAvailability[]; workerModels?: Partial<WorkerModelCatalog> };
+export type WorkerCatalogResponse = {
+  workers: WorkerAvailability[];
+  workerModels?: Partial<WorkerModelCatalog>;
+  workerModelsRefreshing?: boolean;
+};
 export type SettingsResponse = {
   values: Record<string, string>;
   secrets?: Record<string, { configured: boolean; updatedAt: string }>;
@@ -148,7 +153,7 @@ export type EventStreamState = {
   workers: ConversationWorkerRecord[];
   planItems: PlanItemRecord[];
   clarifications: ClarificationRecord[];
-  validationRuns: Array<{ runId: string }>;
+  validationRuns: ValidationRunRecord[];
   executionEvents: ExecutionEventRecord[];
   supervisorInterventions: SupervisorInterventionRecord[];
   frontendErrors?: AppErrorDescriptor[];

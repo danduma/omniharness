@@ -6,6 +6,10 @@ import { encryptSettingValue, shouldEncryptSetting } from "@/server/settings/cry
 import { buildAppError, errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 
+function isInternalSettingKey(key: string) {
+  return key.startsWith("__");
+}
+
 export async function GET(req: NextRequest) {
   try {
     const auth = await requireApiSession(req, {
@@ -19,6 +23,10 @@ export async function GET(req: NextRequest) {
     const allSettings = await db.select().from(settings);
     const diagnostics: ReturnType<typeof buildAppError>[] = [];
     const values = Object.fromEntries(allSettings.flatMap((setting) => {
+      if (isInternalSettingKey(setting.key)) {
+        return [];
+      }
+
       if (!shouldEncryptSetting(setting.key)) {
         return [[setting.key, setting.value]];
       }
@@ -26,6 +34,10 @@ export async function GET(req: NextRequest) {
       return [];
     }));
     const secrets = Object.fromEntries(allSettings.flatMap((setting) => {
+      if (isInternalSettingKey(setting.key)) {
+        return [];
+      }
+
       if (!shouldEncryptSetting(setting.key)) {
         return [];
       }
@@ -59,6 +71,10 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json();
     for (const [key, value] of Object.entries(body)) {
+      if (isInternalSettingKey(key)) {
+        continue;
+      }
+
       if (typeof value === "string") {
         const isSecret = shouldEncryptSetting(key);
         if (isSecret && value.trim() === "") {

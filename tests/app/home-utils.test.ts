@@ -420,7 +420,7 @@ describe("home utils", () => {
         { id: "clarification-1", runId: "run-2", question: "delete?", answer: null, status: "pending" },
       ],
       validationRuns: [
-        { runId: "run-2" },
+        { id: "validation-1", runId: "run-2", planItemId: null, status: "pending", summary: null, evidence: null },
       ],
       executionEvents: [
         { id: "event-1", runId: "run-1", workerId: "worker-1", eventType: "keep", createdAt: "" },

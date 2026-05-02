@@ -3,8 +3,8 @@ import { NextRequest } from "next/server";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
 
-const { mockBuildWorkerModelCatalog, mockIsSpawnableWorkerType } = vi.hoisted(() => ({
-  mockBuildWorkerModelCatalog: vi.fn(),
+const { mockGetCatalogSnapshot, mockIsSpawnableWorkerType } = vi.hoisted(() => ({
+  mockGetCatalogSnapshot: vi.fn(),
   mockIsSpawnableWorkerType: vi.fn(),
 }));
 
@@ -13,28 +13,33 @@ vi.mock("@/server/supervisor/worker-availability", () => ({
 }));
 
 vi.mock("@/server/worker-models", () => ({
-  buildWorkerModelCatalog: mockBuildWorkerModelCatalog,
+  WorkerModelCatalogManager: vi.fn().mockImplementation(() => ({
+    getCatalogSnapshot: mockGetCatalogSnapshot,
+  })),
 }));
 
 import { GET } from "@/app/api/agents/catalog/route";
 
 describe("GET /api/agents/catalog", () => {
   beforeEach(() => {
-    mockBuildWorkerModelCatalog.mockReset();
-    mockBuildWorkerModelCatalog.mockResolvedValue({
-      codex: [
-        { value: "gpt-5.4", label: "GPT-5.4" },
-        { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
-      ],
-      claude: [
-        { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
-      ],
-      gemini: [
-        { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
-      ],
-      opencode: [
-        { value: "openai/gpt-5.4", label: "GPT-5.4" },
-      ],
+    mockGetCatalogSnapshot.mockReset();
+    mockGetCatalogSnapshot.mockResolvedValue({
+      catalog: {
+        codex: [
+          { value: "gpt-5.4", label: "GPT-5.4" },
+          { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
+        ],
+        claude: [
+          { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
+        ],
+        gemini: [
+          { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
+        ],
+        opencode: [
+          { value: "openai/gpt-5.4", label: "GPT-5.4" },
+        ],
+      },
+      refreshing: true,
     });
     mockIsSpawnableWorkerType.mockReset();
     return db.delete(settings);

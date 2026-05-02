@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/server/db";
-import { messages, plans, runs, accounts, workers, clarifications, validationRuns, executionEvents, supervisorInterventions } from "@/server/db/schema";
+import { messages, plans, runs, accounts, workers, planItems, clarifications, validationRuns, executionEvents, supervisorInterventions } from "@/server/db/schema";
 import { BRIDGE_URL } from "@/server/bridge-client";
 import { buildAppError } from "@/server/api-errors";
 import { desc } from "drizzle-orm";
@@ -44,6 +44,7 @@ async function readPersistedEventRecords() {
   const allRuns = await db.select().from(runs).orderBy(desc(runs.createdAt));
   const allAccounts = await db.select().from(accounts);
   const allWorkers = await db.select().from(workers);
+  const allPlanItems = await db.select().from(planItems);
   const allClarifications = await db.select().from(clarifications).orderBy(desc(clarifications.createdAt));
   const allValidationRuns = await db.select().from(validationRuns).orderBy(desc(validationRuns.createdAt));
   const allExecutionEvents = await db.select().from(executionEvents).orderBy(desc(executionEvents.createdAt));
@@ -55,6 +56,7 @@ async function readPersistedEventRecords() {
     allRuns,
     allAccounts,
     allWorkers,
+    allPlanItems,
     allClarifications,
     allValidationRuns,
     allExecutionEvents,
@@ -123,6 +125,25 @@ function filterSelectedRunScopedRecords<T extends { runId: string }>(
   runIds: Set<string> | null,
 ) {
   return runIds ? records.filter((record) => runIds.has(record.runId)) : [];
+}
+
+function selectedPlanIds(records: PersistedEventRecords, runIds: Set<string> | null) {
+  if (!runIds) {
+    return null;
+  }
+
+  return new Set(
+    records.allRuns
+      .filter((run) => runIds.has(run.id))
+      .map((run) => run.planId),
+  );
+}
+
+function filterSelectedPlanScopedRecords<T extends { planId: string }>(
+  records: T[],
+  planIds: Set<string> | null,
+) {
+  return planIds ? records.filter((record) => planIds.has(record.planId)) : [];
 }
 
 function compactExecutionEvent(event: PersistedEventRecords["allExecutionEvents"][number]) {
@@ -213,6 +234,7 @@ function buildEventPayload(
   options: EventPayloadOptions = {},
 ) {
   const runIds = selectedRunIds(options);
+  const planIds = selectedPlanIds(records, runIds);
 
   return {
     messages: filterSelectedRunScopedRecords(records.msgs, runIds),
@@ -221,6 +243,7 @@ function buildEventPayload(
     accounts: records.allAccounts,
     agents: agentsData.map(compactAgentSnapshot),
     workers: records.allWorkers.map(compactWorkerRecord),
+    planItems: filterSelectedPlanScopedRecords(records.allPlanItems, planIds),
     clarifications: filterSelectedRunScopedRecords(records.allClarifications, runIds),
     validationRuns: filterSelectedRunScopedRecords(records.allValidationRuns, runIds),
     executionEvents: filterSelectedRunScopedRecords(records.allExecutionEvents, runIds)
@@ -320,7 +343,10 @@ export async function GET(req: NextRequest) {
   } satisfies EventPayloadOptions;
 
   if (req.nextUrl.searchParams.get("snapshot") === "1") {
-    return NextResponse.json(await buildRuntimeEnrichedEventPayload(eventPayloadOptions));
+    const payload = req.nextUrl.searchParams.get("persisted") === "1"
+      ? await buildPersistedEventPayload(eventPayloadOptions)
+      : await buildRuntimeEnrichedEventPayload(eventPayloadOptions);
+    return NextResponse.json(payload);
   }
 
   const stream = new ReadableStream({

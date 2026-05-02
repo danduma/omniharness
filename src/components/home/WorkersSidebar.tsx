@@ -3,9 +3,10 @@ import { Cpu, Moon, Sun, Terminal as TerminalIcon, XCircle } from "lucide-react"
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkerCard } from "@/components/WorkerCard";
+import type { TerminalUserMessage } from "@/components/Terminal";
 import { workersSidebarManager } from "@/components/component-state-managers";
 import { WORKER_OPTIONS } from "@/app/home/constants";
-import type { AgentSnapshot } from "@/app/home/types";
+import type { AgentSnapshot, SupervisorInterventionRecord } from "@/app/home/types";
 import { buildWorkerLists, getWorkerRuntimeLabel, type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
@@ -13,6 +14,7 @@ import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 export interface WorkersSidebarProps {
   workers: ConversationWorkerRecord[];
   agents: AgentSnapshot[];
+  supervisorInterventions: SupervisorInterventionRecord[];
   preferredModel: string | null;
   preferredEffort: string | null;
   onStopWorker?: (workerId: string) => void;
@@ -58,6 +60,7 @@ export function ConversationWorkerCard({
   terminalHeightClass,
   fillAvailable = false,
   fallbackPreview,
+  supervisorInterventions = [],
   onStopWorker,
   isStopping,
 }: {
@@ -69,6 +72,7 @@ export function ConversationWorkerCard({
   terminalHeightClass: string;
   fillAvailable?: boolean;
   fallbackPreview?: string | null;
+  supervisorInterventions?: SupervisorInterventionRecord[];
   onStopWorker?: (workerId: string) => void;
   isStopping?: boolean;
 }) {
@@ -87,6 +91,31 @@ export function ConversationWorkerCard({
     lastText: "",
     displayText: fallbackPreview ?? "",
   };
+  const userMessages = useMemo<TerminalUserMessage[]>(() => {
+    const messages: TerminalUserMessage[] = [];
+    const initialPrompt = worker.initialPrompt?.trim();
+    if (initialPrompt) {
+      messages.push({
+        id: `${worker.id}:initial-prompt`,
+        content: initialPrompt,
+        createdAt: worker.createdAt ?? new Date(0).toISOString(),
+      });
+    }
+
+    for (const intervention of supervisorInterventions) {
+      if (intervention.workerId !== worker.id || !intervention.prompt.trim()) {
+        continue;
+      }
+
+      messages.push({
+        id: intervention.id,
+        content: intervention.prompt,
+        createdAt: intervention.createdAt,
+      });
+    }
+
+    return messages;
+  }, [supervisorInterventions, worker.createdAt, worker.id, worker.initialPrompt]);
 
   return (
     <WorkerCard
@@ -100,6 +129,7 @@ export function ConversationWorkerCard({
       activeModel={activeModel}
       activeEffort={activeEffort}
       promptPreview={worker.initialPrompt}
+      userMessages={userMessages}
       pendingPermissions={pendingPermissions}
       terminalHeightClass={terminalHeightClass}
       fillAvailable={fillAvailable}
@@ -109,7 +139,7 @@ export function ConversationWorkerCard({
   );
 }
 
-export function WorkersSidebar({ workers, agents, preferredModel, preferredEffort, onStopWorker, stoppingWorkerId, onClose }: WorkersSidebarProps) {
+export function WorkersSidebar({ workers, agents, supervisorInterventions, preferredModel, preferredEffort, onStopWorker, stoppingWorkerId, onClose }: WorkersSidebarProps) {
   const { activeTab: requestedActiveTab } = useManagerSnapshot(workersSidebarManager);
   const workerGroups = buildWorkerLists(workers);
   const agentsById = useMemo(
@@ -187,6 +217,7 @@ export function WorkersSidebar({ workers, agents, preferredModel, preferredEffor
                   agent={agent}
                   preferredModel={preferredModel}
                   preferredEffort={preferredEffort}
+                  supervisorInterventions={supervisorInterventions}
                   defaultOpen={activeTab === "active" || hasSingleVisibleWorker}
                   terminalHeightClass={terminalHeightClass}
                   fillAvailable={hasSingleVisibleWorker}

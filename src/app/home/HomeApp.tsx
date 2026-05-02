@@ -21,7 +21,7 @@ import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
 import { COMPOSER_WORKER_OPTIONS, WORKER_OPTIONS } from "./constants";
-import type { AgentSnapshot, AuthSessionResponse, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, RunRecord, SettingsResponse, SidebarGroup, SidebarRun, WorkerCatalogResponse, WorkerType } from "./types";
+import type { AgentSnapshot, AuthSessionResponse, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, RunRecord, SettingsResponse, SidebarGroup, SidebarRun, SupervisorInterventionRecord, WorkerCatalogResponse, WorkerType } from "./types";
 import { EventStreamStateManager } from "./EventStreamStateManager";
 import { homeUiSetters, homeUiStateManager, INITIAL_EVENT_STREAM_STATE } from "./HomeUiStateManager";
 import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
@@ -242,6 +242,7 @@ export function HomeApp() {
     queryKey: ["worker-catalog"],
     staleTime: 60_000,
     enabled: appUnlocked,
+    refetchInterval: (query) => query.state.data?.workerModelsRefreshing ? 2_000 : false,
     queryFn: async () => {
       return requestJson<WorkerCatalogResponse & { diagnostics?: AppErrorDescriptor[] }>("/api/agents/catalog", undefined, {
         source: "Agent runtime",
@@ -844,6 +845,11 @@ export function HomeApp() {
       .filter((event) => event.runId === selectedRunId)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   ), [selectedRunId, state.executionEvents]);
+  const selectedRunSupervisorInterventions = useMemo(() => (
+    ((state.supervisorInterventions || []) as SupervisorInterventionRecord[])
+      .filter((intervention) => intervention.runId === selectedRunId)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+  ), [selectedRunId, state.supervisorInterventions]);
   const latestExecutionEvent = selectedRunExecutionEvents[0] ?? null;
   const completionEvent = selectedRunExecutionEvents.find((event) => event.eventType === "run_completed") ?? null;
   const failedWorkerAvailability = useMemo(() => {
@@ -1260,6 +1266,7 @@ export function HomeApp() {
           setMobileWorkersOpen={setMobileWorkersOpen}
           selectedRunWorkers={selectedRunWorkersForDisplay}
           conversationAgents={conversationAgents}
+          supervisorInterventions={selectedRunSupervisorInterventions}
           onStopWorker={(workerId) => {
             if (selectedRunId) {
               stopWorker.mutate({ runId: selectedRunId, workerId });
@@ -1298,6 +1305,7 @@ export function HomeApp() {
           handleSaveEditedMessage={handleSaveEditedMessage}
           selectedRunWorkers={selectedRunWorkersForDisplay}
           conversationAgents={conversationAgents}
+          supervisorInterventions={selectedRunSupervisorInterventions}
           showConversationExecution={showConversationExecution}
           liveExecutionStatus={liveExecutionStatus}
           liveThoughts={liveThoughts}
@@ -1327,6 +1335,7 @@ export function HomeApp() {
             <WorkersSidebar
               workers={selectedRunWorkersForDisplay}
               agents={conversationAgents}
+              supervisorInterventions={selectedRunSupervisorInterventions}
               preferredModel={selectedRun?.preferredWorkerModel ?? null}
               preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
               onStopWorker={(workerId) => {

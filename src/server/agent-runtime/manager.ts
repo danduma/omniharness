@@ -1,10 +1,11 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import { randomUUID } from "crypto";
 import { constants, accessSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, statSync, symlinkSync } from "fs";
+import { mkdir, readFile, writeFile } from "fs/promises";
 import { request as httpRequest } from "http";
 import { request as httpsRequest } from "https";
 import { homedir } from "os";
-import { basename, join } from "path";
+import { basename, dirname, join } from "path";
 import { Readable, Writable } from "stream";
 import * as acp from "@agentclientprotocol/sdk";
 import { applyCodexBridgeEnv, shouldSetRequestedMode } from "./codex";
@@ -224,6 +225,17 @@ function renderOutputEntries(entries: OutputEntry[]) {
     .join("\n\n");
 }
 
+function selectTextFileRange(content: string, line?: number | null, limit?: number | null) {
+  if (line == null && limit == null) {
+    return content;
+  }
+
+  const lines = content.match(/[^\n]*\n|[^\n]+/g) ?? [];
+  const start = Math.max(0, (line ?? 1) - 1);
+  const end = limit == null ? undefined : start + Math.max(0, limit);
+  return lines.slice(start, end).join("");
+}
+
 function sanitizePathPart(input: string) {
   const sanitized = input.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
   return sanitized || "skill";
@@ -433,6 +445,19 @@ class RuntimeClient implements acp.Client {
         resolve,
       });
     });
+  }
+
+  async readTextFile(params: acp.ReadTextFileRequest): Promise<acp.ReadTextFileResponse> {
+    const content = await readFile(params.path, "utf8");
+    return {
+      content: selectTextFileRange(content, params.line, params.limit),
+    };
+  }
+
+  async writeTextFile(params: acp.WriteTextFileRequest): Promise<acp.WriteTextFileResponse> {
+    await mkdir(dirname(params.path), { recursive: true });
+    await writeFile(params.path, params.content, "utf8");
+    return {};
   }
 
   async sessionUpdate(params: acp.SessionNotification): Promise<void> {
@@ -867,7 +892,12 @@ export class AgentRuntimeManager {
       const init = await Promise.race([
         connection.initialize({
           protocolVersion: acp.PROTOCOL_VERSION,
-          clientCapabilities: {},
+          clientCapabilities: {
+            fs: {
+              readTextFile: true,
+              writeTextFile: true,
+            },
+          },
         } as any),
         processFailure,
       ]);

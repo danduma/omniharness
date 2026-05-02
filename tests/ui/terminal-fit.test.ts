@@ -34,6 +34,16 @@ test("terminal renders thoughts behind a collapsible thinking summary", () => {
   expect(terminalSource).toContain("thoughtOpenById[activity.id] ?? activity.inProgress");
 });
 
+test("terminal renders model thoughts as markdown while preserving thought tone", () => {
+  expect(terminalSource).toContain("<MarkdownContent");
+  expect(terminalSource).toContain("content={thought}");
+  expect(terminalSource).toContain("inheritTextColor");
+  expect(terminalSource).toContain("text-[length:var(--terminal-thought-size)] leading-[1.5]");
+  expect(terminalSource).toContain('variant === "native"\n                    ? "text-muted-foreground');
+  expect(terminalSource).toContain(': "text-zinc-500');
+  expect(terminalSource).not.toContain("leading-[1.5] italic");
+});
+
 test("terminal keeps tool output compact and expandable", () => {
   expect(terminalSource).toContain("const TOOL_OUTPUT_PREVIEW_LINES = 3");
   expect(terminalSource).toContain("isTerminalToolStatus(activity.status)");

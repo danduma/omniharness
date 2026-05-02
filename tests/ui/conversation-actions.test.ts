@@ -9,6 +9,7 @@ const pageSource = [
   "src/app/home/useAppErrors.ts",
   "src/app/home/useConversationExecutionStatus.ts",
   "src/app/home/useHomeLifecycle.ts",
+  "src/app/home/LiveEventConnectionManager.ts",
   "src/app/home/utils.ts",
   "src/components/home/ConversationMain.tsx",
   "src/components/home/ConversationSidebar.tsx",

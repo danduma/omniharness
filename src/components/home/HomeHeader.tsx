@@ -3,7 +3,7 @@ import { AlertTriangle, Menu, PanelRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { PRODUCT_NAME } from "@/app/home/constants";
-import type { AgentSnapshot, MessageRecord, RunRecord, SidebarGroup, SidebarRun } from "@/app/home/types";
+import type { AgentSnapshot, MessageRecord, RunRecord, SidebarGroup, SidebarRun, SupervisorInterventionRecord } from "@/app/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { ConversationSidebar } from "./ConversationSidebar";
 import { ThemeModeToggle, WorkersSidebar } from "./WorkersSidebar";
@@ -47,6 +47,7 @@ interface HomeHeaderProps {
   setMobileWorkersOpen: (open: boolean) => void;
   selectedRunWorkers: ConversationWorkerRecord[];
   conversationAgents: AgentSnapshot[];
+  supervisorInterventions: SupervisorInterventionRecord[];
   onStopWorker?: (workerId: string) => void;
   stoppingWorkerId?: string | null;
 }
@@ -90,6 +91,7 @@ export function HomeHeader({
   setMobileWorkersOpen,
   selectedRunWorkers,
   conversationAgents,
+  supervisorInterventions,
   onStopWorker,
   stoppingWorkerId,
 }: HomeHeaderProps) {
@@ -194,6 +196,7 @@ export function HomeHeader({
           <WorkersSidebar
             workers={selectedRunId && isImplementationConversation ? selectedRunWorkers : []}
             agents={selectedRunId && isImplementationConversation ? conversationAgents : []}
+            supervisorInterventions={selectedRunId && isImplementationConversation ? supervisorInterventions : []}
             preferredModel={selectedRun?.preferredWorkerModel ?? null}
             preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
             onStopWorker={onStopWorker}

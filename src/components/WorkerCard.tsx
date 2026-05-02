@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { AlertTriangle, Bot, ChevronDown, Clock, Cpu, Square } from "lucide-react";
-import { Terminal, type AgentTerminalPayload } from "@/components/Terminal";
+import { Terminal, type AgentTerminalPayload, type TerminalUserMessage } from "@/components/Terminal";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { workerCardManager } from "@/components/component-state-managers";
 import { isWorkerActiveStatus } from "@/lib/conversation-workers";
@@ -43,6 +43,7 @@ export type WorkerCardProps = {
   activeModel: string | null;
   activeEffort: string | null;
   promptPreview?: string | null;
+  userMessages?: TerminalUserMessage[];
   pendingPermissions: PendingPermissionRecord[];
   terminalHeightClass: string;
   fillAvailable?: boolean;
@@ -169,6 +170,7 @@ export function WorkerCard({
   activeModel,
   activeEffort,
   promptPreview,
+  userMessages = [],
   pendingPermissions,
   terminalHeightClass,
   fillAvailable = false,
@@ -280,7 +282,7 @@ export function WorkerCard({
             </div>
           ) : null}
           <div className={cn("relative w-full bg-[#0b0c0e]", terminalHeightClass, fillAvailable && "min-h-0 flex-1")}>
-            <Terminal agent={agent} />
+            <Terminal agent={agent} userMessages={userMessages} />
           </div>
         </CollapsibleContent>
       </div>

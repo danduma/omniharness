@@ -283,6 +283,47 @@ describe("GET /api/events", () => {
     expect(payload.messages.find((message: { runId: string }) => message.runId === runId)?.content).toBe("Start snapshot conversation");
   });
 
+  it("returns a persisted-only JSON snapshot without polling the agent runtime", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/persisted-live-snapshot.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      title: "Persisted snapshot conversation",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "Recover from persisted state",
+      createdAt: now,
+    });
+
+    global.fetch = vi.fn().mockResolvedValue(new Response("runtime should not be called", { status: 530 }));
+
+    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const payload = await response.json();
+
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(payload.frontendErrors).toEqual([]);
+    expect(payload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Persisted snapshot conversation");
+    expect(payload.messages.find((message: { runId: string }) => message.runId === runId)?.content).toBe("Recover from persisted state");
+  });
+
   it("does not surface transient bridge agent-list failures as frontend errors", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

@@ -102,6 +102,59 @@ process.stdin.on('data', (chunk) => {
 });
 `;
 
+const fakeFsAcpAgentScript = `#!/usr/bin/env node
+const fs = require('node:fs');
+const logPath = process.env.FAKE_ACP_REQUEST_LOG;
+process.stdin.setEncoding('utf8');
+let buffer = '';
+let sessionRequestId = null;
+let readPath = null;
+let writePath = null;
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + '\\n');
+}
+
+function append(event) {
+  if (logPath) fs.appendFileSync(logPath, JSON.stringify(event) + '\\n');
+}
+
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\\r?\\n/g);
+  buffer = lines.pop() ?? '';
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === 'initialize') {
+      append({ method: message.method, params: message.params });
+      write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+    } else if (message.method === 'session/new') {
+      sessionRequestId = message.id;
+      readPath = process.env.FAKE_ACP_READ_PATH;
+      writePath = process.env.FAKE_ACP_WRITE_PATH;
+      write({
+        jsonrpc: '2.0',
+        id: 1001,
+        method: 'fs/read_text_file',
+        params: { sessionId: 'session-1', path: readPath },
+      });
+    } else if (message.id === 1001) {
+      append({ method: 'fs/read_text_file/response', result: message.result });
+      write({
+        jsonrpc: '2.0',
+        id: 1002,
+        method: 'fs/write_text_file',
+        params: { sessionId: 'session-1', path: writePath, content: message.result.content.replace('before', 'after') },
+      });
+    } else if (message.id === 1002) {
+      append({ method: 'fs/write_text_file/response', result: message.result });
+      write({ jsonrpc: '2.0', id: sessionRequestId, result: { sessionId: 'session-1' } });
+    }
+  }
+});
+`;
+
 describe("internal agent runtime HTTP API", () => {
   it("spawns ACP agents, forwards MCP servers, exposes skill roots, and serves agent output", async () => {
     const projectDir = createTempDir("omni-runtime-project-");
@@ -189,5 +242,54 @@ describe("internal agent runtime HTTP API", () => {
     const stopResponse = await fetch(`${baseUrl}/agents/worker-1`, { method: "DELETE" });
     expect(stopResponse.status).toBe(200);
     expect(readdirSync(join(projectDir, ".agents", "skills")).some((entry) => entry.includes("reviewer"))).toBe(false);
+  }, 15_000);
+
+  it("advertises and serves ACP filesystem capabilities to workers", async () => {
+    const projectDir = createTempDir("omni-runtime-fs-project-");
+    const binDir = createTempDir("omni-runtime-fs-bin-");
+    const requestLog = join(projectDir, "requests.jsonl");
+    const readPath = join(projectDir, "input.txt");
+    const writePath = join(projectDir, "nested", "output.txt");
+    writeFileSync(readPath, "before\n");
+    const fakeAgent = createExecutable(binDir, "fake-fs-acp-agent", fakeFsAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "worker-fs",
+        env: {
+          FAKE_ACP_REQUEST_LOG: requestLog,
+          FAKE_ACP_READ_PATH: readPath,
+          FAKE_ACP_WRITE_PATH: writePath,
+        },
+      }),
+    });
+
+    expect(spawnResponse.status).toBe(201);
+    expect(readFileSync(writePath, "utf8")).toBe("after\n");
+
+    const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
+    const initialize = events.find((event) => event.method === "initialize");
+    expect(initialize.params.clientCapabilities.fs).toEqual({
+      readTextFile: true,
+      writeTextFile: true,
+    });
+    expect(events.find((event) => event.method === "fs/read_text_file/response").result).toEqual({ content: "before\n" });
+    expect(events.find((event) => event.method === "fs/write_text_file/response").result).toEqual({});
+
+    await fetch(`${baseUrl}/agents/worker-fs`, { method: "DELETE" });
   }, 15_000);
 });

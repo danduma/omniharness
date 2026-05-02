@@ -1,6 +1,7 @@
 {
-  "name": "tmp-app",
+  "name": "omniharness",
   "version": "0.1.0",
+  "description": "Local web UI, CLI, and ACP control plane for supervising coding agents.",
   "private": true,
   "packageManager": "pnpm@9.6.0",
   "engines": {

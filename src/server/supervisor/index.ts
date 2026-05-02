@@ -8,7 +8,7 @@ import * as bridge from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { clarifications, executionEvents, messages as dbMessages, runs, settings, supervisorInterventions, workers } from "@/server/db/schema";
 import { buildMastraModelConfig, getSupervisorModelConfig, validateSupervisorModelConfig } from "@/server/supervisor/model-config";
-import { SUPERVISOR_SYSTEM_PROMPT } from "@/server/prompts";
+import { SUPERVISOR_SYSTEM_PROMPT } from "@/server/supervisor/prompt";
 import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { buildSupervisorTools } from "@/server/supervisor/tools";
 import { buildSupervisorTurnContext } from "@/server/supervisor/context";
@@ -23,6 +23,11 @@ import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { parsePlan } from "@/server/plans/parser";
+import { syncPlanItems } from "@/server/plans/checklist";
+import { assessPlanReadiness } from "@/server/plans/readiness";
+import { pauseForClarifications } from "@/server/clarifications/loop";
+import { validateRun } from "@/server/validation";
 
 export interface SupervisorOptions {
   runId: string;
@@ -843,13 +848,39 @@ export class Supervisor {
           const requestedPath = asString(action.args.path, "path");
           const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
           const { absolutePath, content, truncated } = readSupervisorFile(requestedPath, run?.projectPath);
+          const parsedPlan = requestedPath.endsWith(".md") || absolutePath.endsWith(".md")
+            ? parsePlan(content)
+            : null;
           await insertExecutionEvent(this.runId, "supervisor_file_read", {
             summary: `Read ${requestedPath} for supervisor context.`,
             path: requestedPath,
             absolutePath,
             content,
             truncated,
+            parsedPlanItems: parsedPlan?.items.length ?? 0,
           });
+
+          if (run && parsedPlan && parsedPlan.items.length > 0) {
+            await syncPlanItems(run.planId, parsedPlan.items);
+            await insertExecutionEvent(this.runId, "plan_items_synced", {
+              summary: `Synced ${parsedPlan.items.length} checklist items from ${requestedPath}.`,
+              path: requestedPath,
+              itemCount: parsedPlan.items.length,
+            });
+
+            const readiness = await assessPlanReadiness(parsedPlan);
+            if (!readiness.ready) {
+              await pauseForClarifications(this.runId, readiness.questions);
+              await insertRunMessage(
+                this.runId,
+                "supervisor",
+                `I need clarification before implementation can continue:\n\n${readiness.questions.map((question) => `- ${question}`).join("\n")}`,
+                "clarification",
+              );
+              return { state: "paused" };
+            }
+          }
+
           await insertRunMessage(
             this.runId,
             "system",
@@ -901,6 +932,22 @@ export class Supervisor {
 
         case "mark_complete": {
           const summary = asString(action.args.summary, "summary");
+          const validation = await validateRun(this.runId);
+          if (!validation.ok) {
+            const failureSummary = validation.failures.join("; ") || "Validation did not produce passing evidence.";
+            await insertExecutionEvent(this.runId, "run_validation_failed", {
+              summary: failureSummary,
+              failures: validation.failures,
+            });
+            await insertRunMessage(
+              this.runId,
+              "system",
+              `Completion blocked by validation: ${failureSummary}`,
+              "supervisor_action",
+            );
+            return { state: "wait", delayMs: 1_000 };
+          }
+
           await cancelRunWorkers(this.runId);
           if (!await this.loadActiveRun()) {
             return { state: "completed" };

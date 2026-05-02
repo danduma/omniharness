@@ -11,7 +11,7 @@ import { conversationMainManager } from "@/components/component-state-managers";
 import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
 import { extractLatestPlainTextTurn } from "@/lib/agent-output";
 import { type ConversationWorkerRecord } from "@/lib/conversation-workers";
-import type { AgentSnapshot, MessageRecord, NoticeDescriptor, RunRecord } from "@/app/home/types";
+import type { AgentSnapshot, MessageRecord, NoticeDescriptor, RunRecord, SupervisorInterventionRecord } from "@/app/home/types";
 import { formatExecutionTimestamp, parseSpawnedWorkerMessage, type ConversationTimelineItem } from "@/app/home/utils";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
@@ -181,6 +181,7 @@ interface ConversationMainProps {
     mutate: (payload: { runId: string; planPath: string | null }) => void;
   };
   conversationTimelineItems: ConversationTimelineItem[];
+  supervisorInterventions: SupervisorInterventionRecord[];
   recoverRun: { isPending: boolean };
   showRecoverableRunningState: boolean;
   hasStuckWorker: boolean;
@@ -259,6 +260,7 @@ export function ConversationMain({
   primaryConversationAgent,
   promotePlanningConversation,
   conversationTimelineItems,
+  supervisorInterventions,
   recoverRun,
   showRecoverableRunningState,
   hasStuckWorker,
@@ -450,6 +452,7 @@ export function ConversationMain({
                         defaultOpen={false}
                         terminalHeightClass="h-64 sm:h-[22rem]"
                         fallbackPreview={parsed?.purpose}
+                        supervisorInterventions={supervisorInterventions}
                         onStopWorker={onStopWorker}
                         isStopping={stoppingWorkerId === workerId}
                       />

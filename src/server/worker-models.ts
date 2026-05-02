@@ -12,6 +12,19 @@ export type WorkerModelOption = {
 export type WorkerModelCatalog = Record<SupportedWorkerType, WorkerModelOption[]>;
 
 type RunCommand = (command: string, args: string[]) => Promise<string>;
+type LoadCachedCatalog = () => Promise<Partial<WorkerModelCatalog> | null>;
+type SaveCachedCatalog = (catalog: WorkerModelCatalog) => Promise<void>;
+
+export type WorkerModelCatalogSnapshot = {
+  catalog: WorkerModelCatalog;
+  refreshing: boolean;
+};
+
+type WorkerModelCatalogManagerOptions = {
+  runCommand?: RunCommand;
+  loadCachedCatalog?: LoadCachedCatalog;
+  saveCachedCatalog?: SaveCachedCatalog;
+};
 
 const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
   codex: [
@@ -90,6 +103,67 @@ function mergeModelOptions(base: WorkerModelOption[], discovered: WorkerModelOpt
   return merged;
 }
 
+function buildHardcodedCatalog(): WorkerModelCatalog {
+  return {
+    codex: [...HARDCODED_WORKER_MODELS.codex],
+    claude: [...HARDCODED_WORKER_MODELS.claude],
+    gemini: [...HARDCODED_WORKER_MODELS.gemini],
+    opencode: [...HARDCODED_WORKER_MODELS.opencode],
+  };
+}
+
+function normalizeCachedCatalog(catalog: Partial<WorkerModelCatalog> | null | undefined): Partial<WorkerModelCatalog> | null {
+  if (!catalog || typeof catalog !== "object") {
+    return null;
+  }
+
+  const normalized: Partial<WorkerModelCatalog> = {};
+  for (const type of Object.keys(HARDCODED_WORKER_MODELS) as SupportedWorkerType[]) {
+    const models = catalog[type];
+    if (!Array.isArray(models)) {
+      continue;
+    }
+
+    const options = models.flatMap((model) => {
+      if (!model || typeof model !== "object") {
+        return [];
+      }
+
+      const value = typeof model.value === "string" ? model.value.trim() : "";
+      if (!value) {
+        return [];
+      }
+
+      const label = typeof model.label === "string" ? model.label : undefined;
+      return [{
+        value,
+        label: normalizeLabel(value, label),
+      }];
+    });
+
+    if (options.length > 0) {
+      normalized[type] = mergeModelOptions([], options);
+    }
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
+function mergeCatalogWithCache(cachedCatalog: Partial<WorkerModelCatalog> | null | undefined): WorkerModelCatalog {
+  const catalog = buildHardcodedCatalog();
+  const normalizedCache = normalizeCachedCatalog(cachedCatalog);
+
+  if (!normalizedCache) {
+    return catalog;
+  }
+
+  for (const type of Object.keys(HARDCODED_WORKER_MODELS) as SupportedWorkerType[]) {
+    catalog[type] = mergeModelOptions(catalog[type], normalizedCache[type] ?? []);
+  }
+
+  return catalog;
+}
+
 function parseCodexModels(output: string) {
   const parsed = JSON.parse(output) as {
     models?: Array<{
@@ -129,27 +203,85 @@ function parseOpenCodeModels(output: string) {
   }));
 }
 
+export class WorkerModelCatalogManager {
+  private readonly runCommand: RunCommand;
+  private readonly loadCachedCatalog?: LoadCachedCatalog;
+  private readonly saveCachedCatalog?: SaveCachedCatalog;
+  private cachedCatalog: Partial<WorkerModelCatalog> | null | undefined;
+  private refreshPromise: Promise<WorkerModelCatalog> | null = null;
+  private hasStartedRefresh = false;
+
+  constructor(options: WorkerModelCatalogManagerOptions = {}) {
+    this.runCommand = options.runCommand ?? defaultRunCommand;
+    this.loadCachedCatalog = options.loadCachedCatalog;
+    this.saveCachedCatalog = options.saveCachedCatalog;
+  }
+
+  async getCatalogSnapshot(options: { refreshOnFirstLoad?: boolean } = {}): Promise<WorkerModelCatalogSnapshot> {
+    const cachedCatalog = await this.loadCacheOnce();
+
+    if (options.refreshOnFirstLoad && !this.hasStartedRefresh) {
+      void this.refreshCatalog().catch(() => undefined);
+    }
+
+    return {
+      catalog: mergeCatalogWithCache(cachedCatalog),
+      refreshing: this.refreshPromise !== null,
+    };
+  }
+
+  async refreshCatalog(): Promise<WorkerModelCatalog> {
+    if (this.refreshPromise) {
+      return this.refreshPromise;
+    }
+
+    this.hasStartedRefresh = true;
+    this.refreshPromise = this.buildFreshCatalog()
+      .then(async (catalog) => {
+        this.cachedCatalog = catalog;
+        await this.saveCachedCatalog?.(catalog);
+        return catalog;
+      })
+      .finally(() => {
+        this.refreshPromise = null;
+      });
+
+    return this.refreshPromise;
+  }
+
+  private async loadCacheOnce() {
+    if (this.cachedCatalog !== undefined) {
+      return this.cachedCatalog;
+    }
+
+    try {
+      this.cachedCatalog = normalizeCachedCatalog(await this.loadCachedCatalog?.() ?? null);
+    } catch {
+      this.cachedCatalog = null;
+    }
+
+    return this.cachedCatalog;
+  }
+
+  private async buildFreshCatalog() {
+    const baseCatalog = mergeCatalogWithCache(await this.loadCacheOnce());
+    const [codexResult, openCodeResult] = await Promise.allSettled([
+      this.runCommand("codex", ["debug", "models"]).then(parseCodexModels),
+      this.runCommand("opencode", ["models", "--refresh"]).then(parseOpenCodeModels),
+    ]);
+
+    if (codexResult.status === "fulfilled") {
+      baseCatalog.codex = mergeModelOptions(HARDCODED_WORKER_MODELS.codex, codexResult.value);
+    }
+
+    if (openCodeResult.status === "fulfilled") {
+      baseCatalog.opencode = mergeModelOptions(HARDCODED_WORKER_MODELS.opencode, openCodeResult.value);
+    }
+
+    return baseCatalog;
+  }
+}
+
 export async function buildWorkerModelCatalog(options: { runCommand?: RunCommand } = {}): Promise<WorkerModelCatalog> {
-  const runCommand = options.runCommand ?? defaultRunCommand;
-  const catalog: WorkerModelCatalog = {
-    codex: [...HARDCODED_WORKER_MODELS.codex],
-    claude: [...HARDCODED_WORKER_MODELS.claude],
-    gemini: [...HARDCODED_WORKER_MODELS.gemini],
-    opencode: [...HARDCODED_WORKER_MODELS.opencode],
-  };
-
-  const [codexResult, openCodeResult] = await Promise.allSettled([
-    runCommand("codex", ["debug", "models"]).then(parseCodexModels),
-    runCommand("opencode", ["models", "--refresh"]).then(parseOpenCodeModels),
-  ]);
-
-  if (codexResult.status === "fulfilled") {
-    catalog.codex = mergeModelOptions(catalog.codex, codexResult.value);
-  }
-
-  if (openCodeResult.status === "fulfilled") {
-    catalog.opencode = mergeModelOptions(catalog.opencode, openCodeResult.value);
-  }
-
-  return catalog;
+  return new WorkerModelCatalogManager(options).refreshCatalog();
 }

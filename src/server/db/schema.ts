@@ -152,6 +152,16 @@ export const clarifications = sqliteTable('clarifications', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });
 
+export const workerAssignments = sqliteTable('worker_assignments', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').references(() => runs.id).notNull(),
+  workerId: text('worker_id').references(() => workers.id),
+  planItemId: text('plan_item_id').references(() => planItems.id).notNull(),
+  status: text('status').notNull(), // 'assigned', 'running', 'completed', 'failed', 'cancelled'
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
 export const validationRuns = sqliteTable('validation_runs', {
   id: text('id').primaryKey(),
   runId: text('run_id').references(() => runs.id).notNull(),

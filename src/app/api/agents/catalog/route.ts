@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { eq } from "drizzle-orm";
 import { BRIDGE_URL } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
@@ -7,7 +8,7 @@ import { isSpawnableWorkerType } from "@/server/supervisor/worker-availability";
 import { SUPPORTED_WORKER_TYPES, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
 import { buildAppError, errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
-import { buildWorkerModelCatalog } from "@/server/worker-models";
+import { WorkerModelCatalogManager, type WorkerModelCatalog } from "@/server/worker-models";
 
 interface RuntimeDoctorResult {
   type: string;
@@ -17,6 +18,40 @@ interface RuntimeDoctorResult {
   endpoint: boolean | null;
   message?: string;
 }
+
+const WORKER_MODEL_CATALOG_CACHE_KEY = "__WORKER_MODEL_CATALOG_CACHE";
+
+const workerModelCatalogManager = new WorkerModelCatalogManager({
+  loadCachedCatalog: async () => {
+    const cached = await db.select().from(settings).where(eq(settings.key, WORKER_MODEL_CATALOG_CACHE_KEY)).get();
+    if (!cached?.value) {
+      return null;
+    }
+
+    const parsed = JSON.parse(cached.value) as unknown;
+    if (parsed && typeof parsed === "object" && "catalog" in parsed) {
+      return (parsed as { catalog?: Partial<WorkerModelCatalog> }).catalog ?? null;
+    }
+
+    return parsed as Partial<WorkerModelCatalog>;
+  },
+  saveCachedCatalog: async (catalog) => {
+    const cachedValue = JSON.stringify({ catalog, updatedAt: new Date().toISOString() });
+    await db.insert(settings)
+      .values({
+        key: WORKER_MODEL_CATALOG_CACHE_KEY,
+        value: cachedValue,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: settings.key,
+        set: {
+          value: cachedValue,
+          updatedAt: new Date(),
+        },
+      });
+  },
+});
 
 export async function GET(req: NextRequest) {
   try {
@@ -28,10 +63,10 @@ export async function GET(req: NextRequest) {
       return auth.response;
     }
 
-    const [allSettings, doctorResponse, workerModels] = await Promise.all([
+    const [allSettings, doctorResponse, workerModelSnapshot] = await Promise.all([
       db.select().from(settings),
       fetch(`${BRIDGE_URL}/doctor`),
-      buildWorkerModelCatalog(),
+      workerModelCatalogManager.getCatalogSnapshot({ refreshOnFirstLoad: true }),
     ]);
 
     if (!doctorResponse.ok) {
@@ -55,7 +90,8 @@ export async function GET(req: NextRequest) {
           action: "Load worker availability",
         },
       )),
-      workerModels,
+      workerModels: workerModelSnapshot.catalog,
+      workerModelsRefreshing: workerModelSnapshot.refreshing,
       workers: SUPPORTED_WORKER_TYPES.map((type) => ({
         type,
         label: WORKER_TYPE_LABELS[type],

@@ -57,7 +57,11 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain("Claude Code");
   expect(workerCardSource).toContain("Context unavailable");
   expect(workerCardSource).toContain('promptPreview?: string | null;');
+  expect(workerCardSource).toContain('userMessages?: TerminalUserMessage[];');
   expect(workersSidebarSource).toContain('promptPreview={worker.initialPrompt}');
+  expect(workersSidebarSource).toContain('supervisorInterventions={supervisorInterventions}');
+  expect(workersSidebarSource).toContain('content: intervention.prompt');
+  expect(workerCardSource).toContain('<Terminal agent={agent} userMessages={userMessages} />');
   expect(workerCardSource).toContain('const promptPreviewText = promptPreview?.trim() ?? "";');
   expect(workerCardSource).toContain('line-clamp-2 text-[11px] leading-[1.35] text-zinc-500');
   expect(workerCardSource).not.toContain('const preview = buildWorkerPreview(agent);');
@@ -338,6 +342,7 @@ test("failed runs surface recovery UI in the header and conversation feed", () =
   expect(pageSource).toContain("Unstick latest");
   expect(pageSource).toContain('label: "Stuck"');
   expect(pageSource).toContain('label: "Needs recovery"');
+  expect(pageSource).toContain('label: "Runtime error"');
   expect(pageSource).toContain('msg.kind === "error"');
   expect(pageSource).toContain("Run failed");
 });
@@ -346,9 +351,9 @@ test("running conversations render an in-thread execution indicator and timeline
   expect(pageSource).toContain("function ConversationExecutionStatus");
   expect(pageSource).toContain("function SupervisorActivityMessage");
   expect(pageSource).toContain("const isConversationThinking =");
-  expect(pageSource).toContain("const liveThoughts =");
-  expect(pageSource).toContain("const selectedRunExecutionEvents =");
-  expect(pageSource).toContain("const conversationTimelineItems =");
+  expect(pageSource).toContain("const liveThoughts = useMemo(() => {");
+  expect(pageSource).toContain("const selectedRunExecutionEvents = useMemo(() => (");
+  expect(pageSource).toContain("const conversationTimelineItems = useMemo(() => buildConversationTimelineItems");
   expect(pageSource).toContain("const liveExecutionStatus =");
   expect(pageSource).toContain("buildConversationTimelineItems");
   expect(pageSource).toContain('item.type === "activity"');
@@ -360,6 +365,11 @@ test("running conversations render an in-thread execution indicator and timeline
   expect(pageSource).toContain("Waiting ");
   expect(pageSource).not.toContain("Show supervisor activity");
   expect(pageSource).not.toContain("Hide supervisor activity");
+  expect(pageSource).not.toContain("SupervisorActivityPresentationManager");
+  expect(pageSource).not.toContain("SupervisorActivityDrawer");
+  expect(pageSource).not.toContain("ClarificationPanel");
+  expect(pageSource).not.toContain("PlanProgress");
+  expect(pageSource).not.toContain("ValidationSummary");
   expect(pageSource).not.toContain("No execution details yet.");
   expect(pageSource).not.toContain("Current status");
   expect(pageSource).not.toContain("Last bridge error");

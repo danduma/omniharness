@@ -169,6 +169,19 @@ CREATE TABLE IF NOT EXISTS clarifications (
   FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action
 );
 
+CREATE TABLE IF NOT EXISTS worker_assignments (
+  id text PRIMARY KEY NOT NULL,
+  run_id text NOT NULL,
+  worker_id text,
+  plan_item_id text NOT NULL,
+  status text NOT NULL,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action,
+  FOREIGN KEY (worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE no action,
+  FOREIGN KEY (plan_item_id) REFERENCES plan_items(id) ON UPDATE no action ON DELETE no action
+);
+
 CREATE TABLE IF NOT EXISTS validation_runs (
   id text PRIMARY KEY NOT NULL,
   run_id text NOT NULL,

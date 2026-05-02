@@ -16,7 +16,7 @@ interface TerminalProps {
   className?: string;
 }
 
-interface TerminalUserMessage {
+export interface TerminalUserMessage {
   id: string;
   content: string;
   createdAt: string;
@@ -473,12 +473,17 @@ function ThoughtActivity({
         <div className="min-h-0 overflow-hidden">
           <div className="space-y-1 pb-0.5 pt-0.5">
             {activity.thoughts.map((thought, index) => (
-              <p
+              <MarkdownContent
                 key={`${activity.id}:${index}`}
-                className={cn("max-w-none whitespace-pre-wrap text-[length:var(--terminal-thought-size)] leading-[1.5] italic", variant === "native" ? "text-muted-foreground" : "text-zinc-500")}
-              >
-                {thought}
-              </p>
+                content={thought}
+                inheritTextColor
+                className={cn(
+                  "space-y-1 text-[length:var(--terminal-thought-size)] leading-[1.5]",
+                  variant === "native"
+                    ? "text-muted-foreground [&_code]:bg-muted/70 [&_pre]:bg-muted/35"
+                    : "text-zinc-500 [&_blockquote]:border-white/10 [&_blockquote]:bg-white/5 [&_code]:bg-white/10 [&_pre]:border-white/10 [&_pre]:bg-white/5",
+                )}
+              />
             ))}
           </div>
         </div>

@@ -5,7 +5,13 @@ function isSafeHref(href: string) {
   return /^(https?:\/\/|mailto:|\/|#)/.test(href);
 }
 
-function renderInlineMarkdown(text: string, keyPrefix: string): React.ReactNode[] {
+interface MarkdownContentProps {
+  content: string;
+  className?: string;
+  inheritTextColor?: boolean;
+}
+
+function renderInlineMarkdown(text: string, keyPrefix: string, inheritTextColor = false): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   const pattern = /(\[([^\]]+)\]\(([^)\s]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*)/g;
   let lastIndex = 0;
@@ -24,7 +30,12 @@ function renderInlineMarkdown(text: string, keyPrefix: string): React.ReactNode[
           href={href}
           target={href.startsWith("http") ? "_blank" : undefined}
           rel={href.startsWith("http") ? "noreferrer" : undefined}
-          className="font-medium text-emerald-700 underline decoration-emerald-700/30 underline-offset-4 transition-colors hover:text-emerald-900 dark:text-emerald-300 dark:hover:text-emerald-100"
+          className={cn(
+            "font-medium underline underline-offset-4 transition-colors",
+            inheritTextColor
+              ? "text-current decoration-current/35 hover:text-current dark:text-current dark:hover:text-current"
+              : "text-emerald-700 decoration-emerald-700/30 hover:text-emerald-900 dark:text-emerald-300 dark:hover:text-emerald-100",
+          )}
         >
           {match[2]}
         </a>
@@ -33,13 +44,23 @@ function renderInlineMarkdown(text: string, keyPrefix: string): React.ReactNode[
       nodes.push(
         <code
           key={`${keyPrefix}-code-${match.index}`}
-          className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em] text-foreground"
+          className={cn(
+            "rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em]",
+            inheritTextColor ? "text-current" : "text-foreground",
+          )}
         >
           {match[4]}
         </code>,
       );
     } else if (match[5]) {
-      nodes.push(<strong key={`${keyPrefix}-strong-${match.index}`} className="font-semibold text-foreground">{match[5]}</strong>);
+      nodes.push(
+        <strong
+          key={`${keyPrefix}-strong-${match.index}`}
+          className={cn("font-semibold", inheritTextColor ? "text-current" : "text-foreground")}
+        >
+          {match[5]}
+        </strong>,
+      );
     } else if (match[6]) {
       nodes.push(<em key={`${keyPrefix}-em-${match.index}`} className="italic">{match[6]}</em>);
     }
@@ -54,7 +75,7 @@ function renderInlineMarkdown(text: string, keyPrefix: string): React.ReactNode[
   return nodes;
 }
 
-export function MarkdownContent({ content, className }: { content: string; className?: string }) {
+export function MarkdownContent({ content, className, inheritTextColor = false }: MarkdownContentProps) {
   const lines = content.replace(/\r\n/g, "\n").split("\n");
   const blocks: React.ReactNode[] = [];
   let index = 0;
@@ -99,7 +120,13 @@ export function MarkdownContent({ content, className }: { content: string; class
       }
 
       blocks.push(
-        <pre key={`code-${start}`} className="overflow-x-auto rounded-md border border-border/60 bg-muted/40 p-3 text-xs leading-5 text-foreground">
+        <pre
+          key={`code-${start}`}
+          className={cn(
+            "overflow-x-auto rounded-md border border-border/60 bg-muted/40 p-3 text-xs leading-5",
+            inheritTextColor ? "text-current" : "text-foreground",
+          )}
+        >
           <code>{codeLines.join("\n")}</code>
         </pre>,
       );
@@ -110,8 +137,11 @@ export function MarkdownContent({ content, className }: { content: string; class
     if (headingMatch) {
       const Tag = headingMatch[1].length <= 2 ? "h3" : "h4";
       blocks.push(
-        <Tag key={`heading-${index}`} className="pt-1 text-sm font-semibold leading-5 text-foreground">
-          {renderInlineMarkdown(headingMatch[2], `heading-${index}`)}
+        <Tag
+          key={`heading-${index}`}
+          className={cn("pt-1 text-sm font-semibold leading-5", inheritTextColor ? "text-current" : "text-foreground")}
+        >
+          {renderInlineMarkdown(headingMatch[2], `heading-${index}`, inheritTextColor)}
         </Tag>,
       );
       index += 1;
@@ -142,7 +172,7 @@ export function MarkdownContent({ content, className }: { content: string; class
         >
           {items.map((item, itemIndex) => (
             <li key={`${start}-${itemIndex}`} className="pl-1">
-              {renderInlineMarkdown(item, `list-${start}-${itemIndex}`)}
+              {renderInlineMarkdown(item, `list-${start}-${itemIndex}`, inheritTextColor)}
             </li>
           ))}
         </ListTag>,
@@ -160,8 +190,14 @@ export function MarkdownContent({ content, className }: { content: string; class
       }
 
       blocks.push(
-        <blockquote key={`quote-${start}`} className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-muted-foreground">
-          {renderInlineMarkdown(quoteLines.join(" "), `quote-${start}`)}
+        <blockquote
+          key={`quote-${start}`}
+          className={cn(
+            "rounded-md border border-border/60 bg-muted/30 px-3 py-2",
+            inheritTextColor ? "text-current" : "text-muted-foreground",
+          )}
+        >
+          {renderInlineMarkdown(quoteLines.join(" "), `quote-${start}`, inheritTextColor)}
         </blockquote>,
       );
       continue;
@@ -171,7 +207,7 @@ export function MarkdownContent({ content, className }: { content: string; class
     if (paragraph.text) {
       blocks.push(
         <p key={`paragraph-${paragraph.start}`}>
-          {renderInlineMarkdown(paragraph.text, `paragraph-${paragraph.start}`)}
+          {renderInlineMarkdown(paragraph.text, `paragraph-${paragraph.start}`, inheritTextColor)}
         </p>,
       );
     }

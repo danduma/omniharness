@@ -110,4 +110,19 @@ describe("/api/settings", () => {
 
     warnSpy.mockRestore();
   });
+
+  it("keeps internal cache settings out of the public settings payload", async () => {
+    await db.insert(settings).values([
+      { key: "__WORKER_MODEL_CATALOG_CACHE", value: "{\"catalog\":{}}", updatedAt: new Date() },
+      { key: "TEST_SUPERVISOR_MODEL", value: "gemini-3.1-pro-preview", updatedAt: new Date() },
+    ]);
+
+    const response = await GET(await makeAuthenticatedRequest("http://localhost/api/settings"));
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    expect(payload.values.__WORKER_MODEL_CATALOG_CACHE).toBeUndefined();
+    expect(payload.secrets.__WORKER_MODEL_CATALOG_CACHE).toBeUndefined();
+    expect(payload.values.TEST_SUPERVISOR_MODEL).toBe("gemini-3.1-pro-preview");
+  });
 });

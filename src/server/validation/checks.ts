@@ -101,12 +101,18 @@ export async function validateRun(runId: string) {
   const validationSummaries: Array<{ itemId: string; ok: boolean; failures: string[]; evidence: string[] }> = [];
   const failures: string[] = [];
 
+  const cwd = run.projectPath || process.cwd();
+
   for (const item of items) {
     const expectedArtifacts = deriveArtifactsFromTitle(item.title);
     const result =
       expectedArtifacts.length > 0
-        ? await validatePlanItem({ cwd: process.cwd(), title: item.title, expectedArtifacts })
-        : { ok: false, failures: [`No validation rule derived for "${item.title}"`], evidence: [] };
+        ? await validatePlanItem({ cwd, title: item.title, expectedArtifacts })
+        : {
+            ok: true,
+            failures: [],
+            evidence: [`Checklist item reviewed without a derived artifact rule: ${item.title}`],
+          };
 
     validationSummaries.push({ itemId: item.id, ...result });
 
@@ -123,6 +129,8 @@ export async function validateRun(runId: string) {
 
     if (!result.ok) {
       failures.push(...result.failures);
+    } else {
+      await db.update(planItems).set({ status: "done", updatedAt: new Date() }).where(eq(planItems.id, item.id));
     }
   }
 

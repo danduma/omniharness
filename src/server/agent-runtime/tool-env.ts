@@ -12,9 +12,17 @@ export type ToolDiagnostic = {
   required: boolean;
 };
 
+export type StructuredToolDiagnostic = {
+  name: string;
+  available: boolean;
+  provider: string;
+  required: boolean;
+};
+
 export type ToolDiagnostics = {
   ok: boolean;
   path: string;
+  structured: StructuredToolDiagnostic[];
   required: ToolDiagnostic[];
   optional: ToolDiagnostic[];
 };
@@ -45,17 +53,7 @@ const DEFAULT_REQUIRED_TOOLS = [
   "node",
   "bash",
   "sh",
-  "sed",
-  "awk",
-  "grep",
-  "find",
-  "xargs",
-  "cat",
   "ls",
-  "mkdir",
-  "rm",
-  "cp",
-  "mv",
 ];
 const DEFAULT_OPTIONAL_TOOLS = [
   "pnpm",
@@ -63,12 +61,29 @@ const DEFAULT_OPTIONAL_TOOLS = [
   "python3",
   "python",
   "zsh",
+  "sed",
+  "awk",
+  "grep",
+  "find",
+  "xargs",
+  "mkdir",
+  "rm",
+  "cp",
+  "mv",
   "jq",
   "gh",
   "cargo",
   "uv",
   "fd",
   "make",
+];
+const DEFAULT_STRUCTURED_TOOLS = [
+  "fs/read_text_file",
+  "fs/write_text_file",
+  "acp_fs/read_text_file",
+  "acp_fs/write_text_file",
+  "acp_fs/edit_text_file",
+  "acp_fs/multi_edit_text_file",
 ];
 
 function splitPath(value: string | undefined): string[] {
@@ -237,10 +252,12 @@ export function createToolDiagnostics(input: {
   cwd?: string;
   required?: string[];
   optional?: string[];
+  structured?: string[];
 } = {}): ToolDiagnostics {
   const managedEnv = withManagedPath(input.env || process.env, input.cwd);
   const required = input.required || DEFAULT_REQUIRED_TOOLS;
   const optional = input.optional || DEFAULT_OPTIONAL_TOOLS;
+  const structured = input.structured || DEFAULT_STRUCTURED_TOOLS;
 
   const toDiagnostic = (name: string, requiredTool: boolean): ToolDiagnostic => {
     const foundPath = resolveCommand(name, { env: managedEnv, cwd: input.cwd });
@@ -252,12 +269,19 @@ export function createToolDiagnostics(input: {
     };
   };
 
+  const structuredDiagnostics = structured.map((name) => ({
+    name,
+    available: true,
+    provider: name.startsWith("fs/") ? "ACP client filesystem" : "codex-acp acp_fs",
+    required: true,
+  }));
   const requiredDiagnostics = required.map((name) => toDiagnostic(name, true));
   const optionalDiagnostics = optional.map((name) => toDiagnostic(name, false));
 
   return {
-    ok: requiredDiagnostics.every((item) => item.available),
+    ok: structuredDiagnostics.every((item) => item.available) && requiredDiagnostics.every((item) => item.available),
     path: managedEnv.PATH || "",
+    structured: structuredDiagnostics,
     required: requiredDiagnostics,
     optional: optionalDiagnostics,
   };

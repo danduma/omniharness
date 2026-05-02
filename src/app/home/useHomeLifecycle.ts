@@ -1,13 +1,12 @@
 import { useEffect, useRef } from "react";
 import type React from "react";
 import { type UseMutationResult } from "@tanstack/react-query";
-import { type AppErrorDescriptor, mergeAppErrors, requestJson } from "@/lib/app-errors";
+import { type AppErrorDescriptor, mergeAppErrors } from "@/lib/app-errors";
 import type { ConversationModeOption } from "@/components/ConversationModePicker";
 import { COMPOSER_EFFORT_STORAGE_KEY, COMPOSER_MODE_STORAGE_KEY, COMPOSER_MODEL_STORAGE_KEY, COMPOSER_WORKER_STORAGE_KEY, EFFORT_OPTIONS, RUN_PATH_PATTERN, WORKER_OPTIONS } from "./constants";
+import { LiveEventConnectionManager } from "./LiveEventConnectionManager";
 import type { ComposerWorkerOption, EventStreamState } from "./types";
 import { buildConversationPath, buildInlineError, parseCollapsedProjectPaths } from "./utils";
-
-const SNAPSHOT_FALLBACK_COOLDOWN_MS = 15_000;
 
 interface UseHomeLifecycleProps {
   appUnlocked: boolean;
@@ -97,12 +96,6 @@ export function useHomeLifecycle({
     }
 
     let isActive = true;
-    let isPollingSnapshot = false;
-    let lastSnapshotPollAt = 0;
-    const runParam = selectedRunId ? `&runId=${encodeURIComponent(selectedRunId)}` : "";
-    const snapshotUrl = `/api/events?snapshot=1${runParam}`;
-    const streamUrl = selectedRunId ? `/api/events?runId=${encodeURIComponent(selectedRunId)}` : "/api/events";
-
     const applyEventStreamUpdate = (data: EventStreamState) => {
       if (!isActive) {
         return;
@@ -117,78 +110,21 @@ export function useHomeLifecycle({
       ));
     };
 
-    const pollSnapshot = async () => {
-      const now = Date.now();
-      if (isPollingSnapshot || now - lastSnapshotPollAt < SNAPSHOT_FALLBACK_COOLDOWN_MS) {
-        return;
-      }
-
-      lastSnapshotPollAt = now;
-      isPollingSnapshot = true;
-      try {
-        const data = await requestJson<EventStreamState>(snapshotUrl, undefined, {
-          source: "Events",
-          action: "Load live state snapshot",
-        });
-        applyEventStreamUpdate(data);
-      } catch (error) {
+    const connectionManager = new LiveEventConnectionManager({
+      selectedRunId,
+      applyUpdate: applyEventStreamUpdate,
+      reportError: (error) => {
         if (!isActive) {
           return;
         }
-        setRuntimeErrors((current) => mergeAppErrors(current, [
-          buildInlineError(error, {
-            source: "Events",
-            action: "Load live state snapshot",
-          }),
-        ]));
-      } finally {
-        isPollingSnapshot = false;
-      }
-    };
+        setRuntimeErrors((current) => mergeAppErrors(current, [buildInlineError(error)]));
+      },
+    });
+    connectionManager.start();
 
-    const eventSource = new EventSource(streamUrl);
-    eventSource.addEventListener("update", (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        applyEventStreamUpdate(data);
-      } catch {
-        setRuntimeErrors((current) => mergeAppErrors(current, [{
-          message: "The frontend received a malformed update payload from /api/events.",
-          source: "Events",
-          action: "Process live updates",
-          suggestion: "Inspect the events route response payload and server logs, then refresh the page after fixing the malformed data.",
-        }]));
-      }
-    });
-    eventSource.addEventListener("update_error", (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        setRuntimeErrors((current) => mergeAppErrors(current, [
-          buildInlineError(data, {
-            source: "Events",
-            action: "Stream live updates",
-          }),
-        ]));
-      } catch {
-        setRuntimeErrors((current) => mergeAppErrors(current, [{
-          message: "The live event stream reported a malformed error payload.",
-          source: "Events",
-          action: "Stream live updates",
-        }]));
-      }
-    });
-    eventSource.onerror = () => {
-      setRuntimeErrors((current) => mergeAppErrors(current, [{
-        message: "The frontend lost its live connection to /api/events.",
-        source: "Events",
-        action: "Stream live updates",
-        suggestion: "Keep this page open while the app reconnects. If the error persists, refresh the page and inspect the server logs for the events route.",
-      }]));
-      void pollSnapshot();
-    };
     return () => {
       isActive = false;
-      eventSource.close();
+      connectionManager.stop();
     };
   }, [appUnlocked, filterEventStreamState, selectedRunId]);
 

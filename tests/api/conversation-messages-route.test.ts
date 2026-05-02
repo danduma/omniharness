@@ -5,16 +5,18 @@ import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { clarifications, messages, plans, runs, workerCounters, workers } from "@/server/db/schema";
 
-const { mockAskAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
+const { mockAskAgent, mockGetAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
   mockAskAgent: vi.fn().mockResolvedValue({
     response: "Here is the next planning step.",
     state: "working",
   }),
+  mockGetAgent: vi.fn().mockResolvedValue(null),
   mockStartSupervisorRun: vi.fn(),
 }));
 
 vi.mock("@/server/bridge-client", () => ({
   askAgent: mockAskAgent,
+  getAgent: mockGetAgent,
 }));
 
 vi.mock("@/server/supervisor/start", () => ({
@@ -26,6 +28,7 @@ import { POST } from "@/app/api/conversations/[id]/messages/route";
 describe("POST /api/conversations/[id]/messages", () => {
   beforeEach(async () => {
     mockAskAgent.mockClear();
+    mockGetAgent.mockClear();
     mockStartSupervisorRun.mockClear();
     await db.delete(clarifications);
     await db.delete(messages);
