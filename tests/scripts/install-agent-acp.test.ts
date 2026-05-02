@@ -66,6 +66,8 @@ describe("install-agent-acp.sh", () => {
     expect(result.stdout).toContain("native ACP support via `opencode acp`");
     expect(result.stdout).toContain("Checking agent tool environment");
     expect(result.stdout).toContain("Structured ACP filesystem tools are provided by the runtime");
+    expect(result.stdout).toContain("Codex workers also get native Codex argv0 shims");
+    expect(result.stdout).toContain("Codex core tools are enabled through a runtime managed config");
     expect(result.stdout).toContain("rg: detected");
     expect(result.stdout).toContain("git: detected");
     expect(result.stdout).toContain("node: detected");

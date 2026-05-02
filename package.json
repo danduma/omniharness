@@ -11,6 +11,7 @@
     "preinstall": "node ./scripts/check-pnpm.mjs",
     "predev": "node ./scripts/check-pnpm.mjs --verify-native",
     "dev": "pnpm exec tsx scripts/dev.ts",
+    "dev:proxy": "pnpm exec tsx scripts/dev-compression-proxy.ts",
     "prebuild": "node ./scripts/check-pnpm.mjs --verify-native",
     "dev:web": "next dev",
     "setup:agents": "./scripts/install-agent-acp.sh",

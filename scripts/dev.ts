@@ -9,10 +9,15 @@ const repoRoot = process.cwd();
 const webPort = process.env.PORT || "3050";
 process.env.PORT = webPort;
 const webHost = process.env.OMNIHARNESS_WEB_HOST?.trim() || "0.0.0.0";
+const proxyPort = process.env.OMNIHARNESS_DEV_PROXY_PORT?.trim() || "3035";
+const shouldLaunchProxy = process.env.OMNIHARNESS_DEV_PROXY !== "0";
+process.env.OMNIHARNESS_DEV_PROXY_PORT = proxyPort;
+process.env.OMNIHARNESS_DEV_PROXY_TARGET ||= `http://127.0.0.1:${webPort}`;
 const bridgeUrl = resolveBridgeUrl(process.env);
 const bridgeDir = resolveBridgeDir(repoRoot, process.env);
 const bridgeLockPath = resolveBridgeLockPath(repoRoot);
 const webCommand = ["pnpm", ["run", "dev:web", "--hostname", webHost, "--port", webPort]] as const;
+const proxyCommand = ["pnpm", ["run", "dev:proxy"]] as const;
 const bridgeCommand = ["pnpm", ["exec", "tsx", "scripts/agent-runtime.ts"]] as const;
 const setupCommands = [
   { label: "runtime install", command: "pnpm", args: ["install"] },
@@ -21,6 +26,7 @@ const setupCommands = [
 
 let managedBridgeChild: ChildProcess | null = null;
 let webChild: ChildProcess | null = null;
+let proxyChild: ChildProcess | null = null;
 let shuttingDown = false;
 let ownsBridgeLock = false;
 
@@ -169,6 +175,22 @@ function launchWeb() {
   });
 }
 
+function launchProxy() {
+  if (!shouldLaunchProxy) {
+    return;
+  }
+
+  console.log(`[dev] Starting compressed tunnel proxy on 127.0.0.1:${proxyPort}`);
+  proxyChild = spawnManaged(proxyCommand[0], [...proxyCommand[1]], repoRoot, "proxy");
+
+  proxyChild.once("exit", (code, signal) => {
+    if (!shuttingDown) {
+      console.error(`[dev] Tunnel proxy exited unexpectedly with ${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}.`);
+      shutdown(code ?? 1);
+    }
+  });
+}
+
 function shutdown(exitCode = 0) {
   if (shuttingDown) {
     return;
@@ -178,6 +200,10 @@ function shutdown(exitCode = 0) {
 
   if (webChild && !webChild.killed) {
     webChild.kill("SIGTERM");
+  }
+
+  if (proxyChild && !proxyChild.killed) {
+    proxyChild.kill("SIGTERM");
   }
 
   if (managedBridgeChild && !managedBridgeChild.killed) {
@@ -197,9 +223,13 @@ function shutdown(exitCode = 0) {
 async function main() {
   await ensureManagedBridge();
   launchWeb();
+  launchProxy();
 
   console.log(`[dev] OmniHarness will use agent runtime at ${bridgeUrl}`);
   console.log("[dev] Next.js will print the local and network UI URLs when it is ready.");
+  if (shouldLaunchProxy) {
+    console.log(`[dev] Point Cloudflare Tunnel at http://localhost:${proxyPort} for compressed remote dev.`);
+  }
 }
 
 process.on("SIGINT", () => shutdown(0));

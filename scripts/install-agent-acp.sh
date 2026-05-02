@@ -116,6 +116,12 @@ echo "Checking agent tool environment..."
 echo "The OmniHarness agent runtime builds a managed worker PATH from common developer tool locations,"
 echo "but installing these tools globally still gives agents the best local capability."
 echo "Structured ACP filesystem tools are provided by the runtime: read_text_file, write_text_file, edit_text_file, multi_edit_text_file."
+if [ "$(uname -s)" = "Linux" ]; then
+  echo "Codex workers also get native Codex argv0 shims: apply_patch, applypatch, codex-linux-sandbox."
+else
+  echo "Codex workers also get native Codex argv0 shims: apply_patch, applypatch."
+fi
+echo "Codex core tools are enabled through a runtime managed config: exec_command, write_stdin, update_plan, apply_patch, web_search, view_image, MCP resources."
 for tool in rg git node bash sh ls; do
   report_tool "$tool" "required"
 done

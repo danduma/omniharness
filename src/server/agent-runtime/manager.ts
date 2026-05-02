@@ -9,7 +9,7 @@ import { basename, dirname, join } from "path";
 import { Readable, Writable } from "stream";
 import * as acp from "@agentclientprotocol/sdk";
 import { applyCodexBridgeEnv, shouldSetRequestedMode } from "./codex";
-import { commandAvailable, createToolDiagnostics, withManagedPath } from "./tool-env";
+import { commandAvailable, createToolDiagnostics, withCodexStandardTooling, withManagedPath } from "./tool-env";
 import type {
   AgentRecord,
   AgentRuntimeConfig,
@@ -615,6 +615,7 @@ export class AgentRuntimeManager {
     }, cwd);
 
     if (type === "codex") {
+      Object.assign(finalEnv, withCodexStandardTooling(finalEnv));
       Object.assign(finalEnv, applyCodexBridgeEnv(finalEnv, null));
     }
 
@@ -774,6 +775,7 @@ export class AgentRuntimeManager {
     record.updatedAt = nowIso();
     record.currentText = "";
     record.activeOutputEntryId = null;
+    record.lastError = null;
     record.stopReason = null;
     const unsubscribe = onChunk ? this.subscribeChunks(name, onChunk) : null;
 
