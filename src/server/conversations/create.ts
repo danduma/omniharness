@@ -75,6 +75,105 @@ async function buildCreatedConversationResponse(args: {
   };
 }
 
+async function runInitialWorkerTurn(args: {
+  runId: string;
+  workerId: string;
+  workerType: string;
+  cwd: string;
+  agent: AgentRecord;
+  mode: "direct" | "planning";
+  command: string;
+}) {
+  try {
+    await db.update(workers).set({
+      status: "working",
+      updatedAt: new Date(),
+    }).where(eq(workers.id, args.workerId));
+    if (args.mode === "planning") {
+      await db.update(runs).set({
+        status: "working",
+        updatedAt: new Date(),
+      }).where(eq(runs.id, args.runId));
+    }
+    notifyEventStreamSubscribers();
+
+    const response = await askAgent(args.workerId, buildInitialWorkerPrompt(args.mode, args.command));
+    let snapshot: AgentRecord | null = null;
+    try {
+      snapshot = await getAgent(args.workerId);
+      await persistWorkerSnapshot(args.workerId, snapshot);
+    } catch {
+      // The bridge may have already dropped a failed worker; the ask response still determines the visible state.
+    }
+
+    if (!hasVisibleWorkerOutput(response.response, snapshot)) {
+      const failureMessage = buildEmptyWorkerOutputMessage(snapshot, response.state);
+
+      await db.update(workers).set({
+        type: snapshot?.type || args.agent.type || args.workerType,
+        status: "error",
+        cwd: snapshot?.cwd || args.agent.cwd || args.cwd,
+        outputLog: failureMessage,
+        bridgeSessionId: snapshot?.sessionId ?? args.agent.sessionId ?? null,
+        bridgeSessionMode: snapshot?.sessionMode ?? args.agent.sessionMode ?? null,
+        updatedAt: new Date(),
+      }).where(eq(workers.id, args.workerId));
+
+      await persistRunFailure(args.runId, new Error(failureMessage));
+      notifyEventStreamSubscribers();
+      return;
+    }
+
+    await db.update(workers).set({
+      type: args.agent.type || args.workerType,
+      status: response.state,
+      cwd: args.agent.cwd || args.cwd,
+      outputLog: response.response.trim() ? response.response : "",
+      bridgeSessionId: snapshot?.sessionId ?? args.agent.sessionId ?? null,
+      bridgeSessionMode: snapshot?.sessionMode ?? args.agent.sessionMode ?? null,
+      updatedAt: new Date(),
+    }).where(eq(workers.id, args.workerId));
+
+    await db.insert(dbMessages).values({
+      id: randomUUID(),
+      runId: args.runId,
+      role: "worker",
+      kind: args.mode,
+      content: response.response,
+      workerId: args.workerId,
+      createdAt: new Date(),
+    });
+
+    if (args.mode === "planning") {
+      const latestRun = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
+      const latestWorker = await db.select().from(workers).where(eq(workers.id, args.workerId)).get();
+      if (latestRun) {
+        await refreshPlanningArtifactsForRun({
+          run: latestRun,
+          worker: latestWorker,
+          snapshot,
+          responseText: response.response,
+        });
+      }
+    } else {
+      await db.update(runs).set({
+        status: "done",
+        updatedAt: new Date(),
+      }).where(eq(runs.id, args.runId));
+    }
+
+    notifyEventStreamSubscribers();
+  } catch (error) {
+    await db.update(workers).set({
+      status: "error",
+      updatedAt: new Date(),
+    }).where(eq(workers.id, args.workerId));
+    await persistRunFailure(args.runId, error);
+    notifyEventStreamSubscribers();
+    throw error;
+  }
+}
+
 export async function createConversation(args: {
   mode?: unknown;
   command: string;
@@ -167,76 +266,22 @@ export async function createConversation(args: {
       effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
     });
 
-    if (mode === "planning") {
-      await db.update(runs).set({
-        status: "working",
-        updatedAt: new Date(),
-      }).where(eq(runs.id, runId));
-      notifyEventStreamSubscribers();
-    }
-
-    const response = await askAgent(workerId, buildInitialWorkerPrompt(mode, command));
-    let snapshot: AgentRecord | null = null;
-    try {
-      snapshot = await getAgent(workerId);
-      await persistWorkerSnapshot(workerId, snapshot);
-    } catch {
-      // The bridge may have already dropped a failed direct worker; the ask response still determines the visible state.
-    }
-
-    if (!hasVisibleWorkerOutput(response.response, snapshot)) {
-      const failureMessage = buildEmptyWorkerOutputMessage(snapshot, response.state);
-
-      await db.update(workers).set({
-        type: snapshot?.type || agent.type || workerType,
-        status: "error",
-        cwd: snapshot?.cwd || agent.cwd || cwd,
-        outputLog: failureMessage,
-        bridgeSessionId: snapshot?.sessionId ?? agent.sessionId ?? null,
-        bridgeSessionMode: snapshot?.sessionMode ?? agent.sessionMode ?? null,
-        updatedAt: new Date(),
-      }).where(eq(workers.id, workerId));
-
-      await persistRunFailure(runId, new Error(failureMessage));
-      notifyEventStreamSubscribers();
-
-      return buildCreatedConversationResponse({ planId, runId, messageId: initialMessageId, mode });
-    }
-
-    await db.update(workers).set({
-      type: agent.type || workerType,
-      status: response.state,
-      cwd: agent.cwd || cwd,
-      outputLog: response.response.trim() ? response.response : "",
-      bridgeSessionId: snapshot?.sessionId ?? agent.sessionId ?? null,
-      bridgeSessionMode: snapshot?.sessionMode ?? agent.sessionMode ?? null,
-      updatedAt: new Date(),
-    }).where(eq(workers.id, workerId));
-
-    await db.insert(dbMessages).values({
-      id: randomUUID(),
+    const response = await buildCreatedConversationResponse({ planId, runId, messageId: initialMessageId, mode });
+    runInitialWorkerTurn({
       runId,
-      role: "worker",
-      kind: mode,
-      content: response.response,
       workerId,
-      createdAt: new Date(),
+      workerType,
+      cwd,
+      agent,
+      mode,
+      command,
+    }).catch((error) => {
+      console.error(`Initial ${mode} conversation turn failed:`, error);
     });
-
-    if (mode === "planning") {
-      const latestRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
-      const latestWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
-      if (latestRun) {
-        await refreshPlanningArtifactsForRun({
-          run: latestRun,
-          worker: latestWorker,
-          snapshot,
-          responseText: response.response,
-        });
-      }
-    }
-
-    notifyEventStreamSubscribers();
+    queueConversationTitleGeneration({ runId, command }).catch((error) => {
+      console.error("Conversation title generation failed:", error);
+    });
+    return response;
   }
 
   queueConversationTitleGeneration({ runId, command }).catch((error) => {

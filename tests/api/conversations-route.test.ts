@@ -76,6 +76,26 @@ vi.mock("@/server/events/live-updates", () => ({
 
 import { POST } from "@/app/api/conversations/route";
 
+function delay(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitFor<T>(read: () => Promise<T>, predicate: (value: T) => boolean, timeoutMs = 1_000) {
+  const startedAt = Date.now();
+  let latest = await read();
+
+  while (!predicate(latest)) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(`Timed out waiting for expected state. Last value: ${JSON.stringify(latest)}`);
+    }
+
+    await delay(10);
+    latest = await read();
+  }
+
+  return latest;
+}
+
 describe("POST /api/conversations", () => {
   beforeEach(async () => {
     mockStartSupervisorRun.mockClear();
@@ -167,6 +187,71 @@ describe("POST /api/conversations", () => {
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
   });
 
+  it("returns a planning conversation before the first planner turn completes", async () => {
+    let resolveAsk: ((value: { response: string; state: string }) => void) | null = null;
+    mockAskAgent.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveAsk = resolve;
+    }));
+    mockGetAgent.mockResolvedValueOnce({
+      name: "worker-1",
+      type: "codex",
+      state: "idle",
+      cwd: "/workspace/app",
+      lastText: "Let's shape the plan.",
+      currentText: "",
+      renderedOutput: "",
+      outputEntries: [
+        {
+          id: "entry-plan",
+          type: "message",
+          text: "Let's shape the plan.",
+          timestamp: new Date(0).toISOString(),
+        },
+      ],
+      stderrBuffer: [],
+      stopReason: "end_turn",
+    });
+
+    const request = new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "planning",
+        command: "Help me write a plan for the conversation modes work",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+      }),
+    });
+
+    const responsePromise = POST(request);
+    let payload!: { runId: string };
+
+    try {
+      await expect(Promise.race([
+        responsePromise.then(() => "resolved"),
+        delay(50).then(() => "pending"),
+      ])).resolves.toBe("resolved");
+
+      payload = await (await responsePromise).json();
+      const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+      const initialMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
+
+      expect(["starting", "working"]).toContain(createdRun?.status);
+      expect(initialMessages.filter((message) => message.role === "worker")).toHaveLength(0);
+    } finally {
+      resolveAsk?.({ response: "Let's shape the plan.", state: "idle" });
+      await responsePromise.catch(() => null);
+    }
+
+    const completedRun = await waitFor(
+      () => db.select().from(runs).where(eq(runs.id, payload.runId)).get(),
+      (run) => run?.status === "awaiting_user",
+    );
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
+
+    expect(completedRun?.status).toBe("awaiting_user");
+    expect(storedMessages.some((message) => message.role === "worker" && message.content === "Let's shape the plan.")).toBe(true);
+  });
+
   it("starts a direct conversation with one direct worker and no supervisor", async () => {
     const request = new NextRequest("http://localhost/api/conversations", {
       method: "POST",
@@ -190,6 +275,73 @@ describe("POST /api/conversations", () => {
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
     expect(mockAskAgent).toHaveBeenCalledTimes(1);
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+  });
+
+  it("returns a direct conversation before the first worker turn completes", async () => {
+    let resolveAsk: ((value: { response: string; state: string }) => void) | null = null;
+    mockAskAgent.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveAsk = resolve;
+    }));
+    mockGetAgent.mockResolvedValueOnce({
+      name: "worker-1",
+      type: "codex",
+      state: "idle",
+      cwd: "/workspace/app",
+      lastText: "Ready for the next prompt.",
+      currentText: "",
+      renderedOutput: "",
+      outputEntries: [
+        {
+          id: "entry-ready",
+          type: "message",
+          text: "Ready for the next prompt.",
+          timestamp: new Date(0).toISOString(),
+        },
+      ],
+      stderrBuffer: [],
+      stopReason: "end_turn",
+    });
+
+    const request = new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command: "Open a direct Codex session in this repo",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+      }),
+    });
+
+    const responsePromise = POST(request);
+
+    let payload!: { runId: string };
+    try {
+      await expect(Promise.race([
+        responsePromise.then(() => "resolved"),
+        delay(50).then(() => "pending"),
+      ])).resolves.toBe("resolved");
+
+      payload = await (await responsePromise).json();
+      const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+      const createdWorkers = await db.select().from(workers).where(eq(workers.runId, payload.runId));
+      const initialMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
+
+      expect(createdRun?.status).toBe("running");
+      expect(createdWorkers).toHaveLength(1);
+      expect(initialMessages.filter((message) => message.role === "worker")).toHaveLength(0);
+    } finally {
+      resolveAsk?.({ response: "Ready for the next prompt.", state: "idle" });
+      await responsePromise.catch(() => null);
+    }
+
+    const completedRun = await waitFor(
+      () => db.select().from(runs).where(eq(runs.id, payload.runId)).get(),
+      (run) => run?.status === "done",
+    );
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
+
+    expect(completedRun?.status).toBe("done");
+    expect(storedMessages.some((message) => message.role === "worker" && message.content === "Ready for the next prompt.")).toBe(true);
   });
 
   it("records a visible failure when a direct worker returns no output", async () => {
@@ -240,7 +392,10 @@ describe("POST /api/conversations", () => {
     expect(response.status).toBe(200);
 
     const payload = await response.json();
-    const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+    const createdRun = await waitFor(
+      () => db.select().from(runs).where(eq(runs.id, payload.runId)).get(),
+      (run) => run?.status === "failed",
+    );
     const createdWorkers = await db.select().from(workers).where(eq(workers.runId, payload.runId));
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
 
