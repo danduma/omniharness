@@ -20,6 +20,7 @@ export const INITIAL_EVENT_STREAM_STATE: EventStreamState = {
   validationRuns: [],
   executionEvents: [],
   supervisorInterventions: [],
+  queuedMessages: [],
   frontendErrors: [],
 };
 
@@ -86,6 +87,7 @@ const initialHomeUiState: HomeUiState = {
     WORKER_DEFAULT_TYPE: "codex",
     WORKER_ALLOWED_TYPES: DEFAULT_ALLOWED_WORKER_TYPES,
     WORKER_YOLO_MODE: "true",
+    BUSY_MESSAGE_ACTION: "queue",
     PROJECTS: "[]",
   },
   showFolderPicker: false,

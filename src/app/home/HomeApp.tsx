@@ -19,6 +19,8 @@ import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
 import { COMPOSER_WORKER_OPTIONS, WORKER_OPTIONS } from "./constants";
+import { busyMessageQueueManager } from "./BusyMessageQueueManager";
+import { parseBusyMessageAction, resolveBusyComposerBehavior, type BusyMessageAction } from "./busy-message-behavior";
 import type { AgentSnapshot, AuthSessionResponse, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, RunRecord, SettingsResponse, SidebarGroup, SidebarRun, SupervisorInterventionRecord, WorkerCatalogResponse, WorkerType } from "./types";
 import { EventStreamStateManager } from "./EventStreamStateManager";
 import { homeUiSetters, homeUiStateManager, INITIAL_EVENT_STREAM_STATE } from "./HomeUiStateManager";
@@ -68,6 +70,9 @@ function resolveRepoName(projectPath: string | null) {
 
   return normalized.split(/[/\\]/).filter(Boolean).pop() || "omniharness";
 }
+
+const AUTO_COMMIT_CHAT_PROMPT = "Create a git commit including the changes you've made";
+const AUTO_COMMIT_PROJECT_PROMPT = "Group all modified files into commits as they fit best";
 
 export function HomeApp() {
   const {
@@ -170,6 +175,7 @@ export function HomeApp() {
     },
     [stateManager],
   );
+  const busyMessageQueueState = useManagerSnapshot(busyMessageQueueManager);
   const scrollRef = useRef<HTMLDivElement>(null);
   const commandInputRef = useRef<HTMLTextAreaElement>(null);
   const pendingDeletedRunIdsRef = useRef<Set<string>>(new Set());
@@ -296,8 +302,13 @@ export function HomeApp() {
     );
 
     const pendingDeletedRunIds = pendingDeletedRunIdsRef.current;
+    const reconcileQueuedMessages = (stateWithQueues: EventStreamState) => {
+      busyMessageQueueManager.setQueuedMessages(stateWithQueues.queuedMessages || []);
+      return stateWithQueues;
+    };
+
     if (pendingDeletedRunIds.size === 0) {
-      return nextState;
+      return reconcileQueuedMessages(nextState);
     }
 
     nextState = filterOptimisticallyDeletedRuns(nextState, pendingDeletedRunIds);
@@ -307,7 +318,7 @@ export function HomeApp() {
         pendingDeletedRunIds.delete(runId);
       }
     }
-    return nextState;
+    return reconcileQueuedMessages(nextState);
   }, []);
 
   useHomeLifecycle({ appUnlocked, setHasReceivedInitialEventStreamPayload, setState, setRuntimeErrors, routeReady, setRouteReady, authEnabled, authConfigurationError, pairTokenFromUrl, setPairTokenFromUrl, redeemPairMutation, pairRedeemAttempted, setPairRedeemAttempted, selectedRunId, setSelectedRunId, draftProjectPath, setDraftProjectPath, setSelectedConversationMode, setSelectedCliAgent, setSelectedModel, setSelectedEffort, setReadMarkers, readMarkers, collapsedProjectPaths, setCollapsedProjectPaths, rightSidebarWidth, setRightSidebarWidth, isResizingRightSidebar, setIsResizingRightSidebar, selectedConversationMode, selectedCliAgent, selectedModel, selectedEffort, themeMode, setThemeMode, filterEventStreamState });
@@ -498,12 +509,12 @@ export function HomeApp() {
   });
 
   const sendConversationMessage = useMutation({
-    mutationFn: async (payload: { runId: string; content: string; attachments: PendingChatAttachment[] }) => {
+    mutationFn: async (payload: { runId: string; content: string; attachments: PendingChatAttachment[]; busyAction?: BusyMessageAction }) => {
       const uploadedAttachments = await uploadPendingChatAttachments(payload.attachments);
-      return requestJson<{ ok: true; message?: MessageRecord }>(`/api/conversations/${payload.runId}/messages`, {
+      return requestJson<{ ok: true; message?: MessageRecord; queuedMessage?: NonNullable<EventStreamState["queuedMessages"]>[number] }>(`/api/conversations/${payload.runId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: payload.content, attachments: uploadedAttachments }),
+        body: JSON.stringify({ content: payload.content, attachments: uploadedAttachments, busyAction: payload.busyAction }),
       }, {
         source: "Conversations",
         action: "Send a conversation message",
@@ -513,9 +524,90 @@ export function HomeApp() {
       if (data.message) {
         pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
       }
+      if (data.queuedMessage) {
+        busyMessageQueueManager.upsertQueuedMessage(data.queuedMessage);
+      }
       setState((current) => appendSentConversationMessageSnapshot(current, data.message));
       setCommand("");
       clearAttachments();
+    },
+  });
+
+  const cancelQueuedMessage = useMutation({
+    mutationFn: async ({ runId, messageId }: { runId: string; messageId: string }) => {
+      return requestJson<{ ok: true }>(`/api/conversations/${runId}/queued-messages/${messageId}`, {
+        method: "DELETE",
+      }, {
+        source: "Conversations",
+        action: "Cancel queued message",
+      });
+    },
+    onMutate: ({ messageId }) => {
+      busyMessageQueueManager.markCancelling(messageId);
+    },
+    onSuccess: (_data, variables) => {
+      busyMessageQueueManager.hideQueuedMessage(variables.messageId);
+    },
+    onError: (_error, variables) => {
+      busyMessageQueueManager.unmarkCancelling(variables.messageId);
+    },
+  });
+
+  const autoCommitChat = useMutation({
+    mutationFn: async ({ runId }: { runId: string }) => {
+      return requestJson<{ ok: true; message?: MessageRecord }>(`/api/conversations/${runId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: AUTO_COMMIT_CHAT_PROMPT }),
+      }, {
+        source: "Conversations",
+        action: "Auto commit chat",
+      });
+    },
+    onSuccess: (data) => {
+      if (data.message) {
+        pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
+      }
+      setState((current) => appendSentConversationMessageSnapshot(current, data.message));
+    },
+  });
+
+  const autoCommitProject = useMutation({
+    mutationFn: async (payload: { projectPath: string }) => {
+      const isAutoWorkerSelection = selectedCliAgent === "auto";
+      const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel);
+      return requestJson<({ runId?: string } & CreatedConversationSnapshot)>("/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "direct",
+          command: AUTO_COMMIT_PROJECT_PROMPT,
+          projectPath: payload.projectPath,
+          preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
+          preferredWorkerModel: resolvedSelectedModel,
+          preferredWorkerEffort: selectedEffort.toLowerCase(),
+          allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent],
+        }),
+      }, {
+        source: "Conversations",
+        action: "Auto commit project",
+      });
+    },
+    onSuccess: (data) => {
+      setCommand("");
+      clearAttachments();
+      setMobileNavOpen(false);
+      if (data.runId) {
+        if (data.run) {
+          pendingCreatedConversationSnapshotsRef.current.set(data.runId, {
+            plan: data.plan,
+            run: data.run,
+            message: data.message,
+          });
+          setState((current) => appendCreatedConversationSnapshot(current, data));
+        }
+        setSelectedRunId(data.runId);
+      }
     },
   });
 
@@ -566,7 +658,7 @@ export function HomeApp() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const hasAttachments = attachments.length > 0;
-    if (!command.trim() && !hasAttachments && isConversationStoppable) {
+    if (composerBehavior.submitAction === "stop") {
       if (!selectedRunId) {
         return;
       }
@@ -584,7 +676,16 @@ export function HomeApp() {
 
     if (command.trim() || hasAttachments) {
       if (selectedRunId) {
-        sendConversationMessage.mutate({ runId: selectedRunId, content: command, attachments });
+        sendConversationMessage.mutate({
+          runId: selectedRunId,
+          content: command,
+          attachments,
+          busyAction: composerBehavior.submitAction === "send_queue"
+            ? "queue"
+            : composerBehavior.submitAction === "send_steer"
+              ? "steer"
+              : undefined,
+        });
         return;
       }
 
@@ -614,6 +715,18 @@ export function HomeApp() {
     const updatedKeys = { ...apiKeys, PROJECTS: JSON.stringify(newProjects) };
     setApiKeys(updatedKeys);
     fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updatedKeys) });
+  };
+
+  const handleAutoCommitChat = () => {
+    if (!selectedRunId) {
+      return;
+    }
+
+    autoCommitChat.mutate({ runId: selectedRunId });
+  };
+
+  const handleAutoCommitProject = (projectPath: string) => {
+    autoCommitProject.mutate({ projectPath });
   };
 
   const beginConversationInProject = (projectPath: string) => {
@@ -1042,7 +1155,7 @@ export function HomeApp() {
     ? plans.find((p) => p.id === runs.find((r) => r.id === selectedRunId)?.planId) ?? null
     : null;
   const activeConversationCwd = selectedRun?.projectPath || activePlan?.path || draftProjectPath || null;
-  const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, runCommandError: runCommand.error, sendConversationMessageError: sendConversationMessage.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, deleteRunError: deleteRun.error, stopSupervisorError: stopSupervisor.error, stopWorkerError: stopWorker.error });
+  const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, runCommandError: runCommand.error, sendConversationMessageError: sendConversationMessage.error, cancelQueuedMessageError: cancelQueuedMessage.error, autoCommitChatError: autoCommitChat.error, autoCommitProjectError: autoCommitProject.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, deleteRunError: deleteRun.error, stopSupervisorError: stopSupervisor.error, stopWorkerError: stopWorker.error });
 
   useRunSelectionEffects({ scrollRef, state, selectedRunId, selectedRun, activeComposerMode, selectedCliAgent, setSelectedCliAgent, autoSelectedWorkerType, activeAllowedWorkerTypes, hydratedRunSelectionId, setHydratedRunSelectionId, selectedModel, setSelectedModel, selectedEffort, setSelectedEffort, availableWorkerTypes, configuredAllowedWorkerTypes, apiKeys, setApiKeys, setReadMarkers });
   const activeMention = getActiveMentionQuery(command, commandCursor);
@@ -1113,6 +1226,13 @@ export function HomeApp() {
 
   const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || promotePlanningConversation.isPending || stopSupervisor.isPending || stopWorker.isPending;
   const isStoppingConversation = stopSupervisor.isPending || stopWorker.isPending;
+  const busyMessageAction = parseBusyMessageAction(apiKeys.BUSY_MESSAGE_ACTION);
+  const composerBehavior = resolveBusyComposerBehavior({
+    hasBusyConversation: isSupervisorRunning || Boolean(stoppableConversationWorkerId),
+    isConversationStoppable,
+    hasContent: Boolean(command.trim() || attachments.length > 0),
+    busyMessageAction,
+  });
   const lockedDirectWorkerLabel = WORKER_OPTIONS.find((option) => option.value === (selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent))?.label
     || WORKER_OPTIONS.find((option) => option.value === autoSelectedWorkerType)?.label
     || "Direct worker";
@@ -1222,9 +1342,17 @@ export function HomeApp() {
           isComposerSubmitting={isComposerSubmitting}
           isConversationStoppable={isConversationStoppable}
           isStoppingConversation={isStoppingConversation}
-          onSendConversationMessage={(content) => {
+          composerBehavior={composerBehavior}
+          queuedMessages={busyMessageQueueState.queuedMessages}
+          cancellingQueuedMessageIds={busyMessageQueueState.cancellingMessageIds}
+          onCancelQueuedMessage={(messageId) => {
             if (selectedRunId) {
-              sendConversationMessage.mutate({ runId: selectedRunId, content, attachments });
+              cancelQueuedMessage.mutate({ runId: selectedRunId, messageId });
+            }
+          }}
+          onSendConversationMessage={(content, busyAction) => {
+            if (selectedRunId) {
+              sendConversationMessage.mutate({ runId: selectedRunId, content, attachments, busyAction });
             }
           }}
           onRunCommand={(content) => runCommand.mutate({ content, attachments })}
@@ -1279,6 +1407,8 @@ export function HomeApp() {
     openFolderPicker: () => setShowFolderPicker(true),
     startNewPlan: handleStartNewPlan,
     beginConversationInProject,
+    autoCommitProject: handleAutoCommitProject,
+    isAutoCommitProjectPending: autoCommitProject.isPending,
     handleRemoveProject,
     selectRun: handleSelectRun,
     renamingRunId,
@@ -1318,6 +1448,8 @@ export function HomeApp() {
           selectedRunWorkers={selectedRunWorkersForDisplay}
           conversationAgents={conversationAgents}
           supervisorInterventions={selectedRunSupervisorInterventions}
+          onAutoCommitChat={handleAutoCommitChat}
+          isAutoCommitChatPending={autoCommitChat.isPending}
           onStopWorker={(workerId) => {
             if (selectedRunId) {
               stopWorker.mutate({ runId: selectedRunId, workerId });

@@ -11,6 +11,7 @@ import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
+import { createQueuedConversationMessage, type BusyMessageAction } from "./queued-messages";
 import { serializeMessageRecord } from "./message-records";
 
 type RunRecord = typeof runs.$inferSelect;
@@ -102,10 +103,12 @@ export async function sendConversationMessage({
   runId,
   content,
   attachments = [],
+  busyAction = null,
 }: {
   runId: string;
   content: string;
   attachments?: ChatAttachment[];
+  busyAction?: BusyMessageAction | null;
 }) {
   const trimmedContent = content.trim();
   const normalizedAttachments = normalizeChatAttachments(attachments);
@@ -118,6 +121,32 @@ export async function sendConversationMessage({
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
   if (!run) {
     throw Object.assign(new Error("Conversation not found"), { status: 404 });
+  }
+
+  if (busyAction === "queue") {
+    if (run.mode === "implementation") {
+      const queuedMessage = await createQueuedConversationMessage({
+        runId,
+        action: "queue",
+        content: trimmedContent,
+        attachments: normalizedAttachments,
+      });
+      return { ok: true, queuedMessage };
+    }
+
+    const worker = await db.select().from(workers).where(eq(workers.runId, runId)).get();
+    if (!worker) {
+      throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
+    }
+
+    const queuedMessage = await createQueuedConversationMessage({
+      runId,
+      targetWorkerId: worker.id,
+      action: "queue",
+      content: trimmedContent,
+      attachments: normalizedAttachments,
+    });
+    return { ok: true, queuedMessage };
   }
 
   if (run.mode === "implementation") {
@@ -170,6 +199,17 @@ export async function sendConversationMessage({
     throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
   }
 
+  if (busyAction === "steer" && ["starting", "working", "stuck"].includes(worker.status.trim().toLowerCase().split(":")[0] ?? "")) {
+    const queuedMessage = await createQueuedConversationMessage({
+      runId,
+      targetWorkerId: worker.id,
+      action: "steer",
+      content: trimmedContent,
+      attachments: normalizedAttachments,
+    });
+    return { ok: true, queuedMessage };
+  }
+
   const userMessageCreatedAt = new Date();
   const userMessage = {
     id: randomUUID(),
@@ -191,6 +231,35 @@ export async function sendConversationMessage({
   notifyEventStreamSubscribers();
 
   if (run.mode === "direct") {
+    if (busyAction === "steer") {
+      try {
+        await continueWorkerConversation({ run, worker, content: workerContent });
+      } catch (error) {
+        if (isAgentBusyError(error)) {
+          await db.delete(messages).where(eq(messages.id, userMessage.id));
+          const queuedMessage = await createQueuedConversationMessage({
+            runId,
+            targetWorkerId: worker.id,
+            action: "steer",
+            content: trimmedContent,
+            attachments: normalizedAttachments,
+          });
+          return {
+            ok: true,
+            message: serializeMessageRecord({ ...userMessage, attachmentsJson }),
+            queuedMessage,
+          };
+        }
+
+        throw error;
+      }
+
+      return {
+        ok: true,
+        message: serializeMessageRecord({ ...userMessage, attachmentsJson }),
+      };
+    }
+
     continueWorkerConversation({ run, worker, content: workerContent }).catch((error) => {
       if (isAgentBusyError(error)) {
         return;
@@ -205,7 +274,27 @@ export async function sendConversationMessage({
     };
   }
 
-  await continueWorkerConversation({ run, worker, content: workerContent });
+  try {
+    await continueWorkerConversation({ run, worker, content: workerContent });
+  } catch (error) {
+    if (busyAction === "steer" && isAgentBusyError(error)) {
+      await db.delete(messages).where(eq(messages.id, userMessage.id));
+      const queuedMessage = await createQueuedConversationMessage({
+        runId,
+        targetWorkerId: worker.id,
+        action: "steer",
+        content: trimmedContent,
+        attachments: normalizedAttachments,
+      });
+      return {
+        ok: true,
+        message: serializeMessageRecord({ ...userMessage, attachmentsJson }),
+        queuedMessage,
+      };
+    }
+
+    throw error;
+  }
 
   return {
     ok: true,

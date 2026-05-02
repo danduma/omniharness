@@ -21,6 +21,12 @@ describe("isTransientSupervisorError", () => {
     ))).toBe(true);
   });
 
+  it("treats plain-text retryable bridge failures as transient", () => {
+    expect(isTransientSupervisorError(new Error("Ask failed: Agent is busy: worker-1"))).toBe(true);
+    expect(isTransientSupervisorError(new Error("Get agent failed: read ECONNRESET"))).toBe(true);
+    expect(isTransientSupervisorError(new Error("Cannot connect to API: connect ETIMEDOUT api.example.com"))).toBe(true);
+  });
+
   it("does not retry clear configuration errors", () => {
     expect(isTransientSupervisorError(new Error("API key not valid"))).toBe(false);
   });

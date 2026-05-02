@@ -5,8 +5,10 @@ import { Button } from "@/components/ui/button";
 import { ComposerModelPicker } from "@/components/composer/ComposerModelPicker";
 import { ComposerSelect } from "@/components/composer/ComposerSelect";
 import { ConversationModePicker, type ConversationModeOption } from "@/components/ConversationModePicker";
+import { QueuedMessageDrawer } from "./QueuedMessageDrawer";
 import { EFFORT_OPTIONS } from "@/app/home/constants";
-import type { ComposerWorkerOption, WorkerModelOption } from "@/app/home/types";
+import type { BusyComposerBehavior, BusyMessageAction } from "@/app/home/busy-message-behavior";
+import type { ComposerWorkerOption, QueuedConversationMessageRecord, WorkerModelOption } from "@/app/home/types";
 import { formatBytes, type PendingChatAttachment } from "@/lib/chat-attachments";
 import { cn } from "@/lib/utils";
 
@@ -44,7 +46,11 @@ interface ConversationComposerProps {
   isComposerSubmitting: boolean;
   isConversationStoppable: boolean;
   isStoppingConversation: boolean;
-  onSendConversationMessage: (content: string) => void;
+  composerBehavior: BusyComposerBehavior;
+  queuedMessages: QueuedConversationMessageRecord[];
+  cancellingQueuedMessageIds: Set<string>;
+  onCancelQueuedMessage: (messageId: string) => void;
+  onSendConversationMessage: (content: string, busyAction?: BusyMessageAction) => void;
   onRunCommand: (content: string) => void;
   onStopConversation: () => void;
 }
@@ -81,8 +87,11 @@ export function ConversationComposer({
   selectedEffort,
   setSelectedEffort,
   isComposerSubmitting,
-  isConversationStoppable,
   isStoppingConversation,
+  composerBehavior,
+  queuedMessages,
+  cancellingQueuedMessageIds,
+  onCancelQueuedMessage,
   onSendConversationMessage,
   onRunCommand,
   onStopConversation,
@@ -90,7 +99,7 @@ export function ConversationComposer({
   const trimmedCommand = command.trim();
   const hasAttachments = attachments.length > 0;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const isStopButtonVisible = isConversationStoppable;
+  const isStopButtonVisible = composerBehavior.buttonKind === "stop";
   const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;
   const isSubmitButtonDisabled = isStopButtonVisible
     ? isStoppingConversation
@@ -144,6 +153,12 @@ export function ConversationComposer({
           </div>
         </div>
       )}
+      <QueuedMessageDrawer
+        messages={queuedMessages}
+        cancellingMessageIds={cancellingQueuedMessageIds}
+        themeMode={themeMode}
+        onCancel={onCancelQueuedMessage}
+      />
       <div
         className={cn(
           "rounded-[1.5rem] px-4 pb-0.5 pt-3 transition-all sm:px-5 sm:pb-1 sm:pt-4",
@@ -212,7 +227,14 @@ export function ConversationComposer({
 
               if (!isComposerSubmitting && (trimmedCommand || hasAttachments)) {
                 if (selectedRunId) {
-                  onSendConversationMessage(command);
+                  onSendConversationMessage(
+                    command,
+                    composerBehavior.submitAction === "send_queue"
+                      ? "queue"
+                      : composerBehavior.submitAction === "send_steer"
+                        ? "steer"
+                        : undefined,
+                  );
                 } else {
                   onRunCommand(command);
                 }
@@ -343,8 +365,8 @@ export function ConversationComposer({
               type="submit"
               size="icon"
               disabled={isSubmitButtonDisabled}
-              aria-label={isStopButtonVisible ? "Stop conversation" : "Send message"}
-              title={isStopButtonVisible ? "Stop conversation" : "Send message"}
+              aria-label={composerBehavior.ariaLabel}
+              title={composerBehavior.ariaLabel}
               className={cn(
                 "h-9 w-9 shrink-0 rounded-[15.3px] transition-all sm:h-10 sm:w-10 sm:rounded-[17px]",
                 themeMode === "night"

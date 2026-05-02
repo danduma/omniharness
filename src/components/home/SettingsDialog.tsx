@@ -442,6 +442,24 @@ export function SettingsDialog({
                 />
               </label>
 
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-muted-foreground" htmlFor="BUSY_MESSAGE_ACTION">
+                  During Active Work
+                </label>
+                <select
+                  id="BUSY_MESSAGE_ACTION"
+                  className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+                  value={apiKeys.BUSY_MESSAGE_ACTION === "steer" ? "steer" : "queue"}
+                  onChange={(event) => setApiKeys((current) => ({ ...current, BUSY_MESSAGE_ACTION: event.target.value }))}
+                >
+                  <option value="queue">Queue messages until the next safe turn</option>
+                  <option value="steer">Steer immediately, queue if the worker is busy</option>
+                </select>
+                <p className="text-[11px] text-muted-foreground">
+                  Controls what happens when you send text while a supervisor or worker is already running.
+                </p>
+              </div>
+
               {workerCatalogQuery.isError ? (
                 <ErrorNotice
                   error={buildInlineError(workerCatalogQuery.error, {

@@ -1,5 +1,5 @@
 import type React from "react";
-import { AlertTriangle, Menu, PanelRight } from "lucide-react";
+import { AlertTriangle, GitCommitHorizontal, Menu, PanelRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -25,6 +25,8 @@ interface HomeHeaderProps {
   openFolderPicker: () => void;
   startNewPlan: () => void;
   beginConversationInProject: (projectPath: string) => void;
+  autoCommitProject: (projectPath: string) => void;
+  isAutoCommitProjectPending: boolean;
   handleRemoveProject: (pathToRemove: string) => void;
   selectRun: (runId: string) => void;
   renamingRunId: string | null;
@@ -50,6 +52,8 @@ interface HomeHeaderProps {
   selectedRunWorkers: ConversationWorkerRecord[];
   conversationAgents: AgentSnapshot[];
   supervisorInterventions: SupervisorInterventionRecord[];
+  onAutoCommitChat: () => void;
+  isAutoCommitChatPending: boolean;
   onStopWorker?: (workerId: string) => void;
   stoppingWorkerId?: string | null;
 }
@@ -70,6 +74,8 @@ export function HomeHeader({
   openFolderPicker,
   startNewPlan,
   beginConversationInProject,
+  autoCommitProject,
+  isAutoCommitProjectPending,
   handleRemoveProject,
   selectRun,
   renamingRunId,
@@ -95,6 +101,8 @@ export function HomeHeader({
   selectedRunWorkers,
   conversationAgents,
   supervisorInterventions,
+  onAutoCommitChat,
+  isAutoCommitChatPending,
   onStopWorker,
   stoppingWorkerId,
 }: HomeHeaderProps) {
@@ -146,6 +154,8 @@ export function HomeHeader({
             openFolderPicker={openFolderPicker}
             startNewPlan={startNewPlan}
             beginConversationInProject={beginConversationInProject}
+            autoCommitProject={autoCommitProject}
+            isAutoCommitProjectPending={isAutoCommitProjectPending}
             handleRemoveProject={handleRemoveProject}
             selectRun={selectRun}
             renamingRunId={renamingRunId}
@@ -240,6 +250,20 @@ export function HomeHeader({
     </div>
 
     <div className="flex items-center gap-2">
+      {selectedRunId ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+          aria-label="Auto Commit Chat"
+          title="Create a git commit for this chat"
+          onClick={onAutoCommitChat}
+          disabled={isAutoCommitChatPending}
+        >
+          <GitCommitHorizontal className="h-3.5 w-3.5" />
+          <span className="hidden md:inline">Auto Commit Chat</span>
+        </Button>
+      ) : null}
       <ThemeModeToggle themeMode={themeMode} setThemeMode={setThemeMode} />
       {selectedRunId && isImplementationConversation ? (
         <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-muted-foreground hover:text-foreground lg:inline-flex" title="Toggle Conversation Workers" onClick={() => setRightSidebarOpen(!rightSidebarOpen)}>

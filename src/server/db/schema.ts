@@ -68,6 +68,20 @@ export const messages = sqliteTable('messages', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 
+export const queuedConversationMessages = sqliteTable('queued_conversation_messages', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').references(() => runs.id).notNull(),
+  targetWorkerId: text('target_worker_id').references(() => workers.id),
+  action: text('action').notNull(),
+  content: text('content').notNull(),
+  attachmentsJson: text('attachments_json'),
+  status: text('status').notNull(),
+  lastError: text('last_error'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  deliveredAt: integer('delivered_at', { mode: 'timestamp' }),
+});
+
 export const accounts = sqliteTable('accounts', {
   id: text('id').primaryKey(),
   provider: text('provider').notNull(),

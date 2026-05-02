@@ -2,6 +2,7 @@ import type { AppErrorDescriptor } from "@/lib/app-errors";
 import type { ConversationModeOption } from "@/components/ConversationModePicker";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { ChatAttachment } from "@/lib/chat-attachments";
+import type { BusyMessageAction } from "./busy-message-behavior";
 
 export type { ConversationModeOption };
 
@@ -56,6 +57,19 @@ export type SupervisorInterventionRecord = {
   prompt: string;
   summary?: string | null;
   createdAt: string;
+};
+export type QueuedConversationMessageRecord = {
+  id: string;
+  runId: string;
+  targetWorkerId?: string | null;
+  action: BusyMessageAction;
+  content: string;
+  status: "pending" | "delivering" | "delivered" | "cancelled" | "failed";
+  lastError?: string | null;
+  attachments?: ChatAttachment[];
+  createdAt: string;
+  updatedAt: string;
+  deliveredAt?: string | null;
 };
 export type AgentSnapshot = {
   name: string;
@@ -159,6 +173,7 @@ export type EventStreamState = {
   validationRuns: ValidationRunRecord[];
   executionEvents: ExecutionEventRecord[];
   supervisorInterventions: SupervisorInterventionRecord[];
+  queuedMessages?: QueuedConversationMessageRecord[];
   frontendErrors?: AppErrorDescriptor[];
 };
 export type SettingsTab = "llm" | "workers";

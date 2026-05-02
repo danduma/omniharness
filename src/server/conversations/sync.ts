@@ -7,6 +7,7 @@ import { persistRunFailure } from "@/server/runs/failures";
 import { isTerminalRunStatus } from "@/server/runs/status";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
+import { drainQueuedWorkerMessages } from "./queued-messages";
 
 const MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC = "Worker is idle with no recorded output, and the bridge no longer has a live session for it.";
 
@@ -84,17 +85,21 @@ function isAgentBusyRunFailure(run: typeof runs.$inferSelect) {
   return run.status === "failed" && /\bagent is busy\b/i.test(run.lastError ?? "");
 }
 
-function isRecoverableImplementationSupervisorFailure(run: typeof runs.$inferSelect) {
+function isRecoverableImplementationTransientFailure(run: typeof runs.$inferSelect) {
   const lastError = run.lastError ?? "";
   return run.mode === "implementation"
     && run.status === "failed"
     && Boolean(lastError.trim())
-    && (/^get agent failed:/i.test(lastError) || /^cannot connect to api:/i.test(lastError))
     && isTransientSupervisorError(new Error(lastError));
 }
 
 function isCleanLiveAgent(agent: ReturnType<typeof normalizeAgentRecord>) {
   return agent.state !== "error" && !agent.lastError?.trim();
+}
+
+function isWorkerQueueDrainableStatus(status: string) {
+  const normalized = status.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  return Boolean(normalized) && !["starting", "working", "stuck", "error", "cancelled"].includes(normalized);
 }
 
 async function clearMatchingRunFailureMessage(run: typeof runs.$inferSelect) {
@@ -117,9 +122,9 @@ export async function syncConversationSessions(rawAgents: unknown[]) {
 
   for (const run of allRuns) {
     const staleBusyFailure = isAgentBusyRunFailure(run);
-    const staleImplementationSupervisorFailure = isRecoverableImplementationSupervisorFailure(run);
+    const staleImplementationTransientFailure = isRecoverableImplementationTransientFailure(run);
     if (run.mode === "implementation") {
-      if (!staleImplementationSupervisorFailure) {
+      if (!staleImplementationTransientFailure) {
         continue;
       }
 
@@ -185,6 +190,9 @@ export async function syncConversationSessions(rawAgents: unknown[]) {
       if (staleBusyFailure && result.status !== "failed") {
         await clearMatchingRunFailureMessage(run);
       }
+      if (isWorkerQueueDrainableStatus(agent.state)) {
+        await drainQueuedWorkerMessages({ runId: run.id, workerId: worker.id });
+      }
       continue;
     }
 
@@ -196,6 +204,9 @@ export async function syncConversationSessions(rawAgents: unknown[]) {
     }).where(eq(runs.id, run.id));
     if (staleBusyFailure && nextRunState !== "failed") {
       await clearMatchingRunFailureMessage(run);
+    }
+    if (isWorkerQueueDrainableStatus(agent.state)) {
+      await drainQueuedWorkerMessages({ runId: run.id, workerId: worker.id });
     }
   }
 
@@ -231,6 +242,9 @@ export async function syncConversationSessions(rawAgents: unknown[]) {
     }
 
     if (nextRunState === run.status) {
+      if (isWorkerQueueDrainableStatus(worker.status)) {
+        await drainQueuedWorkerMessages({ runId: run.id, workerId: worker.id });
+      }
       continue;
     }
 

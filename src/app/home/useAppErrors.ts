@@ -10,6 +10,9 @@ interface UseAppErrorsProps {
   settingsError: unknown;
   runCommandError: unknown;
   sendConversationMessageError?: unknown;
+  cancelQueuedMessageError?: unknown;
+  autoCommitChatError?: unknown;
+  autoCommitProjectError?: unknown;
   recoverRunError: unknown;
   renameRunError: unknown;
   deleteRunError: unknown;
@@ -24,6 +27,9 @@ export function useAppErrors({
   settingsError,
   runCommandError,
   sendConversationMessageError,
+  cancelQueuedMessageError,
+  autoCommitChatError,
+  autoCommitProjectError,
   recoverRunError,
   renameRunError,
   deleteRunError,
@@ -64,6 +70,27 @@ export function useAppErrors({
       }));
     }
 
+    if (cancelQueuedMessageError) {
+      errors.push(buildInlineError(cancelQueuedMessageError, {
+        source: "Conversations",
+        action: "Cancel queued message",
+      }));
+    }
+
+    if (autoCommitChatError) {
+      errors.push(buildInlineError(autoCommitChatError, {
+        source: "Conversations",
+        action: "Auto commit chat",
+      }));
+    }
+
+    if (autoCommitProjectError) {
+      errors.push(buildInlineError(autoCommitProjectError, {
+        source: "Conversations",
+        action: "Auto commit project",
+      }));
+    }
+
     if (recoverRunError) {
       errors.push(buildInlineError(recoverRunError, {
         source: "Runs",
@@ -101,6 +128,9 @@ export function useAppErrors({
 
     return mergeAppErrors([], errors);
   }, [
+    autoCommitChatError,
+    autoCommitProjectError,
+    cancelQueuedMessageError,
     deleteRunError,
     projectFilesError,
     recoverRunError,

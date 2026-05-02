@@ -81,6 +81,22 @@ CREATE TABLE IF NOT EXISTS messages (
   FOREIGN KEY (worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE no action
 );
 
+CREATE TABLE IF NOT EXISTS queued_conversation_messages (
+  id text PRIMARY KEY NOT NULL,
+  run_id text NOT NULL,
+  target_worker_id text,
+  action text NOT NULL,
+  content text NOT NULL,
+  attachments_json text,
+  status text NOT NULL,
+  last_error text,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  delivered_at integer,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action,
+  FOREIGN KEY (target_worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE no action
+);
+
 CREATE TABLE IF NOT EXISTS accounts (
   id text PRIMARY KEY NOT NULL,
   provider text NOT NULL,

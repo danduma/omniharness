@@ -1,5 +1,5 @@
 import type React from "react";
-import { CheckCircle2, Clock, Folder, FolderPlus, LoaderCircle, LogOut, MoreHorizontal, Pencil, Plus, Search, Settings, Smartphone, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, Pencil, Plus, Search, Settings, Smartphone, Trash2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -22,6 +22,8 @@ export interface ConversationSidebarProps {
   openFolderPicker: () => void;
   startNewPlan: () => void;
   beginConversationInProject: (projectPath: string) => void;
+  autoCommitProject: (projectPath: string) => void;
+  isAutoCommitProjectPending: boolean;
   handleRemoveProject: (pathToRemove: string) => void;
   selectRun: (runId: string) => void;
   renamingRunId: string | null;
@@ -51,6 +53,8 @@ export function ConversationSidebar({
   openFolderPicker,
   startNewPlan,
   beginConversationInProject,
+  autoCommitProject,
+  isAutoCommitProjectPending,
   handleRemoveProject,
   selectRun,
   renamingRunId,
@@ -122,6 +126,13 @@ export function ConversationSidebar({
                           <MoreHorizontal className="h-3.5 w-3.5" />
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start">
+                          <DropdownMenuItem
+                            className="cursor-pointer whitespace-nowrap"
+                            disabled={isAutoCommitProjectPending}
+                            onClick={() => autoCommitProject(group.path)}
+                          >
+                            <GitCommitHorizontal className="mr-2 h-4 w-4" /> Auto Commit Project
+                          </DropdownMenuItem>
                           <DropdownMenuItem className="cursor-pointer whitespace-nowrap text-destructive focus:bg-destructive/10 focus:text-destructive" onClick={() => handleRemoveProject(group.path)}>
                             <Trash2 className="mr-2 h-4 w-4" /> Remove Project
                           </DropdownMenuItem>

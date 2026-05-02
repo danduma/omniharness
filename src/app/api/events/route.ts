@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/server/db";
-import { messages, plans, runs, accounts, workers, planItems, clarifications, validationRuns, executionEvents, supervisorInterventions } from "@/server/db/schema";
+import { messages, plans, runs, accounts, workers, planItems, clarifications, validationRuns, executionEvents, supervisorInterventions, queuedConversationMessages } from "@/server/db/schema";
 import { BRIDGE_URL } from "@/server/bridge-client";
 import { buildAppError } from "@/server/api-errors";
 import { desc } from "drizzle-orm";
@@ -11,6 +11,7 @@ import { buildLiveWorkerSnapshots } from "@/server/workers/live-snapshots";
 import { waitForEventStreamNotification } from "@/server/events/live-updates";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { serializeMessageRecord } from "@/server/conversations/message-records";
+import { serializeQueuedConversationMessage } from "@/server/conversations/queued-messages";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +51,7 @@ async function readPersistedEventRecords() {
   const allValidationRuns = await db.select().from(validationRuns).orderBy(desc(validationRuns.createdAt));
   const allExecutionEvents = await db.select().from(executionEvents).orderBy(desc(executionEvents.createdAt));
   const allSupervisorInterventions = await db.select().from(supervisorInterventions).orderBy(desc(supervisorInterventions.createdAt));
+  const allQueuedMessages = await db.select().from(queuedConversationMessages).orderBy(desc(queuedConversationMessages.createdAt));
 
   return {
     msgs,
@@ -62,6 +64,7 @@ async function readPersistedEventRecords() {
     allValidationRuns,
     allExecutionEvents,
     allSupervisorInterventions,
+    allQueuedMessages,
   };
 }
 
@@ -252,6 +255,9 @@ function buildEventPayload(
       .map(compactExecutionEvent),
     supervisorInterventions: filterSelectedRunScopedRecords(records.allSupervisorInterventions, runIds)
       .map(compactSupervisorIntervention),
+    queuedMessages: filterSelectedRunScopedRecords(records.allQueuedMessages, runIds)
+      .filter((message) => message.status === "pending" || message.status === "delivering")
+      .map(serializeQueuedConversationMessage),
     frontendErrors,
   };
 }

@@ -13,6 +13,7 @@ const pageSource = [
   "src/app/home/utils.ts",
   "src/components/home/ConversationMain.tsx",
   "src/components/home/ConversationSidebar.tsx",
+  "src/components/home/HomeHeader.tsx",
   "src/components/home/SettingsDialog.tsx",
 ].map(readSource).join("\n");
 const markdownContentSource = readSource("src/components/MarkdownContent.tsx");
@@ -21,6 +22,22 @@ test("conversation rows expose rename and delete actions", () => {
   expect(pageSource).toContain('Rename conversation');
   expect(pageSource).toContain('Delete conversation');
   expect(pageSource).toContain('requestJson(`/api/runs/${runId}`');
+});
+
+test("top bar exposes an auto commit action for the selected chat", () => {
+  expect(pageSource).toContain("AUTO_COMMIT_CHAT_PROMPT");
+  expect(pageSource).toContain('"Create a git commit including the changes you\'ve made"');
+  expect(pageSource).toContain("autoCommitChat.mutate({ runId: selectedRunId })");
+  expect(pageSource).toContain("Auto Commit Chat");
+});
+
+test("project menus expose an auto commit action that starts a direct worker conversation", () => {
+  expect(pageSource).toContain("AUTO_COMMIT_PROJECT_PROMPT");
+  expect(pageSource).toContain('"Group all modified files into commits as they fit best"');
+  expect(pageSource).toContain("mode: \"direct\"");
+  expect(pageSource).toContain("projectPath: payload.projectPath");
+  expect(pageSource).toContain("autoCommitProject.mutate({ projectPath })");
+  expect(pageSource).toContain("Auto Commit Project");
 });
 
 test("deleting a conversation removes it optimistically before the request resolves", () => {

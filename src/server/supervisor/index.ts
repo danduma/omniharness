@@ -22,6 +22,7 @@ import { isActiveImplementationRun } from "@/server/runs/status";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
+import { drainQueuedImplementationMessages } from "@/server/conversations/queued-messages";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { parsePlan } from "@/server/plans/parser";
 import { syncPlanItems } from "@/server/plans/checklist";
@@ -548,6 +549,8 @@ export class Supervisor {
       lastError: null,
       updatedAt: new Date(),
     }).where(eq(runs.id, this.runId));
+
+    await drainQueuedImplementationMessages(this.runId);
 
     const pendingClarifications = await db.select().from(clarifications).where(eq(clarifications.runId, this.runId));
     if (pendingClarifications.some((clarification) => clarification.status === "pending")) {

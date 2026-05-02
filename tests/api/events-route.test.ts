@@ -864,12 +864,12 @@ summary: Plan is ready.
     expect(persistedMessages.filter((message) => message.kind === "error")).toHaveLength(0);
   });
 
-  it("recovers an implementation conversation when an old bridge poll reset is followed by a clean live worker", async () => {
+  it("recovers an implementation conversation when an old transient supervisor failure is followed by a clean live worker", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = `${runId}-worker-1`;
     const now = new Date();
-    const errorMessage = "Get agent failed: fetch failed (caused by: read ECONNRESET)";
+    const errorMessage = "Supervisor model request failed: rate limit exceeded";
 
     await db.insert(plans).values({
       id: planId,
