@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS messages (
   role text NOT NULL,
   kind text,
   content text NOT NULL,
+  attachments_json text,
   worker_id text,
   superseded_at integer,
   edited_from_message_id text,
@@ -332,6 +333,10 @@ if (!messageColumnNames.has("superseded_at")) {
 
 if (!messageColumnNames.has("edited_from_message_id")) {
   sqlite.exec("ALTER TABLE messages ADD COLUMN edited_from_message_id text;");
+}
+
+if (!messageColumnNames.has("attachments_json")) {
+  sqlite.exec("ALTER TABLE messages ADD COLUMN attachments_json text;");
 }
 
 export const db = drizzle(sqlite, { schema });

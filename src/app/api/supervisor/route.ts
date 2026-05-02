@@ -4,11 +4,7 @@ import { createConversation } from '@/server/conversations/create';
 import { ensureSupervisorRuntimeStarted } from '@/server/supervisor/runtime-watchdog';
 import { errorResponse } from '@/server/api-errors';
 import { requireApiSession } from "@/server/auth/guards";
-interface AttachmentInput {
-  kind?: string;
-  name?: string;
-  path?: string;
-}
+import { normalizeChatAttachments } from "@/lib/chat-attachments";
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,9 +30,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const attachments = Array.isArray(body?.attachments)
-      ? (body.attachments as AttachmentInput[])
-      : [];
+    const attachments = normalizeChatAttachments(body?.attachments);
 
     // Sync accounts
     const creditManager = new CreditManager();

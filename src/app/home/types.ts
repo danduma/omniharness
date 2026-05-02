@@ -1,6 +1,7 @@
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import type { ConversationModeOption } from "@/components/ConversationModePicker";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
+import type { ChatAttachment } from "@/lib/chat-attachments";
 
 export type { ConversationModeOption };
 
@@ -34,6 +35,8 @@ export type MessageRecord = {
   kind?: string | null;
   content: string;
   workerId?: string | null;
+  attachments?: ChatAttachment[];
+  attachmentsJson?: string | null;
   createdAt: string;
 };
 export type ExecutionEventRecord = {

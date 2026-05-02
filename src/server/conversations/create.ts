@@ -9,17 +9,14 @@ import { queueConversationTitleGeneration } from "@/server/conversation-title";
 import { normalizeConversationMode, type ConversationMode } from "./modes";
 import { normalizeWorkerType, parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
 import { PLANNER_SYSTEM_PROMPT } from "@/server/prompts";
-import { persistRunFailure } from "@/server/runs/failures";
+import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
+import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
+import { serializeMessageRecord } from "./message-records";
 
-interface AttachmentInput {
-  kind?: string;
-  name?: string;
-  path?: string;
-}
 
 function buildInitialWorkerPrompt(mode: ConversationMode, command: string) {
   if (mode === "planning") {
@@ -55,6 +52,10 @@ function buildEmptyWorkerOutputMessage(snapshot: AgentRecord | null, responseSta
   return `Agent stopped without producing output. Final state: ${responseState || "unknown"}.`;
 }
 
+function isAgentBusyError(error: unknown) {
+  return /\bagent is busy\b/i.test(formatErrorMessage(error));
+}
+
 async function buildCreatedConversationResponse(args: {
   planId: string;
   runId: string;
@@ -71,7 +72,7 @@ async function buildCreatedConversationResponse(args: {
     mode: args.mode,
     plan,
     run,
-    message,
+    message: serializeMessageRecord(message),
   };
 }
 
@@ -164,6 +165,22 @@ async function runInitialWorkerTurn(args: {
 
     notifyEventStreamSubscribers();
   } catch (error) {
+    if (isAgentBusyError(error)) {
+      const now = new Date();
+      await db.update(workers).set({
+        status: "working",
+        updatedAt: now,
+      }).where(eq(workers.id, args.workerId));
+      await db.update(runs).set({
+        status: args.mode === "planning" ? "working" : "running",
+        failedAt: null,
+        lastError: null,
+        updatedAt: now,
+      }).where(eq(runs.id, args.runId));
+      notifyEventStreamSubscribers();
+      throw Object.assign(error instanceof Error ? error : new Error(formatErrorMessage(error)), { status: 409 });
+    }
+
     await db.update(workers).set({
       status: "error",
       updatedAt: new Date(),
@@ -182,12 +199,14 @@ export async function createConversation(args: {
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
   allowedWorkerTypes?: string[] | string | null;
-  attachments?: AttachmentInput[];
+  attachments?: ChatAttachment[];
 }) {
   const mode = normalizeConversationMode(args.mode);
   const command = args.command.trim();
   const projectPath = args.projectPath?.trim() || null;
-  const attachments = args.attachments ?? [];
+  const attachments = normalizeChatAttachments(args.attachments ?? []);
+  const attachmentsJson = serializeChatAttachments(attachments);
+  const workerPrompt = appendAttachmentContext(command, attachments);
   const preferredWorkerType = args.preferredWorkerType?.trim()
     ? normalizeWorkerType(args.preferredWorkerType)
     : null;
@@ -232,6 +251,7 @@ export async function createConversation(args: {
     role: "user",
     kind: "checkpoint",
     content: command,
+    attachmentsJson,
     createdAt: new Date(),
   });
   notifyEventStreamSubscribers();
@@ -274,8 +294,12 @@ export async function createConversation(args: {
       cwd,
       agent,
       mode,
-      command,
+      command: workerPrompt,
     }).catch((error) => {
+      if (isAgentBusyError(error)) {
+        return;
+      }
+
       console.error(`Initial ${mode} conversation turn failed:`, error);
     });
     queueConversationTitleGeneration({ runId, command }).catch((error) => {

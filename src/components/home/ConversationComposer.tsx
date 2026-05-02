@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import type React from "react";
 import { ArrowUp, LoaderCircle, Plus, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -6,7 +7,7 @@ import { ComposerSelect } from "@/components/composer/ComposerSelect";
 import { ConversationModePicker, type ConversationModeOption } from "@/components/ConversationModePicker";
 import { EFFORT_OPTIONS } from "@/app/home/constants";
 import type { ComposerWorkerOption, WorkerModelOption } from "@/app/home/types";
-import type { AttachmentItem } from "@/components/FileAttachmentPickerDialog";
+import { formatBytes, type PendingChatAttachment } from "@/lib/chat-attachments";
 import { cn } from "@/lib/utils";
 
 interface ConversationComposerProps {
@@ -26,9 +27,10 @@ interface ConversationComposerProps {
   setMentionIndex: React.Dispatch<React.SetStateAction<number>>;
   applyMention: (filePath: string) => void;
   themeMode: "day" | "night";
-  attachments: AttachmentItem[];
-  handleRemoveAttachment: (attachmentPath: string) => void;
-  setShowAttachmentPicker: (open: boolean) => void;
+  attachments: PendingChatAttachment[];
+  handleRemoveAttachment: (attachmentId: string) => void;
+  onAddAttachmentFiles: (files: File[]) => void;
+  onAddPastedImages: (files: File[]) => void;
   shouldLockDirectWorker: boolean;
   lockedDirectWorkerLabel: string;
   selectedCliAgent: ComposerWorkerOption;
@@ -66,7 +68,8 @@ export function ConversationComposer({
   themeMode,
   attachments,
   handleRemoveAttachment,
-  setShowAttachmentPicker,
+  onAddAttachmentFiles,
+  onAddPastedImages,
   shouldLockDirectWorker,
   lockedDirectWorkerLabel,
   selectedCliAgent,
@@ -85,14 +88,16 @@ export function ConversationComposer({
   onStopConversation,
 }: ConversationComposerProps) {
   const trimmedCommand = command.trim();
+  const hasAttachments = attachments.length > 0;
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const isStopButtonVisible = isConversationStoppable;
   const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;
   const isSubmitButtonDisabled = isStopButtonVisible
     ? isStoppingConversation
-    : isComposerSubmitting || !trimmedCommand;
+    : isComposerSubmitting || (!trimmedCommand && !hasAttachments);
 
   return (
-  <div className={`relative z-20 w-full shrink-0 bg-background p-3 sm:p-4 ${className}`}>
+  <div className={cn("relative z-20 w-full shrink-0 bg-background p-3 sm:p-4", className)}>
     <form
       onSubmit={(event) => {
         if (isStopButtonVisible) {
@@ -156,6 +161,17 @@ export function ConversationComposer({
           }}
           onClick={(e) => setCommandCursor(e.currentTarget.selectionStart ?? 0)}
           onKeyUp={(e) => setCommandCursor(e.currentTarget.selectionStart ?? 0)}
+          onPaste={(event) => {
+            const pastedImages = Array.from(event.clipboardData.items)
+              .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+              .map((item) => item.getAsFile())
+              .filter((file): file is File => Boolean(file));
+
+            if (pastedImages.length > 0) {
+              event.preventDefault();
+              onAddPastedImages(pastedImages);
+            }
+          }}
           onKeyDown={(e) => {
             if (showMentionPicker) {
               if (e.key === "ArrowDown") {
@@ -194,7 +210,7 @@ export function ConversationComposer({
                 return;
               }
 
-              if (!isComposerSubmitting && trimmedCommand) {
+              if (!isComposerSubmitting && (trimmedCommand || hasAttachments)) {
                 if (selectedRunId) {
                   onSendConversationMessage(command);
                 } else {
@@ -207,7 +223,8 @@ export function ConversationComposer({
           disabled={isComposerSubmitting}
           rows={1}
           className={cn(
-            "min-h-[56px] w-full resize-none bg-transparent text-[15px] leading-6 outline-none",
+            "w-full resize-none bg-transparent text-[15px] leading-6 outline-none",
+            hasAttachments ? "min-h-[112px]" : "min-h-[56px]",
             themeMode === "night"
               ? "text-foreground placeholder:text-muted-foreground/80"
               : "text-[#454545] placeholder:text-[#c4c4c2]",
@@ -218,18 +235,28 @@ export function ConversationComposer({
           <div className="mt-3 flex flex-wrap gap-2">
             {attachments.map((attachment) => (
               <div
-                key={attachment.path}
+                key={attachment.id}
                 className={cn(
-                  "inline-flex max-w-full items-center gap-2 rounded-full px-3 py-1.5 text-xs shadow-sm",
+                  attachment.kind === "image"
+                    ? "inline-flex max-w-full items-center gap-2 rounded-2xl px-2 py-1.5 text-xs shadow-sm"
+                    : "inline-flex max-w-full items-center gap-2 rounded-full px-3 py-1.5 text-xs shadow-sm",
                   themeMode === "night"
                     ? "bg-background/65 text-foreground dark:bg-black/20"
                     : "border border-[#e2e2df] bg-white/95 text-[#4d4d4d]",
                 )}
               >
-                <span className="truncate">{attachment.relativePath}</span>
+                {attachment.kind === "image" && attachment.previewUrl ? (
+                  <img
+                    src={attachment.previewUrl}
+                    alt=""
+                    className="h-10 w-10 rounded-xl object-cover"
+                  />
+                ) : null}
+                <span className="truncate">{attachment.name}</span>
+                <span className="shrink-0 text-[10px] opacity-60">{formatBytes(attachment.size)}</span>
                 <button
                   type="button"
-                  onClick={() => handleRemoveAttachment(attachment.path)}
+                  onClick={() => handleRemoveAttachment(attachment.id)}
                   className={cn(
                     "inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors",
                     themeMode === "night"
@@ -246,12 +273,26 @@ export function ConversationComposer({
         ) : null}
 
         <div className="mt-1 flex items-center gap-1 sm:gap-2">
-          {!selectedRunId ? (
-            <Button
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="sr-only"
+            aria-hidden="true"
+            tabIndex={-1}
+            onChange={(event) => {
+              const files = Array.from(event.currentTarget.files ?? []);
+              if (files.length > 0) {
+                onAddAttachmentFiles(files);
+              }
+              event.currentTarget.value = "";
+            }}
+          />
+          <Button
               type="button"
               variant="ghost"
               size="icon"
-              onClick={() => setShowAttachmentPicker(true)}
+              onClick={() => fileInputRef.current?.click()}
               className={cn(
                 "h-9 w-9 shrink-0 rounded-full sm:h-10 sm:w-10",
                 themeMode === "night"
@@ -262,7 +303,6 @@ export function ConversationComposer({
             >
               <Plus className="h-5 w-5" />
             </Button>
-          ) : null}
 
           <div className="ml-auto flex min-w-0 items-center justify-end gap-1 sm:gap-2">
             {shouldLockDirectWorker ? (
@@ -306,7 +346,7 @@ export function ConversationComposer({
               aria-label={isStopButtonVisible ? "Stop conversation" : "Send message"}
               title={isStopButtonVisible ? "Stop conversation" : "Send message"}
               className={cn(
-                "h-9 w-9 shrink-0 rounded-full transition-all sm:h-10 sm:w-10",
+                "h-9 w-9 shrink-0 rounded-[15.3px] transition-all sm:h-10 sm:w-10 sm:rounded-[17px]",
                 themeMode === "night"
                   ? "bg-foreground text-background hover:bg-foreground/90 disabled:bg-foreground/50"
                   : "bg-[#9d9d9d] text-white hover:bg-[#8b8b8b] disabled:bg-[#c9c9c9]",

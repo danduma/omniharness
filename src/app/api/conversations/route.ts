@@ -3,6 +3,7 @@ import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watc
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { createConversation } from "@/server/conversations/create";
+import { normalizeChatAttachments } from "@/lib/chat-attachments";
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,8 +20,9 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json();
     const command = String(body?.command ?? "").trim();
-    if (!command) {
-      return errorResponse("Command cannot be empty", {
+    const attachments = normalizeChatAttachments(body?.attachments);
+    if (!command && attachments.length === 0) {
+      return errorResponse("Command or attachment is required", {
         status: 400,
         source: "Conversations",
         action: "Start a conversation",
@@ -37,7 +39,7 @@ export async function POST(req: NextRequest) {
       allowedWorkerTypes: Array.isArray(body?.allowedWorkerTypes) || typeof body?.allowedWorkerTypes === "string"
         ? body.allowedWorkerTypes
         : null,
-      attachments: Array.isArray(body?.attachments) ? body.attachments : [],
+      attachments,
     });
 
     return NextResponse.json({ ok: true, ...result });

@@ -2,19 +2,17 @@
 
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import dynamic from "next/dynamic";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { BootShell } from "@/components/BootShell";
-import { FileAttachmentPickerDialog, type AttachmentItem } from "@/components/FileAttachmentPickerDialog";
-import { FolderPickerDialog } from "@/components/FolderPickerDialog";
 import { LoginShell } from "@/components/LoginShell";
-import { PairDeviceDialog } from "@/components/PairDeviceDialog";
 import { ConversationComposer } from "@/components/home/ConversationComposer";
 import { ConversationMain } from "@/components/home/ConversationMain";
 import { ConversationSidebar } from "@/components/home/ConversationSidebar";
 import { HomeHeader } from "@/components/home/HomeHeader";
-import { SettingsDialog } from "@/components/home/SettingsDialog";
 import { WorkersSidebar } from "@/components/home/WorkersSidebar";
 import { type AppErrorDescriptor, mergeAppErrors, requestJson } from "@/lib/app-errors";
+import type { ChatAttachment, PendingChatAttachment } from "@/lib/chat-attachments";
 import { buildConversationGroups } from "@/lib/conversations";
 import { buildWorkerLists, isWorkerActiveStatus, mergeWorkerLiveStatus, normalizeWorkerStatus, type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
@@ -30,6 +28,37 @@ import { useConversationExecutionStatus } from "./useConversationExecutionStatus
 import { useHomeLifecycle } from "./useHomeLifecycle";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { useRunSelectionEffects } from "./useRunSelectionEffects";
+
+const FolderPickerDialog = dynamic(
+  () => import("@/components/FolderPickerDialog").then((module) => module.FolderPickerDialog),
+  { ssr: false },
+);
+const PairDeviceDialog = dynamic(
+  () => import("@/components/PairDeviceDialog").then((module) => module.PairDeviceDialog),
+  { ssr: false },
+);
+const SettingsDialog = dynamic(
+  () => import("@/components/home/SettingsDialog").then((module) => module.SettingsDialog),
+  { ssr: false },
+);
+
+async function uploadPendingChatAttachments(attachments: PendingChatAttachment[]) {
+  if (attachments.length === 0) {
+    return [];
+  }
+
+  const formData = new FormData();
+  attachments.forEach((attachment) => formData.append("files", attachment.file, attachment.name));
+  const response = await requestJson<{ ok: true; attachments: ChatAttachment[] }>("/api/attachments", {
+    method: "POST",
+    body: formData,
+  }, {
+    source: "Attachments",
+    action: "Upload attachments",
+  });
+
+  return response.attachments;
+}
 
 function resolveRepoName(projectPath: string | null) {
   const normalized = projectPath?.trim().replace(/[/\\]+$/, "");
@@ -50,7 +79,6 @@ export function HomeApp() {
     activeLlmProfileTab,
     apiKeys,
     showFolderPicker,
-    showAttachmentPicker,
     selectedRunId,
     rightSidebarOpen,
     rightSidebarWidth,
@@ -65,6 +93,7 @@ export function HomeApp() {
     collapsedProjectPaths,
     renamingRunId,
     renameValue,
+    renameSource,
     editingMessageId,
     editingMessageValue,
     expandedDirectMessageIds,
@@ -92,7 +121,6 @@ export function HomeApp() {
     setActiveLlmProfileTab,
     setApiKeys,
     setShowFolderPicker,
-    setShowAttachmentPicker,
     setSelectedRunId,
     setRightSidebarOpen,
     setRightSidebarWidth,
@@ -107,6 +135,7 @@ export function HomeApp() {
     setCollapsedProjectPaths,
     setRenamingRunId,
     setRenameValue,
+    setRenameSource,
     setEditingMessageId,
     setEditingMessageValue,
     setExpandedDirectMessageIds,
@@ -117,7 +146,10 @@ export function HomeApp() {
     setSelectedModel,
     setSelectedEffort,
     setHydratedRunSelectionId,
-    setAttachments,
+    addAttachmentFiles,
+    addPastedImages,
+    removeAttachment,
+    clearAttachments,
     setPairTokenFromUrl,
     setAuthError,
     setPairRedeemError,
@@ -323,6 +355,7 @@ export function HomeApp() {
       }));
       setRenamingRunId(null);
       setRenameValue("");
+      setRenameSource(null);
     },
   });
 
@@ -332,6 +365,7 @@ export function HomeApp() {
       const previousSelectedRunId = selectedRunId;
       const previousRenamingRunId = renamingRunId;
       const previousRenameValue = renameValue;
+      const previousRenameSource = renameSource;
       const previousPendingCreatedSnapshot = pendingCreatedConversationSnapshotsRef.current.get(variables.runId);
       const hadPendingCreatedSnapshot = pendingCreatedConversationSnapshotsRef.current.has(variables.runId);
 
@@ -345,6 +379,7 @@ export function HomeApp() {
       if (renamingRunId === variables.runId) {
         setRenamingRunId(null);
         setRenameValue("");
+        setRenameSource(null);
       }
 
       return {
@@ -352,6 +387,7 @@ export function HomeApp() {
         previousSelectedRunId,
         previousRenamingRunId,
         previousRenameValue,
+        previousRenameSource,
         previousPendingCreatedSnapshot,
         hadPendingCreatedSnapshot,
       };
@@ -380,6 +416,7 @@ export function HomeApp() {
       setSelectedRunId(context.previousSelectedRunId);
       setRenamingRunId(context.previousRenamingRunId);
       setRenameValue(context.previousRenameValue);
+      setRenameSource(context.previousRenameSource);
     },
   });
 
@@ -421,21 +458,22 @@ export function HomeApp() {
   });
 
   const runCommand = useMutation({
-    mutationFn: async (cmd: string) => {
+    mutationFn: async (payload: { content: string; attachments: PendingChatAttachment[] }) => {
       const isAutoWorkerSelection = selectedCliAgent === "auto";
       const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel);
+      const uploadedAttachments = await uploadPendingChatAttachments(payload.attachments);
       return requestJson<({ runId?: string } & CreatedConversationSnapshot)>("/api/conversations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mode: selectedConversationMode,
-          command: cmd,
+          command: payload.content,
           projectPath: currentProjectScope,
           preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
           preferredWorkerModel: resolvedSelectedModel,
           preferredWorkerEffort: selectedEffort.toLowerCase(),
           allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent],
-          attachments: attachments.map(({ kind, name, path }) => ({ kind, name, path })),
+          attachments: uploadedAttachments,
         }),
       }, {
         source: "Supervisor",
@@ -444,7 +482,7 @@ export function HomeApp() {
     },
     onSuccess: (data) => {
       setCommand("");
-      setAttachments([]);
+      clearAttachments();
       if (data.runId) {
         if (data.run) {
           pendingCreatedConversationSnapshotsRef.current.set(data.runId, {
@@ -460,11 +498,12 @@ export function HomeApp() {
   });
 
   const sendConversationMessage = useMutation({
-    mutationFn: async (payload: { runId: string; content: string }) => {
+    mutationFn: async (payload: { runId: string; content: string; attachments: PendingChatAttachment[] }) => {
+      const uploadedAttachments = await uploadPendingChatAttachments(payload.attachments);
       return requestJson<{ ok: true; message?: MessageRecord }>(`/api/conversations/${payload.runId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: payload.content }),
+        body: JSON.stringify({ content: payload.content, attachments: uploadedAttachments }),
       }, {
         source: "Conversations",
         action: "Send a conversation message",
@@ -476,6 +515,7 @@ export function HomeApp() {
       }
       setState((current) => appendSentConversationMessageSnapshot(current, data.message));
       setCommand("");
+      clearAttachments();
     },
   });
 
@@ -525,7 +565,8 @@ export function HomeApp() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!command.trim() && isConversationStoppable) {
+    const hasAttachments = attachments.length > 0;
+    if (!command.trim() && !hasAttachments && isConversationStoppable) {
       if (!selectedRunId) {
         return;
       }
@@ -541,13 +582,13 @@ export function HomeApp() {
       return;
     }
 
-    if (command.trim()) {
+    if (command.trim() || hasAttachments) {
       if (selectedRunId) {
-        sendConversationMessage.mutate({ runId: selectedRunId, content: command });
+        sendConversationMessage.mutate({ runId: selectedRunId, content: command, attachments });
         return;
       }
 
-      runCommand.mutate(command);
+      runCommand.mutate({ content: command, attachments });
     }
   };
 
@@ -555,7 +596,7 @@ export function HomeApp() {
     setSelectedRunId(null);
     setDraftProjectPath(null);
     setCommand("");
-    setAttachments([]);
+    clearAttachments();
     setMobileNavOpen(false);
   };
 
@@ -579,7 +620,7 @@ export function HomeApp() {
     setSelectedRunId(null);
     setDraftProjectPath(projectPath);
     setCommand("");
-    setAttachments([]);
+    clearAttachments();
     setMobileNavOpen(false);
     requestAnimationFrame(() => {
       commandInputRef.current?.focus();
@@ -613,11 +654,19 @@ export function HomeApp() {
   const handleStartRenamingRun = (run: SidebarRun) => {
     setRenamingRunId(run.id);
     setRenameValue(run.title);
+    setRenameSource("sidebar");
+  };
+
+  const handleStartTopBarRenamingRun = (run: SidebarRun) => {
+    setRenamingRunId(run.id);
+    setRenameValue(run.title);
+    setRenameSource("topbar");
   };
 
   const handleCancelRenamingRun = () => {
     setRenamingRunId(null);
     setRenameValue("");
+    setRenameSource(null);
   };
 
   const handleCommitRenamingRun = (runId: string) => {
@@ -921,7 +970,14 @@ export function HomeApp() {
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
   }, [filteredMessages, isDirectConversation]);
   const pendingPermissionAgent = activeConversationAgents.find((agent) => (agent.pendingPermissions?.length ?? 0) > 0) ?? null;
-  const erroredAgent = activeConversationAgents.find((agent) => agent.state === "error" || Boolean(agent.lastError) || Boolean(agent.stopReason)) ?? null;
+  const erroredAgent = activeConversationAgents.find((agent) => {
+    if (agent.state === "error") {
+      return true;
+    }
+
+    const active = isWorkerActiveStatus(agent.state) || Boolean(agent.currentText?.trim());
+    return !active && Boolean(agent.lastError);
+  }) ?? null;
   const latestWaitEvent = selectedRunExecutionEvents.find((event) => event.eventType === "supervisor_wait") ?? null;
   const latestStuckEvent = selectedRunExecutionEvents.find((event) => event.eventType === "worker_stuck") ?? null;
   const hasStuckWorker = conversationWorkerGroups.active.some((worker) => worker.status === "stuck")
@@ -986,7 +1042,7 @@ export function HomeApp() {
     ? plans.find((p) => p.id === runs.find((r) => r.id === selectedRunId)?.planId) ?? null
     : null;
   const activeConversationCwd = selectedRun?.projectPath || activePlan?.path || draftProjectPath || null;
-  const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, runCommandError: runCommand.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, deleteRunError: deleteRun.error, stopSupervisorError: stopSupervisor.error, stopWorkerError: stopWorker.error });
+  const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, runCommandError: runCommand.error, sendConversationMessageError: sendConversationMessage.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, deleteRunError: deleteRun.error, stopSupervisorError: stopSupervisor.error, stopWorkerError: stopWorker.error });
 
   useRunSelectionEffects({ scrollRef, state, selectedRunId, selectedRun, activeComposerMode, selectedCliAgent, setSelectedCliAgent, autoSelectedWorkerType, activeAllowedWorkerTypes, hydratedRunSelectionId, setHydratedRunSelectionId, selectedModel, setSelectedModel, selectedEffort, setSelectedEffort, availableWorkerTypes, configuredAllowedWorkerTypes, apiKeys, setApiKeys, setReadMarkers });
   const activeMention = getActiveMentionQuery(command, commandCursor);
@@ -1024,24 +1080,16 @@ export function HomeApp() {
     });
   };
 
-  const handleAttachFiles = (nextAttachments: AttachmentItem[]) => {
-    setAttachments((current) => {
-      const seen = new Set(current.map((attachment) => attachment.path));
-      const merged = [...current];
-
-      for (const attachment of nextAttachments) {
-        if (!seen.has(attachment.path)) {
-          seen.add(attachment.path);
-          merged.push(attachment);
-        }
-      }
-
-      return merged;
-    });
+  const handleAddAttachmentFiles = (files: File[]) => {
+    addAttachmentFiles(files);
   };
 
-  const handleRemoveAttachment = (attachmentPath: string) => {
-    setAttachments((current) => current.filter((attachment) => attachment.path !== attachmentPath));
+  const handleAddPastedImages = (files: File[]) => {
+    addPastedImages(files);
+  };
+
+  const handleRemoveAttachment = (attachmentId: string) => {
+    removeAttachment(attachmentId);
   };
 
   const handleToggleAllowedWorker = (workerType: WorkerType, checked: boolean) => {
@@ -1159,7 +1207,8 @@ export function HomeApp() {
           themeMode={themeMode}
           attachments={attachments}
           handleRemoveAttachment={handleRemoveAttachment}
-          setShowAttachmentPicker={setShowAttachmentPicker}
+          onAddAttachmentFiles={handleAddAttachmentFiles}
+          onAddPastedImages={handleAddPastedImages}
           shouldLockDirectWorker={shouldLockDirectWorker}
           lockedDirectWorkerLabel={lockedDirectWorkerLabel}
           selectedCliAgent={selectedCliAgent}
@@ -1175,10 +1224,10 @@ export function HomeApp() {
           isStoppingConversation={isStoppingConversation}
           onSendConversationMessage={(content) => {
             if (selectedRunId) {
-              sendConversationMessage.mutate({ runId: selectedRunId, content });
+              sendConversationMessage.mutate({ runId: selectedRunId, content, attachments });
             }
           }}
-          onRunCommand={(content) => runCommand.mutate(content)}
+          onRunCommand={(content) => runCommand.mutate({ content, attachments })}
           onStopConversation={() => {
             if (!selectedRunId) {
               return;
@@ -1234,6 +1283,7 @@ export function HomeApp() {
     selectRun: handleSelectRun,
     renamingRunId,
     renameValue,
+    renameSource,
     setRenameValue,
     startRenamingRun: handleStartRenamingRun,
     commitRenamingRun: handleCommitRenamingRun,
@@ -1253,6 +1303,7 @@ export function HomeApp() {
       <div className="relative flex min-w-0 flex-1 flex-col bg-background">
         <HomeHeader
           {...sharedSidebarProps}
+          startRenamingRun={handleStartTopBarRenamingRun}
           mobileNavOpen={mobileNavOpen}
           setMobileNavOpen={setMobileNavOpen}
           activeConversationCwd={activeConversationCwd}
@@ -1315,7 +1366,7 @@ export function HomeApp() {
             }
           }}
           stoppingWorkerId={stopWorker.variables?.workerId ?? null}
-          emptyComposer={renderComposer("mt-6 w-full")}
+          emptyComposer={renderComposer("mt-2 w-full pt-0 sm:pt-0")}
         />
 
         {selectedRunId ? renderComposer("w-full") : null}
@@ -1380,12 +1431,6 @@ export function HomeApp() {
         open={showFolderPicker}
         onOpenChange={setShowFolderPicker}
         onSelect={handleAddProject}
-      />
-      <FileAttachmentPickerDialog
-        open={showAttachmentPicker}
-        onOpenChange={setShowAttachmentPicker}
-        rootPath={currentProjectScope}
-        onSelect={handleAttachFiles}
       />
     </div>
   );

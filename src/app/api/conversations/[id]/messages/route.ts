@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { sendConversationMessage } from "@/server/conversations/send-message";
+import { normalizeChatAttachments } from "@/lib/chat-attachments";
 
 export async function POST(
   req: NextRequest,
@@ -20,15 +21,16 @@ export async function POST(
     const { id } = await params;
     const body = await req.json();
     const content = String(body?.content ?? "").trim();
-    if (!content) {
-      return errorResponse("Message content cannot be empty", {
+    const attachments = normalizeChatAttachments(body?.attachments);
+    if (!content && attachments.length === 0) {
+      return errorResponse("Message content or attachment is required", {
         status: 400,
         source: "Conversations",
         action: "Send a conversation message",
       });
     }
 
-    return NextResponse.json(await sendConversationMessage({ runId: id, content }));
+    return NextResponse.json(await sendConversationMessage({ runId: id, content, attachments }));
   } catch (error: unknown) {
     const status = typeof (error as { status?: unknown }).status === "number"
       ? (error as { status: number }).status

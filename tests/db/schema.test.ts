@@ -19,6 +19,10 @@ describe("db schema", () => {
     expect(schema.workers).toHaveProperty("lastText");
   });
 
+  it("persists structured message attachments", () => {
+    expect(schema.messages).toHaveProperty("attachmentsJson");
+  });
+
   it("persists mode-aware conversation metadata on runs", () => {
     expect(schema.runs).toHaveProperty("mode");
     expect(schema.runs).toHaveProperty("specPath");

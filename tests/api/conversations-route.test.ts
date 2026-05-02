@@ -80,7 +80,7 @@ function delay(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitFor<T>(read: () => Promise<T>, predicate: (value: T) => boolean, timeoutMs = 1_000) {
+async function waitFor<T>(read: () => T | Promise<T>, predicate: (value: T) => boolean, timeoutMs = 1_000) {
   const startedAt = Date.now();
   let latest = await read();
 
@@ -188,7 +188,7 @@ describe("POST /api/conversations", () => {
   });
 
   it("returns a planning conversation before the first planner turn completes", async () => {
-    let resolveAsk: ((value: { response: string; state: string }) => void) | null = null;
+    let resolveAsk: (value: { response: string; state: string }) => void = () => undefined;
     mockAskAgent.mockImplementationOnce(() => new Promise((resolve) => {
       resolveAsk = resolve;
     }));
@@ -238,7 +238,7 @@ describe("POST /api/conversations", () => {
       expect(["starting", "working"]).toContain(createdRun?.status);
       expect(initialMessages.filter((message) => message.role === "worker")).toHaveLength(0);
     } finally {
-      resolveAsk?.({ response: "Let's shape the plan.", state: "idle" });
+      resolveAsk({ response: "Let's shape the plan.", state: "idle" });
       await responsePromise.catch(() => null);
     }
 
@@ -250,6 +250,39 @@ describe("POST /api/conversations", () => {
 
     expect(completedRun?.status).toBe("awaiting_user");
     expect(storedMessages.some((message) => message.role === "worker" && message.content === "Let's shape the plan.")).toBe(true);
+  });
+
+  it("does not mark a new planning conversation failed when the first planner turn is already busy", async () => {
+    mockAskAgent.mockRejectedValueOnce(new Error("Ask failed: Agent is busy: planner-worker"));
+
+    const request = new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "planning",
+        command: "Help me write a plan for the conversation modes work",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+      }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    await waitFor(
+      () => db.select().from(runs).where(eq(runs.id, payload.runId)).get(),
+      (run) => run?.status === "working",
+    );
+
+    const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+    const createdWorkers = await db.select().from(workers).where(eq(workers.runId, payload.runId));
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
+
+    expect(createdRun?.status).toBe("working");
+    expect(createdRun?.lastError).toBeNull();
+    expect(createdRun?.failedAt).toBeNull();
+    expect(createdWorkers[0]?.status).toBe("working");
+    expect(storedMessages.filter((message) => message.kind === "error")).toHaveLength(0);
   });
 
   it("starts a direct conversation with one direct worker and no supervisor", async () => {
@@ -278,7 +311,7 @@ describe("POST /api/conversations", () => {
   });
 
   it("returns a direct conversation before the first worker turn completes", async () => {
-    let resolveAsk: ((value: { response: string; state: string }) => void) | null = null;
+    let resolveAsk: (value: { response: string; state: string }) => void = () => undefined;
     mockAskAgent.mockImplementationOnce(() => new Promise((resolve) => {
       resolveAsk = resolve;
     }));
@@ -330,7 +363,7 @@ describe("POST /api/conversations", () => {
       expect(createdWorkers).toHaveLength(1);
       expect(initialMessages.filter((message) => message.role === "worker")).toHaveLength(0);
     } finally {
-      resolveAsk?.({ response: "Ready for the next prompt.", state: "idle" });
+      resolveAsk({ response: "Ready for the next prompt.", state: "idle" });
       await responsePromise.catch(() => null);
     }
 
@@ -342,6 +375,39 @@ describe("POST /api/conversations", () => {
 
     expect(completedRun?.status).toBe("done");
     expect(storedMessages.some((message) => message.role === "worker" && message.content === "Ready for the next prompt.")).toBe(true);
+  });
+
+  it("does not mark a new direct conversation failed when the first worker turn is already busy", async () => {
+    mockAskAgent.mockRejectedValueOnce(new Error("Ask failed: Agent is busy: direct-worker"));
+
+    const request = new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command: "Open a direct Codex session in this repo",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+      }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    await waitFor(
+      () => db.select().from(workers).where(eq(workers.runId, payload.runId)),
+      (createdWorkers) => createdWorkers[0]?.status === "working",
+    );
+
+    const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+    const createdWorkers = await db.select().from(workers).where(eq(workers.runId, payload.runId));
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
+
+    expect(createdRun?.status).toBe("running");
+    expect(createdRun?.lastError).toBeNull();
+    expect(createdRun?.failedAt).toBeNull();
+    expect(createdWorkers[0]?.status).toBe("working");
+    expect(storedMessages.filter((message) => message.kind === "error")).toHaveLength(0);
   });
 
   it("records a visible failure when a direct worker returns no output", async () => {
@@ -406,4 +472,42 @@ describe("POST /api/conversations", () => {
     expect(createdWorkers[0]?.outputLog).toContain("stopped without producing output");
     expect(storedMessages.some((message) => message.kind === "error" && message.content.includes("stopped without producing output"))).toBe(true);
   });
+  it("starts an attachment-only direct conversation with persisted attachment metadata", async () => {
+    const attachment = {
+      id: "attachment-1",
+      kind: "image",
+      name: "screen.png",
+      mimeType: "image/png",
+      size: 123,
+      storagePath: "attachments/upload-1/attachment-1-screen.png",
+    };
+
+    const request = new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command: "",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+        attachments: [attachment],
+      }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    expect(payload.message.attachments).toEqual([attachment]);
+
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
+    expect(JSON.parse(storedMessages[0]?.attachmentsJson || "[]")).toEqual([attachment]);
+
+    await waitFor(
+      () => Promise.resolve(mockAskAgent.mock.calls),
+      (calls) => calls.length > 0,
+    );
+    expect(mockAskAgent.mock.calls[0]?.[1]).toContain("Attached files available to inspect:");
+    expect(mockAskAgent.mock.calls[0]?.[1]).toContain("path: attachments/upload-1/attachment-1-screen.png");
+  });
+
 });

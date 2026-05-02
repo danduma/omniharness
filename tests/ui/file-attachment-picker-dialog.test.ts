@@ -2,22 +2,33 @@ import fs from "fs";
 import path from "path";
 import { test, expect } from "vitest";
 
-const dialogSource = fs.readFileSync(
-  path.resolve(process.cwd(), "src/components/FileAttachmentPickerDialog.tsx"),
+const managerSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/app/home/HomeUiStateManager.ts"),
+  "utf8"
+);
+const composerSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/components/home/ConversationComposer.tsx"),
+  "utf8"
+);
+const homeSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/app/home/HomeApp.tsx"),
   "utf8"
 );
 
-test("file attachment picker supports searching and attaching multiple files from the active scope", () => {
-  expect(dialogSource).toContain('queryKey: ["attachable-files", rootPath]');
-  expect(dialogSource).toContain('placeholder="Search files..."');
-  expect(dialogSource).toContain("selectedFiles.includes(filePath)");
-  expect(dialogSource).toContain("fileAttachmentPickerManager.toggleFile(filePath)");
-  expect(dialogSource).toContain("Attach Selected Files");
-  expect(dialogSource).toContain("onSelect(selectedFiles.map");
+test("native chat attachment flow is managed by HomeUiStateManager", () => {
+  expect(managerSource).toContain("addAttachmentFiles(files: File[])");
+  expect(managerSource).toContain("addPastedImages(files: File[])");
+  expect(managerSource).toContain("removeAttachment(id: string)");
+  expect(managerSource).toContain("clearAttachments()");
+  expect(managerSource).toContain("URL.createObjectURL(file)");
+  expect(managerSource).toContain("URL.revokeObjectURL(attachment.previewUrl)");
 });
 
-test("file attachment picker renders loader failures inside the dialog", () => {
-  expect(dialogSource).toContain('action: "Load attachable files"');
-  expect(dialogSource).toContain("normalizeAppError(error).message");
-  expect(dialogSource).toContain("Load attachable files");
+test("composer uses the native file input instead of the project file picker dialog", () => {
+  expect(composerSource).toContain('type="file"');
+  expect(composerSource).toContain("onAddAttachmentFiles(files)");
+  expect(composerSource).toContain("event.clipboardData.items");
+  expect(composerSource).toContain("onAddPastedImages(pastedImages)");
+  expect(homeSource).not.toContain("<FileAttachmentPickerDialog");
+  expect(homeSource).toContain("uploadPendingChatAttachments");
 });

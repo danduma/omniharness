@@ -9,6 +9,7 @@ interface UseAppErrorsProps {
   projectFilesError: unknown;
   settingsError: unknown;
   runCommandError: unknown;
+  sendConversationMessageError?: unknown;
   recoverRunError: unknown;
   renameRunError: unknown;
   deleteRunError: unknown;
@@ -22,6 +23,7 @@ export function useAppErrors({
   projectFilesError,
   settingsError,
   runCommandError,
+  sendConversationMessageError,
   recoverRunError,
   renameRunError,
   deleteRunError,
@@ -52,6 +54,13 @@ export function useAppErrors({
       errors.push(buildInlineError(runCommandError, {
         source: "Supervisor",
         action: "Start a run",
+      }));
+    }
+
+    if (sendConversationMessageError) {
+      errors.push(buildInlineError(sendConversationMessageError, {
+        source: "Conversations",
+        action: "Send a conversation message",
       }));
     }
 
@@ -97,6 +106,7 @@ export function useAppErrors({
     recoverRunError,
     renameRunError,
     runCommandError,
+    sendConversationMessageError,
     settingsError,
     stopSupervisorError,
     stopWorkerError,

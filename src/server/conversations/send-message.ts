@@ -8,11 +8,17 @@ import { resumeRunAfterClarification } from "@/server/clarifications/loop";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
-import { persistRunFailure } from "@/server/runs/failures";
+import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
+import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
+import { serializeMessageRecord } from "./message-records";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
+
+function isAgentBusyError(error: unknown) {
+  return /\bagent is busy\b/i.test(formatErrorMessage(error));
+}
 
 async function continueWorkerConversation({
   run,
@@ -67,6 +73,22 @@ async function continueWorkerConversation({
 
     notifyEventStreamSubscribers();
   } catch (error) {
+    if (isAgentBusyError(error)) {
+      const now = new Date();
+      await db.update(workers).set({
+        status: "working",
+        updatedAt: now,
+      }).where(eq(workers.id, worker.id));
+      await db.update(runs).set({
+        status: run.mode === "planning" ? "working" : "running",
+        failedAt: null,
+        lastError: null,
+        updatedAt: now,
+      }).where(eq(runs.id, run.id));
+      notifyEventStreamSubscribers();
+      throw Object.assign(error instanceof Error ? error : new Error(formatErrorMessage(error)), { status: 409 });
+    }
+
     await db.update(workers).set({
       status: "error",
       updatedAt: new Date(),
@@ -79,13 +101,18 @@ async function continueWorkerConversation({
 export async function sendConversationMessage({
   runId,
   content,
+  attachments = [],
 }: {
   runId: string;
   content: string;
+  attachments?: ChatAttachment[];
 }) {
   const trimmedContent = content.trim();
-  if (!trimmedContent) {
-    throw Object.assign(new Error("Message content cannot be empty"), { status: 400 });
+  const normalizedAttachments = normalizeChatAttachments(attachments);
+  const attachmentsJson = serializeChatAttachments(normalizedAttachments);
+  const workerContent = appendAttachmentContext(trimmedContent, normalizedAttachments);
+  if (!trimmedContent && normalizedAttachments.length === 0) {
+    throw Object.assign(new Error("Message content or attachment is required"), { status: 400 });
   }
 
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
@@ -107,6 +134,7 @@ export async function sendConversationMessage({
       role: "user",
       kind: pendingClarification ? "clarification_answer" : "checkpoint",
       content: trimmedContent,
+      attachmentsJson,
       createdAt,
     };
 
@@ -118,10 +146,7 @@ export async function sendConversationMessage({
       notifyEventStreamSubscribers();
       return {
         ok: true,
-        message: {
-          ...message,
-          createdAt: createdAt.toISOString(),
-        },
+        message: serializeMessageRecord({ ...message, attachmentsJson }),
         ...resumeResult,
       };
     }
@@ -136,10 +161,7 @@ export async function sendConversationMessage({
     notifyEventStreamSubscribers();
     return {
       ok: true,
-      message: {
-        ...message,
-        createdAt: createdAt.toISOString(),
-      },
+      message: serializeMessageRecord({ ...message, attachmentsJson }),
     };
   }
 
@@ -155,6 +177,7 @@ export async function sendConversationMessage({
     role: "user",
     kind: "checkpoint",
     content: trimmedContent,
+    attachmentsJson,
     createdAt: userMessageCreatedAt,
   };
 
@@ -168,26 +191,24 @@ export async function sendConversationMessage({
   notifyEventStreamSubscribers();
 
   if (run.mode === "direct") {
-    continueWorkerConversation({ run, worker, content: trimmedContent }).catch((error) => {
+    continueWorkerConversation({ run, worker, content: workerContent }).catch((error) => {
+      if (isAgentBusyError(error)) {
+        return;
+      }
+
       console.error("Direct conversation follow-up failed:", error);
     });
 
     return {
       ok: true,
-      message: {
-        ...userMessage,
-        createdAt: userMessageCreatedAt.toISOString(),
-      },
+      message: serializeMessageRecord({ ...userMessage, attachmentsJson }),
     };
   }
 
-  await continueWorkerConversation({ run, worker, content: trimmedContent });
+  await continueWorkerConversation({ run, worker, content: workerContent });
 
   return {
     ok: true,
-    message: {
-      ...userMessage,
-      createdAt: userMessageCreatedAt.toISOString(),
-    },
+    message: serializeMessageRecord({ ...userMessage, attachmentsJson }),
   };
 }

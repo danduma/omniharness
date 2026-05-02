@@ -1,5 +1,6 @@
 import type React from "react";
 import { Copy } from "lucide-react";
+import { formatBytes, type ChatAttachment } from "@/lib/chat-attachments";
 import { cn } from "@/lib/utils";
 
 export type UserInputMessageAction = {
@@ -12,6 +13,7 @@ export type UserInputMessageAction = {
 
 interface UserInputMessageProps {
   content: string;
+  attachments?: ChatAttachment[];
   isExpanded: boolean;
   onToggleExpanded: () => void;
   onCopy?: (content: string) => void | Promise<void>;
@@ -20,23 +22,61 @@ interface UserInputMessageProps {
 
 export function UserInputMessage({
   content,
+  attachments = [],
   isExpanded,
   onToggleExpanded,
   onCopy,
   actions = [],
 }: UserInputMessageProps) {
   const isLongMessage = content.length > 420 || content.split(/\r\n|\r|\n/).length > 6;
+  const attachmentUrl = (attachment: ChatAttachment) => attachment.previewUrl
+    || (attachment.storagePath
+      ? `/api/attachments?path=${encodeURIComponent(attachment.storagePath)}&mimeType=${encodeURIComponent(attachment.mimeType)}`
+      : "");
 
   return (
     <div className="flex justify-start pl-4 sm:pl-6">
       <div className="flex w-full max-w-[min(72ch,calc(100%-1rem))] flex-col items-start sm:max-w-[min(78ch,calc(100%-1.5rem))]">
         <div className="group/user-message relative w-full overflow-hidden rounded-lg bg-[#3a3a3a] px-3 py-2 text-left text-sm leading-6 text-[#d8d8d8] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition-colors hover:bg-[#404040]">
-          <span
-            className="block select-text overflow-hidden whitespace-pre-wrap break-words"
-            style={{ maxHeight: isExpanded ? undefined : "calc(1.5rem * 6)" }}
-          >
-            {content}
-          </span>
+          {content ? (
+            <span
+              className="block select-text overflow-hidden whitespace-pre-wrap break-words"
+              style={{ maxHeight: isExpanded ? undefined : "calc(1.5rem * 6)" }}
+            >
+              {content}
+            </span>
+          ) : null}
+          {attachments.length > 0 ? (
+            <div className={cn("flex flex-wrap gap-2", content && "mt-3")}>
+              {attachments.map((attachment) => {
+                const url = attachmentUrl(attachment);
+                return attachment.kind === "image" && url ? (
+                  <a
+                    key={attachment.id}
+                    href={url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group/attachment overflow-hidden rounded-xl border border-white/10 bg-black/15"
+                    title={attachment.name}
+                  >
+                    <img
+                      src={url}
+                      alt={attachment.name}
+                      className="h-24 w-24 object-cover transition-transform group-hover/attachment:scale-105"
+                    />
+                  </a>
+                ) : (
+                  <div
+                    key={attachment.id}
+                    className="inline-flex max-w-full items-center gap-2 rounded-full border border-white/10 bg-black/15 px-3 py-1.5 text-xs"
+                  >
+                    <span className="truncate">{attachment.name}</span>
+                    <span className="shrink-0 opacity-60">{formatBytes(attachment.size)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
           {isExpanded || isLongMessage ? (
             <button
               type="button"

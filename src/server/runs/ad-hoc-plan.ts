@@ -7,6 +7,9 @@ interface AttachmentInput {
   kind?: string;
   name?: string;
   path?: string;
+  storagePath?: string;
+  mimeType?: string;
+  size?: number;
 }
 
 function quoteBlock(text: string) {
@@ -23,7 +26,9 @@ function formatAttachments(attachments: AttachmentInput[]) {
     const parts = [
       attachment.kind?.trim(),
       attachment.name?.trim(),
-      attachment.path?.trim(),
+      attachment.mimeType?.trim(),
+      typeof attachment.size === "number" ? `${attachment.size} bytes` : undefined,
+      attachment.storagePath?.trim() || attachment.path?.trim(),
     ].filter(Boolean);
 
     return parts.length > 0 ? `- ${parts.join(" | ")}` : "- attachment";

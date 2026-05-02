@@ -31,7 +31,8 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('border border-[#d8d8d8] bg-[#fbfbfa]');
   expect(pageSource).toContain('focus-within:bg-white');
   expect(pageSource).toContain("px-4 pb-0.5 pt-3");
-  expect(pageSource).toContain("min-h-[56px] w-full resize-none bg-transparent");
+  expect(pageSource).toContain('"w-full resize-none bg-transparent text-[15px] leading-6 outline-none"');
+  expect(pageSource).toContain('hasAttachments ? "min-h-[112px]" : "min-h-[56px]"');
   expect(pageSource).toContain("rows={1}");
   expect(composerSelectSource).toContain("<select");
   expect(composerSelectSource).not.toContain("selectedLabel");
@@ -40,6 +41,9 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain("<ComposerModelPicker");
   expect(pageSource).toContain('ariaLabel="Worker effort"');
   expect(composerModelPickerSource).toContain("Choose model");
+  expect(composerModelPickerSource).toContain("useMediaQuery");
+  expect(composerModelPickerSource).toContain("<PopoverPrimitive.Root");
+  expect(composerModelPickerSource).toContain('side="top"');
   expect(composerModelPickerSource).toContain('side="bottom"');
   expect(composerModelPickerSource).toContain("Search models");
   expect(pageSource).toContain("const WORKER_OPTIONS: Array<{ value: WorkerType; label: string }> = [");
@@ -91,14 +95,17 @@ test("direct mode requires an explicit cli agent and tightens dropdown alignment
   expect(composerSelectSource).toContain('"h-8 max-w-[6.8rem] shrink truncate appearance-none border-0 bg-transparent px-1 text-right text-xs outline-none transition-colors sm:h-9 sm:max-w-none sm:px-2 sm:text-sm"');
 });
 
-test("composer exposes attachment entry and renders attached file chips", () => {
-  expect(pageSource).toContain('showAttachmentPicker: false');
+test("composer exposes native file input, paste ingestion, previews, and removal controls", () => {
   expect(pageSource).toContain('attachments: []');
-  expect(pageSource).toContain('setShowAttachmentPicker(true)');
-  expect(pageSource).toContain('attachments.map((attachment) => (');
+  expect(pageSource).toContain('type="file"');
+  expect(pageSource).toContain('multiple');
+  expect(pageSource).toContain('onAddAttachmentFiles(files)');
+  expect(pageSource).toContain('event.clipboardData.items');
+  expect(pageSource).toContain('onAddPastedImages(pastedImages)');
+  expect(pageSource).toContain('attachment.kind === "image" && attachment.previewUrl');
   expect(pageSource).toContain('aria-label={`Remove ${attachment.name}`}');
   expect(pageSource).toContain('<Plus className="h-5 w-5" />');
-  expect(pageSource).toContain("FileAttachmentPickerDialog");
+  expect(pageSource).not.toContain("FileAttachmentPickerDialog");
   expect(pageSource).toContain("attachments,");
 });
 
@@ -121,11 +128,11 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain("const isStopButtonVisible = isConversationStoppable");
   expect(pageSource).toContain("disabled={isSubmitButtonDisabled}");
   expect(pageSource).toContain('aria-label={isStopButtonVisible ? "Stop conversation" : "Send message"}');
-  expect(pageSource).toContain("if (!command.trim() && isConversationStoppable) {");
+  expect(pageSource).toContain("if (!command.trim() && !hasAttachments && isConversationStoppable) {");
   expect(pageSource).toContain("stopSupervisor.mutate({ runId: selectedRunId })");
   expect(pageSource).toContain("stopWorker.mutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId })");
   expect(pageSource).toContain("if (selectedRunId) {");
-  expect(pageSource).toContain("sendConversationMessage.mutate({ runId: selectedRunId, content: command })");
+  expect(pageSource).toContain("sendConversationMessage.mutate({ runId: selectedRunId, content: command, attachments })");
   expect(pageSource).toContain("<Square className=\"h-4 w-4 fill-current\" />");
 });
 

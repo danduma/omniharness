@@ -61,6 +61,7 @@ export const messages = sqliteTable('messages', {
   role: text('role').notNull(), // 'user', 'supervisor', 'worker'
   kind: text('kind'),
   content: text('content').notNull(),
+  attachmentsJson: text('attachments_json'),
   workerId: text('worker_id').references(() => workers.id),
   supersededAt: integer('superseded_at', { mode: 'timestamp' }),
   editedFromMessageId: text('edited_from_message_id'),
