@@ -71,7 +71,7 @@ process.stdin.on('data', (chunk) => {
     if (!line.trim()) continue;
     const message = JSON.parse(line);
     if (message.method === 'initialize') {
-      append({ method: message.method, params: message.params });
+      append({ method: message.method, params: message.params, codexManagedConfigPath: process.env.CODEX_MANAGED_CONFIG_PATH || null });
       write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
     }
     if (message.method === 'session/new') {
@@ -242,6 +242,46 @@ describe("internal agent runtime HTTP API", () => {
     const stopResponse = await fetch(`${baseUrl}/agents/worker-1`, { method: "DELETE" });
     expect(stopResponse.status).toBe(200);
     expect(readdirSync(join(projectDir, ".agents", "skills")).some((entry) => entry.includes("reviewer"))).toBe(false);
+  }, 15_000);
+
+  it("spawns Codex ACP workers with standard Codex core tools enabled", async () => {
+    const projectDir = createTempDir("omni-runtime-codex-project-");
+    const binDir = createTempDir("omni-runtime-codex-bin-");
+    const requestLog = join(projectDir, "requests.jsonl");
+    const fakeAgent = createExecutable(binDir, "codex-acp", fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "codex",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "codex-worker",
+        env: { FAKE_ACP_REQUEST_LOG: requestLog },
+      }),
+    });
+
+    expect(spawnResponse.status).toBe(201);
+    const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
+    const initialize = events.find((event) => event.method === "initialize");
+    expect(initialize.codexManagedConfigPath).toMatch(/managed_config\.toml$/);
+    const managedConfig = readFileSync(initialize.codexManagedConfigPath, "utf8");
+    expect(managedConfig).toContain("apply_patch_freeform = true");
+    expect(managedConfig).toContain("unified_exec = true");
+    expect(managedConfig).toContain("web_search_request = true");
+    expect(managedConfig).toContain("view_image_tool = true");
+
+    await fetch(`${baseUrl}/agents/codex-worker`, { method: "DELETE" });
   }, 15_000);
 
   it("advertises and serves ACP filesystem capabilities to workers", async () => {
