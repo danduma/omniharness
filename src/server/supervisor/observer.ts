@@ -343,7 +343,10 @@ async function loadActiveRun(runId: string) {
 
 function isMissingAgentError(error: unknown) {
   const message = formatErrorMessage(error).toLowerCase();
-  return message.includes("404") || message.includes("not_found") || message.includes("agent not found");
+  return message.includes("404")
+    || message.includes("not_found")
+    || message.includes("agent not found")
+    || message.includes("session not found");
 }
 
 async function reviveWorkerFromSavedSession(args: {

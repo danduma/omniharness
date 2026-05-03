@@ -750,6 +750,61 @@ describe("deriveWorkerEvents", () => {
     expect(wakeSupervisor).toHaveBeenCalledWith(runId, 0);
   });
 
+  it("treats ACP session-not-found resume failures as missing saved sessions", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      bridgeSessionId: "session-gone",
+      bridgeSessionMode: "full-access",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    mockGetAgent.mockRejectedValue(new Error("Get agent failed: 404 not_found"));
+    vi.mocked(mockSpawnAgent).mockRejectedValue(
+      new Error('Spawn failed: failed to start codex agent via codex-acp: {"code":-32602,"message":"Invalid params","data":"session not found"}'),
+    );
+
+    await pollRunWorkers(runId, wakeSupervisor);
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+
+    expect(persistedRun?.status).toBe("running");
+    expect(persistedRun?.lastError).toBeNull();
+    expect(persistedWorker?.status).toBe("cancelled");
+    expect(persistedWorker?.bridgeSessionId).toBeNull();
+    expect(workerEvents.some((event) => event.eventType === "worker_session_missing")).toBe(true);
+    expect(workerEvents.some((event) => event.eventType === "worker_resume_failed")).toBe(false);
+    expect(wakeSupervisor).toHaveBeenCalledWith(runId, 0);
+  });
+
   it("persists structured terminal snapshots for later inspection", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

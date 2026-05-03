@@ -57,7 +57,7 @@ describe("install-agent-acp.sh", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("codex: detected");
-    expect(result.stdout).toContain("would install `codex-acp` with `cargo install --locked --git https://github.com/cola-io/codex-acp.git --tag v0.4.2 codex-acp`");
+    expect(result.stdout).toContain("would install `codex-acp` with `cargo install --locked --git https://github.com/danduma/codex-acp.git --branch main codex-acp`");
     expect(result.stdout).toContain("claude: detected");
     expect(result.stdout).toContain("would install `@agentclientprotocol/claude-agent-acp`");
     expect(result.stdout).toContain("gemini: detected");
@@ -112,10 +112,42 @@ exit 0
     });
 
     expect(result.status).toBe(0);
-    expect(fs.readFileSync(cargoLogPath, "utf8")).toContain("install --locked --git https://github.com/cola-io/codex-acp.git --tag v0.4.2 codex-acp");
+    expect(fs.readFileSync(cargoLogPath, "utf8")).toContain("install --locked --git https://github.com/danduma/codex-acp.git --branch main codex-acp");
     expect(result.stdout).toContain("installed `codex-acp`");
     expect(fs.readFileSync(npmLogPath, "utf8")).toContain("install -g @agentclientprotocol/claude-agent-acp");
     expect(result.stdout).toContain("installed `@agentclientprotocol/claude-agent-acp`");
     expect(result.stdout).toContain("codex: detected");
+  });
+
+  it("refreshes an existing Codex ACP adapter from the OmniHarness fork", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
+    const binDir = path.join(tempDir, "bin");
+    const cargoLogPath = path.join(tempDir, "cargo.log");
+    tempDirs.push(tempDir);
+    fs.mkdirSync(binDir, { recursive: true });
+
+    createFakeBin("codex", binDir);
+    createFakeBin("codex-acp", binDir);
+    createFakeBin(
+      "cargo",
+      binDir,
+      `#!/bin/sh
+echo "$@" >> "${cargoLogPath}"
+exit 0
+`,
+    );
+
+    const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        PATH: `${binDir}:/usr/bin:/bin`,
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("`codex-acp` already installed; refreshing from the OmniHarness fork");
+    expect(fs.readFileSync(cargoLogPath, "utf8")).toContain("install --locked --git https://github.com/danduma/codex-acp.git --branch main codex-acp");
   });
 });

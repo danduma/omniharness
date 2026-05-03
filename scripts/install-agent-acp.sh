@@ -57,10 +57,10 @@ run_install_npm() {
 run_install_cargo_git() {
   local binary_name="$1"
   local git_url="$2"
-  local git_tag="$3"
+  local git_branch="$3"
 
   if [ "$DRY_RUN" -eq 1 ]; then
-    echo "  -> would install \`$binary_name\` with \`cargo install --locked --git $git_url --tag $git_tag $binary_name\`"
+    echo "  -> would install \`$binary_name\` with \`cargo install --locked --git $git_url --branch $git_branch $binary_name\`"
     return 0
   fi
 
@@ -69,7 +69,7 @@ run_install_cargo_git() {
     return 1
   fi
 
-  cargo install --locked --git "$git_url" --tag "$git_tag" "$binary_name"
+  cargo install --locked --git "$git_url" --branch "$git_branch" "$binary_name"
   echo "  -> installed \`$binary_name\`"
 }
 
@@ -78,10 +78,9 @@ echo "Detecting local coding agents and ACP adapters..."
 if have_command codex; then
   echo "codex: detected"
   if have_command codex-acp; then
-    echo "  -> \`codex-acp\` already installed"
-  else
-    run_install_cargo_git "codex-acp" "https://github.com/cola-io/codex-acp.git" "v0.4.2"
+    echo "  -> \`codex-acp\` already installed; refreshing from the OmniHarness fork"
   fi
+  run_install_cargo_git "codex-acp" "https://github.com/danduma/codex-acp.git" "main"
 else
   echo "codex: not detected"
 fi
