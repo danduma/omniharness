@@ -929,7 +929,6 @@ export class Supervisor {
             summary: reason,
             seconds,
           });
-          await insertRunMessage(this.runId, "system", `Waiting ${seconds}s before the next check: ${reason}`, "supervisor_action");
           return { state: "wait", delayMs: seconds * 1000 };
         }
 

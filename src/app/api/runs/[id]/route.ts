@@ -8,6 +8,7 @@ import { errorResponse } from "@/server/api-errors";
 import { recoverRun } from "@/server/runs/recovery";
 import { stopRunObserver } from "@/server/supervisor/observer";
 import { cancelSupervisorWake } from "@/server/supervisor/wake";
+import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
 import { getAppDataPath } from "@/server/app-root";
 import { requireApiSession } from "@/server/auth/guards";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
@@ -140,6 +141,7 @@ export async function POST(
 
       cancelSupervisorWake(runId);
       stopRunObserver(runId);
+      await clearSupervisorWakeLease(runId);
 
       const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
       const activeWorkers = runWorkers.filter((worker) => isActiveWorkerStatus(worker.status));

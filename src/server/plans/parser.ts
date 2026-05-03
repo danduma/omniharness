@@ -3,6 +3,7 @@ export interface ParsedPlanItem {
   phase: string | null;
   title: string;
   sourceLine: number;
+  details?: string;
 }
 
 export interface ParsedPlan {
@@ -29,9 +30,26 @@ export function parsePlan(markdown: string): ParsedPlan {
         phase: currentPhase,
         title: itemMatch[1].trim(),
         sourceLine: index + 1,
+        details: collectItemDetails(lines, index),
       });
     }
   }
 
   return { markdown, items };
+}
+
+function collectItemDetails(lines: string[], itemIndex: number) {
+  const details: string[] = [];
+
+  for (let index = itemIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^#{1,6}\s+(.+)$/.test(line) || /^- \[ \] (.+)$/.test(line)) {
+      break;
+    }
+    if (line.trim().length > 0) {
+      details.push(line.trim());
+    }
+  }
+
+  return details.join("\n");
 }

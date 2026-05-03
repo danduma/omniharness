@@ -9,7 +9,9 @@ import {
   messages,
   planItems,
   plans,
+  queuedConversationMessages,
   runs,
+  settings,
   supervisorInterventions,
   validationRuns,
   workerAssignments,
@@ -51,10 +53,12 @@ describe("POST /api/conversations/[id]/messages", () => {
     await db.delete(workerAssignments);
     await db.delete(executionEvents);
     await db.delete(clarifications);
+    await db.delete(queuedConversationMessages);
     await db.delete(messages);
     await db.delete(workers);
     await db.delete(workerCounters);
     await db.delete(planItems);
+    await db.delete(settings);
     await db.delete(runs);
     await db.delete(plans);
   });
@@ -212,6 +216,57 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
   });
 
+  it("queues active implementation follow-ups instead of trying to wake an already-running supervisor", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "docs/superpowers/plans/implementation.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(settings).values({
+      key: `SUPERVISOR_WAKE_LEASE:${runId}`,
+      value: JSON.stringify({ leaseId: randomUUID(), expiresAt: Date.now() + 900_000 }),
+      updatedAt: new Date(),
+    });
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        content: "stop the current server on 3002",
+        busyAction: "steer",
+      }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.queuedMessage).toMatchObject({
+      runId,
+      action: "steer",
+      status: "pending",
+      content: "stop the current server on 3002",
+    });
+
+    const queuedMessages = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId));
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    expect(queuedMessages).toHaveLength(1);
+    expect(storedMessages).toHaveLength(0);
+    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+  });
+
   it("uses implementation follow-ups to answer pending clarifications", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -243,6 +298,11 @@ describe("POST /api/conversations/[id]/messages", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
+    await db.insert(settings).values({
+      key: `SUPERVISOR_WAKE_LEASE:${runId}`,
+      value: JSON.stringify({ leaseId: randomUUID(), expiresAt: Date.now() + 900_000 }),
+      updatedAt: new Date(),
+    });
 
     const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
@@ -264,8 +324,10 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(updatedClarification?.answer).toBe("Use the existing conversations API.");
 
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    const staleLease = await db.select().from(settings).where(eq(settings.key, `SUPERVISOR_WAKE_LEASE:${runId}`)).get();
     expect(storedMessages).toHaveLength(1);
     expect(storedMessages[0]?.kind).toBe("clarification_answer");
+    expect(staleLease).toBeUndefined();
     expect(mockAskAgent).not.toHaveBeenCalled();
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
   });

@@ -178,6 +178,50 @@ describe("Supervisor worker spawn flow", () => {
     expect(mockNotifyEventStreamSubscribers).toHaveBeenCalled();
   });
 
+  it("records supervisor waits without adding main conversation system messages", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-wait",
+      name: "wait_until",
+      args: {
+        seconds: 5,
+        reason: "Worker is actively checking available browser tooling/deps.",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    const waitEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+    const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+
+    expect(waitEvent).toMatchObject({
+      eventType: "supervisor_wait",
+      runId,
+    });
+    expect(persistedMessages).toEqual([]);
+  });
+
   it("compacts the supervisor prompt before calling the model when the context is near the window limit", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

@@ -24,4 +24,20 @@ describe("parsePlan", () => {
       "Phase 2",
     ]);
   });
+
+  it("keeps indented checklist support with each item", () => {
+    const result = parsePlan(`# Plan
+
+## Phase 1
+- [ ] Update package.json scripts.
+  - Add \`admin:parity:capture\`.
+  - Verify: \`npm run admin:parity:capture\` prints missing prerequisites clearly.
+- [ ] Second task
+`);
+
+    expect(result.items[0]?.details).toBe(
+      "- Add `admin:parity:capture`.\n- Verify: `npm run admin:parity:capture` prints missing prerequisites clearly.",
+    );
+    expect(result.items[1]?.details).toBe("");
+  });
 });

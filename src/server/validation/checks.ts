@@ -46,7 +46,7 @@ function checkArtifact(cwd: string, artifact: ValidationArtifact): { ok: boolean
   return { ok: true, evidence: `Command passed: ${artifact.command}` };
 }
 
-function deriveArtifactsFromTitle(title: string): ValidationArtifact[] {
+export function deriveArtifactsFromTitle(title: string): ValidationArtifact[] {
   const backticked = title.match(/`([^`]+)`/);
   if (backticked) {
     return [{ type: "file", path: backticked[1] }];
@@ -61,7 +61,10 @@ function deriveArtifactsFromTitle(title: string): ValidationArtifact[] {
   if (match) {
     const rawTarget = match[2].replace(/["']/g, "").trim();
     const firstToken = rawTarget.split(/\s+/)[0];
-    return [{ type: "file", path: firstToken }];
+    const looksLikeFilePath = /[/\\]/.test(firstToken) || /\.[a-z0-9]+$/i.test(firstToken);
+    if (looksLikeFilePath) {
+      return [{ type: "file", path: firstToken }];
+    }
   }
 
   if (/test/i.test(title)) {

@@ -11,6 +11,7 @@ import { acquireSupervisorWakeLease, releaseSupervisorWakeLease } from "./lease"
 const wakeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const wakeDeadlines = new Map<string, number>();
 const inFlight = new Set<string>();
+const LEASE_BLOCKED_RETRY_MS = 1_000;
 
 function clearWake(runId: string) {
   const existing = wakeTimers.get(runId);
@@ -29,6 +30,7 @@ export async function executeSupervisorWake(runId: string) {
 
   const leaseId = await acquireSupervisorWakeLease(runId);
   if (!leaseId) {
+    scheduleSupervisorWake(runId, LEASE_BLOCKED_RETRY_MS);
     return;
   }
 

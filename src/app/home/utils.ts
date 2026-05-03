@@ -263,20 +263,27 @@ const HIDDEN_CONVERSATION_TIMELINE_EVENT_TYPES = new Set([
   "auth.pairing_redeemed",
   "auth.pairing_rejected",
   "auth.session_revoked",
+  "clarification_resolved",
+  "clarifications_requested",
   "conversation_title_generation_failed",
+  "plan_items_synced",
   "supervisor_context_compacted",
+  "supervisor_repo_inspected",
+  "supervisor_wait",
   "worker_idle",
+  "worker_mode_changed",
   "worker_output_changed",
+  "worker_permission_auto_approved",
+  "worker_prompted",
+  "worker_session_resumed",
+  "worker_snapshot_invalid",
   "worker_stopped",
 ]);
 
 const MESSAGE_MIRRORED_CONVERSATION_TIMELINE_EVENT_TYPES = new Set([
   "clarification_requested",
   "run_completed",
-  "supervisor_file_read",
-  "supervisor_wait",
   "worker_cancelled",
-  "worker_mode_changed",
   "worker_permission_approved",
   "worker_permission_denied",
   "worker_spawn_blocked",
@@ -309,6 +316,14 @@ function shouldShowExecutionEventInTimeline(event: ExecutionEventRecord, message
   return !hasNearbyMirroredMessage(event, messages);
 }
 
+function isSupervisorWaitTimelineMessage(message: MessageRecord) {
+  return (
+    message.role === "system"
+    && message.kind === "supervisor_action"
+    && /^Waiting\s+\d+s\s+before the next check:/i.test(message.content.trim())
+  );
+}
+
 export function buildConversationTimelineItems({
   messages,
   executionEvents,
@@ -316,12 +331,14 @@ export function buildConversationTimelineItems({
   messages: MessageRecord[];
   executionEvents: ExecutionEventRecord[];
 }): ConversationTimelineItem[] {
-  const items: ConversationTimelineItem[] = messages.map((message) => ({
-    type: "message",
-    id: message.id,
-    createdAt: message.createdAt,
-    message,
-  }));
+  const items: ConversationTimelineItem[] = messages
+    .filter((message) => !isSupervisorWaitTimelineMessage(message))
+    .map((message) => ({
+      type: "message",
+      id: message.id,
+      createdAt: message.createdAt,
+      message,
+    }));
 
   for (const event of executionEvents) {
     if (!shouldShowExecutionEventInTimeline(event, messages)) {
@@ -489,6 +506,15 @@ export function summarizeExecutionEvent(event: ExecutionEventRecord) {
   const seconds = typeof details.seconds === "number" ? details.seconds : null;
   const mode = typeof details.mode === "string" ? details.mode.trim() : "";
   const workerLabel = event.workerId || "worker";
+
+  if (event.eventType === "supervisor_file_read") {
+    const path = typeof details.path === "string" && details.path.trim()
+      ? details.path.trim()
+      : typeof details.absolutePath === "string" && details.absolutePath.trim()
+        ? details.absolutePath.trim()
+        : "";
+    return path ? `Read ${path}` : "Read file";
+  }
 
   if (event.eventType === "supervisor_wait") {
     const waitReason = summary || reason || "Waiting before the next supervisor check";

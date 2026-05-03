@@ -58,6 +58,29 @@ describe("conversation worker helpers", () => {
     });
   });
 
+  it("does not revive cancelled workers from persisted-only output", () => {
+    const workers: ConversationWorkerRecord[] = [
+      { id: "worker-cancelled", runId: "run-1", type: "codex", status: "cancelled" },
+    ];
+    const agents: ConversationWorkerAgent[] = [
+      {
+        name: "worker-cancelled",
+        state: "cancelled",
+        currentText: "Persisted text from before cancellation.",
+        lastText: "Persisted text from before cancellation.",
+        bridgeMissing: true,
+      },
+    ];
+
+    const merged = mergeWorkerLiveStatus(workers, agents);
+
+    expect(merged[0]).toBe(workers[0]);
+    expect(buildWorkerLists(merged)).toEqual({
+      active: [],
+      finished: [workers[0]],
+    });
+  });
+
   it("prefers live text, then persisted output, then errors for collapsed worker previews", () => {
     const activeAgent: ConversationWorkerAgent = {
       name: "worker-live",

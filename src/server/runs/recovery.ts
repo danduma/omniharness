@@ -18,6 +18,7 @@ import { askAgent, cancelAgent, getAgent, spawnAgent, type AgentRecord } from "@
 import { createAdHocPlan, rewriteAdHocPlan } from "@/server/runs/ad-hoc-plan";
 import { persistRunFailure } from "@/server/runs/failures";
 import { startSupervisorRun } from "@/server/supervisor/start";
+import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
 import { getAppDataPath } from "@/server/app-root";
 import { PLANNER_SYSTEM_PROMPT } from "@/server/prompts";
 import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/supervisor/worker-types";
@@ -278,6 +279,7 @@ export async function recoverRun(args: RecoverRunArgs) {
   }
 
   await clearRunDerivedState(args.runId, run.planId);
+  await clearSupervisorWakeLease(args.runId);
   await db.update(runs).set({
     status: "running",
     failedAt: null,

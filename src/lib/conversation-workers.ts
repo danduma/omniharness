@@ -18,6 +18,7 @@ export type ConversationWorkerAgent = {
   displayText?: string;
   lastError?: string | null;
   stopReason?: string | null;
+  bridgeMissing?: boolean;
 };
 
 const ACTIVE_WORKER_STATES = new Set(["starting", "working", "idle", "stuck"]);
@@ -108,7 +109,7 @@ export function mergeWorkerLiveStatus<T extends ConversationWorkerRecord>(
       return worker;
     }
 
-    const hasLiveOutput = Boolean(agent.currentText?.trim());
+    const hasLiveOutput = !agent.bridgeMissing && Boolean(agent.currentText?.trim());
     if (!isWorkerActiveStatus(agent.state) && !hasLiveOutput) {
       return worker;
     }

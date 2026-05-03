@@ -17,6 +17,7 @@ import {
   executionEvents,
   creditEvents,
   accounts,
+  settings,
 } from "@/server/db/schema";
 import { PATCH, DELETE, POST } from "@/app/api/runs/[id]/route";
 
@@ -183,6 +184,11 @@ describe("POST /api/runs/[id]", () => {
         updatedAt: now,
       },
     ]);
+    await db.insert(settings).values({
+      key: `SUPERVISOR_WAKE_LEASE:${runId}`,
+      value: JSON.stringify({ leaseId: randomUUID(), expiresAt: Date.now() + 900_000 }),
+      updatedAt: now,
+    });
 
     const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
       method: "POST",
@@ -195,6 +201,7 @@ describe("POST /api/runs/[id]", () => {
     const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const updatedWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
     const stopEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+    const staleLease = await db.select().from(settings).where(eq(settings.key, `SUPERVISOR_WAKE_LEASE:${runId}`)).get();
 
     expect(mockCancelSupervisorWake).toHaveBeenCalledWith(runId);
     expect(mockStopRunObserver).toHaveBeenCalledWith(runId);
@@ -202,6 +209,7 @@ describe("POST /api/runs/[id]", () => {
     expect(mockCancelAgent).not.toHaveBeenCalledWith(finishedWorkerId);
     expect(updatedRun?.status).toBe("cancelled");
     expect(updatedWorkers.find((worker) => worker.id === activeWorkerId)?.status).toBe("cancelled");
+    expect(staleLease).toBeUndefined();
     expect(stopEvent?.eventType).toBe("supervisor_stopped");
   });
 
@@ -353,6 +361,11 @@ describe("POST /api/runs/[id]", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
+    await db.insert(settings).values({
+      key: `SUPERVISOR_WAKE_LEASE:${runId}`,
+      value: JSON.stringify({ leaseId: randomUUID(), expiresAt: Date.now() + 900_000 }),
+      updatedAt: new Date(),
+    });
 
     const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
       method: "POST",
@@ -366,6 +379,7 @@ describe("POST /api/runs/[id]", () => {
     const remainingMessages = await db.select().from(messages).where(eq(messages.runId, runId));
     const remainingWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
     const remainingClarifications = await db.select().from(clarifications).where(eq(clarifications.runId, runId));
+    const staleLease = await db.select().from(settings).where(eq(settings.key, `SUPERVISOR_WAKE_LEASE:${runId}`)).get();
 
     expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
@@ -375,6 +389,7 @@ describe("POST /api/runs/[id]", () => {
     expect(remainingWorkers).toHaveLength(1);
     expect(remainingWorkers[0]?.status).toBe("cancelled");
     expect(remainingClarifications).toHaveLength(0);
+    expect(staleLease).toBeUndefined();
     expect(remainingMessages.map((message) => message.id)).toEqual([userMessageId]);
   });
 

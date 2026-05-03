@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, like } from "drizzle-orm";
 import { db } from "@/server/db";
 import { messages, plans, runs, settings } from "@/server/db/schema";
@@ -25,12 +25,17 @@ import { cancelSupervisorWake, executeSupervisorWake } from "@/server/supervisor
 
 describe("executeSupervisorWake", () => {
   beforeEach(async () => {
+    vi.useRealTimers();
     mockSupervisorRun.mockReset();
     mockStopRunObserver.mockReset();
     await db.delete(messages);
     await db.delete(runs);
     await db.delete(plans);
     await db.delete(settings).where(like(settings.key, "SUPERVISOR_WAKE_LEASE:%"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("keeps an implementation run active when supervisor execution hits a retryable bridge reset", async () => {
@@ -69,5 +74,45 @@ describe("executeSupervisorWake", () => {
     expect(persistedRun?.lastError).toBeNull();
     expect(runMessages.some((message) => message.kind === "error")).toBe(false);
     expect(mockStopRunObserver).not.toHaveBeenCalled();
+  });
+
+  it("retries a wake when an active persisted lease temporarily blocks acquisition", async () => {
+    vi.useFakeTimers();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(settings).values({
+      key: `SUPERVISOR_WAKE_LEASE:${runId}`,
+      value: JSON.stringify({ leaseId: randomUUID(), expiresAt: Date.now() + 900_000 }),
+      updatedAt: now,
+    });
+
+    mockSupervisorRun.mockResolvedValue({ state: "completed" });
+
+    await executeSupervisorWake(runId);
+
+    expect(mockSupervisorRun).not.toHaveBeenCalled();
+
+    await db.delete(settings).where(eq(settings.key, `SUPERVISOR_WAKE_LEASE:${runId}`));
+    await vi.advanceTimersByTimeAsync(1_000);
+    cancelSupervisorWake(runId);
+
+    expect(mockSupervisorRun).toHaveBeenCalledTimes(1);
   });
 });

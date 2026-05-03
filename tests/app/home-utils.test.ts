@@ -67,7 +67,7 @@ describe("home utils", () => {
     })).toBe("Waiting for your reply");
   });
 
-  it("intersperses supervisor activity with conversation messages by timestamp", () => {
+  it("intersperses useful supervisor activity with conversation messages by timestamp", () => {
     const timeline = buildConversationTimelineItems({
       messages: [
         {
@@ -108,8 +108,74 @@ describe("home utils", () => {
 
     expect(timeline.map((item) => `${item.type}:${item.id}`)).toEqual([
       "message:message-1",
-      "activity:event-1",
       "message:message-2",
+    ]);
+  });
+
+  it("omits supervisor wait chatter from the main conversation timeline", () => {
+    const timeline = buildConversationTimelineItems({
+      messages: [
+        {
+          id: "message-1",
+          runId: "run-1",
+          role: "system",
+          kind: "supervisor_action",
+          content: "Waiting 5s before the next check: Worker is actively checking available browser tooling/deps.",
+          createdAt: "2026-04-27T00:00:10.000Z",
+        },
+      ],
+      executionEvents: [
+        buildExecutionEvent({
+          id: "event-1",
+          eventType: "supervisor_wait",
+          details: JSON.stringify({
+            seconds: 5,
+            summary: "Worker is actively checking available browser tooling/deps.",
+          }),
+          createdAt: "2026-04-27T00:00:10.000Z",
+        }),
+      ],
+    });
+
+    expect(timeline).toEqual([]);
+  });
+
+  it("keeps routine supervisor logs out of the main conversation timeline", () => {
+    const timeline = buildConversationTimelineItems({
+      messages: [],
+      executionEvents: [
+        buildExecutionEvent({
+          id: "event-inspected",
+          eventType: "supervisor_repo_inspected",
+          details: JSON.stringify({ summary: "Inspected repository with rg supervisor_wait." }),
+          createdAt: "2026-04-27T00:00:10.000Z",
+        }),
+        buildExecutionEvent({
+          id: "event-prompted",
+          workerId: "worker-1",
+          eventType: "worker_prompted",
+          details: JSON.stringify({ summary: "Sent follow-up to worker-1" }),
+          createdAt: "2026-04-27T00:00:11.000Z",
+        }),
+        buildExecutionEvent({
+          id: "event-read",
+          eventType: "supervisor_file_read",
+          details: JSON.stringify({ path: "docs/plan.md", summary: "Read docs/plan.md for supervisor context." }),
+          createdAt: "2026-04-27T00:00:12.000Z",
+        }),
+        buildExecutionEvent({
+          id: "event-blocked",
+          workerId: "worker-1",
+          eventType: "worker_spawn_blocked",
+          details: JSON.stringify({ summary: "Blocked duplicate worker spawn because worker-1 is active." }),
+          createdAt: "2026-04-27T00:00:13.000Z",
+        }),
+      ],
+    });
+
+    expect(timeline.map((item) => `${item.type}:${item.id}:${item.type === "activity" ? item.text : ""}`)).toEqual([
+      "activity:event-read:Read docs/plan.md",
+      "activity:event-blocked:Blocked duplicate worker spawn because worker-1 is active.",
     ]);
   });
 

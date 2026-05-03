@@ -123,17 +123,17 @@ export async function sendConversationMessage({
     throw Object.assign(new Error("Conversation not found"), { status: 404 });
   }
 
-  if (busyAction === "queue") {
-    if (run.mode === "implementation") {
-      const queuedMessage = await createQueuedConversationMessage({
-        runId,
-        action: "queue",
-        content: trimmedContent,
-        attachments: normalizedAttachments,
-      });
-      return { ok: true, queuedMessage };
-    }
+  if (run.mode === "implementation" && (busyAction === "queue" || busyAction === "steer")) {
+    const queuedMessage = await createQueuedConversationMessage({
+      runId,
+      action: busyAction,
+      content: trimmedContent,
+      attachments: normalizedAttachments,
+    });
+    return { ok: true, queuedMessage };
+  }
 
+  if (busyAction === "queue") {
     const worker = await db.select().from(workers).where(eq(workers.runId, runId)).get();
     if (!worker) {
       throw Object.assign(new Error("Conversation worker not found"), { status: 404 });

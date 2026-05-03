@@ -71,3 +71,7 @@ export async function releaseSupervisorWakeLease(runId: string, leaseId: string)
 
   await db.delete(settings).where(and(eq(settings.key, key), eq(settings.value, existing.value)));
 }
+
+export async function clearSupervisorWakeLease(runId: string) {
+  await db.delete(settings).where(eq(settings.key, leaseKey(runId)));
+}
