@@ -11,7 +11,9 @@ interface UseConversationExecutionStatusProps {
   latestStuckEvent: ExecutionEventRecord | null;
   showRecoverableRunningState: boolean;
   latestWaitEvent: ExecutionEventRecord | null;
+  latestPromptDeferredEvent: ExecutionEventRecord | null;
   completionEvent: ExecutionEventRecord | null;
+  queuedMessageCount: number;
   activeConversationAgents: AgentSnapshot[];
   liveThoughts: Array<{ agentName: string; snippet: string; isLive: boolean }>;
 }
@@ -25,7 +27,9 @@ export function useConversationExecutionStatus({
   latestStuckEvent,
   showRecoverableRunningState,
   latestWaitEvent,
+  latestPromptDeferredEvent,
   completionEvent,
+  queuedMessageCount,
   activeConversationAgents,
   liveThoughts,
 }: UseConversationExecutionStatusProps) {
@@ -85,6 +89,22 @@ export function useConversationExecutionStatus({
       };
     }
 
+    if (queuedMessageCount > 0) {
+      return {
+        label: queuedMessageCount === 1 ? "Queued follow-up" : "Queued follow-ups",
+        detail: `${queuedMessageCount} user ${queuedMessageCount === 1 ? "message is" : "messages are"} waiting for delivery.`,
+        tone: "warning" as const,
+      };
+    }
+
+    if (latestPromptDeferredEvent) {
+      return {
+        label: "Retry queued",
+        detail: [durationLabel, summarizeExecutionEvent(latestPromptDeferredEvent)].filter(Boolean).join(". "),
+        tone: "active" as const,
+      };
+    }
+
     if (latestWaitEvent && !activeConversationAgents.some((agent) => agent.state === "working")) {
       const details = parseExecutionEventDetails(latestWaitEvent.details);
       const seconds = typeof details.seconds === "number" ? details.seconds : null;
@@ -121,6 +141,6 @@ export function useConversationExecutionStatus({
       detail: [durationLabel, latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The supervisor is still checking the run."].filter(Boolean).join(". "),
       tone: "active" as const,
     };
-  }, [activeConversationAgents, completionEvent, erroredAgent, hasStuckWorker, latestExecutionEvent, latestStuckEvent, latestWaitEvent, liveThoughts, pendingPermissionAgent, selectedRun, showRecoverableRunningState]);
+  }, [activeConversationAgents, completionEvent, erroredAgent, hasStuckWorker, latestExecutionEvent, latestPromptDeferredEvent, latestStuckEvent, latestWaitEvent, liveThoughts, pendingPermissionAgent, queuedMessageCount, selectedRun, showRecoverableRunningState]);
   return { liveExecutionStatus };
 }

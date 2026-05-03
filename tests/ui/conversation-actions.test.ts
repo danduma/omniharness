@@ -101,8 +101,8 @@ test("failed runs render a single persisted error in the conversation view", () 
   expect(pageSource).not.toContain("Execution failed");
   expect(pageSource).toContain("function extractWorkerFailureDetail(messages: MessageRecord[])");
   expect(pageSource).toContain("const visibleMessages = useMemo(() => {");
-  expect(pageSource).toContain('message.role === "system"');
-  expect(pageSource).toContain('message.kind === "error"');
+  expect(pageSource).toContain("shouldRenderMessageInMainConversation");
+  expect(pageSource).not.toContain('message.role === "system"');
   expect(pageSource).toContain('conversationTimelineItems.map((item: ConversationTimelineItem) => {');
   expect(pageSource).toContain('action: workerFailureDetail ? "Worker setup" : staleFailure ? "Retry" : "Run failed"');
   expect(pageSource).toContain('message: workerFailureDetail || (staleFailure');

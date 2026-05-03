@@ -24,7 +24,7 @@ import { parseBusyMessageAction, resolveBusyComposerBehavior, type BusyMessageAc
 import type { AgentSnapshot, AuthSessionResponse, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, QueuedConversationMessageRecord, RunRecord, SettingsResponse, SidebarGroup, SidebarRun, SupervisorInterventionRecord, WorkerCatalogResponse, WorkerType } from "./types";
 import { EventStreamStateManager } from "./EventStreamStateManager";
 import { homeUiSetters, homeUiStateManager, INITIAL_EVENT_STREAM_STATE } from "./HomeUiStateManager";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
 import { useAppErrors } from "./useAppErrors";
 import { useConversationExecutionStatus } from "./useConversationExecutionStatus";
 import { useHomeLifecycle } from "./useHomeLifecycle";
@@ -1061,16 +1061,8 @@ export function HomeApp() {
   }, [failedWorkerAvailability, filteredMessages, selectedRun]);
   const visibleMessages = useMemo(() => {
     const messages = (filteredMessages || []) as MessageRecord[];
-
-    if (!selectedRun || selectedRun.status !== "failed" || !selectedRun.lastError) {
-      return messages;
-    }
-
-    return messages.filter((message) => !(
-      message.role === "system"
-      && message.kind === "error"
-    ));
-  }, [filteredMessages, selectedRun]);
+    return messages.filter(shouldRenderMessageInMainConversation);
+  }, [filteredMessages]);
   const conversationTimelineItems = useMemo(() => buildConversationTimelineItems({
     messages: visibleMessages,
     executionEvents: selectedRunExecutionEvents,
@@ -1095,6 +1087,7 @@ export function HomeApp() {
     return !active && Boolean(agent.lastError);
   }) ?? null;
   const latestWaitEvent = selectedRunExecutionEvents.find((event) => event.eventType === "supervisor_wait") ?? null;
+  const latestPromptDeferredEvent = selectedRunExecutionEvents.find((event) => event.eventType === "worker_prompt_deferred") ?? null;
   const latestStuckEvent = selectedRunExecutionEvents.find((event) => event.eventType === "worker_stuck") ?? null;
   const hasStuckWorker = conversationWorkerGroups.active.some((worker) => worker.status === "stuck")
     || activeConversationAgents.some((agent) => agent.state === "stuck")
@@ -1121,7 +1114,9 @@ export function HomeApp() {
     latestStuckEvent,
     showRecoverableRunningState,
     latestWaitEvent,
+    latestPromptDeferredEvent,
     completionEvent,
+    queuedMessageCount: busyMessageQueueState.queuedMessages.filter((message) => message.runId === selectedRunId && (message.status === "pending" || message.status === "delivering")).length,
     activeConversationAgents,
     liveThoughts,
   });
@@ -1130,6 +1125,7 @@ export function HomeApp() {
     || Boolean(pendingPermissionAgent)
     || hasStuckWorker
     || showRecoverableRunningState
+    || Boolean(latestPromptDeferredEvent)
     || selectedRun?.status === "awaiting_user"
     || selectedRun?.status === "failed";
   const showConversationExecution = shouldShowConversationExecutionPanel({
@@ -1507,18 +1503,11 @@ export function HomeApp() {
           setEditingMessageValue={setEditingMessageValue}
           handleCancelEditingMessage={handleCancelEditingMessage}
           handleSaveEditedMessage={handleSaveEditedMessage}
-          selectedRunWorkers={selectedRunWorkersForDisplay}
           conversationAgents={conversationAgents}
-          supervisorInterventions={selectedRunSupervisorInterventions}
           showConversationExecution={showConversationExecution}
           liveExecutionStatus={liveExecutionStatus}
           liveThoughts={liveThoughts}
-          onStopWorker={(workerId) => {
-            if (selectedRunId) {
-              stopWorker.mutate({ runId: selectedRunId, workerId });
-            }
-          }}
-          stoppingWorkerId={stopWorker.variables?.workerId ?? null}
+          executionEvents={selectedRunExecutionEvents}
           emptyComposer={renderComposer("mt-2 w-full pt-0 sm:pt-0")}
         />
 

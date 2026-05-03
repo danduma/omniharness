@@ -1,5 +1,5 @@
 import type React from "react";
-import { Blocks, ChevronDown, GitBranch, Pencil, RotateCcw } from "lucide-react";
+import { Blocks, ChevronDown, GitBranch, ListTree, Pencil, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -10,13 +10,11 @@ import { PlanningArtifactsPanel } from "@/components/PlanningArtifactsPanel";
 import { conversationMainManager } from "@/components/component-state-managers";
 import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
 import { extractLatestPlainTextTurn } from "@/lib/agent-output";
-import { type ConversationWorkerRecord } from "@/lib/conversation-workers";
-import type { AgentSnapshot, MessageRecord, NoticeDescriptor, RunRecord, SupervisorInterventionRecord } from "@/app/home/types";
-import { formatExecutionTimestamp, parseSpawnedWorkerMessage, type ConversationTimelineItem } from "@/app/home/utils";
+import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, NoticeDescriptor, RunRecord } from "@/app/home/types";
+import { formatExecutionTimestamp, parseExecutionEventDetails, summarizeExecutionEvent, type ConversationTimelineItem } from "@/app/home/utils";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { ErrorNotice } from "./ErrorNotice";
-import { ConversationWorkerCard } from "./WorkersSidebar";
 import { UserInputMessage, type UserInputMessageAction } from "./UserInputMessage";
 
 interface ConversationExecutionStatusProps {
@@ -73,6 +71,77 @@ function ConversationExecutionStatus({
       </div>
     ) : null}
   </div>
+  );
+}
+
+function ConversationRunLog({
+  runId,
+  executionEvents,
+}: {
+  runId: string | null;
+  executionEvents: ExecutionEventRecord[];
+}) {
+  const { runLogOpenByRunId } = useManagerSnapshot(conversationMainManager);
+
+  if (!runId || executionEvents.length === 0) {
+    return null;
+  }
+
+  const open = Boolean(runLogOpenByRunId[runId]);
+
+  return (
+    <Collapsible open={open} onOpenChange={(nextOpen) => conversationMainManager.setRunLogOpen(runId, nextOpen)}>
+      <div className="rounded-lg border border-border/70 bg-muted/20 text-sm" aria-label="Run Log">
+        <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left">
+          <span className="flex min-w-0 items-center gap-2 text-xs font-semibold text-muted-foreground">
+            <ListTree className="h-3.5 w-3.5 shrink-0" />
+            Run Log
+            <span className="rounded-full bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {executionEvents.length}
+            </span>
+          </span>
+          <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="border-t border-border/60 px-3 py-2">
+            <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+              {executionEvents.map((event) => {
+                const details = parseExecutionEventDetails(event.details);
+                const detailText = event.details?.trim() || "";
+                return (
+                  <div key={event.id} className="rounded-md border border-border/50 bg-background/70 p-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="break-words text-xs font-medium text-foreground">{event.eventType}</p>
+                        <p className="mt-0.5 break-words text-[11px] leading-relaxed text-muted-foreground">
+                          {summarizeExecutionEvent(event)}
+                        </p>
+                        {event.workerId ? (
+                          <p className="mt-1 text-[10px] text-muted-foreground/70">Worker: {event.workerId}</p>
+                        ) : null}
+                      </div>
+                      <span className="shrink-0 text-[10px] text-muted-foreground/60">
+                        {formatExecutionTimestamp(event.createdAt)}
+                      </span>
+                    </div>
+                    {detailText ? (
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-[10px] font-medium text-muted-foreground hover:text-foreground">
+                          Details
+                        </summary>
+                        <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/40 p-2 text-[10px] leading-relaxed text-muted-foreground">
+                          {JSON.stringify(details, null, 2)}
+                        </pre>
+                      </details>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
   );
 }
 
@@ -177,7 +246,6 @@ interface ConversationMainProps {
     mutate: (payload: { runId: string; planPath: string | null }) => void;
   };
   conversationTimelineItems: ConversationTimelineItem[];
-  supervisorInterventions: SupervisorInterventionRecord[];
   recoverRun: { isPending: boolean };
   showRecoverableRunningState: boolean;
   hasStuckWorker: boolean;
@@ -190,13 +258,11 @@ interface ConversationMainProps {
   setEditingMessageValue: (value: string) => void;
   handleCancelEditingMessage: () => void;
   handleSaveEditedMessage: (messageId: string) => void;
-  selectedRunWorkers: ConversationWorkerRecord[];
   conversationAgents: AgentSnapshot[];
   showConversationExecution: boolean;
   liveExecutionStatus: ConversationExecutionStatusProps["liveExecutionStatus"];
   liveThoughts: ConversationExecutionStatusProps["liveThoughts"];
-  onStopWorker?: (workerId: string) => void;
-  stoppingWorkerId?: string | null;
+  executionEvents: ExecutionEventRecord[];
   emptyComposer: React.ReactNode;
 }
 
@@ -256,7 +322,6 @@ export function ConversationMain({
   primaryConversationAgent,
   promotePlanningConversation,
   conversationTimelineItems,
-  supervisorInterventions,
   recoverRun,
   showRecoverableRunningState,
   hasStuckWorker,
@@ -269,13 +334,11 @@ export function ConversationMain({
   setEditingMessageValue,
   handleCancelEditingMessage,
   handleSaveEditedMessage,
-  selectedRunWorkers,
   conversationAgents,
   showConversationExecution,
   liveExecutionStatus,
   liveThoughts,
-  onStopWorker,
-  stoppingWorkerId,
+  executionEvents,
   emptyComposer,
 }: ConversationMainProps) {
   const handleCopyDirectMessage = async (content: string) => {
@@ -376,7 +439,7 @@ export function ConversationMain({
                 {!isUserMessage ? (
                   <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
                     <div className="flex items-center gap-2">
-                    <span className={`text-xs font-semibold capitalize tracking-wider ${msg.role === "system" ? "text-muted-foreground" : "text-emerald-600"}`}>
+                    <span className="text-xs font-semibold capitalize tracking-wider text-emerald-600">
                       {msg.role}
                     </span>
                     {msg.kind === "error" ? (
@@ -418,52 +481,11 @@ export function ConversationMain({
                     onCopy={handleCopyDirectMessage}
                     actions={userMessageActions}
                   />
-                ) : msg.role === "system" && msg.content.startsWith("Spawned worker.") ? (
-                  (() => {
-                    const parsed = parseSpawnedWorkerMessage(msg.content);
-                    const workerId = parsed?.workerId?.trim() || "";
-                    const linkedWorker = selectedRunWorkers.find((worker) => worker.id === workerId);
-                    const linkedAgent = conversationAgents.find((agent) => agent.name === workerId);
-
-                    if (!workerId) {
-                      return (
-                        <p className="px-1 text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
-                          {msg.content}
-                        </p>
-                      );
-                    }
-
-                    const resolvedWorker = linkedWorker ?? {
-                      id: workerId,
-                      runId: msg.runId,
-                      type: parsed?.typeLabel || "",
-                      status: linkedAgent?.state || "starting",
-                    };
-
-                    return (
-                      <ConversationWorkerCard
-                        worker={resolvedWorker}
-                        agent={linkedAgent}
-                        preferredModel={selectedRun?.preferredWorkerModel || null}
-                        preferredEffort={selectedRun?.preferredWorkerEffort || null}
-                        defaultOpen={false}
-                        terminalHeightClass="h-64 sm:h-[22rem]"
-                        fallbackPreview={parsed?.purpose}
-                        supervisorInterventions={supervisorInterventions}
-                        onStopWorker={onStopWorker}
-                        isStopping={stoppingWorkerId === workerId}
-                      />
-                    );
-                  })()
                 ) : msg.role === "worker" ? (
                   <WorkerOutputMessage
                     message={msg}
                     agent={conversationAgents.find((agent) => agent.name === inferWorkerIdFromMessage(msg)) ?? null}
                   />
-                ) : msg.role === "system" ? (
-                  <p className="px-1 text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
-                    {msg.content}
-                  </p>
                 ) : (
                   <div className={cn(
                     "overflow-x-auto rounded-lg border p-4 leading-relaxed",
@@ -495,6 +517,13 @@ export function ConversationMain({
             liveThoughts={liveThoughts}
           />
         ) : null}
+
+          {isImplementationConversation ? (
+            <ConversationRunLog
+              runId={selectedRunId}
+              executionEvents={executionEvents}
+            />
+          ) : null}
 
           {!conversationFailure && (showRecoverableRunningState || hasStuckWorker) ? (
             <LatestRecoveryAction

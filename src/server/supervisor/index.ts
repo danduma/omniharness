@@ -416,7 +416,6 @@ async function deferBusyWorkerPrompt(runId: string, workerId: string, prompt: st
     prompt,
     error: errorMessage,
   }, workerId);
-  await insertRunMessage(runId, "system", summary, "supervisor_action");
 
   return { state: "wait", delayMs: WORKER_BUSY_RETRY_DELAY_MS };
 }
@@ -589,12 +588,6 @@ export class Supervisor {
               requestedPurpose: purpose,
               activeWorkerId: activeMainWorker.id,
             });
-            await insertRunMessage(
-              this.runId,
-              "system",
-              `Blocked duplicate worker spawn "${title}" because ${activeMainWorker.id} is already the active implementation worker.`,
-              "supervisor_action",
-            );
             return { state: "wait", delayMs: 5_000 };
           }
           const workerId = await reserveWorkerRow({
@@ -662,12 +655,6 @@ export class Supervisor {
             requestedType: workerType.requestedType,
             fallbackReason: workerType.fallbackReason,
           }, workerId);
-          await insertRunMessage(
-            this.runId,
-            "system",
-            spawnSummary,
-            "supervisor_action",
-          );
 
           try {
             const response = await bridge.askAgent(workerId, prompt);
@@ -681,14 +668,6 @@ export class Supervisor {
               status: purpose ? `${response.state}: ${purpose}` : response.state,
               updatedAt: new Date(),
             }).where(eq(workers.id, workerId));
-
-            await insertRunMessage(
-              this.runId,
-              "worker",
-              `Prompted ${workerId}:\n${prompt}\n\nInitial response:\n${response.response}`.slice(0, 4000),
-              "worker_output",
-              workerId,
-            );
           } catch (error) {
             if (isAgentBusyError(error)) {
               return deferBusyWorkerPrompt(this.runId, workerId, prompt, error);
@@ -745,7 +724,6 @@ export class Supervisor {
             summary: `Sent follow-up to ${workerId}`,
             interventionType,
           });
-          await insertRunMessage(this.runId, "worker", `Prompted ${workerId}:\n${prompt}\n\nResponse:\n${response.response}`.slice(0, 4000), "worker_output", workerId);
           return { state: "wait", delayMs: 5_000 };
         }
 
@@ -767,7 +745,6 @@ export class Supervisor {
             summary: `Cancelled ${workerId}`,
             reason,
           }, workerId);
-          await insertRunMessage(this.runId, "system", `Cancelled ${workerId}: ${reason}`, "supervisor_action");
           return { state: "wait", delayMs: 1_000 };
         }
 
@@ -779,7 +756,6 @@ export class Supervisor {
             summary: `Set ${workerId} mode to ${mode}`,
             mode,
           }, workerId);
-          await insertRunMessage(this.runId, "system", `Set ${workerId} mode to ${mode}.`, "supervisor_action");
           return { state: "wait", delayMs: 1_000 };
         }
 
@@ -796,12 +772,6 @@ export class Supervisor {
             reason,
             optionId,
           }, workerId);
-          await insertRunMessage(
-            this.runId,
-            "system",
-            `Approved permission for ${workerId}: ${reason}${optionId ? ` (option: ${optionId})` : ""}`,
-            "supervisor_action",
-          );
           return { state: "wait", delayMs: 1_000 };
         }
 
@@ -818,12 +788,6 @@ export class Supervisor {
             reason,
             optionId,
           }, workerId);
-          await insertRunMessage(
-            this.runId,
-            "system",
-            `Denied permission for ${workerId}: ${reason}${optionId ? ` (option: ${optionId})` : ""}`,
-            "supervisor_action",
-          );
           return { state: "wait", delayMs: 1_000 };
         }
 
@@ -884,12 +848,6 @@ export class Supervisor {
             }
           }
 
-          await insertRunMessage(
-            this.runId,
-            "system",
-            `Read ${requestedPath} for supervisor context${truncated ? " (truncated)." : "."}`,
-            "supervisor_action",
-          );
           return { state: "wait", delayMs: 1_000 };
         }
 
@@ -913,12 +871,6 @@ export class Supervisor {
             output: result.output,
             error: result.error,
           });
-          await insertRunMessage(
-            this.runId,
-            "system",
-            `${summary}\n\nExit code: ${result.exitCode}\n${result.output || result.error || "(no output)"}`,
-            "supervisor_action",
-          );
           return { state: "wait", delayMs: 1_000 };
         }
 
@@ -941,12 +893,6 @@ export class Supervisor {
               summary: failureSummary,
               failures: validation.failures,
             });
-            await insertRunMessage(
-              this.runId,
-              "system",
-              `Completion blocked by validation: ${failureSummary}`,
-              "supervisor_action",
-            );
             return { state: "wait", delayMs: 1_000 };
           }
 

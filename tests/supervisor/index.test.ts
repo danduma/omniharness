@@ -438,6 +438,7 @@ describe("Supervisor worker spawn flow", () => {
     expect(event?.eventType).toBe("supervisor_file_read");
     expect(event?.details).toContain("docs/spec.md");
     expect(event?.details).toContain("understand the why before implementation");
+    expect(await db.select().from(messages).where(eq(messages.runId, runId))).toEqual([]);
   });
 
   it("runs targeted repository inspection without spawning a worker", async () => {
@@ -485,6 +486,7 @@ describe("Supervisor worker spawn flow", () => {
     expect(event?.eventType).toBe("supervisor_repo_inspected");
     expect(event?.details).toContain('"command":"sed"');
     expect(event?.details).toContain("Outcome: inspect only the needed lines");
+    expect(await db.select().from(messages).where(eq(messages.runId, runId))).toEqual([]);
   });
 
   it("cancels a spawned bridge agent if the run fails while spawn is in flight", async () => {
@@ -600,15 +602,20 @@ describe("Supervisor worker spawn flow", () => {
     pendingAsk.resolve({ response: "Started work", state: "working" });
     await expect(runPromise).resolves.toEqual({ state: "wait", delayMs: 5_000 });
 
-    const systemMessages = await db.select().from(messages).where(eq(messages.runId, runId));
-    const spawnMessage = systemMessages.find((message) => message.role === "system" && message.content.includes("Spawned"));
-    expect(spawnMessage?.content).toContain("CLI: OpenCode");
-    expect(spawnMessage?.content).toContain(`Worker: ${runId}-worker-1`);
-    expect(spawnMessage?.content).toContain("Model: openai/gpt-5.4");
-    expect(spawnMessage?.content).toContain("Effort: high");
-    expect(spawnMessage?.content).toContain("Mode: full-access");
-    expect(spawnMessage?.content).toContain("Title: Main implementation");
-    expect(spawnMessage?.content).toContain("Purpose: finish the task.");
+    const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    const spawnEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+    expect(persistedMessages).toEqual([]);
+    expect(spawnEvent).toMatchObject({
+      eventType: "worker_spawned",
+      workerId: `${runId}-worker-1`,
+    });
+    expect(spawnEvent?.details).toContain("CLI: OpenCode");
+    expect(spawnEvent?.details).toContain(`Worker: ${runId}-worker-1`);
+    expect(spawnEvent?.details).toContain("Model: openai/gpt-5.4");
+    expect(spawnEvent?.details).toContain("Effort: high");
+    expect(spawnEvent?.details).toContain("Mode: full-access");
+    expect(spawnEvent?.details).toContain("Title: Main implementation");
+    expect(spawnEvent?.details).toContain("Purpose: finish the task.");
   });
 
   it("passes worker-requested skill roots and MCP servers to the bridge spawn call", async () => {
@@ -1061,9 +1068,11 @@ describe("Supervisor worker spawn flow", () => {
     expect(persistedWorker?.status).toBe("working");
 
     const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
     const deferredEvent = events.find((event) => event.eventType === "worker_prompt_deferred");
     expect(deferredEvent?.workerId).toBe("worker-already-running");
     expect(deferredEvent?.details).toContain("Agent is busy");
+    expect(persistedMessages).toEqual([]);
   });
 
   it("lists recorded supervisor interventions when completing the run", async () => {

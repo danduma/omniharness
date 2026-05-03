@@ -162,7 +162,7 @@ test("main conversation does not duplicate worker panes from the sidebar", () =>
   expect(pageSource).not.toContain("<Cpu className=\"h-4 w-4\" /> CLI Agents");
   expect(pageSource).not.toContain('{isImplementationConversation && conversationWorkerGroups.active.length > 0 && (');
   expect(pageSource).not.toContain('{conversationWorkerGroups.active.map((worker) => {');
-  expect(pageSource).toContain('defaultOpen={false}');
+  expect(pageSource).not.toContain('defaultOpen={false}');
   expect(pageSource).toContain('defaultOpen={activeTab === "active" || hasSingleVisibleWorker}');
   expect(pageSource).not.toContain("<Cpu className=\"h-4 w-4\" /> Live CLI Agents");
   expect(pageSource).not.toContain('{conversationWorkers.length > 0 && (');
@@ -362,8 +362,12 @@ test("failed runs surface recovery UI in the header and conversation feed", () =
 
 test("running conversations render an in-thread execution indicator and timeline activity rows", () => {
   expect(pageSource).toContain("function ConversationExecutionStatus");
+  expect(pageSource).toContain("function ConversationRunLog");
   expect(pageSource).toContain("function SupervisorActivityMessage");
   expect(pageSource).toContain('aria-label="Conversation event"');
+  expect(pageSource).toContain('aria-label="Run Log"');
+  expect(pageSource).toContain('Run Log');
+  expect(pageSource).toContain('runLogOpenByRunId');
   expect(pageSource).toContain("const isConversationThinking =");
   expect(pageSource).toContain("const liveThoughts = useMemo(() => {");
   expect(pageSource).toContain("const selectedRunExecutionEvents = useMemo(() => (");
@@ -391,6 +395,9 @@ test("running conversations render an in-thread execution indicator and timeline
   expect(pageSource).not.toContain("Last bridge error");
   expect(pageSource).toContain("{isImplementationConversation && showConversationExecution ? (");
   expect(pageSource).toContain("executionEventCount: conversationTimelineActivityCount");
+  expect(pageSource).toContain("executionEvents={selectedRunExecutionEvents}");
+  expect(pageSource).not.toContain('msg.role === "system"');
+  expect(pageSource).not.toContain('parseSpawnedWorkerMessage');
 });
 
 test("new conversations expose a mode picker and only existing direct runs lock the worker type", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, filterOptimisticallyDeletedRuns, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, summarizeExecutionEvent } from "@/app/home/utils";
-import type { EventStreamState, ExecutionEventRecord, RunRecord } from "@/app/home/types";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, classifyExecutionEvent, filterOptimisticallyDeletedRuns, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/app/home/utils";
+import type { EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord } from "@/app/home/types";
 
 function buildRun(overrides: Partial<RunRecord>): RunRecord {
   return {
@@ -21,6 +21,18 @@ function buildExecutionEvent(overrides: Partial<ExecutionEventRecord>): Executio
     runId: "run-1",
     eventType: "worker_prompted",
     details: JSON.stringify({ summary: "Sent follow-up to worker-1" }),
+    createdAt: "2026-04-27T00:00:10.000Z",
+    ...overrides,
+  };
+}
+
+function buildMessage(overrides: Partial<MessageRecord>): MessageRecord {
+  return {
+    id: "message-1",
+    runId: "run-1",
+    role: "system",
+    kind: "supervisor_action",
+    content: "worker-1 is already busy; waiting before sending another prompt.",
     createdAt: "2026-04-27T00:00:10.000Z",
     ...overrides,
   };
@@ -177,6 +189,62 @@ describe("home utils", () => {
       "activity:event-read:Read docs/plan.md",
       "activity:event-blocked:Blocked duplicate worker spawn because worker-1 is active.",
     ]);
+  });
+
+  it("classifies routine supervisor and worker events away from the transcript", () => {
+    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_prompt_deferred" }))).toBe("dynamic_status");
+    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "supervisor_wait" }))).toBe("run_log");
+    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_prompted" }))).toBe("run_log");
+    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_output_changed" }))).toBe("run_log");
+    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_idle" }))).toBe("run_log");
+  });
+
+  it("classifies actionable events as inline feed signals with summaries", () => {
+    const actionableEvents = [
+      "worker_spawn_blocked",
+      "worker_permission_requested",
+      "worker_permission_approved",
+      "worker_permission_denied",
+      "run_validation_failed",
+      "worker_stuck",
+      "worker_session_missing",
+      "run_failed",
+    ];
+
+    for (const eventType of actionableEvents) {
+      const event = buildExecutionEvent({
+        eventType,
+        workerId: "worker-1",
+        details: JSON.stringify({ summary: `${eventType} summary`, reason: `${eventType} reason` }),
+      });
+      expect(classifyExecutionEvent(event)).toBe("inline_event");
+      expect(summarizeInlineEvent(event)).toBeTruthy();
+    }
+  });
+
+  it("hides legacy operational system messages from the main conversation", () => {
+    expect(shouldRenderMessageInMainConversation(buildMessage({
+      content: "worker-1 is already busy; waiting before sending another prompt.",
+    }))).toBe(false);
+    expect(shouldRenderMessageInMainConversation(buildMessage({
+      content: "Waiting 5s before the next check: Worker is actively checking dependencies.",
+    }))).toBe(false);
+    expect(shouldRenderMessageInMainConversation(buildMessage({
+      content: "Spawned worker. CLI: OpenCode | Worker: worker-1 | Purpose: implement.",
+    }))).toBe(false);
+    expect(shouldRenderMessageInMainConversation(buildMessage({
+      content: "Inspected repository with rg supervisor_wait.\n\nExit code: 0\nresult",
+    }))).toBe(false);
+    expect(shouldRenderMessageInMainConversation(buildMessage({
+      role: "user",
+      kind: "checkpoint",
+      content: "Please implement the spec.",
+    }))).toBe(true);
+    expect(shouldRenderMessageInMainConversation(buildMessage({
+      role: "supervisor",
+      kind: "completion",
+      content: "Implemented and verified.",
+    }))).toBe(true);
   });
 
   it("does not show recovery for a freshly created running conversation before execution events hydrate", () => {

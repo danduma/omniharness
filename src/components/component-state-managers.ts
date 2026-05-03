@@ -88,14 +88,22 @@ export const composerModelPickerManager = new class extends StateManager<{ open:
   closeAndReset = () => this.patch({ open: false, query: "" });
 }();
 
-export const conversationMainManager = new class extends StateManager<{ fullOutputOpenByMessageId: Record<string, boolean> }> {
+export const conversationMainManager = new class extends StateManager<{
+  fullOutputOpenByMessageId: Record<string, boolean>;
+  runLogOpenByRunId: Record<string, boolean>;
+}> {
   constructor() {
-    super({ fullOutputOpenByMessageId: {} });
+    super({ fullOutputOpenByMessageId: {}, runLogOpenByRunId: {} });
   }
 
   setFullOutputOpen = (messageId: string, open: boolean) => this.setKey("fullOutputOpenByMessageId", (current) => ({
     ...current,
     [messageId]: open,
+  }));
+
+  setRunLogOpen = (runId: string, open: boolean) => this.setKey("runLogOpenByRunId", (current) => ({
+    ...current,
+    [runId]: open,
   }));
 }();
 

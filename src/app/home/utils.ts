@@ -253,7 +253,13 @@ export type ConversationTimelineItem =
   | { type: "message"; id: string; createdAt: string; message: MessageRecord }
   | { type: "activity"; id: string; createdAt: string; event: ExecutionEventRecord; text: string };
 
-const HIDDEN_CONVERSATION_TIMELINE_EVENT_TYPES = new Set([
+export type ConversationSignalDestination =
+  | "main_conversation"
+  | "inline_event"
+  | "dynamic_status"
+  | "run_log";
+
+const RUN_LOG_ONLY_EVENT_TYPES = new Set([
   "auth.login_failed",
   "auth.login_rate_limited",
   "auth.login_succeeded",
@@ -280,6 +286,27 @@ const HIDDEN_CONVERSATION_TIMELINE_EVENT_TYPES = new Set([
   "worker_stopped",
 ]);
 
+const DYNAMIC_STATUS_EVENT_TYPES = new Set([
+  "worker_prompt_deferred",
+  "worker_spawned",
+]);
+
+const INLINE_CONVERSATION_EVENT_TYPES = new Set([
+  "clarification_requested",
+  "run_failed",
+  "run_validation_failed",
+  "supervisor_file_read",
+  "worker_cancelled",
+  "worker_error",
+  "worker_permission_approved",
+  "worker_permission_denied",
+  "worker_permission_requested",
+  "worker_prompt_failed",
+  "worker_session_missing",
+  "worker_spawn_blocked",
+  "worker_stuck",
+]);
+
 const MESSAGE_MIRRORED_CONVERSATION_TIMELINE_EVENT_TYPES = new Set([
   "clarification_requested",
   "run_completed",
@@ -289,6 +316,40 @@ const MESSAGE_MIRRORED_CONVERSATION_TIMELINE_EVENT_TYPES = new Set([
   "worker_spawn_blocked",
   "worker_spawned",
 ]);
+
+const USER_VISIBLE_MESSAGE_ROLES = new Set([
+  "user",
+  "supervisor",
+  "worker",
+]);
+
+export function classifyExecutionEvent(event: ExecutionEventRecord): ConversationSignalDestination {
+  if (INLINE_CONVERSATION_EVENT_TYPES.has(event.eventType)) {
+    return "inline_event";
+  }
+
+  if (DYNAMIC_STATUS_EVENT_TYPES.has(event.eventType)) {
+    return "dynamic_status";
+  }
+
+  if (RUN_LOG_ONLY_EVENT_TYPES.has(event.eventType)) {
+    return "run_log";
+  }
+
+  return "run_log";
+}
+
+export function shouldRenderMessageInMainConversation(message: MessageRecord) {
+  if (!USER_VISIBLE_MESSAGE_ROLES.has(message.role)) {
+    return false;
+  }
+
+  if (message.role === "worker" && !message.content.trim()) {
+    return false;
+  }
+
+  return true;
+}
 
 function timestampMs(value: string) {
   const time = new Date(value).getTime();
@@ -309,19 +370,11 @@ function hasNearbyMirroredMessage(event: ExecutionEventRecord, messages: Message
 }
 
 function shouldShowExecutionEventInTimeline(event: ExecutionEventRecord, messages: MessageRecord[]) {
-  if (HIDDEN_CONVERSATION_TIMELINE_EVENT_TYPES.has(event.eventType)) {
+  if (classifyExecutionEvent(event) !== "inline_event") {
     return false;
   }
 
   return !hasNearbyMirroredMessage(event, messages);
-}
-
-function isSupervisorWaitTimelineMessage(message: MessageRecord) {
-  return (
-    message.role === "system"
-    && message.kind === "supervisor_action"
-    && /^Waiting\s+\d+s\s+before the next check:/i.test(message.content.trim())
-  );
 }
 
 export function buildConversationTimelineItems({
@@ -332,7 +385,7 @@ export function buildConversationTimelineItems({
   executionEvents: ExecutionEventRecord[];
 }): ConversationTimelineItem[] {
   const items: ConversationTimelineItem[] = messages
-    .filter((message) => !isSupervisorWaitTimelineMessage(message))
+    .filter(shouldRenderMessageInMainConversation)
     .map((message) => ({
       type: "message",
       id: message.id,
@@ -345,7 +398,7 @@ export function buildConversationTimelineItems({
       continue;
     }
 
-    const text = summarizeExecutionEvent(event).trim();
+    const text = summarizeInlineEvent(event)?.trim() ?? "";
     if (!text) {
       continue;
     }
@@ -600,6 +653,14 @@ export function summarizeExecutionEvent(event: ExecutionEventRecord) {
   return summary || reason || error || event.eventType.replace(/_/g, " ");
 }
 
+export function summarizeInlineEvent(event: ExecutionEventRecord) {
+  if (classifyExecutionEvent(event) !== "inline_event") {
+    return null;
+  }
+
+  return summarizeExecutionEvent(event);
+}
+
 export function formatExecutionTimestamp(value: string) {
   return new Date(value).toLocaleTimeString([], {
     hour: "numeric",
@@ -762,17 +823,4 @@ export function buildConversationPath(selectedRunId: string | null, draftProject
 
   const query = params.toString();
   return query ? `/?${query}` : "/";
-}
-
-export function parseSpawnedWorkerMessage(content: string) {
-  if (!content.startsWith("Spawned worker.")) {
-    return null;
-  }
-
-  const parts = content.substring(15).split(" | ").map((part) => part.trim()).filter(Boolean);
-  return {
-    workerId: parts.find((part) => part.startsWith("Worker: "))?.substring(8) ?? null,
-    typeLabel: parts.find((part) => part.startsWith("CLI: "))?.substring(5) ?? null,
-    purpose: parts.find((part) => part.startsWith("Purpose: "))?.substring(9) ?? null,
-  };
 }
