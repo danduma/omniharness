@@ -2,7 +2,13 @@
 
 set -euo pipefail
 
-PORTS=(3050 3035)
+DEFAULT_PORTS=(3050 3035 7800)
+
+if [ "$#" -gt 0 ]; then
+  PORTS=("$@")
+else
+  PORTS=("${DEFAULT_PORTS[@]}")
+fi
 
 if ! command -v lsof >/dev/null 2>&1; then
   echo "lsof is required to find processes using ports ${PORTS[*]}" >&2
@@ -14,11 +20,29 @@ find_pids() {
   lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
 }
 
+cleanup_runtime_lock() {
+  local port="$1"
+  local lock_path=".omniharness/bridge.lock.json"
+
+  if [ "$port" != "7800" ] || [ ! -f "$lock_path" ]; then
+    return
+  fi
+
+  echo "Removing stale OmniHarness agent runtime lock at $lock_path..."
+  rm -f "$lock_path"
+}
+
 for PORT in "${PORTS[@]}"; do
+  if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
+    echo "Invalid port: $PORT" >&2
+    exit 1
+  fi
+
   PIDS="$(find_pids "$PORT")"
 
   if [ -z "$PIDS" ]; then
     echo "No process is listening on port $PORT."
+    cleanup_runtime_lock "$PORT"
     continue
   fi
 
@@ -47,5 +71,6 @@ for PORT in "${PORTS[@]}"; do
     exit 1
   fi
 
+  cleanup_runtime_lock "$PORT"
   echo "Port $PORT is free."
 done

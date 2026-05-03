@@ -188,9 +188,9 @@ describe("POST /api/conversations", () => {
   });
 
   it("returns a planning conversation before the first planner turn completes", async () => {
-    let resolveAsk: (value: { response: string; state: string }) => void = () => undefined;
-    mockAskAgent.mockImplementationOnce(() => new Promise((resolve) => {
-      resolveAsk = resolve;
+    const resolveAskRef: Array<(value: { response: string; state: string }) => void> = [];
+    mockAskAgent.mockImplementationOnce(() => new Promise<{ response: string; state: string }>((resolve) => {
+      resolveAskRef[0] = resolve;
     }));
     mockGetAgent.mockResolvedValueOnce({
       name: "worker-1",
@@ -238,7 +238,7 @@ describe("POST /api/conversations", () => {
       expect(["starting", "working"]).toContain(createdRun?.status);
       expect(initialMessages.filter((message) => message.role === "worker")).toHaveLength(0);
     } finally {
-      resolveAsk({ response: "Let's shape the plan.", state: "idle" });
+      resolveAskRef[0]?.({ response: "Let's shape the plan.", state: "idle" });
       await responsePromise.catch(() => null);
     }
 
@@ -311,9 +311,9 @@ describe("POST /api/conversations", () => {
   });
 
   it("returns a direct conversation before the first worker turn completes", async () => {
-    let resolveAsk: (value: { response: string; state: string }) => void = () => undefined;
-    mockAskAgent.mockImplementationOnce(() => new Promise((resolve) => {
-      resolveAsk = resolve;
+    const resolveAskRef: Array<(value: { response: string; state: string }) => void> = [];
+    mockAskAgent.mockImplementationOnce(() => new Promise<{ response: string; state: string }>((resolve) => {
+      resolveAskRef[0] = resolve;
     }));
     mockGetAgent.mockResolvedValueOnce({
       name: "worker-1",
@@ -363,7 +363,7 @@ describe("POST /api/conversations", () => {
       expect(createdWorkers).toHaveLength(1);
       expect(initialMessages.filter((message) => message.role === "worker")).toHaveLength(0);
     } finally {
-      resolveAsk({ response: "Ready for the next prompt.", state: "idle" });
+      resolveAskRef[0]?.({ response: "Ready for the next prompt.", state: "idle" });
       await responsePromise.catch(() => null);
     }
 

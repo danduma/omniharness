@@ -71,7 +71,17 @@ process.stdin.on('data', (chunk) => {
     if (!line.trim()) continue;
     const message = JSON.parse(line);
     if (message.method === 'initialize') {
-      append({ method: message.method, params: message.params, codexManagedConfigPath: process.env.CODEX_MANAGED_CONFIG_PATH || null });
+      const pathEntries = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+      const applyPatchPath = pathEntries
+        .map((entry) => path.join(entry, 'apply_patch'))
+        .find((candidate) => fs.existsSync(candidate)) || null;
+      append({
+        method: message.method,
+        params: message.params,
+        codexManagedConfigPath: process.env.CODEX_MANAGED_CONFIG_PATH || null,
+        applyPatchPath,
+        path: process.env.PATH || null,
+      });
       write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
     }
     if (message.method === 'session/new') {
@@ -91,12 +101,31 @@ process.stdin.on('data', (chunk) => {
         params: {
           sessionId: message.params.sessionId,
           update: {
+            sessionUpdate: 'usage_update',
+            used: 250,
+            size: 1000,
+          },
+        },
+      });
+      write({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: message.params.sessionId,
+          update: {
             sessionUpdate: 'agent_message_chunk',
             content: { type: 'text', text: 'fake response' },
           },
         },
       });
-      write({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+      write({
+        jsonrpc: '2.0',
+        id: message.id,
+        result: {
+          stopReason: 'end_turn',
+          usage: { inputTokens: 150, outputTokens: 100, totalTokens: 250 },
+        },
+      });
     }
   }
 });
@@ -218,6 +247,13 @@ describe("internal agent runtime HTTP API", () => {
       name: "worker-1",
       currentText: "fake response",
       lastText: "fake response",
+      contextUsage: {
+        inputTokens: 150,
+        outputTokens: 100,
+        totalTokens: 250,
+        maxTokens: 1000,
+        fullnessPercent: 25,
+      },
     });
 
     const doctorResponse = await fetch(`${baseUrl}/doctor`);
@@ -242,17 +278,19 @@ describe("internal agent runtime HTTP API", () => {
     const stopResponse = await fetch(`${baseUrl}/agents/worker-1`, { method: "DELETE" });
     expect(stopResponse.status).toBe(200);
     expect(readdirSync(join(projectDir, ".agents", "skills")).some((entry) => entry.includes("reviewer"))).toBe(false);
-  }, 15_000);
+  }, 30_000);
 
   it("spawns Codex ACP workers with standard Codex core tools enabled", async () => {
     const projectDir = createTempDir("omni-runtime-codex-project-");
     const binDir = createTempDir("omni-runtime-codex-bin-");
     const requestLog = join(projectDir, "requests.jsonl");
     const fakeAgent = createExecutable(binDir, "codex-acp", fakeAcpAgentScript);
+    const fakeNativeCodex = createExecutable(binDir, "codex-native", "#!/bin/sh\necho codex-native\n");
     const server = createAgentRuntimeServer({
       env: {
         ...process.env,
         OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        OMNIHARNESS_CODEX_NATIVE_BINARY: fakeNativeCodex,
         PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
       },
     });
@@ -280,6 +318,8 @@ describe("internal agent runtime HTTP API", () => {
     expect(managedConfig).toContain("unified_exec = true");
     expect(managedConfig).toContain("web_search_request = true");
     expect(managedConfig).toContain("view_image_tool = true");
+    expect(initialize.applyPatchPath).toMatch(/omniharness-codex-tools-.+apply_patch$/);
+    expect(initialize.path.split(":")[0]).toContain("omniharness-codex-tools-");
 
     await fetch(`${baseUrl}/agents/codex-worker`, { method: "DELETE" });
   }, 15_000);

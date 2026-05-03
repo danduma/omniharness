@@ -37,6 +37,60 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function finiteNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function updateContextUsage(record: AgentRecord, patch: Partial<NonNullable<AgentRecord["contextUsage"]>>) {
+  const existing = record.contextUsage ?? {};
+  const inputTokens = finiteNumber(patch.inputTokens) ?? existing.inputTokens ?? null;
+  const outputTokens = finiteNumber(patch.outputTokens) ?? existing.outputTokens ?? null;
+  const totalTokens = finiteNumber(patch.totalTokens) ?? existing.totalTokens ?? null;
+  const maxTokens = finiteNumber(patch.maxTokens) ?? existing.maxTokens ?? null;
+  const explicitFullnessPercent = finiteNumber(patch.fullnessPercent);
+  const fullnessPercent = explicitFullnessPercent ?? (
+    totalTokens !== null && maxTokens !== null && maxTokens > 0
+      ? Math.min(100, Math.max(0, (totalTokens / maxTokens) * 100))
+      : existing.fullnessPercent ?? null
+  );
+
+  record.contextUsage = {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    maxTokens,
+    fullnessPercent,
+  };
+}
+
+function applyPromptUsage(record: AgentRecord, usage: unknown) {
+  const payload = asRecord(usage);
+  if (!payload) {
+    return;
+  }
+
+  updateContextUsage(record, {
+    inputTokens: finiteNumber(payload.inputTokens),
+    outputTokens: finiteNumber(payload.outputTokens),
+    totalTokens: finiteNumber(payload.totalTokens),
+  });
+}
+
+function applySessionUsageUpdate(record: AgentRecord, update: Record<string, unknown>) {
+  const used = finiteNumber(update.used);
+  const size = finiteNumber(update.size);
+  if (used === null || size === null || size <= 0) {
+    return false;
+  }
+
+  updateContextUsage(record, {
+    totalTokens: used,
+    maxTokens: size,
+    fullnessPercent: Math.min(100, Math.max(0, (used / size) * 100)),
+  });
+  return true;
+}
+
 function expandHomePath(input: string, env: EnvLike = process.env) {
   if (input.startsWith("~/")) {
     return join(env.HOME || homedir(), input.slice(2));
@@ -295,7 +349,7 @@ function cleanupSkillLinks(linkPaths: string[]) {
   for (const linkPath of linkPaths) {
     try {
       if (lstatSync(linkPath).isSymbolicLink()) {
-        rmSync(linkPath, { force: true });
+        rmSync(linkPath, { force: true, recursive: true });
       }
     } catch {
       // Best-effort cleanup for worker-scoped temporary skill links.
@@ -467,6 +521,11 @@ class RuntimeClient implements acp.Client {
     }
     const update = params.update as any;
     record.updatedAt = nowIso();
+
+    if (update.sessionUpdate === "usage_update") {
+      applySessionUsageUpdate(record, update);
+      return;
+    }
 
     if (update.sessionUpdate === "agent_message_chunk") {
       const text = update.content?.type === "text" ? update.content.text : "";
@@ -785,6 +844,7 @@ export class AgentRuntimeManager {
         prompt: [{ type: "text", text: prompt }],
       } as any);
       record.stopReason = typeof (response as any)?.stopReason === "string" ? (response as any).stopReason : null;
+      applyPromptUsage(record, (response as any)?.usage);
       record.lastText = record.currentText;
       record.state = "idle";
       record.updatedAt = nowIso();

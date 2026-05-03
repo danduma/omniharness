@@ -97,7 +97,7 @@ function proxyRequest(request: IncomingMessage, response: ServerResponse) {
       ...withoutHopByHopHeaders(request.headers),
       host: target.host,
       "x-forwarded-host": request.headers.host,
-      "x-forwarded-proto": request.socket.encrypted ? "https" : "http",
+      "x-forwarded-proto": "encrypted" in request.socket && request.socket.encrypted ? "https" : "http",
     },
   };
 

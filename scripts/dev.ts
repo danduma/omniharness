@@ -1,8 +1,9 @@
-import { spawn, type ChildProcess } from "child_process";
+import { execFileSync, spawn, type ChildProcess } from "child_process";
 import fs from "fs";
 import path from "path";
 import process from "process";
 import { acquireBridgeLock, releaseBridgeLock, resolveBridgeLockPath } from "../src/server/dev/bridge-lock";
+import { describeBridgeToolingProblem } from "../src/server/dev/bridge-health";
 import { bridgeNeedsBuild, resolveBridgeDir, resolveBridgeUrl, shouldAutoStartBridge } from "../src/server/dev/managed-bridge";
 
 const repoRoot = process.cwd();
@@ -29,6 +30,14 @@ let webChild: ChildProcess | null = null;
 let proxyChild: ChildProcess | null = null;
 let shuttingDown = false;
 let ownsBridgeLock = false;
+
+function bridgePort() {
+  try {
+    return new URL(bridgeUrl).port || "80";
+  } catch {
+    return null;
+  }
+}
 
 function prefixStream(stream: NodeJS.ReadableStream | null, prefix: string) {
   if (!stream) {
@@ -80,11 +89,108 @@ async function runSetupCommand(command: string, args: string[], cwd: string, lab
 
 async function isBridgeReady() {
   try {
-    const response = await fetch(`${bridgeUrl}/agents`);
-    return response.ok;
+    const agentsResponse = await fetch(`${bridgeUrl}/agents`);
+    if (!agentsResponse.ok) {
+      return false;
+    }
+
+    const doctorResponse = await fetch(`${bridgeUrl}/doctor`);
+    if (!doctorResponse.ok) {
+      return false;
+    }
+
+    return describeBridgeToolingProblem(await doctorResponse.json()) === null;
   } catch {
     return false;
   }
+}
+
+async function describeReachableBridgeProblem() {
+  try {
+    const agentsResponse = await fetch(`${bridgeUrl}/agents`);
+    if (!agentsResponse.ok) {
+      return null;
+    }
+
+    const doctorResponse = await fetch(`${bridgeUrl}/doctor`);
+    if (!doctorResponse.ok) {
+      return `doctor returned HTTP ${doctorResponse.status}`;
+    }
+
+    return describeBridgeToolingProblem(await doctorResponse.json());
+  } catch {
+    return null;
+  }
+}
+
+function findBridgeListenerPids() {
+  const port = bridgePort();
+  if (!port) {
+    return [];
+  }
+
+  try {
+    const output = execFileSync("lsof", ["-tiTCP:" + port, "-sTCP:LISTEN"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1500,
+    });
+
+    return output
+      .split(/\r?\n/g)
+      .map((line) => Number.parseInt(line.trim(), 10))
+      .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
+  } catch {
+    return [];
+  }
+}
+
+async function waitForBridgeToStop(timeoutMs: number) {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    if (findBridgeListenerPids().length === 0) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+
+  return false;
+}
+
+async function stopStaleLocalBridge(reason: string) {
+  const pids = findBridgeListenerPids();
+  if (pids.length === 0) {
+    return false;
+  }
+
+  console.log(`[dev] Restarting stale local agent runtime at ${bridgeUrl}: ${reason}`);
+  for (const pid of pids) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // The process may have exited between lsof and kill.
+    }
+  }
+
+  if (await waitForBridgeToStop(5_000)) {
+    fs.rmSync(bridgeLockPath, { force: true });
+    return true;
+  }
+
+  for (const pid of pids) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // The process may have exited after SIGTERM.
+    }
+  }
+
+  const stopped = await waitForBridgeToStop(2_000);
+  if (stopped) {
+    fs.rmSync(bridgeLockPath, { force: true });
+  }
+  return stopped;
 }
 
 async function waitForBridgeReady(timeoutMs: number) {
@@ -104,6 +210,18 @@ async function ensureManagedBridge() {
   if (await isBridgeReady()) {
     console.log(`[dev] Reusing running agent runtime at ${bridgeUrl}`);
     return;
+  }
+
+  const reachableBridgeProblem = await describeReachableBridgeProblem();
+  if (reachableBridgeProblem) {
+    if (shouldAutoStartBridge(process.env, bridgeUrl) && await stopStaleLocalBridge(reachableBridgeProblem)) {
+      return ensureManagedBridge();
+    }
+
+    throw new Error(
+      `OmniHarness agent runtime is already running at ${bridgeUrl}, but it is missing required standard tools: ` +
+      `${reachableBridgeProblem}. Restart the agent runtime so new workers get the current Codex tool wiring.`,
+    );
   }
 
   if (!shouldAutoStartBridge(process.env, bridgeUrl)) {
