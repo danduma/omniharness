@@ -2,7 +2,7 @@ import { chatAttachmentKindFromMimeType, type PendingChatAttachment } from "@/li
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { StateManager, type StateUpdate } from "@/lib/state-manager";
 import { DEFAULT_ALLOWED_WORKER_TYPES } from "./constants";
-import type { ComposerWorkerOption, ConversationModeOption, EventStreamState, LlmProfileTab, MessageRecord, SettingsTab } from "./types";
+import type { ComposerWorkerOption, ConversationModeOption, EventStreamState, LlmProfileTab, MessageRecord, SettingsTab, WorkerSettingsTab } from "./types";
 import type { CreatedConversationSnapshot } from "./utils";
 
 export type ThemeMode = "day" | "night";
@@ -30,6 +30,7 @@ type HomeUiState = {
   showSettings: boolean;
   showPairDeviceDialog: boolean;
   activeSettingsTab: SettingsTab;
+  activeWorkerSettingsTab: WorkerSettingsTab;
   activeLlmProfileTab: LlmProfileTab;
   apiKeys: Record<string, string>;
   showFolderPicker: boolean;
@@ -73,6 +74,7 @@ const initialHomeUiState: HomeUiState = {
   showSettings: false,
   showPairDeviceDialog: false,
   activeSettingsTab: "llm",
+  activeWorkerSettingsTab: "availability",
   activeLlmProfileTab: "supervisor",
   apiKeys: {
     SUPERVISOR_LLM_PROVIDER: "gemini",
@@ -212,6 +214,7 @@ export const homeUiSetters = {
   setShowSettings: homeUiStateManager.createSetter("showSettings"),
   setShowPairDeviceDialog: homeUiStateManager.createSetter("showPairDeviceDialog"),
   setActiveSettingsTab: homeUiStateManager.createSetter("activeSettingsTab"),
+  setActiveWorkerSettingsTab: homeUiStateManager.createSetter("activeWorkerSettingsTab"),
   setActiveLlmProfileTab: homeUiStateManager.createSetter("activeLlmProfileTab"),
   setApiKeys: homeUiStateManager.createSetter("apiKeys"),
   setShowFolderPicker: homeUiStateManager.createSetter("showFolderPicker"),

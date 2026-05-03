@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { type AppErrorDescriptor, appErrorKey, requestJson } from "@/lib/app-errors";
 import { LLM_PROVIDER_OPTIONS, WORKER_OPTIONS } from "@/app/home/constants";
-import type { LlmFieldPrefix, LlmProfileTab, SettingsTab, WorkerAvailability, WorkerType } from "@/app/home/types";
+import type { LlmFieldPrefix, LlmProfileTab, SettingsTab, WorkerAvailability, WorkerSettingsTab, WorkerType } from "@/app/home/types";
 import { buildInlineError, parseBooleanSetting, parseWorkerType } from "@/app/home/utils";
 import { cn } from "@/lib/utils";
 import { ErrorNotice } from "./ErrorNotice";
@@ -204,6 +204,8 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void;
   activeSettingsTab: SettingsTab;
   setActiveSettingsTab: React.Dispatch<React.SetStateAction<SettingsTab>>;
+  activeWorkerSettingsTab: WorkerSettingsTab;
+  setActiveWorkerSettingsTab: React.Dispatch<React.SetStateAction<WorkerSettingsTab>>;
   activeLlmProfileTab: LlmProfileTab;
   setActiveLlmProfileTab: React.Dispatch<React.SetStateAction<LlmProfileTab>>;
   apiKeys: Record<string, string>;
@@ -231,6 +233,8 @@ export function SettingsDialog({
   onOpenChange,
   activeSettingsTab,
   setActiveSettingsTab,
+  activeWorkerSettingsTab,
+  setActiveWorkerSettingsTab,
   activeLlmProfileTab,
   setActiveLlmProfileTab,
   apiKeys,
@@ -246,15 +250,16 @@ export function SettingsDialog({
 }: SettingsDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[min(760px,calc(100dvh-2rem))] sm:max-h-[min(760px,calc(100dvh-3rem))] sm:max-w-xl flex-col overflow-hidden">
+        <DialogHeader className="shrink-0 pr-8">
           <DialogTitle>OmniHarness Configuration</DialogTitle>
           <DialogDescription>
             Configure primary and fallback supervisor LLM credentials for this workspace.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+          <div className="space-y-4">
           <div className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-1">
             <button
               type="button"
@@ -355,110 +360,144 @@ export function SettingsDialog({
               <div className="space-y-1">
                 <div className="text-sm font-semibold">Worker Agents</div>
                 <p className="text-xs text-muted-foreground">
-                  Only currently available bridge workers can be enabled for new conversations.
+                  Tune availability, default agent selection, and active-run behavior.
                 </p>
               </div>
 
-              <div className="space-y-2">
-                {settingsWorkers.map((worker) => {
-                  const isAvailable = worker.availability.status === "ok";
-                  const isChecked = configuredAllowedWorkerSet.has(worker.type);
-                  const availabilityTone =
-                    worker.availability.status === "ok"
-                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                      : worker.availability.status === "warning"
-                        ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
-                        : "bg-destructive/10 text-destructive";
-
-                  return (
-                    <label
-                      key={worker.type}
-                      className={cn(
-                        "flex items-start justify-between gap-3 rounded-lg border border-border/60 bg-background/70 p-3",
-                        !isAvailable && "opacity-70",
-                      )}
-                    >
-                      <div className="flex min-w-0 flex-1 items-start gap-3">
-                        <input
-                          type="checkbox"
-                          className="mt-0.5 h-4 w-4 rounded border-border"
-                          checked={isChecked}
-                          disabled={!isAvailable || (isChecked && configuredAllowedWorkerTypes.length === 1)}
-                          onChange={(event) => handleToggleAllowedWorker(worker.type, event.target.checked)}
-                        />
-                        <div className="min-w-0 space-y-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-sm font-medium break-words">{worker.label}</span>
-                            <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em]", availabilityTone)}>
-                              {worker.availability.status}
-                            </span>
-                          </div>
-                          <p className="text-xs break-words text-muted-foreground">
-                            {worker.availability.message || (isAvailable ? "Ready to spawn from the bridge." : "Unavailable right now.")}
-                          </p>
-                        </div>
-                      </div>
-                    </label>
-                  );
-                })}
+              <div className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-1">
+                {([
+                  ["availability", "Availability"],
+                  ["defaults", "Defaults"],
+                  ["runtime", "Runtime"],
+                ] as Array<[WorkerSettingsTab, string]>).map(([tab, label]) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    className={cn(
+                      "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                      activeWorkerSettingsTab === tab
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                    aria-pressed={activeWorkerSettingsTab === tab}
+                    onClick={() => setActiveWorkerSettingsTab(tab)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-muted-foreground" htmlFor="WORKER_DEFAULT_TYPE">
-                  Default Worker Agent
-                </label>
-                <select
-                  id="WORKER_DEFAULT_TYPE"
-                  className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
-                  value={parseWorkerType(apiKeys.WORKER_DEFAULT_TYPE) ?? configuredAllowedWorkerTypes[0] ?? "codex"}
-                  onChange={(event) => setApiKeys((current) => ({ ...current, WORKER_DEFAULT_TYPE: event.target.value }))}
-                >
-                  {WORKER_OPTIONS
-                    .filter((option) => configuredAllowedWorkerSet.has(option.value))
-                    .map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                  ))}
-                </select>
-              </div>
-
-              <label className="flex items-start justify-between gap-3 rounded-lg border border-border/60 bg-background/70 p-3" htmlFor="WORKER_YOLO_MODE">
-                <div className="min-w-0 space-y-1">
-                  <div className="text-sm font-medium">YOLO Worker Mode</div>
+              {activeWorkerSettingsTab === "availability" ? (
+                <div className="space-y-2">
                   <p className="text-xs text-muted-foreground">
-                    Default new workers to the runtime&apos;s most permissive mode so routine approvals rarely interrupt execution.
+                    Only currently available bridge workers can be enabled for new conversations.
                   </p>
-                </div>
-                <input
-                  id="WORKER_YOLO_MODE"
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 rounded border-border"
-                  checked={parseBooleanSetting(apiKeys.WORKER_YOLO_MODE, true)}
-                  onChange={(event) => setApiKeys((current) => ({
-                    ...current,
-                    WORKER_YOLO_MODE: event.target.checked ? "true" : "false",
-                  }))}
-                />
-              </label>
+                  {settingsWorkers.map((worker) => {
+                    const isAvailable = worker.availability.status === "ok";
+                    const isChecked = configuredAllowedWorkerSet.has(worker.type);
+                    const availabilityTone =
+                      worker.availability.status === "ok"
+                        ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                        : worker.availability.status === "warning"
+                          ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                          : "bg-destructive/10 text-destructive";
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-muted-foreground" htmlFor="BUSY_MESSAGE_ACTION">
-                  During Active Work
-                </label>
-                <select
-                  id="BUSY_MESSAGE_ACTION"
-                  className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
-                  value={apiKeys.BUSY_MESSAGE_ACTION === "steer" ? "steer" : "queue"}
-                  onChange={(event) => setApiKeys((current) => ({ ...current, BUSY_MESSAGE_ACTION: event.target.value }))}
-                >
-                  <option value="queue">Queue messages until the next safe turn</option>
-                  <option value="steer">Steer immediately, queue if the worker is busy</option>
-                </select>
-                <p className="text-[11px] text-muted-foreground">
-                  Controls what happens when you send text while a supervisor or worker is already running.
-                </p>
-              </div>
+                    return (
+                      <label
+                        key={worker.type}
+                        className={cn(
+                          "flex items-start justify-between gap-3 rounded-lg border border-border/60 bg-background/70 p-3",
+                          !isAvailable && "opacity-70",
+                        )}
+                      >
+                        <div className="flex min-w-0 flex-1 items-start gap-3">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5 h-4 w-4 rounded border-border"
+                            checked={isChecked}
+                            disabled={!isAvailable || (isChecked && configuredAllowedWorkerTypes.length === 1)}
+                            onChange={(event) => handleToggleAllowedWorker(worker.type, event.target.checked)}
+                          />
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-medium break-words">{worker.label}</span>
+                              <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em]", availabilityTone)}>
+                                {worker.availability.status}
+                              </span>
+                            </div>
+                            <p className="text-xs break-words text-muted-foreground">
+                              {worker.availability.message || (isAvailable ? "Ready to spawn from the bridge." : "Unavailable right now.")}
+                            </p>
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : null}
+
+              {activeWorkerSettingsTab === "defaults" ? (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground" htmlFor="WORKER_DEFAULT_TYPE">
+                    Default Worker Agent
+                  </label>
+                  <select
+                    id="WORKER_DEFAULT_TYPE"
+                    className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+                    value={parseWorkerType(apiKeys.WORKER_DEFAULT_TYPE) ?? configuredAllowedWorkerTypes[0] ?? "codex"}
+                    onChange={(event) => setApiKeys((current) => ({ ...current, WORKER_DEFAULT_TYPE: event.target.value }))}
+                  >
+                    {WORKER_OPTIONS
+                      .filter((option) => configuredAllowedWorkerSet.has(option.value))
+                      .map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              ) : null}
+
+              {activeWorkerSettingsTab === "runtime" ? (
+                <div className="space-y-3">
+                  <label className="flex items-start justify-between gap-3 rounded-lg border border-border/60 bg-background/70 p-3" htmlFor="WORKER_YOLO_MODE">
+                    <div className="min-w-0 space-y-1">
+                      <div className="text-sm font-medium">YOLO Worker Mode</div>
+                      <p className="text-xs text-muted-foreground">
+                        Default new workers to the runtime&apos;s most permissive mode so routine approvals rarely interrupt execution.
+                      </p>
+                    </div>
+                    <input
+                      id="WORKER_YOLO_MODE"
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4 rounded border-border"
+                      checked={parseBooleanSetting(apiKeys.WORKER_YOLO_MODE, true)}
+                      onChange={(event) => setApiKeys((current) => ({
+                        ...current,
+                        WORKER_YOLO_MODE: event.target.checked ? "true" : "false",
+                      }))}
+                    />
+                  </label>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-muted-foreground" htmlFor="BUSY_MESSAGE_ACTION">
+                      During Active Work
+                    </label>
+                    <select
+                      id="BUSY_MESSAGE_ACTION"
+                      className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+                      value={apiKeys.BUSY_MESSAGE_ACTION === "steer" ? "steer" : "queue"}
+                      onChange={(event) => setApiKeys((current) => ({ ...current, BUSY_MESSAGE_ACTION: event.target.value }))}
+                    >
+                      <option value="queue">Queue messages until the next safe turn</option>
+                      <option value="steer">Steer immediately, queue if the worker is busy</option>
+                    </select>
+                    <p className="text-[11px] text-muted-foreground">
+                      Controls what happens when you send text while a supervisor or worker is already running.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
 
               {workerCatalogQuery.isError ? (
                 <ErrorNotice
@@ -496,8 +535,9 @@ export function SettingsDialog({
             />
           ) : null}
         </div>
+        </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending}>Save</Button>
         </DialogFooter>

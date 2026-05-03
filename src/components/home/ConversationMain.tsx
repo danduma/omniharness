@@ -95,19 +95,15 @@ function inferWorkerIdFromMessage(message: MessageRecord) {
 
 function SupervisorActivityMessage({ item }: { item: Extract<ConversationTimelineItem, { type: "activity" }> }) {
   return (
-    <div className="group flex w-full flex-col text-sm">
-      <div className="mb-1.5 flex items-center gap-2 px-1">
-        <span className="text-xs font-semibold capitalize tracking-wider text-muted-foreground">System</span>
-        {item.event.workerId ? (
-          <span className="truncate text-[10px] font-medium text-muted-foreground/60">{item.event.workerId}</span>
-        ) : null}
+    <div className="group flex w-full flex-col px-1 text-sm" aria-label="Conversation event">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
+          {item.text}
+        </p>
         <span className="shrink-0 text-[10px] text-muted-foreground/50">
           {formatExecutionTimestamp(item.createdAt)}
         </span>
       </div>
-      <p className="px-1 text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
-        {item.text}
-      </p>
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { useRef } from "react";
 import type React from "react";
 import { ArrowUp, LoaderCircle, Plus, Square, X } from "lucide-react";
@@ -49,6 +50,7 @@ interface ConversationComposerProps {
   composerBehavior: BusyComposerBehavior;
   queuedMessages: QueuedConversationMessageRecord[];
   cancellingQueuedMessageIds: Set<string>;
+  onEditQueuedMessage: (message: QueuedConversationMessageRecord) => void;
   onCancelQueuedMessage: (messageId: string) => void;
   onSendConversationMessage: (content: string, busyAction?: BusyMessageAction) => void;
   onRunCommand: (content: string) => void;
@@ -91,6 +93,7 @@ export function ConversationComposer({
   composerBehavior,
   queuedMessages,
   cancellingQueuedMessageIds,
+  onEditQueuedMessage,
   onCancelQueuedMessage,
   onSendConversationMessage,
   onRunCommand,
@@ -157,6 +160,7 @@ export function ConversationComposer({
         messages={queuedMessages}
         cancellingMessageIds={cancellingQueuedMessageIds}
         themeMode={themeMode}
+        onEdit={onEditQueuedMessage}
         onCancel={onCancelQueuedMessage}
       />
       <div
@@ -268,9 +272,12 @@ export function ConversationComposer({
                 )}
               >
                 {attachment.kind === "image" && attachment.previewUrl ? (
-                  <img
+                  <Image
                     src={attachment.previewUrl}
                     alt=""
+                    width={40}
+                    height={40}
+                    unoptimized
                     className="h-10 w-10 rounded-xl object-cover"
                   />
                 ) : null}
@@ -368,18 +375,18 @@ export function ConversationComposer({
               aria-label={composerBehavior.ariaLabel}
               title={composerBehavior.ariaLabel}
               className={cn(
-                "h-9 w-9 shrink-0 rounded-[15.3px] transition-all sm:h-10 sm:w-10 sm:rounded-[17px]",
+                "h-[30.6px] w-[30.6px] shrink-0 rounded-full transition-all sm:h-[34px] sm:w-[34px]",
                 themeMode === "night"
                   ? "bg-foreground text-background hover:bg-foreground/90 disabled:bg-foreground/50"
                   : "bg-[#9d9d9d] text-white hover:bg-[#8b8b8b] disabled:bg-[#c9c9c9]",
               )}
             >
               {isStoppingConversation || isSendButtonBusy ? (
-                <LoaderCircle className="h-5 w-5 animate-spin" />
+                <LoaderCircle className="h-[17px] w-[17px] animate-spin" />
               ) : isStopButtonVisible ? (
-                <Square className="h-4 w-4 fill-current" />
+                <Square className="h-[13.6px] w-[13.6px] fill-current" />
               ) : (
-                <ArrowUp className="h-5 w-5" />
+                <ArrowUp className="h-[17px] w-[17px]" />
               )}
             </Button>
           </div>

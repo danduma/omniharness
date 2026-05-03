@@ -9,6 +9,7 @@ const pageSource = [
   "src/app/home/HomeApp.tsx",
   "src/app/home/HomeUiStateManager.ts",
   "src/app/home/constants.ts",
+  "src/app/home/types.ts",
   "src/app/home/useAppErrors.ts",
   "src/app/home/useConversationExecutionStatus.ts",
   "src/app/home/useHomeLifecycle.ts",
@@ -126,8 +127,10 @@ test("workers sidebar gives a single visible worker the full available window an
   expect(workersSidebarSource).toContain("fillAvailable={hasSingleVisibleWorker}");
   expect(workersSidebarSource).toContain('defaultOpen={activeTab === "active" || hasSingleVisibleWorker}');
   expect(workerCardSource).toContain("fillAvailable?: boolean;");
-  expect(workerCardSource).toContain('fillAvailable && "flex h-full min-h-0 flex-col"');
-  expect(workerCardSource).toContain('fillAvailable && "min-h-0 flex-1"');
+  expect(workerCardSource).toContain("const shouldFillAvailable = fillAvailable && open;");
+  expect(workerCardSource).toContain('shouldFillAvailable && "flex h-full min-h-0 flex-col"');
+  expect(workerCardSource).toContain('shouldFillAvailable && "min-h-0 flex-1"');
+  expect(workerCardSource).not.toContain('fillAvailable && "flex h-full min-h-0 flex-col"');
 });
 
 test("worker detail renders from streamed agent state instead of per-worker polling", () => {
@@ -230,7 +233,9 @@ test("settings render as a centered app modal with supervisor llm controls", () 
   expect(pageSource).toContain('import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox"');
   expect(pageSource).toContain('import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"');
   expect(pageSource).toContain('<Dialog open={open} onOpenChange={onOpenChange}>');
-  expect(pageSource).toContain('className="sm:max-w-xl"');
+  expect(pageSource).toContain('className="flex max-h-[min(760px,calc(100dvh-2rem))] sm:max-h-[min(760px,calc(100dvh-3rem))] sm:max-w-xl flex-col overflow-hidden"');
+  expect(pageSource).toContain('className="min-h-0 flex-1 overflow-y-auto pr-1"');
+  expect(pageSource).toContain('className="shrink-0"');
   expect(pageSource).toContain("Supervisor LLM");
   expect(pageSource).toContain("Fallback LLM");
   expect(pageSource).toContain("LLM Settings");
@@ -253,6 +258,15 @@ test("settings render as a centered app modal with supervisor llm controls", () 
   expect(pageSource).toContain("Search Gemini models");
   expect(pageSource).toContain("Gemini model ids load automatically from the API key and appear in a searchable dropdown.");
   expect(pageSource).toContain("Worker Agents");
+  expect(pageSource).toContain('activeWorkerSettingsTab: "availability"');
+  expect(pageSource).toContain('setActiveWorkerSettingsTab: homeUiStateManager.createSetter("activeWorkerSettingsTab")');
+  expect(pageSource).toContain('export type WorkerSettingsTab = "availability" | "defaults" | "runtime"');
+  expect(pageSource).toContain('activeWorkerSettingsTab === "availability"');
+  expect(pageSource).toContain('activeWorkerSettingsTab === "defaults"');
+  expect(pageSource).toContain('activeWorkerSettingsTab === "runtime"');
+  expect(pageSource).toContain("Availability");
+  expect(pageSource).toContain("Defaults");
+  expect(pageSource).toContain("Runtime");
   expect(pageSource).toContain("Default Worker Agent");
   expect(pageSource).toContain("YOLO Worker Mode");
   expect(pageSource).toContain("WORKER_YOLO_MODE");
@@ -313,10 +327,10 @@ test("send button swaps to a spinner while a command submission is pending", () 
   expect(pageSource).toContain("const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;");
   expect(pageSource).toContain('disabled={isSubmitButtonDisabled}');
   expect(pageSource).toContain('{isStoppingConversation || isSendButtonBusy ? (');
-  expect(pageSource).toContain('<LoaderCircle className="h-5 w-5 animate-spin" />');
+  expect(pageSource).toContain('<LoaderCircle className="h-[17px] w-[17px] animate-spin" />');
   expect(pageSource).toContain(') : isStopButtonVisible ? (');
-  expect(pageSource).toContain('<Square className="h-4 w-4 fill-current" />');
-  expect(pageSource).toContain('<ArrowUp className="h-5 w-5" />');
+  expect(pageSource).toContain('<Square className="h-[13.6px] w-[13.6px] fill-current" />');
+  expect(pageSource).toContain('<ArrowUp className="h-[17px] w-[17px]" />');
 });
 
 test("project groups show a loading indicator while conversations are still hydrating", () => {
@@ -349,10 +363,12 @@ test("failed runs surface recovery UI in the header and conversation feed", () =
 test("running conversations render an in-thread execution indicator and timeline activity rows", () => {
   expect(pageSource).toContain("function ConversationExecutionStatus");
   expect(pageSource).toContain("function SupervisorActivityMessage");
+  expect(pageSource).toContain('aria-label="Conversation event"');
   expect(pageSource).toContain("const isConversationThinking =");
   expect(pageSource).toContain("const liveThoughts = useMemo(() => {");
   expect(pageSource).toContain("const selectedRunExecutionEvents = useMemo(() => (");
   expect(pageSource).toContain("const conversationTimelineItems = useMemo(() => buildConversationTimelineItems");
+  expect(pageSource).toContain('const conversationTimelineActivityCount = conversationTimelineItems.filter((item) => item.type === "activity").length;');
   expect(pageSource).toContain("const liveExecutionStatus =");
   expect(pageSource).toContain("buildConversationTimelineItems");
   expect(pageSource).toContain('item.type === "activity"');
@@ -362,6 +378,7 @@ test("running conversations render an in-thread execution indicator and timeline
   expect(pageSource).toContain("activity");
   expect(pageSource).toContain("Awaiting permission");
   expect(pageSource).toContain("Waiting ");
+  expect(pageSource).not.toContain(">System</span>");
   expect(pageSource).not.toContain("Show supervisor activity");
   expect(pageSource).not.toContain("Hide supervisor activity");
   expect(pageSource).not.toContain("SupervisorActivityPresentationManager");
@@ -373,6 +390,7 @@ test("running conversations render an in-thread execution indicator and timeline
   expect(pageSource).not.toContain("Current status");
   expect(pageSource).not.toContain("Last bridge error");
   expect(pageSource).toContain("{isImplementationConversation && showConversationExecution ? (");
+  expect(pageSource).toContain("executionEventCount: conversationTimelineActivityCount");
 });
 
 test("new conversations expose a mode picker and only existing direct runs lock the worker type", () => {

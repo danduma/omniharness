@@ -21,7 +21,7 @@ import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } f
 import { COMPOSER_WORKER_OPTIONS, WORKER_OPTIONS } from "./constants";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
 import { parseBusyMessageAction, resolveBusyComposerBehavior, type BusyMessageAction } from "./busy-message-behavior";
-import type { AgentSnapshot, AuthSessionResponse, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, RunRecord, SettingsResponse, SidebarGroup, SidebarRun, SupervisorInterventionRecord, WorkerCatalogResponse, WorkerType } from "./types";
+import type { AgentSnapshot, AuthSessionResponse, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, QueuedConversationMessageRecord, RunRecord, SettingsResponse, SidebarGroup, SidebarRun, SupervisorInterventionRecord, WorkerCatalogResponse, WorkerType } from "./types";
 import { EventStreamStateManager } from "./EventStreamStateManager";
 import { homeUiSetters, homeUiStateManager, INITIAL_EVENT_STREAM_STATE } from "./HomeUiStateManager";
 import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
@@ -81,6 +81,7 @@ export function HomeApp() {
     showSettings,
     showPairDeviceDialog,
     activeSettingsTab,
+    activeWorkerSettingsTab,
     activeLlmProfileTab,
     apiKeys,
     showFolderPicker,
@@ -123,6 +124,7 @@ export function HomeApp() {
     setShowSettings,
     setShowPairDeviceDialog,
     setActiveSettingsTab,
+    setActiveWorkerSettingsTab,
     setActiveLlmProfileTab,
     setApiKeys,
     setShowFolderPicker,
@@ -1073,6 +1075,7 @@ export function HomeApp() {
     messages: visibleMessages,
     executionEvents: selectedRunExecutionEvents,
   }), [selectedRunExecutionEvents, visibleMessages]);
+  const conversationTimelineActivityCount = conversationTimelineItems.filter((item) => item.type === "activity").length;
   const directConversationMessages = useMemo(() => {
     if (!isDirectConversation) {
       return [] as MessageRecord[];
@@ -1123,11 +1126,16 @@ export function HomeApp() {
     liveThoughts,
   });
 
-  const isConversationThinking = selectedRun?.status === "running" || conversationAgents.some((agent) => agent.state === "working");
+  const isConversationThinking = hasActiveWorker
+    || Boolean(pendingPermissionAgent)
+    || hasStuckWorker
+    || showRecoverableRunningState
+    || selectedRun?.status === "awaiting_user"
+    || selectedRun?.status === "failed";
   const showConversationExecution = shouldShowConversationExecutionPanel({
     selectedRun,
     isConversationThinking,
-    executionEventCount: selectedRunExecutionEvents.length,
+    executionEventCount: conversationTimelineActivityCount,
   });
 
   const currentProjectScope = resolveProjectScope({
@@ -1203,6 +1211,18 @@ export function HomeApp() {
 
   const handleRemoveAttachment = (attachmentId: string) => {
     removeAttachment(attachmentId);
+  };
+
+  const handleEditQueuedMessage = (message: QueuedConversationMessageRecord) => {
+    const nextCommand = message.content;
+    setCommand(nextCommand);
+    setCommandCursor(nextCommand.length);
+    clearAttachments();
+    cancelQueuedMessage.mutate({ runId: message.runId, messageId: message.id });
+    requestAnimationFrame(() => {
+      commandInputRef.current?.focus();
+      commandInputRef.current?.setSelectionRange(nextCommand.length, nextCommand.length);
+    });
   };
 
   const handleToggleAllowedWorker = (workerType: WorkerType, checked: boolean) => {
@@ -1345,6 +1365,7 @@ export function HomeApp() {
           composerBehavior={composerBehavior}
           queuedMessages={busyMessageQueueState.queuedMessages}
           cancellingQueuedMessageIds={busyMessageQueueState.cancellingMessageIds}
+          onEditQueuedMessage={handleEditQueuedMessage}
           onCancelQueuedMessage={(messageId) => {
             if (selectedRunId) {
               cancelQueuedMessage.mutate({ runId: selectedRunId, messageId });
@@ -1538,6 +1559,8 @@ export function HomeApp() {
         onOpenChange={setShowSettings}
         activeSettingsTab={activeSettingsTab}
         setActiveSettingsTab={setActiveSettingsTab}
+        activeWorkerSettingsTab={activeWorkerSettingsTab}
+        setActiveWorkerSettingsTab={setActiveWorkerSettingsTab}
         activeLlmProfileTab={activeLlmProfileTab}
         setActiveLlmProfileTab={setActiveLlmProfileTab}
         apiKeys={apiKeys}

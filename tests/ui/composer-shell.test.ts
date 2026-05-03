@@ -112,7 +112,7 @@ test("composer exposes native file input, paste ingestion, previews, and removal
 test("composer control row stays on one compact mobile row", () => {
   expect(pageSource).toContain('className="mt-1 flex items-center gap-1 sm:gap-2"');
   expect(pageSource).toContain('className="ml-auto flex min-w-0 items-center justify-end gap-1 sm:gap-2"');
-  expect(pageSource).toContain('"h-9 w-9 shrink-0 rounded-full transition-all sm:h-10 sm:w-10"');
+  expect(pageSource).toContain('"h-[30.6px] w-[30.6px] shrink-0 rounded-full transition-all sm:h-[34px] sm:w-[34px]"');
   expect(pageSource).not.toContain('className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2"');
   expect(pageSource).not.toContain('className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1 sm:gap-2"');
   expect(pageSource).not.toContain('className="ml-auto flex flex-wrap items-center gap-2"');
@@ -125,15 +125,17 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain("const pendingConversationWorkerId = !isImplementationConversation && sendConversationMessage.isPending");
   expect(pageSource).toContain("const stoppableConversationWorkerId = busyConversationWorkerId ?? pendingConversationWorkerId");
   expect(pageSource).toContain("const isConversationStoppable = isSupervisorRunning || Boolean(stoppableConversationWorkerId)");
-  expect(pageSource).toContain("const isStopButtonVisible = isConversationStoppable");
+  expect(pageSource).toContain('const isStopButtonVisible = composerBehavior.buttonKind === "stop"');
+  expect(pageSource).toContain("resolveBusyComposerBehavior({");
   expect(pageSource).toContain("disabled={isSubmitButtonDisabled}");
-  expect(pageSource).toContain('aria-label={isStopButtonVisible ? "Stop conversation" : "Send message"}');
-  expect(pageSource).toContain("if (!command.trim() && !hasAttachments && isConversationStoppable) {");
+  expect(pageSource).toContain("aria-label={composerBehavior.ariaLabel}");
+  expect(pageSource).toContain('composerBehavior.submitAction === "stop"');
   expect(pageSource).toContain("stopSupervisor.mutate({ runId: selectedRunId })");
   expect(pageSource).toContain("stopWorker.mutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId })");
   expect(pageSource).toContain("if (selectedRunId) {");
-  expect(pageSource).toContain("sendConversationMessage.mutate({ runId: selectedRunId, content: command, attachments })");
-  expect(pageSource).toContain("<Square className=\"h-4 w-4 fill-current\" />");
+  expect(pageSource).toContain("sendConversationMessage.mutate({ runId: selectedRunId, content, attachments, busyAction })");
+  expect(pageSource).toContain('composerBehavior.submitAction === "send_queue"');
+  expect(pageSource).toContain("<Square className=\"h-[13.6px] w-[13.6px] fill-current\" />");
 });
 
 test("worker cards expose individual stop controls", () => {

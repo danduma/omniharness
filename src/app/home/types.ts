@@ -177,6 +177,7 @@ export type EventStreamState = {
   frontendErrors?: AppErrorDescriptor[];
 };
 export type SettingsTab = "llm" | "workers";
+export type WorkerSettingsTab = "availability" | "defaults" | "runtime";
 
 export type SidebarRun = { id: string; title: string; path: string; status: string; createdAt: string };
 export type SidebarGroup = { path: string; name: string; runs: SidebarRun[] };

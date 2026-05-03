@@ -184,6 +184,7 @@ export function WorkerCard({
   const stateLabel = formatWorkerStateLabel(agent.state);
   const showPromptPreview = promptPreviewText.length > 0;
   const showStopWorker = Boolean(onStopWorker) && isWorkerActiveStatus(agent.state);
+  const shouldFillAvailable = fillAvailable && open;
 
   const displayId = useMemo(() => {
     const normalizedTitle = workerTitle?.trim();
@@ -200,10 +201,10 @@ export function WorkerCard({
   }, [workerId, workerNumber, workerTitle]);
 
   return (
-    <Collapsible open={open} onOpenChange={(nextOpen) => workerCardManager.setOpen(workerId, nextOpen)} className={cn(fillAvailable && "flex h-full min-h-0 flex-col")}>
+    <Collapsible open={open} onOpenChange={(nextOpen) => workerCardManager.setOpen(workerId, nextOpen)} className={cn(shouldFillAvailable && "flex h-full min-h-0 flex-col")}>
       <div className={cn(
         "overflow-hidden rounded-[18px] border border-white/8 bg-[#111315] text-zinc-100 shadow-[0_20px_60px_rgba(0,0,0,0.24)]",
-        fillAvailable && "flex min-h-0 flex-1 flex-col",
+        shouldFillAvailable && "flex min-h-0 flex-1 flex-col",
       )}>
         <div className="shrink-0 border-b border-white/8 bg-[#111315] px-4 py-4">
           <div className="flex items-start justify-between gap-4">
@@ -276,14 +277,14 @@ export function WorkerCard({
             </div>
           </div>
         </div>
-        <CollapsibleContent className={cn(fillAvailable && "flex min-h-0 flex-1 flex-col")}>
+        <CollapsibleContent className={cn(shouldFillAvailable && "flex min-h-0 flex-1 flex-col")}>
           {agent.lastError ? (
             <div className="shrink-0 border-b border-white/8 bg-[#151012] px-4 py-3">
               <div className="text-[11px] text-zinc-500">Error</div>
               <div className="mt-1 break-all text-[12px] leading-[1.55] text-zinc-300">{agent.lastError}</div>
             </div>
           ) : null}
-          <div className={cn("relative w-full bg-[#0b0c0e]", terminalHeightClass, fillAvailable && "min-h-0 flex-1")}>
+          <div className={cn("relative w-full bg-[#0b0c0e]", terminalHeightClass, shouldFillAvailable && "min-h-0 flex-1")}>
             <Terminal agent={agent} userMessages={userMessages} />
           </div>
         </CollapsibleContent>

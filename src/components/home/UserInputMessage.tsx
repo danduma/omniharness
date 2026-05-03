@@ -1,3 +1,4 @@
+import Image from "next/image";
 import type React from "react";
 import { Copy } from "lucide-react";
 import { formatBytes, type ChatAttachment } from "@/lib/chat-attachments";
@@ -59,9 +60,12 @@ export function UserInputMessage({
                     className="group/attachment overflow-hidden rounded-xl border border-white/10 bg-black/15"
                     title={attachment.name}
                   >
-                    <img
+                    <Image
                       src={url}
                       alt={attachment.name}
+                      width={96}
+                      height={96}
+                      unoptimized
                       className="h-24 w-24 object-cover transition-transform group-hover/attachment:scale-105"
                     />
                   </a>
