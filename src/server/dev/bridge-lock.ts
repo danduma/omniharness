@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { execFileSync } from "child_process";
 
 export interface BridgeLockRecord {
   pid: number;
@@ -46,6 +47,28 @@ export function isProcessAlive(pid: number) {
   } catch (error) {
     const code = error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
     return code !== "ESRCH";
+  }
+}
+
+export function isBridgeStarterCommand(command: string) {
+  return /(^|\s)(\S+\/)?scripts\/(dev|agent-runtime)\.ts(\s|$)/.test(command);
+}
+
+export function isBridgeStarterProcessAlive(pid: number) {
+  if (!isProcessAlive(pid)) {
+    return false;
+  }
+
+  try {
+    const command = execFileSync("ps", ["-p", String(pid), "-o", "command="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1500,
+    }).trim();
+
+    return isBridgeStarterCommand(command);
+  } catch {
+    return false;
   }
 }
 

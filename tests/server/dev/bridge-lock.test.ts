@@ -4,6 +4,7 @@ import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   acquireBridgeLock,
+  isBridgeStarterCommand,
   readBridgeLock,
   releaseBridgeLock,
   resolveBridgeLockPath,
@@ -77,5 +78,12 @@ describe("bridge lock helpers", () => {
 
     releaseBridgeLock(lockPath, 33333);
     expect(readBridgeLock(lockPath)).toBeNull();
+  });
+
+  it("matches OmniHarness bridge starter commands", () => {
+    expect(isBridgeStarterCommand("node ./node_modules/.bin/tsx scripts/dev.ts")).toBe(true);
+    expect(isBridgeStarterCommand("node /repo/scripts/agent-runtime.ts")).toBe(true);
+    expect(isBridgeStarterCommand("/usr/libexec/mobileassetd")).toBe(false);
+    expect(isBridgeStarterCommand("node scripts/devtools.ts")).toBe(false);
   });
 });

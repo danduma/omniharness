@@ -2,7 +2,7 @@ import { execFileSync, spawn, type ChildProcess } from "child_process";
 import fs from "fs";
 import path from "path";
 import process from "process";
-import { acquireBridgeLock, releaseBridgeLock, resolveBridgeLockPath } from "../src/server/dev/bridge-lock";
+import { acquireBridgeLock, isBridgeStarterProcessAlive, releaseBridgeLock, resolveBridgeLockPath } from "../src/server/dev/bridge-lock";
 import { describeBridgeToolingProblem } from "../src/server/dev/bridge-health";
 import { bridgeNeedsBuild, resolveBridgeDir, resolveBridgeUrl, shouldAutoStartBridge } from "../src/server/dev/managed-bridge";
 
@@ -238,11 +238,15 @@ async function ensureManagedBridge() {
     );
   }
 
-  const lockResult = acquireBridgeLock(bridgeLockPath, {
-    pid: process.pid,
-    bridgeUrl,
-    startedAt: Date.now(),
-  });
+  const lockResult = acquireBridgeLock(
+    bridgeLockPath,
+    {
+      pid: process.pid,
+      bridgeUrl,
+      startedAt: Date.now(),
+    },
+    isBridgeStarterProcessAlive,
+  );
 
   if (lockResult.status === "locked") {
     console.log(

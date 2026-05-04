@@ -96,6 +96,9 @@ process.stdin.on('data', (chunk) => {
     }
     if (message.method === 'session/prompt') {
       append({ method: message.method, params: message.params });
+      if (process.env.FAKE_ACP_STDERR_ON_PROMPT) {
+        process.stderr.write(process.env.FAKE_ACP_STDERR_ON_PROMPT + '\\n');
+      }
       write({
         jsonrpc: '2.0',
         method: 'session/update',
@@ -327,6 +330,47 @@ describe("internal agent runtime HTTP API", () => {
     const stopResponse = await fetch(`${baseUrl}/agents/worker-1`, { method: "DELETE" });
     expect(stopResponse.status).toBe(200);
     expect(readdirSync(join(projectDir, ".agents", "skills")).some((entry) => entry.includes("reviewer"))).toBe(false);
+  }, 30_000);
+
+  it("keeps nonfatal agent stderr diagnostics out of lastError", async () => {
+    const projectDir = createTempDir("omni-runtime-stderr-project-");
+    const binDir = createTempDir("omni-runtime-stderr-bin-");
+    const fakeAgent = createExecutable(binDir, "fake-acp-agent", fakeAcpAgentScript);
+    const stderrLine = "\u001b[2m2026-05-04T10:55:13.261719Z\u001b[0m \u001b[31mERROR\u001b[0m \u001b[2mcodex_core::tools::router\u001b[0m\u001b[2m:\u001b[0m \u001b[3merror\u001b[0m\u001b[2m=\u001b[0mwrite_stdin failed: Unknown process id 66670";
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "stderr-worker",
+        env: { FAKE_ACP_STDERR_ON_PROMPT: stderrLine },
+      }),
+    });
+    expect(spawnResponse.status).toBe(201);
+
+    const askResponse = await fetch(`${baseUrl}/agents/stderr-worker/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "hello" }),
+    });
+    expect(askResponse.status).toBe(200);
+
+    const agentResponse = await fetch(`${baseUrl}/agents/stderr-worker`);
+    const agentJson = await agentResponse.json();
+    expect(agentJson.lastError).toBeNull();
+    expect(agentJson.stderrBuffer).toEqual(expect.arrayContaining([stderrLine]));
   }, 30_000);
 
   it("spawns Codex ACP workers with standard Codex core tools enabled", async () => {

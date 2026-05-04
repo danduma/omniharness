@@ -762,7 +762,6 @@ export class AgentRuntimeManager {
             pushStderrLine(stderrBuffer, line);
             if (recordRef.current) {
               recordRef.current.updatedAt = nowIso();
-              recordRef.current.lastError = line;
             }
           },
         });
