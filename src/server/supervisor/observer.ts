@@ -642,6 +642,13 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
             reason: formatErrorMessage(resumeError),
             sessionId: worker.bridgeSessionId,
           });
+          await db.update(workers).set({
+            status: "error",
+            bridgeSessionId: null,
+            bridgeSessionMode: null,
+            updatedAt: new Date(now),
+          }).where(eq(workers.id, worker.id));
+          notifyEventStreamSubscribers();
           stopRunObserver(runId);
           await persistRunFailure(runId, resumeError);
           return;

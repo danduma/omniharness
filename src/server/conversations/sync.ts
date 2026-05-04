@@ -7,6 +7,7 @@ import { persistRunFailure } from "@/server/runs/failures";
 import { isTerminalRunStatus } from "@/server/runs/status";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
+import { parseWorkerOutputEntries, serializeWorkerOutputEntries } from "@/server/workers/snapshots";
 import { drainQueuedWorkerMessages } from "./queued-messages";
 
 const MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC = "Worker is idle with no recorded output, and the bridge no longer has a live session for it.";
@@ -29,19 +30,10 @@ function hasPersistedWorkerOutput(worker: typeof workers.$inferSelect) {
     return true;
   }
 
-  try {
-    const entries = JSON.parse(worker.outputEntriesJson) as unknown;
-    return Array.isArray(entries)
-      && entries.some((entry) => {
-        if (!entry || typeof entry !== "object") {
-          return false;
-        }
-        const text = (entry as { text?: unknown }).text;
-        return typeof text === "string" && text.trim().length > 0;
-      });
-  } catch {
-    return false;
-  }
+  return parseWorkerOutputEntries(worker.outputEntriesJson).some((entry) => {
+    const text = (entry as { text?: unknown }).text;
+    return typeof text === "string" && text.trim().length > 0;
+  });
 }
 
 function resolveSyncedRunState(agent: ReturnType<typeof normalizeAgentRecord>) {
@@ -139,7 +131,7 @@ export async function syncConversationSessions(rawAgents: unknown[]) {
       await db.update(workers).set({
         status: implementationAgent.state,
         cwd: implementationAgent.cwd || implementationWorker.cwd,
-        outputEntriesJson: JSON.stringify(implementationAgent.outputEntries ?? []),
+        outputEntriesJson: serializeWorkerOutputEntries(implementationAgent.outputEntries),
         currentText: implementationAgent.currentText,
         lastText: implementationAgent.lastText,
         updatedAt: new Date(),
@@ -172,7 +164,7 @@ export async function syncConversationSessions(rawAgents: unknown[]) {
     await db.update(workers).set({
       status: agent.state,
       cwd: agent.cwd || worker.cwd,
-      outputEntriesJson: JSON.stringify(agent.outputEntries ?? []),
+      outputEntriesJson: serializeWorkerOutputEntries(agent.outputEntries),
       currentText: agent.currentText,
       lastText: agent.lastText,
       updatedAt: new Date(),

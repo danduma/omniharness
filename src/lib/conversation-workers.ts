@@ -126,11 +126,21 @@ export function mergeWorkerLiveStatus<T extends ConversationWorkerRecord>(
     }
 
     const hasLiveOutput = !agent.bridgeMissing && Boolean(agent.currentText?.trim());
-    if (!isWorkerActiveStatus(agent.state) && !hasLiveOutput) {
-      return worker;
+    const agentIsActive = isWorkerActiveStatus(agent.state);
+    if (!agentIsActive && !hasLiveOutput) {
+      if (!isWorkerActiveStatus(worker.status)) {
+        return worker;
+      }
+
+      const agentStatus = normalizeWorkerStatus(agent.state);
+      if (!agentStatus) {
+        return worker;
+      }
+
+      return agentStatus === worker.status ? worker : { ...worker, status: agentStatus };
     }
 
-    const status = isWorkerActiveStatus(agent.state) ? agent.state : "working";
+    const status = agentIsActive ? agent.state : "working";
     return status === worker.status ? worker : { ...worker, status };
   });
 }

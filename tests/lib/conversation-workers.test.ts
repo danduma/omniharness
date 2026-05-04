@@ -81,6 +81,28 @@ describe("conversation worker helpers", () => {
     });
   });
 
+  it("applies terminal live state to stale persisted active workers", () => {
+    const workers: ConversationWorkerRecord[] = [
+      { id: "worker-stale", runId: "run-1", type: "codex", status: "working" },
+    ];
+    const agents: ConversationWorkerAgent[] = [
+      {
+        name: "worker-stale",
+        state: "error",
+        lastError: "Spawn failed: Agent session did not include a session id.",
+        bridgeMissing: true,
+      },
+    ];
+
+    const merged = mergeWorkerLiveStatus(workers, agents);
+
+    expect(merged[0]).toEqual(expect.objectContaining({ id: "worker-stale", status: "error" }));
+    expect(buildWorkerLists(merged)).toEqual({
+      active: [],
+      finished: [merged[0]],
+    });
+  });
+
   it("prefers live text, then persisted output, then errors for collapsed worker previews", () => {
     const activeAgent: ConversationWorkerAgent = {
       name: "worker-live",

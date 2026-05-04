@@ -100,6 +100,10 @@ function isAgentActive(state: string | null | undefined) {
   return normalized === "starting" || normalized === "working" || normalized === "stuck";
 }
 
+function isFailedRun(run: PersistedRunRecord | null) {
+  return (run?.status ?? "").trim().toLowerCase() === "failed";
+}
+
 function shouldSurfaceBridgeLastError(agent: AgentRecord) {
   if (!agent.lastError) {
     return false;
@@ -179,12 +183,14 @@ export function buildLiveWorkerSnapshot(args: {
   const structuredEntriesText = outputEntriesText(persistedOutputEntries);
   const lastText = persistedLastText || outputLog || structuredEntriesText || missingBridgeDiagnostic;
   const displayText = outputLog || persistedLastText || structuredEntriesText || missingBridgeDiagnostic;
+  const persistedState = worker?.status || "starting";
+  const state = isFailedRun(run) && isAgentActive(persistedState) ? "error" : persistedState;
 
   return {
     name: worker?.id ?? "",
     type: worker?.type ?? "",
     cwd: worker?.cwd ?? "",
-    state: worker?.status || "starting",
+    state,
     sessionId: worker?.bridgeSessionId ?? null,
     requestedModel,
     effectiveModel: null,

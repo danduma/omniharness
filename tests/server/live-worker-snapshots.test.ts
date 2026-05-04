@@ -281,6 +281,55 @@ describe("buildLiveWorkerSnapshot", () => {
     }));
   });
 
+  it("does not present a failed run with a missing bridge as an active worker", () => {
+    const snapshot = buildLiveWorkerSnapshot({
+      agent: null,
+      worker: {
+        id: "worker-stale-active",
+        runId: "run-failed",
+        type: "codex",
+        status: "working",
+        cwd: "/repo",
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "Old in-flight text",
+        lastText: "Old in-flight text",
+        bridgeSessionId: "session-stale",
+        bridgeSessionMode: "full-access",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      run: {
+        id: "run-failed",
+        planId: "plan-failed",
+        mode: "implementation",
+        projectPath: "/repo",
+        title: "Failed stale worker",
+        preferredWorkerType: "codex",
+        preferredWorkerModel: "gpt-5.5",
+        preferredWorkerEffort: "high",
+        allowedWorkerTypes: "codex",
+        specPath: null,
+        artifactPlanPath: null,
+        plannerArtifactsJson: null,
+        parentRunId: null,
+        forkedFromMessageId: null,
+        status: "failed",
+        failedAt: new Date(),
+        lastError: "Spawn failed: Agent session did not include a session id.",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      bridgeError: new Error("Get agent failed: 404 not_found"),
+    });
+
+    expect(snapshot).toEqual(expect.objectContaining({
+      state: "error",
+      lastError: "Spawn failed: Agent session did not include a session id.",
+      bridgeMissing: true,
+    }));
+  });
+
   it("builds display text from persisted structured entries when the bridge is missing", () => {
     const snapshot = buildLiveWorkerSnapshot({
       agent: null,

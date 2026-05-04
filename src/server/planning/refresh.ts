@@ -4,19 +4,7 @@ import { messages, runs, workers } from "@/server/db/schema";
 import type { AgentRecord } from "@/server/bridge-client";
 import { collectPlannerArtifacts } from "@/server/planning/artifacts";
 import { derivePlanningStatus, type PlanningConversationStatus } from "@/server/planning/status";
-
-function parseOutputEntriesJson(value: string | null | undefined) {
-  if (!value?.trim()) {
-    return [] as Array<{ type?: string; text?: string }>;
-  }
-
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed) ? parsed as Array<{ type?: string; text?: string }> : [];
-  } catch {
-    return [] as Array<{ type?: string; text?: string }>;
-  }
-}
+import { parseWorkerOutputEntries } from "@/server/workers/snapshots";
 
 function collectTextParts(...parts: Array<string | null | undefined>) {
   return parts
@@ -45,7 +33,7 @@ export async function refreshPlanningArtifactsForRun(args: {
   const worker = args.worker ?? await db.select().from(workers).where(eq(workers.runId, args.run.id)).get();
   const snapshot = args.snapshot ?? null;
   const cwd = snapshot?.cwd || worker?.cwd || args.run.projectPath || process.cwd();
-  const persistedEntryText = parseOutputEntriesJson(worker?.outputEntriesJson)
+  const persistedEntryText = parseWorkerOutputEntries(worker?.outputEntriesJson)
     .filter(isPlannerMessageEntry)
     .map((entry) => entry.text)
     .filter((text): text is string => Boolean(text?.trim()));

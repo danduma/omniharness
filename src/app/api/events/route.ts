@@ -74,6 +74,7 @@ type EventPayloadOptions = {
 };
 
 type PersistedEventRecords = Awaited<ReturnType<typeof readPersistedEventRecords>>;
+type LiveWorkerOutputEntry = NonNullable<ReturnType<typeof buildLiveWorkerSnapshots>[number]["outputEntries"]>[number];
 
 const WORKER_INITIAL_PROMPT_PREVIEW_LIMIT = 1_000;
 const AGENT_TEXT_FIELD_LIMIT = 4_000;
@@ -193,7 +194,7 @@ function compactSupervisorIntervention(intervention: PersistedEventRecords["allS
   };
 }
 
-function isToolOutputEntry(entry: ReturnType<typeof buildLiveWorkerSnapshots>[number]["outputEntries"][number]) {
+function isToolOutputEntry(entry: LiveWorkerOutputEntry) {
   return entry.type === "tool_call" || entry.type === "tool_call_update" || entry.type === "permission";
 }
 
@@ -246,7 +247,7 @@ function compactLargeRawToolPayload(raw: Record<string, unknown>) {
   };
 }
 
-function compactAgentOutputEntryRaw(entry: ReturnType<typeof buildLiveWorkerSnapshots>[number]["outputEntries"][number]) {
+function compactAgentOutputEntryRaw(entry: LiveWorkerOutputEntry) {
   if (!isToolOutputEntry(entry) || typeof entry.raw !== "object" || entry.raw === null) {
     return undefined;
   }
