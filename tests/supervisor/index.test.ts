@@ -178,6 +178,55 @@ describe("Supervisor worker spawn flow", () => {
     expect(mockNotifyEventStreamSubscribers).toHaveBeenCalled();
   });
 
+  it("resolves relative worker spawn cwd under the run project path", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "omniharness-worker-cwd-"));
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      projectPath: workspace,
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-relative-cwd",
+      name: "worker_spawn",
+      args: {
+        type: "opencode",
+        cwd: ".",
+        title: "Main implementation",
+        prompt: "start implementing",
+        mode: "auto",
+        purpose: "finish the task",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: workspace,
+      name: `${runId}-worker-1`,
+    }));
+
+    const worker = await db.select().from(workers).where(eq(workers.runId, runId)).get();
+    expect(worker?.cwd).toBe(workspace);
+  });
+
   it("records supervisor waits without adding main conversation system messages", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

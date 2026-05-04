@@ -42,7 +42,7 @@ export function buildSupervisorTools(options?: { allowedWorkerTypes?: string[]; 
         (preferredWorkerType ? ` Prefer ${preferredWorkerType} when it is suitable.` : ""),
       inputSchema: z.object({
         type: z.string().describe(`External harness type. Valid values for this run: ${allowedWorkerTypes.join(", ")}.`),
-        cwd: z.string().describe("Working directory for the worker."),
+        cwd: z.string().describe("Working directory for the worker. Relative paths resolve under the run project directory."),
         mode: z.string().optional().describe("Worker permission mode such as auto, full-access, or read-only."),
         title: z.string().describe("Short user-visible title for this worker based on the exact task allocated to it."),
         purpose: z.string().optional().describe("Short purpose for why this worker exists."),

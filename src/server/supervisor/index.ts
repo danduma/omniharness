@@ -198,6 +198,14 @@ function resolveSupervisorInspectionCwd(cwd: string | null, projectPath: string 
   return requestedCwd;
 }
 
+function resolveSupervisorWorkerCwd(cwd: string, projectPath: string | null | undefined) {
+  if (!projectPath) {
+    return path.resolve(cwd);
+  }
+
+  return resolveSupervisorInspectionCwd(cwd, projectPath);
+}
+
 function validateSupervisorInspectArgs(command: string, args: string[]) {
   if (!SUPERVISOR_INSPECT_COMMANDS.has(command)) {
     throw new SupervisorProtocolError(`Unsupported inspection command "${command}".`);
@@ -573,7 +581,7 @@ export class Supervisor {
           const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
           const allowedWorkerTypes = parseAllowedWorkerTypes(run?.allowedWorkerTypes);
           const workerType = selectSpawnableWorkerType(requestedType, envParams, allowedWorkerTypes);
-          const cwd = asString(action.args.cwd, "cwd");
+          const cwd = resolveSupervisorWorkerCwd(asString(action.args.cwd, "cwd"), run?.projectPath);
           const title = asString(action.args.title, "title");
           const prompt = asString(action.args.prompt, "prompt");
           const mode = resolveWorkerSpawnMode(action.args.mode, yoloModeEnabled);
