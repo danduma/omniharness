@@ -1,5 +1,6 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, gt } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import path from "path";
 import * as bridge from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { executionEvents, runs, workers } from "@/server/db/schema";
@@ -13,6 +14,7 @@ import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 const OBSERVER_INTERVAL_MS = 5_000;
 const IDLE_THRESHOLD_MS = 30_000;
 const STUCK_THRESHOLD_MS = 90_000;
+const DUPLICATE_WORKER_EVENT_WINDOW_MS = 5 * 60_000;
 
 interface WorkerBridgeSnapshot {
   state: string;
@@ -49,6 +51,16 @@ export interface DerivedWorkerEvent {
 
 const observerIntervals = new Map<string, ReturnType<typeof setInterval>>();
 const observerState = new Map<string, WorkerObserverState>();
+const recentWorkerEventKeys = new Map<string, number>();
+const TYPE_DEDUPED_WORKER_EVENT_TYPES = new Set([
+  "worker_error",
+  "worker_idle",
+  "worker_stopped",
+  "worker_stuck",
+]);
+const EXACT_DEDUPED_WORKER_EVENT_TYPES = new Set([
+  "worker_output_changed",
+]);
 const FATAL_STDERR_PATTERNS = [
   /ACP write error:/i,
   /\bEPIPE\b/i,
@@ -58,6 +70,72 @@ const FATAL_STDERR_PATTERNS = [
 
 function stateKey(runId: string, workerId: string) {
   return `${runId}:${workerId}`;
+}
+
+function isPathInside(childPath: string, parentPath: string) {
+  const relative = path.relative(parentPath, childPath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function getWorkerCwdMismatch(args: {
+  projectPath: string | null | undefined;
+  workerCwd: string;
+}) {
+  if (!args.projectPath?.trim()) {
+    return null;
+  }
+
+  const projectPath = path.resolve(args.projectPath);
+  const workerCwd = args.workerCwd.trim();
+  if (!path.isAbsolute(workerCwd)) {
+    return {
+      projectPath,
+      workerCwd: args.workerCwd,
+      summary: `Worker launched outside run project directory: worker cwd "${args.workerCwd}" is not absolute; run project is "${projectPath}".`,
+    };
+  }
+
+  const resolvedWorkerCwd = path.resolve(workerCwd);
+  if (isPathInside(resolvedWorkerCwd, projectPath)) {
+    return null;
+  }
+
+  return {
+    projectPath,
+    workerCwd: resolvedWorkerCwd,
+    summary: `Worker launched outside run project directory: worker cwd "${resolvedWorkerCwd}" is outside run project "${projectPath}".`,
+  };
+}
+
+async function failRunForWorkerCwdMismatch(args: {
+  runId: string;
+  worker: typeof workers.$inferSelect;
+  mismatch: NonNullable<ReturnType<typeof getWorkerCwdMismatch>>;
+  now: number;
+}) {
+  let cancelError: string | null = null;
+  try {
+    await bridge.cancelAgent(args.worker.id);
+  } catch (error) {
+    cancelError = formatErrorMessage(error);
+  }
+
+  await insertExecutionEvent(args.runId, args.worker.id, "worker_environment_mismatch", {
+    summary: args.mismatch.summary,
+    projectPath: args.mismatch.projectPath,
+    workerCwd: args.worker.cwd,
+    resolvedWorkerCwd: args.mismatch.workerCwd,
+    cancelError,
+  });
+
+  await db.update(workers).set({
+    status: "error",
+    updatedAt: new Date(args.now),
+  }).where(eq(workers.id, args.worker.id));
+  notifyEventStreamSubscribers();
+
+  stopRunObserver(args.runId);
+  await persistRunFailure(args.runId, new Error(`${args.mismatch.summary} Worker: ${args.worker.id}. This is an OmniHarness runtime bug; stopping the run instead of retrying the worker.`));
 }
 
 function normalizeSnapshot(snapshot: WorkerBridgeSnapshot | bridge.AgentRecord) {
@@ -110,6 +188,18 @@ function progressSignature(snapshot: WorkerBridgeSnapshot) {
     pendingPermissions: snapshot.pendingPermissions ?? [],
     stopReason: snapshot.stopReason,
   });
+}
+
+function parseSnapshotFingerprint(fingerprint: string | undefined) {
+  if (!fingerprint) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(fingerprint) as { state?: unknown; stopReason?: unknown };
+  } catch {
+    return null;
+  }
 }
 
 function getFatalBridgeStderr(stderrBuffer: string[]) {
@@ -220,6 +310,7 @@ export function deriveWorkerEvents(args: {
 }): { nextState: WorkerObserverState; events: DerivedWorkerEvent[] } {
   const fingerprint = snapshotFingerprint(args.snapshot);
   const previous = args.previous;
+  const previousSnapshot = parseSnapshotFingerprint(previous?.fingerprint);
   const changed = !previous || previous.fingerprint !== fingerprint;
   const currentProgressSignature = progressSignature(args.snapshot);
   const currentPendingFingerprint = JSON.stringify(args.snapshot.pendingPermissions ?? []);
@@ -267,7 +358,7 @@ export function deriveWorkerEvents(args: {
     });
   }
 
-  if (!idleNotified && silenceMs >= IDLE_THRESHOLD_MS) {
+  if (!idleNotified && silenceMs >= IDLE_THRESHOLD_MS && silenceMs < STUCK_THRESHOLD_MS) {
     events.push({
       type: "worker_idle",
       summary: `${args.workerId} has been idle for ${Math.round(silenceMs / 1000)} seconds`,
@@ -287,7 +378,7 @@ export function deriveWorkerEvents(args: {
     stuckNotified = true;
   }
 
-  if (args.snapshot.state === "error") {
+  if (args.snapshot.state === "error" && (!previous || previousSnapshot?.state !== "error")) {
     events.push({
       type: "worker_error",
       summary: `${args.workerId} reported an error state`,
@@ -296,7 +387,9 @@ export function deriveWorkerEvents(args: {
     });
   }
 
-  if (args.snapshot.stopReason || args.snapshot.state === "stopped") {
+  const stoppedChanged = args.snapshot.state === "stopped" && previousSnapshot?.state !== "stopped";
+  const stopReasonChanged = Boolean(args.snapshot.stopReason) && args.snapshot.stopReason !== previousSnapshot?.stopReason;
+  if ((!previous && (args.snapshot.stopReason || args.snapshot.state === "stopped")) || stoppedChanged || stopReasonChanged) {
     events.push({
       type: "worker_stopped",
       summary: `${args.workerId} stopped${args.snapshot.stopReason ? `: ${args.snapshot.stopReason}` : ""}`,
@@ -324,16 +417,56 @@ async function insertExecutionEvent(
   eventType: string,
   details: Record<string, unknown>,
 ) {
+  const serializedDetails = JSON.stringify(details);
+  const dedupeScope = TYPE_DEDUPED_WORKER_EVENT_TYPES.has(eventType)
+    ? "type"
+    : EXACT_DEDUPED_WORKER_EVENT_TYPES.has(eventType)
+      ? "exact"
+      : null;
+
+  if (dedupeScope) {
+    const now = Date.now();
+    const eventKey = dedupeScope === "exact"
+      ? `${runId}:${workerId}:${eventType}:${serializedDetails}`
+      : `${runId}:${workerId}:${eventType}`;
+    const recentEventAt = recentWorkerEventKeys.get(eventKey);
+    if (recentEventAt && now - recentEventAt < DUPLICATE_WORKER_EVENT_WINDOW_MS) {
+      return false;
+    }
+    recentWorkerEventKeys.set(eventKey, now);
+
+    const duplicate = await db.select({ id: executionEvents.id }).from(executionEvents).where(
+      dedupeScope === "exact"
+        ? and(
+          eq(executionEvents.runId, runId),
+          eq(executionEvents.workerId, workerId),
+          eq(executionEvents.eventType, eventType),
+          eq(executionEvents.details, serializedDetails),
+          gt(executionEvents.createdAt, new Date(now - DUPLICATE_WORKER_EVENT_WINDOW_MS)),
+        )
+        : and(
+          eq(executionEvents.runId, runId),
+          eq(executionEvents.workerId, workerId),
+          eq(executionEvents.eventType, eventType),
+          gt(executionEvents.createdAt, new Date(now - DUPLICATE_WORKER_EVENT_WINDOW_MS)),
+        ),
+    ).get();
+    if (duplicate) {
+      return false;
+    }
+  }
+
   await db.insert(executionEvents).values({
     id: randomUUID(),
     runId,
     workerId,
     planItemId: null,
     eventType,
-    details: JSON.stringify(details),
+    details: serializedDetails,
     createdAt: new Date(),
   });
   notifyEventStreamSubscribers();
+  return true;
 }
 
 async function loadActiveRun(runId: string) {
@@ -349,6 +482,11 @@ function isMissingAgentError(error: unknown) {
     || message.includes("session not found");
 }
 
+function isAgentAlreadyExistsError(error: unknown, workerId: string) {
+  const message = formatErrorMessage(error).toLowerCase();
+  return message.includes("agent already exists") && message.includes(workerId.toLowerCase());
+}
+
 async function reviveWorkerFromSavedSession(args: {
   run: typeof runs.$inferSelect;
   worker: typeof workers.$inferSelect;
@@ -358,15 +496,23 @@ async function reviveWorkerFromSavedSession(args: {
     return null;
   }
 
-  const resumedWorker = await bridge.spawnAgent({
-    type: args.worker.type,
-    cwd: args.worker.cwd,
-    name: args.worker.id,
-    ...(args.worker.bridgeSessionMode ? { mode: args.worker.bridgeSessionMode } : {}),
-    ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
-    ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
-    resumeSessionId: args.worker.bridgeSessionId,
-  });
+  let resumedWorker: bridge.AgentRecord;
+  try {
+    resumedWorker = await bridge.spawnAgent({
+      type: args.worker.type,
+      cwd: args.worker.cwd,
+      name: args.worker.id,
+      ...(args.worker.bridgeSessionMode ? { mode: args.worker.bridgeSessionMode } : {}),
+      ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
+      ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
+      resumeSessionId: args.worker.bridgeSessionId,
+    });
+  } catch (error) {
+    if (!isAgentAlreadyExistsError(error, args.worker.id)) {
+      throw error;
+    }
+    resumedWorker = await bridge.getAgent(args.worker.id);
+  }
 
   await insertExecutionEvent(args.run.id, args.worker.id, "worker_session_resumed", {
     summary: `Resumed ${args.worker.id} from saved session`,
@@ -397,6 +543,20 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
   for (const worker of runWorkers) {
     if (worker.status === "cancelled") {
       continue;
+    }
+
+    const cwdMismatch = getWorkerCwdMismatch({
+      projectPath: run.projectPath,
+      workerCwd: worker.cwd,
+    });
+    if (cwdMismatch) {
+      await failRunForWorkerCwdMismatch({
+        runId,
+        worker,
+        mismatch: cwdMismatch,
+        now,
+      });
+      return;
     }
 
     let snapshot: WorkerBridgeSnapshot;
@@ -532,14 +692,14 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
       notifyEventStreamSubscribers();
 
       for (const event of filteredEvents) {
-        await insertExecutionEvent(runId, worker.id, event.type, {
+        const insertedEvent = await insertExecutionEvent(runId, worker.id, event.type, {
           summary: event.summary,
           state: snapshot.state,
           stopReason: snapshot.stopReason,
           currentText: snapshot.currentText.slice(-1000),
           lastText: snapshot.lastText.slice(-1000),
         });
-        if (event.shouldWakeSupervisor && latestRun.status !== "awaiting_user") {
+        if (insertedEvent && event.shouldWakeSupervisor && latestRun.status !== "awaiting_user") {
           wakeSupervisor(runId, 0);
         }
       }
@@ -582,6 +742,11 @@ export function stopRunObserver(runId: string) {
   for (const key of observerState.keys()) {
     if (key.startsWith(`${runId}:`)) {
       observerState.delete(key);
+    }
+  }
+  for (const key of recentWorkerEventKeys.keys()) {
+    if (key.startsWith(`${runId}:`)) {
+      recentWorkerEventKeys.delete(key);
     }
   }
 }

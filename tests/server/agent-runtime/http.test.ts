@@ -114,6 +114,34 @@ process.stdin.on('data', (chunk) => {
         params: {
           sessionId: message.params.sessionId,
           update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'terminal-1',
+            kind: 'execute',
+            status: 'in_progress',
+            title: 'Terminal',
+            rawInput: { command: 'pnpm test tests/api/agent-route.test.ts' },
+          },
+        },
+      });
+      write({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: message.params.sessionId,
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'terminal-1',
+            status: 'completed',
+            rawOutput: { formatted_output: 'PASS tests/api/agent-route.test.ts\\n' },
+          },
+        },
+      });
+      write({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: message.params.sessionId,
+          update: {
             sessionUpdate: 'agent_message_chunk',
             content: { type: 'text', text: 'fake response' },
           },
@@ -244,7 +272,8 @@ describe("internal agent runtime HTTP API", () => {
     });
 
     const agentResponse = await fetch(`${baseUrl}/agents/worker-1`);
-    await expect(agentResponse.json()).resolves.toMatchObject({
+    const agentJson = await agentResponse.json();
+    expect(agentJson).toMatchObject({
       name: "worker-1",
       currentText: "fake response",
       lastText: "fake response",
@@ -256,6 +285,25 @@ describe("internal agent runtime HTTP API", () => {
         fullnessPercent: 25,
       },
     });
+    expect(agentJson.outputEntries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "tool_call",
+        toolCallId: "terminal-1",
+        toolKind: "execute",
+        status: "in_progress",
+        raw: expect.objectContaining({
+          rawInput: { command: "pnpm test tests/api/agent-route.test.ts" },
+        }),
+      }),
+      expect.objectContaining({
+        type: "tool_call_update",
+        toolCallId: "terminal-1",
+        status: "completed",
+        raw: expect.objectContaining({
+          rawOutput: { formatted_output: "PASS tests/api/agent-route.test.ts\n" },
+        }),
+      }),
+    ]));
 
     const doctorResponse = await fetch(`${baseUrl}/doctor`);
     expect(doctorResponse.status).toBe(200);
@@ -332,6 +380,60 @@ describe("internal agent runtime HTTP API", () => {
     expect(initialize.path.split(":")[0]).toContain("omniharness-codex-tools-");
 
     await fetch(`${baseUrl}/agents/codex-worker`, { method: "DELETE" });
+  }, 15_000);
+
+  it("treats duplicate saved-session resume requests as idempotent", async () => {
+    const projectDir = createTempDir("omni-runtime-resume-project-");
+    const binDir = createTempDir("omni-runtime-resume-bin-");
+    const requestLog = join(projectDir, "requests.jsonl");
+    const fakeAgent = createExecutable(binDir, "fake-acp-agent", fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "worker-resume",
+        env: { FAKE_ACP_REQUEST_LOG: requestLog },
+      }),
+    });
+    expect(spawnResponse.status).toBe(201);
+
+    const resumeResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "worker-resume",
+        env: { FAKE_ACP_REQUEST_LOG: requestLog },
+        resumeSessionId: "session-1",
+      }),
+    });
+
+    expect(resumeResponse.status).toBe(201);
+    await expect(resumeResponse.json()).resolves.toMatchObject({
+      name: "worker-resume",
+      sessionId: "session-1",
+      state: "idle",
+    });
+
+    const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
+    expect(events.filter((event) => event.method === "session/new")).toHaveLength(1);
+
+    await fetch(`${baseUrl}/agents/worker-resume`, { method: "DELETE" });
   }, 15_000);
 
   it("advertises and serves ACP filesystem capabilities to workers", async () => {

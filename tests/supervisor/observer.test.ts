@@ -4,12 +4,14 @@ import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { executionEvents, messages, plans, runs, workerCounters, workers } from "@/server/db/schema";
 
-const { mockGetAgent } = vi.hoisted(() => ({
+const { mockCancelAgent, mockGetAgent } = vi.hoisted(() => ({
+  mockCancelAgent: vi.fn(),
   mockGetAgent: vi.fn(),
 }));
 
 vi.mock("@/server/bridge-client", () => ({
   getAgent: mockGetAgent,
+  cancelAgent: mockCancelAgent,
   approvePermission: vi.fn(),
   spawnAgent: vi.fn(),
 }));
@@ -17,10 +19,12 @@ vi.mock("@/server/bridge-client", () => ({
 import { deriveWorkerEvents, pollRunWorkers } from "@/server/supervisor/observer";
 import { approvePermission as mockApprovePermission } from "@/server/bridge-client";
 import { spawnAgent as mockSpawnAgent } from "@/server/bridge-client";
+import { deriveWorkerTerminalProcesses } from "@/lib/worker-terminal-processes";
 
 describe("deriveWorkerEvents", () => {
   beforeEach(async () => {
     mockGetAgent.mockReset();
+    mockCancelAgent.mockReset();
     vi.mocked(mockApprovePermission).mockReset();
     vi.mocked(mockSpawnAgent).mockReset();
     await db.delete(executionEvents);
@@ -54,6 +58,45 @@ describe("deriveWorkerEvents", () => {
         updatesActivity: true,
       }),
     ]);
+  });
+
+  it("does not emit stopped again when a worker remains stopped", () => {
+    const stoppedSnapshot = {
+      state: "stopped",
+      currentText: "done",
+      lastText: "done",
+      pendingPermissions: [],
+      stderrBuffer: [],
+      stopReason: "completed",
+    };
+    const { events } = deriveWorkerEvents({
+      workerId: "run-1-worker-3",
+      snapshot: stoppedSnapshot,
+      previous: {
+        fingerprint: JSON.stringify({
+          state: "stopped",
+          currentText: "done",
+          lastText: "done",
+          pendingPermissions: [],
+          stopReason: "completed",
+          stderrTail: [],
+        }),
+        lastChangedAt: 1_000,
+        lastMeaningfulActivityAt: 1_000,
+        progressSignature: JSON.stringify({
+          state: "stopped",
+          currentText: "done",
+          lastText: "done",
+          pendingPermissions: [],
+          stopReason: "completed",
+        }),
+        idleNotified: false,
+        stuckNotified: false,
+      },
+      now: 6_000,
+    });
+
+    expect(events.some((event) => event.type === "worker_stopped")).toBe(false);
   });
 
   it("wakes the supervisor when a worker has been idle for thirty seconds", () => {
@@ -284,6 +327,62 @@ describe("deriveWorkerEvents", () => {
     expect(failedRun?.status).toBe("failed");
     expect(failedRun?.lastError).toContain("agent runtime is not running");
     expect(runMessages.some((message) => message.content.includes("agent runtime is not running"))).toBe(true);
+  });
+
+  it("fails the run before polling when a worker was launched outside the run project", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const projectPath = "/tmp/omniharness-project";
+    const wakeSupervisor = vi.fn();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      projectPath,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "opencode",
+      status: "working",
+      cwd: ".",
+      outputLog: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await pollRunWorkers(runId, wakeSupervisor);
+
+    const failedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+    const runMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    const mismatchEvent = workerEvents.find((event) => event.eventType === "worker_environment_mismatch");
+
+    expect(mockGetAgent).not.toHaveBeenCalled();
+    expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
+    expect(wakeSupervisor).not.toHaveBeenCalled();
+    expect(persistedWorker?.status).toBe("error");
+    expect(failedRun?.status).toBe("failed");
+    expect(failedRun?.lastError).toContain("Worker launched outside run project directory");
+    expect(failedRun?.lastError).toContain(workerId);
+    expect(runMessages.some((message) => message.content.includes("Worker launched outside run project directory"))).toBe(true);
+    expect(mismatchEvent).toBeTruthy();
+    expect(mismatchEvent?.details).toContain(projectPath);
+    expect(mismatchEvent?.details).toContain("\"workerCwd\":\".\"");
   });
 
   it("keeps the run active when bridge status polling hits a retryable transport reset", async () => {
@@ -546,6 +645,72 @@ describe("deriveWorkerEvents", () => {
     expect(wakeSupervisor).toHaveBeenCalledWith(runId, 0);
   });
 
+  it("does not persist duplicate stuck events from overlapping observer polls", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+    const snapshot = {
+      state: "working",
+      currentText: "same output",
+      lastText: "same output",
+      pendingPermissions: [],
+      stderrBuffer: [],
+      stopReason: null,
+    };
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "opencode",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    mockGetAgent.mockResolvedValue(snapshot);
+    vi.spyOn(Date, "now").mockReturnValue(0);
+    await pollRunWorkers(runId, wakeSupervisor);
+
+    let releaseSnapshot!: () => void;
+    const snapshotGate = new Promise<void>((resolve) => {
+      releaseSnapshot = resolve;
+    });
+    mockGetAgent.mockImplementation(async () => {
+      await snapshotGate;
+      return snapshot;
+    });
+    vi.spyOn(Date, "now").mockReturnValue(90_000);
+
+    const firstPoll = pollRunWorkers(runId, wakeSupervisor);
+    const secondPoll = pollRunWorkers(runId, wakeSupervisor);
+    await Promise.resolve();
+    releaseSnapshot();
+    await Promise.all([firstPoll, secondPoll]);
+
+    const stuckEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+    expect(stuckEvents.filter((event) => event.eventType === "worker_stuck")).toHaveLength(1);
+    expect(wakeSupervisor).toHaveBeenCalledTimes(1);
+  });
+
   it("auto-approves safe pending permission requests using the strongest allow option", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -695,6 +860,71 @@ describe("deriveWorkerEvents", () => {
 
     expect(persistedWorker?.status).toBe("idle");
     expect(workerEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
+  });
+
+  it("reattaches to an existing agent when duplicate saved-session resume races", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const wakeSupervisor = vi.fn();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      bridgeSessionId: "session-race",
+      bridgeSessionMode: "full-access",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    mockGetAgent
+      .mockRejectedValueOnce(new Error("Get agent failed: 404 not_found"))
+      .mockResolvedValueOnce({
+        name: workerId,
+        type: "codex",
+        cwd: process.cwd(),
+        state: "idle",
+        sessionId: "session-race",
+        sessionMode: "full-access",
+        currentText: "",
+        lastText: "",
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      });
+    vi.mocked(mockSpawnAgent).mockRejectedValue(new Error(`Spawn failed: Agent already exists: ${workerId}`));
+
+    await pollRunWorkers(runId, wakeSupervisor);
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+
+    expect(persistedRun?.status).toBe("running");
+    expect(persistedRun?.lastError).toBeNull();
+    expect(persistedWorker?.status).toBe("idle");
+    expect(workerEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
+    expect(workerEvents.some((event) => event.eventType === "worker_resume_failed")).toBe(false);
   });
 
   it("marks a worker cancelled when its saved bridge session is gone instead of failing the run", async () => {
@@ -853,7 +1083,26 @@ describe("deriveWorkerEvents", () => {
           timestamp: new Date(0).toISOString(),
           toolCallId: "tool-1",
           toolKind: "execute",
+          status: "in_progress",
+          raw: {
+            kind: "execute",
+            rawInput: {
+              command: "pnpm test tests/api/agent-route.test.ts",
+            },
+          },
+        },
+        {
+          id: "tool-1-update",
+          type: "tool_call_update",
+          text: "Tool call tool-1 completed",
+          timestamp: new Date(1).toISOString(),
+          toolCallId: "tool-1",
           status: "completed",
+          raw: {
+            rawOutput: {
+              formatted_output: "PASS tests/api/agent-route.test.ts\n",
+            },
+          },
         },
       ],
       stderrBuffer: [],
@@ -865,12 +1114,26 @@ describe("deriveWorkerEvents", () => {
     const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     expect(persistedWorker?.currentText).toBe("Wrapping up verification");
     expect(persistedWorker?.lastText).toBe("Ran the focused test suite");
-    await expect(Promise.resolve(JSON.parse(persistedWorker?.outputEntriesJson ?? "[]"))).resolves.toEqual([
+    const persistedOutputEntries = JSON.parse(persistedWorker?.outputEntriesJson ?? "[]");
+    expect(persistedOutputEntries).toEqual([
       expect.objectContaining({
         id: "tool-1",
         type: "tool_call",
+        status: "in_progress",
+        raw: expect.objectContaining({
+          rawInput: { command: "pnpm test tests/api/agent-route.test.ts" },
+        }),
+      }),
+      expect.objectContaining({
+        id: "tool-1-update",
+        type: "tool_call_update",
         status: "completed",
       }),
     ]);
+    expect(deriveWorkerTerminalProcesses(persistedOutputEntries)[0]).toMatchObject({
+      command: "pnpm test tests/api/agent-route.test.ts",
+      status: "completed",
+      outputTail: "PASS tests/api/agent-route.test.ts",
+    });
   });
 });

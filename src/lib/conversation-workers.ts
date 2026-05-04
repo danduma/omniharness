@@ -72,10 +72,10 @@ export function getWorkerRuntimeLabel(worker: ConversationWorkerRecord, now = Da
     return null;
   }
 
-  const active = isWorkerActiveStatus(worker.status);
-  const endedAt = active ? now : parseTimestampMs(worker.updatedAt) ?? now;
+  const lastActivityAt = parseTimestampMs(worker.updatedAt);
+  const endedAt = lastActivityAt ?? now;
   const duration = formatHumanDuration(Math.max(0, endedAt - startedAt));
-  return active ? `Working for ${duration}` : `Worked ${duration}`;
+  return `Worked ${duration}`;
 }
 
 function summarizePreview(value: string) {

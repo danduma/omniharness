@@ -42,7 +42,13 @@ function finiteNumber(value: unknown) {
 }
 
 function updateContextUsage(record: AgentRecord, patch: Partial<NonNullable<AgentRecord["contextUsage"]>>) {
-  const existing = record.contextUsage ?? {};
+  const existing: NonNullable<AgentRecord["contextUsage"]> = record.contextUsage ?? {
+    inputTokens: null,
+    outputTokens: null,
+    totalTokens: null,
+    maxTokens: null,
+    fullnessPercent: null,
+  };
   const inputTokens = finiteNumber(patch.inputTokens) ?? existing.inputTokens ?? null;
   const outputTokens = finiteNumber(patch.outputTokens) ?? existing.outputTokens ?? null;
   const totalTokens = finiteNumber(patch.totalTokens) ?? existing.totalTokens ?? null;
@@ -112,6 +118,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
+function asNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
 export function normalizeMcpServers(value: unknown, field: string): acp.McpServer[] {
   if (value == null) {
     return [];
@@ -142,7 +152,7 @@ export function normalizeMcpServers(value: unknown, field: string): acp.McpServe
         command: record.command.trim(),
         args: asStringArray(record.args, `${field}[${index}].args`),
         env: normalizeNameValueList(record.env, `${field}[${index}].env`),
-        ...(record._meta != null ? { _meta: record._meta as any } : {}),
+        ...(record._meta != null ? { _meta: record._meta as Record<string, unknown> } : {}),
       };
     }
 
@@ -154,7 +164,7 @@ export function normalizeMcpServers(value: unknown, field: string): acp.McpServe
       name: record.name.trim(),
       url: record.url.trim(),
       headers: normalizeNameValueList(record.headers, `${field}[${index}].headers`),
-      ...(record._meta != null ? { _meta: record._meta as any } : {}),
+      ...(record._meta != null ? { _meta: record._meta as Record<string, unknown> } : {}),
     } as acp.McpServer;
   });
 }
@@ -237,15 +247,17 @@ function appendMessageChunk(record: AgentRecord, text: string, type: "message" |
   record.activeOutputEntryId = entry.id;
 }
 
-function summarizeToolCallUpdate(update: any) {
+function summarizeToolCallUpdate(update: Record<string, unknown>) {
   const contentSummary = Array.isArray(update.content)
     ? update.content
-        .map((item: any) => {
-          if (item?.type === "content" && item.content?.type === "text" && typeof item.content.text === "string") {
-            return item.content.text;
+        .map((item) => {
+          const record = asRecord(item);
+          const content = asRecord(record?.content);
+          if (record?.type === "content" && content?.type === "text" && typeof content.text === "string") {
+            return content.text;
           }
-          if (item?.type === "content" && item.content?.type) {
-            return `[${item.content.type}]`;
+          if (record?.type === "content" && content?.type) {
+            return `[${content.type}]`;
           }
           return "";
         })
@@ -253,7 +265,9 @@ function summarizeToolCallUpdate(update: any) {
         .join(" ")
     : "";
 
-  const base = `Tool call ${typeof update.toolCallId === "string" ? update.toolCallId : ""} ${typeof update.status === "string" ? update.status : "updated"}`.trim();
+  const toolCallId = typeof update.toolCallId === "string" ? update.toolCallId : "";
+  const status = typeof update.status === "string" ? update.status : "updated";
+  const base = `Tool call ${toolCallId} ${status}`.trim();
   return contentSummary ? `${base}: ${contentSummary}` : base;
 }
 
@@ -426,7 +440,8 @@ function getApiKeyValue(type: string, env: EnvLike) {
   return null;
 }
 
-function getApiKeyRequirement(_type: string) {
+function getApiKeyRequirement(type: string) {
+  void type;
   return { required: false, message: null as string | null };
 }
 
@@ -519,7 +534,10 @@ class RuntimeClient implements acp.Client {
     if (!record) {
       return;
     }
-    const update = params.update as any;
+    const update = asRecord(params.update);
+    if (!update) {
+      return;
+    }
     record.updatedAt = nowIso();
 
     if (update.sessionUpdate === "usage_update") {
@@ -528,7 +546,8 @@ class RuntimeClient implements acp.Client {
     }
 
     if (update.sessionUpdate === "agent_message_chunk") {
-      const text = update.content?.type === "text" ? update.content.text : "";
+      const content = asRecord(update.content);
+      const text = content?.type === "text" && typeof content.text === "string" ? content.text : "";
       if (text) {
         record.currentText += text;
         record.lastText = record.currentText;
@@ -539,7 +558,8 @@ class RuntimeClient implements acp.Client {
     }
 
     if (update.sessionUpdate === "agent_thought_chunk") {
-      const text = update.content?.type === "text" ? update.content.text : "";
+      const content = asRecord(update.content);
+      const text = content?.type === "text" && typeof content.text === "string" ? content.text : "";
       if (text) {
         appendMessageChunk(record, text, "thought");
       }
@@ -640,11 +660,21 @@ export class AgentRuntimeManager {
     if (!name) {
       throw new RuntimeHttpError(400, "Agent name is required");
     }
-    if (this.agents.has(name)) {
+
+    const cwd = input.cwd || process.cwd();
+    const existing = this.agents.get(name);
+    if (existing) {
+      if (
+        input.resumeSessionId
+        && existing.sessionId === input.resumeSessionId
+        && existing.type === type
+        && existing.cwd === cwd
+      ) {
+        return this.toStatus(existing);
+      }
       throw new RuntimeHttpError(400, `Agent already exists: ${name}`);
     }
 
-    const cwd = input.cwd || process.cwd();
     const requestedModel = input.model?.trim() || null;
     const requestedEffort = input.effort?.trim().toLowerCase() || null;
     const configuredAgent = this.options.config?.agents?.[type];
@@ -683,9 +713,9 @@ export class AgentRuntimeManager {
       Object.assign(finalEnv, applyCodexBridgeEnv(finalEnv, null));
     }
 
-    let record: AgentRecord | undefined;
+    const recordRef: { current?: AgentRecord } = {};
     const stderrBuffer: string[] = [];
-    const client = new RuntimeClient(() => record, (agentName, chunk) => this.publishChunk(agentName, chunk));
+    const client = new RuntimeClient(() => recordRef.current, (agentName, chunk) => this.publishChunk(agentName, chunk));
     const defaultCommand = input.command || configuredAgent?.command || type;
     const defaultArgsList = requestedArgs || configuredArgs || defaultArgs;
     const useCodexFallback = type === "codex" && !input.command && !configuredAgent?.command && !requestedArgs && !configuredArgs;
@@ -714,7 +744,7 @@ export class AgentRuntimeManager {
     let child: ChildProcessWithoutNullStreams | undefined;
     let connection: acp.ClientSideConnection | undefined;
     let init: unknown;
-    let session: any;
+    let session: unknown;
     let lastError: unknown;
 
     for (const candidate of candidates) {
@@ -730,9 +760,9 @@ export class AgentRuntimeManager {
           getClient: () => client,
           onStderrLine: (line) => {
             pushStderrLine(stderrBuffer, line);
-            if (record) {
-              record.updatedAt = nowIso();
-              record.lastError = line;
+            if (recordRef.current) {
+              recordRef.current.updatedAt = nowIso();
+              recordRef.current.lastError = line;
             }
           },
         });
@@ -752,30 +782,43 @@ export class AgentRuntimeManager {
     }
 
     const requestedMode = input.mode || configuredAgent?.mode;
-    const currentModeId = typeof session?.modes?.currentModeId === "string" ? session.modes.currentModeId : null;
+    const sessionRecord = asRecord(session);
+    const sessionId = asNonEmptyString(sessionRecord?.sessionId);
+    if (!sessionId) {
+      cleanupSkillLinks(managedSkillLinks);
+      throw new RuntimeHttpError(500, "Agent session did not include a session id.");
+    }
+
+    const modesRecord = asRecord(sessionRecord?.modes);
+    const currentModeId = asNonEmptyString(modesRecord?.currentModeId);
     if (connection && shouldSetRequestedMode(requestedMode, currentModeId)) {
       try {
-        await connection.setSessionMode({
-          sessionId: session.sessionId,
+        const setModeParams = {
+          sessionId,
           modeId: requestedMode,
-        } as any);
-      } catch (modeError: any) {
-        process.stderr.write(`[${name}] setSessionMode("${requestedMode}") failed: ${modeError?.message || modeError}\n`);
+        } as Parameters<acp.ClientSideConnection["setSessionMode"]>[0];
+        await connection.setSessionMode(setModeParams);
+      } catch (modeError: unknown) {
+        process.stderr.write(`[${name}] setSessionMode("${requestedMode}") failed: ${describeUnknownError(modeError)}\n`);
       }
     }
 
     const created = nowIso();
-    record = {
+    const initRecord = asRecord(init);
+    const protocolVersion = typeof initRecord?.protocolVersion === "number" || typeof initRecord?.protocolVersion === "string"
+      ? initRecord.protocolVersion
+      : null;
+    const record: AgentRecord = {
       name,
       type,
       cwd,
       child,
       connection,
-      sessionId: session.sessionId,
+      sessionId,
       state: "idle",
       lastError: null,
       stderrBuffer,
-      protocolVersion: typeof (init as any).protocolVersion === "number" || typeof (init as any).protocolVersion === "string" ? (init as any).protocolVersion : null,
+      protocolVersion,
       requestedModel,
       effectiveModel: requestedModel,
       requestedEffort,
@@ -793,6 +836,7 @@ export class AgentRuntimeManager {
       createdAt: created,
       updatedAt: created,
     };
+    recordRef.current = record;
     this.agents.set(name, record);
 
     child.on("exit", (code, signal) => {
@@ -844,12 +888,14 @@ export class AgentRuntimeManager {
     const unsubscribe = onChunk ? this.subscribeChunks(name, onChunk) : null;
 
     try {
-      const response = await record.connection.prompt({
+      const promptParams = {
         sessionId: record.sessionId,
         prompt: [{ type: "text", text: prompt }],
-      } as any);
-      record.stopReason = typeof (response as any)?.stopReason === "string" ? (response as any).stopReason : null;
-      applyPromptUsage(record, (response as any)?.usage);
+      } as Parameters<acp.ClientSideConnection["prompt"]>[0];
+      const response = await record.connection.prompt(promptParams);
+      const responseRecord = asRecord(response);
+      record.stopReason = typeof responseRecord?.stopReason === "string" ? responseRecord.stopReason : null;
+      applyPromptUsage(record, responseRecord?.usage);
       record.lastText = record.currentText;
       record.state = "idle";
       record.updatedAt = nowIso();
@@ -874,7 +920,8 @@ export class AgentRuntimeManager {
     if (!record) {
       throw new RuntimeHttpError(404, "not_found");
     }
-    await record.connection.cancel({ sessionId: record.sessionId } as any);
+    const cancelParams = { sessionId: record.sessionId } as Parameters<acp.ClientSideConnection["cancel"]>[0];
+    await record.connection.cancel(cancelParams);
     const cancelledPermissions = this.cancelAllPendingPermissions(record);
     record.updatedAt = nowIso();
     if (record.state === "working") {
@@ -888,7 +935,8 @@ export class AgentRuntimeManager {
     if (!record) {
       throw new RuntimeHttpError(404, "not_found");
     }
-    await record.connection.setSessionMode({ sessionId: record.sessionId, modeId: mode } as any);
+    const setModeParams = { sessionId: record.sessionId, modeId: mode } as Parameters<acp.ClientSideConnection["setSessionMode"]>[0];
+    await record.connection.setSessionMode(setModeParams);
     record.sessionMode = mode;
     record.updatedAt = nowIso();
     return { ok: true, name: record.name, mode };
@@ -956,26 +1004,27 @@ export class AgentRuntimeManager {
     );
     const connection = new acp.ClientSideConnection(input.getClient, stream);
     try {
-      const init = await Promise.race([
-        connection.initialize({
-          protocolVersion: acp.PROTOCOL_VERSION,
-          clientCapabilities: {
-            fs: {
-              readTextFile: true,
-              writeTextFile: true,
-            },
+      const initializeParams = {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {
+          fs: {
+            readTextFile: true,
+            writeTextFile: true,
           },
-        } as any),
+        },
+      } as Parameters<acp.ClientSideConnection["initialize"]>[0];
+      const init = await Promise.race([
+        connection.initialize(initializeParams),
         processFailure,
       ]);
       const sessionSetupParams = {
         cwd: input.cwd,
         mcpServers: input.mcpServers,
         ...(input.skillRoots.length > 0 ? { _meta: { "omniharness/skillRoots": input.skillRoots } } : {}),
-      };
+      } as Parameters<acp.ClientSideConnection["newSession"]>[0];
       const session = input.resumeSessionId
         ? await this.resumeOrLoadSession(connection, input.resumeSessionId, sessionSetupParams, processFailure)
-        : await Promise.race([connection.newSession(sessionSetupParams as any), processFailure]);
+        : await Promise.race([connection.newSession(sessionSetupParams), processFailure]);
       return { child, connection, init, session };
     } catch (error) {
       child.kill("SIGTERM");
@@ -986,17 +1035,22 @@ export class AgentRuntimeManager {
   private async resumeOrLoadSession(
     connection: acp.ClientSideConnection,
     sessionId: string,
-    sessionSetupParams: { cwd: string; mcpServers: acp.McpServer[]; _meta?: Record<string, unknown> },
+    sessionSetupParams: Parameters<acp.ClientSideConnection["newSession"]>[0],
     spawnError: Promise<never>,
   ) {
     try {
+      const resumeParams = { sessionId } as Parameters<acp.ClientSideConnection["unstable_resumeSession"]>[0];
       return await Promise.race([
-        connection.unstable_resumeSession({ sessionId } as any),
+        connection.unstable_resumeSession(resumeParams),
         spawnError,
       ]);
     } catch {
+      const loadParams = {
+        sessionId,
+        ...sessionSetupParams,
+      } as Parameters<acp.ClientSideConnection["loadSession"]>[0];
       return await Promise.race([
-        connection.loadSession({ sessionId, ...sessionSetupParams } as any),
+        connection.loadSession(loadParams),
         spawnError,
       ]);
     }
