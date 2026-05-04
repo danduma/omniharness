@@ -8,7 +8,7 @@ import { homedir } from "os";
 import { basename, dirname, join } from "path";
 import { Readable, Writable } from "stream";
 import * as acp from "@agentclientprotocol/sdk";
-import { applyCodexBridgeEnv, shouldSetRequestedMode } from "./codex";
+import { applyCodexBridgeEnv, buildCodexConfigArgs, shouldSetRequestedMode } from "./codex";
 import { commandAvailable, createToolDiagnostics, withCodexStandardTooling, withManagedPath } from "./tool-env";
 import type {
   AgentRecord,
@@ -664,6 +664,11 @@ export class AgentRuntimeManager {
       if (requestedModel) {
         defaultArgs.push("--model", requestedModel);
       }
+    } else if (type === "codex") {
+      defaultArgs = buildCodexConfigArgs({
+        model: requestedModel,
+        effort: requestedEffort,
+      });
     }
     const configuredArgs = configuredAgent?.args && configuredAgent.args.length > 0 ? configuredAgent.args : undefined;
     const requestedArgs = input.args && input.args.length > 0 ? input.args : undefined;

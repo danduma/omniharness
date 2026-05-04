@@ -14,6 +14,7 @@ export const COMPOSER_WORKER_OPTIONS: Array<{ value: ComposerWorkerOption; label
 export const DEFAULT_ALLOWED_WORKER_TYPES = JSON.stringify(WORKER_OPTIONS.map((option) => option.value));
 export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
   codex: [
+    { value: "gpt-5.5", label: "GPT-5.5" },
     { value: "gpt-5.4", label: "GPT-5.4" },
     { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
@@ -28,6 +29,7 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
     { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
   ],
   opencode: [
+    { value: "openai/gpt-5.5", label: "GPT-5.5" },
     { value: "openai/gpt-5.4", label: "GPT-5.4" },
     { value: "openai/gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "openai/gpt-5.3-codex", label: "GPT-5.3 Codex" },

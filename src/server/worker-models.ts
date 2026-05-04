@@ -28,6 +28,7 @@ type WorkerModelCatalogManagerOptions = {
 
 const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
   codex: [
+    { value: "gpt-5.5", label: "GPT-5.5" },
     { value: "gpt-5.4", label: "GPT-5.4" },
     { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
@@ -42,6 +43,7 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
     { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
   ],
   opencode: [
+    { value: "openai/gpt-5.5", label: "GPT-5.5" },
     { value: "openai/gpt-5.4", label: "GPT-5.4" },
     { value: "openai/gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "openai/gpt-5.3-codex", label: "GPT-5.3 Codex" },

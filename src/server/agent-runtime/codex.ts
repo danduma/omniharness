@@ -17,6 +17,28 @@ export function shouldSetRequestedMode(requestedMode: string | null | undefined,
   return !normalizedCurrent || normalizedRequested !== normalizedCurrent;
 }
 
+function tomlString(value: string) {
+  return JSON.stringify(value);
+}
+
+export function buildCodexConfigArgs(input: {
+  model?: string | null;
+  effort?: string | null;
+}) {
+  const args: string[] = [];
+  const model = input.model?.trim();
+  const effort = input.effort?.trim().toLowerCase();
+
+  if (model) {
+    args.push("-c", `model=${tomlString(model)}`);
+  }
+  if (effort) {
+    args.push("-c", `model_reasoning_effort=${tomlString(effort)}`);
+  }
+
+  return args;
+}
+
 export function applyCodexBridgeEnv(
   env: Record<string, string | undefined>,
   modelRewriteProxyPort: number | null = null,

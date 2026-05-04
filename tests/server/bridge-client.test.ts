@@ -163,6 +163,39 @@ describe("bridge client", () => {
     expect(init?.body).not.toContain('"model":"openai/gpt-5.4"');
   });
 
+  it("normalizes newly advertised GPT model ids without hardcoded version entries", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ name: "worker-1", state: "idle" }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ name: "worker-2", state: "idle" }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }));
+    global.fetch = fetchMock as typeof fetch;
+
+    const { spawnAgent } = await import("@/server/bridge-client");
+    await spawnAgent({
+      type: "codex",
+      cwd: "/tmp",
+      name: "worker-1",
+      model: "openai/gpt-5.5",
+    });
+    await spawnAgent({
+      type: "opencode",
+      cwd: "/tmp",
+      name: "worker-2",
+      model: "gpt-5.5",
+    });
+
+    const [, codexInit] = fetchMock.mock.calls[0] ?? [];
+    const [, openCodeInit] = fetchMock.mock.calls[1] ?? [];
+    expect(codexInit?.body).toContain('"model":"gpt-5.5"');
+    expect(codexInit?.body).not.toContain('"model":"openai/gpt-5.5"');
+    expect(openCodeInit?.body).toContain('"model":"openai/gpt-5.5"');
+  });
+
   it("passes resumeSessionId through when respawning a worker from saved history", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ name: "worker-1", state: "idle", sessionId: "session-123" }), {

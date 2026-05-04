@@ -179,14 +179,12 @@ function normalizeModelForWorkerType(type: string, model?: string) {
   const normalizedModel = trimmedModel.toLowerCase();
 
   if (normalizedType === "codex") {
-    if (normalizedModel === "openai/gpt-5.4") return "gpt-5.4";
-    if (normalizedModel === "openai/gpt-5.4-mini") return "gpt-5.4-mini";
+    if (normalizedModel.startsWith("openai/gpt-")) return normalizedModel.slice("openai/".length);
     if (normalizedModel === "anthropic/claude-sonnet-4") return "claude-sonnet-4";
   }
 
   if (normalizedType === "opencode") {
-    if (normalizedModel === "gpt-5.4") return "openai/gpt-5.4";
-    if (normalizedModel === "gpt-5.4-mini") return "openai/gpt-5.4-mini";
+    if (normalizedModel.startsWith("gpt-")) return `openai/${normalizedModel}`;
     if (normalizedModel === "claude-sonnet-4") return "anthropic/claude-sonnet-4";
   }
 

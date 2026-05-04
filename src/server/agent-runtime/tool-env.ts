@@ -111,6 +111,7 @@ web_search_request = true
 view_image_tool = true
 shell_tool = true
 parallel = true
+remote_models = true
 `;
 
 function splitPath(value: string | undefined): string[] {

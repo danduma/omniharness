@@ -78,6 +78,7 @@ process.stdin.on('data', (chunk) => {
       append({
         method: message.method,
         params: message.params,
+        argv: process.argv.slice(2),
         codexManagedConfigPath: process.env.CODEX_MANAGED_CONFIG_PATH || null,
         applyPatchPath,
         path: process.env.PATH || null,
@@ -305,6 +306,8 @@ describe("internal agent runtime HTTP API", () => {
         command: fakeAgent,
         cwd: projectDir,
         name: "codex-worker",
+        model: "gpt-5.5",
+        effort: "high",
         env: { FAKE_ACP_REQUEST_LOG: requestLog },
       }),
     });
@@ -312,12 +315,19 @@ describe("internal agent runtime HTTP API", () => {
     expect(spawnResponse.status).toBe(201);
     const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
     const initialize = events.find((event) => event.method === "initialize");
+    expect(initialize.argv).toEqual([
+      "-c",
+      'model="gpt-5.5"',
+      "-c",
+      'model_reasoning_effort="high"',
+    ]);
     expect(initialize.codexManagedConfigPath).toMatch(/managed_config\.toml$/);
     const managedConfig = readFileSync(initialize.codexManagedConfigPath, "utf8");
     expect(managedConfig).toContain("apply_patch_freeform = true");
     expect(managedConfig).toContain("unified_exec = true");
     expect(managedConfig).toContain("web_search_request = true");
     expect(managedConfig).toContain("view_image_tool = true");
+    expect(managedConfig).toContain("remote_models = true");
     expect(initialize.applyPatchPath).toMatch(/omniharness-codex-tools-.+apply_patch$/);
     expect(initialize.path.split(":")[0]).toContain("omniharness-codex-tools-");
 
