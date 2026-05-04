@@ -289,6 +289,7 @@ const RUN_LOG_ONLY_EVENT_TYPES = new Set([
 const DYNAMIC_STATUS_EVENT_TYPES = new Set([
   "worker_prompt_deferred",
   "worker_spawned",
+  "worker_stuck",
 ]);
 
 const INLINE_CONVERSATION_EVENT_TYPES = new Set([
@@ -302,9 +303,9 @@ const INLINE_CONVERSATION_EVENT_TYPES = new Set([
   "worker_permission_denied",
   "worker_permission_requested",
   "worker_prompt_failed",
+  "worker_environment_mismatch",
   "worker_session_missing",
   "worker_spawn_blocked",
-  "worker_stuck",
 ]);
 
 const MESSAGE_MIRRORED_CONVERSATION_TIMELINE_EVENT_TYPES = new Set([
@@ -392,8 +393,12 @@ export function buildConversationTimelineItems({
       createdAt: message.createdAt,
       message,
     }));
+  const sortedExecutionEvents = [...executionEvents].sort((a, b) => {
+    const timeDelta = timestampMs(a.createdAt) - timestampMs(b.createdAt);
+    return timeDelta !== 0 ? timeDelta : a.id.localeCompare(b.id);
+  });
 
-  for (const event of executionEvents) {
+  for (const event of sortedExecutionEvents) {
     if (!shouldShowExecutionEventInTimeline(event, messages)) {
       continue;
     }
@@ -551,6 +556,91 @@ export function parseExecutionEventDetails(details: string | null | undefined) {
   }
 }
 
+export function formatExecutionWorkerLabel(workerId: string | null | undefined) {
+  const normalized = workerId?.trim();
+  if (!normalized) {
+    return "worker";
+  }
+
+  const match = normalized.match(/(?:^|-)worker-(\d+)$/);
+  return match ? `worker-${match[1]}` : normalized;
+}
+
+function normalizeDetailText(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function formatDetailLabel(key: string) {
+  const explicitLabels: Record<string, string> = {
+    cancelError: "Cancel error",
+    currentText: "Current",
+    lastText: "Last",
+    projectPath: "Project",
+    resolvedWorkerCwd: "Resolved cwd",
+    stopReason: "Stop reason",
+    workerCwd: "Worker cwd",
+  };
+
+  if (explicitLabels[key]) {
+    return explicitLabels[key];
+  }
+
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/_/g, " ")
+    .replace(/^./, (first) => first.toUpperCase());
+}
+
+function stringifyDetailValue(value: unknown) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value.trim();
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  return JSON.stringify(value, null, 2);
+}
+
+export function getExecutionEventDetailRows(event: ExecutionEventRecord) {
+  const details = parseExecutionEventDetails(event.details);
+  const summary = summarizeExecutionEvent(event);
+  const summaryDetail = typeof details.summary === "string" ? normalizeDetailText(details.summary) : "";
+  const seenValues = new Set([normalizeDetailText(summary), summaryDetail].filter(Boolean));
+  const rows: Array<{ key: string; label: string; value: string; multiline: boolean }> = [];
+
+  for (const [key, rawValue] of Object.entries(details)) {
+    if (key === "summary") {
+      continue;
+    }
+
+    const value = stringifyDetailValue(rawValue);
+    if (!value) {
+      continue;
+    }
+
+    const normalizedValue = normalizeDetailText(value);
+    if (!normalizedValue || seenValues.has(normalizedValue)) {
+      continue;
+    }
+
+    seenValues.add(normalizedValue);
+    rows.push({
+      key,
+      label: formatDetailLabel(key),
+      value: normalizedValue.length > 360 ? `${normalizedValue.slice(0, 360)}...` : value,
+      multiline: value.includes("\n") || value.length > 120 || typeof rawValue === "object",
+    });
+  }
+
+  return rows;
+}
+
 export function summarizeExecutionEvent(event: ExecutionEventRecord) {
   const details = parseExecutionEventDetails(event.details);
   const summary = typeof details.summary === "string" ? details.summary.trim() : "";
@@ -558,7 +648,7 @@ export function summarizeExecutionEvent(event: ExecutionEventRecord) {
   const error = typeof details.error === "string" ? details.error.trim() : "";
   const seconds = typeof details.seconds === "number" ? details.seconds : null;
   const mode = typeof details.mode === "string" ? details.mode.trim() : "";
-  const workerLabel = event.workerId || "worker";
+  const workerLabel = formatExecutionWorkerLabel(event.workerId);
 
   if (event.eventType === "supervisor_file_read") {
     const path = typeof details.path === "string" && details.path.trim()
@@ -584,6 +674,10 @@ export function summarizeExecutionEvent(event: ExecutionEventRecord) {
 
   if (event.eventType === "worker_prompt_failed") {
     return `Failed to send task to ${workerLabel}${error ? `: ${error}` : ""}`;
+  }
+
+  if (event.eventType === "worker_environment_mismatch") {
+    return `${workerLabel} launched in the wrong directory`;
   }
 
   if (event.eventType === "worker_spawned") {

@@ -41,14 +41,16 @@ export interface SupervisorTurnContext {
   planPath: string | null;
   planContent: string | null;
   readFiles: Array<{ path: string; content: string; truncated: boolean }>;
+  workerHistoryReads: Array<{ workerId: string; lines: number; content: string; truncated: boolean }>;
   repoInspections: Array<{ command: string; args: string[]; cwd: string | null; output: string; exitCode: number | null }>;
   preferredWorkerType: string | null;
   allowedWorkerTypes: string[];
   recentUserMessages: string[];
+  conversationTurns: Array<{ role: string; content: string; createdAt: string; kind: string | null }>;
   pendingClarifications: Array<{ id: string; question: string }>;
   answeredClarifications: Array<{ question: string; answer: string }>;
   activeWorkers: WorkerObservation[];
-  recentEvents: Array<{ eventType: string; summary: string; createdAt: string }>;
+  recentEvents: Array<{ eventType: string; summary: string; createdAt: string; workerId: string | null }>;
   compactedMemory: string | null;
 }
 
@@ -130,6 +132,27 @@ function parseRepoInspectionEvent(details: string | null) {
   }
 }
 
+function parseWorkerHistoryReadEvent(details: string | null) {
+  if (!details) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(details) as Record<string, unknown>;
+    if (typeof parsed.workerId !== "string" || typeof parsed.content !== "string") {
+      return null;
+    }
+    return {
+      workerId: parsed.workerId,
+      lines: typeof parsed.lines === "number" ? parsed.lines : 0,
+      content: parsed.content,
+      truncated: parsed.truncated === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function buildSupervisorTurnContext(runId: string): Promise<SupervisorTurnContext> {
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
   if (!run) {
@@ -146,6 +169,16 @@ export async function buildSupervisorTurnContext(runId: string): Promise<Supervi
     message.content,
     parseChatAttachmentsJson(message.attachmentsJson),
   )).join("\n\n").trim();
+  const conversationTurns = allMessages
+    .filter((message) => message.role === "user" || message.role === "supervisor")
+    .map((message) => ({
+      role: message.role,
+      content: message.role === "user"
+        ? appendAttachmentContext(message.content, parseChatAttachmentsJson(message.attachmentsJson))
+        : message.content,
+      createdAt: message.createdAt.toISOString(),
+      kind: message.kind ?? null,
+    }));
   const allClarifications = await db.select().from(clarifications).where(eq(clarifications.runId, runId));
   const pendingClarifications = allClarifications
     .filter((clarification) => clarification.status === "pending")
@@ -201,13 +234,18 @@ export async function buildSupervisorTurnContext(runId: string): Promise<Supervi
     .map((event) => parseReadFileEvent(event.details))
     .filter((file): file is { path: string; content: string; truncated: boolean } => Boolean(file))
     .slice(0, 6);
+  const workerHistoryReads = allEvents
+    .filter((event) => event.eventType === "supervisor_worker_history_read")
+    .map((event) => parseWorkerHistoryReadEvent(event.details))
+    .filter((history): history is { workerId: string; lines: number; content: string; truncated: boolean } => Boolean(history))
+    .slice(0, 6);
   const repoInspections = allEvents
     .filter((event) => event.eventType === "supervisor_repo_inspected")
     .map((event) => parseRepoInspectionEvent(event.details))
     .filter((inspection): inspection is { command: string; args: string[]; cwd: string | null; output: string; exitCode: number | null } => Boolean(inspection))
     .slice(0, 6);
   const recentEvents = allEvents
-    .slice(0, 8)
+    .slice(0, 80)
     .map((event) => {
       let summary = event.eventType;
       if (event.details) {
@@ -226,6 +264,7 @@ export async function buildSupervisorTurnContext(runId: string): Promise<Supervi
         eventType: event.eventType,
         summary: truncate(summary, 240),
         createdAt: event.createdAt.toISOString(),
+        workerId: event.workerId,
       };
     });
 
@@ -236,10 +275,15 @@ export async function buildSupervisorTurnContext(runId: string): Promise<Supervi
     planPath,
     planContent,
     readFiles,
+    workerHistoryReads,
     repoInspections,
     preferredWorkerType: run.preferredWorkerType,
     allowedWorkerTypes: parseAllowedWorkerTypes(run.allowedWorkerTypes),
-    recentUserMessages: userMessages.slice(-6).map((message) => message.content),
+    recentUserMessages: userMessages.map((message) => appendAttachmentContext(
+      message.content,
+      parseChatAttachmentsJson(message.attachmentsJson),
+    )),
+    conversationTurns,
     pendingClarifications,
     answeredClarifications,
     activeWorkers,

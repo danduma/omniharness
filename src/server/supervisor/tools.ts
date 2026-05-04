@@ -132,9 +132,29 @@ export function buildSupervisorTools(options?: { allowedWorkerTypes?: string[]; 
       }),
       execute: queuedToolResult,
     }),
+    read_worker_history: createTool({
+      id: "read_worker_history",
+      description:
+        "Read the last N lines of a worker's persisted/live history when the decision brief is not enough to safely decide. Use this before correcting, continuing, or judging a worker based on uncertain output.",
+      inputSchema: z.object({
+        workerId: z.string(),
+        lines: z.number().describe("Number of recent history lines to read. Clamped between 1 and 500."),
+      }),
+      execute: queuedToolResult,
+    }),
+    end_turn: createTool({
+      id: "end_turn",
+      description:
+        "End this supervisor wake without taking an external action. Use when the supervisor has enough evidence and no worker/user/completion intervention is needed right now.",
+      inputSchema: z.object({
+        reason: z.string(),
+        nextCheckSeconds: z.number().optional().describe("Optional delay before the next scheduler check. Defaults to 5 seconds and is clamped between 1 and 300."),
+      }),
+      execute: queuedToolResult,
+    }),
     wait_until: createTool({
       id: "wait_until",
-      description: "Take no intervention right now and check again later.",
+      description: "Wait for a specific amount of time before the next supervisory heartbeat. Prefer end_turn for the normal no-action end of a supervisor wake.",
       inputSchema: z.object({
         seconds: z.number().describe("How long to wait before the next supervisory heartbeat."),
         reason: z.string(),

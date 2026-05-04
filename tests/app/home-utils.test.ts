@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, classifyExecutionEvent, filterOptimisticallyDeletedRuns, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/app/home/utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, classifyExecutionEvent, filterOptimisticallyDeletedRuns, formatExecutionWorkerLabel, getExecutionEventDetailRows, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/app/home/utils";
 import type { EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord } from "@/app/home/types";
 
 function buildRun(overrides: Partial<RunRecord>): RunRecord {
@@ -193,6 +193,7 @@ describe("home utils", () => {
 
   it("classifies routine supervisor and worker events away from the transcript", () => {
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_prompt_deferred" }))).toBe("dynamic_status");
+    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_stuck" }))).toBe("dynamic_status");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "supervisor_wait" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_prompted" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_output_changed" }))).toBe("run_log");
@@ -206,7 +207,7 @@ describe("home utils", () => {
       "worker_permission_approved",
       "worker_permission_denied",
       "run_validation_failed",
-      "worker_stuck",
+      "worker_environment_mismatch",
       "worker_session_missing",
       "run_failed",
     ];
@@ -220,6 +221,37 @@ describe("home utils", () => {
       expect(classifyExecutionEvent(event)).toBe("inline_event");
       expect(summarizeInlineEvent(event)).toBeTruthy();
     }
+  });
+
+  it("keeps duplicate stuck worker events out of the main conversation timeline", () => {
+    const timeline = buildConversationTimelineItems({
+      messages: [],
+      executionEvents: [
+        buildExecutionEvent({
+          id: "stuck-1",
+          workerId: "worker-1",
+          eventType: "worker_stuck",
+          details: JSON.stringify({ summary: "worker-1 appears stuck after 90 seconds without meaningful progress" }),
+          createdAt: "2026-04-27T00:00:10.000Z",
+        }),
+        buildExecutionEvent({
+          id: "stuck-2",
+          workerId: "worker-1",
+          eventType: "worker_stuck",
+          details: JSON.stringify({ summary: "worker-1 appears stuck after 90 seconds without meaningful progress" }),
+          createdAt: "2026-04-27T00:00:11.000Z",
+        }),
+        buildExecutionEvent({
+          id: "stuck-3",
+          workerId: "worker-1",
+          eventType: "worker_stuck",
+          details: JSON.stringify({ summary: "worker-1 appears stuck after 90 seconds without meaningful progress" }),
+          createdAt: "2026-04-27T00:00:12.000Z",
+        }),
+      ],
+    });
+
+    expect(timeline).toEqual([]);
   });
 
   it("hides legacy operational system messages from the main conversation", () => {
@@ -595,5 +627,36 @@ describe("home utils", () => {
       }),
       createdAt: "2026-04-27T00:00:00.000Z",
     })).toBe("worker-1 session is no longer available");
+  });
+
+  it("uses short worker labels in execution event summaries", () => {
+    const workerId = "5b1bf465-75cc-4484-b4b0-514d04a0ddf4-worker-3";
+
+    expect(formatExecutionWorkerLabel(workerId)).toBe("worker-3");
+    expect(summarizeExecutionEvent(buildExecutionEvent({
+      workerId,
+      eventType: "worker_stopped",
+      details: JSON.stringify({
+        summary: `${workerId} stopped`,
+      }),
+    }))).toBe("worker-3 stopped");
+  });
+
+  it("renders useful execution event details without repeating the summary", () => {
+    const rows = getExecutionEventDetailRows(buildExecutionEvent({
+      workerId: "run-1-worker-3",
+      eventType: "worker_environment_mismatch",
+      details: JSON.stringify({
+        summary: "run-1-worker-3 launched in the wrong directory",
+        workerCwd: ".",
+        resolvedWorkerCwd: "/workspace/app",
+        cancelError: null,
+      }),
+    }));
+
+    expect(rows).toEqual([
+      expect.objectContaining({ key: "workerCwd", label: "Worker cwd", value: "." }),
+      expect.objectContaining({ key: "resolvedWorkerCwd", label: "Resolved cwd", value: "/workspace/app" }),
+    ]);
   });
 });

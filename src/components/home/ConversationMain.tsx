@@ -11,7 +11,7 @@ import { conversationMainManager } from "@/components/component-state-managers";
 import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
 import { extractLatestPlainTextTurn } from "@/lib/agent-output";
 import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, NoticeDescriptor, RunRecord } from "@/app/home/types";
-import { formatExecutionTimestamp, parseExecutionEventDetails, summarizeExecutionEvent, type ConversationTimelineItem } from "@/app/home/utils";
+import { formatExecutionTimestamp, getExecutionEventDetailRows, summarizeExecutionEvent, type ConversationTimelineItem } from "@/app/home/utils";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { ErrorNotice } from "./ErrorNotice";
@@ -106,8 +106,7 @@ function ConversationRunLog({
           <div className="border-t border-border/60 px-3 py-2">
             <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
               {executionEvents.map((event) => {
-                const details = parseExecutionEventDetails(event.details);
-                const detailText = event.details?.trim() || "";
+                const detailRows = getExecutionEventDetailRows(event);
                 return (
                   <div key={event.id} className="rounded-md border border-border/50 bg-background/70 p-2">
                     <div className="flex items-start justify-between gap-3">
@@ -116,23 +115,25 @@ function ConversationRunLog({
                         <p className="mt-0.5 break-words text-[11px] leading-relaxed text-muted-foreground">
                           {summarizeExecutionEvent(event)}
                         </p>
-                        {event.workerId ? (
-                          <p className="mt-1 text-[10px] text-muted-foreground/70">Worker: {event.workerId}</p>
-                        ) : null}
                       </div>
                       <span className="shrink-0 text-[10px] text-muted-foreground/60">
                         {formatExecutionTimestamp(event.createdAt)}
                       </span>
                     </div>
-                    {detailText ? (
-                      <details className="mt-2">
-                        <summary className="cursor-pointer text-[10px] font-medium text-muted-foreground hover:text-foreground">
-                          Details
-                        </summary>
-                        <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/40 p-2 text-[10px] leading-relaxed text-muted-foreground">
-                          {JSON.stringify(details, null, 2)}
-                        </pre>
-                      </details>
+                    {detailRows.length > 0 ? (
+                      <dl className="mt-2 grid gap-1.5 text-[10px] leading-relaxed text-muted-foreground">
+                        {detailRows.map((row) => (
+                          <div key={row.key} className="grid gap-0.5 sm:grid-cols-[6.5rem_minmax(0,1fr)] sm:gap-2">
+                            <dt className="font-medium text-muted-foreground/80">{row.label}</dt>
+                            <dd className={cn(
+                              "min-w-0 break-words",
+                              row.multiline && "max-h-24 overflow-auto whitespace-pre-wrap rounded bg-muted/35 px-1.5 py-1",
+                            )}>
+                              {row.value}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
                     ) : null}
                   </div>
                 );

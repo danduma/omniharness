@@ -40,6 +40,15 @@ export type SupervisorRunResult =
   | { state: "completed" }
   | { state: "failed" };
 
+const DEFAULT_SUPERVISOR_TURN_STEP_LIMIT = 6;
+
+function getSupervisorTurnStepLimit(env: NodeJS.ProcessEnv = process.env) {
+  const parsed = Number.parseInt(env.SUPERVISOR_TURN_STEP_LIMIT ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.min(parsed, 20)
+    : DEFAULT_SUPERVISOR_TURN_STEP_LIMIT;
+}
+
 function asString(value: unknown, field: string) {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new SupervisorProtocolError(`Tool argument "${field}" must be a non-empty string.`);
@@ -85,6 +94,31 @@ function asOptionalMcpServers(value: unknown, field: string): bridge.BridgeMcpSe
     throw new SupervisorProtocolError(`Tool argument "${field}" must be an array of MCP server objects.`);
   }
   return value as bridge.BridgeMcpServer[];
+}
+
+function evidenceActionKey(action: { name: string; args: Record<string, unknown> }) {
+  if (action.name === "read_file") {
+    return `read_file:${typeof action.args.path === "string" ? action.args.path.trim() : ""}`;
+  }
+
+  if (action.name === "inspect_repo") {
+    return [
+      "inspect_repo",
+      typeof action.args.command === "string" ? action.args.command.trim() : "",
+      Array.isArray(action.args.args) ? action.args.args.join("\u0000") : "",
+      typeof action.args.cwd === "string" ? action.args.cwd.trim() : "",
+    ].join(":");
+  }
+
+  if (action.name === "read_worker_history") {
+    return [
+      "read_worker_history",
+      typeof action.args.workerId === "string" ? action.args.workerId.trim() : "",
+      typeof action.args.lines === "number" ? Math.round(action.args.lines) : "",
+    ].join(":");
+  }
+
+  return null;
 }
 
 function normalizeBridgeWorkerMode(value: unknown) {
@@ -336,6 +370,47 @@ function appendWorkerOutput(existingLog: string | null | undefined, nextChunk: s
   return `${existingLog}${separator}${nextChunk}`;
 }
 
+function takeLastLines(text: string, lineCount: number) {
+  const lines = text.split(/\r?\n/);
+  const selected = lines.slice(-lineCount);
+  return {
+    content: selected.join("\n"),
+    truncated: lines.length > selected.length,
+  };
+}
+
+async function readWorkerHistory(workerId: string, requestedLines: number) {
+  const lineCount = Math.max(1, Math.min(500, Math.round(requestedLines)));
+  const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+  if (!worker) {
+    throw new SupervisorProtocolError(`Worker "${workerId}" was not found.`);
+  }
+
+  let liveText = "";
+  try {
+    const snapshot = await bridge.getAgent(workerId);
+    await persistWorkerSnapshot(workerId, snapshot);
+    liveText = [
+      snapshot.currentText,
+      snapshot.lastText,
+      snapshot.stderrBuffer.slice(-20).join("\n"),
+    ].filter((text) => text.trim()).join("\n");
+  } catch {
+    liveText = "";
+  }
+
+  const combined = [
+    worker.outputLog,
+    worker.currentText,
+    worker.lastText,
+    liveText,
+  ].filter((text) => text.trim()).join("\n");
+  return {
+    lines: lineCount,
+    ...takeLastLines(combined || "(no worker history recorded)", lineCount),
+  };
+}
+
 async function reserveWorkerRow(args: {
   runId: string;
   workerType: string;
@@ -568,14 +643,30 @@ export class Supervisor {
       return { state: "paused" };
     }
 
-    const toolCalls = await this.requestToolCalls(llmConfig, 0);
-    if (!await this.loadActiveRun()) {
-      return { state: "completed" };
-    }
+    const evidenceActionsSeen = new Set<string>();
+    const turnStepLimit = getSupervisorTurnStepLimit();
 
-    const action = parseSupervisorToolCallFromMastra(toolCalls);
+    for (let turnStep = 0; turnStep < turnStepLimit; turnStep += 1) {
+      const toolCalls = await this.requestToolCalls(llmConfig, turnStep);
+      if (!await this.loadActiveRun()) {
+        return { state: "completed" };
+      }
 
-    switch (action.name) {
+      const action = parseSupervisorToolCallFromMastra(toolCalls);
+      const evidenceKey = evidenceActionKey(action);
+      if (evidenceKey) {
+        if (evidenceActionsSeen.has(evidenceKey)) {
+          await insertExecutionEvent(this.runId, "supervisor_turn_stopped", {
+            summary: `Stopped supervisor turn after repeated evidence request: ${action.name}.`,
+            actionName: action.name,
+            evidenceKey,
+          });
+          return { state: "wait", delayMs: 1_000 };
+        }
+        evidenceActionsSeen.add(evidenceKey);
+      }
+
+      switch (action.name) {
         case "worker_spawn": {
           const requestedType = asString(action.args.type, "type");
           const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
@@ -656,6 +747,7 @@ export class Supervisor {
           });
           await insertExecutionEvent(this.runId, "worker_spawned", {
             summary: spawnSummary,
+            cwd,
             purpose,
             mode,
             model: preferredModel,
@@ -856,7 +948,7 @@ export class Supervisor {
             }
           }
 
-          return { state: "wait", delayMs: 1_000 };
+          continue;
         }
 
         case "inspect_repo": {
@@ -879,7 +971,21 @@ export class Supervisor {
             output: result.output,
             error: result.error,
           });
-          return { state: "wait", delayMs: 1_000 };
+          continue;
+        }
+
+        case "read_worker_history": {
+          const workerId = asString(action.args.workerId, "workerId");
+          const requestedLines = asNumber(action.args.lines, "lines");
+          const history = await readWorkerHistory(workerId, requestedLines);
+          await insertExecutionEvent(this.runId, "supervisor_worker_history_read", {
+            summary: `Read the last ${history.lines} lines of ${workerId} history for supervisor context.`,
+            workerId,
+            lines: history.lines,
+            content: history.content,
+            truncated: history.truncated,
+          }, workerId);
+          continue;
         }
 
         case "wait_until": {
@@ -890,6 +996,19 @@ export class Supervisor {
             seconds,
           });
           return { state: "wait", delayMs: seconds * 1000 };
+        }
+
+        case "end_turn": {
+          const reason = asString(action.args.reason, "reason");
+          const rawNextCheckSeconds = action.args.nextCheckSeconds === undefined
+            ? 5
+            : asNumber(action.args.nextCheckSeconds, "nextCheckSeconds");
+          const nextCheckSeconds = Math.max(1, Math.min(300, Math.round(rawNextCheckSeconds)));
+          await insertExecutionEvent(this.runId, "supervisor_turn_ended", {
+            summary: reason,
+            nextCheckSeconds,
+          });
+          return { state: "wait", delayMs: nextCheckSeconds * 1000 };
         }
 
         case "mark_complete": {
@@ -946,6 +1065,13 @@ export class Supervisor {
 
         default:
           throw new SupervisorProtocolError(`Unknown tool "${action.name}".`);
+      }
     }
+
+    await insertExecutionEvent(this.runId, "supervisor_turn_step_limit_reached", {
+      summary: `Supervisor turn reached the ${turnStepLimit} step limit before choosing a turn-ending action.`,
+      turnStepLimit,
+    });
+    return { state: "wait", delayMs: 1_000 };
   }
 }

@@ -271,6 +271,51 @@ describe("Supervisor worker spawn flow", () => {
     expect(persistedMessages).toEqual([]);
   });
 
+  it("lets the supervisor explicitly end its turn without recording a wait event", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-end-turn",
+      name: "end_turn",
+      args: {
+        reason: "No intervention needed; worker is still making progress.",
+        nextCheckSeconds: 7,
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 7_000 });
+
+    const event = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+    const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+
+    expect(event).toMatchObject({
+      eventType: "supervisor_turn_ended",
+      runId,
+    });
+    expect(event?.details).toContain("No intervention needed");
+    expect(persistedMessages).toEqual([]);
+  });
+
   it("compacts the supervisor prompt before calling the model when the context is near the window limit", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -322,9 +367,7 @@ describe("Supervisor worker spawn flow", () => {
 
     const promptMessages = mockAgentGenerate.mock.calls[0]?.[0] as Array<{ role: string; content: string }>;
     expect(promptMessages.some((message) => message.content.includes("Prior supervision memory"))).toBe(true);
-    expect(promptMessages.filter((message) => message.role === "user")).toEqual([
-      { role: "user", content: latestInstruction },
-    ]);
+    expect(promptMessages.map((message) => message.content).join("\n\n")).toContain(latestInstruction);
 
     const compactionEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
     expect(compactionEvent?.eventType).toBe("supervisor_context_compacted");
@@ -488,6 +531,133 @@ describe("Supervisor worker spawn flow", () => {
     expect(event?.details).toContain("docs/spec.md");
     expect(event?.details).toContain("understand the why before implementation");
     expect(await db.select().from(messages).where(eq(messages.runId, runId))).toEqual([]);
+  });
+
+  it("continues the same supervisor turn after reading evidence and then acts", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "omniharness-supervisor-turn-"));
+    fs.writeFileSync(path.join(workspace, "evidence.md"), "worker history says tests passed", "utf8");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      projectPath: workspace,
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockParseSupervisorToolCall
+      .mockReturnValueOnce({
+        id: "tool-read",
+        name: "read_file",
+        args: { path: "evidence.md" },
+      })
+      .mockReturnValueOnce({
+        id: "tool-spawn",
+        name: "worker_spawn",
+        args: {
+          type: "opencode",
+          cwd: ".",
+          title: "Main implementation",
+          prompt: "act after reading evidence",
+          mode: "auto",
+          purpose: "finish the task",
+        },
+      });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    expect(mockAgentGenerate).toHaveBeenCalledTimes(2);
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: workspace,
+      name: `${runId}-worker-1`,
+    }));
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(events.map((event) => event.eventType)).toEqual(expect.arrayContaining([
+      "supervisor_file_read",
+      "worker_spawned",
+    ]));
+  });
+
+  it("can read recent worker history as evidence before deciding", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+    const workerId = `${runId}-worker-1`;
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      projectPath: "/tmp/project",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "opencode",
+      status: "idle",
+      cwd: "/tmp/project",
+      workerNumber: 1,
+      title: "Main implementation",
+      initialPrompt: "implement",
+      outputLog: ["line 1", "line 2", "line 3", "line 4"].join("\n"),
+      outputEntriesJson: "",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall
+      .mockReturnValueOnce({
+        id: "tool-history",
+        name: "read_worker_history",
+        args: { workerId, lines: 2 },
+      })
+      .mockReturnValueOnce({
+        id: "tool-wait",
+        name: "wait_until",
+        args: {
+          seconds: 5,
+          reason: "History has enough evidence; wait for next worker update.",
+        },
+      });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    expect(mockAgentGenerate).toHaveBeenCalledTimes(2);
+    const historyEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+    expect(historyEvent?.eventType).toBe("supervisor_worker_history_read");
+    expect(historyEvent?.details).toContain("line 3");
+    expect(historyEvent?.details).toContain("line 4");
+    expect(historyEvent?.details).not.toContain("line 1");
   });
 
   it("runs targeted repository inspection without spawning a worker", async () => {
@@ -665,6 +835,7 @@ describe("Supervisor worker spawn flow", () => {
     expect(spawnEvent?.details).toContain("Mode: full-access");
     expect(spawnEvent?.details).toContain("Title: Main implementation");
     expect(spawnEvent?.details).toContain("Purpose: finish the task.");
+    expect(spawnEvent?.details).toContain("\"cwd\":\"/tmp/project\"");
   });
 
   it("passes worker-requested skill roots and MCP servers to the bridge spawn call", async () => {

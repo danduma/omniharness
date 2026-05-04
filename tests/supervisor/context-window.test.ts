@@ -26,7 +26,7 @@ function baseContext(overrides: Partial<SupervisorTurnContextForPrompt> = {}): S
 }
 
 describe("supervisor context window compaction", () => {
-  it("keeps the normal transcript untouched while it is under budget", () => {
+  it("builds a summary-first decision brief while it is under budget", () => {
     const bundle = buildSupervisorModelMessages({
       systemPrompt: "system",
       context: baseContext({
@@ -42,7 +42,13 @@ describe("supervisor context window compaction", () => {
     });
 
     expect(bundle.stats.compacted).toBe(false);
-    expect(bundle.messages.map((message) => message.role)).toEqual(["system", "system", "user", "user", "system"]);
+    expect(bundle.messages.map((message) => message.role)).toEqual(["system", "system"]);
+    const rendered = bundle.messages.map((message) => message.content).join("\n\n");
+    expect(rendered).toContain("Supervisor decision brief");
+    expect(rendered).toContain("Original prompt");
+    expect(rendered).toContain("Conversation turns with the user");
+    expect(rendered).toContain("first instruction");
+    expect(rendered).toContain("latest instruction");
     expect(bundle.messages.some((message) => message.content.includes("Prior supervision memory"))).toBe(false);
   });
 
@@ -71,13 +77,18 @@ describe("supervisor context window compaction", () => {
     expect(rendered).toContain("Support resumable uploads.");
   });
 
-  it("includes supervisor-read file contents in the model context", () => {
+  it("summarizes supervisor-read files without dumping raw file bodies", () => {
     const bundle = buildSupervisorModelMessages({
       systemPrompt: "system",
       context: baseContext({
         readFiles: [{
           path: "docs/superpowers/specs/handoff.md",
-          content: "# Handoff\n\nThe outcome is a reviewed plan handoff before implementation.",
+          content: [
+            "# Handoff",
+            "",
+            "The outcome is a reviewed plan handoff before implementation.",
+            "background filler ".repeat(2_000),
+          ].join("\n"),
           truncated: false,
         }],
       }),
@@ -91,12 +102,13 @@ describe("supervisor context window compaction", () => {
     });
 
     const rendered = bundle.messages.map((message) => message.content).join("\n\n");
-    expect(rendered).toContain("Supervisor-read files");
+    expect(rendered).toContain("Reusable supervisor notes");
     expect(rendered).toContain("docs/superpowers/specs/handoff.md");
     expect(rendered).toContain("reviewed plan handoff before implementation");
+    expect(rendered).not.toContain("background filler ".repeat(100));
   });
 
-  it("compacts old user messages into memory and keeps the latest instruction when near the budget", () => {
+  it("compacts old user messages into memory and keeps the latest instruction in the decision brief", () => {
     const largeOldInstruction = "old context ".repeat(1_000);
     const latestInstruction = "Now verify the final implementation path.";
     const bundle = buildSupervisorModelMessages({
@@ -120,10 +132,34 @@ describe("supervisor context window compaction", () => {
 
     expect(bundle.stats.compacted).toBe(true);
     expect(bundle.messages.some((message) => message.content.includes("Prior supervision memory"))).toBe(true);
-    expect(bundle.messages.filter((message) => message.role === "user")).toEqual([
-      { role: "user", content: latestInstruction },
-    ]);
+    expect(bundle.messages.map((message) => message.content).join("\n\n")).toContain(latestInstruction);
     expect(estimateContextTokens(bundle.messages)).toBeLessThanOrEqual(bundle.stats.budgetTokens);
+  });
+
+  it("filters low-signal wait events from event detail while retaining actionable events", () => {
+    const bundle = buildSupervisorModelMessages({
+      systemPrompt: "system",
+      context: baseContext({
+        recentEvents: [
+          { eventType: "supervisor_wait", summary: "check again soon", createdAt: "2026-05-04T01:00:02.000Z" },
+          { eventType: "worker_stopped", summary: "worker-1 stopped after verifying tests passed", createdAt: "2026-05-04T01:00:01.000Z", workerId: "worker-1" },
+          { eventType: "supervisor_wait", summary: "poll", createdAt: "2026-05-04T01:00:00.000Z" },
+        ],
+      }),
+      heartbeatCount: 1,
+      runStatus: "running",
+      budget: {
+        maxContextTokens: 4_000,
+        responseReserveTokens: 200,
+        compactionThreshold: 0.8,
+      },
+    });
+
+    const rendered = bundle.messages.map((message) => message.content).join("\n\n");
+    expect(rendered).toContain("Omitted low-signal poll/wait events from detail: 2");
+    expect(rendered).toContain("worker_stopped");
+    expect(rendered).toContain("worker-1 stopped after verifying tests passed");
+    expect(rendered).not.toContain("check again soon");
   });
 
   it("carries forward existing memory and shrinks noisy worker observations first", () => {
