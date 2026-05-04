@@ -42,7 +42,7 @@ describe("supervisor context window compaction", () => {
     });
 
     expect(bundle.stats.compacted).toBe(false);
-    expect(bundle.messages.map((message) => message.role)).toEqual(["system", "system"]);
+    expect(bundle.messages.map((message) => message.role)).toEqual(["system", "user"]);
     const rendered = bundle.messages.map((message) => message.content).join("\n\n");
     expect(rendered).toContain("Supervisor decision brief");
     expect(rendered).toContain("Original prompt");

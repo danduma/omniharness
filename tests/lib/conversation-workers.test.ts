@@ -127,7 +127,7 @@ describe("conversation worker helpers", () => {
       updatedAt: "2026-04-27T00:10:00.000Z",
     };
 
-    expect(getWorkerRuntimeLabel(finishedWorker)).toBe("Worked 2 hours, 32 minutes");
-    expect(getWorkerRuntimeLabel(activeWorker, new Date("2026-04-27T01:15:00.000Z").getTime())).toBe("Worked 10 minutes");
+    expect(getWorkerRuntimeLabel(finishedWorker)).toBe("2 hr 32 min");
+    expect(getWorkerRuntimeLabel(activeWorker, new Date("2026-04-27T01:15:00.000Z").getTime())).toBe("10 min");
   });
 });

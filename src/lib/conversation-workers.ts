@@ -66,6 +66,23 @@ export function formatHumanDuration(durationMs: number) {
   return pluralize(Math.max(1, minutes), "minute");
 }
 
+function formatCompactWorkerDuration(durationMs: number) {
+  const normalizedMs = Math.max(0, Math.round(durationMs));
+
+  if (normalizedMs < MINUTE_MS) {
+    return `${Math.max(1, Math.round(normalizedMs / 1000))} sec`;
+  }
+
+  const hours = Math.floor(normalizedMs / HOUR_MS);
+  const minutes = Math.floor((normalizedMs % HOUR_MS) / MINUTE_MS);
+
+  if (hours > 0) {
+    return minutes > 0 ? `${hours} hr ${minutes} min` : `${hours} hr`;
+  }
+
+  return `${Math.max(1, minutes)} min`;
+}
+
 export function getWorkerRuntimeLabel(worker: ConversationWorkerRecord, now = Date.now()) {
   const startedAt = parseTimestampMs(worker.createdAt);
   if (startedAt === null) {
@@ -74,8 +91,7 @@ export function getWorkerRuntimeLabel(worker: ConversationWorkerRecord, now = Da
 
   const lastActivityAt = parseTimestampMs(worker.updatedAt);
   const endedAt = lastActivityAt ?? now;
-  const duration = formatHumanDuration(Math.max(0, endedAt - startedAt));
-  return `Worked ${duration}`;
+  return formatCompactWorkerDuration(Math.max(0, endedAt - startedAt));
 }
 
 function summarizePreview(value: string) {

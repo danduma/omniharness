@@ -50,8 +50,8 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('flex w-4 shrink-0 items-center justify-center');
   expect(pageSource).not.toContain('flex w-4 shrink-0 items-start justify-center pt-0.5');
   expect(pageSource).toContain('min-w-0 flex items-center justify-between gap-2');
-  expect(agentSurfaceSource).toContain('className={cn("overflow-hidden rounded-2xl border border-white/10 bg-[#0d0f12] text-zinc-100 shadow-[0_24px_70px_rgba(0,0,0,0.32)]", className)}');
-  expect(agentSurfaceSource).toContain('className="border-b border-white/10 bg-[#13161b] px-4 py-3"');
+  expect(agentSurfaceSource).toContain('border border-border/70 bg-card text-card-foreground shadow-sm dark:border-white/10');
+  expect(agentSurfaceSource).toContain('className="border-b border-border/70 bg-card px-4 py-3 dark:border-white/10');
   expect(workerCardSource).toContain("Permissions waiting");
   expect(workerCardSource).toContain("Context usage not reported");
   expect(workerCardSource).toContain("Context usage ");
@@ -63,10 +63,16 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(workersSidebarSource).toContain('content: intervention.prompt');
   expect(workerCardSource).toContain('<Terminal agent={agent} userMessages={userMessages} />');
   expect(workerCardSource).toContain("deriveWorkerTerminalProcesses");
+  expect(workerCardSource).toContain("function shouldShowWorkerError(agent: WorkerCardAgent)");
+  expect(workerCardSource).toContain('if (isWorkerActiveStatus(agent.state)) {');
+  expect(workerCardSource).toContain("const showWorkerError = shouldShowWorkerError(agent);");
+  expect(workerCardSource).toContain("{showWorkerError ? (");
   expect(workerCardSource).toContain("Terminal Processes");
+  expect(workerCardSource).toContain("const activeProcesses = processes.filter((process) => process.active);");
+  expect(workerCardSource).toContain("{activeProcesses.length} running");
   expect(workerCardSource).toContain("terminalProcess.outputTail");
   expect(workerCardSource).toContain('const promptPreviewText = promptPreview?.trim() ?? "";');
-  expect(workerCardSource).toContain('line-clamp-2 text-[11px] leading-[1.35] text-zinc-500');
+  expect(workerCardSource).toContain('line-clamp-2 text-[11px] leading-[1.35] text-muted-foreground dark:text-zinc-500');
   expect(workerCardSource).not.toContain('const preview = buildWorkerPreview(agent);');
   expect(workerCardSource).not.toContain('className="truncate text-[13px] leading-5 text-zinc-400"');
   expect(pageSource).not.toContain("Recent output");
@@ -103,11 +109,15 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).not.toContain("<SheetTitle>Navigation</SheetTitle>");
   expect(pageSource).not.toContain('queryClient.removeQueries({ queryKey: ["conversation-agent", workerId], exact: true })');
   expect(workerCardSource).toContain('function renderContextMeter(fullnessPercent: number | null | undefined)');
+  expect(workerCardSource).toContain('{runtimeDurationLabel ? (');
+  expect(workerCardSource).toContain("<Clock");
+  expect(workerCardSource).toContain('className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground dark:text-zinc-400"');
   expect(workerCardSource).toContain('render={<span className="inline-flex items-center" />}');
   expect(workerCardSource).not.toContain('title={normalized === null ? "Context usage');
   expect(workerCardSource).toContain('className="h-3.5 w-3.5"');
   expect(workerCardSource).toContain('const showStopWorker = Boolean(onStopWorker) && isWorkerActiveStatus(agent.state);');
-  expect(workerCardSource).toContain('className="flex shrink-0 items-start gap-2.5"');
+  expect(workerCardSource).toContain('className="flex shrink-0 items-center gap-1.5"');
+  expect(workerCardSource).toContain('<span className="capitalize">{stateLabel}</span>');
   expect(workerCardSource).toContain('className="inline-flex h-5 w-5 items-center justify-center rounded-full');
   expect(workerCardSource).toContain('className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")}');
   expect(workerCardSource).toContain("Permissions waiting");
@@ -126,7 +136,7 @@ test("workers sidebar is conversation-scoped and resizable", () => {
 
 test("workers sidebar gives a single visible worker the full available window and scrolls multi-worker lists", () => {
   expect(workersSidebarSource).toContain("const hasSingleVisibleWorker = visibleWorkers.length === 1;");
-  expect(workersSidebarSource).toContain('className={cn("min-h-0 flex-1", hasSingleVisibleWorker ? "p-0" : "p-3")}');
+  expect(workersSidebarSource).toContain('className="min-h-0 flex-1 p-3"');
   expect(workersSidebarSource).toContain('hasSingleVisibleWorker ? "flex h-full min-h-full flex-col"');
   expect(workersSidebarSource).toContain('const terminalHeightClass = hasSingleVisibleWorker ? "h-full min-h-[24rem]" : "h-44";');
   expect(workersSidebarSource).toContain("fillAvailable={hasSingleVisibleWorker}");
@@ -134,7 +144,8 @@ test("workers sidebar gives a single visible worker the full available window an
   expect(workerCardSource).toContain("fillAvailable?: boolean;");
   expect(workerCardSource).toContain("const shouldFillAvailable = fillAvailable && open;");
   expect(workerCardSource).toContain('shouldFillAvailable && "flex h-full min-h-0 flex-col"');
-  expect(workerCardSource).toContain('shouldFillAvailable && "flex min-h-0 flex-1 flex-col rounded-none border-x-0 border-b-0 shadow-none"');
+  expect(workerCardSource).toContain('shouldFillAvailable && "flex min-h-0 flex-1 flex-col shadow-none"');
+  expect(workerCardSource).not.toContain('rounded-none border-x-0 border-b-0');
   expect(workerCardSource).toContain('shouldFillAvailable && "min-h-0 flex-1"');
   expect(workerCardSource).not.toContain('fillAvailable && "flex h-full min-h-0 flex-col"');
 });
@@ -221,7 +232,7 @@ test("direct conversations render the user transcript next to the worker surface
   expect(pageSource).toContain('aria-label="Copy message"');
   expect(pageSource).toContain('label: "Retry from here"');
   expect(pageSource).toContain('aria-label={action.label}');
-  expect(pageSource).toContain('onClick: () => handleRetryMessage(msg.id)');
+  expect(pageSource).toContain('onClick: () => handleRetryMessage(message.id)');
   expect(pageSource).toContain('rounded-lg bg-[#3a3a3a]');
   expect(pageSource).toContain('px-3 py-2');
   expect(pageSource).toContain('text-sm leading-6');

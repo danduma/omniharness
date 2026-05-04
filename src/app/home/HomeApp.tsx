@@ -1271,7 +1271,7 @@ export function HomeApp() {
     });
   }
 
-  const handleStartEditingMessage = (message: MessageRecord) => {
+  const handleStartEditingMessage = (message: Pick<MessageRecord, "id" | "content">) => {
     setEditingMessageId(message.id);
     setEditingMessageValue(message.content);
   };
@@ -1298,7 +1298,7 @@ export function HomeApp() {
     );
   };
 
-  const handleForkMessage = (message: MessageRecord) => {
+  const handleForkMessage = (message: Pick<MessageRecord, "id" | "content">) => {
     if (!selectedRunId) return;
     const content = window.prompt("Fork with this prompt:", message.content)?.trim();
     if (!content) return;

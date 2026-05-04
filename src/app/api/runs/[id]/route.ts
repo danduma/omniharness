@@ -221,7 +221,9 @@ export async function POST(
     return NextResponse.json({ ok: true, ...result });
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    const status = errorMessage.includes("must be a user message") || errorMessage.includes("required")
+    const status = errorMessage.includes("must be a user message")
+      || errorMessage.includes("required")
+      || errorMessage.includes("direct control")
       ? 400
       : errorMessage.includes("not found")
         ? 404

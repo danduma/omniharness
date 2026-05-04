@@ -289,6 +289,7 @@ const RUN_LOG_ONLY_EVENT_TYPES = new Set([
 const DYNAMIC_STATUS_EVENT_TYPES = new Set([
   "worker_prompt_deferred",
   "worker_spawned",
+  "worker_session_missing",
   "worker_stuck",
 ]);
 
@@ -304,7 +305,6 @@ const INLINE_CONVERSATION_EVENT_TYPES = new Set([
   "worker_permission_requested",
   "worker_prompt_failed",
   "worker_environment_mismatch",
-  "worker_session_missing",
   "worker_spawn_blocked",
 ]);
 
@@ -641,6 +641,19 @@ export function getExecutionEventDetailRows(event: ExecutionEventRecord) {
   return rows;
 }
 
+function extractSupervisorReadPath(details: Record<string, unknown>, summary: string) {
+  const candidateKeys = ["path", "requestedPath", "filePath", "absolutePath"];
+  for (const key of candidateKeys) {
+    const value = details[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  const summaryMatch = summary.match(/^Read\s+(.+?)(?:\s+for\b|$)/i);
+  return summaryMatch?.[1]?.trim() ?? "";
+}
+
 export function summarizeExecutionEvent(event: ExecutionEventRecord) {
   const details = parseExecutionEventDetails(event.details);
   const summary = typeof details.summary === "string" ? details.summary.trim() : "";
@@ -651,12 +664,8 @@ export function summarizeExecutionEvent(event: ExecutionEventRecord) {
   const workerLabel = formatExecutionWorkerLabel(event.workerId);
 
   if (event.eventType === "supervisor_file_read") {
-    const path = typeof details.path === "string" && details.path.trim()
-      ? details.path.trim()
-      : typeof details.absolutePath === "string" && details.absolutePath.trim()
-        ? details.absolutePath.trim()
-        : "";
-    return path ? `Read ${path}` : "Read file";
+    const readPath = extractSupervisorReadPath(details, summary);
+    return readPath ? `Read ${readPath}` : "Read file";
   }
 
   if (event.eventType === "supervisor_wait") {

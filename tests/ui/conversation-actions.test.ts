@@ -55,10 +55,13 @@ test("deleting a conversation removes it optimistically before the request resol
   expect(rollbackIndex).toBeGreaterThan(optimisticUpdateIndex);
 });
 
-test("user messages expose retry, edit, and fork recovery controls", () => {
+test("direct control user messages expose retry, edit, and fork recovery controls", () => {
   expect(pageSource).toContain("Retry from here");
   expect(pageSource).toContain("Edit in place");
   expect(pageSource).toContain("Fork from here");
+  expect(pageSource).toContain("const canRecoverUserMessage = isDirectConversation;");
+  expect(pageSource).toContain("getUserMessageActions={getUserMessageActions}");
+  expect(pageSource).toContain("actions={userMessageActions}");
   expect(pageSource).toContain('body: JSON.stringify({ action, targetMessageId, content })');
 });
 

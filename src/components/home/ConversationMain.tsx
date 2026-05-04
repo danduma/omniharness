@@ -216,7 +216,7 @@ function WorkerOutputMessage({
           </CollapsibleTrigger>
         </div>
         <CollapsibleContent>
-          <div className="border-t border-emerald-600/15 bg-[#0b0d10] p-2">
+          <div className="border-t border-emerald-600/15 bg-muted/20 p-2 dark:bg-[#0b0d10]">
             <Terminal
               agent={fullOutputAgent}
               className="h-72"
@@ -252,8 +252,8 @@ interface ConversationMainProps {
   hasStuckWorker: boolean;
   latestUserCheckpoint: MessageRecord | null;
   handleRetryMessage: (messageId: string) => void;
-  handleStartEditingMessage: (message: MessageRecord) => void;
-  handleForkMessage: (message: MessageRecord) => void;
+  handleStartEditingMessage: (message: Pick<MessageRecord, "id" | "content">) => void;
+  handleForkMessage: (message: Pick<MessageRecord, "id" | "content">) => void;
   editingMessageId: string | null;
   editingMessageValue: string;
   setEditingMessageValue: (value: string) => void;
@@ -269,7 +269,7 @@ interface ConversationMainProps {
 
 function LatestRecoveryAction({
   selectedRun,
-  isImplementationConversation,
+  isDirectConversation,
   recoverRun,
   showRecoverableRunningState,
   hasStuckWorker,
@@ -277,14 +277,14 @@ function LatestRecoveryAction({
   handleRetryMessage,
 }: {
   selectedRun: RunRecord | null;
-  isImplementationConversation: boolean;
+  isDirectConversation: boolean;
   recoverRun: { isPending: boolean };
   showRecoverableRunningState: boolean;
   hasStuckWorker: boolean;
   latestUserCheckpoint: MessageRecord | null;
   handleRetryMessage: (messageId: string) => void;
 }) {
-  if (!isImplementationConversation || !latestUserCheckpoint) {
+  if (!isDirectConversation || !latestUserCheckpoint) {
     return null;
   }
 
@@ -349,6 +349,31 @@ export function ConversationMain({
       console.error("Copy message failed:", error);
     }
   };
+  const canRecoverUserMessage = isDirectConversation;
+  const getUserMessageActions = (message: Pick<MessageRecord, "id" | "content">): UserInputMessageAction[] => (
+    canRecoverUserMessage
+      ? [
+        {
+          label: "Retry from here",
+          icon: <RotateCcw className="h-3.5 w-3.5" />,
+          disabled: recoverRun.isPending,
+          onClick: () => handleRetryMessage(message.id),
+        },
+        {
+          label: "Edit in place",
+          icon: <Pencil className="h-3.5 w-3.5" />,
+          disabled: recoverRun.isPending,
+          onClick: () => handleStartEditingMessage(message),
+        },
+        {
+          label: "Fork from here",
+          icon: <GitBranch className="h-3.5 w-3.5" />,
+          disabled: recoverRun.isPending,
+          onClick: () => handleForkMessage(message),
+        },
+      ]
+      : []
+  );
 
   return (
   <ScrollArea className="min-h-0 flex-1" ref={scrollRef}>
@@ -367,7 +392,7 @@ export function ConversationMain({
               <ErrorNotice error={conversationFailure} />
               <LatestRecoveryAction
                 selectedRun={selectedRun}
-                isImplementationConversation={isImplementationConversation}
+                isDirectConversation={isDirectConversation}
                 recoverRun={recoverRun}
                 showRecoverableRunningState={showRecoverableRunningState}
                 hasStuckWorker={hasStuckWorker}
@@ -380,6 +405,7 @@ export function ConversationMain({
             <Terminal
               agent={primaryConversationAgent}
               userMessages={directConversationMessages}
+              getUserMessageActions={getUserMessageActions}
               variant="native"
               className="min-h-[32rem]"
             />
@@ -412,28 +438,7 @@ export function ConversationMain({
               const msg = item.message;
               const isUserMessage = msg.role === "user";
               const isExpanded = expandedDirectMessageIds.has(msg.id);
-              const userMessageActions: UserInputMessageAction[] = isImplementationConversation
-                ? [
-                  {
-                    label: "Retry from here",
-                    icon: <RotateCcw className="h-3.5 w-3.5" />,
-                    disabled: recoverRun.isPending,
-                    onClick: () => handleRetryMessage(msg.id),
-                  },
-                  {
-                    label: "Edit in place",
-                    icon: <Pencil className="h-3.5 w-3.5" />,
-                    disabled: recoverRun.isPending,
-                    onClick: () => handleStartEditingMessage(msg),
-                  },
-                  {
-                    label: "Fork from here",
-                    icon: <GitBranch className="h-3.5 w-3.5" />,
-                    disabled: recoverRun.isPending,
-                    onClick: () => handleForkMessage(msg),
-                  },
-                ]
-                : [];
+              const userMessageActions: UserInputMessageAction[] = getUserMessageActions(msg);
 
               return (
               <div key={msg.id} className="group flex w-full flex-col text-sm">
@@ -529,7 +534,7 @@ export function ConversationMain({
           {!conversationFailure && (showRecoverableRunningState || hasStuckWorker) ? (
             <LatestRecoveryAction
               selectedRun={selectedRun}
-              isImplementationConversation={isImplementationConversation}
+              isDirectConversation={isDirectConversation}
               recoverRun={recoverRun}
               showRecoverableRunningState={showRecoverableRunningState}
               hasStuckWorker={hasStuckWorker}
@@ -551,7 +556,7 @@ export function ConversationMain({
               <ErrorNotice error={conversationFailure} />
               <LatestRecoveryAction
                 selectedRun={selectedRun}
-                isImplementationConversation={isImplementationConversation}
+                isDirectConversation={isDirectConversation}
                 recoverRun={recoverRun}
                 showRecoverableRunningState={showRecoverableRunningState}
                 hasStuckWorker={hasStuckWorker}

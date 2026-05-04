@@ -20,6 +20,10 @@ interface UseAppErrorsProps {
   stopWorkerError?: unknown;
 }
 
+function isUnsupportedRecoverRunError(error: unknown) {
+  return buildInlineError(error).message === "Recovery actions are only available in direct control conversations";
+}
+
 export function useAppErrors({
   state,
   runtimeErrors,
@@ -91,7 +95,7 @@ export function useAppErrors({
       }));
     }
 
-    if (recoverRunError) {
+    if (recoverRunError && !isUnsupportedRecoverRunError(recoverRunError)) {
       errors.push(buildInlineError(recoverRunError, {
         source: "Runs",
         action: "Recover conversation",

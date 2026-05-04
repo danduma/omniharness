@@ -452,7 +452,7 @@ function buildMessages(args: {
   }
 
   messages.push({
-    role: "system" as const,
+    role: "user" as const,
     content: [
       "Supervisor decision brief:",
       "",

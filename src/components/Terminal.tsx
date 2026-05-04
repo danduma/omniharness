@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 import { Check, ChevronDown, LoaderCircle, MoreHorizontal } from "lucide-react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { terminalUiManager } from "@/components/component-state-managers";
@@ -12,6 +12,7 @@ import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 interface TerminalProps {
   agent?: AgentTerminalPayload | null;
   userMessages?: TerminalUserMessage[];
+  getUserMessageActions?: (message: TerminalUserMessage) => TerminalUserMessageAction[];
   variant?: "terminal" | "native";
   className?: string;
 }
@@ -20,6 +21,14 @@ export interface TerminalUserMessage {
   id: string;
   content: string;
   createdAt: string;
+}
+
+export interface TerminalUserMessageAction {
+  label: string;
+  title?: string;
+  icon: ReactNode;
+  disabled?: boolean;
+  onClick: () => void;
 }
 
 export interface AgentTerminalPayload {
@@ -34,6 +43,7 @@ type TerminalActivityItem = AgentActivityItem | {
   kind: "user_message";
   text: string;
   timestamp: string;
+  actions: TerminalUserMessageAction[];
 };
 
 const TOOL_OUTPUT_PREVIEW_LINES = 3;
@@ -185,16 +195,16 @@ function statusBadgeClass(status: string, variant: "terminal" | "native") {
   switch (status) {
     case "completed":
     case "done":
-      return "border-emerald-400/25 bg-emerald-400/8 text-emerald-100";
+      return "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:border-emerald-400/25 dark:bg-emerald-400/8 dark:text-emerald-100";
     case "failed":
     case "error":
     case "cancelled":
-      return "border-red-400/25 bg-red-400/8 text-red-100";
+      return "border-red-500/25 bg-red-500/10 text-red-700 dark:border-red-400/25 dark:bg-red-400/8 dark:text-red-100";
     case "in_progress":
     case "working":
-      return "border-cyan-400/25 bg-cyan-400/8 text-cyan-100";
+      return "border-cyan-600/25 bg-cyan-600/10 text-cyan-700 dark:border-cyan-400/25 dark:bg-cyan-400/8 dark:text-cyan-100";
     default:
-      return "border-white/10 bg-white/5 text-zinc-300";
+      return "border-border bg-muted/40 text-muted-foreground dark:border-white/10 dark:bg-white/5 dark:text-zinc-300";
   }
 }
 
@@ -210,30 +220,30 @@ function TimelineMarker({
   const toneClass = {
     thought: variant === "native"
       ? "border-muted-foreground/55 bg-muted-foreground/75"
-      : "border-zinc-400/60 bg-zinc-400/80",
+      : "border-muted-foreground/55 bg-muted-foreground/75 dark:border-zinc-400/60 dark:bg-zinc-400/80",
     tool: variant === "native"
       ? "border-emerald-500/75 bg-emerald-500"
-      : "border-emerald-400/75 bg-emerald-400",
+      : "border-emerald-500/75 bg-emerald-500 dark:border-emerald-400/75 dark:bg-emerald-400",
     error: variant === "native"
       ? "border-destructive/80 bg-destructive"
-      : "border-red-400/80 bg-red-400",
+      : "border-red-500/80 bg-red-500 dark:border-red-400/80 dark:bg-red-400",
     user: variant === "native"
       ? "border-primary/75 bg-primary"
-      : "border-cyan-400/75 bg-cyan-400",
+      : "border-cyan-600/75 bg-cyan-600 dark:border-cyan-400/75 dark:bg-cyan-400",
   }[tone];
   const runningClass = {
     thought: variant === "native"
       ? "border-muted-foreground/55 bg-transparent"
-      : "border-zinc-400/60 bg-transparent",
+      : "border-muted-foreground/55 bg-transparent dark:border-zinc-400/60",
     tool: variant === "native"
       ? "border-emerald-500/75 bg-transparent"
-      : "border-emerald-400/75 bg-transparent",
+      : "border-emerald-500/75 bg-transparent dark:border-emerald-400/75",
     error: variant === "native"
       ? "border-destructive/80 bg-transparent"
-      : "border-red-400/80 bg-transparent",
+      : "border-red-500/80 bg-transparent dark:border-red-400/80",
     user: variant === "native"
       ? "border-primary/75 bg-transparent"
-      : "border-cyan-400/75 bg-transparent",
+      : "border-cyan-600/75 bg-transparent dark:border-cyan-400/75",
   }[tone];
 
   return (
@@ -282,7 +292,7 @@ function ActivityPane({
         canExpand && "transition-[max-height,background-color,border-color,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
         variant === "native"
           ? "rounded border border-border/60 bg-muted/25"
-          : "rounded border border-white/10 bg-[#111318] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
+          : "rounded border border-border/70 bg-background shadow-sm dark:border-white/10 dark:bg-[#111318] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
       )}
       onClick={canInteract ? onClick : undefined}
       role={canInteract ? "button" : undefined}
@@ -300,7 +310,7 @@ function ActivityPane({
           "flex w-8 shrink-0 items-start justify-center border-r px-1 py-2 font-mono text-[length:var(--terminal-pane-label-size)] font-semibold uppercase tracking-[0.18em]",
           variant === "native"
             ? "border-border/60 bg-background/40 text-muted-foreground"
-            : "border-white/8 bg-black/20 text-zinc-500",
+            : "border-border/60 bg-muted/40 text-muted-foreground dark:border-white/8 dark:bg-black/20 dark:text-zinc-500",
         )}>
           {label}
         </div>
@@ -309,7 +319,7 @@ function ActivityPane({
           "text-[length:var(--terminal-pane-size)]",
           variant === "native" ? "leading-[1.5]" : "leading-[1.55]",
           clipped && "line-clamp-[3]",
-          variant === "native" ? "text-foreground" : "text-zinc-200",
+          variant === "native" ? "text-foreground" : "text-foreground dark:text-zinc-200",
         )}>
           {text}
         </pre>
@@ -326,7 +336,7 @@ function ThinkingDots({ variant }: { variant: "terminal" | "native" }) {
           key={index}
           className={cn(
             "h-1 w-1 rounded-full animate-pulse",
-            variant === "native" ? "bg-muted-foreground" : "bg-zinc-400",
+            variant === "native" ? "bg-muted-foreground" : "bg-muted-foreground dark:bg-zinc-400",
           )}
           style={{ animationDelay: `${index * 160}ms` }}
         />
@@ -363,13 +373,13 @@ function ToolActivity({
         aria-expanded={detailsOpen}
       >
         {showToolLabel ? (
-          <span className={cn("text-[length:var(--terminal-tool-label-size)] font-semibold tracking-tight", variant === "native" ? "text-foreground" : "text-zinc-100")}>{activity.label}</span>
+          <span className={cn("text-[length:var(--terminal-tool-label-size)] font-semibold tracking-tight", variant === "native" ? "text-foreground" : "text-foreground dark:text-zinc-100")}>{activity.label}</span>
         ) : null}
         <span
           className={cn(
             "font-mono leading-[1.45]",
             showToolLabel ? "text-[length:var(--terminal-tool-title-size)]" : "text-[length:var(--terminal-tool-label-size)]",
-            variant === "native" ? "text-muted-foreground" : "text-zinc-300/95",
+            variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-300/95",
           )}
         >
           {activity.title}
@@ -378,7 +388,7 @@ function ToolActivity({
           <LoaderCircle
             className={cn(
               "h-3 w-3 shrink-0 animate-spin",
-              variant === "native" ? "text-muted-foreground" : "text-zinc-400",
+              variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-400",
             )}
             aria-label={formatActivityStatus(activity.status)}
           />
@@ -397,7 +407,7 @@ function ToolActivity({
           className={cn(
             "h-3 w-3 shrink-0 transition-transform duration-200 ease-out",
             detailsOpen && "rotate-180",
-            variant === "native" ? "text-muted-foreground group-hover/tool:text-foreground" : "text-zinc-500 group-hover/tool:text-zinc-200",
+            variant === "native" ? "text-muted-foreground group-hover/tool:text-foreground" : "text-muted-foreground group-hover/tool:text-foreground dark:text-zinc-500 dark:group-hover/tool:text-zinc-200",
           )}
           aria-hidden="true"
         />
@@ -450,7 +460,7 @@ function ThoughtActivity({
         onClick={() => terminalUiManager.setThoughtOpen(activity.id, !open)}
         aria-expanded={open}
       >
-        <span className={cn("text-[length:var(--terminal-thought-label-size)] font-semibold tracking-tight", variant === "native" ? "text-muted-foreground" : "text-zinc-400")}>
+        <span className={cn("text-[length:var(--terminal-thought-label-size)] font-semibold tracking-tight", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-400")}>
           {formatThoughtLabel(activity)}
         </span>
         {activity.inProgress ? <ThinkingDots variant={variant} /> : null}
@@ -458,7 +468,7 @@ function ThoughtActivity({
           className={cn(
             "h-3 w-3 shrink-0 transition-transform duration-200 ease-out",
             open && "rotate-180",
-            variant === "native" ? "text-muted-foreground group-hover/thought:text-foreground" : "text-zinc-500 group-hover/thought:text-zinc-300",
+            variant === "native" ? "text-muted-foreground group-hover/thought:text-foreground" : "text-muted-foreground group-hover/thought:text-foreground dark:text-zinc-500 dark:group-hover/thought:text-zinc-300",
           )}
           aria-hidden="true"
         />
@@ -481,7 +491,7 @@ function ThoughtActivity({
                   "space-y-1 text-[length:var(--terminal-thought-size)] leading-[1.5]",
                   variant === "native"
                     ? "text-muted-foreground [&_code]:bg-muted/70 [&_pre]:bg-muted/35"
-                    : "text-zinc-500 [&_blockquote]:border-white/10 [&_blockquote]:bg-white/5 [&_code]:bg-white/10 [&_pre]:border-white/10 [&_pre]:bg-white/5",
+                    : "text-muted-foreground [&_blockquote]:border-border/70 [&_blockquote]:bg-muted/30 [&_code]:bg-muted/70 [&_pre]:border-border/70 [&_pre]:bg-muted/30 dark:text-zinc-500 dark:[&_blockquote]:border-white/10 dark:[&_blockquote]:bg-white/5 dark:[&_code]:bg-white/10 dark:[&_pre]:border-white/10 dark:[&_pre]:bg-white/5",
                 )}
               />
             ))}
@@ -506,9 +516,26 @@ function ActivityRow({
   if (activity.kind === "user_message") {
     return (
       <div className="relative z-10 pl-4 sm:pl-6">
-        <div className="max-w-[min(72ch,calc(100%-1rem))] rounded-lg bg-[#3a3a3a] px-3 py-2 text-[length:var(--terminal-message-size)] leading-[1.55] text-[#d8d8d8] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:max-w-[min(78ch,calc(100%-1.5rem))]">
+        <div className="max-w-[min(72ch,calc(100%-1rem))] rounded-lg bg-muted px-3 py-2 text-[length:var(--terminal-message-size)] leading-[1.55] text-foreground shadow-sm dark:bg-[#3a3a3a] dark:text-[#d8d8d8] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:max-w-[min(78ch,calc(100%-1.5rem))]">
           <p className="max-w-none whitespace-pre-wrap">{activity.text}</p>
         </div>
+        {activity.actions.length > 0 ? (
+          <div className="mt-1 flex items-center gap-1 pl-1 text-muted-foreground/70">
+            {activity.actions.map((action) => (
+              <button
+                key={action.label}
+                type="button"
+                aria-label={action.label}
+                title={action.title ?? action.label}
+                disabled={action.disabled}
+                onClick={action.onClick}
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {action.icon}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -525,13 +552,13 @@ function ActivityRow({
       {connectorExtendsBefore ? (
         <div className={cn(
           "absolute left-2 top-0 h-[0.57rem] w-px",
-          variant === "native" ? "bg-border/80" : "bg-white/14",
+          variant === "native" ? "bg-border/80" : "bg-border/80 dark:bg-white/14",
         )} />
       ) : null}
       {connectorExtendsAfter ? (
         <div className={cn(
           "absolute -bottom-3 left-2 top-[0.57rem] w-px",
-          variant === "native" ? "bg-border/80" : "bg-white/14",
+          variant === "native" ? "bg-border/80" : "bg-border/80 dark:bg-white/14",
         )} />
       ) : null}
       <TimelineMarker running={running} tone={markerTone} variant={variant} />
@@ -543,7 +570,7 @@ function ActivityRow({
               "text-[length:var(--terminal-message-size)] leading-[1.55]",
               variant === "native"
                 ? "text-foreground"
-                : "text-zinc-100/95 [&_blockquote]:border-white/10 [&_blockquote]:bg-white/5 [&_blockquote]:text-zinc-300 [&_code]:bg-white/10 [&_code]:text-inherit [&_h3]:text-inherit [&_h4]:text-inherit [&_pre]:border-white/10 [&_pre]:bg-white/5 [&_pre]:text-inherit [&_strong]:text-inherit",
+                : "text-foreground [&_blockquote]:border-border/70 [&_blockquote]:bg-muted/30 [&_blockquote]:text-muted-foreground [&_code]:bg-muted/70 [&_code]:text-inherit [&_h3]:text-inherit [&_h4]:text-inherit [&_pre]:border-border/70 [&_pre]:bg-muted/30 [&_pre]:text-inherit [&_strong]:text-inherit dark:text-zinc-100/95 dark:[&_blockquote]:border-white/10 dark:[&_blockquote]:bg-white/5 dark:[&_blockquote]:text-zinc-300 dark:[&_code]:bg-white/10 dark:[&_pre]:border-white/10 dark:[&_pre]:bg-white/5",
             )}
           />
         ) : null}
@@ -554,10 +581,10 @@ function ActivityRow({
             "rounded-[0.85rem] border px-2.5 py-2",
             variant === "native"
               ? "border-amber-500/25 bg-amber-500/8"
-              : "border-amber-400/20 bg-[rgba(96,67,22,0.34)] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
+              : "border-amber-500/25 bg-amber-500/10 dark:border-amber-400/20 dark:bg-[rgba(96,67,22,0.34)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
           )}>
-            <div className={cn("text-[length:var(--terminal-permission-title-size)] font-semibold tracking-tight", variant === "native" ? "text-amber-800 dark:text-amber-300" : "text-amber-100")}>{activity.title}</div>
-            <p className={cn("mt-0.5 whitespace-pre-wrap text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/85 dark:text-amber-100/85" : "text-amber-50/85")}>{activity.text}</p>
+            <div className={cn("text-[length:var(--terminal-permission-title-size)] font-semibold tracking-tight", variant === "native" ? "text-amber-800 dark:text-amber-300" : "text-amber-800 dark:text-amber-100")}>{activity.title}</div>
+            <p className={cn("mt-0.5 whitespace-pre-wrap text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/85 dark:text-amber-100/85" : "text-amber-900/85 dark:text-amber-50/85")}>{activity.text}</p>
           </div>
         ) : null}
       </div>
@@ -565,7 +592,7 @@ function ActivityRow({
   );
 }
 
-export function Terminal({ agent, userMessages = [], variant = "terminal", className }: TerminalProps) {
+export function Terminal({ agent, userMessages = [], getUserMessageActions, variant = "terminal", className }: TerminalProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldFollowLatestRef = useRef(true);
   const { terminalZoom } = useManagerSnapshot(terminalUiManager);
@@ -582,6 +609,7 @@ export function Terminal({ agent, userMessages = [], variant = "terminal", class
       kind: "user_message",
       text: message.content,
       timestamp: message.createdAt,
+      actions: getUserMessageActions?.(message) ?? [],
     }));
 
     return [...userActivity, ...agentActivity].sort((a, b) => {
@@ -591,7 +619,7 @@ export function Terminal({ agent, userMessages = [], variant = "terminal", class
       }
       return activityKindOrder(a) - activityKindOrder(b) || a.id.localeCompare(b.id);
     });
-  }, [agent, userMessages]);
+  }, [agent, getUserMessageActions, userMessages]);
   const terminalZoomStyle = useMemo(() => getTerminalZoomStyle(terminalZoom), [terminalZoom]);
 
   useEffect(() => {
@@ -607,7 +635,7 @@ export function Terminal({ agent, userMessages = [], variant = "terminal", class
       "relative w-full",
       variant === "native"
         ? "bg-transparent text-foreground"
-        : "h-full overflow-hidden rounded-[1.05rem] bg-[#0b0d10] text-zinc-100",
+        : "h-full overflow-hidden rounded-[1.05rem] border border-border/70 bg-card text-foreground shadow-sm dark:border-transparent dark:bg-[#0b0d10] dark:text-zinc-100 dark:shadow-none",
       className,
     )}
       style={terminalZoomStyle}
@@ -615,7 +643,7 @@ export function Terminal({ agent, userMessages = [], variant = "terminal", class
       {variant === "terminal" ? (
         <DropdownMenu>
           <DropdownMenuTrigger
-            className="absolute right-2 top-2 z-20 inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-[#15181d]/95 text-zinc-400 shadow-sm transition-colors hover:bg-[#1d2128] hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/45"
+            className="absolute right-2 top-2 z-20 inline-flex h-7 w-7 items-center justify-center rounded-full border border-border/70 bg-background/95 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 dark:border-white/10 dark:bg-[#15181d]/95 dark:text-zinc-400 dark:hover:bg-[#1d2128] dark:hover:text-zinc-100 dark:focus-visible:ring-cyan-300/45"
             aria-label="Terminal text size"
             title="Terminal text size"
           >
@@ -649,7 +677,7 @@ export function Terminal({ agent, userMessages = [], variant = "terminal", class
         className={cn(
           variant === "native"
             ? "overflow-visible px-1 py-2"
-            : "h-full overflow-y-auto px-3 pb-2.5 pt-9 [scrollbar-color:rgba(255,255,255,0.16)_transparent] [scrollbar-width:thin]",
+            : "h-full overflow-y-auto px-3 pb-2.5 pt-9 [scrollbar-color:rgba(113,113,122,0.28)_transparent] [scrollbar-width:thin] dark:[scrollbar-color:rgba(255,255,255,0.16)_transparent]",
         )}
       >
         {activity.length > 0 ? (
@@ -675,7 +703,7 @@ export function Terminal({ agent, userMessages = [], variant = "terminal", class
             "flex h-full min-h-full items-center justify-center rounded-xl border border-dashed px-4 text-center text-sm",
             variant === "native"
               ? "border-border bg-muted/20 text-muted-foreground"
-              : "border-white/10 bg-black/10 text-zinc-500",
+              : "border-border/70 bg-muted/25 text-muted-foreground dark:border-white/10 dark:bg-black/10 dark:text-zinc-500",
           )}>
             Waiting for structured agent output...
           </div>

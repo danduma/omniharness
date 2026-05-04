@@ -40,7 +40,8 @@ test("terminal renders model thoughts as markdown while preserving thought tone"
   expect(terminalSource).toContain("inheritTextColor");
   expect(terminalSource).toContain("text-[length:var(--terminal-thought-size)] leading-[1.5]");
   expect(terminalSource).toContain('variant === "native"\n                    ? "text-muted-foreground');
-  expect(terminalSource).toContain(': "text-zinc-500');
+  expect(terminalSource).toContain(': "text-muted-foreground');
+  expect(terminalSource).toContain('dark:text-zinc-500');
   expect(terminalSource).not.toContain("leading-[1.5] italic");
 });
 
@@ -61,7 +62,7 @@ test("terminal keeps tool output compact and expandable", () => {
   expect(terminalSource).toContain("line-clamp-[3]");
   expect(terminalSource).toContain("Click to expand full output");
   expect(terminalSource).toContain("ChevronDown");
-  expect(terminalSource).toContain('variant === "native"\n          ? "rounded border border-border/60 bg-muted/25"\n          : "rounded border border-white/10 bg-[#111318]');
+  expect(terminalSource).toContain('variant === "native"\n          ? "rounded border border-border/60 bg-muted/25"\n          : "rounded border border-border/70 bg-background shadow-sm dark:border-white/10 dark:bg-[#111318]');
   expect(terminalSource).not.toContain('rounded-[0.85rem] border border-white/10 bg-[#111318]');
   expect(terminalSource).not.toContain('rounded-lg border border-border/60 bg-muted/25');
   expect(terminalSource).toContain('{shouldShowToolSpinner(activity.status) ? (');
@@ -118,15 +119,17 @@ test("terminal exposes a three dot text zoom menu with tiny through three notche
 test("terminal aligns timeline markers with row text and connects the rail", () => {
   expect(terminalSource).toContain("items-start gap-3");
   expect(terminalSource).toContain("mt-[0.32rem]");
-  expect(terminalSource).toContain("absolute left-2 top-0 h-full w-px");
+  expect(terminalSource).toContain("absolute left-2 top-0 h-[0.57rem] w-px");
+  expect(terminalSource).toContain("absolute -bottom-3 left-2 top-[0.57rem] w-px");
   expect(terminalSource).not.toContain("space-y-3");
 });
 
 test("terminal user messages render as left-indented transcript blocks outside the rail", () => {
   expect(terminalSource).toContain('if (activity.kind === "user_message")');
   expect(terminalSource).toContain('relative z-10 pl-4 sm:pl-6');
-  expect(terminalSource).toContain('rounded-lg bg-[#3a3a3a]');
-  expect(terminalSource).toContain('text-[#d8d8d8]');
+  expect(terminalSource).toContain('rounded-lg bg-muted');
+  expect(terminalSource).toContain('dark:bg-[#3a3a3a]');
+  expect(terminalSource).toContain('dark:text-[#d8d8d8]');
   expect(terminalSource).not.toContain('>You</div>');
 });
 

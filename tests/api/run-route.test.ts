@@ -286,7 +286,7 @@ describe("POST /api/runs/[id]", () => {
     expect(stopEvent?.eventType).toBe("worker_cancelled");
   });
 
-  it("retries from a user checkpoint by truncating later history and cancelling workers", async () => {
+  it("rejects recovery actions for supervisor-managed conversations", async () => {
     mockAskAgent.mockClear();
     mockCancelAgent.mockClear();
     mockGetAgent.mockClear();
@@ -373,7 +373,7 @@ describe("POST /api/runs/[id]", () => {
     });
 
     const response = await POST(request, { params: Promise.resolve({ id: runId }) });
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
 
     const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const remainingMessages = await db.select().from(messages).where(eq(messages.runId, runId));
@@ -381,16 +381,21 @@ describe("POST /api/runs/[id]", () => {
     const remainingClarifications = await db.select().from(clarifications).where(eq(clarifications.runId, runId));
     const staleLease = await db.select().from(settings).where(eq(settings.key, `SUPERVISOR_WAKE_LEASE:${runId}`)).get();
 
-    expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
-    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
-    expect(updatedRun?.status).toBe("running");
-    expect(updatedRun?.lastError).toBeNull();
-    expect(updatedRun?.failedAt).toBeNull();
+    expect(await response.json()).toMatchObject({
+      error: {
+        message: expect.stringContaining("direct control"),
+      },
+    });
+    expect(mockCancelAgent).not.toHaveBeenCalledWith(workerId);
+    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+    expect(updatedRun?.status).toBe("failed");
+    expect(updatedRun?.lastError).toBe("API key not valid");
+    expect(updatedRun?.failedAt).toBeInstanceOf(Date);
     expect(remainingWorkers).toHaveLength(1);
-    expect(remainingWorkers[0]?.status).toBe("cancelled");
-    expect(remainingClarifications).toHaveLength(0);
-    expect(staleLease).toBeUndefined();
-    expect(remainingMessages.map((message) => message.id)).toEqual([userMessageId]);
+    expect(remainingWorkers[0]?.status).toBe("working");
+    expect(remainingClarifications).toHaveLength(1);
+    expect(staleLease).toBeDefined();
+    expect(remainingMessages.map((message) => message.id)).toEqual([userMessageId, laterMessageId]);
   });
 
   it("reruns a direct conversation from the selected user checkpoint in a fresh CLI worker", async () => {
@@ -527,6 +532,7 @@ describe("POST /api/runs/[id]", () => {
     await db.insert(runs).values({
       id: runId,
       planId,
+      mode: "direct",
       title: "Edit test",
       status: "failed",
       createdAt: new Date(),
@@ -563,12 +569,18 @@ describe("POST /api/runs/[id]", () => {
     const remainingMessages = await db.select().from(messages).where(eq(messages.runId, runId));
 
     expect(updatedMessage?.content).toBe("new prompt");
-    expect(remainingMessages.map((message) => message.id)).toEqual([userMessageId]);
+    expect(remainingMessages.map((message) => message.id)).toEqual([userMessageId, expect.any(String)]);
+    expect(remainingMessages.at(-1)?.role).toBe("worker");
     expect(fs.readFileSync(adHocAbsolutePath, "utf-8")).toContain("new prompt");
-    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
+    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+    expect(mockAskAgent).toHaveBeenCalledWith(expect.any(String), "new prompt");
   });
 
-  it("forks a new conversation from a user checkpoint", async () => {
+  it("forks a new direct conversation from a direct user checkpoint", async () => {
+    mockAskAgent.mockClear();
+    mockCancelAgent.mockClear();
+    mockGetAgent.mockClear();
+    mockSpawnAgent.mockClear();
     mockStartSupervisorRun.mockClear();
     mockQueueConversationTitleGeneration.mockClear();
     const planId = randomUUID();
@@ -591,8 +603,12 @@ describe("POST /api/runs/[id]", () => {
     await db.insert(runs).values({
       id: runId,
       planId,
+      mode: "direct",
       title: "Source run",
+      projectPath: "/workspace/app",
       preferredWorkerType: "codex",
+      preferredWorkerModel: "gpt-5.4",
+      preferredWorkerEffort: "medium",
       allowedWorkerTypes: JSON.stringify(["codex", "opencode"]),
       status: "done",
       createdAt: new Date(),
@@ -624,12 +640,24 @@ describe("POST /api/runs/[id]", () => {
     expect(payload.runId).not.toBe(runId);
     expect(forkedRun?.parentRunId).toBe(runId);
     expect(forkedRun?.forkedFromMessageId).toBe(userMessageId);
+    expect(forkedRun?.mode).toBe("direct");
+    expect(forkedRun?.projectPath).toBe("/workspace/app");
     expect(forkedRun?.preferredWorkerType).toBe("codex");
+    expect(forkedRun?.preferredWorkerModel).toBe("gpt-5.4");
+    expect(forkedRun?.preferredWorkerEffort).toBe("medium");
     expect(forkedRun?.allowedWorkerTypes).toBe(JSON.stringify(["codex", "opencode"]));
-    expect(forkedMessages).toHaveLength(1);
+    expect(forkedMessages.map((message) => message.role)).toEqual(["user", "worker"]);
     expect(forkedMessages[0]?.content).toBe("forked prompt");
+    expect(forkedMessages.at(-1)?.content).toBe("Rerun complete.");
     expect(fs.readFileSync(getAppDataPath(forkedPlan!.path), "utf-8")).toContain("forked prompt");
-    expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
+    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      type: "codex",
+      cwd: "/workspace/app",
+      model: "gpt-5.4",
+      effort: "medium",
+    }));
+    expect(mockAskAgent).toHaveBeenCalledWith(expect.any(String), "forked prompt");
   });
 });
 

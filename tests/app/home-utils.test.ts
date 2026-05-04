@@ -191,9 +191,28 @@ describe("home utils", () => {
     ]);
   });
 
+  it("uses supervisor file read summary paths when explicit path details are missing", () => {
+    const timeline = buildConversationTimelineItems({
+      messages: [],
+      executionEvents: [
+        buildExecutionEvent({
+          id: "event-read",
+          eventType: "supervisor_file_read",
+          details: JSON.stringify({ summary: "Read docs/spec.md for supervisor context." }),
+          createdAt: "2026-04-27T00:00:12.000Z",
+        }),
+      ],
+    });
+
+    expect(timeline.map((item) => `${item.type}:${item.id}:${item.type === "activity" ? item.text : ""}`)).toEqual([
+      "activity:event-read:Read docs/spec.md",
+    ]);
+  });
+
   it("classifies routine supervisor and worker events away from the transcript", () => {
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_prompt_deferred" }))).toBe("dynamic_status");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_stuck" }))).toBe("dynamic_status");
+    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_session_missing" }))).toBe("dynamic_status");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "supervisor_wait" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_prompted" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_output_changed" }))).toBe("run_log");
@@ -208,7 +227,6 @@ describe("home utils", () => {
       "worker_permission_denied",
       "run_validation_failed",
       "worker_environment_mismatch",
-      "worker_session_missing",
       "run_failed",
     ];
 
@@ -247,6 +265,30 @@ describe("home utils", () => {
           eventType: "worker_stuck",
           details: JSON.stringify({ summary: "worker-1 appears stuck after 90 seconds without meaningful progress" }),
           createdAt: "2026-04-27T00:00:12.000Z",
+        }),
+      ],
+    });
+
+    expect(timeline).toEqual([]);
+  });
+
+  it("keeps missing worker session events out of the main conversation timeline", () => {
+    const timeline = buildConversationTimelineItems({
+      messages: [],
+      executionEvents: [
+        buildExecutionEvent({
+          id: "missing-1",
+          workerId: "worker-1",
+          eventType: "worker_session_missing",
+          details: JSON.stringify({ summary: "Saved bridge session for worker-1 is no longer available" }),
+          createdAt: "2026-04-27T00:00:10.000Z",
+        }),
+        buildExecutionEvent({
+          id: "missing-2",
+          workerId: "worker-1",
+          eventType: "worker_session_missing",
+          details: JSON.stringify({ summary: "Saved bridge session for worker-1 is no longer available" }),
+          createdAt: "2026-04-27T00:00:10.000Z",
         }),
       ],
     });

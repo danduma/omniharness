@@ -17,7 +17,6 @@ import {
 import { askAgent, cancelAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
 import { createAdHocPlan, rewriteAdHocPlan } from "@/server/runs/ad-hoc-plan";
 import { persistRunFailure } from "@/server/runs/failures";
-import { startSupervisorRun } from "@/server/supervisor/start";
 import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
 import { getAppDataPath } from "@/server/app-root";
 import { PLANNER_SYSTEM_PROMPT } from "@/server/prompts";
@@ -195,6 +194,10 @@ export async function recoverRun(args: RecoverRunArgs) {
     throw new Error("Target message must be a user message in this run");
   }
 
+  if (run.mode !== "direct") {
+    throw new Error("Recovery actions are only available in direct control conversations");
+  }
+
   const nextContent = typeof args.content === "string" && args.content.trim()
     ? args.content.trim()
     : targetMessage.content;
@@ -222,6 +225,7 @@ export async function recoverRun(args: RecoverRunArgs) {
     await db.insert(runs).values({
       id: newRunId,
       planId: newPlanId,
+      mode: run.mode,
       title: run.title,
       projectPath: run.projectPath,
       preferredWorkerType: run.preferredWorkerType,
@@ -250,7 +254,12 @@ export async function recoverRun(args: RecoverRunArgs) {
       });
     }
 
-    startSupervisorRun(newRunId);
+    const newRun = await db.select().from(runs).where(eq(runs.id, newRunId)).get();
+    if (!newRun) {
+      throw new Error("Forked run not found");
+    }
+
+    await startDirectRerun(newRun, nextContent);
     return { runId: newRunId };
   }
 
@@ -287,11 +296,7 @@ export async function recoverRun(args: RecoverRunArgs) {
     updatedAt: new Date(),
   }).where(eq(runs.id, args.runId));
 
-  if (run.mode === "implementation") {
-    startSupervisorRun(args.runId);
-  } else {
-    await startDirectRerun(run, nextContent);
-  }
+  await startDirectRerun(run, nextContent);
 
   return { runId: args.runId };
 }

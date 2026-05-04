@@ -7,15 +7,15 @@ export type ConversationModeOption = "implementation" | "planning" | "direct";
 const MODE_COPY: Record<ConversationModeOption, { label: string; description: string }> = {
   planning: {
     label: "Create plan",
-    description: "Work directly with one CLI to inspect the repo, ask questions, and write a spec and plan before implementation.",
+    description: "Use planning mode directly in the selected CLI. Once the plan is done, omni will take over, confirm it under your intent, and keep the agents working non stop until it is fully implemented.",
   },
   implementation: {
     label: "Implement plan",
-    description: "Start a supervisor-managed implementation run for an existing plan or implementation request.",
+    description: "Fully implement an existing plan or spec. Omni will confirm details, coordinate the work and monitor progress until every single bit of the plan is fully implemented.",
   },
   direct: {
     label: "Direct control",
-    description: "Open one remote CLI session and use OmniHarness as a direct control surface.",
+    description: "Use this to directly interact with the selected CLI, with full remote control capabilities.",
   },
 };
 
@@ -31,7 +31,7 @@ export function ConversationModePicker({
   onChange: (mode: ConversationModeOption) => void;
 }) {
   return (
-    <div className="mb-5 space-y-2.5">
+    <div className="mb-8 space-y-3">
       <div className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-1">
         {(Object.entries(MODE_COPY) as Array<[ConversationModeOption, { label: string }]>).map(([mode, config]) => (
           <button
@@ -50,7 +50,7 @@ export function ConversationModePicker({
           </button>
         ))}
       </div>
-      <p className="text-sm leading-relaxed text-muted-foreground">{MODE_COPY[value].description}</p>
+      <p className="max-w-2xl text-sm leading-6 text-muted-foreground">{MODE_COPY[value].description}</p>
     </div>
   );
 }

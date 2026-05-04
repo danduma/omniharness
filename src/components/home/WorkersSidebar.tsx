@@ -195,7 +195,7 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
           </button>
         </div>
       </div>
-      <ScrollArea className={cn("min-h-0 flex-1", hasSingleVisibleWorker ? "p-0" : "p-3")}>
+      <ScrollArea className="min-h-0 flex-1 p-3">
         <div className={cn(
           hasSingleVisibleWorker ? "flex h-full min-h-full flex-col" : visibleWorkers.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col",
         )}>
