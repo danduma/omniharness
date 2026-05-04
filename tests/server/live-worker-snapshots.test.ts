@@ -149,6 +149,67 @@ describe("buildLiveWorkerSnapshot", () => {
     }));
   });
 
+  it("does not show stale bridge stderr as a live worker error while the agent is still active", () => {
+    const staleDiagnostic = "\u001b[31mERROR\u001b[0m codex_core::tools::router: error=write_stdin failed: Unknown process id 66670";
+    const snapshot = buildLiveWorkerSnapshot({
+      agent: {
+        name: "worker-active",
+        type: "codex",
+        cwd: "/repo",
+        state: "working",
+        currentText: "Still applying the patch",
+        lastText: "Started implementation",
+        outputEntries: [],
+        stderrBuffer: [staleDiagnostic],
+        stopReason: null,
+        lastError: staleDiagnostic,
+      },
+      worker: {
+        id: "worker-active",
+        runId: "run-active",
+        type: "codex",
+        status: "working",
+        cwd: "/repo",
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        bridgeSessionId: "session-active",
+        bridgeSessionMode: "full-access",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      run: {
+        id: "run-active",
+        planId: "plan-active",
+        mode: "implementation",
+        projectPath: "/repo",
+        title: "Active worker",
+        preferredWorkerType: "codex",
+        preferredWorkerModel: "gpt-5.5",
+        preferredWorkerEffort: "high",
+        allowedWorkerTypes: "codex",
+        specPath: null,
+        artifactPlanPath: null,
+        plannerArtifactsJson: null,
+        parentRunId: null,
+        forkedFromMessageId: null,
+        status: "running",
+        failedAt: null,
+        lastError: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+
+    expect(snapshot).toEqual(expect.objectContaining({
+      state: "working",
+      bridgeLastError: staleDiagnostic,
+      lastError: null,
+      displayText: "Started implementation\nStill applying the patch",
+    }));
+  });
+
   it("falls back to persisted worker state when the bridge no longer returns the worker", () => {
     const snapshot = buildLiveWorkerSnapshot({
       agent: null,

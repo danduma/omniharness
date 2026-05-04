@@ -484,6 +484,53 @@ describe("deriveWorkerEvents", () => {
     expect(worker?.status).toBe("working");
   });
 
+  it("does not poll a worker row that is still waiting for bridge spawn", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "starting",
+      cwd: process.cwd(),
+      outputLog: "",
+      bridgeSessionId: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockGetAgent.mockRejectedValue(new Error("Get agent failed: not_found"));
+
+    await pollRunWorkers(runId, wakeSupervisor);
+
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+
+    expect(mockGetAgent).not.toHaveBeenCalled();
+    expect(wakeSupervisor).not.toHaveBeenCalled();
+    expect(persistedWorker?.status).toBe("starting");
+    expect(workerEvents).toEqual([]);
+  });
+
   it("fails the run when worker stderr reports a fatal bridge pipe error", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -978,6 +1025,66 @@ describe("deriveWorkerEvents", () => {
     expect(workerEvents.some((event) => event.eventType === "worker_session_missing")).toBe(true);
     expect(workerEvents.some((event) => event.eventType === "worker_resume_failed")).toBe(false);
     expect(wakeSupervisor).toHaveBeenCalledWith(runId, 0);
+  });
+
+  it("does not persist duplicate missing-session events from overlapping observer polls", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      bridgeSessionId: "session-gone",
+      bridgeSessionMode: "full-access",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    let releasePoll!: () => void;
+    const pollGate = new Promise<void>((resolve) => {
+      releasePoll = resolve;
+    });
+    mockGetAgent.mockImplementation(async () => {
+      await pollGate;
+      throw new Error("Get agent failed: 404 not_found");
+    });
+    vi.mocked(mockSpawnAgent).mockRejectedValue(new Error("Spawn agent failed: not_found"));
+    vi.spyOn(Date, "now").mockReturnValue(100_000);
+
+    const firstPoll = pollRunWorkers(runId, wakeSupervisor);
+    const secondPoll = pollRunWorkers(runId, wakeSupervisor);
+    await Promise.resolve();
+    releasePoll();
+    await Promise.all([firstPoll, secondPoll]);
+
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+
+    expect(persistedWorker?.status).toBe("cancelled");
+    expect(workerEvents.filter((event) => event.eventType === "worker_session_missing")).toHaveLength(1);
+    expect(wakeSupervisor).toHaveBeenCalledTimes(1);
   });
 
   it("treats ACP session-not-found resume failures as missing saved sessions", async () => {

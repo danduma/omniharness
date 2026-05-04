@@ -7,6 +7,7 @@ import path from "path";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { executionEvents, messages, plans, runs, supervisorInterventions, workerCounters, workers } from "@/server/db/schema";
+import { buildAgentOutputActivity } from "@/lib/agent-output";
 
 const { mockEnsureSupervisorRuntimeStarted, mockStartSupervisorRun } = vi.hoisted(() => ({
   mockEnsureSupervisorRuntimeStarted: vi.fn().mockResolvedValue(undefined),
@@ -200,6 +201,109 @@ describe("GET /api/events", () => {
     expect(payload.executionEvents).toHaveLength(30);
     expect(payload.executionEvents[0].details).toContain("Event 29");
     expect(payload.executionEvents[0].details).not.toContain("xxxxx");
+  });
+
+  it("keeps compact raw tool payloads so selected-run terminal tool rows can expand", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+    const outputEntries = [
+      {
+        id: "edit-start",
+        type: "tool_call",
+        text: "Edit /workspace/app/rust/xtask/Cargo.toml",
+        timestamp: now.toISOString(),
+        toolCallId: "call-edit",
+        status: "in_progress",
+        raw: {
+          title: "Edit /workspace/app/rust/xtask/Cargo.toml",
+          kind: "edit",
+          rawInput: {
+            changes: {
+              "/workspace/app/rust/xtask/Cargo.toml": {
+                type: "update",
+                unified_diff: "@@ -1 +1\n-old\n+new\n",
+              },
+            },
+          },
+        },
+      },
+      {
+        id: "edit-done",
+        type: "tool_call_update",
+        text: "Tool call call-edit completed",
+        timestamp: new Date(now.getTime() + 1000).toISOString(),
+        toolCallId: "call-edit",
+        status: "completed",
+        raw: {
+          rawOutput: {
+            stdout: "Success. Updated the following files:\nM rust/xtask/Cargo.toml\n",
+            stderr: "",
+            success: true,
+            changes: {
+              "/workspace/app/rust/xtask/Cargo.toml": {
+                type: "update",
+                unified_diff: "@@ -1 +1\n-old\n+new\n",
+              },
+            },
+          },
+        },
+      },
+    ];
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/raw-tool-payload.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      title: "Raw tool payload",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: JSON.stringify(outputEntries),
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    const payload = await response.json();
+    const editUpdate = payload.agents[0].outputEntries.find((entry: { id: string }) => entry.id === "edit-done");
+
+    expect(editUpdate.raw.rawOutput.changes["/workspace/app/rust/xtask/Cargo.toml"].unified_diff).toContain("+new");
+
+    const activities = buildAgentOutputActivity({
+      outputEntries: payload.agents[0].outputEntries,
+      currentText: "",
+      lastText: "",
+      displayText: "",
+    });
+    const editActivity = activities.find((activity) => activity.kind === "tool" && activity.id === "call-edit");
+    expect(editActivity).toMatchObject({
+      kind: "tool",
+      label: "Edit",
+      outputPane: expect.objectContaining({
+        text: expect.stringContaining("Success. Updated the following files"),
+      }),
+    });
   });
 
   afterEach(() => {

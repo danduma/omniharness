@@ -55,6 +55,7 @@ const recentWorkerEventKeys = new Map<string, number>();
 const TYPE_DEDUPED_WORKER_EVENT_TYPES = new Set([
   "worker_error",
   "worker_idle",
+  "worker_session_missing",
   "worker_stopped",
   "worker_stuck",
 ]);
@@ -70,6 +71,10 @@ const FATAL_STDERR_PATTERNS = [
 
 function stateKey(runId: string, workerId: string) {
   return `${runId}:${workerId}`;
+}
+
+function normalizeWorkerStatus(status: string | null | undefined) {
+  return (status ?? "").trim().toLowerCase().split(":")[0]?.trim() ?? "";
 }
 
 function isPathInside(childPath: string, parentPath: string) {
@@ -545,6 +550,10 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
       continue;
     }
 
+    if (normalizeWorkerStatus(worker.status) === "starting" && !worker.bridgeSessionId) {
+      continue;
+    }
+
     const cwdMismatch = getWorkerCwdMismatch({
       projectPath: run.projectPath,
       workerCwd: worker.cwd,
@@ -611,7 +620,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
             return;
           }
           if (isMissingAgentError(resumeError)) {
-            await insertExecutionEvent(runId, worker.id, "worker_session_missing", {
+            const insertedEvent = await insertExecutionEvent(runId, worker.id, "worker_session_missing", {
               summary: `Saved bridge session for ${worker.id} is no longer available`,
               reason: formatErrorMessage(resumeError),
               sessionId: worker.bridgeSessionId,
@@ -623,7 +632,9 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
               updatedAt: new Date(now),
             }).where(eq(workers.id, worker.id));
             notifyEventStreamSubscribers();
-            wakeSupervisor(runId, 0);
+            if (insertedEvent) {
+              wakeSupervisor(runId, 0);
+            }
             continue;
           }
           await insertExecutionEvent(runId, worker.id, "worker_resume_failed", {

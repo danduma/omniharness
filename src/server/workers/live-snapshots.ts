@@ -95,6 +95,27 @@ function outputEntriesText(entries: NonNullable<AgentRecord["outputEntries"]>) {
     .join("\n\n");
 }
 
+function isAgentActive(state: string | null | undefined) {
+  const normalized = (state ?? "").trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  return normalized === "starting" || normalized === "working" || normalized === "stuck";
+}
+
+function shouldSurfaceBridgeLastError(agent: AgentRecord) {
+  if (!agent.lastError) {
+    return false;
+  }
+
+  if (agent.state === "error") {
+    return true;
+  }
+
+  if (isAgentActive(agent.state)) {
+    return false;
+  }
+
+  return !agent.currentText.trim() && !agent.lastText.trim() && (agent.outputEntries?.length ?? 0) === 0;
+}
+
 export function buildLiveWorkerSnapshot(args: {
   agent?: unknown | null;
   worker?: PersistedWorkerRecord | null;
@@ -127,6 +148,7 @@ export function buildLiveWorkerSnapshot(args: {
     const lastText = normalizedAgent.lastText || persistedLastText || outputLog || structuredEntriesText || emptyStopDiagnostic;
     const displayBase = structuredOutput || outputLog || lastText || structuredEntriesText || "";
     const displayText = liveText && !structuredOutput ? appendLiveText(displayBase, liveText) : displayBase;
+    const visibleLastError = shouldSurfaceBridgeLastError(normalizedAgent) ? normalizedAgent.lastError : null;
 
     return {
       ...normalizedAgent,
@@ -142,7 +164,7 @@ export function buildLiveWorkerSnapshot(args: {
       lastText,
       bridgeLastError: normalizedAgent.lastError ?? null,
       runLastError,
-      lastError: normalizedAgent.lastError ?? null,
+      lastError: visibleLastError,
       outputLog,
       displayText,
       bridgeMissing: false,

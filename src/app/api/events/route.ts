@@ -78,6 +78,8 @@ type PersistedEventRecords = Awaited<ReturnType<typeof readPersistedEventRecords
 const WORKER_INITIAL_PROMPT_PREVIEW_LIMIT = 1_000;
 const AGENT_TEXT_FIELD_LIMIT = 4_000;
 const AGENT_ENTRY_TEXT_LIMIT = 2_000;
+const AGENT_ENTRY_RAW_STRING_LIMIT = 20_000;
+const AGENT_ENTRY_RAW_JSON_LIMIT = 60_000;
 const AGENT_OUTPUT_ENTRY_LIMIT = 24;
 const EXECUTION_EVENT_LIMIT = 100;
 const EXECUTION_EVENT_DETAIL_LIMIT = 1_000;
@@ -191,6 +193,74 @@ function compactSupervisorIntervention(intervention: PersistedEventRecords["allS
   };
 }
 
+function isToolOutputEntry(entry: ReturnType<typeof buildLiveWorkerSnapshots>[number]["outputEntries"][number]) {
+  return entry.type === "tool_call" || entry.type === "tool_call_update" || entry.type === "permission";
+}
+
+function compactRawValue(value: unknown, stringLimit = AGENT_ENTRY_RAW_STRING_LIMIT, depth = 0): unknown {
+  if (typeof value === "string") {
+    return truncateText(value, stringLimit);
+  }
+
+  if (value == null || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+
+  if (depth >= 8) {
+    return "[Truncated nested raw tool payload]";
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 80).map((item) => compactRawValue(item, stringLimit, depth + 1));
+  }
+
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nestedValue]) => [
+        key,
+        compactRawValue(nestedValue, stringLimit, depth + 1),
+      ]),
+    );
+  }
+
+  return String(value);
+}
+
+function compactLargeRawToolPayload(raw: Record<string, unknown>) {
+  return {
+    sessionUpdate: raw.sessionUpdate,
+    title: raw.title,
+    kind: raw.kind,
+    path: raw.path,
+    filePath: raw.filePath,
+    locations: compactRawValue(raw.locations, 2_000),
+    rawInput: compactRawValue(raw.rawInput, 10_000),
+    rawOutput: raw.rawOutput == null
+      ? undefined
+      : {
+          truncated: true,
+          preview: truncateText(JSON.stringify(raw.rawOutput, null, 2), AGENT_ENTRY_RAW_JSON_LIMIT),
+        },
+    content: compactRawValue(raw.content, 10_000),
+    _meta: compactRawValue(raw._meta, 10_000),
+  };
+}
+
+function compactAgentOutputEntryRaw(entry: ReturnType<typeof buildLiveWorkerSnapshots>[number]["outputEntries"][number]) {
+  if (!isToolOutputEntry(entry) || typeof entry.raw !== "object" || entry.raw === null) {
+    return undefined;
+  }
+
+  const raw = entry.raw as Record<string, unknown>;
+  const compacted = compactRawValue(raw);
+  const serialized = JSON.stringify(compacted);
+  if (serialized.length <= AGENT_ENTRY_RAW_JSON_LIMIT) {
+    return compacted;
+  }
+
+  return compactLargeRawToolPayload(raw);
+}
+
 function compactAgentSnapshot(agent: ReturnType<typeof buildLiveWorkerSnapshots>[number]) {
   return {
     ...agent,
@@ -202,6 +272,7 @@ function compactAgentSnapshot(agent: ReturnType<typeof buildLiveWorkerSnapshots>
       toolCallId: entry.toolCallId,
       toolKind: entry.toolKind,
       status: entry.status,
+      raw: compactAgentOutputEntryRaw(entry),
     })),
     renderedOutput: null,
     currentText: truncateText(agent.currentText, AGENT_TEXT_FIELD_LIMIT),
