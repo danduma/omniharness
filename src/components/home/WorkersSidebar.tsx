@@ -157,7 +157,7 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col bg-muted/10">
-      <div className="flex items-center justify-between border-b p-4">
+      <div className="flex items-center justify-between border-b px-3 py-2.5">
         <h3 className="flex items-center gap-2 text-sm font-semibold">
           <Cpu className="h-4 w-4" /> Conversation Workers
         </h3>
@@ -167,12 +167,12 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
           </Button>
         )}
       </div>
-      <div className="border-b border-border/60 px-4 py-3">
-        <div className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-1">
+      <div className="border-b border-border/60 px-3 py-2">
+        <div className="inline-flex rounded-lg border border-border/60 bg-muted/30 p-0.5">
           <button
             type="button"
             className={cn(
-              "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+              "rounded-md px-2.5 py-1 text-xs font-semibold transition-colors",
               activeTab === "active"
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
@@ -184,7 +184,7 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
           <button
             type="button"
             className={cn(
-              "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+              "rounded-md px-2.5 py-1 text-xs font-semibold transition-colors",
               activeTab === "finished"
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
@@ -195,7 +195,7 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
           </button>
         </div>
       </div>
-      <ScrollArea className="min-h-0 flex-1 p-4">
+      <ScrollArea className={cn("min-h-0 flex-1", hasSingleVisibleWorker ? "p-0" : "p-3")}>
         <div className={cn(
           hasSingleVisibleWorker ? "flex h-full min-h-full flex-col" : visibleWorkers.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col",
         )}>

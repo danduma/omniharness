@@ -53,7 +53,7 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(agentSurfaceSource).toContain('className={cn("overflow-hidden rounded-2xl border border-white/10 bg-[#0d0f12] text-zinc-100 shadow-[0_24px_70px_rgba(0,0,0,0.32)]", className)}');
   expect(agentSurfaceSource).toContain('className="border-b border-white/10 bg-[#13161b] px-4 py-3"');
   expect(workerCardSource).toContain("Permissions waiting");
-  expect(workerCardSource).toContain("Context usage unavailable");
+  expect(workerCardSource).toContain("Context usage not reported");
   expect(workerCardSource).toContain("Context usage ");
   expect(pageSource).toContain("Claude Code");
   expect(workerCardSource).toContain('promptPreview?: string | null;');
@@ -62,11 +62,15 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(workersSidebarSource).toContain('supervisorInterventions={supervisorInterventions}');
   expect(workersSidebarSource).toContain('content: intervention.prompt');
   expect(workerCardSource).toContain('<Terminal agent={agent} userMessages={userMessages} />');
+  expect(workerCardSource).toContain("deriveWorkerTerminalProcesses");
+  expect(workerCardSource).toContain("Terminal Processes");
+  expect(workerCardSource).toContain("terminalProcess.outputTail");
   expect(workerCardSource).toContain('const promptPreviewText = promptPreview?.trim() ?? "";');
   expect(workerCardSource).toContain('line-clamp-2 text-[11px] leading-[1.35] text-zinc-500');
   expect(workerCardSource).not.toContain('const preview = buildWorkerPreview(agent);');
   expect(workerCardSource).not.toContain('className="truncate text-[13px] leading-5 text-zinc-400"');
   expect(pageSource).not.toContain("Recent output");
+  expect(pageSource).not.toContain("Terminal Processes");
   expect(pageSource).toContain('hasSingleVisibleWorker ? "flex h-full min-h-full flex-col" : visibleWorkers.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col"');
   expect(pageSource).toContain('className="flex h-full min-h-[16rem] flex-1 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground"');
   expect(pageSource).not.toContain('className="flex h-32 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground"');
@@ -99,14 +103,15 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).not.toContain("<SheetTitle>Navigation</SheetTitle>");
   expect(pageSource).not.toContain('queryClient.removeQueries({ queryKey: ["conversation-agent", workerId], exact: true })');
   expect(workerCardSource).toContain('function renderContextMeter(fullnessPercent: number | null | undefined)');
-  expect(workerCardSource).toContain('className="inline-flex items-center gap-1.5"');
+  expect(workerCardSource).toContain('render={<span className="inline-flex items-center" />}');
+  expect(workerCardSource).not.toContain('title={normalized === null ? "Context usage');
   expect(workerCardSource).toContain('className="h-3.5 w-3.5"');
   expect(workerCardSource).toContain('const showStopWorker = Boolean(onStopWorker) && isWorkerActiveStatus(agent.state);');
   expect(workerCardSource).toContain('className="flex shrink-0 items-start gap-2.5"');
   expect(workerCardSource).toContain('className="inline-flex h-5 w-5 items-center justify-center rounded-full');
   expect(workerCardSource).toContain('className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")}');
   expect(workerCardSource).toContain("Permissions waiting");
-  expect(workerCardSource).toContain("Context usage unavailable");
+  expect(workerCardSource).toContain("Context usage not reported");
   expect(workerCardSource).toContain("conic-gradient");
   expect(pageSource).not.toContain("Context window");
   expect(pageSource).not.toContain("Pending permissions");
@@ -121,7 +126,7 @@ test("workers sidebar is conversation-scoped and resizable", () => {
 
 test("workers sidebar gives a single visible worker the full available window and scrolls multi-worker lists", () => {
   expect(workersSidebarSource).toContain("const hasSingleVisibleWorker = visibleWorkers.length === 1;");
-  expect(workersSidebarSource).toContain('className="min-h-0 flex-1 p-4"');
+  expect(workersSidebarSource).toContain('className={cn("min-h-0 flex-1", hasSingleVisibleWorker ? "p-0" : "p-3")}');
   expect(workersSidebarSource).toContain('hasSingleVisibleWorker ? "flex h-full min-h-full flex-col"');
   expect(workersSidebarSource).toContain('const terminalHeightClass = hasSingleVisibleWorker ? "h-full min-h-[24rem]" : "h-44";');
   expect(workersSidebarSource).toContain("fillAvailable={hasSingleVisibleWorker}");
@@ -129,6 +134,7 @@ test("workers sidebar gives a single visible worker the full available window an
   expect(workerCardSource).toContain("fillAvailable?: boolean;");
   expect(workerCardSource).toContain("const shouldFillAvailable = fillAvailable && open;");
   expect(workerCardSource).toContain('shouldFillAvailable && "flex h-full min-h-0 flex-col"');
+  expect(workerCardSource).toContain('shouldFillAvailable && "flex min-h-0 flex-1 flex-col rounded-none border-x-0 border-b-0 shadow-none"');
   expect(workerCardSource).toContain('shouldFillAvailable && "min-h-0 flex-1"');
   expect(workerCardSource).not.toContain('fillAvailable && "flex h-full min-h-0 flex-col"');
 });

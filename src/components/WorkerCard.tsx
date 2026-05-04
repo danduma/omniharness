@@ -4,10 +4,15 @@ import { useEffect, useMemo, useRef } from "react";
 import { AlertTriangle, Bot, ChevronDown, Clock, Cpu, Square } from "lucide-react";
 import { Terminal, type AgentTerminalPayload, type TerminalUserMessage } from "@/components/Terminal";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { workerCardManager } from "@/components/component-state-managers";
 import { isWorkerActiveStatus } from "@/lib/conversation-workers";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import {
+  deriveWorkerTerminalProcesses,
+  type WorkerTerminalProcess,
+} from "@/lib/worker-terminal-processes";
 
 export type WorkerCardAgent = AgentTerminalPayload & {
   name: string;
@@ -66,9 +71,8 @@ function renderContextMeter(fullnessPercent: number | null | undefined) {
 
   return (
     <div
-      aria-label={normalized === null ? "Context usage unavailable" : `Context usage ${normalized}%`}
+      aria-label={normalized === null ? "Context usage not reported" : `Context usage ${normalized}%`}
       className="relative h-4 w-4 shrink-0 rounded-full border border-white/10 bg-white/[0.03]"
-      title={normalized === null ? "Context usage unavailable" : `Context usage ${normalized}%`}
     >
       <div
         className="absolute inset-0 rounded-full"
@@ -84,12 +88,70 @@ function formatContextAvailability(fullnessPercent: number | null | undefined) {
     return null;
   }
 
-  const availablePercent = Math.max(0, Math.min(100, 100 - Math.round(fullnessPercent)));
-  return `Context ${availablePercent}% available`;
+  const normalized = Math.max(0, Math.min(100, Math.round(fullnessPercent)));
+  return `Context usage ${normalized}%`;
 }
 
 function formatWorkerStateLabel(state: string) {
   return state.replace(/[_-]+/g, " ");
+}
+
+function formatTerminalProcessStatus(status: WorkerTerminalProcess["status"]) {
+  return status
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
+function terminalProcessStatusClass(process: WorkerTerminalProcess) {
+  if (process.active) {
+    return "bg-emerald-300";
+  }
+
+  if (process.status === "failed" || process.status === "error" || process.status === "cancelled") {
+    return "bg-red-300";
+  }
+
+  return "bg-zinc-500";
+}
+
+function TerminalProcessSummary({ processes }: { processes: WorkerTerminalProcess[] }) {
+  if (processes.length === 0) {
+    return null;
+  }
+
+  const visibleProcesses = processes.slice(0, 3);
+  const activeProcessCount = processes.filter((process) => process.active).length;
+
+  return (
+    <div className="shrink-0 border-b border-white/8 bg-[#0e1012] px-4 py-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="text-[11px] font-medium text-zinc-200">Terminal Processes</div>
+        <div className="text-[10px] font-medium uppercase tracking-normal text-zinc-500">
+          {activeProcessCount > 0 ? `${activeProcessCount} active` : "Recent"}
+        </div>
+      </div>
+      <div className="space-y-2">
+        {visibleProcesses.map((terminalProcess) => (
+          <div key={terminalProcess.id} className="min-w-0 text-[11px] leading-5">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", terminalProcessStatusClass(terminalProcess))} />
+              <span className="shrink-0 font-medium text-zinc-400">{formatTerminalProcessStatus(terminalProcess.status)}</span>
+              <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-200" title={terminalProcess.command}>
+                {terminalProcess.command}
+              </code>
+            </div>
+            {terminalProcess.outputTail ? (
+              <div className="line-clamp-2 pl-3.5 font-mono text-[10px] leading-4 text-zinc-500" title={terminalProcess.outputTail}>
+                {terminalProcess.outputTail}
+              </div>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function PermissionWarning({ workerId, pendingPermissions }: { workerId: string; pendingPermissions: PendingPermissionRecord[] }) {
@@ -185,6 +247,7 @@ export function WorkerCard({
   const showPromptPreview = promptPreviewText.length > 0;
   const showStopWorker = Boolean(onStopWorker) && isWorkerActiveStatus(agent.state);
   const shouldFillAvailable = fillAvailable && open;
+  const terminalProcesses = useMemo(() => deriveWorkerTerminalProcesses(agent.outputEntries), [agent.outputEntries]);
 
   const displayId = useMemo(() => {
     const normalizedTitle = workerTitle?.trim();
@@ -204,12 +267,12 @@ export function WorkerCard({
     <Collapsible open={open} onOpenChange={(nextOpen) => workerCardManager.setOpen(workerId, nextOpen)} className={cn(shouldFillAvailable && "flex h-full min-h-0 flex-col")}>
       <div className={cn(
         "overflow-hidden rounded-[18px] border border-white/8 bg-[#111315] text-zinc-100 shadow-[0_20px_60px_rgba(0,0,0,0.24)]",
-        shouldFillAvailable && "flex min-h-0 flex-1 flex-col",
+        shouldFillAvailable && "flex min-h-0 flex-1 flex-col rounded-none border-x-0 border-b-0 shadow-none",
       )}>
-        <div className="shrink-0 border-b border-white/8 bg-[#111315] px-4 py-4">
+        <div className="shrink-0 border-b border-white/8 bg-[#111315] px-3.5 py-3">
           <div className="flex items-start justify-between gap-4">
             <CollapsibleTrigger className="min-w-0 flex-1 text-left">
-              <div className="min-w-0 flex-1 space-y-2">
+              <div className="min-w-0 flex-1 space-y-1.5">
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
                   <div className="break-words text-[12px] font-medium text-zinc-100" title={workerId}>
                     {displayId}
@@ -224,10 +287,18 @@ export function WorkerCard({
                   </div>
                   {activeEffort ? <span className="text-[11px] text-zinc-500">{activeEffort} effort</span> : null}
                   {contextLabel ? (
-                    <div className="inline-flex items-center gap-1.5" title={contextLabel}>
-                      {renderContextMeter(agent.contextUsage?.fullnessPercent)}
-                      <span className="text-[11px] text-zinc-500">{contextLabel}</span>
-                    </div>
+                    <Tooltip>
+                      <TooltipTrigger
+                        closeOnClick={false}
+                        onClick={(event) => event.stopPropagation()}
+                        render={<span className="inline-flex items-center" />}
+                      >
+                        {renderContextMeter(agent.contextUsage?.fullnessPercent)}
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" align="center" sideOffset={8}>
+                        {contextLabel}
+                      </TooltipContent>
+                    </Tooltip>
                   ) : null}
                   {runtimeDurationLabel ? (
                     <div className="inline-flex min-w-0 items-center gap-1.5 text-[11px] text-zinc-400">
@@ -237,9 +308,24 @@ export function WorkerCard({
                   ) : null}
                 </div>
                 {showPromptPreview ? (
-                  <div className="line-clamp-2 text-[11px] leading-[1.35] text-zinc-500" title={promptPreviewText}>
-                    {promptPreviewText}
-                  </div>
+                  <Tooltip>
+                    <TooltipTrigger
+                      closeOnClick={false}
+                      render={<span className="block w-fit max-w-full" />}
+                    >
+                      <span className="line-clamp-2 text-[11px] leading-[1.35] text-zinc-500">
+                        {promptPreviewText}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="bottom"
+                      align="start"
+                      sideOffset={8}
+                      className="block max-h-72 max-w-[min(34rem,calc(100vw-3rem))] overflow-auto rounded-lg border border-white/10 bg-[#181a1d] p-3 text-left text-[11px] leading-[1.5] text-zinc-200 shadow-[0_18px_60px_rgba(0,0,0,0.42)]"
+                    >
+                      {promptPreviewText}
+                    </TooltipContent>
+                  </Tooltip>
                 ) : null}
               </div>
             </CollapsibleTrigger>
@@ -284,6 +370,7 @@ export function WorkerCard({
               <div className="mt-1 break-all text-[12px] leading-[1.55] text-zinc-300">{agent.lastError}</div>
             </div>
           ) : null}
+          <TerminalProcessSummary processes={terminalProcesses} />
           <div className={cn("relative w-full bg-[#0b0c0e]", terminalHeightClass, shouldFillAvailable && "min-h-0 flex-1")}>
             <Terminal agent={agent} userMessages={userMessages} />
           </div>
