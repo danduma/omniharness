@@ -21,6 +21,8 @@ test("terminal renders a structured activity feed instead of replaying xterm tex
   expect(terminalSource).toContain("buildAgentOutputActivity");
   expect(terminalSource).toContain('activity.kind === "thinking"');
   expect(terminalSource).toContain('activity.kind === "tool"');
+  expect(terminalSource).toContain('activity.kind === "history_gap"');
+  expect(terminalSource).toContain("Live payload summary");
   expect(terminalSource).not.toContain("@xterm/xterm");
 });
 
@@ -100,13 +102,13 @@ test("terminal uses the same measured expansion animation for thoughts", () => {
   expect(terminalSource).not.toContain("space-y-1 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1");
 });
 
-test("terminal exposes a three dot text zoom menu with tiny through three notches larger", () => {
+test("terminal exposes a text size icon menu with tiny through three notches larger", () => {
   expect(terminalSource).toContain("TERMINAL_ZOOM_LEVELS");
   expect(terminalSource).toContain('value: "tiny"');
   expect(terminalSource).toContain('value: "largest"');
   expect(terminalSource).toContain("notch: 3");
   expect(terminalSource).toContain('aria-label="Terminal text size"');
-  expect(terminalSource).toContain("<MoreHorizontal");
+  expect(terminalSource).toContain("<ALargeSmall");
   expect(terminalSource).toContain("<DropdownMenuGroup>");
   expect(terminalSource).toContain("<DropdownMenuLabel>Text size</DropdownMenuLabel>");
   expect(terminalSource).toContain("</DropdownMenuGroup>");
@@ -127,7 +129,7 @@ test("terminal aligns timeline markers with row text and connects the rail", () 
 test("terminal user messages render as left-indented transcript blocks outside the rail", () => {
   expect(terminalSource).toContain('if (activity.kind === "user_message")');
   expect(terminalSource).toContain('relative z-10 pl-4 sm:pl-6');
-  expect(terminalSource).toContain('rounded-lg bg-muted');
+  expect(terminalSource).toContain('rounded-[1.55rem] bg-[#f3f3f3]');
   expect(terminalSource).toContain('dark:bg-[#3a3a3a]');
   expect(terminalSource).toContain('dark:text-[#d8d8d8]');
   expect(terminalSource).not.toContain('>You</div>');

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
-import { Check, ChevronDown, LoaderCircle, MoreHorizontal } from "lucide-react";
+import { ALargeSmall, Check, ChevronDown, LoaderCircle } from "lucide-react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { terminalUiManager } from "@/components/component-state-managers";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -13,6 +13,8 @@ interface TerminalProps {
   agent?: AgentTerminalPayload | null;
   userMessages?: TerminalUserMessage[];
   getUserMessageActions?: (message: TerminalUserMessage) => TerminalUserMessageAction[];
+  hasMoreHistory?: boolean;
+  onRequestMoreHistory?: () => void;
   variant?: "terminal" | "native";
   className?: string;
 }
@@ -105,6 +107,12 @@ export function shouldTerminalFollowLatest(
   return metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop <= TERMINAL_BOTTOM_THRESHOLD_PX;
 }
 
+function shouldTerminalRequestMoreHistory(
+  metrics: Pick<HTMLDivElement, "scrollTop">,
+) {
+  return metrics.scrollTop <= TERMINAL_BOTTOM_THRESHOLD_PX;
+}
+
 function activityTimestampMs(timestamp: string) {
   const value = new Date(timestamp).getTime();
   return Number.isFinite(value) ? value : 0;
@@ -120,10 +128,12 @@ function activityKindOrder(activity: TerminalActivityItem) {
       return 2;
     case "permission":
       return 3;
-    case "message":
+    case "history_gap":
       return 4;
-    default:
+    case "message":
       return 5;
+    default:
+      return 6;
   }
 }
 
@@ -516,7 +526,7 @@ function ActivityRow({
   if (activity.kind === "user_message") {
     return (
       <div className="relative z-10 pl-4 sm:pl-6">
-        <div className="max-w-[min(72ch,calc(100%-1rem))] rounded-lg bg-muted px-3 py-2 text-[length:var(--terminal-message-size)] leading-[1.55] text-foreground shadow-sm dark:bg-[#3a3a3a] dark:text-[#d8d8d8] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:max-w-[min(78ch,calc(100%-1.5rem))]">
+        <div className="max-w-[min(72ch,calc(100%-1rem))] rounded-[1.55rem] bg-[#f3f3f3] px-6 py-4 text-[length:var(--terminal-message-size)] leading-[1.55] text-[#202124] dark:bg-[#3a3a3a] dark:text-[#d8d8d8] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:max-w-[min(78ch,calc(100%-1.5rem))]">
           <p className="max-w-none whitespace-pre-wrap">{activity.text}</p>
         </div>
         {activity.actions.length > 0 ? (
@@ -574,6 +584,23 @@ function ActivityRow({
             )}
           />
         ) : null}
+        {activity.kind === "history_gap" ? (
+          <div
+            className={cn(
+              "inline-flex max-w-[min(72ch,100%)] flex-col gap-1 rounded-md border border-dashed px-2.5 py-2",
+              variant === "native"
+                ? "border-border bg-muted/20 text-muted-foreground"
+                : "border-border/80 bg-muted/25 text-muted-foreground dark:border-white/12 dark:bg-white/5 dark:text-zinc-400",
+            )}
+          >
+            <div className="font-mono text-[length:var(--terminal-badge-size)] font-semibold uppercase tracking-[0.12em]">
+              Live payload summary
+            </div>
+            <div className="text-[length:var(--terminal-thought-size)] leading-[1.45]">
+              {activity.text}
+            </div>
+          </div>
+        ) : null}
         {activity.kind === "thinking" ? <ThoughtActivity activity={activity} variant={variant} /> : null}
         {activity.kind === "tool" ? <ToolActivity activity={activity} variant={variant} /> : null}
         {activity.kind === "permission" ? (
@@ -592,7 +619,15 @@ function ActivityRow({
   );
 }
 
-export function Terminal({ agent, userMessages = [], getUserMessageActions, variant = "terminal", className }: TerminalProps) {
+export function Terminal({
+  agent,
+  userMessages = [],
+  getUserMessageActions,
+  hasMoreHistory = false,
+  onRequestMoreHistory,
+  variant = "terminal",
+  className,
+}: TerminalProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldFollowLatestRef = useRef(true);
   const { terminalZoom } = useManagerSnapshot(terminalUiManager);
@@ -647,7 +682,7 @@ export function Terminal({ agent, userMessages = [], getUserMessageActions, vari
             aria-label="Terminal text size"
             title="Terminal text size"
           >
-            <MoreHorizontal className="h-4 w-4" />
+            <ALargeSmall className="h-4 w-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-36">
             <DropdownMenuGroup>
@@ -673,6 +708,9 @@ export function Terminal({ agent, userMessages = [], getUserMessageActions, vari
         ref={scrollRef}
         onScroll={(event) => {
           shouldFollowLatestRef.current = shouldTerminalFollowLatest(event.currentTarget);
+          if (hasMoreHistory && shouldTerminalRequestMoreHistory(event.currentTarget)) {
+            onRequestMoreHistory?.();
+          }
         }}
         className={cn(
           variant === "native"

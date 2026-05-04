@@ -26,6 +26,13 @@ export type AgentActivityItem =
     }
   | {
       id: string;
+      kind: "history_gap";
+      text: string;
+      timestamp: string;
+      omittedCount?: number;
+    }
+  | {
+      id: string;
       kind: "thinking";
       thoughts: string[];
       timestamp: string;
@@ -67,6 +74,15 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function isOmittedOutputEntriesMarker(entry: AgentOutputEntry) {
+  return entry.id.startsWith("output-entries-omitted:");
+}
+
+function omittedOutputEntriesCount(text: string) {
+  const match = text.match(/^(\d+)\s+earlier output entries omitted from this live payload\./);
+  return match ? Number.parseInt(match[1], 10) || undefined : undefined;
 }
 
 function normalizeMultilineText(value: string): string {
@@ -125,7 +141,7 @@ export function extractLatestPlainTextTurn(snapshot: AgentOutputSnapshot): strin
 
   for (let index = outputEntries.length - 1; index >= 0; index -= 1) {
     const entry = outputEntries[index];
-    if (entry?.type !== "message") {
+    if (entry?.type !== "message" || isOmittedOutputEntriesMarker(entry)) {
       continue;
     }
 
@@ -543,6 +559,19 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
         continue;
       }
       finishOpenThinking(entry.timestamp);
+      if (isOmittedOutputEntriesMarker(entry)) {
+        const omittedCount = omittedOutputEntriesCount(text);
+        items.push({
+          id: entry.id,
+          kind: "history_gap",
+          text: omittedCount
+            ? `${omittedCount} earlier output entries are not loaded in this live snapshot.`
+            : "Earlier output entries are not loaded in this live snapshot.",
+          timestamp: entry.timestamp,
+          omittedCount,
+        });
+        continue;
+      }
       items.push({
         id: entry.id,
         kind: "message",

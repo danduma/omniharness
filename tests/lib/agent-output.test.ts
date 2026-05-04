@@ -260,6 +260,29 @@ describe("agent output normalization", () => {
     ]);
   });
 
+  it("renders compact live payload markers as history gap metadata", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        {
+          id: "output-entries-omitted:entry-5:entry-66",
+          type: "message",
+          text: "60 earlier output entries omitted from this live payload. Open the worker detail again as it updates to see the current tail.",
+          timestamp: "2026-05-04T00:01:06.000Z",
+        },
+      ],
+    });
+
+    expect(activity).toEqual([
+      {
+        id: "output-entries-omitted:entry-5:entry-66",
+        kind: "history_gap",
+        text: "60 earlier output entries are not loaded in this live snapshot.",
+        timestamp: "2026-05-04T00:01:06.000Z",
+        omittedCount: 60,
+      },
+    ]);
+  });
+
   it("extracts the latest plain text worker turn instead of the initial chatter", () => {
     const summary = extractLatestPlainTextTurn({
       outputEntries: [
@@ -288,6 +311,27 @@ describe("agent output normalization", () => {
     });
 
     expect(summary).toBe("Updated the worker summary card and verified the focused tests.");
+  });
+
+  it("does not treat compact live payload markers as the latest worker turn", () => {
+    const summary = extractLatestPlainTextTurn({
+      outputEntries: [
+        {
+          id: "msg-1",
+          type: "message",
+          text: "Actual worker update",
+          timestamp: "2026-05-04T00:00:00.000Z",
+        },
+        {
+          id: "output-entries-omitted:msg-1:msg-2",
+          type: "message",
+          text: "20 earlier output entries omitted from this live payload. Open the worker detail again as it updates to see the current tail.",
+          timestamp: "2026-05-04T00:00:01.000Z",
+        },
+      ],
+    });
+
+    expect(summary).toBe("Actual worker update");
   });
 
   it("falls back to the response section from legacy worker output messages", () => {
