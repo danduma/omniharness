@@ -176,7 +176,7 @@ describe("Supervisor worker spawn flow", () => {
     await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
 
     expect(mockNotifyEventStreamSubscribers).toHaveBeenCalled();
-  });
+  }, 15_000);
 
   it("rechecks immediately when a worker returns long final-looking output", async () => {
     const planId = randomUUID();

@@ -567,25 +567,28 @@ export async function GET(req: NextRequest) {
     return auth.response;
   }
 
-  await ensureSupervisorRuntimeStarted();
-
   const eventPayloadOptions = {
     selectedRunId: req.nextUrl.searchParams.get("runId"),
   } satisfies EventPayloadOptions;
 
   if (req.nextUrl.searchParams.get("snapshot") === "1") {
-    const payload = req.nextUrl.searchParams.get("persisted") === "1"
-      ? await buildPersistedEventPayload(eventPayloadOptions)
-      : await buildRuntimeEnrichedEventPayload(eventPayloadOptions);
+    const persistedOnly = req.nextUrl.searchParams.get("persisted") === "1";
+    if (persistedOnly) {
+      return NextResponse.json(await buildPersistedEventPayload(eventPayloadOptions));
+    }
+
+    await ensureSupervisorRuntimeStarted();
+    const payload = await buildRuntimeEnrichedEventPayload(eventPayloadOptions);
     return NextResponse.json(payload);
   }
+
+  await ensureSupervisorRuntimeStarted();
 
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
       let isClosed = false;
       let lastUpdatePayload = "";
-      let lastRuntimeEnrichedPayload: Awaited<ReturnType<typeof buildRuntimeEnrichedEventPayload>> | null = null;
 
       const sendSerializedEvent = (event: string, serializedData: string) => {
         try {
@@ -629,15 +632,11 @@ export async function GET(req: NextRequest) {
           ]);
 
           if (runtimePayload) {
-            lastRuntimeEnrichedPayload = runtimePayload;
             sendUpdateIfChanged(runtimePayload);
           } else {
-            if (!lastRuntimeEnrichedPayload) {
-              sendUpdateIfChanged(await buildPersistedEventPayload(eventPayloadOptions));
-            }
+            sendUpdateIfChanged(await buildPersistedEventPayload(eventPayloadOptions));
             const enrichedPayload = await runtimePayloadPromise;
             if (!isClosed) {
-              lastRuntimeEnrichedPayload = enrichedPayload;
               sendUpdateIfChanged(enrichedPayload);
             }
           }

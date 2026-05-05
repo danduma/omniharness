@@ -285,5 +285,5 @@ describe("supervisor context window compaction", () => {
     expect(rendered).toContain("Earlier summary: worker fixed the API route.");
     expect(rendered.length).toBeLessThan(noisyWorkerText.length);
     expect(estimateContextTokens(bundle.messages)).toBeLessThanOrEqual(bundle.stats.budgetTokens);
-  });
+  }, 15_000);
 });

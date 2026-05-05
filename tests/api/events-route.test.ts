@@ -54,6 +54,7 @@ describe("GET /api/events", () => {
   beforeEach(async () => {
     mockEnsureSupervisorRuntimeStarted.mockClear();
     mockStartSupervisorRun.mockClear();
+    global.fetch = originalFetch;
     await db.delete(supervisorInterventions);
     await db.delete(executionEvents);
     await db.delete(messages);
@@ -204,6 +205,127 @@ describe("GET /api/events", () => {
     expect(payload.executionEvents).toHaveLength(30);
     expect(payload.executionEvents[0].details).toContain("Event 29");
     expect(payload.executionEvents[0].details).not.toContain("xxxxx");
+  });
+
+  it("serves persisted snapshots from sqlite without waiting for supervisor startup or bridge fetches", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/instant-persisted-snapshot.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      title: "Instant persisted snapshot",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "Persisted worker output",
+      outputEntriesJson: JSON.stringify([{
+        id: "entry-persisted",
+        type: "message",
+        text: "Disk-backed worker entry",
+        timestamp: now.toISOString(),
+      }]),
+      currentText: "",
+      lastText: "Persisted last text",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    global.fetch = vi.fn().mockRejectedValue(new Error("bridge should not be called"));
+    const ensureCallsBefore = mockEnsureSupervisorRuntimeStarted.mock.calls.length;
+
+    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const payload = await response.json();
+
+    expect(mockEnsureSupervisorRuntimeStarted).toHaveBeenCalledTimes(ensureCallsBefore);
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(payload.agents[0]).toEqual(expect.objectContaining({
+      name: workerId,
+      outputLog: "Persisted worker output",
+      lastText: "Persisted last text",
+      bridgeMissing: true,
+    }));
+    expect(payload.agents[0].outputEntries).toEqual([
+      expect.objectContaining({ id: "entry-persisted", text: "Disk-backed worker entry" }),
+    ]);
+  });
+
+  it("streams a persisted sqlite update when runtime enrichment misses the grace window", async () => {
+    vi.useFakeTimers();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/instant-sse-persisted-output.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      title: "Instant SSE persisted output",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "SSE disk output",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    global.fetch = vi.fn(() => new Promise<Response>(() => {}));
+
+    const controller = new AbortController();
+    const response = await GET(new NextRequest(`http://localhost/api/events?runId=${runId}`, {
+      signal: controller.signal,
+    }));
+    const reader = response.body!.getReader();
+    const readPromise = readWithTimeout(reader, 1000);
+
+    await vi.advanceTimersByTimeAsync(151);
+    const result = await readPromise;
+    controller.abort();
+    reader.releaseLock();
+    vi.useRealTimers();
+
+    expect(result.done).toBe(false);
+    const payload = decodeFirstEvent(result.value!);
+    expect(payload.agents[0]).toEqual(expect.objectContaining({
+      name: workerId,
+      outputLog: "SSE disk output",
+      bridgeMissing: true,
+    }));
   });
 
   it("keeps completed terminal lifecycle entries in compact selected-run snapshots", async () => {

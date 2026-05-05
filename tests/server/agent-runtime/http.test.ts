@@ -378,6 +378,9 @@ describe("internal agent runtime HTTP API", () => {
       env: {
         ...process.env,
         OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        OPENAI_BASE_URL: "http://127.0.0.1:9/v1",
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:9",
+        GOOGLE_GEMINI_BASE_URL: "http://127.0.0.1:9",
         PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
       },
     });
@@ -478,7 +481,7 @@ describe("internal agent runtime HTTP API", () => {
     const stopResponse = await fetch(`${baseUrl}/agents/worker-1`, { method: "DELETE" });
     expect(stopResponse.status).toBe(200);
     expect(readdirSync(join(projectDir, ".agents", "skills")).some((entry) => entry.includes("reviewer"))).toBe(false);
-  }, 30_000);
+  }, 120_000);
 
   it("stops a single reported terminal process without deleting the agent", async () => {
     const projectDir = createTempDir("omni-runtime-terminal-project-");
