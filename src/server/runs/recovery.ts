@@ -9,6 +9,7 @@ import {
   messages,
   planItems,
   plans,
+  queuedConversationMessages,
   runs,
   supervisorInterventions,
   validationRuns,
@@ -17,7 +18,9 @@ import {
 import { askAgent, cancelAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
 import { createAdHocPlan, rewriteAdHocPlan } from "@/server/runs/ad-hoc-plan";
 import { persistRunFailure } from "@/server/runs/failures";
+import { createRunId } from "@/server/runs/ids";
 import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
+import { startSupervisorRun } from "@/server/supervisor/start";
 import { getAppDataPath } from "@/server/app-root";
 import { PLANNER_SYSTEM_PROMPT } from "@/server/prompts";
 import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/supervisor/worker-types";
@@ -59,6 +62,7 @@ async function clearRunDerivedState(runId: string, planId: string) {
   await db.delete(validationRuns).where(eq(validationRuns.runId, runId));
   await db.delete(executionEvents).where(eq(executionEvents.runId, runId));
   await db.delete(supervisorInterventions).where(eq(supervisorInterventions.runId, runId));
+  await db.delete(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId));
   await db.delete(planItems).where(eq(planItems.planId, planId));
 }
 
@@ -174,6 +178,80 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string) 
   });
 }
 
+async function startImplementationRerun(
+  run: typeof runs.$inferSelect,
+  plan: typeof plans.$inferSelect,
+  args: RecoverRunArgs,
+  targetMessage: typeof messages.$inferSelect,
+  nextContent: string,
+) {
+  await cancelRunWorkers(args.runId);
+
+  const laterMessages = await db.select().from(messages).where(eq(messages.runId, args.runId));
+  const laterMessageIds = laterMessages
+    .filter((message) => message.createdAt > targetMessage.createdAt)
+    .map((message) => message.id);
+
+  if (laterMessageIds.length > 0) {
+    await db.delete(messages).where(inArray(messages.id, laterMessageIds));
+  }
+
+  if (args.action === "edit") {
+    await db.update(messages).set({
+      content: nextContent,
+      editedFromMessageId: args.targetMessageId,
+    }).where(eq(messages.id, args.targetMessageId));
+  }
+
+  await clearRunDerivedState(args.runId, run.planId);
+  await clearSupervisorWakeLease(args.runId);
+  await db.update(plans).set({
+    status: "running",
+    updatedAt: new Date(),
+  }).where(eq(plans.id, plan.id));
+  await db.update(runs).set({
+    status: "running",
+    failedAt: null,
+    lastError: null,
+    updatedAt: new Date(),
+  }).where(eq(runs.id, args.runId));
+
+  startSupervisorRun(args.runId);
+
+  return { runId: args.runId };
+}
+
+async function resumeImplementationRun(run: typeof runs.$inferSelect, plan: typeof plans.$inferSelect) {
+  await clearSupervisorWakeLease(run.id);
+  await clearMatchingRunFailureMessage(run);
+  await db.update(plans).set({
+    status: "running",
+    updatedAt: new Date(),
+  }).where(eq(plans.id, plan.id));
+  await db.update(runs).set({
+    status: "running",
+    failedAt: null,
+    lastError: null,
+    updatedAt: new Date(),
+  }).where(eq(runs.id, run.id));
+
+  startSupervisorRun(run.id);
+  return { runId: run.id };
+}
+
+async function clearMatchingRunFailureMessage(run: typeof runs.$inferSelect) {
+  if (!run.lastError) {
+    return;
+  }
+
+  await db.delete(messages).where(and(
+    eq(messages.runId, run.id),
+    eq(messages.role, "system"),
+    eq(messages.kind, "error"),
+    eq(messages.content, `Run failed: ${run.lastError}`),
+  ));
+}
+
 export async function recoverRun(args: RecoverRunArgs) {
   const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
   if (!run) {
@@ -194,10 +272,6 @@ export async function recoverRun(args: RecoverRunArgs) {
     throw new Error("Target message must be a user message in this run");
   }
 
-  if (run.mode !== "direct") {
-    throw new Error("Recovery actions are only available in direct control conversations");
-  }
-
   const nextContent = typeof args.content === "string" && args.content.trim()
     ? args.content.trim()
     : targetMessage.content;
@@ -206,11 +280,27 @@ export async function recoverRun(args: RecoverRunArgs) {
     throw new Error("Content cannot be empty");
   }
 
+  if (run.mode === "implementation") {
+    if (args.action !== "retry" && args.action !== "edit") {
+      throw new Error("Fork recovery is only available in direct control conversations");
+    }
+
+    if (args.action === "retry") {
+      return resumeImplementationRun(run, plan);
+    }
+
+    return startImplementationRerun(run, plan, args, targetMessage, nextContent);
+  }
+
+  if (run.mode !== "direct") {
+    throw new Error("Recovery actions are only available in direct control conversations");
+  }
+
   if (args.action === "fork") {
     await cancelRunWorkers(args.runId);
 
     const newPlanId = randomUUID();
-    const newRunId = randomUUID();
+    const newRunId = createRunId();
     const planPath = createAdHocPlan(nextContent);
     const now = new Date();
 

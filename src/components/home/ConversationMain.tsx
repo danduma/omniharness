@@ -26,22 +26,26 @@ function ConversationExecutionStatus({
   liveExecutionStatus,
   liveThoughts,
 }: ConversationExecutionStatusProps) {
+  const liveThoughtText = liveThoughts[0]?.snippet?.trim() ?? "";
+  const statusText = liveExecutionStatus.detail || liveThoughtText;
+
   return (
-  <div className="group flex w-full flex-col text-sm">
-    <div className="mb-1.5 flex items-center gap-2 px-1">
+  <div className="group flex w-full min-w-0 items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-sm" aria-label="Conversation status">
       <span
         className={cn(
-          "text-xs font-semibold tracking-wide",
+          "shrink-0 text-xs font-semibold tracking-wide",
           liveExecutionStatus.tone === "error"
             ? "text-destructive"
             : liveExecutionStatus.tone === "warning"
               ? "text-amber-700"
-              : "text-amber-600",
+              : liveExecutionStatus.tone === "muted"
+                ? "text-muted-foreground"
+                : "text-amber-600",
         )}
       >
         {liveExecutionStatus.label}
       </span>
-      <div className="flex items-center gap-1" aria-hidden={liveExecutionStatus.tone !== "active"}>
+      <div className="flex shrink-0 items-center gap-1" aria-hidden={liveExecutionStatus.tone !== "active"}>
         {[0, 1, 2].map((index) => (
           <span
             key={index}
@@ -57,18 +61,8 @@ function ConversationExecutionStatus({
           />
         ))}
       </div>
-    </div>
-    {liveExecutionStatus.detail ? (
-      <p className="mb-2 px-1 text-xs leading-relaxed text-muted-foreground">{liveExecutionStatus.detail}</p>
-    ) : null}
-    {liveThoughts.length > 0 ? (
-      <div className="mb-1 space-y-1 px-1">
-        {liveThoughts.map((thought) => (
-          <p key={`${thought.agentName}:${thought.snippet}`} className="text-xs leading-relaxed text-muted-foreground">
-            {thought.agentName}: {thought.snippet}
-          </p>
-        ))}
-      </div>
+    {statusText ? (
+      <span className="min-w-0 truncate text-xs leading-5 text-muted-foreground">{statusText}</span>
     ) : null}
   </div>
   );
@@ -163,12 +157,26 @@ function inferWorkerIdFromMessage(message: MessageRecord) {
   return promptedMatch?.[1] ?? null;
 }
 
+function renderSupervisorActivityText(text: string) {
+  const match = text.match(/^(Starting worker \d+|Steering worker \d+)([\s\S]*)$/);
+  if (!match) {
+    return text;
+  }
+
+  return (
+    <>
+      <strong className="font-semibold text-foreground">{match[1]}</strong>
+      {match[2]}
+    </>
+  );
+}
+
 function SupervisorActivityMessage({ item }: { item: Extract<ConversationTimelineItem, { type: "activity" }> }) {
   return (
     <div className="group flex w-full flex-col px-1 text-sm" aria-label="Conversation event">
       <div className="flex items-start justify-between gap-3">
         <p className="text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
-          {item.text}
+          {renderSupervisorActivityText(item.text)}
         </p>
         <span className="shrink-0 text-[10px] text-muted-foreground/50">
           {formatExecutionTimestamp(item.createdAt)}
@@ -269,7 +277,7 @@ interface ConversationMainProps {
 
 function LatestRecoveryAction({
   selectedRun,
-  isDirectConversation,
+  canRetryConversation,
   recoverRun,
   showRecoverableRunningState,
   hasStuckWorker,
@@ -277,14 +285,14 @@ function LatestRecoveryAction({
   handleRetryMessage,
 }: {
   selectedRun: RunRecord | null;
-  isDirectConversation: boolean;
+  canRetryConversation: boolean;
   recoverRun: { isPending: boolean };
   showRecoverableRunningState: boolean;
   hasStuckWorker: boolean;
   latestUserCheckpoint: MessageRecord | null;
   handleRetryMessage: (messageId: string) => void;
 }) {
-  if (!isDirectConversation || !latestUserCheckpoint) {
+  if (!canRetryConversation || !latestUserCheckpoint) {
     return null;
   }
 
@@ -301,7 +309,7 @@ function LatestRecoveryAction({
         onClick={() => handleRetryMessage(latestUserCheckpoint.id)}
         disabled={recoverRun.isPending}
       >
-        <RotateCcw className="mr-2 h-4 w-4" /> {selectedRun?.status === "failed" ? "Retry latest" : "Unstick latest"}
+        <RotateCcw className="mr-2 h-4 w-4" /> {selectedRun?.status === "failed" ? "Resume worker" : "Unstick latest"}
       </Button>
     </div>
   );
@@ -349,31 +357,42 @@ export function ConversationMain({
       console.error("Copy message failed:", error);
     }
   };
-  const canRecoverUserMessage = isDirectConversation;
-  const getUserMessageActions = (message: Pick<MessageRecord, "id" | "content">): UserInputMessageAction[] => (
-    canRecoverUserMessage
-      ? [
-        {
-          label: "Retry from here",
-          icon: <RotateCcw className="h-3.5 w-3.5" />,
-          disabled: recoverRun.isPending,
-          onClick: () => handleRetryMessage(message.id),
-        },
-        {
-          label: "Edit in place",
-          icon: <Pencil className="h-3.5 w-3.5" />,
-          disabled: recoverRun.isPending,
-          onClick: () => handleStartEditingMessage(message),
-        },
-        {
-          label: "Fork from here",
-          icon: <GitBranch className="h-3.5 w-3.5" />,
-          disabled: recoverRun.isPending,
-          onClick: () => handleForkMessage(message),
-        },
-      ]
-      : []
-  );
+  const canRetryConversation = isDirectConversation || (isImplementationConversation && selectedRun?.status !== "failed");
+  const canRecoverUserMessage = isDirectConversation || isImplementationConversation;
+  const getUserMessageActions = (message: Pick<MessageRecord, "id" | "content">): UserInputMessageAction[] => {
+    if (!canRecoverUserMessage) {
+      return [];
+    }
+
+    const retryActions: UserInputMessageAction[] = [
+      {
+        label: isImplementationConversation ? "Resume from here" : "Retry from here",
+        icon: <RotateCcw className="h-3.5 w-3.5" />,
+        disabled: recoverRun.isPending,
+        onClick: () => handleRetryMessage(message.id),
+      },
+    ];
+
+    if (!isDirectConversation) {
+      return retryActions;
+    }
+
+    return [
+      ...retryActions,
+      {
+        label: "Edit in place",
+        icon: <Pencil className="h-3.5 w-3.5" />,
+        disabled: recoverRun.isPending,
+        onClick: () => handleStartEditingMessage(message),
+      },
+      {
+        label: "Fork from here",
+        icon: <GitBranch className="h-3.5 w-3.5" />,
+        disabled: recoverRun.isPending,
+        onClick: () => handleForkMessage(message),
+      },
+    ];
+  };
 
   return (
   <ScrollArea className="min-h-0 flex-1" ref={scrollRef}>
@@ -392,7 +411,7 @@ export function ConversationMain({
               <ErrorNotice error={conversationFailure} />
               <LatestRecoveryAction
                 selectedRun={selectedRun}
-                isDirectConversation={isDirectConversation}
+                canRetryConversation={canRetryConversation}
                 recoverRun={recoverRun}
                 showRecoverableRunningState={showRecoverableRunningState}
                 hasStuckWorker={hasStuckWorker}
@@ -482,6 +501,7 @@ export function ConversationMain({
                   <UserInputMessage
                     content={msg.content}
                     attachments={msg.attachments}
+                    createdAt={msg.createdAt}
                     isExpanded={isExpanded}
                     onToggleExpanded={() => toggleDirectMessageExpansion(msg.id)}
                     onCopy={handleCopyDirectMessage}
@@ -534,7 +554,7 @@ export function ConversationMain({
           {!conversationFailure && (showRecoverableRunningState || hasStuckWorker) ? (
             <LatestRecoveryAction
               selectedRun={selectedRun}
-              isDirectConversation={isDirectConversation}
+              canRetryConversation={canRetryConversation}
               recoverRun={recoverRun}
               showRecoverableRunningState={showRecoverableRunningState}
               hasStuckWorker={hasStuckWorker}
@@ -556,7 +576,7 @@ export function ConversationMain({
               <ErrorNotice error={conversationFailure} />
               <LatestRecoveryAction
                 selectedRun={selectedRun}
-                isDirectConversation={isDirectConversation}
+                canRetryConversation={canRetryConversation}
                 recoverRun={recoverRun}
                 showRecoverableRunningState={showRecoverableRunningState}
                 hasStuckWorker={hasStuckWorker}

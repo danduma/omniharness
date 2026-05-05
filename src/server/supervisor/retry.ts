@@ -12,9 +12,26 @@ const RETRYABLE_ERROR_CODES = new Set([
   "UND_ERR_HEADERS_TIMEOUT",
   "UND_ERR_SOCKET",
 ]);
+const RECOVERABLE_CONNECTION_ERROR_CODES = new Set([
+  "EAI_AGAIN",
+  "ECONNABORTED",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETDOWN",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
 const RETRYABLE_MESSAGE_PATTERNS = [
   /\b(?:ECONNABORTED|ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETDOWN|ENETUNREACH|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_SOCKET)\b/i,
   /\bENOTFOUND\b/i,
+  /\bNo spawnable worker is available\b/i,
+  /\bACP adapter is not installed\b/i,
+  /\bAgent session did not include a session id\b/i,
   /\bagent is busy\b/i,
   /\bgetaddrinfo\b/i,
   /\bfetch failed\b/i,
@@ -30,11 +47,15 @@ const RETRYABLE_MESSAGE_PATTERNS = [
   /\bnetwork\b/i,
   /\bsocket hang up\b/i,
   /\bother side closed\b/i,
+  /\bworker binary is not installed\b/i,
 ];
 
 export interface RetrySupervisorRequestOptions {
   attempts?: number;
   initialDelayMs?: number;
+  maxDelayMs?: number;
+  operationTimeoutMs?: number;
+  retryIndefinitelyWhen?: (error: unknown) => boolean;
   sleep?: (delayMs: number) => Promise<void>;
 }
 
@@ -97,29 +118,76 @@ export function isTransientSupervisorError(error: unknown) {
   });
 }
 
+export function isRecoverableConnectionSupervisorError(error: unknown) {
+  return extractErrorChain(error).some((entry) => {
+    const message = typeof entry.message === "string" ? entry.message : "";
+    const code = typeof entry.code === "string" ? entry.code.toUpperCase() : "";
+    return (
+      RECOVERABLE_CONNECTION_ERROR_CODES.has(code) ||
+      /\b(?:EAI_AGAIN|ECONNABORTED|ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETDOWN|ENETUNREACH|ENOTFOUND|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_SOCKET)\b/i.test(message) ||
+      /\bgetaddrinfo\b/i.test(message) ||
+      /\bfetch failed\b/i.test(message) ||
+      /\bnetwork\b/i.test(message) ||
+      /\bsocket hang up\b/i.test(message) ||
+      /\bother side closed\b/i.test(message)
+    );
+  });
+}
+
+function exponentialDelayMs(attempt: number, initialDelayMs: number, maxDelayMs: number) {
+  if (initialDelayMs === 0 || maxDelayMs === 0) {
+    return 0;
+  }
+  return Math.min(maxDelayMs, initialDelayMs * 2 ** Math.min(30, attempt - 1));
+}
+
+function runWithOperationTimeout<T>(operation: () => Promise<T>, timeoutMs: number | undefined) {
+  if (timeoutMs === undefined || timeoutMs <= 0 || !Number.isFinite(timeoutMs)) {
+    return operation();
+  }
+
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error(`Supervisor request timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+  });
+
+  return Promise.race([operation(), timeoutPromise]).finally(() => {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  });
+}
+
 export async function retrySupervisorRequest<T>(
   operation: () => Promise<T>,
   options: RetrySupervisorRequestOptions = {},
 ) {
   const attempts = Math.max(1, options.attempts ?? 3);
   const initialDelayMs = Math.max(0, options.initialDelayMs ?? 250);
+  const maxDelayMs = Math.max(0, options.maxDelayMs ?? Number.POSITIVE_INFINITY);
   const sleep = options.sleep ?? defaultSleep;
 
   let lastError: unknown;
 
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+  for (let attempt = 1; ; attempt += 1) {
     try {
-      return await operation();
+      return await runWithOperationTimeout(operation, options.operationTimeoutMs);
     } catch (error) {
       lastError = error;
 
-      if (!isTransientSupervisorError(error) || attempt === attempts) {
+      const retryIndefinitely = options.retryIndefinitelyWhen?.(error) === true;
+      if (!isTransientSupervisorError(error) || (!retryIndefinitely && attempt === attempts)) {
         throw error;
       }
 
-      const delayMs = initialDelayMs * 2 ** (attempt - 1);
+      const delayMs = exponentialDelayMs(attempt, initialDelayMs, maxDelayMs);
+      const attemptLabel = retryIndefinitely
+        ? `attempt ${attempt}`
+        : `attempt ${attempt} of ${attempts}`;
       console.warn(
-        `Supervisor model request failed with a retryable error (attempt ${attempt} of ${attempts}). Retrying in ${delayMs}ms.`,
+        `Supervisor request failed with a retryable error (${attemptLabel}). Retrying in ${delayMs}ms.`,
         error,
       );
       await sleep(delayMs);

@@ -168,7 +168,7 @@ export function ConversationComposer({
           "rounded-[1.5rem] px-4 pb-0.5 pt-3 transition-all sm:px-5 sm:pb-1 sm:pt-4",
           themeMode === "night"
             ? "border border-transparent bg-muted/80 shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] focus-within:bg-muted/90 dark:bg-[#2f2f2f] dark:focus-within:bg-[#343434]"
-            : "border border-[#d8d8d8] bg-[#fbfbfa] shadow-[0_24px_60px_-34px_rgba(24,24,27,0.22),0_1px_0_rgba(255,255,255,0.92)_inset] focus-within:bg-white",
+            : "rounded-[2rem] border border-[#dededd] bg-[#fdfdfc] shadow-none focus-within:border-[#d2d2d0] focus-within:bg-[#fdfdfc] sm:rounded-[2.35rem]",
         )}
       >
         <textarea

@@ -178,6 +178,46 @@ describe("Supervisor worker spawn flow", () => {
     expect(mockNotifyEventStreamSubscribers).toHaveBeenCalled();
   });
 
+  it("rechecks immediately when a worker returns long final-looking output", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+    const longWorkerResponse = [
+      "Implemented the next real slice of the parity plan: the mobile media core now has a feature-gated linked FFmpeg/libav path instead of only the adapter-unavailable stub.",
+      "",
+      "Changed:",
+      "",
+      "Added optional ffmpeg-next and image deps behind mobile_media_core/ffmpeg in Cargo.toml.",
+      "Implemented linked-library support for probe_media, extract_frame, render_preview_frame, and audio stream waveform summaries in engine.rs.",
+      "Kept the no-feature production path explicitly failing with adapter-unavailable errors, so unstaged native-library builds still cannot fake media success.",
+      "Added a feature-gated real fixture test in linked_ffmpeg_adapter.rs.",
+      "Updated the plan and FFmpeg architecture-mismatch note with the current state and remaining encoder/muxer gap.",
+    ].join("\n");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockAskAgent.mockResolvedValue({ response: longWorkerResponse, state: "idle" });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 0 });
+  });
+
   it("resolves relative worker spawn cwd under the run project path", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -957,6 +997,66 @@ describe("Supervisor worker spawn flow", () => {
     expect(event?.details).toContain("already has active implementation worker");
   });
 
+  it("blocks a replacement main worker while a stopped main worker still has a resumable session", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: `${runId}-worker-1`,
+      runId,
+      type: "opencode",
+      status: "stopped",
+      cwd: "/tmp/project",
+      title: "Main implementation",
+      initialPrompt: "implement the plan",
+      outputLog: "",
+      bridgeSessionId: "session-resumable",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-replacement",
+      name: "worker_spawn",
+      args: {
+        type: "opencode",
+        cwd: "/tmp/project",
+        title: "Main implementation",
+        prompt: "implement the plan",
+        purpose: "Implement the plan",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    const allWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+    expect(allWorkers).toHaveLength(1);
+    const event = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+    expect(event?.eventType).toBe("worker_spawn_blocked");
+    expect(event?.details).toContain("resumable implementation worker");
+  });
+
   it("blocks duplicate verification workers that are checking the same plan", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -1236,6 +1336,74 @@ describe("Supervisor worker spawn flow", () => {
     });
   });
 
+  it("records supervisor continue prompts before waiting for the worker response", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+    const pendingAsk = deferred<{ response: string; state: string }>();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: "worker-needs-visible-prompt",
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/tmp/project",
+      title: "Main implementation",
+      initialPrompt: "implement the plan",
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-continue",
+      name: "worker_continue",
+      args: {
+        workerId: "worker-needs-visible-prompt",
+        prompt: "Please continue from the next unchecked item.",
+      },
+    });
+    mockAskAgent.mockReturnValue(pendingAsk.promise);
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    const runPromise = new Supervisor({ runId }).run();
+    await vi.waitFor(() => expect(mockAskAgent).toHaveBeenCalledWith(
+      "worker-needs-visible-prompt",
+      "Please continue from the next unchecked item.",
+    ));
+
+    const interventionsWhileWorkerRuns = await db.select()
+      .from(supervisorInterventions)
+      .where(eq(supervisorInterventions.runId, runId));
+
+    expect(interventionsWhileWorkerRuns).toHaveLength(1);
+    expect(interventionsWhileWorkerRuns[0]).toMatchObject({
+      runId,
+      workerId: "worker-needs-visible-prompt",
+      prompt: "Please continue from the next unchecked item.",
+    });
+
+    pendingAsk.resolve({ response: "Continuing now", state: "working" });
+    await expect(runPromise).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+  });
+
   it("defers worker follow-ups when the bridge reports the agent is busy", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -1289,10 +1457,12 @@ describe("Supervisor worker spawn flow", () => {
 
     const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
     const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    const interventions = await db.select().from(supervisorInterventions).where(eq(supervisorInterventions.runId, runId));
     const deferredEvent = events.find((event) => event.eventType === "worker_prompt_deferred");
     expect(deferredEvent?.workerId).toBe("worker-already-running");
     expect(deferredEvent?.details).toContain("Agent is busy");
     expect(persistedMessages).toEqual([]);
+    expect(interventions).toEqual([]);
   });
 
   it("lists recorded supervisor interventions when completing the run", async () => {

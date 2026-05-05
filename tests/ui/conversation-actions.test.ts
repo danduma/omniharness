@@ -16,6 +16,7 @@ const pageSource = [
   "src/components/home/HomeHeader.tsx",
   "src/components/home/SettingsDialog.tsx",
 ].map(readSource).join("\n");
+const homeAppSource = readSource("src/app/home/HomeApp.tsx");
 const markdownContentSource = readSource("src/components/MarkdownContent.tsx");
 
 test("conversation rows expose rename and delete actions", () => {
@@ -59,10 +60,22 @@ test("direct control user messages expose retry, edit, and fork recovery control
   expect(pageSource).toContain("Retry from here");
   expect(pageSource).toContain("Edit in place");
   expect(pageSource).toContain("Fork from here");
-  expect(pageSource).toContain("const canRecoverUserMessage = isDirectConversation;");
+  expect(pageSource).toContain("const canRecoverUserMessage = isDirectConversation || isImplementationConversation;");
   expect(pageSource).toContain("getUserMessageActions={getUserMessageActions}");
   expect(pageSource).toContain("actions={userMessageActions}");
   expect(pageSource).toContain('body: JSON.stringify({ action, targetMessageId, content })');
+});
+
+test("implementation failures expose retry without direct-control edit and fork actions", () => {
+  expect(pageSource).toContain('const canRetryConversation = isDirectConversation || (isImplementationConversation && selectedRun?.status !== "failed");');
+  expect(pageSource).toContain("const canRecoverUserMessage = isDirectConversation || isImplementationConversation;");
+  expect(pageSource).toContain("if (!canRecoverUserMessage) {");
+  expect(pageSource).toContain("if (!isDirectConversation) {");
+  expect(pageSource).toContain("return retryActions;");
+  expect(homeAppSource).toContain("const autoResumeRunKeysRef = useRef<Set<string>>(new Set());");
+  expect(homeAppSource).toContain("failedWorkerAvailability?.availability.status !== \"ok\"");
+  expect(homeAppSource).toContain("recoverRun.mutate({");
+  expect(homeAppSource).toContain('action: "retry"');
 });
 
 test("user input messages share the direct-control bubble renderer", () => {
@@ -74,12 +87,17 @@ test("user input messages share the direct-control bubble renderer", () => {
 
   expect(userInputSource).toContain("export function UserInputMessage");
   expect(userInputSource).toContain('flex justify-start pl-4 sm:pl-6');
-  expect(userInputSource).toContain('rounded-lg bg-[#3a3a3a]');
+  expect(userInputSource).toContain('rounded-[1.55rem] bg-[#f3f3f3]');
+  expect(userInputSource).toContain('dark:bg-[#3a3a3a]');
+  expect(userInputSource).toContain('const timestampLabel = createdAt ? formatUserMessageTimestamp(createdAt) : "";');
+  expect(userInputSource).toContain('{timestampLabel ? <span>{timestampLabel}</span> : null}');
+  expect(userInputSource).toContain('mt-1.5 flex w-full items-center justify-end gap-2 pr-5');
   expect(userInputSource).toContain('maxHeight: isExpanded ? undefined : "calc(1.5rem * 6)"');
   expect(userInputSource).toContain('aria-label={isExpanded ? "Show less message text" : "Show more message text"}');
   expect(userInputSource).toContain('aria-label="Copy message"');
   expect(conversationMainSource).toContain('from "./UserInputMessage";');
   expect(conversationMainSource).toContain('<UserInputMessage');
+  expect(conversationMainSource).toContain('createdAt={msg.createdAt}');
   expect(conversationMainSource).not.toContain('rounded-[1.9rem] rounded-br-lg bg-[#242424]');
   expect(conversationMainSource).not.toContain('msg.role === "user"\n                      ? "border-transparent bg-muted/30 text-foreground"');
 });
@@ -107,10 +125,10 @@ test("failed runs render a single persisted error in the conversation view", () 
   expect(pageSource).toContain("shouldRenderMessageInMainConversation");
   expect(pageSource).not.toContain('message.role === "system"');
   expect(pageSource).toContain('conversationTimelineItems.map((item: ConversationTimelineItem) => {');
-  expect(pageSource).toContain('action: workerFailureDetail ? "Worker setup" : staleFailure ? "Retry" : "Run failed"');
+  expect(pageSource).toContain('action: workerFailureDetail ? "Worker setup" : staleFailure ? "Reconnecting" : "Run failed"');
   expect(pageSource).toContain('message: workerFailureDetail || (staleFailure');
-  expect(pageSource).toContain("Update the model or account, then retry.");
-  expect(pageSource).toContain('`${workerLabel || "Worker"} available.`');
+  expect(pageSource).toContain("Update the model or account, then resume.");
+  expect(pageSource).toContain('`Reconnecting to ${workerLabel || "worker"}.`');
   expect(pageSource).not.toContain("This failure was recorded earlier and may be stale.");
   expect(pageSource).not.toContain('<div className="font-semibold">Run failed</div>');
   expect(pageSource).toContain("Run failed");

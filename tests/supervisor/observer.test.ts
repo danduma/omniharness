@@ -144,6 +144,108 @@ describe("deriveWorkerEvents", () => {
     ]);
   });
 
+  it("wakes the supervisor immediately when ACP reports a worker turn is complete", () => {
+    const { nextState, events } = deriveWorkerEvents({
+      workerId: "worker-1",
+      snapshot: {
+        state: "idle",
+        currentText: "Implemented the slice and verified the focused tests.",
+        lastText: "Implemented the slice and verified the focused tests.",
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+      previous: {
+        fingerprint: JSON.stringify({
+          state: "working",
+          currentText: "running focused tests",
+          lastText: "running focused tests",
+          pendingPermissions: [],
+          stopReason: null,
+          stderrTail: [],
+        }),
+        lastChangedAt: 0,
+        lastMeaningfulActivityAt: 0,
+        progressSignature: JSON.stringify({
+          state: "working",
+          currentText: "running focused tests",
+          lastText: "running focused tests",
+          pendingPermissions: [],
+          stopReason: null,
+        }),
+        idleNotified: false,
+        stuckNotified: false,
+      },
+      now: 1_000,
+    });
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "worker_turn_completed",
+        shouldWakeSupervisor: true,
+        updatesActivity: false,
+      }),
+    ]));
+    expect(nextState.completionHintNotified).toBe(true);
+  });
+
+  it("uses long final-looking text as a completion fallback before the idle threshold", () => {
+    const finalText = [
+      "Implemented the next real slice of the parity plan: the mobile media core now has a feature-gated linked FFmpeg/libav path instead of only the adapter-unavailable stub.",
+      "",
+      "Changed:",
+      "",
+      "Added optional ffmpeg-next and image deps behind mobile_media_core/ffmpeg in Cargo.toml.",
+      "Implemented linked-library support for probe_media, extract_frame, render_preview_frame, and audio stream waveform summaries in engine.rs.",
+      "Kept the no-feature production path explicitly failing with adapter-unavailable errors, so unstaged native-library builds still cannot fake media success.",
+      "Added a feature-gated real fixture test in linked_ffmpeg_adapter.rs.",
+      "Updated the plan and FFmpeg architecture-mismatch note with the current state and remaining encoder/muxer gap.",
+    ].join("\n");
+
+    const { events } = deriveWorkerEvents({
+      workerId: "worker-1",
+      snapshot: {
+        state: "working",
+        currentText: finalText,
+        lastText: finalText,
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+      previous: {
+        fingerprint: JSON.stringify({
+          state: "working",
+          currentText: "running tests",
+          lastText: "running tests",
+          pendingPermissions: [],
+          stopReason: null,
+          stderrTail: [],
+        }),
+        lastChangedAt: 0,
+        lastMeaningfulActivityAt: 0,
+        progressSignature: JSON.stringify({
+          state: "working",
+          currentText: "running tests",
+          lastText: "running tests",
+          pendingPermissions: [],
+          stopReason: null,
+        }),
+        idleNotified: false,
+        stuckNotified: false,
+      },
+      now: 5_000,
+    });
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "worker_turn_completed",
+        summary: "worker-1 produced a long final-looking text turn",
+        shouldWakeSupervisor: true,
+      }),
+    ]));
+    expect(events.some((event) => event.type === "worker_idle")).toBe(false);
+  });
+
   it("wakes the supervisor immediately when a permission request appears", () => {
     const permission = {
       requestId: 12,
@@ -386,7 +488,7 @@ describe("deriveWorkerEvents", () => {
     expect(mismatchEvent?.details).toContain("\"workerCwd\":\".\"");
   });
 
-  it("keeps the run active when bridge status polling hits a retryable transport reset", async () => {
+  it("keeps retryable bridge status polling resets out of worker failure events", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = randomUUID();
@@ -432,7 +534,7 @@ describe("deriveWorkerEvents", () => {
     expect(persistedRun?.status).toBe("running");
     expect(persistedRun?.lastError).toBeNull();
     expect(runMessages.some((message) => message.kind === "error")).toBe(false);
-    expect(workerEvents.some((event) => event.eventType === "worker_poll_failed")).toBe(true);
+    expect(workerEvents.some((event) => event.eventType === "worker_poll_failed")).toBe(false);
   });
 
   it("does not poll workers for a cancelled run", async () => {
@@ -532,6 +634,55 @@ describe("deriveWorkerEvents", () => {
     expect(workerEvents).toEqual([]);
   });
 
+  it("does not poll a starting worker after spawn but before its initial prompt finishes", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "starting",
+      cwd: process.cwd(),
+      outputLog: "",
+      bridgeSessionId: "session-starting",
+      bridgeSessionMode: "full-access",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockGetAgent.mockRejectedValue(new Error("Get agent failed: not_found"));
+
+    await pollRunWorkers(runId, wakeSupervisor);
+
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+
+    expect(mockGetAgent).not.toHaveBeenCalled();
+    expect(wakeSupervisor).not.toHaveBeenCalled();
+    expect(persistedWorker?.status).toBe("starting");
+    expect(persistedWorker?.bridgeSessionId).toBe("session-starting");
+    expect(workerEvents).toEqual([]);
+  });
+
   it("fails the run when worker stderr reports a fatal bridge pipe error", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -583,6 +734,61 @@ describe("deriveWorkerEvents", () => {
     expect(failedRun?.status).toBe("failed");
     expect(failedRun?.lastError).toContain("write EPIPE");
     expect(runMessages.some((message) => message.content.includes("write EPIPE"))).toBe(true);
+  });
+
+  it("keeps ECONNRESET stderr diagnostics from failing the worker", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockGetAgent.mockResolvedValue({
+      state: "working",
+      currentText: "waiting on provider",
+      lastText: "waiting on provider",
+      pendingPermissions: [],
+      stderrBuffer: [
+        "Provider request failed: read ECONNRESET",
+      ],
+      stopReason: null,
+    });
+
+    await pollRunWorkers(runId, vi.fn());
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const runMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+
+    expect(persistedRun?.status).toBe("running");
+    expect(persistedRun?.lastError).toBeNull();
+    expect(persistedWorker?.status).toBe("working");
+    expect(runMessages.some((message) => message.kind === "error")).toBe(false);
   });
 
   it("fails the run with a visible error when the worker snapshot is malformed", async () => {
@@ -908,6 +1114,91 @@ describe("deriveWorkerEvents", () => {
 
     expect(persistedWorker?.status).toBe("idle");
     expect(workerEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
+  });
+
+  it("revives a stopped live worker from its saved session instead of treating it as done", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      preferredWorkerModel: "openai/gpt-5.4",
+      preferredWorkerEffort: "high",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      bridgeSessionId: "session-stopped",
+      bridgeSessionMode: "full-access",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    mockGetAgent.mockResolvedValue({
+      name: workerId,
+      type: "codex",
+      cwd: process.cwd(),
+      state: "stopped",
+      sessionId: "session-stopped",
+      sessionMode: "full-access",
+      currentText: "",
+      lastText: "Still working on it.",
+      pendingPermissions: [],
+      stderrBuffer: [],
+      stopReason: "process exited",
+    });
+    vi.mocked(mockSpawnAgent).mockResolvedValue({
+      name: workerId,
+      type: "codex",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "session-stopped",
+      sessionMode: "full-access",
+      currentText: "",
+      lastText: "Still working on it.",
+      pendingPermissions: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    await pollRunWorkers(runId, wakeSupervisor);
+
+    expect(mockSpawnAgent).toHaveBeenCalledWith({
+      type: "codex",
+      cwd: process.cwd(),
+      name: workerId,
+      mode: "full-access",
+      model: "openai/gpt-5.4",
+      effort: "high",
+      resumeSessionId: "session-stopped",
+    });
+
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+
+    expect(persistedWorker?.status).toBe("idle");
+    expect(workerEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
+    expect(workerEvents.some((event) => event.eventType === "worker_stopped")).toBe(false);
+    expect(wakeSupervisor).toHaveBeenCalledWith(runId, 0);
   });
 
   it("reattaches to an existing agent when duplicate saved-session resume races", async () => {

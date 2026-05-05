@@ -1,7 +1,10 @@
 import { type AppErrorDescriptor, normalizeAppError } from "@/lib/app-errors";
-import { formatHumanDuration } from "@/lib/conversation-workers";
+import { formatHumanDuration, type ConversationWorkerRecord } from "@/lib/conversation-workers";
+import { getLatestUnresolvedWorkerStuckEvent } from "@/lib/worker-stuck-events";
 import { WORKER_OPTIONS, FALLBACK_WORKER_MODEL_OPTIONS } from "./constants";
-import type { AgentSnapshot, EventStreamState, ExecutionEventRecord, MessageRecord, PlanItemRecord, PlanRecord, RunRecord, WorkerModelCatalog, WorkerType } from "./types";
+import type { AgentSnapshot, EventStreamState, ExecutionEventRecord, MessageRecord, PlanItemRecord, PlanRecord, RunRecord, SupervisorInterventionRecord, WorkerModelCatalog, WorkerType } from "./types";
+
+export { getLatestUnresolvedWorkerStuckEvent };
 
 export function buildInlineError(
   error: unknown,
@@ -251,7 +254,7 @@ export function shouldOpenExecutionDetailsForRun({
 
 export type ConversationTimelineItem =
   | { type: "message"; id: string; createdAt: string; message: MessageRecord }
-  | { type: "activity"; id: string; createdAt: string; event: ExecutionEventRecord; text: string };
+  | { type: "activity"; id: string; createdAt: string; event?: ExecutionEventRecord; text: string };
 
 export type ConversationSignalDestination =
   | "main_conversation"
@@ -273,7 +276,9 @@ const RUN_LOG_ONLY_EVENT_TYPES = new Set([
   "clarifications_requested",
   "conversation_title_generation_failed",
   "plan_items_synced",
+  "run_failed",
   "supervisor_context_compacted",
+  "supervisor_file_read",
   "supervisor_repo_inspected",
   "supervisor_wait",
   "worker_idle",
@@ -284,20 +289,18 @@ const RUN_LOG_ONLY_EVENT_TYPES = new Set([
   "worker_session_resumed",
   "worker_snapshot_invalid",
   "worker_stopped",
+  "worker_turn_completed",
 ]);
 
 const DYNAMIC_STATUS_EVENT_TYPES = new Set([
   "worker_prompt_deferred",
-  "worker_spawned",
   "worker_session_missing",
   "worker_stuck",
 ]);
 
 const INLINE_CONVERSATION_EVENT_TYPES = new Set([
   "clarification_requested",
-  "run_failed",
   "run_validation_failed",
-  "supervisor_file_read",
   "worker_cancelled",
   "worker_error",
   "worker_permission_approved",
@@ -305,6 +308,7 @@ const INLINE_CONVERSATION_EVENT_TYPES = new Set([
   "worker_permission_requested",
   "worker_prompt_failed",
   "worker_environment_mismatch",
+  "worker_spawned",
   "worker_spawn_blocked",
 ]);
 
@@ -338,6 +342,15 @@ export function classifyExecutionEvent(event: ExecutionEventRecord): Conversatio
   }
 
   return "run_log";
+}
+
+export function shouldShowExecutionEventInRunLog(event: ExecutionEventRecord) {
+  if (event.eventType !== "worker_poll_failed") {
+    return true;
+  }
+
+  const details = parseExecutionEventDetails(event.details);
+  return details.retryable !== true;
 }
 
 export function shouldRenderMessageInMainConversation(message: MessageRecord) {
@@ -381,9 +394,13 @@ function shouldShowExecutionEventInTimeline(event: ExecutionEventRecord, message
 export function buildConversationTimelineItems({
   messages,
   executionEvents,
+  supervisorInterventions = [],
+  workers = [],
 }: {
   messages: MessageRecord[];
   executionEvents: ExecutionEventRecord[];
+  supervisorInterventions?: SupervisorInterventionRecord[];
+  workers?: ConversationWorkerRecord[];
 }): ConversationTimelineItem[] {
   const items: ConversationTimelineItem[] = messages
     .filter(shouldRenderMessageInMainConversation)
@@ -397,6 +414,24 @@ export function buildConversationTimelineItems({
     const timeDelta = timestampMs(a.createdAt) - timestampMs(b.createdAt);
     return timeDelta !== 0 ? timeDelta : a.id.localeCompare(b.id);
   });
+  const workerIdsWithSpawnEvents = new Set(
+    executionEvents
+      .filter((event) => event.eventType === "worker_spawned" && event.workerId)
+      .map((event) => event.workerId as string),
+  );
+
+  for (const worker of workers) {
+    if (!worker.createdAt || workerIdsWithSpawnEvents.has(worker.id)) {
+      continue;
+    }
+
+    items.push({
+      type: "activity",
+      id: `worker-start:${worker.id}`,
+      createdAt: worker.createdAt,
+      text: summarizeWorkerStartRecord(worker),
+    });
+  }
 
   for (const event of sortedExecutionEvents) {
     if (!shouldShowExecutionEventInTimeline(event, messages)) {
@@ -413,6 +448,20 @@ export function buildConversationTimelineItems({
       id: event.id,
       createdAt: event.createdAt,
       event,
+      text,
+    });
+  }
+
+  for (const intervention of supervisorInterventions) {
+    const text = summarizeSupervisorIntervention(intervention);
+    if (!text) {
+      continue;
+    }
+
+    items.push({
+      type: "activity",
+      id: intervention.id,
+      createdAt: intervention.createdAt,
       text,
     });
   }
@@ -566,6 +615,88 @@ export function formatExecutionWorkerLabel(workerId: string | null | undefined) 
   return match ? `worker-${match[1]}` : normalized;
 }
 
+function formatConversationWorkerLabel(workerId: string | null | undefined) {
+  const normalized = workerId?.trim();
+  if (!normalized) {
+    return "worker";
+  }
+
+  const match = normalized.match(/(?:^|-)worker-(\d+)$/);
+  return match ? `worker ${match[1]}` : normalized;
+}
+
+function normalizeSentence(value: string) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  return /[.!?]$/.test(normalized) ? normalized : `${normalized}.`;
+}
+
+function lowerFirst(value: string) {
+  return value ? `${value.charAt(0).toLowerCase()}${value.slice(1)}` : value;
+}
+
+function extractSpawnTitle(summary: string) {
+  const match = summary.match(/(?:^|\|\s*)Title:\s*(.+?)(?:\.\s*(?:\||$)|\s*\||$)/i);
+  return match?.[1]?.trim() ?? "";
+}
+
+function summarizeTaskText(value: string) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const truncated = normalized.length > 180 ? `${normalized.slice(0, 180).trim()}...` : normalized;
+  return normalizeSentence(truncated);
+}
+
+function summarizeWorkerSpawnEvent(event: ExecutionEventRecord) {
+  const details = parseExecutionEventDetails(event.details);
+  const summary = typeof details.summary === "string" ? details.summary.trim() : "";
+  const purpose = typeof details.purpose === "string" ? details.purpose.trim() : "";
+  const title = typeof details.title === "string" && details.title.trim()
+    ? details.title.trim()
+    : extractSpawnTitle(summary);
+  const task = summarizeTaskText(purpose || title);
+  const workerLabel = formatConversationWorkerLabel(event.workerId);
+
+  return task
+    ? `Starting ${workerLabel} to ${lowerFirst(task)}`
+    : `Starting ${workerLabel}.`;
+}
+
+function summarizeWorkerStartRecord(worker: ConversationWorkerRecord) {
+  const workerLabel = typeof worker.workerNumber === "number"
+    ? `worker ${worker.workerNumber}`
+    : formatConversationWorkerLabel(worker.id);
+  const task = summarizeTaskText(worker.title || worker.initialPrompt || "");
+
+  return task
+    ? `Starting ${workerLabel} to ${lowerFirst(task)}`
+    : `Starting ${workerLabel}.`;
+}
+
+function summarizeSupervisorIntervention(intervention: SupervisorInterventionRecord) {
+  const workerLabel = formatConversationWorkerLabel(intervention.workerId);
+  const prompt = summarizeTaskText(intervention.prompt);
+  if (!prompt) {
+    return `Steering ${workerLabel}.`;
+  }
+
+  if (intervention.interventionType === "recovery") {
+    return `Steering ${workerLabel} to recover: ${prompt}`;
+  }
+
+  if (intervention.interventionType === "completion_gap") {
+    return `Steering ${workerLabel} to close the remaining gap: ${prompt}`;
+  }
+
+  return `Steering ${workerLabel}: ${prompt}`;
+}
+
 function normalizeDetailText(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -685,6 +816,10 @@ export function summarizeExecutionEvent(event: ExecutionEventRecord) {
     return `Failed to send task to ${workerLabel}${error ? `: ${error}` : ""}`;
   }
 
+  if (event.eventType === "worker_prompt_deferred") {
+    return `Waiting to steer ${formatConversationWorkerLabel(event.workerId)}; worker is busy.`;
+  }
+
   if (event.eventType === "worker_environment_mismatch") {
     return `${workerLabel} launched in the wrong directory`;
   }
@@ -733,6 +868,10 @@ export function summarizeExecutionEvent(event: ExecutionEventRecord) {
     return `${workerLabel} produced new output`;
   }
 
+  if (event.eventType === "worker_turn_completed") {
+    return `${workerLabel} completed a turn`;
+  }
+
   if (event.eventType === "worker_idle") {
     return `${workerLabel} is waiting`;
   }
@@ -759,6 +898,10 @@ export function summarizeExecutionEvent(event: ExecutionEventRecord) {
 export function summarizeInlineEvent(event: ExecutionEventRecord) {
   if (classifyExecutionEvent(event) !== "inline_event") {
     return null;
+  }
+
+  if (event.eventType === "worker_spawned") {
+    return summarizeWorkerSpawnEvent(event);
   }
 
   return summarizeExecutionEvent(event);

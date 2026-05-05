@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import fs from "fs";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { cancelAgent } from "@/server/bridge-client";
+import { cancelAgent, cancelAgentTerminalProcess } from "@/server/bridge-client";
 import { errorResponse } from "@/server/api-errors";
 import { recoverRun } from "@/server/runs/recovery";
 import { stopRunObserver } from "@/server/supervisor/observer";
@@ -12,6 +12,7 @@ import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
 import { getAppDataPath } from "@/server/app-root";
 import { requireApiSession } from "@/server/auth/guards";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { pauseForClarifications } from "@/server/clarifications/loop";
 import {
   plans,
   runs,
@@ -39,6 +40,29 @@ function normalizeWorkerStatus(status: string | null | undefined) {
 function isActiveWorkerStatus(status: string | null | undefined) {
   return ["starting", "working", "idle", "stuck"].includes(normalizeWorkerStatus(status));
 }
+
+function actionLabelForPostAction(action: unknown) {
+  switch (action) {
+    case "stop_supervisor":
+      return "Stop supervisor";
+    case "stop_worker":
+      return "Stop worker";
+    case "stop_worker_terminal":
+      return "Stop worker terminal";
+    case "retry":
+    case "edit":
+    case "fork":
+    default:
+      return "Recover conversation";
+  }
+}
+
+function isTerminalProcessNotFoundError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /terminal process not found/i.test(message);
+}
+
+const USER_STOPPED_WORKER_QUESTION = "I paused the active workers after you stopped one. Is there anything you want to modify before I continue?";
 
 async function insertExecutionEvent(
   runId: string,
@@ -68,6 +92,34 @@ async function cancelWorker(worker: typeof workers.$inferSelect) {
     status: "cancelled",
     updatedAt: new Date(),
   }).where(eq(workers.id, worker.id));
+}
+
+async function pauseImplementationRunAfterWorkerStop(runId: string, stoppedWorkerId: string) {
+  cancelSupervisorWake(runId);
+  stopRunObserver(runId);
+  await clearSupervisorWakeLease(runId);
+
+  const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+  const activeWorkers = runWorkers.filter((worker) => isActiveWorkerStatus(worker.status));
+  for (const worker of activeWorkers) {
+    await cancelWorker(worker);
+  }
+
+  await insertExecutionEvent(runId, "worker_stop_requested", {
+    summary: `Paused work because ${stoppedWorkerId} was stopped by the user.`,
+    stoppedWorkerId,
+    cancelledWorkerIds: activeWorkers.map((worker) => worker.id),
+  }, stoppedWorkerId);
+
+  await db.insert(messages).values({
+    id: randomUUID(),
+    runId,
+    role: "supervisor",
+    kind: "clarification",
+    content: USER_STOPPED_WORKER_QUESTION,
+    createdAt: new Date(),
+  });
+  await pauseForClarifications(runId, [USER_STOPPED_WORKER_QUESTION]);
 }
 
 export async function PATCH(
@@ -116,6 +168,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let postActionLabel = "Recover conversation";
   try {
     const auth = await requireApiSession(req, {
       source: "Runs",
@@ -129,6 +182,7 @@ export async function POST(
     const { id: runId } = await params;
     const body = await req.json();
     const action = body?.action;
+    postActionLabel = actionLabelForPostAction(action);
     if (action === "stop_supervisor") {
       const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
       if (!run) {
@@ -181,6 +235,14 @@ export async function POST(
         });
       }
 
+      const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+      if (run?.mode === "implementation") {
+        await pauseImplementationRunAfterWorkerStop(runId, workerId);
+        notifyEventStreamSubscribers();
+
+        return NextResponse.json({ ok: true, runId, workerId, paused: true });
+      }
+
       await cancelWorker(worker);
       await insertExecutionEvent(runId, "worker_cancelled", {
         summary: `Stopped ${workerId}`,
@@ -189,6 +251,53 @@ export async function POST(
       notifyEventStreamSubscribers();
 
       return NextResponse.json({ ok: true, runId, workerId });
+    }
+
+    if (action === "stop_worker_terminal") {
+      const workerId = String(body?.workerId ?? "").trim();
+      const terminalProcessId = String(body?.terminalProcessId ?? "").trim();
+      const processId = String(body?.processId ?? "").trim();
+      if (!workerId || !terminalProcessId || !processId) {
+        return errorResponse("workerId, terminalProcessId, and processId are required", {
+          status: 400,
+          source: "Runs",
+          action: "Stop worker terminal",
+        });
+      }
+
+      const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+      if (!worker || worker.runId !== runId) {
+        return errorResponse("Worker not found", {
+          status: 404,
+          source: "Runs",
+          action: "Stop worker terminal",
+        });
+      }
+
+      let alreadyStopped = false;
+      try {
+        await cancelAgentTerminalProcess(worker.id, processId, terminalProcessId);
+      } catch (error) {
+        if (!isTerminalProcessNotFoundError(error)) {
+          throw error;
+        }
+        alreadyStopped = true;
+      }
+
+      await insertExecutionEvent(runId, "worker_terminal_cancelled", {
+        summary: alreadyStopped
+          ? `Terminal ${terminalProcessId} for ${workerId} was already stopped`
+          : `Stopped terminal ${terminalProcessId} for ${workerId}`,
+        reason: alreadyStopped
+          ? "User stopped this terminal process, but it was already gone."
+          : "User stopped this terminal process.",
+        terminalProcessId,
+        processId,
+        alreadyStopped,
+      }, workerId);
+      notifyEventStreamSubscribers();
+
+      return NextResponse.json({ ok: true, runId, workerId, terminalProcessId, processId, alreadyStopped });
     }
 
     const targetMessageId = String(body?.targetMessageId ?? "");
@@ -231,7 +340,7 @@ export async function POST(
     return errorResponse(error, {
       status,
       source: "Runs",
-      action: "Recover conversation",
+      action: postActionLabel,
     });
   }
 }

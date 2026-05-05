@@ -76,7 +76,7 @@ export function useConversationExecutionStatus({
         label: "Stuck",
         detail: latestStuckEvent
           ? summarizeExecutionEvent(latestStuckEvent)
-          : "The worker stopped making progress. Retry the latest message to restart the turn.",
+          : "The worker stopped making progress. Resume the worker to continue the turn.",
         tone: "warning" as const,
       };
     }
@@ -84,7 +84,7 @@ export function useConversationExecutionStatus({
     if (showRecoverableRunningState) {
       return {
         label: "Needs recovery",
-        detail: "This conversation is still marked running, but nothing active is attached to it. Retry the latest message to unstick it.",
+        detail: "This conversation is still marked running, but nothing active is attached to it. Reconnect to the existing worker session to continue.",
         tone: "warning" as const,
       };
     }

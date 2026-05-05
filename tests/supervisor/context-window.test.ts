@@ -136,6 +136,53 @@ describe("supervisor context window compaction", () => {
     expect(estimateContextTokens(bundle.messages)).toBeLessThanOrEqual(bundle.stats.budgetTokens);
   });
 
+  it("compacts supervisor interpretation and user confirmation into durable communication memory", () => {
+    const supervisorInterpretation =
+      "I understand the high-level intent as making plan execution confirm user-visible outcomes before implementation starts.";
+    const userConfirmation = "Yes, that is the intent. Keep the confirmation as the source of truth.";
+    const bundle = buildSupervisorModelMessages({
+      systemPrompt: "system",
+      context: baseContext({
+        goal: "Execute docs/superpowers/plans/intent-confirmation.md",
+        recentUserMessages: [
+          "Execute docs/superpowers/plans/intent-confirmation.md",
+          userConfirmation,
+        ],
+        conversationTurns: [
+          {
+            role: "user",
+            content: "Execute docs/superpowers/plans/intent-confirmation.md",
+            createdAt: "2026-05-04T01:00:00.000Z",
+            kind: "checkpoint",
+          },
+          {
+            role: "supervisor",
+            content: supervisorInterpretation,
+            createdAt: "2026-05-04T01:00:01.000Z",
+            kind: "clarification",
+          },
+          {
+            role: "user",
+            content: userConfirmation,
+            createdAt: "2026-05-04T01:00:02.000Z",
+            kind: "clarification",
+          },
+        ],
+      }),
+      heartbeatCount: 3,
+      runStatus: "running",
+      budget: {
+        maxContextTokens: 760,
+        responseReserveTokens: 100,
+        compactionThreshold: 0.6,
+      },
+    });
+
+    expect(bundle.stats.compacted).toBe(true);
+    expect(bundle.stats.memorySummary).toContain(supervisorInterpretation);
+    expect(bundle.stats.memorySummary).toContain(userConfirmation);
+  });
+
   it("filters low-signal wait events from event detail while retaining actionable events", () => {
     const bundle = buildSupervisorModelMessages({
       systemPrompt: "system",
@@ -160,6 +207,50 @@ describe("supervisor context window compaction", () => {
     expect(rendered).toContain("worker_stopped");
     expect(rendered).toContain("worker-1 stopped after verifying tests passed");
     expect(rendered).not.toContain("check again soon");
+  });
+
+  it("does not present a worker_stuck event as actionable after newer worker output", () => {
+    const bundle = buildSupervisorModelMessages({
+      systemPrompt: "system",
+      context: baseContext({
+        activeWorkers: [{
+          workerId: "worker-3",
+          type: "codex",
+          status: "working",
+          purpose: "main implementation",
+          silenceMs: 10_000,
+          currentText: "I have made the core edits and I am running tests.",
+          lastText: "I have made the core edits and I am running tests.",
+          stderrTail: "",
+          stopReason: null,
+        }],
+        recentEvents: [
+          {
+            eventType: "worker_output_changed",
+            summary: "worker-3 output changed",
+            createdAt: "2026-05-04T14:31:55.000Z",
+            workerId: "worker-3",
+          },
+          {
+            eventType: "worker_stuck",
+            summary: "worker-3 appears stuck after 97 seconds without meaningful progress",
+            createdAt: "2026-05-04T14:30:08.000Z",
+            workerId: "worker-3",
+          },
+        ],
+      }),
+      heartbeatCount: 1,
+      runStatus: "running",
+      budget: {
+        maxContextTokens: 4_000,
+        responseReserveTokens: 200,
+        compactionThreshold: 0.8,
+      },
+    });
+
+    const rendered = bundle.messages.map((message) => message.content).join("\n\n");
+    expect(rendered).not.toContain("worker_stuck");
+    expect(rendered).not.toContain("appears stuck");
   });
 
   it("carries forward existing memory and shrinks noisy worker observations first", () => {

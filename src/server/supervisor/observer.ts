@@ -8,6 +8,7 @@ import { shouldAutoApprove } from "@/server/permissions";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { isActiveImplementationRun } from "@/server/runs/status";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
+import { isLongWorkerCompletionText, normalizeWorkerStatus } from "@/server/supervisor/worker-completion";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 
@@ -40,6 +41,7 @@ interface WorkerObserverState {
   progressSignature: string;
   idleNotified: boolean;
   stuckNotified: boolean;
+  completionHintNotified?: boolean;
 }
 
 export interface DerivedWorkerEvent {
@@ -65,16 +67,11 @@ const EXACT_DEDUPED_WORKER_EVENT_TYPES = new Set([
 const FATAL_STDERR_PATTERNS = [
   /ACP write error:/i,
   /\bEPIPE\b/i,
-  /\bECONNRESET\b/i,
   /\bERR_STREAM_DESTROYED\b/i,
 ];
 
 function stateKey(runId: string, workerId: string) {
   return `${runId}:${workerId}`;
-}
-
-function normalizeWorkerStatus(status: string | null | undefined) {
-  return (status ?? "").trim().toLowerCase().split(":")[0]?.trim() ?? "";
 }
 
 function isPathInside(childPath: string, parentPath: string) {
@@ -337,6 +334,7 @@ export function deriveWorkerEvents(args: {
   const events: DerivedWorkerEvent[] = [];
   let idleNotified = previous?.idleNotified ?? false;
   let stuckNotified = previous?.stuckNotified ?? false;
+  let completionHintNotified = previous?.completionHintNotified ?? false;
 
   if (changed) {
     events.push({
@@ -348,7 +346,28 @@ export function deriveWorkerEvents(args: {
     if (madeMeaningfulProgress) {
       idleNotified = false;
       stuckNotified = false;
+      completionHintNotified = false;
     }
+  }
+
+  const previousStatus = normalizeWorkerStatus(
+    typeof previousSnapshot?.state === "string" ? previousSnapshot.state : null,
+  );
+  const currentStatus = normalizeWorkerStatus(args.snapshot.state);
+  const completedByAcpState = previousStatus === "working" && currentStatus === "idle";
+  const longCompletionText = isLongWorkerCompletionText(
+    args.snapshot.lastText || args.snapshot.currentText,
+  );
+  if (!completionHintNotified && (completedByAcpState || longCompletionText)) {
+    events.push({
+      type: "worker_turn_completed",
+      summary: completedByAcpState
+        ? `${args.workerId} completed a worker turn`
+        : `${args.workerId} produced a long final-looking text turn`,
+      shouldWakeSupervisor: true,
+      updatesActivity: false,
+    });
+    completionHintNotified = true;
   }
 
   if (
@@ -411,6 +430,7 @@ export function deriveWorkerEvents(args: {
       progressSignature: currentProgressSignature,
       idleNotified,
       stuckNotified,
+      completionHintNotified,
     },
     events,
   };
@@ -496,10 +516,14 @@ async function reviveWorkerFromSavedSession(args: {
   run: typeof runs.$inferSelect;
   worker: typeof workers.$inferSelect;
   now: number;
+  sessionId?: string | null;
+  sessionMode?: string | null;
 }) {
-  if (!args.worker.bridgeSessionId) {
+  const sessionId = args.sessionId?.trim() || args.worker.bridgeSessionId;
+  if (!sessionId) {
     return null;
   }
+  const sessionMode = args.sessionMode ?? args.worker.bridgeSessionMode;
 
   let resumedWorker: bridge.AgentRecord;
   try {
@@ -507,10 +531,10 @@ async function reviveWorkerFromSavedSession(args: {
       type: args.worker.type,
       cwd: args.worker.cwd,
       name: args.worker.id,
-      ...(args.worker.bridgeSessionMode ? { mode: args.worker.bridgeSessionMode } : {}),
+      ...(sessionMode ? { mode: sessionMode } : {}),
       ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
       ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
-      resumeSessionId: args.worker.bridgeSessionId,
+      resumeSessionId: sessionId,
     });
   } catch (error) {
     if (!isAgentAlreadyExistsError(error, args.worker.id)) {
@@ -521,13 +545,13 @@ async function reviveWorkerFromSavedSession(args: {
 
   await insertExecutionEvent(args.run.id, args.worker.id, "worker_session_resumed", {
     summary: `Resumed ${args.worker.id} from saved session`,
-    sessionId: args.worker.bridgeSessionId,
+    sessionId,
   });
 
   await db.update(workers).set({
     status: resumedWorker.state,
-    bridgeSessionId: resumedWorker.sessionId ?? args.worker.bridgeSessionId,
-    bridgeSessionMode: resumedWorker.sessionMode ?? args.worker.bridgeSessionMode,
+    bridgeSessionId: resumedWorker.sessionId ?? sessionId,
+    bridgeSessionMode: resumedWorker.sessionMode ?? sessionMode ?? null,
     updatedAt: new Date(args.now),
   }).where(eq(workers.id, args.worker.id));
   notifyEventStreamSubscribers();
@@ -535,9 +559,52 @@ async function reviveWorkerFromSavedSession(args: {
   return normalizeSnapshot(resumedWorker).snapshot;
 }
 
+async function markWorkerSessionMissing(args: {
+  runId: string;
+  worker: typeof workers.$inferSelect;
+  reason: unknown;
+  sessionId: string | null | undefined;
+  now: number;
+}) {
+  const insertedEvent = await insertExecutionEvent(args.runId, args.worker.id, "worker_session_missing", {
+    summary: `Saved bridge session for ${args.worker.id} is no longer available`,
+    reason: formatErrorMessage(args.reason),
+    sessionId: args.sessionId,
+  });
+  await db.update(workers).set({
+    status: "cancelled",
+    bridgeSessionId: null,
+    bridgeSessionMode: null,
+    updatedAt: new Date(args.now),
+  }).where(eq(workers.id, args.worker.id));
+  notifyEventStreamSubscribers();
+  return insertedEvent;
+}
+
+async function markWorkerResumeFailed(args: {
+  runId: string;
+  worker: typeof workers.$inferSelect;
+  reason: unknown;
+  sessionId: string | null | undefined;
+  now: number;
+}) {
+  await insertExecutionEvent(args.runId, args.worker.id, "worker_resume_failed", {
+    summary: `Failed to resume ${args.worker.id} from saved session`,
+    reason: formatErrorMessage(args.reason),
+    sessionId: args.sessionId,
+  });
+  await db.update(workers).set({
+    status: "error",
+    bridgeSessionId: null,
+    bridgeSessionMode: null,
+    updatedAt: new Date(args.now),
+  }).where(eq(workers.id, args.worker.id));
+  notifyEventStreamSubscribers();
+}
+
 export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: string, delayMs?: number) => void) {
   const run = await loadActiveRun(runId);
-  if (!isActiveImplementationRun(run)) {
+  if (!run) {
     stopRunObserver(runId);
     return;
   }
@@ -550,7 +617,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
       continue;
     }
 
-    if (normalizeWorkerStatus(worker.status) === "starting" && !worker.bridgeSessionId) {
+    if (normalizeWorkerStatus(worker.status) === "starting") {
       continue;
     }
 
@@ -596,6 +663,53 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
         await persistRunFailure(runId, error);
         return;
       }
+
+      if (normalizeWorkerStatus(snapshot.state) === "stopped") {
+        const resumeSessionId = snapshot.sessionId ?? worker.bridgeSessionId;
+        if (resumeSessionId) {
+          try {
+            const revivedSnapshot = await reviveWorkerFromSavedSession({
+              run: latestRun,
+              worker,
+              now,
+              sessionId: resumeSessionId,
+              sessionMode: snapshot.sessionMode ?? worker.bridgeSessionMode,
+            });
+            if (revivedSnapshot) {
+              snapshot = revivedSnapshot;
+              wakeSupervisor(runId, 0);
+            }
+          } catch (resumeError) {
+            if (!await loadActiveRun(runId)) {
+              stopRunObserver(runId);
+              return;
+            }
+            if (isMissingAgentError(resumeError)) {
+              const insertedEvent = await markWorkerSessionMissing({
+                runId,
+                worker,
+                reason: resumeError,
+                sessionId: resumeSessionId,
+                now,
+              });
+              if (insertedEvent) {
+                wakeSupervisor(runId, 0);
+              }
+              continue;
+            }
+            await markWorkerResumeFailed({
+              runId,
+              worker,
+              reason: resumeError,
+              sessionId: resumeSessionId,
+              now,
+            });
+            stopRunObserver(runId);
+            await persistRunFailure(runId, resumeError);
+            return;
+          }
+        }
+      }
     } catch (error) {
       if (!await loadActiveRun(runId)) {
         stopRunObserver(runId);
@@ -611,6 +725,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
           });
           if (revivedSnapshot) {
             snapshot = revivedSnapshot;
+            wakeSupervisor(runId, 0);
           } else {
             throw error;
           }
@@ -620,48 +735,40 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
             return;
           }
           if (isMissingAgentError(resumeError)) {
-            const insertedEvent = await insertExecutionEvent(runId, worker.id, "worker_session_missing", {
-              summary: `Saved bridge session for ${worker.id} is no longer available`,
-              reason: formatErrorMessage(resumeError),
+            const insertedEvent = await markWorkerSessionMissing({
+              runId,
+              worker,
+              reason: resumeError,
               sessionId: worker.bridgeSessionId,
+              now,
             });
-            await db.update(workers).set({
-              status: "cancelled",
-              bridgeSessionId: null,
-              bridgeSessionMode: null,
-              updatedAt: new Date(now),
-            }).where(eq(workers.id, worker.id));
-            notifyEventStreamSubscribers();
             if (insertedEvent) {
               wakeSupervisor(runId, 0);
             }
             continue;
           }
-          await insertExecutionEvent(runId, worker.id, "worker_resume_failed", {
-            summary: `Failed to resume ${worker.id} from saved session`,
-            reason: formatErrorMessage(resumeError),
+          await markWorkerResumeFailed({
+            runId,
+            worker,
+            reason: resumeError,
             sessionId: worker.bridgeSessionId,
+            now,
           });
-          await db.update(workers).set({
-            status: "error",
-            bridgeSessionId: null,
-            bridgeSessionMode: null,
-            updatedAt: new Date(now),
-          }).where(eq(workers.id, worker.id));
-          notifyEventStreamSubscribers();
           stopRunObserver(runId);
           await persistRunFailure(runId, resumeError);
           return;
         }
       } else {
+        const retryable = isTransientSupervisorError(error);
+        if (retryable) {
+          continue;
+        }
+
         await insertExecutionEvent(runId, worker.id, "worker_poll_failed", {
           summary: `Observer polling failed for ${worker.id}`,
           reason: formatErrorMessage(error),
-          retryable: isTransientSupervisorError(error),
+          retryable,
         });
-        if (isTransientSupervisorError(error)) {
-          continue;
-        }
         stopRunObserver(runId);
         await persistRunFailure(runId, error);
         return;

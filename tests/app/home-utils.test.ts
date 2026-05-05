@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, classifyExecutionEvent, filterOptimisticallyDeletedRuns, formatExecutionWorkerLabel, getExecutionEventDetailRows, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/app/home/utils";
-import type { EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord } from "@/app/home/types";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, classifyExecutionEvent, filterOptimisticallyDeletedRuns, formatExecutionWorkerLabel, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/app/home/utils";
+import type { EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord, SupervisorInterventionRecord } from "@/app/home/types";
+import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 
 function buildRun(overrides: Partial<RunRecord>): RunRecord {
   return {
@@ -34,6 +35,33 @@ function buildMessage(overrides: Partial<MessageRecord>): MessageRecord {
     kind: "supervisor_action",
     content: "worker-1 is already busy; waiting before sending another prompt.",
     createdAt: "2026-04-27T00:00:10.000Z",
+    ...overrides,
+  };
+}
+
+function buildSupervisorIntervention(overrides: Partial<SupervisorInterventionRecord>): SupervisorInterventionRecord {
+  return {
+    id: "intervention-1",
+    runId: "run-1",
+    workerId: "run-1-worker-9",
+    interventionType: "continue",
+    prompt: "Please continue from the next unchecked item.",
+    createdAt: "2026-04-27T00:00:12.000Z",
+    ...overrides,
+  };
+}
+
+function buildWorker(overrides: Partial<ConversationWorkerRecord>): ConversationWorkerRecord {
+  return {
+    id: "run-1-worker-9",
+    runId: "run-1",
+    type: "codex",
+    status: "working",
+    title: "Implement mobile-desktop feature parity plan",
+    initialPrompt: "Please implement the mobile plan.",
+    workerNumber: 9,
+    createdAt: "2026-04-27T00:00:10.000Z",
+    updatedAt: "2026-04-27T00:00:20.000Z",
     ...overrides,
   };
 }
@@ -124,6 +152,82 @@ describe("home utils", () => {
     ]);
   });
 
+  it("surfaces worker starts and supervisor steering in the main conversation timeline", () => {
+    const timeline = buildConversationTimelineItems({
+      messages: [
+        buildMessage({
+          id: "message-1",
+          role: "user",
+          kind: "checkpoint",
+          content: "Implement the mobile parity plan.",
+          createdAt: "2026-04-27T00:00:00.000Z",
+        }),
+        buildMessage({
+          id: "message-2",
+          role: "supervisor",
+          kind: "clarification",
+          content: "I need clarification before implementation can continue.",
+          createdAt: "2026-04-27T00:00:05.000Z",
+        }),
+      ],
+      executionEvents: [
+        buildExecutionEvent({
+          id: "event-start",
+          workerId: "run-1-worker-9",
+          eventType: "worker_spawned",
+          details: JSON.stringify({
+            summary: "Spawned worker. CLI: Codex | Worker: run-1-worker-9 | Title: Implement mobile-desktop feature parity plan.",
+          }),
+          createdAt: "2026-04-27T00:00:10.000Z",
+        }),
+      ],
+      supervisorInterventions: [
+        buildSupervisorIntervention({
+          id: "intervention-steer",
+          workerId: "run-1-worker-9",
+          interventionType: "recovery",
+          prompt: "Stop compiling to x86_64. The user explicitly instructed: make sure it all compiles to arm64 not x86.",
+          createdAt: "2026-04-27T00:00:15.000Z",
+        }),
+      ],
+    });
+
+    expect(timeline.map((item) => item.type === "message" ? item.message.content : item.text)).toEqual([
+      "Implement the mobile parity plan.",
+      "I need clarification before implementation can continue.",
+      "Starting worker 9 to implement mobile-desktop feature parity plan.",
+      "Steering worker 9 to recover: Stop compiling to x86_64. The user explicitly instructed: make sure it all compiles to arm64 not x86.",
+    ]);
+  });
+
+  it("derives worker start activity from worker rows when old spawn events are outside the live event window", () => {
+    const timeline = buildConversationTimelineItems({
+      messages: [
+        buildMessage({
+          id: "message-1",
+          role: "user",
+          kind: "checkpoint",
+          content: "Implement the mobile parity plan.",
+          createdAt: "2026-04-27T00:00:00.000Z",
+        }),
+      ],
+      executionEvents: [],
+      workers: [
+        buildWorker({
+          id: "run-1-worker-9",
+          workerNumber: 9,
+          title: "Implement mobile-desktop feature parity plan",
+          createdAt: "2026-04-27T00:00:10.000Z",
+        }),
+      ],
+    });
+
+    expect(timeline.map((item) => item.type === "message" ? item.message.content : item.text)).toEqual([
+      "Implement the mobile parity plan.",
+      "Starting worker 9 to implement mobile-desktop feature parity plan.",
+    ]);
+  });
+
   it("omits supervisor wait chatter from the main conversation timeline", () => {
     const timeline = buildConversationTimelineItems({
       messages: [
@@ -186,12 +290,11 @@ describe("home utils", () => {
     });
 
     expect(timeline.map((item) => `${item.type}:${item.id}:${item.type === "activity" ? item.text : ""}`)).toEqual([
-      "activity:event-read:Read docs/plan.md",
       "activity:event-blocked:Blocked duplicate worker spawn because worker-1 is active.",
     ]);
   });
 
-  it("uses supervisor file read summary paths when explicit path details are missing", () => {
+  it("keeps supervisor file reads out of the main conversation timeline", () => {
     const timeline = buildConversationTimelineItems({
       messages: [],
       executionEvents: [
@@ -204,19 +307,73 @@ describe("home utils", () => {
       ],
     });
 
-    expect(timeline.map((item) => `${item.type}:${item.id}:${item.type === "activity" ? item.text : ""}`)).toEqual([
-      "activity:event-read:Read docs/spec.md",
-    ]);
+    expect(timeline).toEqual([]);
   });
 
   it("classifies routine supervisor and worker events away from the transcript", () => {
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_prompt_deferred" }))).toBe("dynamic_status");
+    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_spawned" }))).toBe("inline_event");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_stuck" }))).toBe("dynamic_status");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_session_missing" }))).toBe("dynamic_status");
+    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "run_failed" }))).toBe("run_log");
+    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "supervisor_file_read" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "supervisor_wait" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_prompted" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_output_changed" }))).toBe("run_log");
+    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_turn_completed" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_idle" }))).toBe("run_log");
+  });
+
+  it("summarizes deferred steering without exposing ignored busy errors", () => {
+    expect(summarizeExecutionEvent(buildExecutionEvent({
+      eventType: "worker_prompt_deferred",
+      workerId: "run-1-worker-9",
+      details: JSON.stringify({
+        summary: "run-1-worker-9 is already busy; waiting before sending another prompt.",
+        prompt: "Stop compiling to x86_64.",
+        error: "Ask failed: Agent is busy",
+      }),
+    }))).toBe("Waiting to steer worker 9; worker is busy.");
+  });
+
+  it("does not treat a worker as stuck after newer output from the same worker", () => {
+    const latestStuckEvent = getLatestUnresolvedWorkerStuckEvent([
+      buildExecutionEvent({
+        id: "output-after-stuck",
+        workerId: "worker-3",
+        eventType: "worker_output_changed",
+        createdAt: "2026-05-04T14:31:55.000Z",
+      }),
+      buildExecutionEvent({
+        id: "stuck-before-output",
+        workerId: "worker-3",
+        eventType: "worker_stuck",
+        details: JSON.stringify({ summary: "worker-3 appears stuck" }),
+        createdAt: "2026-05-04T14:30:08.000Z",
+      }),
+    ]);
+
+    expect(latestStuckEvent).toBeNull();
+  });
+
+  it("does not treat a worker as stuck after a newer completed turn from the same worker", () => {
+    const latestStuckEvent = getLatestUnresolvedWorkerStuckEvent([
+      buildExecutionEvent({
+        id: "completed-after-stuck",
+        workerId: "worker-3",
+        eventType: "worker_turn_completed",
+        createdAt: "2026-05-04T14:31:55.000Z",
+      }),
+      buildExecutionEvent({
+        id: "stuck-before-completed",
+        workerId: "worker-3",
+        eventType: "worker_stuck",
+        details: JSON.stringify({ summary: "worker-3 appears stuck" }),
+        createdAt: "2026-05-04T14:30:08.000Z",
+      }),
+    ]);
+
+    expect(latestStuckEvent).toBeNull();
   });
 
   it("classifies actionable events as inline feed signals with summaries", () => {
@@ -227,7 +384,6 @@ describe("home utils", () => {
       "worker_permission_denied",
       "run_validation_failed",
       "worker_environment_mismatch",
-      "run_failed",
     ];
 
     for (const eventType of actionableEvents) {
@@ -239,6 +395,26 @@ describe("home utils", () => {
       expect(classifyExecutionEvent(event)).toBe("inline_event");
       expect(summarizeInlineEvent(event)).toBeTruthy();
     }
+  });
+
+  it("keeps retryable worker poll failures out of the run log", () => {
+    expect(shouldShowExecutionEventInRunLog(buildExecutionEvent({
+      eventType: "worker_poll_failed",
+      details: JSON.stringify({
+        summary: "Observer polling failed for worker-2",
+        reason: "Get agent failed: fetch failed (caused by: read ECONNRESET)",
+        retryable: true,
+      }),
+    }))).toBe(false);
+
+    expect(shouldShowExecutionEventInRunLog(buildExecutionEvent({
+      eventType: "worker_poll_failed",
+      details: JSON.stringify({
+        summary: "Observer polling failed for worker-2",
+        reason: "Get agent failed: not_found",
+        retryable: false,
+      }),
+    }))).toBe(true);
   });
 
   it("keeps duplicate stuck worker events out of the main conversation timeline", () => {

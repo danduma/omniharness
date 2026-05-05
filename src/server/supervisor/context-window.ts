@@ -1,3 +1,5 @@
+import { filterResolvedWorkerStuckEvents } from "@/lib/worker-stuck-events";
+
 type SupervisorModelMessage = {
   role: "system" | "user";
   content: string;
@@ -163,6 +165,13 @@ const LOW_SIGNAL_EVENT_TYPES = new Set([
   "worker_output_changed",
 ]);
 
+function withoutResolvedWorkerStuckEvents(context: SupervisorTurnContextForPrompt): SupervisorTurnContextForPrompt {
+  const recentEvents = filterResolvedWorkerStuckEvents(context.recentEvents);
+  return recentEvents.length === context.recentEvents.length
+    ? context
+    : { ...context, recentEvents };
+}
+
 const SIGNAL_LINE_PATTERN = /\b(error|failed?|failure|success|updated?|fixed?|blocked?|stuck|done|complete[sd]?|verified?|tests?|passing|passed|permission|cancelled?|spawned|prompted|deferred|warning|cannot|missing|conflict|patch|build|lint|typecheck|handoff)\b/i;
 
 function summarizeUserMessages(messages: string[], goal: string) {
@@ -176,6 +185,24 @@ function summarizeUserMessages(messages: string[], goal: string) {
   }
 
   return pieces.join("\n");
+}
+
+function summarizeCommunicationTurns(context: SupervisorTurnContextForPrompt, maxLength = 2_400) {
+  const turns = getConversationTurns(context);
+  if (turns.length === 0) {
+    return "";
+  }
+
+  const contentBudget = Math.max(120, Math.min(420, Math.floor(1_800 / turns.length)));
+  const lines = turns.map((turn, index) => {
+    const kind = turn.kind ? `/${turn.kind}` : "";
+    return `- ${index + 1}. ${turn.createdAt} ${turn.role}${kind}: ${truncate(normalizeWhitespace(turn.content), contentBudget)}`;
+  });
+
+  return truncate([
+    "Durable communication turns with the user and supervisor:",
+    ...lines,
+  ].join("\n"), maxLength);
 }
 
 function extractUsefulText(text: string, maxLength: number) {
@@ -261,7 +288,7 @@ function buildMemorySummary(context: SupervisorTurnContextForPrompt, sourceMessa
       ? `Existing rolling memory:\n${truncate(context.compactedMemory.trim(), 2_400)}`
       : "",
     buildObjectiveAndPlanContext(context),
-    summarizeUserMessages(sourceMessages, context.goal),
+    summarizeCommunicationTurns(context) || summarizeUserMessages(sourceMessages, context.goal),
     context.answeredClarifications.length > 0
       ? [
           "Answered clarifications:",
@@ -541,17 +568,18 @@ export function buildSupervisorModelMessages(args: {
   runStatus: string;
   budget?: SupervisorContextBudget;
 }): SupervisorPromptBundle {
+  const context = withoutResolvedWorkerStuckEvents(args.context);
   const budget = args.budget ?? getSupervisorContextBudget();
   const budgetTokens = usableBudgetTokens(budget);
-  const observationSummary = buildObservationSummary(args.context, args.heartbeatCount, args.runStatus, {
+  const observationSummary = buildObservationSummary(context, args.heartbeatCount, args.runStatus, {
     workerTextLimit: 2_000,
     eventLimit: 8,
   });
   const normalMessages = buildMessages({
     systemPrompt: args.systemPrompt,
-    context: args.context,
-    objectiveAndPlanContext: buildObjectiveAndPlanContext(args.context),
-    memorySummary: args.context.compactedMemory?.trim() || null,
+    context,
+    objectiveAndPlanContext: buildObjectiveAndPlanContext(context),
+    memorySummary: context.compactedMemory?.trim() || null,
     observationSummary,
   });
   const normalTokens = estimateContextTokens(normalMessages);
@@ -563,16 +591,16 @@ export function buildSupervisorModelMessages(args: {
         compacted: false,
         estimatedTokens: normalTokens,
         budgetTokens,
-        memorySummary: args.context.compactedMemory?.trim() || null,
+        memorySummary: context.compactedMemory?.trim() || null,
         reason: null,
       },
     };
   }
 
-  const memorySummary = buildMemorySummary(args.context, args.context.recentUserMessages);
+  const memorySummary = buildMemorySummary(context, context.recentUserMessages);
   const compactedMessages = fitMessagesIntoBudget({
     systemPrompt: args.systemPrompt,
-    context: args.context,
+    context,
     heartbeatCount: args.heartbeatCount,
     runStatus: args.runStatus,
     budgetTokens,

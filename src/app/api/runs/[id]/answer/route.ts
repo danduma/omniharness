@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { errorResponse } from "@/server/api-errors";
 import { answerClarification } from "@/server/clarifications/store";
 import { resumeRunAfterClarification } from "@/server/clarifications/loop";
 import { requireApiSession } from "@/server/auth/guards";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { db } from "@/server/db";
+import { messages } from "@/server/db/schema";
 
 export async function POST(
   req: NextRequest,
@@ -31,6 +34,14 @@ export async function POST(
     }
 
     await answerClarification(clarificationId, answer);
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "user",
+      kind: "clarification",
+      content: answer,
+      createdAt: new Date(),
+    });
     const resumeResult = await resumeRunAfterClarification(runId);
     notifyEventStreamSubscribers();
 

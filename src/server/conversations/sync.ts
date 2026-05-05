@@ -6,7 +6,7 @@ import { normalizeAgentRecord } from "@/server/bridge-client";
 import { persistRunFailure } from "@/server/runs/failures";
 import { isTerminalRunStatus } from "@/server/runs/status";
 import { startSupervisorRun } from "@/server/supervisor/start";
-import { isTransientSupervisorError } from "@/server/supervisor/retry";
+import { isRecoverableConnectionSupervisorError, isTransientSupervisorError } from "@/server/supervisor/retry";
 import { parseWorkerOutputEntries, serializeWorkerOutputEntries } from "@/server/workers/snapshots";
 import { drainQueuedWorkerMessages } from "./queued-messages";
 
@@ -85,8 +85,21 @@ function isRecoverableImplementationTransientFailure(run: typeof runs.$inferSele
     && isTransientSupervisorError(new Error(lastError));
 }
 
+function isRecoverableImplementationConnectionFailure(run: typeof runs.$inferSelect) {
+  const lastError = run.lastError ?? "";
+  return run.mode === "implementation"
+    && run.status === "failed"
+    && Boolean(lastError.trim())
+    && isRecoverableConnectionSupervisorError(new Error(lastError));
+}
+
 function isCleanLiveAgent(agent: ReturnType<typeof normalizeAgentRecord>) {
   return agent.state !== "error" && !agent.lastError?.trim();
+}
+
+function isActiveLiveAgent(agent: ReturnType<typeof normalizeAgentRecord>) {
+  const state = agent.state.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  return ["starting", "working", "stuck"].includes(state) || Boolean(agent.currentText.trim());
 }
 
 function isWorkerQueueDrainableStatus(status: string) {
@@ -115,16 +128,66 @@ export async function syncConversationSessions(rawAgents: unknown[]) {
   for (const run of allRuns) {
     const staleBusyFailure = isAgentBusyRunFailure(run);
     const staleImplementationTransientFailure = isRecoverableImplementationTransientFailure(run);
+    const staleImplementationConnectionFailure = isRecoverableImplementationConnectionFailure(run);
     if (run.mode === "implementation") {
+      const implementationWorkers = allWorkers.filter((candidate) => candidate.runId === run.id);
+      let syncedActiveLiveWorker = false;
+
+      for (const implementationWorker of implementationWorkers) {
+        const implementationAgent = agents.find((candidate) => candidate.name === implementationWorker.id);
+        if (!implementationAgent || !isCleanLiveAgent(implementationAgent) || !isActiveLiveAgent(implementationAgent)) {
+          continue;
+        }
+
+        await db.update(workers).set({
+          status: implementationAgent.state,
+          cwd: implementationAgent.cwd || implementationWorker.cwd,
+          outputEntriesJson: serializeWorkerOutputEntries(implementationAgent.outputEntries),
+          currentText: implementationAgent.currentText,
+          lastText: implementationAgent.lastText,
+          bridgeSessionId: implementationAgent.sessionId ?? implementationWorker.bridgeSessionId,
+          bridgeSessionMode: implementationAgent.sessionMode ?? implementationWorker.bridgeSessionMode,
+          updatedAt: new Date(),
+        }).where(eq(workers.id, implementationWorker.id));
+        syncedActiveLiveWorker = true;
+      }
+
+      if (syncedActiveLiveWorker) {
+        if (run.status !== "running" || run.failedAt || run.lastError) {
+          await db.update(runs).set({
+            status: "running",
+            failedAt: null,
+            lastError: null,
+            updatedAt: new Date(),
+          }).where(eq(runs.id, run.id));
+          await clearMatchingRunFailureMessage(run);
+          startSupervisorRun(run.id);
+        }
+        continue;
+      }
+
       if (!staleImplementationTransientFailure) {
         continue;
       }
 
-      const implementationWorker = allWorkers.find((candidate) => candidate.runId === run.id);
+      const implementationWorker = implementationWorkers[0];
       const implementationAgent = implementationWorker
         ? agents.find((candidate) => candidate.name === implementationWorker.id)
         : null;
       if (!implementationWorker || !implementationAgent || !isCleanLiveAgent(implementationAgent)) {
+        if (staleImplementationConnectionFailure) {
+          const resumableWorker = implementationWorkers.find((worker) => worker.bridgeSessionId?.trim());
+          if (resumableWorker) {
+            await db.update(runs).set({
+              status: "running",
+              failedAt: null,
+              lastError: null,
+              updatedAt: new Date(),
+            }).where(eq(runs.id, run.id));
+            await clearMatchingRunFailureMessage(run);
+            startSupervisorRun(run.id);
+          }
+        }
         continue;
       }
 

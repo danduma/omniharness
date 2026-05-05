@@ -3,6 +3,7 @@ type RecoveryAction = "retry" | "edit" | "fork";
 type RecoverableRun = {
   id: string;
   status: string;
+  mode?: string | null;
   lastError?: string | null;
   failedAt?: string | null;
 };
@@ -40,6 +41,11 @@ type RecoverableExecutionEvent = {
   eventType: string;
 };
 
+type RecoverableQueuedMessage = {
+  id: string;
+  runId: string;
+};
+
 export type RecoverableConversationState = {
   runs: RecoverableRun[];
   messages: RecoverableMessage[];
@@ -49,6 +55,7 @@ export type RecoverableConversationState = {
   validationRuns: RecoverableRunScoped[];
   executionEvents: RecoverableExecutionEvent[];
   supervisorInterventions: RecoverableRunScoped[];
+  queuedMessages?: RecoverableQueuedMessage[];
 };
 
 export function applyRunRecoveryOptimisticUpdate(
@@ -75,6 +82,29 @@ export function applyRunRecoveryOptimisticUpdate(
     .filter((worker) => worker.runId === args.runId)
     .map((worker) => worker.id);
   const targetTimestamp = new Date(targetMessage.createdAt).getTime();
+  const targetRun = state.runs.find((run) => run.id === args.runId);
+  const isImplementationResume = args.action === "retry" && targetRun?.mode === "implementation";
+
+  if (isImplementationResume) {
+    return {
+      ...state,
+      runs: state.runs.map((run) => (
+        run.id === args.runId
+          ? {
+              ...run,
+              status: "running",
+              lastError: null,
+              failedAt: null,
+            }
+          : run
+      )),
+      messages: state.messages.filter((message) => (
+        message.runId !== args.runId
+        || message.kind !== "error"
+        || message.content !== `Run failed: ${targetRun?.lastError ?? ""}`
+      )),
+    };
+  }
 
   return {
     ...state,
@@ -116,5 +146,6 @@ export function applyRunRecoveryOptimisticUpdate(
     validationRuns: state.validationRuns.filter((item) => item.runId !== args.runId),
     executionEvents: state.executionEvents.filter((item) => item.runId !== args.runId),
     supervisorInterventions: state.supervisorInterventions.filter((item) => item.runId !== args.runId),
+    queuedMessages: state.queuedMessages?.filter((item) => item.runId !== args.runId),
   };
 }

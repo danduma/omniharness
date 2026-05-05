@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { plans, runs, clarifications } from "@/server/db/schema";
+import { plans, runs, clarifications, messages } from "@/server/db/schema";
 
 const { mockStartSupervisorRun } = vi.hoisted(() => ({
   mockStartSupervisorRun: vi.fn(),
@@ -61,10 +61,19 @@ describe("POST /api/runs/[id]/answer", () => {
 
     const updatedClarification = await db.select().from(clarifications).where(eq(clarifications.id, clarificationId)).get();
     const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
 
     expect(updatedClarification?.answer).toBe("Implement the onboarding flow and add tests.");
     expect(updatedClarification?.status).toBe("answered");
     expect(updatedRun?.status).toBe("running");
+    expect(storedMessages).toEqual([
+      expect.objectContaining({
+        runId,
+        role: "user",
+        kind: "clarification",
+        content: "Implement the onboarding flow and add tests.",
+      }),
+    ]);
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
   });
 });

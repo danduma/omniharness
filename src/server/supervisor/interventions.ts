@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { db } from "@/server/db";
 import { supervisorInterventions } from "@/server/db/schema";
+import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 
 export function classifySupervisorIntervention(prompt: string) {
   const normalized = prompt.toLowerCase();
@@ -28,7 +29,7 @@ export async function recordSupervisorIntervention(args: {
   summary?: string | null;
   interventionType?: string | null;
 }) {
-  await db.insert(supervisorInterventions).values({
+  const record = {
     id: randomUUID(),
     runId: args.runId,
     workerId: args.workerId,
@@ -36,5 +37,9 @@ export async function recordSupervisorIntervention(args: {
     prompt: args.prompt,
     summary: args.summary?.trim() || null,
     createdAt: new Date(),
-  });
+  };
+
+  await db.insert(supervisorInterventions).values(record);
+  notifyEventStreamSubscribers();
+  return record;
 }

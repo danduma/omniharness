@@ -22,6 +22,7 @@ import { isActiveImplementationRun } from "@/server/runs/status";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
+import { normalizeWorkerStatus, workerTurnRecheckDelayMs } from "@/server/supervisor/worker-completion";
 import { drainQueuedImplementationMessages } from "@/server/conversations/queued-messages";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { parsePlan } from "@/server/plans/parser";
@@ -41,6 +42,7 @@ export type SupervisorRunResult =
   | { state: "failed" };
 
 const DEFAULT_SUPERVISOR_TURN_STEP_LIMIT = 6;
+const WORKER_TURN_DEFAULT_RECHECK_DELAY_MS = 5_000;
 
 function getSupervisorTurnStepLimit(env: NodeJS.ProcessEnv = process.env) {
   const parsed = Number.parseInt(env.SUPERVISOR_TURN_STEP_LIMIT ?? "", 10);
@@ -139,6 +141,7 @@ const SUPERVISOR_FILE_READ_LIMIT = 60_000;
 const SUPERVISOR_INSPECT_OUTPUT_LIMIT = 20_000;
 const SUPERVISOR_INSPECT_TIMEOUT_MS = 10_000;
 const WORKER_BUSY_RETRY_DELAY_MS = 5_000;
+const DEFAULT_SUPERVISOR_MODEL_REQUEST_TIMEOUT_MS = 60_000;
 const SUPERVISOR_INSPECT_COMMANDS = new Set(["rg", "grep", "find", "sed", "awk", "head", "tail", "wc", "ls", "pwd"]);
 
 function parseBooleanSettingValue(value: string | null | undefined, defaultValue: boolean) {
@@ -160,6 +163,13 @@ function parseBooleanSettingValue(value: string | null | undefined, defaultValue
   }
 
   return defaultValue;
+}
+
+function getSupervisorModelRequestTimeoutMs(env: NodeJS.ProcessEnv = process.env) {
+  const parsed = Number.parseInt(env.SUPERVISOR_MODEL_REQUEST_TIMEOUT_MS ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.min(parsed, 5 * 60_000)
+    : DEFAULT_SUPERVISOR_MODEL_REQUEST_TIMEOUT_MS;
 }
 
 function resolveWorkerSpawnMode(requestedMode: unknown, yoloModeEnabled: boolean) {
@@ -441,12 +451,12 @@ async function reserveWorkerRow(args: {
   return workerId;
 }
 
-function normalizeWorkerStatus(status: string | null | undefined) {
-  return (status ?? "").trim().toLowerCase().split(":")[0]?.trim() ?? "";
-}
-
 function isActiveWorkerStatus(status: string | null | undefined) {
   return ["starting", "working", "idle", "stuck"].includes(normalizeWorkerStatus(status));
+}
+
+function isResumableWorkerStatus(status: string | null | undefined) {
+  return normalizeWorkerStatus(status) === "stopped";
 }
 
 function describesSeparatedAllocation(...values: Array<string | null | undefined>) {
@@ -461,7 +471,7 @@ function describesSeparatedAllocation(...values: Array<string | null | undefined
 async function findActiveMainWorker(runId: string) {
   const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
   return runWorkers.find((worker) => {
-    if (!isActiveWorkerStatus(worker.status)) {
+    if (!isActiveWorkerStatus(worker.status) && !(worker.bridgeSessionId && isResumableWorkerStatus(worker.status))) {
       return false;
     }
 
@@ -588,7 +598,10 @@ export class Supervisor {
       maxSteps: 1,
       toolChoice: "required",
       runId: `${this.runId}:heartbeat:${heartbeatCount}`,
-    }));
+    }), {
+      attempts: 1,
+      operationTimeoutMs: getSupervisorModelRequestTimeoutMs(),
+    });
 
     return completion.toolCalls;
   }
@@ -681,11 +694,15 @@ export class Supervisor {
           const mcpServers = asOptionalMcpServers(action.args.mcpServers, "mcpServers");
           const activeMainWorker = await findActiveMainWorker(this.runId);
           if (activeMainWorker && !describesSeparatedAllocation(title, purpose, prompt)) {
+            const resumable = activeMainWorker.bridgeSessionId && isResumableWorkerStatus(activeMainWorker.status);
             await insertExecutionEvent(this.runId, "worker_spawn_blocked", {
-              summary: `Blocked duplicate worker spawn because ${this.runId} already has active implementation worker ${activeMainWorker.id}.`,
+              summary: resumable
+                ? `Blocked replacement worker spawn because ${this.runId} already has resumable implementation worker ${activeMainWorker.id}.`
+                : `Blocked duplicate worker spawn because ${this.runId} already has active implementation worker ${activeMainWorker.id}.`,
               requestedTitle: title,
               requestedPurpose: purpose,
               activeWorkerId: activeMainWorker.id,
+              resumableSessionId: resumable ? activeMainWorker.bridgeSessionId : null,
             });
             return { state: "wait", delayMs: 5_000 };
           }
@@ -748,6 +765,7 @@ export class Supervisor {
           await insertExecutionEvent(this.runId, "worker_spawned", {
             summary: spawnSummary,
             cwd,
+            title,
             purpose,
             mode,
             model: preferredModel,
@@ -756,8 +774,9 @@ export class Supervisor {
             fallbackReason: workerType.fallbackReason,
           }, workerId);
 
+          let response: Awaited<ReturnType<typeof bridge.askAgent>>;
           try {
-            const response = await bridge.askAgent(workerId, prompt);
+            response = await bridge.askAgent(workerId, prompt);
             if (!await this.loadActiveRun()) {
               await this.cleanupWorkerAfterInactiveRun(workerId, spawnedWorker);
               return { state: "completed" };
@@ -785,18 +804,34 @@ export class Supervisor {
             throw error;
           }
 
-          return { state: "wait", delayMs: 5_000 };
+          return {
+            state: "wait",
+            delayMs: workerTurnRecheckDelayMs({
+              responseText: response.response,
+              stopReason: response.stopReason,
+              defaultDelayMs: WORKER_TURN_DEFAULT_RECHECK_DELAY_MS,
+            }),
+          };
         }
 
         case "worker_continue": {
           const workerId = asString(action.args.workerId, "workerId");
           const prompt = asString(action.args.prompt, "prompt");
           const interventionType = typeof action.args.interventionType === "string" ? action.args.interventionType : null;
+          const intervention = await recordSupervisorIntervention({
+            runId: this.runId,
+            workerId,
+            prompt,
+            summary: `Sent follow-up to ${workerId}`,
+            interventionType,
+          });
           let response: Awaited<ReturnType<typeof bridge.askAgent>>;
           try {
             response = await bridge.askAgent(workerId, prompt);
           } catch (error) {
             if (isAgentBusyError(error)) {
+              await db.delete(supervisorInterventions).where(eq(supervisorInterventions.id, intervention.id));
+              notifyEventStreamSubscribers();
               return deferBusyWorkerPrompt(this.runId, workerId, prompt, error);
             }
 
@@ -817,14 +852,14 @@ export class Supervisor {
             summary: `Sent follow-up to ${workerId}`,
             prompt,
           }, workerId);
-          await recordSupervisorIntervention({
-            runId: this.runId,
-            workerId,
-            prompt,
-            summary: `Sent follow-up to ${workerId}`,
-            interventionType,
-          });
-          return { state: "wait", delayMs: 5_000 };
+          return {
+            state: "wait",
+            delayMs: workerTurnRecheckDelayMs({
+              responseText: response.response,
+              stopReason: response.stopReason,
+              defaultDelayMs: WORKER_TURN_DEFAULT_RECHECK_DELAY_MS,
+            }),
+          };
         }
 
         case "worker_cancel": {
