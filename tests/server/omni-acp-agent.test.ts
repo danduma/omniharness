@@ -54,6 +54,7 @@ describe("OmniHarnessAcpAgent", () => {
     });
 
     expect(initialized.agentInfo?.name).toBe("OmniHarness");
+    expect(session.sessionId).toMatch(/^[0-9a-f]{12}$/);
     expect(initialized.agentCapabilities?.loadSession).toBe(true);
     expect(initialized.agentCapabilities?.sessionCapabilities?.list).toEqual({});
     expect(initialized.agentCapabilities?.sessionCapabilities?.resume).toEqual({});
@@ -254,6 +255,7 @@ describe("OmniHarnessAcpAgent", () => {
     } as any);
 
     expect(fork?.sessionId).not.toBe(runId);
+    expect(fork?.sessionId).toMatch(/^[0-9a-f]{12}$/);
     expect(fork?.modes?.currentModeId).toBe("planning");
     expect(createConversation).toHaveBeenCalledWith(expect.objectContaining({
       mode: "planning",

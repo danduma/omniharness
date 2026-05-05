@@ -10,6 +10,7 @@ import { normalizeConversationMode, type ConversationMode } from "./modes";
 import { normalizeWorkerType, parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
 import { PLANNER_SYSTEM_PROMPT } from "@/server/prompts";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
+import { createRunId } from "@/server/runs/ids";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
@@ -228,7 +229,7 @@ export async function createConversation(args: {
     updatedAt: new Date(),
   });
 
-  const runId = randomUUID();
+  const runId = createRunId();
   await db.insert(runs).values({
     id: runId,
     planId,

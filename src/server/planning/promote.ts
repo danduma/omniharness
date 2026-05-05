@@ -5,6 +5,7 @@ import { messages, plans, runs } from "@/server/db/schema";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { assessPlanReadiness } from "@/server/plans/readiness";
 import { parsePlan } from "@/server/plans/parser";
+import { createRunId } from "@/server/runs/ids";
 import fs from "fs";
 
 interface PlannerArtifactRecord {
@@ -89,7 +90,7 @@ export async function promotePlanningRun(args: {
     updatedAt: new Date(),
   });
 
-  const newRunId = randomUUID();
+  const newRunId = createRunId();
   await db.insert(runs).values({
     id: newRunId,
     planId: newPlanId,

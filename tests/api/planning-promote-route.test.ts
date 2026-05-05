@@ -98,6 +98,7 @@ describe("POST /api/planning/[id]/promote", () => {
     const promotedRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
     const promotedPlan = await db.select().from(plans).where(eq(plans.id, promotedRun!.planId)).get();
 
+    expect(payload.runId).toMatch(/^[0-9a-f]{12}$/);
     expect(promotedRun?.mode).toBe("implementation");
     expect(promotedRun?.projectPath).toBe(workspace);
     expect(promotedPlan?.path).toBe(implementationPlanPath);

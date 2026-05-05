@@ -131,6 +131,7 @@ describe("POST /api/conversations", () => {
     const payload = await response.json();
     const run = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
 
+    expect(payload.runId).toMatch(/^[0-9a-f]{12}$/);
     expect(run?.mode).toBe("implementation");
     expect(payload.plan).toEqual(expect.objectContaining({
       id: payload.planId,

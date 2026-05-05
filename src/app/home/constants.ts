@@ -41,7 +41,7 @@ export const COMPOSER_WORKER_STORAGE_KEY = "omni-composer-worker";
 export const COMPOSER_MODEL_STORAGE_KEY = "omni-composer-model";
 export const COMPOSER_EFFORT_STORAGE_KEY = "omni-composer-effort";
 export const COMPOSER_MODE_STORAGE_KEY = "omni-composer-mode";
-export const RUN_PATH_PATTERN = /^\/session\/([0-9a-fA-F-]{36})\/?$/;
+export const RUN_PATH_PATTERN = /^\/session\/([0-9a-fA-F]{12}|[0-9a-fA-F-]{36})\/?$/;
 
 export const LLM_PROVIDER_OPTIONS = [
   { value: "gemini", label: "Gemini" },

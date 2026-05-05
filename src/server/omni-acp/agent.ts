@@ -1,4 +1,3 @@
-import { randomUUID } from "crypto";
 import { asc, desc, eq } from "drizzle-orm";
 import * as acp from "@agentclientprotocol/sdk";
 import { db } from "@/server/db";
@@ -7,6 +6,7 @@ import { createConversation } from "@/server/conversations/create";
 import { sendConversationMessage } from "@/server/conversations/send-message";
 import { waitForEventStreamNotification } from "@/server/events/live-updates";
 import { CONVERSATION_MODES, type ConversationMode } from "@/server/conversations/modes";
+import { createShortUuid } from "@/server/runs/ids";
 
 const OMNI_ACP_MODES: acp.SessionMode[] = [
   {
@@ -236,7 +236,7 @@ export class OmniHarnessAcpAgent implements acp.Agent {
   }
 
   async newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
-    const sessionId = randomUUID();
+    const sessionId = createShortUuid();
     this.sessions.set(sessionId, {
       sessionId,
       cwd: params.cwd,
@@ -295,7 +295,7 @@ export class OmniHarnessAcpAgent implements acp.Agent {
 
   async unstable_forkSession(params: acp.ForkSessionRequest): Promise<acp.ForkSessionResponse> {
     const source = await this.resolveSessionOrRun(params.sessionId);
-    const sessionId = randomUUID();
+    const sessionId = createShortUuid();
     this.sessions.set(sessionId, {
       sessionId,
       cwd: params.cwd || source.cwd,
