@@ -28,8 +28,8 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('selectedModel: "gpt-5.4"');
   expect(pageSource).toContain('selectedEffort: "High"');
   expect(pageSource).toContain('themeMode === "night"');
-  expect(pageSource).toContain('border border-[#d8d8d8] bg-[#fbfbfa]');
-  expect(pageSource).toContain('focus-within:bg-white');
+  expect(pageSource).toContain('rounded-[2rem] border border-[#dededd] bg-[#fdfdfc]');
+  expect(pageSource).toContain('focus-within:border-[#d2d2d0] focus-within:bg-[#fdfdfc]');
   expect(pageSource).toContain("px-4 pb-0.5 pt-3");
   expect(pageSource).toContain('"w-full resize-none bg-transparent text-[15px] leading-6 outline-none"');
   expect(pageSource).toContain('hasAttachments ? "min-h-[112px]" : "min-h-[56px]"');

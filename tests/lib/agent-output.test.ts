@@ -265,7 +265,7 @@ describe("agent output normalization", () => {
     expect(activity[0]).toMatchObject({
       kind: "tool",
       label: "Edit",
-      title: "Edit /workspace/app/src/index.ts",
+      title: "index.ts",
       status: "completed",
       outputPane: {
         label: "DIFF",

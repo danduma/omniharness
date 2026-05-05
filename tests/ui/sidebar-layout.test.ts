@@ -258,7 +258,7 @@ test("direct conversations render the user transcript next to the worker surface
   expect(pageSource).toContain('onClick: () => handleRetryMessage(message.id)');
   expect(pageSource).toContain('rounded-[1.55rem] bg-[#f3f3f3]');
   expect(pageSource).toContain('px-6 py-4');
-  expect(pageSource).toContain('text-[15px] leading-7');
+  expect(pageSource).toContain('text-sm leading-6');
   expect(pageSource).toContain('createdAt={msg.createdAt}');
   expect(pageSource).not.toContain('text-[1.375rem]');
   expect(pageSource).toContain('cursor-pointer');

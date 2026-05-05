@@ -136,7 +136,7 @@ test("terminal aligns timeline markers with row text and connects the rail", () 
   expect(terminalSource).toContain("items-start gap-3");
   expect(terminalSource).toContain("mt-[0.32rem]");
   expect(terminalSource).toContain("absolute left-2 top-0 h-[0.57rem] w-px");
-  expect(terminalSource).toContain("absolute -bottom-3 left-2 top-[0.57rem] w-px");
+  expect(terminalSource).toContain("absolute -bottom-2.5 left-2 top-[0.57rem] w-px");
   expect(terminalSource).not.toContain("space-y-3");
 });
 

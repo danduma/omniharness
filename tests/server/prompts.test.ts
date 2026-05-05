@@ -8,7 +8,7 @@ import {
 describe("prompt markdown loading", () => {
   it("loads the supervisor prompt from markdown", () => {
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("You are the OmniHarness Supervisor.");
-    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("You must answer with exactly one tool call every turn.");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("You must answer with exactly one tool call for each model request.");
   });
 
   it("loads the conversation title prompt from markdown", () => {
