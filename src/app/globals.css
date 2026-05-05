@@ -130,3 +130,86 @@
     font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
   }
 }
+
+@keyframes boot-sweep {
+  0% {
+    opacity: 0.12;
+    transform: translateX(-38%) scaleX(0.7);
+  }
+  48% {
+    opacity: 0.58;
+    transform: translateX(0) scaleX(1);
+  }
+  100% {
+    opacity: 0.12;
+    transform: translateX(38%) scaleX(0.7);
+  }
+}
+
+@keyframes boot-scan {
+  0% {
+    opacity: 0.18;
+    transform: translateY(-22%) scaleY(0.72);
+  }
+  52% {
+    opacity: 0.72;
+    transform: translateY(0) scaleY(1);
+  }
+  100% {
+    opacity: 0.18;
+    transform: translateY(22%) scaleY(0.72);
+  }
+}
+
+@keyframes boot-scan-horizontal {
+  0% {
+    opacity: 0.18;
+    transform: translateX(-22%) scaleX(0.72);
+  }
+  52% {
+    opacity: 0.72;
+    transform: translateX(0) scaleX(1);
+  }
+  100% {
+    opacity: 0.18;
+    transform: translateX(22%) scaleX(0.72);
+  }
+}
+
+@keyframes boot-pulse {
+  0%, 100% {
+    opacity: 0.45;
+    transform: scale(0.86);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@layer utilities {
+  .animate-boot-sweep {
+    animation: boot-sweep 3.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  }
+
+  .animate-boot-scan {
+    animation: boot-scan 3.2s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  }
+
+  .animate-boot-scan-horizontal {
+    animation: boot-scan-horizontal 3.2s cubic-bezier(0.16, 1, 0.3, 1) infinite 0.35s;
+  }
+
+  .animate-boot-pulse {
+    animation: boot-pulse 1.6s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-boot-sweep,
+    .animate-boot-scan,
+    .animate-boot-scan-horizontal,
+    .animate-boot-pulse {
+      animation: none;
+    }
+  }
+}
