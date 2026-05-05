@@ -21,6 +21,29 @@ export type OutputEntry = {
   raw?: unknown;
 };
 
+export type OutputArchiveStats = {
+  totalEntries: number;
+  byteSize: number;
+  logPath: string;
+  liveEntries: number;
+  omittedLiveEntries: number;
+};
+
+export type OutputArchivePage = {
+  name: string;
+  cursor: number;
+  nextCursor: number | null;
+  totalEntries: number;
+  entries: OutputEntry[];
+};
+
+export type AgentOutputArchiveHandle = {
+  readonly filePath: string;
+  append(input: Omit<OutputEntry, "id" | "timestamp"> & { timestamp?: string }): OutputEntry;
+  stats(liveEntries?: number): OutputArchiveStats;
+  readPage(input?: { cursor?: number; limit?: number }): Promise<OutputArchivePage>;
+};
+
 export type AgentRecord = {
   name: string;
   type: string;
@@ -48,6 +71,7 @@ export type AgentRecord = {
   currentText: string;
   activeOutputEntryId: string | null;
   outputEntries: OutputEntry[];
+  outputArchive: AgentOutputArchiveHandle;
   stopReason: string | null;
   pendingPermissions: PendingPermission[];
   activeTask: { taskId: string; subtaskId: string } | null;
@@ -87,6 +111,14 @@ export type AskResult = {
   state: AgentState;
   stopReason: string | null;
   response: string;
+};
+
+export type CancelTerminalProcessResult = {
+  ok: true;
+  name: string;
+  processId: string;
+  toolCallId: string | null;
+  signal: NodeJS.Signals;
 };
 
 export type DoctorResult = {

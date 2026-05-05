@@ -300,8 +300,8 @@ describe("EventStreamStateManager", () => {
     expect(next.agents[0].outputEntries?.map((entry) => entry.id)).toEqual([
       "entry-0",
       "entry-60",
-      "entry-67",
       "output-entries-omitted:entry-0:entry-67",
+      "entry-67",
     ]);
   });
 });

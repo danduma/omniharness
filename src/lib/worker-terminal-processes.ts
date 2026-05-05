@@ -1,4 +1,5 @@
 import type { AgentOutputEntry } from "@/lib/agent-output";
+import { isWorkerActiveStatus } from "@/lib/conversation-workers";
 
 export type WorkerTerminalProcessStatus =
   | "pending"
@@ -14,6 +15,7 @@ export type WorkerTerminalProcessStatus =
 export type WorkerTerminalProcess = {
   id: string;
   command: string;
+  processId: string | null;
   status: WorkerTerminalProcessStatus;
   startedAt: string;
   updatedAt: string;
@@ -41,6 +43,31 @@ function asNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function quoteCommandPart(value: string): string {
+  if (/^[A-Za-z0-9_./:=@%+-]+$/.test(value)) {
+    return value;
+  }
+
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function asCommandString(value: unknown): string | null {
+  const direct = asNonEmptyString(value);
+  if (direct) {
+    return direct;
+  }
+
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const parts = value
+    .map((part) => typeof part === "string" ? part.trim() : "")
+    .filter(Boolean);
+
+  return parts.length > 0 ? parts.map(quoteCommandPart).join(" ") : null;
+}
+
 function normalizeMultilineText(value: string): string {
   return value.replace(/\r\n?/g, "\n").trim();
 }
@@ -57,6 +84,8 @@ function normalizeStatus(value: string | null | undefined): WorkerTerminalProces
     case "error":
     case "cancelled":
       return normalized;
+    case "canceled":
+      return "cancelled";
     case "done":
     case "success":
       return "completed";
@@ -114,15 +143,46 @@ function extractCommand(raw: Record<string, unknown> | null): string | null {
   const rawInput = asRecord(raw.rawInput);
   const candidates = [
     rawInput?.command,
+    rawInput?.command_string,
     rawInput?.cmd,
     raw.command,
+    raw.command_string,
     raw.cmd,
   ];
 
   for (const candidate of candidates) {
-    const command = asNonEmptyString(candidate);
+    const command = asCommandString(candidate);
     if (command) {
       return normalizeMultilineText(command);
+    }
+  }
+
+  return null;
+}
+
+function extractProcessId(raw: Record<string, unknown> | null): string | null {
+  if (!raw) {
+    return null;
+  }
+
+  const rawInput = asRecord(raw.rawInput);
+  const rawOutput = asRecord(raw.rawOutput);
+  const candidates = [
+    rawInput?.process_id,
+    rawInput?.processId,
+    rawInput?.pid,
+    raw.process_id,
+    raw.processId,
+    raw.pid,
+    rawOutput?.process_id,
+    rawOutput?.processId,
+    rawOutput?.pid,
+  ];
+
+  for (const candidate of candidates) {
+    const processId = typeof candidate === "number" ? String(candidate) : asNonEmptyString(candidate);
+    if (processId) {
+      return processId;
     }
   }
 
@@ -194,10 +254,12 @@ function toProcess(entry: AgentOutputEntry, allowSparseUpdate = false): MutableW
 
   const fallbackCommand = asNonEmptyString(raw?.title) || asNonEmptyString(entry.text) || "Terminal process";
   const output = extractOutputText(raw);
+  const processId = extractProcessId(raw);
 
   return {
     id: entry.toolCallId || entry.id,
     command: command || fallbackCommand,
+    processId,
     status: normalizeStatus(entry.status),
     startedAt: entry.timestamp,
     updatedAt: entry.timestamp,
@@ -225,6 +287,10 @@ function mergeProcess(target: MutableWorkerTerminalProcess, next: MutableWorkerT
 
   if (next.outputTail) {
     target.outputTail = next.outputTail;
+  }
+
+  if (next.processId) {
+    target.processId = next.processId;
   }
 
   if (next.toolKind) {
@@ -267,4 +333,15 @@ export function deriveWorkerTerminalProcesses(outputEntries: AgentOutputEntry[] 
 
       return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
     });
+}
+
+export function deriveVisibleWorkerTerminalProcesses(
+  outputEntries: AgentOutputEntry[] | null | undefined,
+  workerStatus: string | null | undefined,
+): WorkerTerminalProcess[] {
+  if (!isWorkerActiveStatus(workerStatus)) {
+    return [];
+  }
+
+  return deriveWorkerTerminalProcesses(outputEntries);
 }

@@ -54,6 +54,7 @@ const path = require('node:path');
 const logPath = process.env.FAKE_ACP_REQUEST_LOG;
 process.stdin.setEncoding('utf8');
 let buffer = '';
+let promptFailures = 0;
 
 function write(message) {
   process.stdout.write(JSON.stringify(message) + '\\n');
@@ -98,6 +99,18 @@ process.stdin.on('data', (chunk) => {
       append({ method: message.method, params: message.params });
       if (process.env.FAKE_ACP_STDERR_ON_PROMPT) {
         process.stderr.write(process.env.FAKE_ACP_STDERR_ON_PROMPT + '\\n');
+      }
+      if (process.env.FAKE_ACP_FAIL_FIRST_PROMPT_ECONNRESET === '1' && promptFailures === 0) {
+        promptFailures += 1;
+        write({
+          jsonrpc: '2.0',
+          id: message.id,
+          error: {
+            code: -32603,
+            message: 'read ECONNRESET',
+          },
+        });
+        continue;
       }
       write({
         jsonrpc: '2.0',
@@ -216,6 +229,141 @@ process.stdin.on('data', (chunk) => {
 });
 `;
 
+const fakeTerminalAcpAgentScript = `#!/usr/bin/env node
+const { spawn } = require('node:child_process');
+process.stdin.setEncoding('utf8');
+let buffer = '';
+let child = null;
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + '\\n');
+}
+
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\\r?\\n/g);
+  buffer = lines.pop() ?? '';
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === 'initialize') {
+      write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+    }
+    if (message.method === 'session/new') {
+      write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-1' } });
+    }
+    if (message.method === 'session/prompt') {
+      child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+      write({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: message.params.sessionId,
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'terminal-live',
+            kind: 'execute',
+            status: 'in_progress',
+            title: 'Long terminal',
+            rawInput: { command: 'node -e setInterval', process_id: String(child.pid) },
+          },
+        },
+      });
+      write({
+        jsonrpc: '2.0',
+        id: message.id,
+        result: { stopReason: 'end_turn' },
+      });
+    }
+  }
+});
+
+process.on('exit', () => {
+  if (child && !child.killed) child.kill('SIGTERM');
+});
+`;
+
+const fakeVerboseAcpAgentScript = `#!/usr/bin/env node
+process.stdin.setEncoding('utf8');
+let buffer = '';
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + '\\n');
+}
+
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\\r?\\n/g);
+  buffer = lines.pop() ?? '';
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === 'initialize') {
+      write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+    }
+    if (message.method === 'session/new') {
+      write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-1' } });
+    }
+    if (message.method === 'session/prompt') {
+      const largeOutput = 'x'.repeat(250000);
+      write({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: message.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: largeOutput },
+          },
+        },
+      });
+      for (let index = 0; index < 260; index += 1) {
+        write({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId: message.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'verbose-' + index,
+              status: 'completed',
+              content: [{ type: 'content', content: { type: 'text', text: largeOutput } }],
+              rawOutput: { formatted_output: largeOutput },
+            },
+          },
+        });
+      }
+      write({
+        jsonrpc: '2.0',
+        id: message.id,
+        result: { stopReason: 'end_turn' },
+      });
+    }
+  }
+});
+`;
+
+type TestAgentOutputEntry = {
+  toolCallId?: string | null;
+  raw?: {
+    rawInput?: {
+      process_id?: string;
+    };
+  };
+};
+
+async function waitForProcessExit(pid: number) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
 describe("internal agent runtime HTTP API", () => {
   it("spawns ACP agents, forwards MCP servers, exposes skill roots, and serves agent output", async () => {
     const projectDir = createTempDir("omni-runtime-project-");
@@ -332,6 +480,155 @@ describe("internal agent runtime HTTP API", () => {
     expect(readdirSync(join(projectDir, ".agents", "skills")).some((entry) => entry.includes("reviewer"))).toBe(false);
   }, 30_000);
 
+  it("stops a single reported terminal process without deleting the agent", async () => {
+    const projectDir = createTempDir("omni-runtime-terminal-project-");
+    const binDir = createTempDir("omni-runtime-terminal-bin-");
+    const fakeAgent = createExecutable(binDir, "fake-terminal-agent", fakeTerminalAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "terminal-worker",
+      }),
+    });
+    expect(spawnResponse.status).toBe(201);
+
+    const askResponse = await fetch(`${baseUrl}/agents/terminal-worker/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "run long command" }),
+    });
+    expect(askResponse.status).toBe(200);
+
+    const agentBeforeCancel = await (await fetch(`${baseUrl}/agents/terminal-worker`)).json();
+    const terminalEntry = (agentBeforeCancel.outputEntries as TestAgentOutputEntry[]).find((entry) => entry.toolCallId === "terminal-live");
+    const pid = Number(terminalEntry?.raw?.rawInput?.process_id);
+    expect(pid).toBeGreaterThan(0);
+
+    const cancelResponse = await fetch(`${baseUrl}/agents/terminal-worker/terminals/${pid}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ toolCallId: "terminal-live" }),
+    });
+    expect(cancelResponse.status).toBe(200);
+
+    await expect(cancelResponse.json()).resolves.toMatchObject({
+      ok: true,
+      name: "terminal-worker",
+      processId: String(pid),
+      toolCallId: "terminal-live",
+    });
+    await expect(waitForProcessExit(pid)).resolves.toBe(true);
+
+    const agentAfterCancel = await (await fetch(`${baseUrl}/agents/terminal-worker`)).json();
+    expect(agentAfterCancel).toMatchObject({ name: "terminal-worker" });
+    expect(agentAfterCancel.outputEntries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "tool_call_update",
+        toolCallId: "terminal-live",
+        status: "cancelled",
+      }),
+    ]));
+  }, 30_000);
+
+  it("bounds retained agent output before serializing runtime status", async () => {
+    const projectDir = createTempDir("omni-runtime-verbose-project-");
+    const runtimeDataDir = createTempDir("omni-runtime-data-");
+    const binDir = createTempDir("omni-runtime-verbose-bin-");
+    const fakeAgent = createExecutable(binDir, "fake-verbose-agent", fakeVerboseAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        OMNIHARNESS_RUNTIME_DATA_DIR: runtimeDataDir,
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "verbose-worker",
+      }),
+    });
+    expect(spawnResponse.status).toBe(201);
+
+    const askResponse = await fetch(`${baseUrl}/agents/verbose-worker/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "make lots of output" }),
+    });
+    expect(askResponse.status).toBe(200);
+
+    const listResponse = await fetch(`${baseUrl}/agents`);
+    expect(listResponse.status).toBe(200);
+    const payloadText = await listResponse.text();
+    expect(payloadText.length).toBeLessThan(1_500_000);
+    const [agentJson] = JSON.parse(payloadText);
+    expect(agentJson.outputEntries.length).toBeLessThanOrEqual(80);
+    expect(agentJson.outputArchive).toMatchObject({
+      totalEntries: expect.any(Number),
+      liveEntries: agentJson.outputEntries.length,
+    });
+    expect(agentJson.outputArchive.logPath).toContain(runtimeDataDir);
+    expect(agentJson.outputArchive.logPath).not.toContain(projectDir);
+    expect(agentJson.outputArchive.totalEntries).toBeGreaterThan(agentJson.outputEntries.length);
+    expect(agentJson.outputEntries[0].id).toBe("output-archive-marker");
+    expect(agentJson.outputEntries[0].text).toContain("stored in the worker output archive");
+    expect(agentJson.currentText.length).toBeLessThanOrEqual(100_000);
+    expect(agentJson.currentText).toContain("Earlier runtime output omitted");
+    expect(agentJson.outputEntries.every((entry: { text: string }) => entry.text.length <= 5_000)).toBe(true);
+    const lastEntry = agentJson.outputEntries.at(-1);
+    expect(lastEntry.raw.rawOutput.formatted_output.length).toBeLessThanOrEqual(4_050);
+
+    const archiveResponse = await fetch(`${baseUrl}/agents/verbose-worker/output?limit=3`);
+    expect(archiveResponse.status).toBe(200);
+    const archivePage = await archiveResponse.json();
+    expect(archivePage).toMatchObject({
+      name: "verbose-worker",
+      cursor: 0,
+      nextCursor: expect.any(Number),
+      totalEntries: agentJson.outputArchive.totalEntries,
+      entries: expect.any(Array),
+    });
+    expect(archivePage.entries).toHaveLength(3);
+    expect(archivePage.entries[0]).toMatchObject({
+      type: "message",
+      text: "x".repeat(250000),
+    });
+    expect(archivePage.entries[1]).toMatchObject({
+      type: "tool_call_update",
+      toolCallId: "verbose-0",
+    });
+    expect(archivePage.entries[1].raw.rawOutput.formatted_output).toBe("x".repeat(250000));
+
+    const nextPageResponse = await fetch(`${baseUrl}/agents/verbose-worker/output?cursor=${archivePage.nextCursor}&limit=2`);
+    expect(nextPageResponse.status).toBe(200);
+    const nextPage = await nextPageResponse.json();
+    expect(nextPage.cursor).toBe(archivePage.nextCursor);
+    expect(nextPage.entries).toHaveLength(2);
+    expect(nextPage.entries[0].toolCallId).toBe("verbose-2");
+  }, 30_000);
+
   it("keeps nonfatal agent stderr diagnostics out of lastError", async () => {
     const projectDir = createTempDir("omni-runtime-stderr-project-");
     const binDir = createTempDir("omni-runtime-stderr-bin-");
@@ -371,6 +668,58 @@ describe("internal agent runtime HTTP API", () => {
     const agentJson = await agentResponse.json();
     expect(agentJson.lastError).toBeNull();
     expect(agentJson.stderrBuffer).toEqual(expect.arrayContaining([stderrLine]));
+  }, 30_000);
+
+  it("keeps a worker prompt alive across ECONNRESET failures", async () => {
+    const projectDir = createTempDir("omni-runtime-reset-project-");
+    const binDir = createTempDir("omni-runtime-reset-bin-");
+    const requestLog = join(projectDir, "requests.jsonl");
+    const fakeAgent = createExecutable(binDir, "fake-acp-agent", fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "reset-worker",
+        env: {
+          FAKE_ACP_FAIL_FIRST_PROMPT_ECONNRESET: "1",
+          FAKE_ACP_REQUEST_LOG: requestLog,
+        },
+      }),
+    });
+    expect(spawnResponse.status).toBe(201);
+
+    const askResponse = await fetch(`${baseUrl}/agents/reset-worker/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "hello" }),
+    });
+
+    expect(askResponse.status).toBe(200);
+    await expect(askResponse.json()).resolves.toMatchObject({
+      name: "reset-worker",
+      response: "fake response",
+      state: "idle",
+    });
+
+    const agentResponse = await fetch(`${baseUrl}/agents/reset-worker`);
+    const agentJson = await agentResponse.json();
+    const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
+    expect(agentJson.lastError).toBeNull();
+    expect(agentJson.state).toBe("idle");
+    expect(events.filter((event) => event.method === "session/prompt")).toHaveLength(2);
   }, 30_000);
 
   it("spawns Codex ACP workers with standard Codex core tools enabled", async () => {

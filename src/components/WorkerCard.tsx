@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import { AlertTriangle, Bot, ChevronDown, Clock, Cpu, Square } from "lucide-react";
+import { AlertTriangle, Bot, ChevronDown, Clock, Cpu, Hash, Square, SquareTerminal } from "lucide-react";
 import { Terminal, type AgentTerminalPayload, type TerminalUserMessage } from "@/components/Terminal";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -10,7 +10,7 @@ import { isWorkerActiveStatus } from "@/lib/conversation-workers";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import {
-  deriveWorkerTerminalProcesses,
+  deriveVisibleWorkerTerminalProcesses,
   type WorkerTerminalProcess,
 } from "@/lib/worker-terminal-processes";
 
@@ -53,32 +53,50 @@ export type WorkerCardProps = {
   terminalHeightClass: string;
   fillAvailable?: boolean;
   onStopWorker?: () => void;
+  onStopTerminalProcess?: (terminalProcess: WorkerTerminalProcess) => void;
+  onLoadWorkerHistory?: () => void;
   isStopping?: boolean;
+  stoppingTerminalProcessId?: string | null;
 };
 
 function renderContextMeter(fullnessPercent: number | null | undefined) {
   const normalized = typeof fullnessPercent === "number" && Number.isFinite(fullnessPercent)
     ? Math.min(100, Math.max(0, Math.round(fullnessPercent)))
     : null;
-  const meterTone = normalized === null
+  const lightMeterTone = normalized === null
     ? "rgba(113,113,122,0.24)"
     : normalized >= 85
       ? "rgba(248,113,113,0.9)"
       : normalized >= 60
         ? "rgba(245,158,11,0.82)"
         : "rgba(71,85,105,0.58)";
+  const darkMeterTone = normalized === null
+    ? "rgba(212,212,216,0.38)"
+    : normalized >= 85
+      ? "rgba(252,165,165,0.88)"
+      : normalized >= 60
+        ? "rgba(250,204,21,0.86)"
+        : "rgba(212,212,216,0.78)";
   const meterFill = normalized === null ? 0 : normalized;
 
   return (
     <div
       aria-label={normalized === null ? "Context usage not reported" : `Context usage ${normalized}%`}
-      className="relative h-4 w-4 shrink-0 rounded-full border border-border/70 bg-muted/30 dark:border-white/10 dark:bg-white/[0.03]"
+      className="relative h-4 w-4 shrink-0 rounded-full border border-border/70 bg-muted/30 dark:border-white/25 dark:bg-white/[0.06]"
     >
       <div
-        className="absolute inset-0 rounded-full"
-        style={{ background: `conic-gradient(${meterTone} ${meterFill}%, rgba(113,113,122,0.18) ${meterFill}% 100%)` }}
+        className="absolute inset-0 rounded-full dark:hidden"
+        style={{
+          background: `conic-gradient(${lightMeterTone} ${meterFill}%, rgba(113,113,122,0.18) ${meterFill}% 100%)`,
+        }}
       />
-      <div className="absolute inset-[1.5px] rounded-full bg-card dark:bg-[#111315]" />
+      <div
+        className="absolute inset-0 hidden rounded-full dark:block"
+        style={{
+          background: `conic-gradient(${darkMeterTone} ${meterFill}%, rgba(244,244,245,0.1) ${meterFill}% 100%)`,
+        }}
+      />
+      <div className="absolute inset-[1.5px] rounded-full bg-card dark:inset-[3px] dark:bg-[#111315]" />
     </div>
   );
 }
@@ -112,60 +130,89 @@ function shouldShowWorkerError(agent: WorkerCardAgent) {
   return !agent.currentText?.trim() && !agent.lastText?.trim() && (agent.outputEntries?.length ?? 0) === 0;
 }
 
-function formatTerminalProcessStatus(status: WorkerTerminalProcess["status"]) {
-  return status
-    .split(/[_\s]+/)
-    .filter(Boolean)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(" ");
+function hasOmittedWorkerHistory(agent: WorkerCardAgent) {
+  return Boolean(agent.outputEntries?.some((entry) => entry.id.startsWith("output-entries-omitted:")));
 }
 
-function terminalProcessStatusClass(process: WorkerTerminalProcess) {
-  if (process.active) {
-    return "bg-emerald-300";
-  }
-
-  if (process.status === "failed" || process.status === "error" || process.status === "cancelled") {
-    return "bg-red-300";
-  }
-
-  return "bg-zinc-500";
-}
-
-function TerminalProcessSummary({ processes }: { processes: WorkerTerminalProcess[] }) {
+function TerminalProcessSummary({
+  workerId,
+  displayId,
+  processes,
+  onStopTerminalProcess,
+  stoppingTerminalProcessId,
+}: {
+  workerId: string;
+  displayId: string;
+  processes: WorkerTerminalProcess[];
+  onStopTerminalProcess?: (terminalProcess: WorkerTerminalProcess) => void;
+  stoppingTerminalProcessId?: string | null;
+}) {
+  const { terminalProcessesOpenByWorkerId } = useManagerSnapshot(workerCardManager);
   const activeProcesses = processes.filter((process) => process.active);
   if (activeProcesses.length === 0) {
     return null;
   }
 
   const visibleProcesses = activeProcesses.slice(0, 3);
+  const open = terminalProcessesOpenByWorkerId[workerId] ?? activeProcesses.length === 1;
+  const summary = `Running ${activeProcesses.length} terminal${activeProcesses.length === 1 ? "" : "s"}`;
 
   return (
-    <div className="shrink-0 border-b border-border/70 bg-muted/20 px-4 py-3 dark:border-white/8 dark:bg-[#0e1012]">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div className="text-[11px] font-medium text-foreground dark:text-zinc-200">Terminal Processes</div>
-        <div className="text-[10px] font-medium uppercase tracking-normal text-muted-foreground dark:text-zinc-500">
-          {activeProcesses.length} running
-        </div>
+    <div className="shrink-0 border-b border-border/70 bg-muted/45 text-foreground dark:border-white/8 dark:bg-[#242426] dark:text-zinc-200">
+      <div className="flex h-9 min-w-0 items-center gap-3 px-4">
+        <SquareTerminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground dark:text-zinc-400" />
+        <button
+          type="button"
+          className="min-w-0 flex-1 truncate text-left text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground dark:text-zinc-400 dark:hover:text-zinc-200"
+          onClick={() => workerCardManager.setTerminalProcessesOpen(workerId, !open)}
+        >
+          {summary}
+        </button>
+        <button
+          type="button"
+          aria-label={open ? "Collapse running terminals" : "Expand running terminals"}
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:text-zinc-400 dark:hover:bg-white/[0.08] dark:hover:text-zinc-100"
+          onClick={() => workerCardManager.setTerminalProcessesOpen(workerId, !open)}
+        >
+          <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} />
+        </button>
       </div>
-      <div className="space-y-2">
-        {visibleProcesses.map((terminalProcess) => (
-          <div key={terminalProcess.id} className="min-w-0 text-[11px] leading-5">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", terminalProcessStatusClass(terminalProcess))} />
-              <span className="shrink-0 font-medium text-muted-foreground dark:text-zinc-400">{formatTerminalProcessStatus(terminalProcess.status)}</span>
-              <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground dark:text-zinc-200" title={terminalProcess.command}>
-                {terminalProcess.command}
-              </code>
-            </div>
-            {terminalProcess.outputTail ? (
-              <div className="line-clamp-2 pl-3.5 font-mono text-[10px] leading-4 text-muted-foreground dark:text-zinc-500" title={terminalProcess.outputTail}>
-                {terminalProcess.outputTail}
+      {open ? (
+        <div className="space-y-1 px-4 pb-2">
+          {visibleProcesses.map((terminalProcess) => {
+            const canStopTerminalProcess = Boolean(onStopTerminalProcess && terminalProcess.processId);
+            const isStoppingTerminalProcess = stoppingTerminalProcessId === terminalProcess.id;
+            const terminalProcessTitle = terminalProcess.processId
+              ? `CLI process ${terminalProcess.processId}`
+              : "No terminal process id reported";
+
+            return (
+              <div key={terminalProcess.id} className="flex min-w-0 items-center gap-2 font-mono text-[12px] leading-5" title={terminalProcessTitle}>
+                <div className="min-w-0 flex-1 truncate">
+                  <span className="text-foreground dark:text-zinc-100">{terminalProcess.command}</span>
+                  {terminalProcess.outputTail ? <span className="text-muted-foreground dark:text-zinc-500"> {terminalProcess.outputTail}</span> : null}
+                </div>
+                {onStopTerminalProcess ? (
+                  <button
+                    type="button"
+                    aria-label={`Stop terminal ${terminalProcess.command} for ${displayId}`}
+                    title={canStopTerminalProcess ? `Stop terminal process ${terminalProcess.processId}` : "This terminal did not report a process id"}
+                    disabled={!canStopTerminalProcess || isStoppingTerminalProcess}
+                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-white/[0.08] dark:hover:text-zinc-100"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onStopTerminalProcess(terminalProcess);
+                    }}
+                  >
+                    <Square className="h-3 w-3 fill-current" />
+                  </button>
+                ) : null}
               </div>
-            ) : null}
-          </div>
-        ))}
-      </div>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -253,7 +300,10 @@ export function WorkerCard({
   terminalHeightClass,
   fillAvailable = false,
   onStopWorker,
+  onStopTerminalProcess,
+  onLoadWorkerHistory,
   isStopping,
+  stoppingTerminalProcessId,
 }: WorkerCardProps) {
   const { openByWorkerId } = useManagerSnapshot(workerCardManager);
   const open = openByWorkerId[workerId] ?? defaultOpen;
@@ -263,22 +313,22 @@ export function WorkerCard({
   const showPromptPreview = promptPreviewText.length > 0;
   const showStopWorker = Boolean(onStopWorker) && isWorkerActiveStatus(agent.state);
   const shouldFillAvailable = fillAvailable && open;
-  const terminalProcesses = useMemo(() => deriveWorkerTerminalProcesses(agent.outputEntries), [agent.outputEntries]);
+  const terminalProcesses = useMemo(() => deriveVisibleWorkerTerminalProcesses(agent.outputEntries, agent.state), [agent.outputEntries, agent.state]);
+  const hasActiveTerminalProcesses = terminalProcesses.some((process) => process.active);
+  const showHeaderStopWorker = showStopWorker && !hasActiveTerminalProcesses;
   const showWorkerError = shouldShowWorkerError(agent);
 
-  const displayId = useMemo(() => {
-    const normalizedTitle = workerTitle?.trim();
-    if (normalizedTitle) {
-      return normalizedTitle;
-    }
-
+  const workerNumberLabel = useMemo(() => {
     if (typeof workerNumber === "number" && Number.isFinite(workerNumber)) {
       return `Worker ${workerNumber}`;
     }
 
     const match = workerId.match(/-worker-(\d+)$/);
-    return match ? `Worker ${match[1]}` : workerId;
-  }, [workerId, workerNumber, workerTitle]);
+    return match ? `Worker ${match[1]}` : null;
+  }, [workerId, workerNumber]);
+  const normalizedWorkerTitle = workerTitle?.trim() ?? "";
+  const displayId = normalizedWorkerTitle || workerNumberLabel || workerId;
+  const showWorkerNumberAfterTitle = Boolean(normalizedWorkerTitle && workerNumberLabel);
 
   return (
     <Collapsible open={open} onOpenChange={(nextOpen) => workerCardManager.setOpen(workerId, nextOpen)} className={cn(shouldFillAvailable && "flex h-full min-h-0 flex-col")}>
@@ -291,8 +341,14 @@ export function WorkerCard({
             <CollapsibleTrigger className="min-w-0 flex-1 text-left">
               <div className="min-w-0 flex-1 space-y-1.5">
                 <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
-                  <div className="shrink-0 break-words text-[12px] font-medium text-foreground dark:text-zinc-100" title={workerId}>
-                    {displayId}
+                  <div className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] font-medium text-foreground dark:text-zinc-100" title={workerId}>
+                    <span className="break-words">{displayId}</span>
+                    {showWorkerNumberAfterTitle ? (
+                      <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-border/70 bg-muted/35 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-400">
+                        <Hash className="h-3 w-3" />
+                        {workerNumberLabel}
+                      </span>
+                    ) : null}
                   </div>
                   <div className="inline-flex min-w-0 shrink items-center gap-1.5 text-[11px] text-muted-foreground dark:text-zinc-400">
                     <Bot className="h-3.5 w-3.5 text-muted-foreground/80 dark:text-zinc-500" />
@@ -355,13 +411,13 @@ export function WorkerCard({
             </CollapsibleTrigger>
             <div className="flex shrink-0 items-center gap-1.5">
               {pendingPermissions.length > 0 ? <PermissionWarning workerId={workerId} pendingPermissions={pendingPermissions} /> : null}
-              {showStopWorker ? (
+              {showHeaderStopWorker ? (
                 <button
                   type="button"
                   aria-label={`Stop ${displayId}`}
                   title={`Stop ${displayId}`}
                   disabled={isStopping}
-                  className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-red-500/25 bg-red-500/10 text-red-700 transition-colors hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-300/15 dark:bg-red-400/[0.06] dark:text-red-100/85 dark:hover:bg-red-400/[0.12]"
+                  className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-stone-300/80 bg-stone-100/40 text-stone-500 transition-colors hover:border-rose-300/70 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-300/15 dark:bg-red-400/[0.06] dark:text-red-100/85 dark:hover:bg-red-400/[0.12]"
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -387,9 +443,20 @@ export function WorkerCard({
               <div className="mt-1 break-all text-[12px] leading-[1.55] text-foreground dark:text-zinc-300">{agent.lastError}</div>
             </div>
           ) : null}
-          <TerminalProcessSummary processes={terminalProcesses} />
+          <TerminalProcessSummary
+            workerId={workerId}
+            displayId={displayId}
+            processes={terminalProcesses}
+            onStopTerminalProcess={showStopWorker ? onStopTerminalProcess : undefined}
+            stoppingTerminalProcessId={stoppingTerminalProcessId}
+          />
           <div className={cn("relative w-full bg-muted/20 p-2 dark:bg-[#0b0c0e]", terminalHeightClass, shouldFillAvailable && "min-h-0 flex-1")}>
-            <Terminal agent={agent} userMessages={userMessages} />
+            <Terminal
+              agent={agent}
+              userMessages={userMessages}
+              hasMoreHistory={hasOmittedWorkerHistory(agent)}
+              onRequestMoreHistory={onLoadWorkerHistory}
+            />
           </div>
         </CollapsibleContent>
       </div>

@@ -118,9 +118,10 @@ export const workersSidebarManager = new class extends StateManager<{ activeTab:
 export const workerCardManager = new class extends StateManager<{
   openByWorkerId: Record<string, boolean>;
   permissionOpenByWorkerId: Record<string, boolean>;
+  terminalProcessesOpenByWorkerId: Record<string, boolean>;
 }> {
   constructor() {
-    super({ openByWorkerId: {}, permissionOpenByWorkerId: {} });
+    super({ openByWorkerId: {}, permissionOpenByWorkerId: {}, terminalProcessesOpenByWorkerId: {} });
   }
 
   setOpen = (workerId: string, open: boolean) => this.setKey("openByWorkerId", (current) => ({
@@ -136,6 +137,11 @@ export const workerCardManager = new class extends StateManager<{
   closePermission = (workerId: string) => this.setKey("permissionOpenByWorkerId", (current) => ({
     ...current,
     [workerId]: false,
+  }));
+
+  setTerminalProcessesOpen = (workerId: string, open: boolean) => this.setKey("terminalProcessesOpenByWorkerId", (current) => ({
+    ...current,
+    [workerId]: open,
   }));
 }();
 

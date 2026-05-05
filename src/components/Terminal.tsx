@@ -122,13 +122,13 @@ function activityKindOrder(activity: TerminalActivityItem) {
   switch (activity.kind) {
     case "user_message":
       return 0;
-    case "thinking":
-      return 1;
-    case "tool":
-      return 2;
-    case "permission":
-      return 3;
     case "history_gap":
+      return 1;
+    case "thinking":
+      return 2;
+    case "tool":
+      return 3;
+    case "permission":
       return 4;
     case "message":
       return 5;
@@ -338,6 +338,128 @@ function ActivityPane({
   );
 }
 
+function diffLineClass(line: string, variant: "terminal" | "native") {
+  if (line.startsWith("@@")) {
+    return variant === "native"
+      ? "bg-sky-500/8 text-sky-700 dark:text-sky-300"
+      : "bg-cyan-500/10 text-cyan-800 dark:bg-cyan-400/8 dark:text-cyan-200";
+  }
+  if (line.startsWith("diff --") || line.startsWith("+++") || line.startsWith("---") || line.startsWith("***")) {
+    return variant === "native"
+      ? "bg-muted/45 text-muted-foreground"
+      : "bg-muted/45 text-muted-foreground dark:bg-white/7 dark:text-zinc-400";
+  }
+  if (line.startsWith("+")) {
+    return variant === "native"
+      ? "bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
+      : "bg-emerald-500/12 text-emerald-800 dark:bg-emerald-400/10 dark:text-emerald-200";
+  }
+  if (line.startsWith("-")) {
+    return variant === "native"
+      ? "bg-red-500/10 text-red-800 dark:text-red-300"
+      : "bg-red-500/12 text-red-800 dark:bg-red-400/10 dark:text-red-200";
+  }
+  return variant === "native" ? "text-foreground" : "text-foreground dark:text-zinc-200";
+}
+
+function formatVisibleDiffLine(line: string): string | null {
+  if (
+    line.startsWith("@@")
+    || line.startsWith("diff --")
+    || line.startsWith("+++")
+    || line.startsWith("---")
+    || line.startsWith("***")
+    || line.startsWith("\\ No newline")
+  ) {
+    return null;
+  }
+  if (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) {
+    return line.slice(1);
+  }
+  return line;
+}
+
+function DiffPane({
+  label,
+  text,
+  variant,
+  preview = false,
+  expanded = true,
+  interactive = true,
+  onClick,
+}: {
+  label: string;
+  text: string;
+  variant: "terminal" | "native";
+  preview?: boolean;
+  expanded?: boolean;
+  interactive?: boolean;
+  onClick?: () => void;
+}) {
+  const lines = text
+    .split("\n")
+    .map((line, index) => ({
+      id: `${index}:${line}`,
+      original: line,
+      visible: formatVisibleDiffLine(line),
+    }))
+    .filter((line) => line.visible != null);
+  const canExpand = preview && lines.length > TOOL_OUTPUT_PREVIEW_LINES;
+  const canInteract = canExpand && interactive;
+  const clipped = canExpand && !expanded;
+  const previewStyle: CSSProperties | undefined = canExpand
+    ? { maxHeight: clipped ? TOOL_OUTPUT_COLLAPSED_MAX_HEIGHT : TOOL_OUTPUT_EXPANDED_MAX_HEIGHT }
+    : undefined;
+
+  return (
+    <div
+      style={previewStyle}
+      className={cn(
+        "overflow-hidden rounded border",
+        canInteract && "cursor-pointer",
+        canExpand && "transition-[max-height,background-color,border-color,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+        variant === "native"
+          ? "border-border/60 bg-muted/25"
+          : "border-border/70 bg-background shadow-sm dark:border-white/10 dark:bg-[#111318] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
+      )}
+      onClick={canInteract ? onClick : undefined}
+      role={canInteract ? "button" : undefined}
+      tabIndex={canInteract ? 0 : undefined}
+      title={canInteract ? (expanded ? "Click to collapse diff preview" : "Click to expand full diff") : undefined}
+      onKeyDown={canInteract ? (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick?.();
+        }
+      } : undefined}
+    >
+      <div className="flex items-stretch">
+        <div className={cn(
+          "flex w-10 shrink-0 items-start justify-center border-r px-1 py-2 font-mono text-[length:var(--terminal-pane-label-size)] font-semibold uppercase tracking-[0.18em]",
+          variant === "native"
+            ? "border-border/60 bg-background/40 text-muted-foreground"
+            : "border-border/60 bg-muted/40 text-muted-foreground dark:border-white/8 dark:bg-black/20 dark:text-zinc-500",
+        )}>
+          {label}
+        </div>
+        <pre className={cn(
+          "min-w-0 flex-1 overflow-auto py-2 font-mono whitespace-pre-wrap break-words text-[length:var(--terminal-pane-size)]",
+          variant === "native" ? "leading-[1.5]" : "leading-[1.55]",
+        )}>
+          {lines.map((line) => (
+            <span
+              key={line.id}
+              className={cn("block px-2.5", diffLineClass(line.original, variant))}
+            >
+              {line.visible && line.visible.length > 0 ? line.visible : " "}
+            </span>
+          ))}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
 function ThinkingDots({ variant }: { variant: "terminal" | "native" }) {
   return (
     <span className="inline-flex items-center gap-0.5" aria-hidden="true">
@@ -433,7 +555,17 @@ function ToolActivity({
           <div className="min-h-0 overflow-hidden">
             <div className="space-y-2 pb-0.5 pt-0.5">
               {activity.inputPane ? <ActivityPane label={activity.inputPane.label} text={activity.inputPane.text} variant={variant} /> : null}
-              {activity.outputPane ? (
+              {activity.outputPane?.kind === "diff" ? (
+                <DiffPane
+                  label={activity.outputPane.label}
+                  text={activity.outputPane.text}
+                  variant={variant}
+                  preview
+                  expanded={outputExpanded}
+                  interactive={detailsOpen}
+                  onClick={() => terminalUiManager.setToolOutputExpanded(activity.id, !outputExpanded)}
+                />
+              ) : activity.outputPane ? (
                 <ActivityPane
                   label={activity.outputPane.label}
                   text={activity.outputPane.text}
@@ -567,7 +699,7 @@ function ActivityRow({
       ) : null}
       {connectorExtendsAfter ? (
         <div className={cn(
-          "absolute -bottom-3 left-2 top-[0.57rem] w-px",
+          "absolute -bottom-2.5 left-2 top-[0.57rem] w-px",
           variant === "native" ? "bg-border/80" : "bg-border/80 dark:bg-white/14",
         )} />
       ) : null}
@@ -719,7 +851,7 @@ export function Terminal({
         )}
       >
         {activity.length > 0 ? (
-          <div className="relative flex flex-col gap-3">
+          <div className="relative flex flex-col gap-2.5">
             {activity.map((entry, index) => {
               const previousEntry = activity[index - 1];
               const nextEntry = activity[index + 1];

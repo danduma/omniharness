@@ -194,13 +194,195 @@ describe("GET /api/events", () => {
     const payload = JSON.parse(text);
 
     expect(Buffer.byteLength(text)).toBeLessThan(150_000);
-    expect(payload.agents[0].outputEntries).toHaveLength(24);
-    expect(payload.agents[0].outputEntries[0].id).toBe("entry-56");
+    expect(payload.agents[0].outputEntries).toHaveLength(31);
+    expect(payload.agents[0].outputEntries[0].id).toBe("entry-0");
+    expect(payload.agents[0].outputEntries[6].text).toContain("50 earlier output entries omitted");
+    expect(payload.agents[0].outputEntries[7].id).toBe("entry-56");
+    expect(payload.agents[0].outputEntries.at(-1).id).toBe("entry-79");
     expect(payload.agents[0].outputEntries.every((entry: { text: string }) => entry.text.length < 2_100)).toBe(true);
     expect(payload.agents[0].currentText.length).toBeLessThan(4_100);
     expect(payload.executionEvents).toHaveLength(30);
     expect(payload.executionEvents[0].details).toContain("Event 29");
     expect(payload.executionEvents[0].details).not.toContain("xxxxx");
+  });
+
+  it("keeps completed terminal lifecycle entries in compact selected-run snapshots", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+    const outputEntries = Array.from({ length: 90 }, (_, index) => ({
+      id: `entry-${index}`,
+      type: "message",
+      text: `message ${index}`,
+      timestamp: new Date(now.getTime() + index * 1000).toISOString(),
+    }));
+
+    outputEntries[18] = {
+      id: "terminal-start",
+      type: "tool_call",
+      text: "flutter analyze",
+      timestamp: new Date(now.getTime() + 18_000).toISOString(),
+      toolCallId: "call-terminal",
+      toolKind: "execute",
+      status: "in_progress",
+      raw: {
+        kind: "execute",
+        rawInput: {
+          command: ["/bin/zsh", "-lc", "flutter analyze"],
+        },
+      },
+    } as typeof outputEntries[number];
+    outputEntries[47] = {
+      id: "terminal-done",
+      type: "tool_call_update",
+      text: "Tool call call-terminal completed",
+      timestamp: new Date(now.getTime() + 47_000).toISOString(),
+      toolCallId: "call-terminal",
+      status: "completed",
+      raw: {
+        status: "completed",
+        rawOutput: {
+          command: ["/bin/zsh", "-lc", "flutter analyze"],
+          formatted_output: "No issues found!\n",
+          exit_code: 0,
+          status: "completed",
+        },
+      },
+    } as typeof outputEntries[number];
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/terminal-lifecycle.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      title: "Terminal lifecycle",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: JSON.stringify(outputEntries),
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    const payload = await response.json();
+    const outputEntryIds = payload.agents[0].outputEntries.map((entry: { id: string }) => entry.id);
+
+    expect(outputEntryIds).toContain("terminal-start");
+    expect(outputEntryIds).toContain("terminal-done");
+    expect(payload.agents[0].outputEntries.find((entry: { id: string }) => entry.id === "terminal-done")).toMatchObject({
+      status: "completed",
+      toolCallId: "call-terminal",
+    });
+    expect(payload.agents[0].outputEntries.find((entry: { id: string }) => entry.id.startsWith("output-entries-omitted:"))?.text).toContain("58 earlier output entries omitted");
+  });
+
+  it("keeps completed non-terminal tool updates in compact selected-run snapshots", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+    const outputEntries = Array.from({ length: 90 }, (_, index) => ({
+      id: `entry-${index}`,
+      type: "message",
+      text: `message ${index}`,
+      timestamp: new Date(now.getTime() + index * 1000).toISOString(),
+    }));
+
+    outputEntries[18] = {
+      id: "edit-start",
+      type: "tool_call",
+      text: "Edit /workspace/app/script/mobile/verify-android-native-libs.sh",
+      timestamp: new Date(now.getTime() + 18_000).toISOString(),
+      toolCallId: "call-edit",
+      toolKind: "edit",
+      status: "in_progress",
+      raw: {
+        kind: "edit",
+        title: "Edit /workspace/app/script/mobile/verify-android-native-libs.sh",
+      },
+    } as typeof outputEntries[number];
+    outputEntries[47] = {
+      id: "edit-done",
+      type: "tool_call_update",
+      text: "Tool call call-edit completed",
+      timestamp: new Date(now.getTime() + 47_000).toISOString(),
+      toolCallId: "call-edit",
+      status: "completed",
+      raw: {
+        status: "completed",
+        content: [{ type: "content", content: { type: "text", text: "Success. Updated the file." } }],
+      },
+    } as typeof outputEntries[number];
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/edit-lifecycle.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      title: "Edit lifecycle",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: JSON.stringify(outputEntries),
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    const payload = await response.json();
+    const activities = buildAgentOutputActivity({
+      outputEntries: payload.agents[0].outputEntries,
+      currentText: "",
+      lastText: "",
+      displayText: "",
+    });
+    const editActivity = activities.find((activity) => activity.kind === "tool" && activity.id === "call-edit");
+
+    expect(payload.agents[0].outputEntries.map((entry: { id: string }) => entry.id)).toContain("edit-done");
+    expect(editActivity).toMatchObject({
+      kind: "tool",
+      label: "Edit",
+      status: "completed",
+      title: "verify-android-native-libs.sh",
+    });
   });
 
   it("keeps compact raw tool payloads so selected-run terminal tool rows can expand", async () => {
@@ -241,6 +423,10 @@ describe("GET /api/events", () => {
             stdout: "Success. Updated the following files:\nM rust/xtask/Cargo.toml\n",
             stderr: "",
             success: true,
+            debugBlobA: "x".repeat(100_000),
+            debugBlobB: "x".repeat(100_000),
+            debugBlobC: "x".repeat(100_000),
+            debugBlobD: "x".repeat(100_000),
             changes: {
               "/workspace/app/rust/xtask/Cargo.toml": {
                 type: "update",
@@ -288,6 +474,7 @@ describe("GET /api/events", () => {
     const payload = await response.json();
     const editUpdate = payload.agents[0].outputEntries.find((entry: { id: string }) => entry.id === "edit-done");
 
+    expect(editUpdate.raw.rawOutput.truncated).toBe(true);
     expect(editUpdate.raw.rawOutput.changes["/workspace/app/rust/xtask/Cargo.toml"].unified_diff).toContain("+new");
 
     const activities = buildAgentOutputActivity({
@@ -301,7 +488,9 @@ describe("GET /api/events", () => {
       kind: "tool",
       label: "Edit",
       outputPane: expect.objectContaining({
-        text: expect.stringContaining("Success. Updated the following files"),
+        label: "DIFF",
+        kind: "diff",
+        text: expect.stringContaining("-old\n+new"),
       }),
     });
   });
@@ -564,6 +753,70 @@ describe("GET /api/events", () => {
 
     const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     expect(persistedRun?.status).toBe("done");
+  });
+
+  it("revives a running implementation worker row when the bridge still has an active worker", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/implementation.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "cancelled",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      bridgeSessionId: "session-live",
+      bridgeSessionMode: "full-access",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      {
+        name: workerId,
+        type: "codex",
+        cwd: "/workspace/app",
+        state: "working",
+        sessionId: "session-live",
+        sessionMode: "full-access",
+        currentText: "still doing real work",
+        lastText: "still doing real work",
+        outputEntries: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    ]), { status: 200 }));
+
+    const response = await GET(new NextRequest(`http://localhost/api/events?runId=${runId}&snapshot=1`));
+    const payload = await response.json();
+
+    expect(payload.workers.find((worker: { id: string }) => worker.id === workerId)?.status).toBe("working");
+    expect(payload.agents.find((agent: { name: string }) => agent.name === workerId)?.state).toBe("working");
+
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(persistedWorker?.status).toBe("working");
+    expect(persistedWorker?.currentText).toBe("still doing real work");
   });
 
   it("streams supervisor interventions with the live conversation payload", async () => {
@@ -1056,6 +1309,73 @@ summary: Plan is ready.
     expect(persistedRun?.lastError).toBeNull();
     expect(persistedRun?.failedAt).toBeNull();
     expect(persistedWorker?.status).toBe("idle");
+    expect(persistedMessages.filter((message) => message.kind === "error")).toHaveLength(0);
+    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
+  });
+
+  it("resumes a failed implementation conversation with a saved bridge session when the live worker must be reloaded", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+    const errorMessage = "Get agent failed: fetch failed (caused by: getaddrinfo EAI_AGAIN api.openai.com)";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/implementation-session-reconnect.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "failed",
+      lastError: errorMessage,
+      failedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "Paused during provider reconnect.",
+      bridgeSessionId: "session-reconnect",
+      bridgeSessionMode: "full-access",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "system",
+      kind: "error",
+      content: `Run failed: ${errorMessage}`,
+      createdAt: now,
+    });
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    const payload = await response.json();
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+
+    expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("running");
+    expect(persistedRun?.status).toBe("running");
+    expect(persistedRun?.lastError).toBeNull();
+    expect(persistedRun?.failedAt).toBeNull();
+    expect(persistedWorker?.status).toBe("working");
+    expect(persistedWorker?.bridgeSessionId).toBe("session-reconnect");
     expect(persistedMessages.filter((message) => message.kind === "error")).toHaveLength(0);
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
   });

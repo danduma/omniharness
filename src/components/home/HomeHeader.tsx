@@ -6,6 +6,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { PRODUCT_NAME } from "@/app/home/constants";
 import type { AgentSnapshot, MessageRecord, RunRecord, SidebarGroup, SidebarRun, SupervisorInterventionRecord } from "@/app/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
+import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { ConversationSidebar } from "./ConversationSidebar";
 import { ThemeModeToggle, WorkersSidebar } from "./WorkersSidebar";
 
@@ -55,7 +56,10 @@ interface HomeHeaderProps {
   onAutoCommitChat: () => void;
   isAutoCommitChatPending: boolean;
   onStopWorker?: (workerId: string) => void;
+  onStopTerminalProcess?: (workerId: string, terminalProcess: WorkerTerminalProcess) => void;
+  onLoadWorkerHistory?: (workerId: string) => void;
   stoppingWorkerId?: string | null;
+  stoppingTerminalProcess?: { workerId: string; terminalProcessId: string } | null;
 }
 
 export function HomeHeader({
@@ -104,7 +108,10 @@ export function HomeHeader({
   onAutoCommitChat,
   isAutoCommitChatPending,
   onStopWorker,
+  onStopTerminalProcess,
+  onLoadWorkerHistory,
   stoppingWorkerId,
+  stoppingTerminalProcess,
 }: HomeHeaderProps) {
   const conversationTitle = selectedRun?.title?.trim() || "New conversation";
   const titleLabel = selectedRun ? conversationTitle : "";
@@ -285,7 +292,10 @@ export function HomeHeader({
             preferredModel={selectedRun?.preferredWorkerModel ?? null}
             preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
             onStopWorker={onStopWorker}
+            onStopTerminalProcess={onStopTerminalProcess}
+            onLoadWorkerHistory={onLoadWorkerHistory}
             stoppingWorkerId={stoppingWorkerId}
+            stoppingTerminalProcess={stoppingTerminalProcess}
             onClose={() => setMobileWorkersOpen(false)}
           />
         </SheetContent>

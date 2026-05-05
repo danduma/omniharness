@@ -1,5 +1,4 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
-import { randomUUID } from "crypto";
 import { constants, accessSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, statSync, symlinkSync } from "fs";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { request as httpRequest } from "http";
@@ -9,13 +8,23 @@ import { basename, dirname, join } from "path";
 import { Readable, Writable } from "stream";
 import * as acp from "@agentclientprotocol/sdk";
 import { applyCodexBridgeEnv, buildCodexConfigArgs, shouldSetRequestedMode } from "./codex";
+import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
 import { commandAvailable, createToolDiagnostics, withCodexStandardTooling, withManagedPath } from "./tool-env";
+import {
+  appendBoundedText,
+  appendMessageChunk,
+  appendOutputEntry,
+  openAgentOutputArchive,
+  renderOutputEntries,
+  selectLiveOutputEntries,
+  summarizeToolCallUpdate,
+} from "./output-store";
 import type {
   AgentRecord,
   AgentRuntimeConfig,
   AskResult,
+  CancelTerminalProcessResult,
   DoctorResult,
-  OutputEntry,
   PendingPermission,
   StartAgentInput,
 } from "./types";
@@ -23,6 +32,8 @@ import { RuntimeHttpError } from "./types";
 
 const MAX_STDERR_LINES = 50;
 const ENDPOINT_TIMEOUT_MS = 5000;
+const WORKER_CONNECTION_RESET_MAX_BACKOFF_MS = 5 * 60_000;
+const MAX_TEXT_FIELD_CHARS = 100_000;
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -212,85 +223,6 @@ function pushStderrLine(buffer: string[], line: string) {
   if (buffer.length > MAX_STDERR_LINES) {
     buffer.splice(0, buffer.length - MAX_STDERR_LINES);
   }
-}
-
-function createOutputEntry(input: Omit<OutputEntry, "id" | "timestamp"> & { timestamp?: string }): OutputEntry {
-  return {
-    id: randomUUID(),
-    timestamp: input.timestamp ?? nowIso(),
-    type: input.type,
-    text: input.text,
-    toolCallId: input.toolCallId,
-    toolKind: input.toolKind,
-    status: input.status,
-    raw: input.raw,
-  };
-}
-
-function appendOutputEntry(record: AgentRecord, input: Omit<OutputEntry, "id" | "timestamp"> & { timestamp?: string }) {
-  record.activeOutputEntryId = null;
-  record.outputEntries.push(createOutputEntry(input));
-}
-
-function appendMessageChunk(record: AgentRecord, text: string, type: "message" | "thought") {
-  const activeEntry = record.activeOutputEntryId
-    ? record.outputEntries.find((entry) => entry.id === record.activeOutputEntryId)
-    : null;
-
-  if (activeEntry && activeEntry.type === type) {
-    activeEntry.text += text;
-    return;
-  }
-
-  const entry = createOutputEntry({ type, text });
-  record.outputEntries.push(entry);
-  record.activeOutputEntryId = entry.id;
-}
-
-function summarizeToolCallUpdate(update: Record<string, unknown>) {
-  const contentSummary = Array.isArray(update.content)
-    ? update.content
-        .map((item) => {
-          const record = asRecord(item);
-          const content = asRecord(record?.content);
-          if (record?.type === "content" && content?.type === "text" && typeof content.text === "string") {
-            return content.text;
-          }
-          if (record?.type === "content" && content?.type) {
-            return `[${content.type}]`;
-          }
-          return "";
-        })
-        .filter(Boolean)
-        .join(" ")
-    : "";
-
-  const toolCallId = typeof update.toolCallId === "string" ? update.toolCallId : "";
-  const status = typeof update.status === "string" ? update.status : "updated";
-  const base = `Tool call ${toolCallId} ${status}`.trim();
-  return contentSummary ? `${base}: ${contentSummary}` : base;
-}
-
-function renderOutputEntries(entries: OutputEntry[]) {
-  return entries
-    .map((entry) => {
-      switch (entry.type) {
-        case "message":
-          return entry.text;
-        case "thought":
-          return `Thought: ${entry.text}`;
-        case "tool_call":
-          return `Tool${entry.toolKind ? ` ${entry.toolKind}` : ""}${entry.status ? ` (${entry.status})` : ""}: ${entry.text}`;
-        case "tool_call_update":
-          return `${entry.status ? `Tool update (${entry.status})` : "Tool update"}: ${entry.text}`;
-        case "permission":
-          return `Permission: ${entry.text}`;
-        default:
-          return entry.text;
-      }
-    })
-    .filter(Boolean)
-    .join("\n\n");
 }
 
 function selectTextFileRange(content: string, line?: number | null, limit?: number | null) {
@@ -549,7 +481,7 @@ class RuntimeClient implements acp.Client {
       const content = asRecord(update.content);
       const text = content?.type === "text" && typeof content.text === "string" ? content.text : "";
       if (text) {
-        record.currentText += text;
+        record.currentText = appendBoundedText(record.currentText, text, MAX_TEXT_FIELD_CHARS);
         record.lastText = record.currentText;
         appendMessageChunk(record, text, "message");
         this.publishChunk(record.name, text);
@@ -609,6 +541,7 @@ export class AgentRuntimeManager {
   ) {}
 
   toStatus(record: AgentRecord) {
+    const outputEntries = selectLiveOutputEntries(record);
     return {
       name: record.name,
       type: record.type,
@@ -627,8 +560,9 @@ export class AgentRuntimeManager {
       stderrBuffer: [...record.stderrBuffer],
       lastText: record.lastText,
       currentText: record.currentText,
-      renderedOutput: renderOutputEntries(record.outputEntries),
-      outputEntries: record.outputEntries.map((entry) => ({ ...entry })),
+      renderedOutput: renderOutputEntries(outputEntries),
+      outputEntries,
+      outputArchive: record.outputArchive.stats(outputEntries.length),
       stopReason: record.stopReason,
       pendingPermissions: record.pendingPermissions.map((item) => ({
         requestId: item.requestId,
@@ -652,6 +586,14 @@ export class AgentRuntimeManager {
   getAgent(name: string) {
     const record = this.agents.get(name);
     return record ? this.toStatus(record) : null;
+  }
+
+  async readAgentOutput(name: string, options?: { cursor?: number; limit?: number }) {
+    const record = this.agents.get(name);
+    if (!record) {
+      throw new RuntimeHttpError(404, `Agent not found: ${name}`);
+    }
+    return record.outputArchive.readPage(options);
   }
 
   async startAgent(input: StartAgentInput) {
@@ -828,6 +770,11 @@ export class AgentRuntimeManager {
       currentText: "",
       activeOutputEntryId: null,
       outputEntries: [],
+      outputArchive: openAgentOutputArchive({
+        name,
+        dataDir: baseEnv.OMNIHARNESS_RUNTIME_DATA_DIR,
+        resume: Boolean(input.resumeSessionId),
+      }),
       stopReason: null,
       pendingPermissions: [],
       activeTask: null,
@@ -891,7 +838,13 @@ export class AgentRuntimeManager {
         sessionId: record.sessionId,
         prompt: [{ type: "text", text: prompt }],
       } as Parameters<acp.ClientSideConnection["prompt"]>[0];
-      const response = await record.connection.prompt(promptParams);
+      const response = await retrySupervisorRequest(
+        () => record.connection.prompt(promptParams),
+        {
+          maxDelayMs: WORKER_CONNECTION_RESET_MAX_BACKOFF_MS,
+          retryIndefinitelyWhen: isRecoverableConnectionSupervisorError,
+        },
+      );
       const responseRecord = asRecord(response);
       record.stopReason = typeof responseRecord?.stopReason === "string" ? responseRecord.stopReason : null;
       applyPromptUsage(record, responseRecord?.usage);
@@ -927,6 +880,55 @@ export class AgentRuntimeManager {
       record.state = "idle";
     }
     return { ok: true, name: record.name, cancelledPermissions };
+  }
+
+  cancelTerminalProcess(name: string, processId: string, toolCallId?: string | null): CancelTerminalProcessResult {
+    const record = this.agents.get(name);
+    if (!record) {
+      throw new RuntimeHttpError(404, "not_found");
+    }
+
+    const normalizedProcessId = processId.trim();
+    if (!/^\d+$/.test(normalizedProcessId)) {
+      throw new RuntimeHttpError(400, "processId must be a numeric terminal process id");
+    }
+
+    const pid = Number(normalizedProcessId);
+    const signal: NodeJS.Signals = "SIGINT";
+    try {
+      process.kill(pid, signal);
+    } catch (error) {
+      throw new RuntimeHttpError(404, `terminal process not found: ${normalizedProcessId}`, {
+        processId: normalizedProcessId,
+        error: describeUnknownError(error),
+      });
+    }
+
+    const normalizedToolCallId = asNonEmptyString(toolCallId) ?? null;
+    record.updatedAt = nowIso();
+    appendOutputEntry(record, {
+      type: "tool_call_update",
+      text: `Terminal process ${normalizedProcessId} cancelled by user.`,
+      toolCallId: normalizedToolCallId ?? undefined,
+      status: "cancelled",
+      raw: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: normalizedToolCallId ?? undefined,
+        status: "cancelled",
+        rawOutput: {
+          process_id: normalizedProcessId,
+          formatted_output: "Terminal process cancelled by user.",
+        },
+      },
+    });
+
+    return {
+      ok: true,
+      name: record.name,
+      processId: normalizedProcessId,
+      toolCallId: normalizedToolCallId,
+      signal,
+    };
   }
 
   async setMode(name: string, mode: string) {

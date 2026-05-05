@@ -24,12 +24,13 @@ import { parseBusyMessageAction, resolveBusyComposerBehavior, type BusyMessageAc
 import type { AgentSnapshot, AuthSessionResponse, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, QueuedConversationMessageRecord, RunRecord, SettingsResponse, SidebarGroup, SidebarRun, SupervisorInterventionRecord, WorkerCatalogResponse, WorkerType } from "./types";
 import { EventStreamStateManager } from "./EventStreamStateManager";
 import { homeUiSetters, homeUiStateManager, INITIAL_EVENT_STREAM_STATE } from "./HomeUiStateManager";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getLatestUnresolvedWorkerStuckEvent, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
 import { useAppErrors } from "./useAppErrors";
 import { useConversationExecutionStatus } from "./useConversationExecutionStatus";
 import { useHomeLifecycle } from "./useHomeLifecycle";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { useRunSelectionEffects } from "./useRunSelectionEffects";
+import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 
 const FolderPickerDialog = dynamic(
   () => import("@/components/FolderPickerDialog").then((module) => module.FolderPickerDialog),
@@ -183,6 +184,8 @@ export function HomeApp() {
   const pendingDeletedRunIdsRef = useRef<Set<string>>(new Set());
   const pendingCreatedConversationSnapshotsRef = useRef<Map<string, CreatedConversationSnapshot>>(new Map());
   const pendingSentConversationMessagesRef = useRef<Map<string, MessageRecord>>(new Map());
+  const loadingWorkerHistoryIdsRef = useRef<Set<string>>(new Set());
+  const autoResumeRunKeysRef = useRef<Set<string>>(new Set());
 
   const sessionQuery = useQuery<AuthSessionResponse>({
     queryKey: ["auth-session"],
@@ -639,6 +642,24 @@ export function HomeApp() {
     },
   });
 
+  const stopWorkerTerminalProcess = useMutation({
+    mutationFn: async ({ runId, workerId, terminalProcess }: { runId: string; workerId: string; terminalProcess: WorkerTerminalProcess }) => {
+      return requestJson<{ ok: true }>(`/api/runs/${runId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "stop_worker_terminal",
+          workerId,
+          terminalProcessId: terminalProcess.id,
+          processId: terminalProcess.processId,
+        }),
+      }, {
+        source: "Runs",
+        action: "Stop worker terminal",
+      });
+    },
+  });
+
   const promotePlanningConversation = useMutation({
     mutationFn: async (payload: { runId: string; planPath: string | null }) => {
       return requestJson<{ runId?: string }>(`/api/planning/${payload.runId}/promote`, {
@@ -1007,6 +1028,7 @@ export function HomeApp() {
   const selectedRunExecutionEvents = useMemo(() => (
     ((state.executionEvents || []) as ExecutionEventRecord[])
       .filter((event) => event.runId === selectedRunId)
+      .filter(shouldShowExecutionEventInRunLog)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   ), [selectedRunId, state.executionEvents]);
   const selectedRunSupervisorInterventions = useMemo(() => (
@@ -1035,30 +1057,69 @@ export function HomeApp() {
 
     return null;
   }, [catalogWorkers, selectedRun, selectedRunAllowedWorkerTypes]);
+  const workerFailureDetail = useMemo(
+    () => extractWorkerFailureDetail((filteredMessages || []) as MessageRecord[]),
+    [filteredMessages],
+  );
+
+  useEffect(() => {
+    if (
+      !selectedRunId
+      || !selectedRun
+      || !isImplementationConversation
+      || selectedRun.status !== "failed"
+      || failedWorkerAvailability?.availability.status !== "ok"
+      || workerFailureDetail
+      || !latestUserCheckpoint
+      || recoverRun.isPending
+    ) {
+      return;
+    }
+
+    const resumeKey = `${selectedRun.id}:${selectedRun.failedAt ?? ""}:${selectedRun.lastError ?? ""}`;
+    if (autoResumeRunKeysRef.current.has(resumeKey)) {
+      return;
+    }
+
+    autoResumeRunKeysRef.current.add(resumeKey);
+    recoverRun.mutate({
+      runId: selectedRunId,
+      action: "retry",
+      targetMessageId: latestUserCheckpoint.id,
+    });
+  }, [
+    failedWorkerAvailability?.availability.status,
+    isImplementationConversation,
+    latestUserCheckpoint,
+    recoverRun,
+    selectedRun,
+    selectedRunId,
+    workerFailureDetail,
+  ]);
+
   const conversationFailure = useMemo(() => {
     if (!selectedRun || selectedRun.status !== "failed" || !selectedRun.lastError) {
       return null;
     }
 
     const staleFailure = failedWorkerAvailability?.availability.status === "ok";
-    const workerFailureDetail = extractWorkerFailureDetail((filteredMessages || []) as MessageRecord[]);
     const workerLabel = failedWorkerAvailability?.label;
     const workerStatus = failedWorkerAvailability?.availability.message;
 
     return {
       tone: workerFailureDetail ? "warning" : staleFailure ? "success" : "error",
-      action: workerFailureDetail ? "Worker setup" : staleFailure ? "Retry" : "Run failed",
+      action: workerFailureDetail ? "Worker setup" : staleFailure ? "Reconnecting" : "Run failed",
       message: workerFailureDetail || (staleFailure
-        ? `${workerLabel || "Worker"} available.`
+        ? `Reconnecting to ${workerLabel || "worker"}.`
         : stripRunFailurePrefix(selectedRun.lastError)),
       suggestion: workerFailureDetail
-        ? "Update the model or account, then retry."
+        ? "Update the model or account, then resume."
         : staleFailure
         ? undefined
-        : "Retry latest after fixing the worker runtime, or switch to another available worker.",
+        : "Fix the worker runtime, then reconnect to the existing worker session.",
       details: staleFailure ? [] : workerLabel && workerStatus ? [`Current ${workerLabel} status: ${workerStatus}`] : [],
     } satisfies NoticeDescriptor;
-  }, [failedWorkerAvailability, filteredMessages, selectedRun]);
+  }, [failedWorkerAvailability, selectedRun, workerFailureDetail]);
   const visibleMessages = useMemo(() => {
     const messages = (filteredMessages || []) as MessageRecord[];
     return messages.filter(shouldRenderMessageInMainConversation);
@@ -1066,7 +1127,9 @@ export function HomeApp() {
   const conversationTimelineItems = useMemo(() => buildConversationTimelineItems({
     messages: visibleMessages,
     executionEvents: selectedRunExecutionEvents,
-  }), [selectedRunExecutionEvents, visibleMessages]);
+    supervisorInterventions: selectedRunSupervisorInterventions,
+    workers: selectedRunWorkersForDisplay,
+  }), [selectedRunExecutionEvents, selectedRunSupervisorInterventions, selectedRunWorkersForDisplay, visibleMessages]);
   const conversationTimelineActivityCount = conversationTimelineItems.filter((item) => item.type === "activity").length;
   const directConversationMessages = useMemo(() => {
     if (!isDirectConversation) {
@@ -1088,7 +1151,7 @@ export function HomeApp() {
   }) ?? null;
   const latestWaitEvent = selectedRunExecutionEvents.find((event) => event.eventType === "supervisor_wait") ?? null;
   const latestPromptDeferredEvent = selectedRunExecutionEvents.find((event) => event.eventType === "worker_prompt_deferred") ?? null;
-  const latestStuckEvent = selectedRunExecutionEvents.find((event) => event.eventType === "worker_stuck") ?? null;
+  const latestStuckEvent = getLatestUnresolvedWorkerStuckEvent(selectedRunExecutionEvents);
   const hasStuckWorker = conversationWorkerGroups.active.some((worker) => worker.status === "stuck")
     || activeConversationAgents.some((agent) => agent.state === "stuck")
     || Boolean(latestStuckEvent);
@@ -1159,7 +1222,7 @@ export function HomeApp() {
     ? plans.find((p) => p.id === runs.find((r) => r.id === selectedRunId)?.planId) ?? null
     : null;
   const activeConversationCwd = selectedRun?.projectPath || activePlan?.path || draftProjectPath || null;
-  const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, runCommandError: runCommand.error, sendConversationMessageError: sendConversationMessage.error, cancelQueuedMessageError: cancelQueuedMessage.error, autoCommitChatError: autoCommitChat.error, autoCommitProjectError: autoCommitProject.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, deleteRunError: deleteRun.error, stopSupervisorError: stopSupervisor.error, stopWorkerError: stopWorker.error });
+  const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, runCommandError: runCommand.error, sendConversationMessageError: sendConversationMessage.error, cancelQueuedMessageError: cancelQueuedMessage.error, autoCommitChatError: autoCommitChat.error, autoCommitProjectError: autoCommitProject.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, deleteRunError: deleteRun.error, stopSupervisorError: stopSupervisor.error, stopWorkerError: stopWorker.error ?? stopWorkerTerminalProcess.error });
 
   useRunSelectionEffects({ scrollRef, state, selectedRunId, selectedRun, activeComposerMode, selectedCliAgent, setSelectedCliAgent, autoSelectedWorkerType, activeAllowedWorkerTypes, hydratedRunSelectionId, setHydratedRunSelectionId, selectedModel, setSelectedModel, selectedEffort, setSelectedEffort, availableWorkerTypes, configuredAllowedWorkerTypes, apiKeys, setApiKeys, setReadMarkers });
   const activeMention = getActiveMentionQuery(command, commandCursor);
@@ -1304,6 +1367,44 @@ export function HomeApp() {
     if (!content) return;
     recoverRun.mutate({ runId: selectedRunId, action: "fork", targetMessageId: message.id, content });
   };
+
+  const handleLoadWorkerHistory = useCallback(async (workerId: string) => {
+    const normalizedWorkerId = workerId.trim();
+    if (!normalizedWorkerId || loadingWorkerHistoryIdsRef.current.has(normalizedWorkerId)) {
+      return;
+    }
+
+    loadingWorkerHistoryIdsRef.current.add(normalizedWorkerId);
+    try {
+      const agent = await requestJson<AgentSnapshot>(
+        `/api/agents/${encodeURIComponent(normalizedWorkerId)}`,
+        undefined,
+        {
+          source: "Agent runtime",
+          action: "Load worker history",
+        },
+      );
+
+      setState((current: typeof state) => {
+        const agentsByName = new Map((current.agents || []).map((candidate: AgentSnapshot) => [candidate.name, candidate]));
+        agentsByName.set(agent.name, agent);
+        return {
+          ...current,
+          agents: Array.from(agentsByName.values()),
+        };
+      });
+    } catch (error) {
+      setRuntimeErrors((current) => mergeAppErrors(current, [
+        buildInlineError(error, {
+          source: "Agent runtime",
+          action: "Load worker history",
+          suggestion: "The live stream can continue, but older worker output could not be hydrated. Try again after the agent runtime responds.",
+        }),
+      ]));
+    } finally {
+      loadingWorkerHistoryIdsRef.current.delete(normalizedWorkerId);
+    }
+  }, [setRuntimeErrors, setState]);
 
   const handleRightSidebarResizeStart = (event: React.PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -1472,7 +1573,17 @@ export function HomeApp() {
               stopWorker.mutate({ runId: selectedRunId, workerId });
             }
           }}
+          onStopTerminalProcess={(workerId, terminalProcess) => {
+            if (selectedRunId && terminalProcess.processId) {
+              stopWorkerTerminalProcess.mutate({ runId: selectedRunId, workerId, terminalProcess });
+            }
+          }}
+          onLoadWorkerHistory={handleLoadWorkerHistory}
           stoppingWorkerId={stopWorker.variables?.workerId ?? null}
+          stoppingTerminalProcess={stopWorkerTerminalProcess.variables ? {
+            workerId: stopWorkerTerminalProcess.variables.workerId,
+            terminalProcessId: stopWorkerTerminalProcess.variables.terminalProcess.id,
+          } : null}
         />
 
         <ConversationMain
@@ -1514,8 +1625,13 @@ export function HomeApp() {
         {selectedRunId ? renderComposer("w-full") : null}
       </div>
 
-      {rightSidebarOpen && selectedRunId && isImplementationConversation ? (
-        <div className="relative hidden h-full shrink-0 border-l border-border lg:flex" style={{ width: rightSidebarWidth }}>
+      {selectedRunId && isImplementationConversation ? (
+        <div
+          className={`relative hidden h-full shrink-0 overflow-hidden border-l bg-background transition-[width,opacity] duration-150 ease-out lg:flex motion-reduce:transition-none ${rightSidebarOpen ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}
+          style={{ width: rightSidebarOpen ? rightSidebarWidth : 0 }}
+          aria-hidden={!rightSidebarOpen}
+          inert={!rightSidebarOpen ? true : undefined}
+        >
           <button
             type="button"
             className="absolute inset-y-0 left-0 z-10 flex w-3 -translate-x-1/2 cursor-col-resize items-center justify-center bg-transparent"
@@ -1524,7 +1640,7 @@ export function HomeApp() {
           >
             <span className="h-14 w-1 rounded-full bg-border/80 transition-colors hover:bg-foreground/30" />
           </button>
-          <div className="flex h-full min-w-0 flex-1 pl-2">
+          <div className={`flex h-full min-w-0 flex-1 pl-2 transition-transform duration-150 ease-out motion-reduce:transition-none ${rightSidebarOpen ? "translate-x-0" : "translate-x-3"}`}>
             <WorkersSidebar
               workers={selectedRunWorkersForDisplay}
               agents={conversationAgents}
@@ -1536,7 +1652,17 @@ export function HomeApp() {
                   stopWorker.mutate({ runId: selectedRunId, workerId });
                 }
               }}
+              onStopTerminalProcess={(workerId, terminalProcess) => {
+                if (selectedRunId && terminalProcess.processId) {
+                  stopWorkerTerminalProcess.mutate({ runId: selectedRunId, workerId, terminalProcess });
+                }
+              }}
+              onLoadWorkerHistory={handleLoadWorkerHistory}
               stoppingWorkerId={stopWorker.variables?.workerId ?? null}
+              stoppingTerminalProcess={stopWorkerTerminalProcess.variables ? {
+                workerId: stopWorkerTerminalProcess.variables.workerId,
+                terminalProcessId: stopWorkerTerminalProcess.variables.terminalProcess.id,
+              } : null}
               onClose={() => setRightSidebarOpen(false)}
             />
           </div>

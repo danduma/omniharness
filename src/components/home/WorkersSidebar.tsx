@@ -10,6 +10,7 @@ import type { AgentSnapshot, SupervisorInterventionRecord } from "@/app/home/typ
 import { buildWorkerLists, getWorkerRuntimeLabel, type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 
 export interface WorkersSidebarProps {
   workers: ConversationWorkerRecord[];
@@ -18,7 +19,10 @@ export interface WorkersSidebarProps {
   preferredModel: string | null;
   preferredEffort: string | null;
   onStopWorker?: (workerId: string) => void;
+  onStopTerminalProcess?: (workerId: string, terminalProcess: WorkerTerminalProcess) => void;
+  onLoadWorkerHistory?: (workerId: string) => void;
   stoppingWorkerId?: string | null;
+  stoppingTerminalProcess?: { workerId: string; terminalProcessId: string } | null;
   onClose?: () => void;
 }
 
@@ -62,7 +66,10 @@ export function ConversationWorkerCard({
   fallbackPreview,
   supervisorInterventions = [],
   onStopWorker,
+  onStopTerminalProcess,
+  onLoadWorkerHistory,
   isStopping,
+  stoppingTerminalProcessId,
 }: {
   worker: ConversationWorkerRecord;
   agent?: AgentSnapshot | null;
@@ -74,7 +81,10 @@ export function ConversationWorkerCard({
   fallbackPreview?: string | null;
   supervisorInterventions?: SupervisorInterventionRecord[];
   onStopWorker?: (workerId: string) => void;
+  onStopTerminalProcess?: (workerId: string, terminalProcess: WorkerTerminalProcess) => void;
+  onLoadWorkerHistory?: (workerId: string) => void;
   isStopping?: boolean;
+  stoppingTerminalProcessId?: string | null;
 }) {
   const configuredModel = agent?.requestedModel || preferredModel || null;
   const configuredEffort = agent?.requestedEffort || preferredEffort || null;
@@ -134,12 +144,15 @@ export function ConversationWorkerCard({
       terminalHeightClass={terminalHeightClass}
       fillAvailable={fillAvailable}
       onStopWorker={onStopWorker ? () => onStopWorker(worker.id) : undefined}
+      onStopTerminalProcess={onStopTerminalProcess ? (terminalProcess) => onStopTerminalProcess(worker.id, terminalProcess) : undefined}
+      onLoadWorkerHistory={onLoadWorkerHistory ? () => onLoadWorkerHistory(worker.id) : undefined}
       isStopping={isStopping}
+      stoppingTerminalProcessId={stoppingTerminalProcessId}
     />
   );
 }
 
-export function WorkersSidebar({ workers, agents, supervisorInterventions, preferredModel, preferredEffort, onStopWorker, stoppingWorkerId, onClose }: WorkersSidebarProps) {
+export function WorkersSidebar({ workers, agents, supervisorInterventions, preferredModel, preferredEffort, onStopWorker, onStopTerminalProcess, onLoadWorkerHistory, stoppingWorkerId, stoppingTerminalProcess, onClose }: WorkersSidebarProps) {
   const { activeTab: requestedActiveTab } = useManagerSnapshot(workersSidebarManager);
   const workerGroups = buildWorkerLists(workers);
   const agentsById = useMemo(
@@ -222,7 +235,10 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
                   terminalHeightClass={terminalHeightClass}
                   fillAvailable={hasSingleVisibleWorker}
                   onStopWorker={onStopWorker}
+                  onStopTerminalProcess={onStopTerminalProcess}
+                  onLoadWorkerHistory={onLoadWorkerHistory}
                   isStopping={stoppingWorkerId === worker.id}
+                  stoppingTerminalProcessId={stoppingTerminalProcess?.workerId === worker.id ? stoppingTerminalProcess.terminalProcessId : null}
                 />
               );
             })

@@ -57,6 +57,58 @@ describe("agent output normalization", () => {
     });
   });
 
+  it("conflates duplicate tool call start entries into one activity item", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        {
+          id: "start-1",
+          type: "tool_call",
+          text: "Terminal",
+          timestamp: "2026-05-04T14:31:00.000Z",
+          toolCallId: "call_c982tKcpm7cjfz8Qbq9DktlV",
+          toolKind: "execute",
+          status: "in_progress",
+          raw: {
+            title: "Terminal",
+            kind: "execute",
+            rawInput: {
+              command: "pnpm test",
+            },
+          },
+        },
+        {
+          id: "start-duplicate",
+          type: "tool_call",
+          text: "Terminal",
+          timestamp: "2026-05-04T14:31:01.000Z",
+          toolCallId: "call_c982tKcpm7cjfz8Qbq9DktlV",
+          toolKind: "execute",
+          status: "in_progress",
+          raw: {
+            title: "Run focused tests",
+            kind: "execute",
+            rawInput: {
+              command: "pnpm test tests/lib/agent-output.test.ts",
+              description: "Run focused tests",
+            },
+          },
+        },
+      ],
+    });
+
+    expect(activity).toHaveLength(1);
+    expect(activity[0]).toMatchObject({
+      id: "call_c982tKcpm7cjfz8Qbq9DktlV",
+      kind: "tool",
+      label: "Bash",
+      status: "in_progress",
+      inputPane: {
+        label: "IN",
+        text: "pnpm test",
+      },
+    });
+  });
+
   it("uses bridge descriptions and tool response payloads for bash activities", () => {
     const activity = buildAgentOutputActivity({
       outputEntries: [
@@ -160,6 +212,102 @@ describe("agent output normalization", () => {
       },
     });
     expect(activity[0]?.kind === "tool" ? activity[0].outputPane : null).toBeUndefined();
+  });
+
+  it("surfaces edit tool unified diffs as dedicated diff panes", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        {
+          id: "start-1",
+          type: "tool_call",
+          text: "Edit /workspace/app/src/index.ts",
+          timestamp: "2026-04-22T00:00:00.000Z",
+          toolCallId: "tool-1",
+          toolKind: "edit",
+          status: "pending",
+          raw: {
+            title: "Edit /workspace/app/src/index.ts",
+            kind: "edit",
+            rawInput: {
+              changes: {
+                "/workspace/app/src/index.ts": {
+                  type: "update",
+                  unified_diff: "@@ -1 +1\n-old\n+new\n",
+                },
+              },
+            },
+          },
+        },
+        {
+          id: "update-1",
+          type: "tool_call_update",
+          text: "Tool call tool-1 completed",
+          timestamp: "2026-04-22T00:00:01.000Z",
+          toolCallId: "tool-1",
+          status: "completed",
+          raw: {
+            rawOutput: {
+              stdout: "Success. Updated the following files:\nM src/index.ts\n",
+              success: true,
+              changes: {
+                "/workspace/app/src/index.ts": {
+                  type: "update",
+                  unified_diff: "@@ -1 +1\n-old\n+new\n",
+                },
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    expect(activity).toHaveLength(1);
+    expect(activity[0]).toMatchObject({
+      kind: "tool",
+      label: "Edit",
+      title: "Edit /workspace/app/src/index.ts",
+      status: "completed",
+      outputPane: {
+        label: "DIFF",
+        kind: "diff",
+        text: expect.stringContaining("-old\n+new"),
+      },
+    });
+    expect(activity[0]?.kind === "tool" ? activity[0].outputPane?.text : "").not.toContain("Success. Updated");
+  });
+
+  it("builds a red-green replacement diff for classic edit old and new string payloads", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        {
+          id: "edit-1",
+          type: "tool_call",
+          text: "Edit",
+          timestamp: "2026-04-22T00:00:00.000Z",
+          toolCallId: "tool-1",
+          toolKind: "edit",
+          status: "completed",
+          raw: {
+            kind: "edit",
+            rawInput: {
+              file_path: "/workspace/app/src/index.ts",
+              old_string: "const status = 'old';",
+              new_string: "const status = 'new';",
+            },
+          },
+        },
+      ],
+    });
+
+    expect(activity[0]).toMatchObject({
+      kind: "tool",
+      label: "Edit",
+      outputPane: {
+        label: "DIFF",
+        kind: "diff",
+        text: "diff -- /workspace/app/src/index.ts\n@@ replacement @@\n-const status = 'old';\n+const status = 'new';",
+      },
+    });
   });
 
   it("groups active thoughts into a thinking activity", () => {

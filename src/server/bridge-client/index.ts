@@ -1,6 +1,7 @@
-import { isTransientSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
+import { isRecoverableConnectionSupervisorError, isTransientSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
 
 export const BRIDGE_URL = process.env.OMNIHARNESS_BRIDGE_URL?.trim() || "http://127.0.0.1:7800";
+const BRIDGE_CONNECTION_RESET_MAX_BACKOFF_MS = 5 * 60_000;
 
 export interface AgentRecord {
   [key: string]: unknown;
@@ -38,6 +39,13 @@ export interface AgentRecord {
     status?: string | null;
     raw?: unknown;
   }>;
+  outputArchive?: {
+    totalEntries: number;
+    byteSize: number;
+    logPath: string;
+    liveEntries: number;
+    omittedLiveEntries: number;
+  } | null;
   renderedOutput?: string | null;
   lastText: string;
   currentText: string;
@@ -50,6 +58,14 @@ export interface TaskRecord {
   name: string;
   state: string;
   subtasks: unknown[];
+}
+
+export interface AgentOutputPage {
+  name: string;
+  cursor: number;
+  nextCursor: number | null;
+  totalEntries: number;
+  entries: NonNullable<AgentRecord["outputEntries"]>;
 }
 
 export type BridgeMcpServer =
@@ -214,6 +230,9 @@ export function normalizeAgentRecord(value: unknown): AgentRecord {
     contextUsage,
     pendingPermissions: asPendingPermissions(record.pendingPermissions),
     outputEntries: asOutputEntries(record.outputEntries),
+    outputArchive: typeof record.outputArchive === "object" && record.outputArchive !== null
+      ? record.outputArchive as AgentRecord["outputArchive"]
+      : null,
     renderedOutput: asNullableString(record.renderedOutput),
     lastText: asString(record.lastText),
     currentText: asString(record.currentText),
@@ -252,6 +271,9 @@ async function requestBridge<T>(path: string, init: RequestInit, action: string)
         });
       }
       return res.json() as Promise<T>;
+    }, {
+      maxDelayMs: BRIDGE_CONNECTION_RESET_MAX_BACKOFF_MS,
+      retryIndefinitelyWhen: (error) => isRecoverableConnectionSupervisorError(error) && !isBridgeConnectionRefused(error),
     });
   } catch (error) {
     if (isBridgeConnectionRefused(error)) {
@@ -297,7 +319,7 @@ export async function spawnAgent(params: {
 }
 
 export async function askAgent(name: string, prompt: string) {
-  return requestBridge<{ response: string; state: string }>(
+  return requestBridge<{ response: string; state: string; stopReason?: string | null }>(
     `/agents/${name}/ask`,
     {
       method: "POST",
@@ -313,6 +335,18 @@ export async function getAgent(name: string) {
   return normalizeAgentRecord(agent);
 }
 
+export async function getAgentOutput(name: string, options: { cursor?: number; limit?: number } = {}) {
+  const params = new URLSearchParams();
+  if (options.cursor !== undefined) {
+    params.set("cursor", String(options.cursor));
+  }
+  if (options.limit !== undefined) {
+    params.set("limit", String(options.limit));
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return requestBridge<AgentOutputPage>(`/agents/${name}/output${suffix}`, {}, "Get agent output");
+}
+
 export async function cancelAgent(name: string) {
   return requestBridge<unknown>(
     `/agents/${name}`,
@@ -320,6 +354,18 @@ export async function cancelAgent(name: string) {
       method: "DELETE",
     },
     "Cancel",
+  );
+}
+
+export async function cancelAgentTerminalProcess(name: string, processId: string, toolCallId?: string | null) {
+  return requestBridge<unknown>(
+    `/agents/${name}/terminals/${encodeURIComponent(processId)}/cancel`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ toolCallId }),
+    },
+    "Cancel terminal",
   );
 }
 

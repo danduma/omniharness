@@ -45,10 +45,32 @@ function outputEntryTimestampMs(entry: AgentOutputEntry) {
   return Number.isFinite(value) ? value : 0;
 }
 
+function omittedOutputEntriesMarkerTailId(entry: AgentOutputEntry) {
+  if (!isOmittedOutputEntriesMarker(entry)) {
+    return null;
+  }
+
+  const markerParts = entry.id.split(":");
+  return markerParts.length >= 3 ? markerParts[2] || null : null;
+}
+
 function sortedOutputEntries(entries: Iterable<AgentOutputEntry>) {
   return Array.from(entries).sort((a, b) => {
     const timeDelta = outputEntryTimestampMs(a) - outputEntryTimestampMs(b);
-    return timeDelta || a.id.localeCompare(b.id);
+    if (timeDelta !== 0) {
+      return timeDelta;
+    }
+
+    const aTailId = omittedOutputEntriesMarkerTailId(a);
+    const bTailId = omittedOutputEntriesMarkerTailId(b);
+    if (aTailId === b.id) {
+      return -1;
+    }
+    if (bTailId === a.id) {
+      return 1;
+    }
+
+    return a.id.localeCompare(b.id);
   });
 }
 

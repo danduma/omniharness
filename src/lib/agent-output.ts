@@ -10,8 +10,9 @@ export interface AgentOutputEntry {
 }
 
 export interface AgentOutputPane {
-  label: "IN" | "OUT";
+  label: "IN" | "OUT" | "DIFF";
   text: string;
+  kind?: "text" | "diff";
 }
 
 const TERMINAL_TOOL_STATUSES = new Set(["completed", "failed", "cancelled", "done", "error"]);
@@ -254,6 +255,12 @@ function basenamePath(value: string): string {
   return segments[segments.length - 1] || value;
 }
 
+function pathFromToolTitle(value: string): string | null {
+  const match = value.match(/^(?:Edit|Read|Open|View|Write|Create)\s+(.+)$/i);
+  const path = match?.[1]?.trim();
+  return path && /[/\\]/.test(path) ? path : null;
+}
+
 function truncateInline(value: string, maxLength = 88): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) {
@@ -337,6 +344,100 @@ function extractDescriptionLikeInput(raw: Record<string, unknown> | null): strin
   return null;
 }
 
+function pathPrefixForDiff(path: string | null, diff: string): string {
+  if (!path || /^(?:diff --|--- |\+\+\+ )/m.test(diff) || diff.includes(path)) {
+    return "";
+  }
+  return `diff -- ${path}\n`;
+}
+
+function stringLooksLikeDiff(value: string): boolean {
+  const normalized = normalizeMultilineText(value).trim();
+  return normalized.length > 0 && (
+    /^@@\s/m.test(normalized)
+    || /^diff --/m.test(normalized)
+    || /^\*\*\* (?:Begin Patch|Update File|Add File|Delete File)/m.test(normalized)
+  );
+}
+
+function extractStringDiff(value: unknown): string | null {
+  if (typeof value !== "string" || !stringLooksLikeDiff(value)) {
+    return null;
+  }
+
+  return normalizeMultilineText(value).trim();
+}
+
+function collectChangeDiffs(value: unknown): string[] {
+  const changes = asRecord(value);
+  if (!changes) {
+    return [];
+  }
+
+  return Object.entries(changes)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .flatMap(([path, change]) => {
+      const record = asRecord(change);
+      const diff = extractStringDiff(record?.unified_diff)
+        || extractStringDiff(record?.diff)
+        || extractStringDiff(record?.patch);
+      return diff ? [`${pathPrefixForDiff(path, diff)}${diff}`] : [];
+    });
+}
+
+function buildReplacementDiff(rawInput: Record<string, unknown> | null): string | null {
+  if (!rawInput) {
+    return null;
+  }
+
+  const oldString = typeof rawInput.old_string === "string" ? normalizeMultilineText(rawInput.old_string) : null;
+  const newString = typeof rawInput.new_string === "string" ? normalizeMultilineText(rawInput.new_string) : null;
+  if (oldString == null || newString == null || oldString === newString) {
+    return null;
+  }
+
+  const path = extractPrimaryPath({ rawInput });
+  const removed = oldString.split("\n").map((line) => `-${line}`).join("\n");
+  const added = newString.split("\n").map((line) => `+${line}`).join("\n");
+  return `${pathPrefixForDiff(path, "")}@@ replacement @@\n${removed}\n${added}`;
+}
+
+function extractToolDiff(raw: Record<string, unknown> | null, contentText?: string | null): string | null {
+  if (!raw) {
+    return null;
+  }
+
+  const rawInput = asRecord(raw.rawInput);
+  const rawOutput = asRecord(raw.rawOutput);
+  const diffs = [
+    ...collectChangeDiffs(rawOutput?.changes),
+    ...collectChangeDiffs(rawInput?.changes),
+  ];
+
+  for (const candidate of [
+    rawOutput?.unified_diff,
+    rawOutput?.diff,
+    rawOutput?.patch,
+    rawInput?.unified_diff,
+    rawInput?.diff,
+    rawInput?.patch,
+    rawInput?.text,
+    contentText ?? null,
+  ]) {
+    const diff = extractStringDiff(candidate);
+    if (diff) {
+      diffs.push(diff);
+    }
+  }
+
+  const replacementDiff = buildReplacementDiff(rawInput);
+  if (replacementDiff) {
+    diffs.push(replacementDiff);
+  }
+
+  return diffs.length > 0 ? diffs.join("\n\n") : null;
+}
+
 function normalizeToolKind(toolKind: string | null | undefined, title: string): "read" | "bash" | "agent" | "edit" | "search" | "tool" {
   const haystack = `${toolKind ?? ""} ${title}`.toLowerCase();
   if (/\b(read|open|view)\b/.test(haystack)) {
@@ -386,6 +487,11 @@ function deriveToolTitle(entry: AgentOutputEntry): string {
     return basenamePath(primaryPath);
   }
 
+  const titlePath = kind === "read" || kind === "edit" ? pathFromToolTitle(baseTitle) : null;
+  if (titlePath) {
+    return basenamePath(titlePath);
+  }
+
   if ((kind === "bash" || kind === "agent") && promptLike) {
     return truncateInline(promptLike);
   }
@@ -424,6 +530,7 @@ function extractSummaryTail(entry: AgentOutputEntry): string | null {
 
 function deriveToolOutputPane(entry: AgentOutputEntry): AgentOutputPane | undefined {
   const raw = asRecord(entry.raw);
+  const kind = normalizeToolKind(entry.toolKind ?? asNonEmptyString(raw?.kind), asNonEmptyString(raw?.title) || entry.text || "");
   const meta = asRecord(raw?._meta);
   const claudeCode = asRecord(meta?.claudeCode);
   const toolResponse = asRecord(claudeCode?.toolResponse);
@@ -436,6 +543,12 @@ function deriveToolOutputPane(entry: AgentOutputEntry): AgentOutputPane | undefi
   const metaOutputText = stringifyUnknown(file?.content) || stdout || stderr;
   const summaryTail = extractSummaryTail(entry);
   const isTerminal = entry.status ? TERMINAL_TOOL_STATUSES.has(entry.status) : false;
+  const structuredDiffText = extractToolDiff(raw);
+  const diffText = structuredDiffText || (kind === "edit" ? extractToolDiff(raw, contentText) : null);
+
+  if (diffText) {
+    return { label: "DIFF", text: diffText, kind: "diff" };
+  }
 
   if (!isTerminal && !metaOutputText && !rawOutputText) {
     return undefined;
@@ -443,7 +556,7 @@ function deriveToolOutputPane(entry: AgentOutputEntry): AgentOutputPane | undefi
 
   const text = cleanPaneText(metaOutputText || contentText || rawOutputText || summaryTail);
 
-  return text ? { label: "OUT", text } : undefined;
+  return text ? { label: "OUT", text, kind: "text" } : undefined;
 }
 
 function normalizeStatus(value: string | null | undefined, fallback = "pending"): string {
@@ -600,8 +713,18 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
 
     if (entry.type === "tool_call") {
       finishOpenThinking(entry.timestamp);
+      const key = entry.toolCallId || entry.id;
+      const existingIndex = toolIndexById.get(key);
+      if (existingIndex != null) {
+        const existing = items[existingIndex];
+        if (existing?.kind === "tool") {
+          applyToolUpdate(existing, entry);
+          continue;
+        }
+      }
+
       const toolActivity = createToolActivity(entry);
-      toolIndexById.set(entry.toolCallId || entry.id, items.length);
+      toolIndexById.set(key, items.length);
       items.push(toolActivity);
       continue;
     }

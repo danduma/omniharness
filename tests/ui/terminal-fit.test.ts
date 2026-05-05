@@ -73,6 +73,20 @@ test("terminal keeps tool output compact and expandable", () => {
   expect(terminalSource).toContain("TERMINAL_REVEAL_CLASS");
 });
 
+test("terminal renders edit diffs with dedicated red and green lines", () => {
+  expect(terminalSource).toContain("function DiffPane");
+  expect(terminalSource).toContain("function diffLineClass");
+  expect(terminalSource).toContain("function formatVisibleDiffLine");
+  expect(terminalSource).toContain('activity.outputPane?.kind === "diff"');
+  expect(terminalSource).toContain("bg-emerald-500/10 text-emerald-800");
+  expect(terminalSource).toContain("bg-red-500/10 text-red-800");
+  expect(terminalSource).toContain('line.startsWith("+")');
+  expect(terminalSource).toContain('line.startsWith("-")');
+  expect(terminalSource).toContain("return line.slice(1);");
+  expect(terminalSource).toContain('line.startsWith("@@")');
+  expect(terminalSource).toContain("visible: formatVisibleDiffLine(line)");
+});
+
 test("terminal uses a measured v0-style expansion animation for tool call details", () => {
   expect(terminalSource).toContain("const TOOL_OUTPUT_COLLAPSED_MAX_HEIGHT = \"calc(var(--terminal-pane-size) * 4.65 + 1rem)\"");
   expect(terminalSource).toContain("grid transition-[grid-template-rows,opacity,transform]");

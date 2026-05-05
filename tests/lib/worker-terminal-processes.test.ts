@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  deriveVisibleWorkerTerminalProcesses,
   deriveWorkerTerminalProcesses,
   isActiveWorkerTerminalProcess,
 } from "@/lib/worker-terminal-processes";
@@ -43,6 +44,7 @@ describe("worker terminal process derivation", () => {
       {
         id: "tool-1",
         command: "pnpm test tests/api/agent-route.test.ts",
+        processId: null,
         status: "completed",
         startedAt: "2026-05-03T00:00:00.000Z",
         updatedAt: "2026-05-03T00:00:02.000Z",
@@ -81,6 +83,52 @@ describe("worker terminal process derivation", () => {
 
     expect(processes.map((process) => process.id)).toEqual(["active", "old"]);
     expect(isActiveWorkerTerminalProcess(processes[0])).toBe(true);
+  });
+
+  it("hides stale active command rows once the worker is no longer active", () => {
+    const outputEntries: AgentOutputEntry[] = [
+      {
+        id: "start-active",
+        type: "tool_call",
+        text: "Terminal",
+        timestamp: "2026-05-03T00:00:01.000Z",
+        toolCallId: "active",
+        toolKind: "execute",
+        status: "running",
+        raw: { command: "pnpm dev" },
+      },
+    ];
+
+    expect(deriveWorkerTerminalProcesses(outputEntries)).toHaveLength(1);
+    expect(deriveVisibleWorkerTerminalProcesses(outputEntries, "cancelled")).toEqual([]);
+    expect(deriveVisibleWorkerTerminalProcesses(outputEntries, "error")).toEqual([]);
+    expect(deriveVisibleWorkerTerminalProcesses(outputEntries, "working")).toHaveLength(1);
+  });
+
+  it("formats shell command arrays and surfaces CLI process handles when provided", () => {
+    const outputEntries: AgentOutputEntry[] = [
+      {
+        id: "start-active",
+        type: "tool_call",
+        text: "Terminal",
+        timestamp: "2026-05-03T00:00:01.000Z",
+        toolCallId: "active",
+        toolKind: "execute",
+        status: "running",
+        raw: {
+          kind: "execute",
+          rawInput: {
+            process_id: "93230",
+            command: ["/bin/zsh", "-lc", "pnpm dev"],
+          },
+        },
+      },
+    ];
+
+    expect(deriveWorkerTerminalProcesses(outputEntries)[0]).toMatchObject({
+      command: "/bin/zsh -lc 'pnpm dev'",
+      processId: "93230",
+    });
   });
 
   it("extracts failed command output from ACP tool response metadata", () => {

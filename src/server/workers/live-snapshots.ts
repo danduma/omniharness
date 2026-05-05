@@ -95,6 +95,37 @@ function outputEntriesText(entries: NonNullable<AgentRecord["outputEntries"]>) {
     .join("\n\n");
 }
 
+function outputEntryTimestampMs(entry: NonNullable<AgentRecord["outputEntries"]>[number]) {
+  const value = new Date(entry.timestamp).getTime();
+  return Number.isFinite(value) ? value : 0;
+}
+
+function mergeOutputEntries(
+  persistedEntries: NonNullable<AgentRecord["outputEntries"]>,
+  liveEntries: NonNullable<AgentRecord["outputEntries"]>,
+) {
+  if (persistedEntries.length === 0) {
+    return liveEntries;
+  }
+
+  if (liveEntries.length === 0) {
+    return persistedEntries;
+  }
+
+  const entriesById = new Map<string, NonNullable<AgentRecord["outputEntries"]>[number]>();
+  for (const entry of persistedEntries) {
+    entriesById.set(entry.id, entry);
+  }
+  for (const entry of liveEntries) {
+    entriesById.set(entry.id, entry);
+  }
+
+  return Array.from(entriesById.values()).sort((left, right) => {
+    const timeDelta = outputEntryTimestampMs(left) - outputEntryTimestampMs(right);
+    return timeDelta || left.id.localeCompare(right.id);
+  });
+}
+
 function isAgentActive(state: string | null | undefined) {
   const normalized = (state ?? "").trim().toLowerCase().split(":")[0]?.trim() ?? "";
   return normalized === "starting" || normalized === "working" || normalized === "stuck";
@@ -144,7 +175,7 @@ export function buildLiveWorkerSnapshot(args: {
   if (normalizedAgent) {
     const structuredOutput = cleanStructuredOutput(normalizedAgent.renderedOutput);
     const liveText = normalizedAgent.currentText.length > 0 ? normalizedAgent.currentText : "";
-    const outputEntries = normalizedAgent.outputEntries?.length ? normalizedAgent.outputEntries : persistedOutputEntries;
+    const outputEntries = mergeOutputEntries(persistedOutputEntries, normalizedAgent.outputEntries ?? []);
     const structuredEntriesText = outputEntriesText(outputEntries);
     const emptyStopDiagnostic = !structuredOutput && !liveText && outputEntries.length === 0 && !outputLog && !normalizedAgent.lastText && !persistedLastText
       ? buildEmptyStopDiagnostic(normalizedAgent.stopReason)

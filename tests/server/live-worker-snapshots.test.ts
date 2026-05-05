@@ -210,6 +210,110 @@ describe("buildLiveWorkerSnapshot", () => {
     }));
   });
 
+  it("keeps persisted completion entries when live bridge output is sparse", () => {
+    const startedAt = new Date(0).toISOString();
+    const completedAt = new Date(1000).toISOString();
+    const snapshot = buildLiveWorkerSnapshot({
+      agent: {
+        name: "worker-sparse-output",
+        type: "codex",
+        cwd: "/repo",
+        state: "working",
+        currentText: "Continuing after reading context",
+        lastText: "",
+        outputEntries: [
+          {
+            id: "read-start",
+            type: "tool_call",
+            text: "Read plan.md",
+            timestamp: startedAt,
+            toolCallId: "call-read-plan",
+            toolKind: "read",
+            status: "in_progress",
+            raw: {
+              kind: "read",
+              rawInput: {
+                command: ["/bin/zsh", "-lc", "sed -n '1,260p' plan.md"],
+              },
+            },
+          },
+        ],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+      worker: {
+        id: "worker-sparse-output",
+        runId: "run-sparse-output",
+        type: "codex",
+        status: "working",
+        cwd: "/repo",
+        outputLog: "",
+        outputEntriesJson: JSON.stringify([
+          {
+            id: "read-start",
+            type: "tool_call",
+            text: "Read plan.md",
+            timestamp: startedAt,
+            toolCallId: "call-read-plan",
+            toolKind: "read",
+            status: "in_progress",
+            raw: {
+              kind: "read",
+              rawInput: {
+                command: ["/bin/zsh", "-lc", "sed -n '1,260p' plan.md"],
+              },
+            },
+          },
+          {
+            id: "read-done",
+            type: "tool_call_update",
+            text: "Tool call call-read-plan completed",
+            timestamp: completedAt,
+            toolCallId: "call-read-plan",
+            status: "completed",
+            raw: {
+              rawOutput: {
+                command: ["/bin/zsh", "-lc", "sed -n '1,260p' plan.md"],
+                status: "completed",
+                exit_code: 0,
+              },
+              status: "completed",
+            },
+          },
+        ]),
+        currentText: "",
+        lastText: "",
+        bridgeSessionId: "session-sparse-output",
+        bridgeSessionMode: "full-access",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      run: {
+        id: "run-sparse-output",
+        planId: "plan-sparse-output",
+        mode: "implementation",
+        projectPath: "/repo",
+        title: "Sparse bridge output",
+        preferredWorkerType: "codex",
+        preferredWorkerModel: "gpt-5.5",
+        preferredWorkerEffort: "high",
+        allowedWorkerTypes: "codex",
+        specPath: null,
+        artifactPlanPath: null,
+        plannerArtifactsJson: null,
+        parentRunId: null,
+        forkedFromMessageId: null,
+        status: "running",
+        failedAt: null,
+        lastError: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+
+    expect(snapshot?.outputEntries?.map((entry) => entry.id)).toEqual(["read-start", "read-done"]);
+  });
+
   it("falls back to persisted worker state when the bridge no longer returns the worker", () => {
     const snapshot = buildLiveWorkerSnapshot({
       agent: null,

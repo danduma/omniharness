@@ -81,10 +81,13 @@ const AGENT_TEXT_FIELD_LIMIT = 4_000;
 const AGENT_ENTRY_TEXT_LIMIT = 2_000;
 const AGENT_ENTRY_RAW_STRING_LIMIT = 20_000;
 const AGENT_ENTRY_RAW_JSON_LIMIT = 60_000;
-const AGENT_OUTPUT_ENTRY_LIMIT = 24;
+const AGENT_OUTPUT_ENTRY_HEAD_LIMIT = 6;
+const AGENT_OUTPUT_ENTRY_TAIL_LIMIT = 24;
 const EXECUTION_EVENT_LIMIT = 100;
 const EXECUTION_EVENT_DETAIL_LIMIT = 1_000;
 const SUPERVISOR_INTERVENTION_TEXT_LIMIT = 2_000;
+const TERMINAL_TOOL_FINAL_STATUSES = new Set(["completed", "failed", "cancelled", "canceled", "done", "error"]);
+const TERMINAL_TOOL_KIND_PATTERN = /\b(execute|terminal|shell|bash|command|run)\b/i;
 
 function truncateText(value: string | null | undefined, limit: number) {
   if (!value || value.length <= limit) {
@@ -227,6 +230,25 @@ function compactRawValue(value: unknown, stringLimit = AGENT_ENTRY_RAW_STRING_LI
   return String(value);
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
+}
+
+function compactRawToolOutput(rawOutput: unknown) {
+  if (rawOutput == null) {
+    return undefined;
+  }
+
+  const rawOutputRecord = asRecord(rawOutput);
+  return {
+    truncated: true,
+    preview: truncateText(JSON.stringify(rawOutput, null, 2), AGENT_ENTRY_RAW_JSON_LIMIT),
+    ...(rawOutputRecord?.changes == null ? {} : {
+      changes: compactRawValue(rawOutputRecord.changes, AGENT_ENTRY_RAW_STRING_LIMIT),
+    }),
+  };
+}
+
 function compactLargeRawToolPayload(raw: Record<string, unknown>) {
   return {
     sessionUpdate: raw.sessionUpdate,
@@ -236,12 +258,7 @@ function compactLargeRawToolPayload(raw: Record<string, unknown>) {
     filePath: raw.filePath,
     locations: compactRawValue(raw.locations, 2_000),
     rawInput: compactRawValue(raw.rawInput, 10_000),
-    rawOutput: raw.rawOutput == null
-      ? undefined
-      : {
-          truncated: true,
-          preview: truncateText(JSON.stringify(raw.rawOutput, null, 2), AGENT_ENTRY_RAW_JSON_LIMIT),
-        },
+    rawOutput: compactRawToolOutput(raw.rawOutput),
     content: compactRawValue(raw.content, 10_000),
     _meta: compactRawValue(raw._meta, 10_000),
   };
@@ -262,10 +279,145 @@ function compactAgentOutputEntryRaw(entry: LiveWorkerOutputEntry) {
   return compactLargeRawToolPayload(raw);
 }
 
+function asNonEmptyString(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function entryCommandText(entry: LiveWorkerOutputEntry) {
+  const raw = asRecord(entry.raw);
+  const rawInput = asRecord(raw?.rawInput);
+  const rawOutput = asRecord(raw?.rawOutput);
+  const candidates = [
+    rawInput?.command,
+    rawInput?.command_string,
+    rawInput?.cmd,
+    raw?.command,
+    raw?.command_string,
+    raw?.cmd,
+    rawOutput?.command,
+    rawOutput?.command_string,
+    rawOutput?.cmd,
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate) && candidate.some((part) => typeof part === "string" && part.trim())) {
+      return candidate.filter((part): part is string => typeof part === "string" && part.trim().length > 0).join(" ");
+    }
+
+    const command = asNonEmptyString(candidate);
+    if (command) {
+      return command;
+    }
+  }
+
+  return null;
+}
+
+function isTerminalToolStart(entry: LiveWorkerOutputEntry) {
+  if (entry.type !== "tool_call") {
+    return false;
+  }
+
+  if (entryCommandText(entry)) {
+    return true;
+  }
+
+  const raw = asRecord(entry.raw);
+  const haystack = [
+    entry.toolKind,
+    raw?.kind,
+    raw?.title,
+    entry.text,
+  ].map((value) => typeof value === "string" ? value : "").join(" ");
+  return TERMINAL_TOOL_KIND_PATTERN.test(haystack);
+}
+
+function terminalToolIds(entries: LiveWorkerOutputEntry[]) {
+  return new Set(
+    entries
+      .filter(isTerminalToolStart)
+      .map((entry) => entry.toolCallId)
+      .filter((toolCallId): toolCallId is string => Boolean(toolCallId)),
+  );
+}
+
+function isTerminalFinalUpdate(entry: LiveWorkerOutputEntry, terminalIds: Set<string>) {
+  return isFinalToolUpdate(entry, terminalIds);
+}
+
+function isFinalToolUpdate(entry: LiveWorkerOutputEntry, toolCallIds: Set<string>) {
+  if (entry.type !== "tool_call_update" || !entry.toolCallId || !toolCallIds.has(entry.toolCallId)) {
+    return false;
+  }
+
+  const raw = asRecord(entry.raw);
+  const rawOutput = asRecord(raw?.rawOutput);
+  const status = asNonEmptyString(entry.status)
+    || asNonEmptyString(raw?.status)
+    || asNonEmptyString(rawOutput?.status);
+  if (status && TERMINAL_TOOL_FINAL_STATUSES.has(status.toLowerCase())) {
+    return true;
+  }
+
+  return /\b(completed|failed|cancelled|canceled|done|error)\b/i.test(entry.text);
+}
+
+function toolCallIds(entries: LiveWorkerOutputEntry[]) {
+  return new Set(
+    entries
+      .filter((entry) => entry.type === "tool_call")
+      .map((entry) => entry.toolCallId)
+      .filter((toolCallId): toolCallId is string => Boolean(toolCallId)),
+  );
+}
+
+function selectCompactAgentOutputEntries(entries: LiveWorkerOutputEntry[]) {
+  const retainedEntryLimit = AGENT_OUTPUT_ENTRY_HEAD_LIMIT + AGENT_OUTPUT_ENTRY_TAIL_LIMIT;
+  if (entries.length <= retainedEntryLimit) {
+    return entries;
+  }
+
+  const head = entries.slice(0, AGENT_OUTPUT_ENTRY_HEAD_LIMIT);
+  const tail = entries.slice(-AGENT_OUTPUT_ENTRY_TAIL_LIMIT);
+  const terminalIds = terminalToolIds(entries);
+  const lifecycleToolIds = toolCallIds(entries);
+  const retainedIds = new Set([
+    ...head.map((entry) => entry.id),
+    ...tail.map((entry) => entry.id),
+    ...entries
+      .filter((entry) => entry.type === "tool_call" || isFinalToolUpdate(entry, lifecycleToolIds) || isTerminalFinalUpdate(entry, terminalIds))
+      .map((entry) => entry.id),
+  ]);
+  const retainedEntries = entries.filter((entry) => retainedIds.has(entry.id));
+  const omittedCount = entries.length - retainedEntries.length;
+  if (omittedCount <= 0) {
+    return retainedEntries;
+  }
+
+  const markerTimestamp = tail[0]?.timestamp ?? head[head.length - 1]?.timestamp ?? new Date(0).toISOString();
+  const marker: LiveWorkerOutputEntry = {
+    id: `output-entries-omitted:${head[head.length - 1]?.id ?? "start"}:${tail[0]?.id ?? "end"}`,
+    type: "message",
+    text: `${omittedCount} earlier output entries omitted from this live payload. Open the worker detail again as it updates to see the current tail.`,
+    timestamp: markerTimestamp,
+  };
+  const firstTailId = tail[0]?.id;
+  const markerIndex = firstTailId ? retainedEntries.findIndex((entry) => entry.id === firstTailId) : -1;
+  if (markerIndex < 0) {
+    return [...retainedEntries, marker];
+  }
+
+  return [
+    ...retainedEntries.slice(0, markerIndex),
+    marker,
+    ...retainedEntries.slice(markerIndex),
+  ];
+}
+
 function compactAgentSnapshot(agent: ReturnType<typeof buildLiveWorkerSnapshots>[number]) {
   return {
     ...agent,
-    outputEntries: (agent.outputEntries ?? []).slice(-AGENT_OUTPUT_ENTRY_LIMIT).map((entry) => ({
+    outputEntries: selectCompactAgentOutputEntries(agent.outputEntries ?? []).map((entry) => ({
       id: entry.id,
       type: entry.type,
       text: truncateText(entry.text, AGENT_ENTRY_TEXT_LIMIT),

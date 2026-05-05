@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
-import type { AgentRuntimeConfig } from "./types";
+import type { AgentRuntimeConfig, StartAgentInput } from "./types";
 import { AgentRuntimeManager } from "./manager";
 import { RuntimeHttpError } from "./types";
 
@@ -18,15 +18,15 @@ function pathParts(req: IncomingMessage) {
   return requestUrl(req).pathname.split("/").filter(Boolean);
 }
 
-async function readJson(req: IncomingMessage): Promise<any> {
+async function readJson<T = Record<string, unknown>>(req: IncomingMessage): Promise<T> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   if (chunks.length === 0) {
-    return {};
+    return {} as T;
   }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as T;
 }
 
 function writeJson(res: ServerResponse, status: number, body: unknown) {
@@ -54,7 +54,7 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
       }
 
       if (method === "POST" && parts.length === 1 && parts[0] === "agents") {
-        const body = await readJson(req);
+        const body = await readJson<StartAgentInput>(req);
         writeJson(res, 201, await manager.startAgent(body));
         return;
       }
@@ -66,6 +66,20 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
 
       if (method === "GET" && parts.length === 1 && parts[0] === "doctor") {
         writeJson(res, 200, await manager.doctor());
+        return;
+      }
+
+      if (parts.length === 3 && parts[0] === "agents" && parts[2] === "output" && method === "GET") {
+        const url = requestUrl(req);
+        const cursorParam = url.searchParams.get("cursor");
+        const limitParam = url.searchParams.get("limit");
+        const cursor = cursorParam == null ? undefined : Number(cursorParam);
+        const limit = limitParam == null ? undefined : Number(limitParam);
+        if ((cursor !== undefined && (!Number.isFinite(cursor) || cursor < 0)) || (limit !== undefined && (!Number.isFinite(limit) || limit <= 0))) {
+          writeJson(res, 400, { error: "cursor must be a non-negative number and limit must be a positive number" });
+          return;
+        }
+        writeJson(res, 200, await manager.readAgentOutput(parts[1], { cursor, limit }));
         return;
       }
 
@@ -102,6 +116,13 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
 
       if (parts.length === 3 && parts[0] === "agents" && method === "POST" && parts[2] === "cancel") {
         writeJson(res, 200, await manager.cancelAgentTurn(parts[1]));
+        return;
+      }
+
+      if (parts.length === 5 && parts[0] === "agents" && parts[2] === "terminals" && parts[4] === "cancel" && method === "POST") {
+        const body = await readJson(req);
+        const toolCallId = typeof body.toolCallId === "string" ? body.toolCallId : null;
+        writeJson(res, 200, manager.cancelTerminalProcess(parts[1], decodeURIComponent(parts[3]), toolCallId));
         return;
       }
 
