@@ -75,7 +75,9 @@ describe("SUPERVISOR_SYSTEM_PROMPT", () => {
   it("tells the supervisor to acknowledge user follow-ups with user-facing reasons", () => {
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("User communication");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("latest user checkpoint");
-    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("end_turn.reason");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("send_user_message");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("written by you for the user");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("what you did or will watch for");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("appears in conversation history");
   });
 });

@@ -356,10 +356,11 @@ describe("Supervisor worker spawn flow", () => {
     expect(persistedMessages).toEqual([]);
   });
 
-  it("records a supervisor reply when ending a turn after a user checkpoint", async () => {
+  it("lets the supervisor send a generated user-visible message before ending its turn", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
     const now = new Date();
+    const supervisorReply = "I heard the fork-sync constraint and delivered it to the active worker. I'll keep watching that parity code stays additive or documented for trunk sync.";
 
     await db.insert(plans).values({
       id: planId,
@@ -386,11 +387,17 @@ describe("Supervisor worker spawn flow", () => {
       createdAt: new Date(now.getTime() + 1_000),
     });
 
-    mockParseSupervisorToolCall.mockReturnValue({
+    mockParseSupervisorToolCall.mockReturnValueOnce({
+      id: "tool-send-user-message",
+      name: "send_user_message",
+      args: {
+        message: supervisorReply,
+      },
+    }).mockReturnValueOnce({
       id: "tool-end-turn",
       name: "end_turn",
       args: {
-        reason: "The worker is making progress. I delivered the fork-sync constraint and will keep watching that boundary.",
+        reason: "The user has been acknowledged and the worker is still making progress.",
         nextCheckSeconds: 7,
       },
     });
@@ -404,8 +411,14 @@ describe("Supervisor worker spawn flow", () => {
     expect(persistedMessages.map((message) => message.role)).toEqual(["user", "supervisor"]);
     expect(persistedMessages[1]).toMatchObject({
       kind: "update",
-      content: "The worker is making progress. I delivered the fork-sync constraint and will keep watching that boundary.",
+      content: supervisorReply,
     });
+    const sentEvent = await db.select().from(executionEvents).where(eq(executionEvents.eventType, "supervisor_user_message_sent")).get();
+    expect(sentEvent).toMatchObject({
+      runId,
+      workerId: null,
+    });
+    expect(mockBuildSupervisorTurnContext).toHaveBeenCalledTimes(2);
   });
 
   it("compacts the supervisor prompt before calling the model when the context is near the window limit", async () => {

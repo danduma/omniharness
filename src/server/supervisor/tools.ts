@@ -111,6 +111,15 @@ export function buildSupervisorTools(options?: { allowedWorkerTypes?: string[]; 
       }),
       execute: queuedToolResult,
     }),
+    send_user_message: createTool({
+      id: "send_user_message",
+      description:
+        "Send a user-visible supervisor-authored message into the conversation transcript. Use this to acknowledge user follow-ups, explain what the supervisor did, or give a brief status update without pausing for an answer.",
+      inputSchema: z.object({
+        message: z.string().describe("The exact user-facing message to persist as the supervisor's reply."),
+      }),
+      execute: queuedToolResult,
+    }),
     read_file: createTool({
       id: "read_file",
       description:

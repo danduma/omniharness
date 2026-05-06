@@ -61,6 +61,62 @@ describe("buildSupervisorTurnContext", () => {
     expect(context.planContent).toBe(planContent);
   });
 
+  it("includes supervisor-authored user messages in the next conversation history", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/objective-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      projectPath: "/workspace/app",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(messages).values([
+      {
+        id: randomUUID(),
+        runId,
+        role: "user",
+        kind: "checkpoint",
+        content: "Keep the fork easy to sync.",
+        createdAt: now,
+      },
+      {
+        id: randomUUID(),
+        runId,
+        role: "supervisor",
+        kind: "update",
+        content: "I delivered the sync-safety constraint and will keep watching for upstream-sensitive edits.",
+        createdAt: new Date(now.getTime() + 1_000),
+      },
+    ]);
+
+    const context = await buildSupervisorTurnContext(runId);
+
+    expect(context.conversationTurns).toEqual([
+      expect.objectContaining({
+        role: "user",
+        kind: "checkpoint",
+        content: "Keep the fork easy to sync.",
+      }),
+      expect.objectContaining({
+        role: "supervisor",
+        kind: "update",
+        content: "I delivered the sync-safety constraint and will keep watching for upstream-sensitive edits.",
+      }),
+    ]);
+  });
+
   it("includes files read by the supervisor as reusable context", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

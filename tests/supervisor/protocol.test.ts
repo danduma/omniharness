@@ -92,6 +92,15 @@ describe("buildSupervisorTools", () => {
     expect(askUserTool?.description).toContain("not just the artifact title");
   });
 
+  it("exposes an explicit supervisor-authored user message tool", () => {
+    const userMessageTool = buildSupervisorTools().send_user_message;
+
+    expect(userMessageTool?.description).toContain("user-visible");
+    expect(userMessageTool?.description).toContain("supervisor-authored");
+    expect(userMessageTool?.description).toContain("conversation transcript");
+    expect(userMessageTool?.inputSchema).toBeTruthy();
+  });
+
   it("lets the supervisor read referenced local files before asking the user", () => {
     const readFileTool = buildSupervisorTools().read_file;
 
