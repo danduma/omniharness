@@ -32,7 +32,7 @@ import { RuntimeHttpError } from "./types";
 
 const MAX_STDERR_LINES = 50;
 const ENDPOINT_TIMEOUT_MS = 5000;
-const WORKER_CONNECTION_RESET_MAX_BACKOFF_MS = 5 * 60_000;
+const WORKER_CONNECTION_RESET_MAX_BACKOFF_MS = 15 * 60_000;
 const MAX_TEXT_FIELD_CHARS = 100_000;
 
 type EnvLike = Record<string, string | undefined>;

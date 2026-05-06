@@ -830,7 +830,9 @@ export class Supervisor {
             response = await bridge.askAgent(workerId, prompt);
           } catch (error) {
             if (isAgentBusyError(error)) {
-              await db.delete(supervisorInterventions).where(eq(supervisorInterventions.id, intervention.id));
+              await db.update(supervisorInterventions).set({
+                summary: `Deferred follow-up to ${workerId}; worker is busy.`,
+              }).where(eq(supervisorInterventions.id, intervention.id));
               notifyEventStreamSubscribers();
               return deferBusyWorkerPrompt(this.runId, workerId, prompt, error);
             }
@@ -944,6 +946,16 @@ export class Supervisor {
           });
           await insertRunMessage(this.runId, "supervisor", question, "clarification");
           return { state: "paused" };
+        }
+
+        case "send_user_message": {
+          const message = asString(action.args.message, "message");
+          await insertRunMessage(this.runId, "supervisor", message, "update");
+          await insertExecutionEvent(this.runId, "supervisor_user_message_sent", {
+            summary: "Sent supervisor message to the user.",
+            message,
+          });
+          continue;
         }
 
         case "read_file": {

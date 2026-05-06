@@ -71,4 +71,11 @@ describe("SUPERVISOR_SYSTEM_PROMPT", () => {
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("sed/awk/head/tail/wc");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("repeated full-file reads");
   });
+
+  it("tells the supervisor to acknowledge user follow-ups with user-facing reasons", () => {
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("User communication");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("latest user checkpoint");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("end_turn.reason");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("what you did or will watch for");
+  });
 });

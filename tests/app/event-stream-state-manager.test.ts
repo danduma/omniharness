@@ -21,6 +21,147 @@ function createState(overrides: Partial<EventStreamState> = {}): EventStreamStat
 }
 
 describe("EventStreamStateManager", () => {
+  it("keeps visited conversation transcript messages when another run payload arrives", () => {
+    const manager = new EventStreamStateManager(createState({
+      runs: [
+        {
+          id: "run-1",
+          planId: "plan-1",
+          status: "running",
+          createdAt: "2026-05-04T00:00:00.000Z",
+          projectPath: null,
+          title: "Run one",
+        },
+      ],
+      messages: [
+        {
+          id: "run-1-message-1",
+          runId: "run-1",
+          role: "user",
+          content: "Original run one request",
+          createdAt: "2026-05-04T00:00:00.000Z",
+        },
+        {
+          id: "run-1-message-2",
+          runId: "run-1",
+          role: "supervisor",
+          content: "Run one response",
+          createdAt: "2026-05-04T00:00:01.000Z",
+        },
+      ],
+    }));
+
+    const next = manager.update(createState({
+      runs: [
+        {
+          id: "run-2",
+          planId: "plan-2",
+          status: "running",
+          createdAt: "2026-05-04T00:01:00.000Z",
+          projectPath: null,
+          title: "Run two",
+        },
+        {
+          id: "run-1",
+          planId: "plan-1",
+          status: "running",
+          createdAt: "2026-05-04T00:00:00.000Z",
+          projectPath: null,
+          title: "Run one",
+        },
+      ],
+      messages: [
+        {
+          id: "run-2-message-1",
+          runId: "run-2",
+          role: "user",
+          content: "Run two request",
+          createdAt: "2026-05-04T00:01:00.000Z",
+        },
+      ],
+    }));
+
+    expect(next.messages.map((message) => message.id)).toEqual([
+      "run-1-message-1",
+      "run-1-message-2",
+      "run-2-message-1",
+    ]);
+  });
+
+  it("replaces cached transcript messages for the run included in the latest payload", () => {
+    const manager = new EventStreamStateManager(createState({
+      runs: [
+        {
+          id: "run-1",
+          planId: "plan-1",
+          status: "running",
+          createdAt: "2026-05-04T00:00:00.000Z",
+          projectPath: null,
+          title: "Run one",
+        },
+        {
+          id: "run-2",
+          planId: "plan-2",
+          status: "running",
+          createdAt: "2026-05-04T00:01:00.000Z",
+          projectPath: null,
+          title: "Run two",
+        },
+      ],
+      messages: [
+        {
+          id: "run-1-message-stale",
+          runId: "run-1",
+          role: "supervisor",
+          content: "Stale run one response",
+          createdAt: "2026-05-04T00:00:00.000Z",
+        },
+        {
+          id: "run-2-message-1",
+          runId: "run-2",
+          role: "user",
+          content: "Run two request",
+          createdAt: "2026-05-04T00:01:00.000Z",
+        },
+      ],
+    }));
+
+    const next = manager.update(createState({
+      runs: [
+        {
+          id: "run-1",
+          planId: "plan-1",
+          status: "running",
+          createdAt: "2026-05-04T00:00:00.000Z",
+          projectPath: null,
+          title: "Run one",
+        },
+        {
+          id: "run-2",
+          planId: "plan-2",
+          status: "running",
+          createdAt: "2026-05-04T00:01:00.000Z",
+          projectPath: null,
+          title: "Run two",
+        },
+      ],
+      messages: [
+        {
+          id: "run-1-message-fresh",
+          runId: "run-1",
+          role: "user",
+          content: "Fresh run one request",
+          createdAt: "2026-05-04T00:00:02.000Z",
+        },
+      ],
+    }));
+
+    expect(next.messages.map((message) => message.id)).toEqual([
+      "run-1-message-fresh",
+      "run-2-message-1",
+    ]);
+  });
+
   it("keeps live worker output when a persisted-only snapshot arrives for the same active worker", () => {
     const manager = new EventStreamStateManager(createState());
     manager.update(createState({

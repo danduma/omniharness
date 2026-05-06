@@ -356,6 +356,58 @@ describe("Supervisor worker spawn flow", () => {
     expect(persistedMessages).toEqual([]);
   });
 
+  it("records a supervisor reply when ending a turn after a user checkpoint", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "Keep fork changes isolated so trunk sync stays easy.",
+      createdAt: new Date(now.getTime() + 1_000),
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-end-turn",
+      name: "end_turn",
+      args: {
+        reason: "The worker is making progress. I delivered the fork-sync constraint and will keep watching that boundary.",
+        nextCheckSeconds: 7,
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 7_000 });
+
+    const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
+
+    expect(persistedMessages.map((message) => message.role)).toEqual(["user", "supervisor"]);
+    expect(persistedMessages[1]).toMatchObject({
+      kind: "update",
+      content: "The worker is making progress. I delivered the fork-sync constraint and will keep watching that boundary.",
+    });
+  });
+
   it("compacts the supervisor prompt before calling the model when the context is near the window limit", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -1462,7 +1514,13 @@ describe("Supervisor worker spawn flow", () => {
     expect(deferredEvent?.workerId).toBe("worker-already-running");
     expect(deferredEvent?.details).toContain("Agent is busy");
     expect(persistedMessages).toEqual([]);
-    expect(interventions).toEqual([]);
+    expect(interventions).toHaveLength(1);
+    expect(interventions[0]).toMatchObject({
+      runId,
+      workerId: "worker-already-running",
+      prompt: "Keep going and report back.",
+      summary: "Deferred follow-up to worker-already-running; worker is busy.",
+    });
   });
 
   it("lists recorded supervisor interventions when completing the run", async () => {

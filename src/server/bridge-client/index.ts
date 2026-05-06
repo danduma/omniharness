@@ -1,7 +1,7 @@
 import { isRecoverableConnectionSupervisorError, isTransientSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
 
 export const BRIDGE_URL = process.env.OMNIHARNESS_BRIDGE_URL?.trim() || "http://127.0.0.1:7800";
-const BRIDGE_CONNECTION_RESET_MAX_BACKOFF_MS = 5 * 60_000;
+const BRIDGE_CONNECTION_RESET_MAX_BACKOFF_MS = 15 * 60_000;
 
 export interface AgentRecord {
   [key: string]: unknown;

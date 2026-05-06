@@ -1,5 +1,5 @@
 import { isWorkerActiveStatus } from "@/lib/conversation-workers";
-import type { AgentSnapshot, EventStreamState } from "./types";
+import type { AgentSnapshot, EventStreamState, MessageRecord } from "./types";
 
 type EventStreamStateListener = (state: EventStreamState) => void;
 type EventStreamStateAction = EventStreamState | ((current: EventStreamState) => EventStreamState);
@@ -198,6 +198,46 @@ function mergeAgentSnapshots(
   return changed ? { ...incoming, agents } : incoming;
 }
 
+function messageTimestampMs(message: MessageRecord) {
+  const value = new Date(message.createdAt).getTime();
+  return Number.isFinite(value) ? value : 0;
+}
+
+function sortMessages(messages: MessageRecord[]) {
+  return [...messages].sort((a, b) => {
+    const timeDelta = messageTimestampMs(a) - messageTimestampMs(b);
+    return timeDelta !== 0 ? timeDelta : a.id.localeCompare(b.id);
+  });
+}
+
+function mergeScopedMessages(current: EventStreamState, incoming: EventStreamState) {
+  const incomingMessages = incoming.messages ?? [];
+  const incomingMessageIds = new Set(incomingMessages.map((message) => message.id));
+  const incomingMessageRunIds = new Set(incomingMessages.map((message) => message.runId));
+  const liveRunIds = new Set((incoming.runs ?? []).map((run) => run.id));
+  const retainedCurrentMessages = (current.messages ?? []).filter((message) => (
+    liveRunIds.has(message.runId)
+    && !incomingMessageIds.has(message.id)
+    && !incomingMessageRunIds.has(message.runId)
+  ));
+  const mergedMessages = sortMessages([
+    ...retainedCurrentMessages,
+    ...incomingMessages,
+  ]);
+
+  if (
+    mergedMessages.length === incomingMessages.length
+    && mergedMessages.every((message, index) => message === incomingMessages[index])
+  ) {
+    return incoming;
+  }
+
+  return {
+    ...incoming,
+    messages: mergedMessages,
+  };
+}
+
 export class EventStreamStateManager {
   private state: EventStreamState;
   private readonly listeners = new Set<EventStreamStateListener>();
@@ -222,7 +262,8 @@ export class EventStreamStateManager {
   update(action: EventStreamStateAction) {
     const incoming = typeof action === "function" ? action(this.state) : action;
     this.rememberOutputEntries(incoming);
-    const nextState = mergeAgentSnapshots(this.state, incoming, this.outputEntriesByAgentName);
+    const incomingWithMessages = mergeScopedMessages(this.state, incoming);
+    const nextState = mergeAgentSnapshots(this.state, incomingWithMessages, this.outputEntriesByAgentName);
 
     if (Object.is(nextState, this.state)) {
       return this.state;
