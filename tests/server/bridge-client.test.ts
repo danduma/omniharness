@@ -93,6 +93,25 @@ describe("bridge client", () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
+  it("does not retry malformed agent session handshakes returned as http 500s", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "Agent session did not include a session id." }), {
+        status: 500,
+        statusText: "Internal Server Error",
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { spawnAgent } = await import("@/server/bridge-client");
+
+    await expect(spawnAgent({ type: "codex", cwd: "/tmp", name: "worker-1" })).rejects.toThrow(
+      /^Spawn failed: Agent session did not include a session id\.$/i,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
   it("retries transient bridge socket-closure errors returned as http 500s", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(
@@ -278,5 +297,26 @@ describe("bridge client", () => {
       pendingPermissions: [],
       stopReason: null,
     });
+  });
+
+  it("keeps retrying recoverable agent snapshot polling until the bridge returns", async () => {
+    const reset = Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed", { cause: reset }))
+      .mockRejectedValueOnce(new TypeError("fetch failed", { cause: reset }))
+      .mockRejectedValueOnce(new TypeError("fetch failed", { cause: reset }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ name: "worker-1", state: "working" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { getAgent } = await import("@/server/bridge-client");
+
+    await expect(getAgent("worker-1")).resolves.toMatchObject({ name: "worker-1", state: "working" });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(warnSpy).toHaveBeenCalledTimes(3);
   });
 });

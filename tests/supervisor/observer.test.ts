@@ -16,7 +16,7 @@ vi.mock("@/server/bridge-client", () => ({
   spawnAgent: vi.fn(),
 }));
 
-import { deriveWorkerEvents, pollRunWorkers } from "@/server/supervisor/observer";
+import { deriveWorkerEvents, pollRunWorkers, startRunObserver, stopRunObserver } from "@/server/supervisor/observer";
 import { approvePermission as mockApprovePermission } from "@/server/bridge-client";
 import { spawnAgent as mockSpawnAgent } from "@/server/bridge-client";
 import { deriveWorkerTerminalProcesses } from "@/lib/worker-terminal-processes";
@@ -963,6 +963,67 @@ describe("deriveWorkerEvents", () => {
     const stuckEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
     expect(stuckEvents.filter((event) => event.eventType === "worker_stuck")).toHaveLength(1);
     expect(wakeSupervisor).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not start another interval poll while a run poll is still in flight", async () => {
+    vi.useFakeTimers();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "opencode",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    let releaseSnapshot!: () => void;
+    const snapshotGate = new Promise<void>((resolve) => {
+      releaseSnapshot = resolve;
+    });
+    mockGetAgent.mockImplementation(async () => {
+      await snapshotGate;
+      return {
+        state: "working",
+        currentText: "still running",
+        lastText: "still running",
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      };
+    });
+
+    startRunObserver(runId, wakeSupervisor);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(mockGetAgent).toHaveBeenCalledTimes(1);
+
+    stopRunObserver(runId);
+    releaseSnapshot();
+    vi.useRealTimers();
   });
 
   it("auto-approves safe pending permission requests using the strongest allow option", async () => {

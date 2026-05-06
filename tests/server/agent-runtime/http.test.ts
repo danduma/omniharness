@@ -95,6 +95,10 @@ process.stdin.on('data', (chunk) => {
       });
       write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-1' } });
     }
+    if (message.method === 'session/resume') {
+      append({ method: message.method, params: message.params });
+      write({ jsonrpc: '2.0', id: message.id, result: {} });
+    }
     if (message.method === 'session/prompt') {
       append({ method: message.method, params: message.params });
       if (process.env.FAKE_ACP_STDERR_ON_PROMPT) {
@@ -830,6 +834,48 @@ describe("internal agent runtime HTTP API", () => {
     expect(events.filter((event) => event.method === "session/new")).toHaveLength(1);
 
     await fetch(`${baseUrl}/agents/worker-resume`, { method: "DELETE" });
+  }, 15_000);
+
+  it("uses the requested session id when ACP resume succeeds without echoing one", async () => {
+    const projectDir = createTempDir("omni-runtime-resume-id-project-");
+    const binDir = createTempDir("omni-runtime-resume-id-bin-");
+    const requestLog = join(projectDir, "requests.jsonl");
+    const fakeAgent = createExecutable(binDir, "fake-acp-agent", fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const resumeResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "worker-resumed",
+        env: { FAKE_ACP_REQUEST_LOG: requestLog },
+        resumeSessionId: "session-1",
+      }),
+    });
+
+    expect(resumeResponse.status).toBe(201);
+    await expect(resumeResponse.json()).resolves.toMatchObject({
+      name: "worker-resumed",
+      sessionId: "session-1",
+      state: "idle",
+    });
+
+    const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
+    expect(events.filter((event) => event.method === "session/resume")).toHaveLength(1);
+    expect(events.filter((event) => event.method === "session/new")).toHaveLength(0);
+
+    await fetch(`${baseUrl}/agents/worker-resumed`, { method: "DELETE" });
   }, 15_000);
 
   it("advertises and serves ACP filesystem capabilities to workers", async () => {

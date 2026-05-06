@@ -117,6 +117,10 @@ function stripRepeatedActionPrefix(detail: string, action: string) {
   return detail.replace(prefixPattern, "").trimStart();
 }
 
+function isNonRetryableBridgeFailureDetail(detail: string) {
+  return /\bAgent session did not include a session id\b/i.test(detail);
+}
+
 function asString(value: unknown, fallback = "") {
   return typeof value === "string" ? value : fallback;
 }
@@ -260,9 +264,11 @@ async function requestBridge<T>(path: string, init: RequestInit, action: string)
 
         const retryable =
           detailFromPayload
-            ? (res.status === 500
-              ? isTransientSupervisorError(new Error(detail))
-              : isTransientSupervisorError(Object.assign(new Error(detail), { status: res.status })))
+            ? (isNonRetryableBridgeFailureDetail(detail)
+              ? false
+              : res.status === 500
+                ? isTransientSupervisorError(new Error(detail))
+                : isTransientSupervisorError(Object.assign(new Error(detail), { status: res.status })))
             : undefined;
 
         throw Object.assign(new Error(`${action} failed: ${detail}`), {

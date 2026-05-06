@@ -619,6 +619,7 @@ export class AgentRuntimeManager {
 
     const requestedModel = input.model?.trim() || null;
     const requestedEffort = input.effort?.trim().toLowerCase() || null;
+    const resumeSessionId = input.resumeSessionId?.trim() || null;
     const configuredAgent = this.options.config?.agents?.[type];
     const baseEnv = this.options.env || process.env;
     const skillRoots = [
@@ -698,7 +699,7 @@ export class AgentRuntimeManager {
           env: finalEnv as NodeJS.ProcessEnv,
           mcpServers,
           skillRoots,
-          resumeSessionId: input.resumeSessionId,
+          ...(resumeSessionId ? { resumeSessionId } : {}),
           getClient: () => client,
           onStderrLine: (line) => {
             pushStderrLine(stderrBuffer, line);
@@ -724,7 +725,7 @@ export class AgentRuntimeManager {
 
     const requestedMode = input.mode || configuredAgent?.mode;
     const sessionRecord = asRecord(session);
-    const sessionId = asNonEmptyString(sessionRecord?.sessionId);
+    const sessionId = resumeSessionId ?? asNonEmptyString(sessionRecord?.sessionId);
     if (!sessionId) {
       cleanupSkillLinks(managedSkillLinks);
       throw new RuntimeHttpError(500, "Agent session did not include a session id.");
