@@ -131,7 +131,10 @@ function shouldShowWorkerError(agent: WorkerCardAgent) {
 }
 
 function hasOmittedWorkerHistory(agent: WorkerCardAgent) {
-  return Boolean(agent.outputEntries?.some((entry) => entry.id.startsWith("output-entries-omitted:")));
+  return Boolean(agent.outputEntries?.some((entry) => (
+    entry.id === "output-archive-marker"
+    || entry.id.startsWith("output-entries-omitted:")
+  )));
 }
 
 function TerminalProcessSummary({

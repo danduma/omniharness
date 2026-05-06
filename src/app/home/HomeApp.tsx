@@ -1377,7 +1377,7 @@ export function HomeApp() {
     loadingWorkerHistoryIdsRef.current.add(normalizedWorkerId);
     try {
       const agent = await requestJson<AgentSnapshot>(
-        `/api/agents/${encodeURIComponent(normalizedWorkerId)}`,
+        `/api/agents/${encodeURIComponent(normalizedWorkerId)}?history=full`,
         undefined,
         {
           source: "Agent runtime",

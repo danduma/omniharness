@@ -1,5 +1,6 @@
 import { isWorkerActiveStatus } from "@/lib/conversation-workers";
 import type { AgentSnapshot, EventStreamState, MessageRecord } from "./types";
+import { WorkerOutputLineCacheManager } from "./WorkerOutputLineCacheManager";
 
 type EventStreamStateListener = (state: EventStreamState) => void;
 type EventStreamStateAction = EventStreamState | ((current: EventStreamState) => EventStreamState);
@@ -242,10 +243,13 @@ export class EventStreamStateManager {
   private state: EventStreamState;
   private readonly listeners = new Set<EventStreamStateListener>();
   private readonly outputEntriesByAgentName = new Map<string, Map<string, AgentOutputEntry>>();
+  private readonly outputLineCache: WorkerOutputLineCacheManager;
 
-  constructor(initialState: EventStreamState) {
-    this.state = initialState;
-    this.rememberOutputEntries(initialState);
+  constructor(initialState: EventStreamState, options: { outputLineCache?: WorkerOutputLineCacheManager } = {}) {
+    this.outputLineCache = options.outputLineCache ?? new WorkerOutputLineCacheManager();
+    const hydratedInitialState = this.outputLineCache.hydrateState(initialState);
+    this.state = hydratedInitialState;
+    this.rememberOutputEntries(hydratedInitialState);
   }
 
   getSnapshot() {
@@ -289,5 +293,6 @@ export class EventStreamStateManager {
       }
       this.outputEntriesByAgentName.set(agent.name, cachedEntries);
     }
+    this.outputLineCache.rememberState(state);
   }
 }

@@ -4,19 +4,144 @@ import { randomUUID } from "crypto";
 import { db } from "@/server/db";
 import { plans, runs, workers } from "@/server/db/schema";
 
-const { mockGetAgent } = vi.hoisted(() => ({
+const { mockGetAgent, mockGetAgentOutput } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
+  mockGetAgentOutput: vi.fn(),
 }));
 
-vi.mock("@/server/bridge-client", () => ({
-  getAgent: mockGetAgent,
-}));
+vi.mock("@/server/bridge-client", async () => {
+  const actual = await vi.importActual<typeof import("@/server/bridge-client")>("@/server/bridge-client");
+  return {
+    ...actual,
+    getAgent: mockGetAgent,
+    getAgentOutput: mockGetAgentOutput,
+  };
+});
 
 import { GET } from "@/app/api/agents/[name]/route";
 
 describe("GET /api/agents/[name]", () => {
   beforeEach(() => {
     mockGetAgent.mockReset();
+    mockGetAgentOutput.mockReset();
+  });
+
+  it("hydrates archived worker output when full history is requested", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `worker-${randomUUID()}`;
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      title: "Archived conversation",
+      status: "running",
+      preferredWorkerModel: "gpt-5.5",
+      preferredWorkerEffort: "high",
+      lastError: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "",
+      currentText: "",
+      lastText: "",
+      bridgeSessionId: "session-123",
+      bridgeSessionMode: "full-access",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockGetAgent.mockResolvedValue({
+      name: workerId,
+      type: "codex",
+      cwd: process.cwd(),
+      state: "working",
+      outputEntries: [
+        {
+          id: "output-archive-marker",
+          type: "message",
+          text: "40 earlier output entries are stored in the worker output archive.",
+          timestamp: "2026-05-06T15:30:00.000Z",
+        },
+        {
+          id: "live-tail",
+          type: "message",
+          text: "Current live tail",
+          timestamp: "2026-05-06T15:50:00.000Z",
+        },
+      ],
+      currentText: "",
+      lastText: "",
+      renderedOutput: "",
+      stderrBuffer: [],
+      stopReason: null,
+    });
+    mockGetAgentOutput.mockResolvedValue({
+      name: workerId,
+      cursor: 0,
+      nextCursor: null,
+      totalEntries: 2,
+      entries: [
+        {
+          id: "archive-between-prompt-1",
+          type: "message",
+          text: "Output that happened ",
+          timestamp: "2026-05-06T15:40:00.000Z",
+        },
+        {
+          id: "archive-between-prompt-2",
+          type: "message",
+          text: "between supervisor prompts.",
+          timestamp: "2026-05-06T15:40:00.100Z",
+        },
+        {
+          id: "archive-later-turn",
+          type: "message",
+          text: "Later output belongs after the next supervisor prompt.",
+          timestamp: "2026-05-06T15:45:00.000Z",
+        },
+        {
+          id: "live-tail",
+          type: "message",
+          text: "Current live tail",
+          timestamp: "2026-05-06T15:50:00.000Z",
+        },
+      ],
+    });
+
+    const response = await GET(new NextRequest(`http://localhost/api/agents/${workerId}?history=full`), {
+      params: Promise.resolve({ name: workerId }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      name: workerId,
+      outputEntries: [
+        expect.objectContaining({
+          id: "archive-between-prompt-1",
+          text: "Output that happened between supervisor prompts.",
+        }),
+        expect.objectContaining({ id: "archive-later-turn" }),
+        expect.objectContaining({ id: "live-tail" }),
+      ],
+    }));
+    expect(mockGetAgentOutput).toHaveBeenCalledWith(workerId, { limit: 20_000 });
   });
 
   it("returns a persisted fallback snapshot when the bridge temporarily loses the worker", async () => {

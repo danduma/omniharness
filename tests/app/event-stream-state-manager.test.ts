@@ -1,6 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { EventStreamStateManager } from "@/app/home/EventStreamStateManager";
+import { WorkerOutputLineCacheManager } from "@/app/home/WorkerOutputLineCacheManager";
 import type { EventStreamState } from "@/app/home/types";
+
+class MemoryStorage implements Pick<Storage, "getItem" | "setItem" | "removeItem"> {
+  private readonly values = new Map<string, string>();
+
+  getItem(key: string) {
+    return this.values.get(key) ?? null;
+  }
+
+  setItem(key: string, value: string) {
+    this.values.set(key, value);
+  }
+
+  removeItem(key: string) {
+    this.values.delete(key);
+  }
+}
 
 function createState(overrides: Partial<EventStreamState> = {}): EventStreamState {
   return {
@@ -21,6 +38,151 @@ function createState(overrides: Partial<EventStreamState> = {}): EventStreamStat
 }
 
 describe("EventStreamStateManager", () => {
+  it("persists worker output lines once globally and hydrates them after a reload", () => {
+    const storage = new MemoryStorage();
+    const cacheOptions = {
+      storage,
+      storageKey: "test-worker-output-cache",
+      now: () => Date.parse("2026-05-04T00:00:10.000Z"),
+    };
+
+    new EventStreamStateManager(createState({
+      agents: [
+        {
+          name: "run-1-worker-1",
+          type: "codex",
+          state: "working",
+          outputEntries: [
+            {
+              id: "entry-0",
+              type: "message",
+              text: "Shared line\nShared line",
+              timestamp: "2026-05-04T00:00:00.000Z",
+            },
+          ],
+        },
+        {
+          name: "run-2-worker-1",
+          type: "codex",
+          state: "working",
+          outputEntries: [
+            {
+              id: "entry-other-worker",
+              type: "message",
+              text: "Shared line",
+              timestamp: "2026-05-04T00:00:01.000Z",
+            },
+          ],
+        },
+      ],
+    }), {
+      outputLineCache: new WorkerOutputLineCacheManager(cacheOptions),
+    });
+
+    const persisted = JSON.parse(storage.getItem("test-worker-output-cache") ?? "{}") as {
+      lines?: Record<string, { text: string }>;
+      workers?: Record<string, unknown>;
+    };
+    expect(Object.values(persisted.lines ?? {}).map((line) => line.text)).toEqual(["Shared line"]);
+    expect(Object.keys(persisted.workers ?? {}).sort()).toEqual(["run-1-worker-1", "run-2-worker-1"]);
+    const persistedAfterFirstSnapshot = storage.getItem("test-worker-output-cache");
+
+    new EventStreamStateManager(createState({
+      agents: [{
+        name: "run-1-worker-1",
+        type: "codex",
+        state: "working",
+        outputEntries: [{
+          id: "entry-0",
+          type: "message",
+          text: "Shared line\nShared line",
+          timestamp: "2026-05-04T00:00:00.000Z",
+        }],
+      }],
+    }), {
+      outputLineCache: new WorkerOutputLineCacheManager(cacheOptions),
+    });
+    expect(storage.getItem("test-worker-output-cache")).toBe(persistedAfterFirstSnapshot);
+
+    const reloadedManager = new EventStreamStateManager(createState({
+      agents: [{
+        name: "run-1-worker-1",
+        type: "codex",
+        state: "working",
+        outputEntries: [
+          {
+            id: "output-entries-omitted:entry-0:entry-9",
+            type: "message",
+            text: "8 earlier output entries omitted from this live payload.",
+            timestamp: "2026-05-04T00:00:09.000Z",
+          },
+        ],
+      }],
+    }), {
+      outputLineCache: new WorkerOutputLineCacheManager(cacheOptions),
+    });
+
+    expect(reloadedManager.getSnapshot().agents[0].outputEntries?.map((entry) => [entry.id, entry.text])).toEqual([
+      ["entry-0", "Shared line\nShared line"],
+      ["output-entries-omitted:entry-0:entry-9", "8 earlier output entries omitted from this live payload."],
+    ]);
+  });
+
+  it("cleans stale worker output caches while preserving recent worker lines", () => {
+    const storage = new MemoryStorage();
+    const oldNow = Date.parse("2026-05-04T00:00:00.000Z");
+    const oldCache = new WorkerOutputLineCacheManager({
+      storage,
+      storageKey: "test-worker-output-cache",
+      now: () => oldNow,
+      cleanupIntervalMs: 0,
+      workerTtlMs: 1_000,
+    });
+    oldCache.rememberState(createState({
+      agents: [{
+        name: "stale-worker",
+        type: "codex",
+        state: "done",
+        outputEntries: [{
+          id: "stale-entry",
+          type: "message",
+          text: "Stale line",
+          timestamp: "2026-05-04T00:00:00.000Z",
+        }],
+      }],
+    }));
+
+    const recentNow = oldNow + 2_000;
+    const recentCache = new WorkerOutputLineCacheManager({
+      storage,
+      storageKey: "test-worker-output-cache",
+      now: () => recentNow,
+      cleanupIntervalMs: 0,
+      workerTtlMs: 1_000,
+    });
+    recentCache.rememberState(createState({
+      agents: [{
+        name: "recent-worker",
+        type: "codex",
+        state: "working",
+        outputEntries: [{
+          id: "recent-entry",
+          type: "message",
+          text: "Recent line",
+          timestamp: "2026-05-04T00:00:02.000Z",
+        }],
+      }],
+    }));
+
+    const persisted = JSON.parse(storage.getItem("test-worker-output-cache") ?? "{}") as {
+      lines?: Record<string, { text: string }>;
+      workers?: Record<string, unknown>;
+    };
+
+    expect(Object.keys(persisted.workers ?? {})).toEqual(["recent-worker"]);
+    expect(Object.values(persisted.lines ?? {}).map((line) => line.text)).toEqual(["Recent line"]);
+  });
+
   it("keeps visited conversation transcript messages when another run payload arrives", () => {
     const manager = new EventStreamStateManager(createState({
       runs: [

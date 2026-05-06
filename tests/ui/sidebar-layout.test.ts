@@ -63,6 +63,7 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(workersSidebarSource).toContain('content: intervention.prompt');
   expect(workerCardSource).toContain("<Terminal");
   expect(workerCardSource).toContain("hasMoreHistory={hasOmittedWorkerHistory(agent)}");
+  expect(workerCardSource).toContain('entry.id === "output-archive-marker"');
   expect(workerCardSource).toContain("onRequestMoreHistory={onLoadWorkerHistory}");
   expect(workerCardSource).toContain("deriveVisibleWorkerTerminalProcesses");
   expect(workerCardSource).toContain("function shouldShowWorkerError(agent: WorkerCardAgent)");
