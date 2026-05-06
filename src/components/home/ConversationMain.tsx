@@ -1,5 +1,5 @@
 import type React from "react";
-import { Blocks, ChevronDown, GitBranch, ListTree, Pencil, RotateCcw } from "lucide-react";
+import { Blocks, ChevronDown, CirclePlay, CircleStop, GitBranch, ListTree, Pencil, RotateCcw, Route } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -171,11 +171,46 @@ function renderSupervisorActivityText(text: string) {
   );
 }
 
+function renderSupervisorActivityIcon(item: Extract<ConversationTimelineItem, { type: "activity" }>) {
+  const eventType = item.event?.eventType;
+  const text = item.text.trim();
+
+  if (eventType === "worker_spawned" || text.startsWith("Starting worker ")) {
+    return <CirclePlay className="h-3.5 w-3.5" aria-hidden="true" strokeWidth={1.8} />;
+  }
+
+  if (
+    eventType === "worker_cancelled"
+    || eventType === "worker_stopped"
+    || eventType === "worker_stop_requested"
+    || text.startsWith("Cancelled worker ")
+    || text.startsWith("Stopped worker ")
+    || text.startsWith("Stopping worker ")
+  ) {
+    return <CircleStop className="h-3.5 w-3.5" aria-hidden="true" strokeWidth={1.8} />;
+  }
+
+  if (
+    eventType === "worker_prompt_deferred"
+    || text.startsWith("Steering worker ")
+    || text.startsWith("Waiting to steer worker ")
+  ) {
+    return <Route className="h-3.5 w-3.5" aria-hidden="true" strokeWidth={1.8} />;
+  }
+
+  return null;
+}
+
 function SupervisorActivityMessage({ item }: { item: Extract<ConversationTimelineItem, { type: "activity" }> }) {
+  const icon = renderSupervisorActivityIcon(item);
+
   return (
-    <div className="group flex w-full flex-col px-1 text-sm" aria-label="Conversation event">
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-[13px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
+    <div className="group flex w-full px-1 text-sm" aria-label="Conversation event">
+      <div className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground/65">
+        {icon}
+      </div>
+      <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+        <p className="min-w-0 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-muted-foreground">
           {renderSupervisorActivityText(item.text)}
         </p>
         <span className="shrink-0 text-[10px] text-muted-foreground/50">

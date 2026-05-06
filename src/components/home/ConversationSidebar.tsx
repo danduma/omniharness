@@ -165,7 +165,7 @@ export function ConversationSidebar({
                     >
                       <div className="flex w-4 shrink-0 items-center justify-center">
                         {run.status === "running" ? (
-                          <LoaderCircle className="h-3.5 w-3.5 animate-spin text-blue-500" />
+                          <LoaderCircle className="h-3.5 w-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" />
                         ) : null}
                       </div>
                       <div className="min-w-0 flex-1">

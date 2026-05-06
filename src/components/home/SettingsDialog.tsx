@@ -153,11 +153,6 @@ function LlmSettingsForm({
               className="h-8 bg-muted/50 text-xs"
             />
           )}
-          {provider === "gemini" ? (
-            <p className="text-[11px] text-muted-foreground">
-              Gemini model ids load automatically from the API key and appear in a searchable dropdown.
-            </p>
-          ) : null}
           {geminiModelsQuery.isError ? (
             <p className="text-[11px] text-destructive">
               {geminiModelsQuery.error instanceof Error ? geminiModelsQuery.error.message : "Unable to fetch available models."}

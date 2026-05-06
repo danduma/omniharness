@@ -24,15 +24,15 @@ test("app uses a neutral boot shell while auth state is still loading", () => {
   expect(pageSource).toContain("<BootShell");
 });
 
-test("loading shell presents a workspace orchestration scene while preserving theme bootstrap safety", () => {
+test("loading shell stays minimal while preserving theme bootstrap safety", () => {
   expect(bootShellSource).toContain("bg-background");
   expect(bootShellSource).toContain('role="status"');
-  expect(bootShellSource).toContain("Preparing workspace handoff");
-  expect(bootShellSource).toContain("Session");
-  expect(bootShellSource).toContain("Workers");
-  expect(bootShellSource).toContain("Messages");
+  expect(bootShellSource).toContain("LoaderCircle");
+  expect(bootShellSource).toContain("animate-spin");
   expect(bootShellSource).toContain("motion-reduce:animate-none");
-  expect(bootShellSource).not.toContain("LoaderCircle");
+  expect(bootShellSource).toContain("Loading workspace...");
+  expect(bootShellSource).not.toContain("Preparing workspace handoff");
+  expect(bootShellSource).not.toContain("Local control plane");
 });
 
 test("login shell keeps the page background dark when dark mode is active", () => {
