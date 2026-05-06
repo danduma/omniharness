@@ -40,9 +40,31 @@ function hasConcreteChecklistSupport(item: ParsedPlan["items"][number]) {
     return false;
   }
 
-  return /(^|\n)\s*- /m.test(details) && (
-    /(^|\n)\s*-?\s*verify:/im.test(details) || isSmallSingleFileConfigEdit(item, details)
-  );
+  if (!/(^|\n)\s*- /m.test(details)) {
+    return false;
+  }
+
+  return /(^|\n)\s*-?\s*verify:/im.test(details)
+    || isSmallSingleFileConfigEdit(item, details)
+    || hasConcreteNestedImplementationDetails(details);
+}
+
+function hasConcreteNestedImplementationDetails(details: string) {
+  const detailBullets = details
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "));
+
+  return detailBullets.some((line) => {
+    const lower = line.toLowerCase();
+    return /\b(add|render|pass|wire|replace|preserve|ensure|keep|call|fetch|export|return|assert|cover|use|avoid|prevent|accept)\b/.test(lower)
+      && (/[`"'({]/.test(line) || /\b(prop|props|api|test|tests|state|behavior|callback|button|tab|sheet|panel|manager|response|error)\b/.test(lower));
+  });
+}
+
+function hasGlobalAcceptanceCriteria(plan: ParsedPlan) {
+  return /^##\s+Acceptance Criteria\s*$/im.test(plan.markdown)
+    && /(^|\n)\s*- /m.test(plan.markdown.slice(plan.markdown.search(/^##\s+Acceptance Criteria\s*$/im)));
 }
 
 export async function assessPlanReadiness(plan: ParsedPlan): Promise<PlanReadinessAssessment> {
@@ -55,7 +77,7 @@ export async function assessPlanReadiness(plan: ParsedPlan): Promise<PlanReadine
   }
 
   for (const item of plan.items) {
-    if (looksVague(item.title) && !hasConcreteChecklistSupport(item)) {
+    if (looksVague(item.title) && !hasConcreteChecklistSupport(item) && !hasGlobalAcceptanceCriteria(plan)) {
       gaps.push(`Item "${item.title}" is too vague.`);
       questions.push(`What concrete deliverable should satisfy "${item.title}"?`);
       questions.push(`How will we verify that "${item.title}" is complete?`);
