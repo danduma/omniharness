@@ -186,6 +186,14 @@ export function HomeApp() {
   const pendingSentConversationMessagesRef = useRef<Map<string, MessageRecord>>(new Map());
   const loadingWorkerHistoryIdsRef = useRef<Set<string>>(new Set());
   const autoResumeRunKeysRef = useRef<Set<string>>(new Set());
+  const scrollConversationToBottom = useCallback(() => {
+    requestAnimationFrame(() => {
+      const viewport = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLDivElement | null;
+      if (viewport) {
+        viewport.scrollTop = viewport.scrollHeight;
+      }
+    });
+  }, []);
 
   const sessionQuery = useQuery<AuthSessionResponse>({
     queryKey: ["auth-session"],
@@ -359,7 +367,7 @@ export function HomeApp() {
         body: JSON.stringify({ title }),
       }, {
         source: "Runs",
-        action: "Rename conversation",
+        action: "Rename",
       });
     },
     onSuccess: (_data, variables) => {
@@ -413,7 +421,7 @@ export function HomeApp() {
         method: "DELETE",
       }, {
         source: "Runs",
-        action: "Delete conversation",
+        action: "Delete",
       });
     },
     onSuccess: (_data, variables) => {
@@ -535,6 +543,7 @@ export function HomeApp() {
       setState((current) => appendSentConversationMessageSnapshot(current, data.message));
       setCommand("");
       clearAttachments();
+      scrollConversationToBottom();
     },
   });
 
@@ -574,6 +583,7 @@ export function HomeApp() {
         pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
       }
       setState((current) => appendSentConversationMessageSnapshot(current, data.message));
+      scrollConversationToBottom();
     },
   });
 
@@ -1694,6 +1704,7 @@ export function HomeApp() {
         open={showPairDeviceDialog}
         onOpenChange={setShowPairDeviceDialog}
         selectedRunId={selectedRunId}
+        publicOrigin={sessionQuery.data?.publicOrigin ?? null}
         availabilityError={pairDeviceAvailabilityError}
       />
 

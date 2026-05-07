@@ -6,7 +6,6 @@ import { getAppDataPath } from "@/server/app-root";
 export const AUTH_SESSION_COOKIE = "omni_session";
 export const AUTH_SESSION_IDLE_MS = 1000 * 60 * 60 * 24 * 30;
 export const AUTH_SESSION_ABSOLUTE_MS = 1000 * 60 * 60 * 24 * 90;
-export const AUTH_PAIR_TOKEN_TTL_MS = 1000 * 60 * 2;
 
 function resolveAuthKeyPath() {
   if (process.env.OMNIHARNESS_AUTH_KEY_PATH?.trim()) {

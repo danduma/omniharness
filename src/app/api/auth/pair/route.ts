@@ -40,12 +40,16 @@ export async function POST(req: NextRequest) {
     const deviceLabel = typeof body?.deviceLabel === "string" && body.deviceLabel.trim()
       ? body.deviceLabel.trim()
       : null;
+    const pairToken = typeof body?.pairToken === "string" && body.pairToken.trim()
+      ? body.pairToken.trim()
+      : null;
     const publicOrigin = getPublicOriginFromRequest(req.url, req.headers);
     const targetPath = targetRunId ? `/session/${targetRunId}` : "/";
     const pairing = await createPairingToken({
       creatorSessionId: auth.session!.id,
       targetRunId,
       deviceLabel,
+      pairToken,
     });
 
     await insertAuthEvent({

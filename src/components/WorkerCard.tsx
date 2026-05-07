@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import { AlertTriangle, Bot, ChevronDown, Clock, Cpu, Hash, Square, SquareTerminal } from "lucide-react";
-import { Terminal, type AgentTerminalPayload, type TerminalUserMessage } from "@/components/Terminal";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { AlertTriangle, Bot, ChevronDown, Clock, Cpu, Hash, Maximize2, Minimize2, Square, SquareTerminal } from "lucide-react";
+import { Terminal, TerminalTextSizeControl, type AgentTerminalPayload, type TerminalUserMessage } from "@/components/Terminal";
+import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { workerCardManager } from "@/components/component-state-managers";
 import { isWorkerActiveStatus } from "@/lib/conversation-workers";
@@ -52,6 +52,10 @@ export type WorkerCardProps = {
   pendingPermissions: PendingPermissionRecord[];
   terminalHeightClass: string;
   fillAvailable?: boolean;
+  compact?: boolean;
+  isFocused?: boolean;
+  canFocus?: boolean;
+  onToggleFocus?: () => void;
   onStopWorker?: () => void;
   onStopTerminalProcess?: (terminalProcess: WorkerTerminalProcess) => void;
   onLoadWorkerHistory?: () => void;
@@ -137,85 +141,181 @@ function hasOmittedWorkerHistory(agent: WorkerCardAgent) {
   )));
 }
 
-function TerminalProcessSummary({
+function WorkerStatusBar({
   workerId,
   displayId,
+  workerNumberLabel,
+  showWorkerNumberAfterTitle,
+  runtimeLabel,
+  runtimeDurationLabel,
+  activeModel,
+  activeEffort,
+  state,
+  stateLabel,
+  contextFullnessPercent,
   processes,
+  showTerminalControls,
+  showContext,
+  showTextSizeControl,
+  onActivateTerminalSummary,
   onStopTerminalProcess,
   stoppingTerminalProcessId,
 }: {
   workerId: string;
   displayId: string;
+  workerNumberLabel: string | null;
+  showWorkerNumberAfterTitle: boolean;
+  runtimeLabel: string | null;
+  runtimeDurationLabel?: string | null;
+  activeModel: string | null;
+  activeEffort: string | null;
+  state: string;
+  stateLabel: string;
+  contextFullnessPercent?: number | null;
   processes: WorkerTerminalProcess[];
+  showTerminalControls: boolean;
+  showContext: boolean;
+  showTextSizeControl: boolean;
+  onActivateTerminalSummary: () => void;
   onStopTerminalProcess?: (terminalProcess: WorkerTerminalProcess) => void;
   stoppingTerminalProcessId?: string | null;
 }) {
   const { terminalProcessesOpenByWorkerId } = useManagerSnapshot(workerCardManager);
   const activeProcesses = processes.filter((process) => process.active);
-  if (activeProcesses.length === 0) {
-    return null;
-  }
-
   const visibleProcesses = activeProcesses.slice(0, 3);
-  const open = terminalProcessesOpenByWorkerId[workerId] ?? activeProcesses.length === 1;
+  const open = showTerminalControls && (terminalProcessesOpenByWorkerId[workerId] ?? activeProcesses.length === 1);
   const summary = `Running ${activeProcesses.length} terminal${activeProcesses.length === 1 ? "" : "s"}`;
+  const contextLabel = showContext ? formatContextAvailability(contextFullnessPercent) : null;
+
+  const handleTerminalSummaryClick = () => {
+    if (activeProcesses.length === 0) {
+      return;
+    }
+
+    if (!showTerminalControls) {
+      onActivateTerminalSummary();
+      return;
+    }
+
+    workerCardManager.setTerminalProcessesOpen(workerId, !open);
+  };
 
   return (
-    <div className="shrink-0 border-b border-border/70 bg-muted/45 text-foreground dark:border-white/8 dark:bg-[#242426] dark:text-zinc-200">
-      <div className="flex h-9 min-w-0 items-center gap-3 px-4">
-        <SquareTerminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground dark:text-zinc-400" />
-        <button
-          type="button"
-          className="min-w-0 flex-1 truncate text-left text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground dark:text-zinc-400 dark:hover:text-zinc-200"
-          onClick={() => workerCardManager.setTerminalProcessesOpen(workerId, !open)}
+    <div className="shrink-0 border-t border-border/70 bg-muted/45 text-foreground dark:border-white/8 dark:bg-[#242426] dark:text-zinc-200">
+      {activeProcesses.length > 0 && showTerminalControls ? (
+        <Collapsible
+          open={open}
+          onOpenChange={(nextOpen) => workerCardManager.setTerminalProcessesOpen(workerId, nextOpen)}
+          className="border-b border-border/60 dark:border-white/8"
         >
-          {summary}
-        </button>
-        <button
-          type="button"
-          aria-label={open ? "Collapse running terminals" : "Expand running terminals"}
-          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:text-zinc-400 dark:hover:bg-white/[0.08] dark:hover:text-zinc-100"
-          onClick={() => workerCardManager.setTerminalProcessesOpen(workerId, !open)}
-        >
-          <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} />
-        </button>
-      </div>
-      {open ? (
-        <div className="space-y-1 px-4 pb-2">
-          {visibleProcesses.map((terminalProcess) => {
-            const canStopTerminalProcess = Boolean(onStopTerminalProcess && terminalProcess.processId);
-            const isStoppingTerminalProcess = stoppingTerminalProcessId === terminalProcess.id;
-            const terminalProcessTitle = terminalProcess.processId
-              ? `CLI process ${terminalProcess.processId}`
-              : "No terminal process id reported";
+          <div
+            className={cn(
+              COLLAPSIBLE_PANEL_TRANSITION_CLASS,
+              open ? COLLAPSIBLE_PANEL_OPEN_CLASS : COLLAPSIBLE_PANEL_CLOSED_CLASS,
+            )}
+            aria-hidden={!open}
+          >
+            <div className="min-h-0 space-y-1 overflow-hidden px-4 py-2">
+              {visibleProcesses.map((terminalProcess) => {
+                const canStopTerminalProcess = Boolean(onStopTerminalProcess && terminalProcess.processId);
+                const isStoppingTerminalProcess = stoppingTerminalProcessId === terminalProcess.id;
+                const terminalProcessTitle = terminalProcess.processId
+                  ? `CLI process ${terminalProcess.processId}`
+                  : "No terminal process id reported";
 
-            return (
-              <div key={terminalProcess.id} className="flex min-w-0 items-center gap-2 font-mono text-[12px] leading-5" title={terminalProcessTitle}>
-                <div className="min-w-0 flex-1 truncate">
-                  <span className="text-foreground dark:text-zinc-100">{terminalProcess.command}</span>
-                  {terminalProcess.outputTail ? <span className="text-muted-foreground dark:text-zinc-500"> {terminalProcess.outputTail}</span> : null}
-                </div>
-                {onStopTerminalProcess ? (
-                  <button
-                    type="button"
-                    aria-label={`Stop terminal ${terminalProcess.command} for ${displayId}`}
-                    title={canStopTerminalProcess ? `Stop terminal process ${terminalProcess.processId}` : "This terminal did not report a process id"}
-                    disabled={!canStopTerminalProcess || isStoppingTerminalProcess}
-                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-white/[0.08] dark:hover:text-zinc-100"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      onStopTerminalProcess(terminalProcess);
-                    }}
-                  >
-                    <Square className="h-3 w-3 fill-current" />
-                  </button>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
+                return (
+                  <div key={terminalProcess.id} className="flex min-w-0 items-center gap-2 font-mono text-[12px] leading-5" title={terminalProcessTitle}>
+                    <div className="min-w-0 flex-1 truncate">
+                      <span className="text-foreground dark:text-zinc-100">{terminalProcess.command}</span>
+                      {terminalProcess.outputTail ? <span className="text-muted-foreground dark:text-zinc-500"> {terminalProcess.outputTail}</span> : null}
+                    </div>
+                    {onStopTerminalProcess ? (
+                      <button
+                        type="button"
+                        aria-label={`Stop terminal ${terminalProcess.command} for ${displayId}`}
+                        title={canStopTerminalProcess ? `Stop terminal process ${terminalProcess.processId}` : "This terminal did not report a process id"}
+                        disabled={!canStopTerminalProcess || isStoppingTerminalProcess}
+                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-white/[0.08] dark:hover:text-zinc-100"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          onStopTerminalProcess(terminalProcess);
+                        }}
+                      >
+                        <Square className="h-3 w-3 fill-current" />
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </Collapsible>
       ) : null}
+      <div className="flex min-h-10 min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-3.5 py-2">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1.5">
+          <div className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] font-medium text-foreground dark:text-zinc-100" title={workerId}>
+            <span className="truncate">{displayId}</span>
+            {showWorkerNumberAfterTitle ? (
+              <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-border/70 bg-muted/35 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-400">
+                <Hash className="h-3 w-3" />
+                {workerNumberLabel}
+              </span>
+            ) : null}
+          </div>
+          <div className="inline-flex min-w-0 shrink items-center gap-1.5 text-[11px] text-muted-foreground dark:text-zinc-400">
+            <Bot className="h-3.5 w-3.5 text-muted-foreground/80 dark:text-zinc-500" />
+            <span className="truncate" title={runtimeLabel || "Unknown"}>{runtimeLabel || "Unknown"}</span>
+          </div>
+          <div className="inline-flex min-w-0 shrink items-center gap-1.5 text-[11px] text-muted-foreground dark:text-zinc-400">
+            <Cpu className="h-3.5 w-3.5 text-muted-foreground/80 dark:text-zinc-500" />
+            <span className="truncate" title={activeModel || "Default"}>{activeModel || "Default"}</span>
+          </div>
+          {activeEffort ? <span className="shrink-0 text-[11px] text-muted-foreground dark:text-zinc-500">{activeEffort} effort</span> : null}
+          {activeProcesses.length > 0 ? (
+            <button
+              type="button"
+              className="inline-flex min-w-0 shrink items-center gap-1.5 rounded px-1 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:text-zinc-400 dark:hover:bg-white/[0.08] dark:hover:text-zinc-100"
+              onClick={handleTerminalSummaryClick}
+              title={showTerminalControls ? (open ? "Collapse running terminals" : "Expand running terminals") : "Expand worker terminal"}
+            >
+              <SquareTerminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground dark:text-zinc-400" />
+              <span className="truncate">{summary}</span>
+              {showTerminalControls ? <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} /> : null}
+            </button>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-2.5 gap-y-1.5">
+          <div className="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium text-muted-foreground dark:text-zinc-400">
+            <span className={cn(
+              "h-1.5 w-1.5 rounded-full",
+              isWorkerActiveStatus(state) ? "bg-emerald-500 dark:bg-emerald-300" : "bg-muted-foreground dark:bg-zinc-500",
+            )} />
+            <span className="capitalize">{stateLabel}</span>
+          </div>
+          {runtimeDurationLabel ? (
+            <div className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground dark:text-zinc-400">
+              <Clock className="h-3.5 w-3.5 text-muted-foreground/80 dark:text-zinc-500" />
+              <span title={runtimeDurationLabel}>{runtimeDurationLabel}</span>
+            </div>
+          ) : null}
+          {contextLabel ? (
+            <Tooltip>
+              <TooltipTrigger
+                closeOnClick={false}
+                onClick={(event) => event.stopPropagation()}
+                render={<span className="inline-flex items-center" />}
+              >
+                {renderContextMeter(contextFullnessPercent)}
+              </TooltipTrigger>
+              <TooltipContent side="top" align="center" sideOffset={8}>
+                {contextLabel}
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
+          {showTextSizeControl ? <TerminalTextSizeControl className="h-6 w-6 shadow-none" /> : null}
+        </div>
+      </div>
     </div>
   );
 }
@@ -302,6 +402,10 @@ export function WorkerCard({
   pendingPermissions,
   terminalHeightClass,
   fillAvailable = false,
+  compact = false,
+  isFocused = false,
+  canFocus = false,
+  onToggleFocus,
   onStopWorker,
   onStopTerminalProcess,
   onLoadWorkerHistory,
@@ -310,7 +414,6 @@ export function WorkerCard({
 }: WorkerCardProps) {
   const { openByWorkerId } = useManagerSnapshot(workerCardManager);
   const open = openByWorkerId[workerId] ?? defaultOpen;
-  const contextLabel = formatContextAvailability(agent.contextUsage?.fullnessPercent);
   const promptPreviewText = promptPreview?.trim() ?? "";
   const stateLabel = formatWorkerStateLabel(agent.state);
   const showPromptPreview = promptPreviewText.length > 0;
@@ -320,6 +423,7 @@ export function WorkerCard({
   const hasActiveTerminalProcesses = terminalProcesses.some((process) => process.active);
   const showHeaderStopWorker = showStopWorker && !hasActiveTerminalProcesses;
   const showWorkerError = shouldShowWorkerError(agent);
+  const showFocusControl = canFocus && Boolean(onToggleFocus);
 
   const workerNumberLabel = useMemo(() => {
     if (typeof workerNumber === "number" && Number.isFinite(workerNumber)) {
@@ -332,6 +436,128 @@ export function WorkerCard({
   const normalizedWorkerTitle = workerTitle?.trim() ?? "";
   const displayId = normalizedWorkerTitle || workerNumberLabel || workerId;
   const showWorkerNumberAfterTitle = Boolean(normalizedWorkerTitle && workerNumberLabel);
+  const compactSubtitle = [
+    stateLabel,
+    runtimeLabel || "Unknown",
+    activeModel || "Default",
+    runtimeDurationLabel,
+  ].filter(Boolean).join(" · ");
+  const headerSummary = (
+    <div className="min-w-0 flex-1 space-y-1.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+        <div className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] font-medium text-foreground dark:text-zinc-100" title={workerId}>
+          <span className="break-words">{displayId}</span>
+          {showWorkerNumberAfterTitle ? (
+            <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-border/70 bg-muted/35 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-400">
+              <Hash className="h-3 w-3" />
+              {workerNumberLabel}
+            </span>
+          ) : null}
+        </div>
+      </div>
+      {showPromptPreview && !compact ? (
+        <Tooltip>
+          <TooltipTrigger
+            closeOnClick={false}
+            render={<span className="block w-fit max-w-full" />}
+          >
+            <span className="line-clamp-2 text-[11px] leading-[1.35] text-muted-foreground dark:text-zinc-500">
+              {promptPreviewText}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent
+            side="bottom"
+            align="start"
+            sideOffset={8}
+            className="block max-h-72 max-w-[min(34rem,calc(100vw-3rem))] overflow-auto rounded-lg border border-border bg-popover p-3 text-left text-[11px] leading-[1.5] text-popover-foreground shadow-[0_18px_60px_rgba(15,23,42,0.16)] dark:border-white/10 dark:bg-[#181a1d] dark:text-zinc-200 dark:shadow-[0_18px_60px_rgba(0,0,0,0.42)]"
+          >
+            {promptPreviewText}
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
+    </div>
+  );
+  const actionControls = (
+    <div className="flex shrink-0 items-center gap-1.5">
+      {pendingPermissions.length > 0 ? <PermissionWarning workerId={workerId} pendingPermissions={pendingPermissions} /> : null}
+      {showFocusControl ? (
+        <button
+          type="button"
+          aria-label={isFocused ? `Show all workers` : `Focus terminal for ${displayId}`}
+          title={isFocused ? "Show all workers" : "Focus terminal"}
+          className="inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:text-zinc-500 dark:hover:bg-white/[0.04] dark:hover:text-zinc-300"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onToggleFocus?.();
+          }}
+        >
+          {isFocused ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+        </button>
+      ) : null}
+      {showHeaderStopWorker ? (
+        <button
+          type="button"
+          aria-label={`Stop ${displayId}`}
+          title={`Stop ${displayId}`}
+          disabled={isStopping}
+          className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-stone-300/80 bg-stone-100/40 text-stone-500 transition-colors hover:border-rose-300/70 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-300/15 dark:bg-red-400/[0.06] dark:text-red-100/85 dark:hover:bg-red-400/[0.12]"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onStopWorker?.();
+          }}
+        >
+          <Square className="h-3 w-3 fill-current" />
+        </button>
+      ) : null}
+      {!compact ? (
+        <CollapsibleTrigger
+          className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:text-zinc-500 dark:hover:bg-white/[0.04] dark:hover:text-zinc-300"
+          aria-label={open ? `Collapse ${displayId}` : `Expand ${displayId}`}
+        >
+          <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
+        </CollapsibleTrigger>
+      ) : null}
+    </div>
+  );
+
+  if (compact) {
+    return (
+      <div
+        className={cn(
+          "overflow-hidden rounded-[14px] border border-border/70 bg-card text-card-foreground shadow-sm transition-colors dark:border-white/8 dark:bg-[#111315] dark:text-zinc-100 dark:shadow-none",
+          compact && "cursor-pointer hover:border-foreground/20 hover:bg-muted/20 dark:hover:border-white/14 dark:hover:bg-white/[0.03]",
+        )}
+      >
+        <div className="border-b-0 bg-card px-3.5 py-2.5 dark:bg-[#111315]">
+          <div className="flex min-h-12 items-center justify-between gap-3">
+            <button type="button" className="min-w-0 flex-1 text-left" onClick={onToggleFocus}>
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-[12px] font-medium text-foreground dark:text-zinc-100" title={displayId}>
+                  {displayId}
+                </span>
+                {showWorkerNumberAfterTitle ? (
+                  <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-border/70 bg-muted/35 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-400">
+                    <Hash className="h-3 w-3" />
+                    {workerNumberLabel}
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground dark:text-zinc-500">
+                <span className={cn(
+                  "h-1.5 w-1.5 shrink-0 rounded-full",
+                  isWorkerActiveStatus(agent.state) ? "bg-emerald-500 dark:bg-emerald-300" : "bg-muted-foreground dark:bg-zinc-500",
+                )} />
+                <span className="truncate capitalize" title={compactSubtitle}>{compactSubtitle}</span>
+              </div>
+            </button>
+            {actionControls}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <Collapsible open={open} onOpenChange={(nextOpen) => workerCardManager.setOpen(workerId, nextOpen)} className={cn(shouldFillAvailable && "flex h-full min-h-0 flex-col")}>
@@ -342,126 +568,60 @@ export function WorkerCard({
         <div className="shrink-0 border-b border-border/70 bg-card px-3.5 py-3 dark:border-white/8 dark:bg-[#111315]">
           <div className="flex items-start justify-between gap-4">
             <CollapsibleTrigger className="min-w-0 flex-1 text-left">
-              <div className="min-w-0 flex-1 space-y-1.5">
-                <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
-                  <div className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] font-medium text-foreground dark:text-zinc-100" title={workerId}>
-                    <span className="break-words">{displayId}</span>
-                    {showWorkerNumberAfterTitle ? (
-                      <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-border/70 bg-muted/35 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-400">
-                        <Hash className="h-3 w-3" />
-                        {workerNumberLabel}
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="inline-flex min-w-0 shrink items-center gap-1.5 text-[11px] text-muted-foreground dark:text-zinc-400">
-                    <Bot className="h-3.5 w-3.5 text-muted-foreground/80 dark:text-zinc-500" />
-                    <span className="truncate" title={runtimeLabel || "Unknown"}>{runtimeLabel || "Unknown"}</span>
-                  </div>
-                  <div className="inline-flex min-w-0 shrink items-center gap-1.5 text-[11px] text-muted-foreground dark:text-zinc-400">
-                    <Cpu className="h-3.5 w-3.5 text-muted-foreground/80 dark:text-zinc-500" />
-                    <span className="truncate" title={activeModel || "Default"}>{activeModel || "Default"}</span>
-                  </div>
-                  {activeEffort ? <span className="shrink-0 text-[11px] text-muted-foreground dark:text-zinc-500">{activeEffort} effort</span> : null}
-                  {runtimeDurationLabel ? (
-                    <div className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground dark:text-zinc-400">
-                      <Clock className="h-3.5 w-3.5 text-muted-foreground/80 dark:text-zinc-500" />
-                      <span title={runtimeDurationLabel}>{runtimeDurationLabel}</span>
-                    </div>
-                  ) : null}
-                  {contextLabel ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        closeOnClick={false}
-                        onClick={(event) => event.stopPropagation()}
-                        render={<span className="inline-flex items-center" />}
-                      >
-                        {renderContextMeter(agent.contextUsage?.fullnessPercent)}
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom" align="center" sideOffset={8}>
-                        {contextLabel}
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : null}
-                  <div className="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium text-muted-foreground dark:text-zinc-400">
-                    <span className={cn(
-                      "h-1.5 w-1.5 rounded-full",
-                      isWorkerActiveStatus(agent.state) ? "bg-emerald-500 dark:bg-emerald-300" : "bg-muted-foreground dark:bg-zinc-500",
-                    )} />
-                    <span className="capitalize">{stateLabel}</span>
-                  </div>
-                </div>
-                {showPromptPreview ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      closeOnClick={false}
-                      render={<span className="block w-fit max-w-full" />}
-                    >
-                      <span className="line-clamp-2 text-[11px] leading-[1.35] text-muted-foreground dark:text-zinc-500">
-                        {promptPreviewText}
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent
-                      side="bottom"
-                      align="start"
-                      sideOffset={8}
-                      className="block max-h-72 max-w-[min(34rem,calc(100vw-3rem))] overflow-auto rounded-lg border border-border bg-popover p-3 text-left text-[11px] leading-[1.5] text-popover-foreground shadow-[0_18px_60px_rgba(15,23,42,0.16)] dark:border-white/10 dark:bg-[#181a1d] dark:text-zinc-200 dark:shadow-[0_18px_60px_rgba(0,0,0,0.42)]"
-                    >
-                      {promptPreviewText}
-                    </TooltipContent>
-                  </Tooltip>
-                ) : null}
-              </div>
+              {headerSummary}
             </CollapsibleTrigger>
-            <div className="flex shrink-0 items-center gap-1.5">
-              {pendingPermissions.length > 0 ? <PermissionWarning workerId={workerId} pendingPermissions={pendingPermissions} /> : null}
-              {showHeaderStopWorker ? (
-                <button
-                  type="button"
-                  aria-label={`Stop ${displayId}`}
-                  title={`Stop ${displayId}`}
-                  disabled={isStopping}
-                  className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-stone-300/80 bg-stone-100/40 text-stone-500 transition-colors hover:border-rose-300/70 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-300/15 dark:bg-red-400/[0.06] dark:text-red-100/85 dark:hover:bg-red-400/[0.12]"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onStopWorker?.();
-                  }}
-                >
-                  <Square className="h-3 w-3 fill-current" />
-                </button>
-              ) : null}
-              <CollapsibleTrigger
-                className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:text-zinc-500 dark:hover:bg-white/[0.04] dark:hover:text-zinc-300"
-                aria-label={open ? `Collapse ${displayId}` : `Expand ${displayId}`}
-              >
-                <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
-              </CollapsibleTrigger>
+            {actionControls}
+          </div>
+        </div>
+        <div
+          className={cn(
+            COLLAPSIBLE_PANEL_TRANSITION_CLASS,
+            open ? COLLAPSIBLE_PANEL_OPEN_CLASS : COLLAPSIBLE_PANEL_CLOSED_CLASS,
+            shouldFillAvailable && "min-h-0 flex-1",
+          )}
+          aria-hidden={!open}
+        >
+          <div className={cn("min-h-0 overflow-hidden", shouldFillAvailable && "flex flex-1 flex-col")}>
+            {showWorkerError ? (
+              <div className="shrink-0 border-b border-border/70 bg-destructive/8 px-4 py-3 dark:border-white/8 dark:bg-[#151012]">
+                <div className="text-[11px] text-muted-foreground dark:text-zinc-500">Error</div>
+                <div className="mt-1 break-all text-[12px] leading-[1.55] text-foreground dark:text-zinc-300">{agent.lastError}</div>
+              </div>
+            ) : null}
+            <div className={cn("relative w-full bg-muted/20 p-2 dark:bg-[#0b0c0e]", terminalHeightClass, shouldFillAvailable && "min-h-0 flex-1")}>
+              <Terminal
+                agent={agent}
+                userMessages={userMessages}
+                hasMoreHistory={hasOmittedWorkerHistory(agent)}
+                onRequestMoreHistory={onLoadWorkerHistory}
+                showTextSizeControl={false}
+              />
             </div>
           </div>
         </div>
-        <CollapsibleContent className={cn(shouldFillAvailable && "flex min-h-0 flex-1 flex-col")}>
-          {showWorkerError ? (
-            <div className="shrink-0 border-b border-border/70 bg-destructive/8 px-4 py-3 dark:border-white/8 dark:bg-[#151012]">
-              <div className="text-[11px] text-muted-foreground dark:text-zinc-500">Error</div>
-              <div className="mt-1 break-all text-[12px] leading-[1.55] text-foreground dark:text-zinc-300">{agent.lastError}</div>
-            </div>
-          ) : null}
-          <TerminalProcessSummary
-            workerId={workerId}
-            displayId={displayId}
-            processes={terminalProcesses}
-            onStopTerminalProcess={showStopWorker ? onStopTerminalProcess : undefined}
-            stoppingTerminalProcessId={stoppingTerminalProcessId}
-          />
-          <div className={cn("relative w-full bg-muted/20 p-2 dark:bg-[#0b0c0e]", terminalHeightClass, shouldFillAvailable && "min-h-0 flex-1")}>
-            <Terminal
-              agent={agent}
-              userMessages={userMessages}
-              hasMoreHistory={hasOmittedWorkerHistory(agent)}
-              onRequestMoreHistory={onLoadWorkerHistory}
-            />
-          </div>
-        </CollapsibleContent>
+        <WorkerStatusBar
+          workerId={workerId}
+          displayId={displayId}
+          workerNumberLabel={workerNumberLabel}
+          showWorkerNumberAfterTitle={showWorkerNumberAfterTitle}
+          runtimeLabel={runtimeLabel}
+          runtimeDurationLabel={runtimeDurationLabel}
+          activeModel={activeModel}
+          activeEffort={activeEffort}
+          state={agent.state}
+          stateLabel={stateLabel}
+          contextFullnessPercent={agent.contextUsage?.fullnessPercent}
+          processes={terminalProcesses}
+          showTerminalControls={open}
+          showContext={open}
+          showTextSizeControl={open}
+          onActivateTerminalSummary={() => {
+            workerCardManager.setOpen(workerId, true);
+            workerCardManager.setTerminalProcessesOpen(workerId, true);
+          }}
+          onStopTerminalProcess={showStopWorker ? onStopTerminalProcess : undefined}
+          stoppingTerminalProcessId={stoppingTerminalProcessId}
+        />
       </div>
     </Collapsible>
   );

@@ -105,14 +105,14 @@ export function useAppErrors({
     if (renameRunError) {
       errors.push(buildInlineError(renameRunError, {
         source: "Runs",
-        action: "Rename conversation",
+        action: "Rename",
       }));
     }
 
     if (deleteRunError) {
       errors.push(buildInlineError(deleteRunError, {
         source: "Runs",
-        action: "Delete conversation",
+        action: "Delete",
       }));
     }
 

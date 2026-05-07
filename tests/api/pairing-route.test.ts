@@ -101,6 +101,49 @@ describe("pairing routes", () => {
     expect(new URL(createdPayload.pairUrl).origin).toBe("https://unsuspecting-lauri-unproscribable.ngrok-free.dev");
   });
 
+  it("registers a browser-generated pairing token so the QR can render before the server round trip finishes", async () => {
+    const desktop = await createAuthSession({
+      label: "Desktop",
+      userAgent: "Desktop browser",
+      authMethod: "password_login",
+    });
+    const browserPairToken = "11111111-1111-4111-8111-111111111111.browser-generated-secret";
+
+    const createResponse = await pairCreateRoute(new NextRequest("http://localhost/api/auth/pair", {
+      method: "POST",
+      headers: {
+        cookie: makeCookie(desktop.tokenValue),
+        origin: "http://localhost",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        targetRunId: "run-browser",
+        pairToken: browserPairToken,
+      }),
+    }));
+
+    expect(createResponse.status).toBe(200);
+    const createdPayload = await createResponse.json();
+    expect(new URL(createdPayload.pairUrl).searchParams.get("pair")).toBe(browserPairToken);
+
+    const redeemResponse = await pairRedeemRoute(new NextRequest("http://localhost/api/auth/pair/redeem", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        pairToken: browserPairToken,
+      }),
+    }));
+
+    expect(redeemResponse.status).toBe(200);
+    await expect(redeemResponse.json()).resolves.toEqual(expect.objectContaining({
+      ok: true,
+      targetPath: "/session/run-browser",
+      pairingId: "11111111-1111-4111-8111-111111111111",
+    }));
+  });
+
   it("rejects reusing the same pairing token twice", async () => {
     const desktop = await createAuthSession({
       label: "Desktop",

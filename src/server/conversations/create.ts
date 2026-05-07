@@ -192,6 +192,50 @@ async function runInitialWorkerTurn(args: {
   }
 }
 
+async function startDirectWorkerConversation(args: {
+  runId: string;
+  workerId: string;
+  workerType: string;
+  cwd: string;
+  preferredWorkerModel?: string | null;
+  preferredWorkerEffort?: string | null;
+  command: string;
+}) {
+  try {
+    const agent = await spawnAgent({
+      type: args.workerType,
+      cwd: args.cwd,
+      name: args.workerId,
+      model: args.preferredWorkerModel?.trim() || undefined,
+      effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
+    });
+
+    await runInitialWorkerTurn({
+      runId: args.runId,
+      workerId: args.workerId,
+      workerType: args.workerType,
+      cwd: args.cwd,
+      agent,
+      mode: "direct",
+      command: args.command,
+    });
+  } catch (error) {
+    if (isAgentBusyError(error)) {
+      return;
+    }
+
+    const failureMessage = formatErrorMessage(error);
+    await db.update(workers).set({
+      status: "error",
+      outputLog: failureMessage,
+      updatedAt: new Date(),
+    }).where(eq(workers.id, args.workerId));
+    await persistRunFailure(args.runId, error);
+    notifyEventStreamSubscribers();
+    console.error("Initial direct conversation worker failed:", error);
+  }
+}
+
 export async function createConversation(args: {
   mode?: unknown;
   command: string;
@@ -279,30 +323,46 @@ export async function createConversation(args: {
       updatedAt: new Date(),
     });
 
-    const agent = await spawnAgent({
-      type: workerType,
-      cwd,
-      name: workerId,
-      model: args.preferredWorkerModel?.trim() || undefined,
-      effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
-    });
-
     const response = await buildCreatedConversationResponse({ planId, runId, messageId: initialMessageId, mode });
-    runInitialWorkerTurn({
-      runId,
-      workerId,
-      workerType,
-      cwd,
-      agent,
-      mode,
-      command: workerPrompt,
-    }).catch((error) => {
-      if (isAgentBusyError(error)) {
-        return;
-      }
 
-      console.error(`Initial ${mode} conversation turn failed:`, error);
-    });
+    if (mode === "direct") {
+      startDirectWorkerConversation({
+        runId,
+        workerId,
+        workerType,
+        cwd,
+        preferredWorkerModel: args.preferredWorkerModel,
+        preferredWorkerEffort: args.preferredWorkerEffort,
+        command: workerPrompt,
+      }).catch((error) => {
+        console.error("Initial direct conversation worker failed:", error);
+      });
+    } else {
+      const agent = await spawnAgent({
+        type: workerType,
+        cwd,
+        name: workerId,
+        model: args.preferredWorkerModel?.trim() || undefined,
+        effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
+      });
+
+      runInitialWorkerTurn({
+        runId,
+        workerId,
+        workerType,
+        cwd,
+        agent,
+        mode,
+        command: workerPrompt,
+      }).catch((error) => {
+        if (isAgentBusyError(error)) {
+          return;
+        }
+
+        console.error(`Initial ${mode} conversation turn failed:`, error);
+      });
+    }
+
     queueConversationTitleGeneration({ runId, command }).catch((error) => {
       console.error("Conversation title generation failed:", error);
     });

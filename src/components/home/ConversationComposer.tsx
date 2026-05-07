@@ -126,6 +126,7 @@ export function ConversationComposer({
         <ConversationModePicker
           value={selectedConversationMode}
           onChange={setSelectedConversationMode}
+          disabled={isComposerSubmitting}
         />
       ) : null}
       {showMentionPicker && (
@@ -377,7 +378,7 @@ export function ConversationComposer({
               className={cn(
                 "h-[30.6px] w-[30.6px] shrink-0 rounded-full transition-all sm:h-[34px] sm:w-[34px]",
                 themeMode === "night"
-                  ? "bg-foreground text-background hover:bg-foreground/90 disabled:bg-foreground/50"
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary/[0.45]"
                   : "bg-[#9d9d9d] text-white hover:bg-[#8b8b8b] disabled:bg-[#c9c9c9]",
               )}
             >

@@ -641,10 +641,7 @@ export function ConversationMain({
             ))}
           </div>
         ) : null}
-        <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
-          <Blocks className="h-8 w-8 text-primary" />
-        </div>
-        <h1 className="mb-1 text-2xl font-semibold">What shall we build in {welcomeRepoName}?</h1>
+        <h1 className="mb-4 text-[1.7rem] font-semibold leading-tight">What shall we build in {welcomeRepoName}?</h1>
         {emptyComposer}
       </div>
     )}

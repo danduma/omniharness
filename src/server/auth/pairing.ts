@@ -3,8 +3,9 @@ import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { authPairTokens } from "@/server/db/schema";
-import { AUTH_PAIR_TOKEN_TTL_MS, getAuthKey } from "@/server/auth/config";
+import { getAuthKey } from "@/server/auth/config";
 import { createAuthSession, parseOpaqueTokenValue } from "@/server/auth/session";
+import { AUTH_PAIR_TOKEN_TTL_MS } from "@/lib/auth-constants";
 
 function hashPairSecret(secret: string) {
   return crypto.createHmac("sha256", getAuthKey()).update(secret).digest("base64url");
@@ -18,9 +19,15 @@ export async function createPairingToken(args: {
   creatorSessionId: string;
   targetRunId?: string | null;
   deviceLabel?: string | null;
+  pairToken?: string | null;
 }) {
-  const id = randomUUID();
-  const secret = createPairSecret();
+  const providedToken = parseOpaqueTokenValue(args.pairToken);
+  if (args.pairToken && !providedToken) {
+    throw new Error("Malformed pairing token.");
+  }
+
+  const id = providedToken?.id ?? randomUUID();
+  const secret = providedToken?.secret ?? createPairSecret();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + AUTH_PAIR_TOKEN_TTL_MS);
 

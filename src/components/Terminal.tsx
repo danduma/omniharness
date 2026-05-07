@@ -17,6 +17,7 @@ interface TerminalProps {
   onRequestMoreHistory?: () => void;
   variant?: "terminal" | "native";
   className?: string;
+  showTextSizeControl?: boolean;
 }
 
 export interface TerminalUserMessage {
@@ -105,6 +106,43 @@ export function shouldTerminalFollowLatest(
   metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
 ) {
   return metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop <= TERMINAL_BOTTOM_THRESHOLD_PX;
+}
+
+export function TerminalTextSizeControl({ className }: { className?: string }) {
+  const { terminalZoom } = useManagerSnapshot(terminalUiManager);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        className={cn(
+          "inline-flex h-7 w-7 items-center justify-center rounded-full border border-border/70 bg-background/95 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 dark:border-white/10 dark:bg-[#15181d]/95 dark:text-zinc-400 dark:hover:bg-[#1d2128] dark:hover:text-zinc-100 dark:focus-visible:ring-cyan-300/45",
+          className,
+        )}
+        aria-label="Terminal text size"
+        title="Terminal text size"
+      >
+        <ALargeSmall className="h-4 w-4" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-36">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Text size</DropdownMenuLabel>
+          {TERMINAL_ZOOM_LEVELS.map((level) => (
+            <DropdownMenuItem
+              key={level.value}
+              onClick={() => terminalUiManager.setTerminalZoom(level.value)}
+              className="text-xs"
+            >
+              <span className="w-4">
+                {terminalZoom === level.value ? <Check className="h-3.5 w-3.5" /> : null}
+              </span>
+              <span>{level.label}</span>
+              {level.notch > 0 ? <span className="ml-auto text-muted-foreground">+{level.notch}</span> : null}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 function shouldTerminalRequestMoreHistory(
@@ -759,6 +797,7 @@ export function Terminal({
   onRequestMoreHistory,
   variant = "terminal",
   className,
+  showTextSizeControl = true,
 }: TerminalProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldFollowLatestRef = useRef(true);
@@ -807,34 +846,8 @@ export function Terminal({
     )}
       style={terminalZoomStyle}
     >
-      {variant === "terminal" ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            className="absolute right-2 top-2 z-20 inline-flex h-7 w-7 items-center justify-center rounded-full border border-border/70 bg-background/95 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 dark:border-white/10 dark:bg-[#15181d]/95 dark:text-zinc-400 dark:hover:bg-[#1d2128] dark:hover:text-zinc-100 dark:focus-visible:ring-cyan-300/45"
-            aria-label="Terminal text size"
-            title="Terminal text size"
-          >
-            <ALargeSmall className="h-4 w-4" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-36">
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>Text size</DropdownMenuLabel>
-              {TERMINAL_ZOOM_LEVELS.map((level) => (
-                <DropdownMenuItem
-                  key={level.value}
-                  onClick={() => terminalUiManager.setTerminalZoom(level.value)}
-                  className="text-xs"
-                >
-                  <span className="w-4">
-                    {terminalZoom === level.value ? <Check className="h-3.5 w-3.5" /> : null}
-                  </span>
-                  <span>{level.label}</span>
-                  {level.notch > 0 ? <span className="ml-auto text-muted-foreground">+{level.notch}</span> : null}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
+      {variant === "terminal" && showTextSizeControl ? (
+        <TerminalTextSizeControl className="absolute right-2 top-2 z-20" />
       ) : null}
       <div
         ref={scrollRef}

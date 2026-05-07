@@ -1,0 +1,91 @@
+import { describe, expect, it } from "vitest";
+import { buildWorkerTerminalUserMessages } from "@/lib/worker-terminal-messages";
+import type { AgentSnapshot, SupervisorInterventionRecord } from "@/app/home/types";
+import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
+
+function buildWorker(overrides: Partial<ConversationWorkerRecord> = {}): ConversationWorkerRecord {
+  return {
+    id: "run-1-worker-1",
+    runId: "run-1",
+    type: "codex",
+    status: "working",
+    initialPrompt: "Initial supervisor prompt",
+    createdAt: "2026-05-07T00:00:00.000Z",
+    updatedAt: "2026-05-07T00:05:00.000Z",
+    ...overrides,
+  };
+}
+
+function buildAgent(outputTimestamps: string[]): AgentSnapshot {
+  return {
+    name: "run-1-worker-1",
+    type: "codex",
+    state: "working",
+    outputEntries: outputTimestamps.map((timestamp, index) => ({
+      id: `entry-${index}`,
+      type: "tool_call",
+      text: `Tool ${index}`,
+      timestamp,
+    })),
+  };
+}
+
+function buildIntervention(overrides: Partial<SupervisorInterventionRecord>): SupervisorInterventionRecord {
+  return {
+    id: "intervention-1",
+    runId: "run-1",
+    workerId: "run-1-worker-1",
+    interventionType: "continue",
+    prompt: "Steer this worker in context",
+    createdAt: "2026-05-07T00:04:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("buildWorkerTerminalUserMessages", () => {
+  it("keeps worker prompts only when loaded output surrounds their timestamp", () => {
+    const messages = buildWorkerTerminalUserMessages({
+      worker: buildWorker(),
+      agent: buildAgent([
+        "2026-05-07T00:00:05.000Z",
+        "2026-05-07T00:04:30.000Z",
+      ]),
+      supervisorInterventions: [
+        buildIntervention({ id: "intervention-in-window" }),
+      ],
+    });
+
+    expect(messages.map((message) => message.id)).toEqual([
+      "run-1-worker-1:initial-prompt",
+      "intervention-in-window",
+    ]);
+  });
+
+  it("drops stale supervisor prompts when their surrounding worker output is not loaded", () => {
+    const messages = buildWorkerTerminalUserMessages({
+      worker: buildWorker(),
+      agent: buildAgent([
+        "2026-05-07T02:00:00.000Z",
+        "2026-05-07T02:01:00.000Z",
+      ]),
+      supervisorInterventions: [
+        buildIntervention({ id: "intervention-stale", createdAt: "2026-05-07T00:04:00.000Z" }),
+        buildIntervention({ id: "intervention-visible", createdAt: "2026-05-07T02:00:30.000Z" }),
+      ],
+    });
+
+    expect(messages.map((message) => message.id)).toEqual(["intervention-visible"]);
+  });
+
+  it("does not render prompt bubbles before any worker output context exists", () => {
+    const messages = buildWorkerTerminalUserMessages({
+      worker: buildWorker(),
+      agent: buildAgent([]),
+      supervisorInterventions: [
+        buildIntervention({ id: "intervention-no-context" }),
+      ],
+    });
+
+    expect(messages).toEqual([]);
+  });
+});

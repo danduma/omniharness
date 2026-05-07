@@ -43,6 +43,7 @@ export type PairingState<TPairing, TStatus> = {
   pairingStatus: TStatus | null;
   qrDataUrl: string | null;
   isLoading: boolean;
+  isActivating: boolean;
   error: string | null;
   copyNotice: string | null;
   nowMs: number;
@@ -55,6 +56,7 @@ export const pairDeviceManager = new class extends StateManager<PairingState<unk
       pairingStatus: null,
       qrDataUrl: null,
       isLoading: false,
+      isActivating: false,
       error: null,
       copyNotice: null,
       nowMs: Date.now(),
@@ -65,6 +67,7 @@ export const pairDeviceManager = new class extends StateManager<PairingState<unk
     pairing: null,
     pairingStatus: null,
     qrDataUrl: null,
+    isActivating: false,
     error: null,
     copyNotice: null,
   });
@@ -107,12 +110,19 @@ export const conversationMainManager = new class extends StateManager<{
   }));
 }();
 
-export const workersSidebarManager = new class extends StateManager<{ activeTab: "active" | "finished" }> {
+export const workersSidebarManager = new class extends StateManager<{
+  activeTab: "active" | "finished";
+  focusedWorkerId: string | null;
+}> {
   constructor() {
-    super({ activeTab: "active" });
+    super({ activeTab: "active", focusedWorkerId: null });
   }
 
-  setActiveTab = (activeTab: "active" | "finished") => this.setKey("activeTab", activeTab);
+  setActiveTab = (activeTab: "active" | "finished") => this.patch({ activeTab, focusedWorkerId: null });
+
+  setFocusedWorker = (focusedWorkerId: string | null) => this.setKey("focusedWorkerId", focusedWorkerId);
+
+  toggleFocusedWorker = (workerId: string) => this.setKey("focusedWorkerId", (current) => current === workerId ? null : workerId);
 }();
 
 export const workerCardManager = new class extends StateManager<{

@@ -46,8 +46,10 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-muted/30');
   expect(pageSource).toContain('min-h-0 flex-1 overflow-hidden');
   expect(pageSource).toContain('mt-auto shrink-0 border-t border-border/60 bg-background/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-background/80');
-  expect(pageSource).toContain('ml-3 group flex min-w-0 cursor-pointer gap-2 overflow-hidden rounded-lg border px-3 py-1.5 text-sm transition-colors');
-  expect(pageSource).toContain('flex w-4 shrink-0 items-center justify-center');
+  expect(pageSource).toContain('"group flex min-w-0 cursor-pointer overflow-hidden rounded-xl py-1.5 pl-8 pr-2 text-sm transition-colors"');
+  expect(pageSource).toContain('"bg-muted text-foreground dark:bg-white/[0.08] dark:text-zinc-100"');
+  expect(pageSource).not.toContain('ml-3 group flex min-w-0 cursor-pointer gap-2 overflow-hidden rounded-lg border px-3 py-1.5 text-sm transition-colors');
+  expect(pageSource).not.toContain('border-primary/20 bg-primary/10 font-medium text-primary');
   expect(pageSource).not.toContain('flex w-4 shrink-0 items-start justify-center pt-0.5');
   expect(pageSource).toContain('min-w-0 flex items-center justify-between gap-2');
   expect(agentSurfaceSource).toContain('border border-border/70 bg-card text-card-foreground shadow-sm dark:border-white/10');
@@ -60,7 +62,7 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(workerCardSource).toContain('userMessages?: TerminalUserMessage[];');
   expect(workersSidebarSource).toContain('promptPreview={worker.initialPrompt}');
   expect(workersSidebarSource).toContain('supervisorInterventions={supervisorInterventions}');
-  expect(workersSidebarSource).toContain('content: intervention.prompt');
+  expect(workersSidebarSource).toContain("buildWorkerTerminalUserMessages");
   expect(workerCardSource).toContain("<Terminal");
   expect(workerCardSource).toContain("hasMoreHistory={hasOmittedWorkerHistory(agent)}");
   expect(workerCardSource).toContain('entry.id === "output-archive-marker"');
@@ -161,9 +163,9 @@ test("workers sidebar gives a single visible worker the full available window an
   expect(workersSidebarSource).toContain("const hasSingleVisibleWorker = visibleWorkers.length === 1;");
   expect(workersSidebarSource).toContain('className="min-h-0 flex-1 p-3"');
   expect(workersSidebarSource).toContain('hasSingleVisibleWorker ? "flex h-full min-h-full flex-col"');
-  expect(workersSidebarSource).toContain('const terminalHeightClass = hasSingleVisibleWorker ? "h-full min-h-[24rem]" : "h-44";');
-  expect(workersSidebarSource).toContain("fillAvailable={hasSingleVisibleWorker}");
-  expect(workersSidebarSource).toContain('defaultOpen={activeTab === "active" || hasSingleVisibleWorker}');
+  expect(workersSidebarSource).toContain('const terminalHeightClass = hasSingleVisibleWorker || isFocusedWorker ? "h-full min-h-[24rem]" : "h-44";');
+  expect(workersSidebarSource).toContain("fillAvailable={hasSingleVisibleWorker || isFocusedWorker}");
+  expect(workersSidebarSource).toContain('defaultOpen={isFocusedWorker || activeTab === "active" || hasSingleVisibleWorker}');
   expect(workerCardSource).toContain("fillAvailable?: boolean;");
   expect(workerCardSource).toContain("const shouldFillAvailable = fillAvailable && open;");
   expect(workerCardSource).toContain('shouldFillAvailable && "flex h-full min-h-0 flex-col"');
@@ -171,6 +173,38 @@ test("workers sidebar gives a single visible worker the full available window an
   expect(workerCardSource).not.toContain('rounded-none border-x-0 border-b-0');
   expect(workerCardSource).toContain('shouldFillAvailable && "min-h-0 flex-1"');
   expect(workerCardSource).not.toContain('fillAvailable && "flex h-full min-h-0 flex-col"');
+});
+
+test("workers sidebar can focus one terminal while keeping other workers compactly switchable", () => {
+  expect(pageSource).toContain('focusedWorkerId: null');
+  expect(pageSource).toContain('setFocusedWorker = (focusedWorkerId: string | null)');
+  expect(pageSource).toContain('toggleFocusedWorker = (workerId: string)');
+  expect(workersSidebarSource).toContain("const focusedWorkerVisible = Boolean(focusedWorkerId && visibleWorkers.some((worker) => worker.id === focusedWorkerId));");
+  expect(workersSidebarSource).toContain("const isFocusMode = visibleWorkers.length > 1 && focusedWorkerVisible;");
+  expect(workersSidebarSource).toContain("const focusedWorker = isFocusMode ? visibleWorkers.find((worker) => worker.id === focusedWorkerId) ?? null : null;");
+  expect(workersSidebarSource).toContain("const compactWorkers = isFocusMode ? visibleWorkers.filter((worker) => worker.id !== focusedWorkerId) : [];");
+  expect(workersSidebarSource).toContain('className="min-h-0 flex-1 p-3"');
+  expect(workersSidebarSource).toContain('className="flex h-full min-h-0 flex-col gap-3"');
+  expect(workersSidebarSource).toContain('className="min-h-0 flex-1"');
+  expect(workersSidebarSource).toContain('className="max-h-64 shrink-0 pr-1"');
+  expect(workersSidebarSource).toContain('workersSidebarManager.toggleFocusedWorker(worker.id)');
+  expect(workersSidebarSource).toContain('const isCompactWorker = Boolean(options.compact);');
+  expect(workersSidebarSource).toContain('compact={isCompactWorker}');
+  expect(workersSidebarSource).toContain('isFocused={isFocusedWorker}');
+  expect(workersSidebarSource).toContain('canFocus={visibleWorkers.length > 1}');
+  expect(workerCardSource).toContain('compact?: boolean;');
+  expect(workerCardSource).toContain('isFocused?: boolean;');
+  expect(workerCardSource).toContain('canFocus?: boolean;');
+  expect(workerCardSource).toContain('onToggleFocus?: () => void;');
+  expect(workerCardSource).toContain('aria-label={isFocused ? `Show all workers` : `Focus terminal for ${displayId}`}');
+  expect(workerCardSource).toContain('title={isFocused ? "Show all workers" : "Focus terminal"}');
+  expect(workerCardSource).toContain('compact && "cursor-pointer hover:border-foreground/20 hover:bg-muted/20');
+  expect(workerCardSource).toContain('if (compact) {');
+  expect(workerCardSource).toContain('onClick={onToggleFocus}');
+  expect(workerCardSource).toContain('const compactSubtitle = [');
+  expect(workerCardSource).toContain('className="flex min-h-12 items-center justify-between gap-3"');
+  expect(workerCardSource).toContain("<Maximize2");
+  expect(workerCardSource).toContain("<Minimize2");
 });
 
 test("worker detail renders from streamed agent state instead of per-worker polling", () => {
@@ -203,20 +237,52 @@ test("main conversation does not duplicate worker panes from the sidebar", () =>
   expect(pageSource).not.toContain('{isImplementationConversation && conversationWorkerGroups.active.length > 0 && (');
   expect(pageSource).not.toContain('{conversationWorkerGroups.active.map((worker) => {');
   expect(pageSource).not.toContain('defaultOpen={false}');
-  expect(pageSource).toContain('defaultOpen={activeTab === "active" || hasSingleVisibleWorker}');
+  expect(pageSource).toContain('defaultOpen={isFocusedWorker || activeTab === "active" || hasSingleVisibleWorker}');
   expect(pageSource).not.toContain("<Cpu className=\"h-4 w-4\" /> Live CLI Agents");
   expect(pageSource).not.toContain('{conversationWorkers.length > 0 && (');
   expect(pageSource).not.toContain('{conversationWorkers.map((worker: any) => {');
 });
 
 test("worker card action buttons render outside the collapsible trigger button", () => {
-  const triggerCloseIndex = workerCardSource.indexOf("</CollapsibleTrigger>");
-  const permissionButtonIndex = workerCardSource.indexOf("<PermissionWarning");
-  const stopButtonIndex = workerCardSource.indexOf('aria-label={`Stop ${displayId}`}');
+  const headerTriggerIndex = workerCardSource.indexOf('<CollapsibleTrigger className="min-w-0 flex-1 text-left">');
+  const headerTriggerCloseIndex = workerCardSource.indexOf("</CollapsibleTrigger>", headerTriggerIndex);
+  const actionControlsIndex = workerCardSource.indexOf("{actionControls}", headerTriggerCloseIndex);
 
-  expect(triggerCloseIndex).toBeGreaterThan(-1);
-  expect(permissionButtonIndex).toBeGreaterThan(triggerCloseIndex);
-  expect(stopButtonIndex).toBeGreaterThan(triggerCloseIndex);
+  expect(headerTriggerIndex).toBeGreaterThan(-1);
+  expect(headerTriggerCloseIndex).toBeGreaterThan(headerTriggerIndex);
+  expect(actionControlsIndex).toBeGreaterThan(headerTriggerCloseIndex);
+  expect(workerCardSource).toContain("<PermissionWarning");
+  expect(workerCardSource).toContain('aria-label={`Stop ${displayId}`}');
+});
+
+test("project and terminal collapses share the side panel transition", () => {
+  expect(pageSource).toContain("COLLAPSIBLE_PANEL_TRANSITION_CLASS");
+  expect(pageSource).toContain("COLLAPSIBLE_PANEL_OPEN_CLASS");
+  expect(pageSource).toContain("COLLAPSIBLE_PANEL_CLOSED_CLASS");
+  expect(workerCardSource).toContain("COLLAPSIBLE_PANEL_TRANSITION_CLASS");
+  expect(workerCardSource).toContain("COLLAPSIBLE_PANEL_OPEN_CLASS");
+  expect(workerCardSource).toContain("COLLAPSIBLE_PANEL_CLOSED_CLASS");
+  expect(workerCardSource).toContain("onOpenChange={(nextOpen) => workerCardManager.setTerminalProcessesOpen(workerId, nextOpen)}");
+  expect(workerCardSource).toContain("onOpenChange={(nextOpen) => workerCardManager.setOpen(workerId, nextOpen)}");
+});
+
+test("worker cards keep identity and live status visible below collapsed terminals", () => {
+  expect(workerCardSource).toContain("function WorkerStatusBar");
+  expect(workerCardSource).toContain("showTerminalControls={open}");
+  expect(workerCardSource).toContain("showContext={open}");
+  expect(workerCardSource).toContain("showTextSizeControl={open}");
+  expect(workerCardSource).toContain("workerCardManager.setOpen(workerId, true);");
+  expect(workerCardSource).toContain("workerCardManager.setTerminalProcessesOpen(workerId, true);");
+  expect(workerCardSource).toContain("<TerminalTextSizeControl");
+  expect(workerCardSource).toContain("showTextSizeControl={false}");
+
+  const workerPanelIndex = workerCardSource.indexOf("open ? COLLAPSIBLE_PANEL_OPEN_CLASS : COLLAPSIBLE_PANEL_CLOSED_CLASS", workerCardSource.indexOf("<Collapsible open={open}"));
+  const workerPanelCloseIndex = workerCardSource.indexOf("</div>", workerPanelIndex);
+  const workerStatusBarIndex = workerCardSource.indexOf("<WorkerStatusBar", workerPanelCloseIndex);
+
+  expect(workerPanelIndex).toBeGreaterThan(-1);
+  expect(workerPanelCloseIndex).toBeGreaterThan(workerPanelIndex);
+  expect(workerStatusBarIndex).toBeGreaterThan(workerPanelCloseIndex);
 });
 
 test("implementation worker messages show a compact latest turn with expandable full output", () => {
@@ -281,6 +347,12 @@ test("settings render as a centered app modal with supervisor llm controls", () 
   expect(pageSource).toContain("Supervisor LLM");
   expect(pageSource).toContain("Fallback LLM");
   expect(pageSource).toContain("LLM Settings");
+  expect(pageSource).toContain("General");
+  expect(pageSource).toContain("Language");
+  expect(pageSource).toContain("LanguageSelect");
+  expect(pageSource).toContain('activeSettingsTab: "general"');
+  expect(pageSource).toContain('export type SettingsTab = "general" | "llm" | "workers"');
+  expect(pageSource).toContain("activeSettingsTab === \"general\"");
   expect(pageSource).toContain("Supervisor Credentials");
   expect(pageSource).toContain("Fallback Credentials");
   expect(pageSource).toContain("activeSettingsTab === \"llm\"");
@@ -388,7 +460,10 @@ test("project group collapsed state survives page reloads", () => {
   expect(pageSource).toContain('window.localStorage.setItem("omni-collapsed-projects", JSON.stringify(Array.from(collapsedProjectPaths)))');
   expect(pageSource).toContain("collapsedProjectPaths={collapsedProjectPaths}");
   expect(pageSource).toContain("onProjectOpenChange: handleProjectOpenChange,");
-  expect(pageSource).toContain("open={!collapsedProjectPaths.has(group.path)}");
+  expect(pageSource).toContain("const projectOpen = !collapsedProjectPaths.has(group.path);");
+  expect(pageSource).toContain("open={projectOpen}");
+  expect(pageSource).toContain("COLLAPSIBLE_PANEL_TRANSITION_CLASS");
+  expect(pageSource).toContain('projectOpen && "rotate-180"');
 });
 
 test("failed runs surface recovery UI in the header and conversation feed", () => {

@@ -73,17 +73,21 @@ export function UserInputMessage({
                     href={url}
                     target="_blank"
                     rel="noreferrer"
-                    className="group/attachment overflow-hidden rounded-xl border border-border/60 bg-[#e9e9e9] dark:border-white/10 dark:bg-black/15"
-                    title={attachment.name}
+                    className="group/attachment inline-flex max-w-full items-center gap-2 overflow-hidden rounded-xl border border-border/60 bg-[#e9e9e9] p-1.5 pr-3 text-xs dark:border-white/10 dark:bg-black/15"
+                    title={`Open ${attachment.name}`}
                   >
                     <Image
                       src={url}
                       alt={attachment.name}
-                      width={96}
-                      height={96}
+                      width={72}
+                      height={72}
                       unoptimized
-                      className="h-24 w-24 object-cover transition-transform group-hover/attachment:scale-105"
+                      className="h-[72px] w-[72px] rounded-lg object-cover transition-transform group-hover/attachment:scale-105"
                     />
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate font-medium">{attachment.name}</span>
+                      <span className="opacity-60">{formatBytes(attachment.size)}</span>
+                    </span>
                   </a>
                 ) : (
                   <div

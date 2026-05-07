@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAuthEnabled, AUTH_SESSION_COOKIE, getAuthConfigurationError } from "@/server/auth/config";
+import { isAuthEnabled, AUTH_SESSION_COOKIE, getAuthConfigurationError, getPublicOriginFromRequest } from "@/server/auth/config";
 import { listActiveSessions, getSessionFromRequest, revokeSession, revokeAllSessions } from "@/server/auth/session";
 import { insertAuthEvent } from "@/server/auth/audit";
 import { errorResponse } from "@/server/api-errors";
@@ -7,6 +7,8 @@ import { requireApiSession } from "@/server/auth/guards";
 
 export async function GET(req: NextRequest) {
   try {
+    const publicOrigin = getPublicOriginFromRequest(req.url, req.headers);
+
     if (!isAuthEnabled()) {
       return NextResponse.json({
         enabled: false,
@@ -14,6 +16,7 @@ export async function GET(req: NextRequest) {
         currentSession: null,
         sessions: [],
         configurationError: null,
+        publicOrigin,
       });
     }
 
@@ -25,6 +28,7 @@ export async function GET(req: NextRequest) {
         currentSession: null,
         sessions: [],
         configurationError,
+        publicOrigin,
       });
     }
 
@@ -36,6 +40,7 @@ export async function GET(req: NextRequest) {
         currentSession: null,
         sessions: [],
         configurationError: null,
+        publicOrigin,
       });
     }
 
@@ -46,6 +51,7 @@ export async function GET(req: NextRequest) {
       currentSession: session,
       sessions,
       configurationError: null,
+      publicOrigin,
     });
   } catch (error) {
     return errorResponse(error, {

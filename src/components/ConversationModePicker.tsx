@@ -26,31 +26,41 @@ export function getConversationModeCopy(mode: ConversationModeOption) {
 export function ConversationModePicker({
   value,
   onChange,
+  disabled = false,
 }: {
   value: ConversationModeOption;
   onChange: (mode: ConversationModeOption) => void;
+  disabled?: boolean;
 }) {
   return (
-    <div className="mb-8 space-y-3">
-      <div className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-1">
+    <div className="mb-9 space-y-4">
+      <div className="inline-flex rounded-2xl border border-border/70 bg-muted/40 p-1.5 dark:border-white/[0.12] dark:bg-black/[0.12]">
         {(Object.entries(MODE_COPY) as Array<[ConversationModeOption, { label: string }]>).map(([mode, config]) => (
           <button
             key={mode}
             type="button"
             className={cn(
-              "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+              "rounded-xl border px-3.5 py-2 text-sm font-semibold transition-colors",
               value === mode
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
+                ? "border-primary/[0.22] bg-primary/[0.055] text-primary"
+                : "border-transparent text-muted-foreground hover:bg-background/40 hover:text-foreground",
+              disabled && "cursor-not-allowed opacity-60 hover:bg-transparent hover:text-muted-foreground",
             )}
             aria-pressed={value === mode}
-            onClick={() => onChange(mode)}
+            disabled={disabled}
+            onClick={() => {
+              if (disabled) {
+                return;
+              }
+
+              onChange(mode);
+            }}
           >
             {config.label}
           </button>
         ))}
       </div>
-      <p className="max-w-2xl text-sm leading-6 text-muted-foreground">{MODE_COPY[value].description}</p>
+      <p className="mx-auto flex h-[10.5rem] max-w-[68ch] items-start justify-center text-[15px] leading-7 text-muted-foreground/90 sm:h-[5.25rem]">{MODE_COPY[value].description}</p>
     </div>
   );
 }

@@ -311,6 +311,66 @@ describe("POST /api/conversations", () => {
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
   });
 
+  it("returns a direct conversation before worker spawn completes", async () => {
+    const resolveSpawnRef: Array<(value: {
+      name: string;
+      type: string;
+      state: string;
+      cwd: string;
+      lastText: string;
+      currentText: string;
+      stderrBuffer: never[];
+      stopReason: null;
+    }) => void> = [];
+    mockSpawnAgent.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveSpawnRef[0] = resolve;
+    }));
+
+    const request = new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command: "Group all modified files into commits as they fit best",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+      }),
+    });
+
+    const responsePromise = POST(request);
+
+    let payload!: { runId: string };
+    try {
+      await expect(Promise.race([
+        responsePromise.then(() => "resolved"),
+        delay(50).then(() => "pending"),
+      ])).resolves.toBe("resolved");
+
+      payload = await (await responsePromise).json();
+      const createdWorkers = await db.select().from(workers).where(eq(workers.runId, payload.runId));
+
+      expect(createdWorkers).toHaveLength(1);
+      expect(createdWorkers[0]?.status).toBe("starting");
+      expect(mockAskAgent).not.toHaveBeenCalled();
+    } finally {
+      resolveSpawnRef[0]?.({
+        name: "worker-1",
+        type: "codex",
+        state: "idle",
+        cwd: "/workspace/app",
+        lastText: "",
+        currentText: "",
+        stderrBuffer: [],
+        stopReason: null,
+      });
+      await responsePromise.catch(() => null);
+    }
+
+    await waitFor(
+      () => Promise.resolve(mockAskAgent.mock.calls),
+      (calls) => calls.length > 0,
+    );
+  });
+
   it("returns a direct conversation before the first worker turn completes", async () => {
     const resolveAskRef: Array<(value: { response: string; state: string }) => void> = [];
     mockAskAgent.mockImplementationOnce(() => new Promise<{ response: string; state: string }>((resolve) => {

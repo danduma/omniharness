@@ -129,7 +129,7 @@ export async function PATCH(
   try {
     const auth = await requireApiSession(req, {
       source: "Runs",
-      action: "Rename conversation",
+      action: "Rename",
       enforceSameOrigin: true,
     });
     if (auth.response) {
@@ -144,7 +144,7 @@ export async function PATCH(
       return errorResponse("Title cannot be empty", {
         status: 400,
         source: "Runs",
-        action: "Rename conversation",
+        action: "Rename",
       });
     }
 
@@ -159,7 +159,7 @@ export async function PATCH(
     return errorResponse(error, {
       status: 500,
       source: "Runs",
-      action: "Rename conversation",
+      action: "Rename",
     });
   }
 }
@@ -352,7 +352,7 @@ export async function DELETE(
   try {
     const auth = await requireApiSession(req, {
       source: "Runs",
-      action: "Delete conversation",
+      action: "Delete",
       enforceSameOrigin: true,
     });
     if (auth.response) {
@@ -365,7 +365,7 @@ export async function DELETE(
       return errorResponse("Run not found", {
         status: 404,
         source: "Runs",
-        action: "Delete conversation",
+        action: "Delete",
       });
     }
 
@@ -423,7 +423,7 @@ export async function DELETE(
     return errorResponse(error, {
       status: 500,
       source: "Runs",
-      action: "Delete conversation",
+      action: "Delete",
     });
   }
 }

@@ -31,6 +31,7 @@ describe("auth routes", () => {
     setNodeEnv(originalNodeEnv);
     delete process.env.OMNIHARNESS_AUTH_PASSWORD;
     delete process.env.OMNIHARNESS_AUTH_PASSWORD_HASH;
+    delete process.env.OMNIHARNESS_PUBLIC_ORIGIN;
     resetLoginRateLimitsForTests();
   });
 
@@ -68,6 +69,17 @@ describe("auth routes", () => {
       currentSession: expect.objectContaining({
         authMethod: "password_login",
       }),
+    }));
+  });
+
+  it("reports the configured public origin for frontend pairing links", async () => {
+    process.env.OMNIHARNESS_PUBLIC_ORIGIN = "https://pair.example.test/";
+
+    const response = await getSessionRoute(new NextRequest("http://localhost/api/auth/session"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      publicOrigin: "https://pair.example.test",
     }));
   });
 

@@ -20,8 +20,10 @@ const homeAppSource = readSource("src/app/home/HomeApp.tsx");
 const markdownContentSource = readSource("src/components/MarkdownContent.tsx");
 
 test("conversation rows expose rename and delete actions", () => {
-  expect(pageSource).toContain('Rename conversation');
-  expect(pageSource).toContain('Delete conversation');
+  expect(pageSource).toContain('Rename');
+  expect(pageSource).toContain('Delete');
+  expect(pageSource).not.toContain('Rename conversation');
+  expect(pageSource).not.toContain('Delete conversation');
   expect(pageSource).toContain('requestJson(`/api/runs/${runId}`');
 });
 
@@ -30,6 +32,37 @@ test("top bar exposes an auto commit action for the selected chat", () => {
   expect(pageSource).toContain('"Create a git commit including the changes you\'ve made"');
   expect(pageSource).toContain("autoCommitChat.mutate({ runId: selectedRunId })");
   expect(pageSource).toContain("Auto Commit Chat");
+});
+
+test("top bar conversation title is plain text until explicitly edited", () => {
+  const homeHeaderSource = readSource("src/components/home/HomeHeader.tsx");
+
+  expect(homeHeaderSource).toContain("Pencil");
+  expect(homeHeaderSource).toContain("isEditingTitle ? (");
+  expect(homeHeaderSource).toContain('aria-label="Conversation title"');
+  expect(homeHeaderSource).toContain('aria-label="Edit conversation title"');
+  expect(homeHeaderSource).toContain('className="hidden');
+  expect(homeHeaderSource).toContain('lg:inline-flex');
+  expect(homeHeaderSource).toContain('onClick={beginTopBarTitleEdit}');
+  expect(homeHeaderSource).toContain('onClick={beginTopBarTitleEdit}');
+  expect(homeHeaderSource).not.toContain("readOnly={!isEditingTitle}");
+  expect(homeHeaderSource).not.toContain("titleInputValue");
+});
+
+test("user-initiated conversation sends reveal the appended turn", () => {
+  expect(homeAppSource).toContain("const scrollConversationToBottom = useCallback");
+
+  const sendConversationSuccessIndex = homeAppSource.indexOf("const sendConversationMessage = useMutation({");
+  const sendConversationScrollIndex = homeAppSource.indexOf("scrollConversationToBottom();", sendConversationSuccessIndex);
+  const autoCommitSuccessIndex = homeAppSource.indexOf("const autoCommitChat = useMutation({");
+  const autoCommitScrollIndex = homeAppSource.indexOf("scrollConversationToBottom();", autoCommitSuccessIndex);
+  const autoCommitProjectIndex = homeAppSource.indexOf("const autoCommitProject = useMutation({");
+
+  expect(sendConversationSuccessIndex).toBeGreaterThanOrEqual(0);
+  expect(sendConversationScrollIndex).toBeGreaterThan(sendConversationSuccessIndex);
+  expect(autoCommitSuccessIndex).toBeGreaterThanOrEqual(0);
+  expect(autoCommitScrollIndex).toBeGreaterThan(autoCommitSuccessIndex);
+  expect(autoCommitScrollIndex).toBeLessThan(autoCommitProjectIndex);
 });
 
 test("project menus expose an auto commit action that starts a direct worker conversation", () => {
@@ -100,6 +133,16 @@ test("user input messages share the direct-control bubble renderer", () => {
   expect(conversationMainSource).toContain('createdAt={msg.createdAt}');
   expect(conversationMainSource).not.toContain('rounded-[1.9rem] rounded-br-lg bg-[#242424]');
   expect(conversationMainSource).not.toContain('msg.role === "user"\n                      ? "border-transparent bg-muted/30 text-foreground"');
+});
+
+test("user input image attachments keep visible attachment metadata in history", () => {
+  const userInputSource = readSource("src/components/home/UserInputMessage.tsx");
+
+  expect(userInputSource).toContain('attachment.kind === "image" && url');
+  expect(userInputSource).toContain('alt={attachment.name}');
+  expect(userInputSource).toContain('{attachment.name}');
+  expect(userInputSource).toContain('{formatBytes(attachment.size)}');
+  expect(userInputSource).toContain('title={`Open ${attachment.name}`}');
 });
 
 test("saving an edited message closes the inline editor before the rerun request resolves", () => {

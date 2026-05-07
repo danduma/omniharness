@@ -138,6 +138,18 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain("<Square className=\"h-[13.6px] w-[13.6px] fill-current\" />");
 });
 
+test("new-conversation mode selection locks while the send mutation is pending", () => {
+  const modePickerSource = fs.readFileSync(
+    path.resolve(process.cwd(), "src/components/ConversationModePicker.tsx"),
+    "utf8"
+  );
+
+  expect(pageSource).toContain("disabled={isComposerSubmitting}");
+  expect(modePickerSource).toContain("disabled?: boolean");
+  expect(modePickerSource).toContain("disabled={disabled}");
+  expect(modePickerSource).toContain("if (disabled) {");
+});
+
 test("worker cards expose individual stop controls", () => {
   expect(pageSource).toContain("stopWorker.mutate({ runId: selectedRunId, workerId })");
   expect(pageSource).toContain("onStopWorker={onStopWorker}");

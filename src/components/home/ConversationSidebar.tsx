@@ -1,11 +1,12 @@
 import type React from "react";
-import { CheckCircle2, Clock, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, Pencil, Plus, Search, Settings, Smartphone, Trash2, XCircle } from "lucide-react";
+import { ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, Pencil, Plus, Search, Settings, Smartphone, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { getRunLatestMessageTimestamp, isRunUnread } from "@/lib/conversation-state";
+import { cn } from "@/lib/utils";
 import type { SidebarGroup, SidebarRun } from "@/app/home/types";
 
 export interface ConversationSidebarProps {
@@ -98,16 +99,23 @@ export function ConversationSidebar({
           </div>
 
           {filteredProjects.length > 0 ? (
-            filteredProjects.map((group) => (
+            filteredProjects.map((group) => {
+              const projectOpen = !collapsedProjectPaths.has(group.path);
+
+              return (
               <Collapsible
                 key={group.path}
-                open={!collapsedProjectPaths.has(group.path)}
+                open={projectOpen}
                 onOpenChange={(open) => onProjectOpenChange(group.path, open)}
               >
                 <div className="group mb-1 flex items-center justify-between rounded px-2 hover:bg-muted/30">
                   <CollapsibleTrigger className="flex flex-1 items-center gap-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
                     <Folder className="h-4 w-4 shrink-0 text-primary/70" />
                     <span className="truncate">{group.name}</span>
+                    <ChevronDown
+                      className={cn("ml-auto h-3.5 w-3.5 shrink-0 transition-transform duration-150 ease-out", projectOpen && "rotate-180")}
+                      aria-hidden="true"
+                    />
                   </CollapsibleTrigger>
 
                   {group.path !== "other" && (
@@ -142,109 +150,109 @@ export function ConversationSidebar({
                   )}
                 </div>
 
-                <CollapsibleContent className="space-y-0.5">
-                  {group.runs.length === 0 ? (
-                    isHydratingConversations ? (
-                      <div className="flex items-center gap-2 py-1 pl-8 text-xs text-muted-foreground/70">
-                        <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                        <span>Loading conversations...</span>
-                      </div>
-                    ) : (
-                      <div className="py-1 pl-8 text-xs italic text-muted-foreground/60">No conversations</div>
-                    )
-                  ) : null}
-                  {group.runs.map((run) => (
-                    <div
-                      key={run.id}
-                      onClick={() => selectRun(run.id)}
-                      className={`ml-3 group flex min-w-0 cursor-pointer gap-2 overflow-hidden rounded-lg border px-3 py-1.5 text-sm transition-colors ${
-                        selectedRunId === run.id
-                          ? "border-primary/20 bg-primary/10 font-medium text-primary"
-                          : "border-transparent text-muted-foreground hover:bg-muted/80"
-                      }`}
-                    >
-                      <div className="flex w-4 shrink-0 items-center justify-center">
-                        {run.status === "running" ? (
-                          <LoaderCircle className="h-3.5 w-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" />
-                        ) : null}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="min-w-0 flex items-center justify-between gap-2" title={run.path}>
-                          {renamingRunId === run.id && renameSource !== "topbar" ? (
-                            <Input
-                              value={renameValue}
-                              onChange={(event) => setRenameValue(event.target.value)}
-                              onClick={(event) => event.stopPropagation()}
-                              onKeyDown={(event) => {
-                                event.stopPropagation();
-                                if (event.key === "Enter") {
-                                  event.preventDefault();
-                                  commitRenamingRun(run.id);
-                                } else if (event.key === "Escape") {
-                                  event.preventDefault();
-                                  cancelRenamingRun();
-                                }
-                              }}
-                              onBlur={() => commitRenamingRun(run.id)}
-                              autoFocus
-                              className="h-7 min-w-0 text-[13px]"
-                            />
-                          ) : (
-                            <span className="truncate text-[13px]">{run.title}</span>
-                          )}
-                          <div className="flex shrink-0 items-center gap-1">
-                            {isRunUnread({
-                              latestMessageAt: getRunLatestMessageTimestamp(run.id, messages || []),
-                              lastReadAt: readMarkers[run.id] ?? null,
-                            }) ? (
-                              <div className="h-2 w-2 shrink-0 rounded-full bg-blue-500" />
-                            ) : run.status === "done" ? (
-                              <CheckCircle2 className="ml-2 h-3 w-3 shrink-0 text-green-500" />
-                            ) : run.status === "failed" ? (
-                              <XCircle className="ml-2 h-3 w-3 shrink-0 text-red-500" />
-                            ) : null}
-                            <DropdownMenu>
-                              <DropdownMenuTrigger
+                <div
+                  className={cn(
+                    COLLAPSIBLE_PANEL_TRANSITION_CLASS,
+                    projectOpen ? COLLAPSIBLE_PANEL_OPEN_CLASS : COLLAPSIBLE_PANEL_CLOSED_CLASS,
+                  )}
+                  aria-hidden={!projectOpen}
+                >
+                  <div className="min-h-0 space-y-0.5 overflow-hidden">
+                    {group.runs.length === 0 ? (
+                      isHydratingConversations ? (
+                        <div className="flex items-center gap-2 py-1 pl-8 text-xs text-muted-foreground/70">
+                          <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                          <span>Loading conversations...</span>
+                        </div>
+                      ) : (
+                        <div className="py-1 pl-8 text-xs italic text-muted-foreground/60">No conversations</div>
+                      )
+                    ) : null}
+                    {group.runs.map((run) => (
+                      <div
+                        key={run.id}
+                        onClick={() => selectRun(run.id)}
+                        className={cn(
+                          "group flex min-w-0 cursor-pointer overflow-hidden rounded-xl py-1.5 pl-8 pr-2 text-sm transition-colors",
+                          selectedRunId === run.id
+                            ? "bg-muted text-foreground dark:bg-white/[0.08] dark:text-zinc-100"
+                            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground dark:text-zinc-300 dark:hover:bg-white/[0.045] dark:hover:text-zinc-100",
+                        )}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="min-w-0 flex items-center justify-between gap-2" title={run.path}>
+                            {renamingRunId === run.id && renameSource !== "topbar" ? (
+                              <Input
+                                value={renameValue}
+                                onChange={(event) => setRenameValue(event.target.value)}
                                 onClick={(event) => event.stopPropagation()}
-                                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-sm font-medium text-muted-foreground opacity-100 transition-colors ring-offset-background hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 lg:opacity-0 lg:group-hover:opacity-100"
-                                aria-label={`Conversation actions for ${run.title}`}
-                              >
-                                <MoreHorizontal className="h-3.5 w-3.5" />
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem
-                                  className="cursor-pointer whitespace-nowrap"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    startRenamingRun(run);
-                                  }}
+                                onKeyDown={(event) => {
+                                  event.stopPropagation();
+                                  if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    commitRenamingRun(run.id);
+                                  } else if (event.key === "Escape") {
+                                    event.preventDefault();
+                                    cancelRenamingRun();
+                                  }
+                                }}
+                                onBlur={() => commitRenamingRun(run.id)}
+                                autoFocus
+                                className="h-7 min-w-0 text-[13px]"
+                              />
+                            ) : (
+                              <span className="truncate text-[13px]">{run.title}</span>
+                            )}
+                            <div className="flex shrink-0 items-center gap-1">
+                              {run.status === "running" ? (
+                                <LoaderCircle className="h-3.5 w-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" />
+                              ) : null}
+                              {isRunUnread({
+                                latestMessageAt: getRunLatestMessageTimestamp(run.id, messages || []),
+                                lastReadAt: readMarkers[run.id] ?? null,
+                              }) ? (
+                                <div className="h-2 w-2 shrink-0 rounded-full bg-blue-500" />
+                              ) : null}
+                              <DropdownMenu>
+                                <DropdownMenuTrigger
+                                  onClick={(event) => event.stopPropagation()}
+                                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-sm font-medium text-muted-foreground opacity-100 transition-colors ring-offset-background hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 lg:opacity-0 lg:group-hover:opacity-100"
+                                  aria-label={`Conversation actions for ${run.title}`}
                                 >
-                                  <Pencil className="mr-2 h-4 w-4" /> Rename conversation
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  variant="destructive"
-                                  className="cursor-pointer whitespace-nowrap"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    deleteRun(run);
-                                  }}
-                                >
-                                  <Trash2 className="mr-2 h-4 w-4" /> Delete conversation
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
+                                  <MoreHorizontal className="h-3.5 w-3.5" />
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="min-w-28">
+                                  <DropdownMenuItem
+                                    className="cursor-pointer whitespace-nowrap"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      startRenamingRun(run);
+                                    }}
+                                  >
+                                    <Pencil className="mr-2 h-4 w-4" /> Rename
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    variant="destructive"
+                                    className="cursor-pointer whitespace-nowrap"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      deleteRun(run);
+                                    }}
+                                  >
+                                    <Trash2 className="mr-2 h-4 w-4" /> Delete
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1 text-[10px] opacity-70">
-                          <Clock className="h-2.5 w-2.5" />
-                          {new Date(run.createdAt).toLocaleDateString()}
-                        </div>
                       </div>
-                    </div>
-                  ))}
-                </CollapsibleContent>
+                    ))}
+                  </div>
+                </div>
               </Collapsible>
-            ))
+              );
+            })
           ) : (
             <p className="pl-2 text-sm text-muted-foreground">No projects added.</p>
           )}

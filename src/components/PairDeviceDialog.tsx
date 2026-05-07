@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { pairDeviceManager, type PairingState } from "@/components/component-state-managers";
 import { requestJson } from "@/lib/app-errors";
+import { createLocalPairingDraft } from "@/lib/local-pairing-token";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 
 type PairCreateResponse = {
@@ -30,13 +31,38 @@ interface PairDeviceDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   selectedRunId?: string | null;
+  publicOrigin?: string | null;
   availabilityError?: string | null;
+}
+
+function isLoopbackOrigin(origin: string) {
+  try {
+    const hostname = new URL(origin).hostname;
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  } catch {
+    return false;
+  }
+}
+
+function resolvePairingOrigin(publicOrigin: string | null | undefined) {
+  const configuredOrigin = publicOrigin?.trim().replace(/\/+$/, "");
+  if (configuredOrigin && !isLoopbackOrigin(configuredOrigin)) {
+    return configuredOrigin;
+  }
+
+  const currentOrigin = window.location.origin;
+  if (!isLoopbackOrigin(currentOrigin)) {
+    return currentOrigin;
+  }
+
+  return null;
 }
 
 export function PairDeviceDialog({
   open,
   onOpenChange,
   selectedRunId = null,
+  publicOrigin = null,
   availabilityError = null,
 }: PairDeviceDialogProps) {
   const {
@@ -44,6 +70,7 @@ export function PairDeviceDialog({
     pairingStatus,
     qrDataUrl,
     isLoading,
+    isActivating,
     error,
     copyNotice,
     nowMs,
@@ -57,29 +84,37 @@ export function PairDeviceDialog({
   }, [nowMs, pairing?.expiresAt]);
 
   const createPairing = useCallback(async () => {
+    const pairingOrigin = resolvePairingOrigin(publicOrigin);
+    if (!pairingOrigin) {
+      pairDeviceManager.patch({
+        isLoading: false,
+        isActivating: false,
+        error: "Phone pairing needs a public or LAN URL. Set OMNIHARNESS_PUBLIC_ORIGIN or open OmniHarness through its tunnel/LAN address.",
+        copyNotice: null,
+        pairing: null,
+        pairingStatus: null,
+        qrDataUrl: null,
+        nowMs: Date.now(),
+      });
+      return;
+    }
+
+    const draft = createLocalPairingDraft({
+      origin: pairingOrigin,
+      targetRunId: selectedRunId,
+    });
+
     pairDeviceManager.patch({
       isLoading: true,
       error: null,
       copyNotice: null,
       pairingStatus: null,
+      isActivating: false,
       nowMs: Date.now(),
     });
 
     try {
-      const data = await requestJson<PairCreateResponse>("/api/auth/pair", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          targetRunId: selectedRunId,
-        }),
-      }, {
-        source: "Auth",
-        action: "Create pairing QR",
-      });
-
-      const nextQrDataUrl = await QRCode.toDataURL(data.pairUrl, {
+      const nextQrDataUrl = await QRCode.toDataURL(draft.pairUrl, {
         margin: 1,
         width: 320,
         color: {
@@ -87,21 +122,68 @@ export function PairDeviceDialog({
           light: "#fbfdf9",
         },
       });
+
       pairDeviceManager.patch({
-        pairing: data,
+        pairing: {
+          pairingId: draft.pairingId,
+          pairUrl: draft.pairUrl,
+          expiresAt: draft.expiresAt,
+        },
         pairingStatus: "pending",
         qrDataUrl: nextQrDataUrl,
+        isLoading: false,
+        isActivating: true,
+      });
+
+      const data = await requestJson<PairCreateResponse>("/api/auth/pair", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          targetRunId: selectedRunId,
+          pairToken: draft.pairToken,
+        }),
+      }, {
+        source: "Auth",
+        action: "Create pairing QR",
+      });
+
+      pairDeviceManager.patch((current) => {
+        const currentPairing = current.pairing as PairCreateResponse | null;
+        return currentPairing && data.pairingId === draft.pairingId
+          ? {
+            pairing: data,
+            pairingStatus: "pending",
+            qrDataUrl: nextQrDataUrl,
+            isActivating: false,
+          }
+          : {};
       });
     } catch (pairError) {
-      pairDeviceManager.patch({
-        error: pairError instanceof Error ? pairError.message : String(pairError),
-        pairing: null,
-        qrDataUrl: null,
+      const message = pairError instanceof Error ? pairError.message : String(pairError);
+      pairDeviceManager.patch((current) => {
+        const currentPairing = current.pairing as PairCreateResponse | null;
+        return currentPairing && currentPairing.pairingId === draft.pairingId
+          ? {
+            error: message,
+            isLoading: false,
+            isActivating: false,
+          }
+          : {
+            error: message,
+            pairing: null,
+            qrDataUrl: null,
+            isLoading: false,
+            isActivating: false,
+          };
       });
-    } finally {
-      pairDeviceManager.setKey("isLoading", false);
     }
-  }, [selectedRunId]);
+  }, [publicOrigin, selectedRunId]);
+
+  const refreshPairing = useCallback(() => {
+    void createPairing();
+  }, [createPairing]);
 
   useEffect(() => {
     if (!open) {
@@ -127,7 +209,7 @@ export function PairDeviceDialog({
   }, [open, pairing?.expiresAt, pairingStatus]);
 
   useEffect(() => {
-    if (!open || !pairing?.pairingId || pairingStatus !== "pending") {
+    if (!open || !pairing?.pairingId || pairingStatus !== "pending" || isActivating || error) {
       return;
     }
 
@@ -145,7 +227,7 @@ export function PairDeviceDialog({
     }, 2000);
 
     return () => window.clearInterval(interval);
-  }, [open, pairing?.pairingId, pairingStatus]);
+  }, [error, isActivating, open, pairing?.pairingId, pairingStatus]);
 
   useEffect(() => {
     if (!open) {
@@ -161,13 +243,17 @@ export function PairDeviceDialog({
     pairDeviceManager.setKey("copyNotice", "Link copied.");
   }
 
-  const statusLabel = pairingStatus === "redeemed"
-    ? "Phone connected"
-    : pairingStatus === "expired"
-      ? "Code expired"
-      : pairingStatus === "revoked"
-        ? "Code revoked"
-        : "Waiting for scan";
+  const statusLabel = error
+    ? "Code not active"
+    : isActivating
+      ? "Activating code"
+      : pairingStatus === "redeemed"
+        ? "Phone connected"
+        : pairingStatus === "expired"
+          ? "Code expired"
+          : pairingStatus === "revoked"
+            ? "Code revoked"
+            : "Waiting for scan";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -261,7 +347,7 @@ export function PairDeviceDialog({
             ) : null}
 
             <div className="mt-auto flex flex-col-reverse gap-2 border-t border-border/60 pt-4 sm:flex-row sm:justify-end">
-              <Button type="button" variant="outline" onClick={() => void createPairing()} disabled={Boolean(availabilityError)}>
+              <Button type="button" variant="outline" onClick={refreshPairing} disabled={Boolean(availabilityError)}>
                 <RefreshCcw className="mr-2 h-4 w-4" />
                 Refresh code
               </Button>

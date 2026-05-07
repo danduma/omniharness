@@ -1,5 +1,5 @@
-import type React from "react";
-import { AlertTriangle, GitCommitHorizontal, Menu, PanelRight } from "lucide-react";
+import { useCallback, type Dispatch, type SetStateAction } from "react";
+import { AlertTriangle, GitCommitHorizontal, Menu, PanelRight, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -22,7 +22,7 @@ interface HomeHeaderProps {
   readMarkers: Record<string, string>;
   collapsedProjectPaths: Set<string>;
   onProjectOpenChange: (projectPath: string, open: boolean) => void;
-  setShowSettings: React.Dispatch<React.SetStateAction<boolean>>;
+  setShowSettings: Dispatch<SetStateAction<boolean>>;
   openFolderPicker: () => void;
   startNewPlan: () => void;
   beginConversationInProject: (projectPath: string) => void;
@@ -45,7 +45,7 @@ interface HomeHeaderProps {
   selectedRun: RunRecord | null;
   isImplementationConversation: boolean;
   themeMode: "day" | "night";
-  setThemeMode: React.Dispatch<React.SetStateAction<"day" | "night">>;
+  setThemeMode: Dispatch<SetStateAction<"day" | "night">>;
   rightSidebarOpen: boolean;
   setRightSidebarOpen: (open: boolean) => void;
   mobileWorkersOpen: boolean;
@@ -134,7 +134,14 @@ export function HomeHeader({
     });
   };
 
-  const titleInputValue = isEditingTitle ? renameValue : titleLabel;
+  const focusTitleInput = useCallback((node: HTMLInputElement | null) => {
+    if (!node || !isEditingTitle) {
+      return;
+    }
+
+    node.focus();
+    node.select();
+  }, [isEditingTitle]);
 
   return (
   <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border/50 px-3 sm:px-4">
@@ -184,53 +191,55 @@ export function HomeHeader({
         {titleLabel || rootFolderLabel ? (
           <div className="flex min-w-0 items-baseline gap-2">
             {titleLabel && selectedRun ? (
-              <Input
-                aria-label="Edit conversation title"
-                value={titleInputValue}
-                readOnly={!isEditingTitle}
-                onPointerDown={(event) => {
-                  if (!isEditingTitle) {
-                    event.currentTarget.focus();
-                    beginTopBarTitleEdit();
-                  }
-                }}
-                onFocus={(event) => {
-                  if (!isEditingTitle) {
-                    beginTopBarTitleEdit();
-                  }
-                  event.currentTarget.select();
-                }}
-                onChange={(event) => {
-                  if (isEditingTitle) {
-                    setRenameValue(event.target.value);
-                  }
-                }}
-                onKeyDown={(event) => {
-                  event.stopPropagation();
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    if (isEditingTitle) {
+              isEditingTitle ? (
+                <Input
+                  ref={focusTitleInput}
+                  aria-label="Edit conversation title"
+                  value={renameValue}
+                  onChange={(event) => setRenameValue(event.target.value)}
+                  onKeyDown={(event) => {
+                    event.stopPropagation();
+                    if (event.key === "Enter") {
+                      event.preventDefault();
                       commitRenamingRun(selectedRun.id);
-                    } else {
-                      beginTopBarTitleEdit();
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      cancelRenamingRun();
                     }
-                  } else if (event.key === "Escape") {
-                    event.preventDefault();
-                    cancelRenamingRun();
-                  }
-                }}
-                onBlur={() => {
-                  if (isEditingTitle) {
-                    commitRenamingRun(selectedRun.id);
-                  }
-                }}
-                title={`${titleLabel} — tap to rename`}
-                className={
-                  isEditingTitle
-                    ? "h-8 w-[18rem] max-w-[calc(100vw-10rem)] rounded-md border-border/70 bg-background px-2 text-sm font-semibold sm:w-[26rem]"
-                    : "h-8 w-[18rem] max-w-[calc(100vw-10rem)] cursor-text truncate border-transparent bg-transparent px-1 text-sm font-semibold text-foreground shadow-none hover:bg-muted focus-visible:border-ring sm:w-[26rem]"
-                }
-              />
+                  }}
+                  className="h-8 w-[18rem] max-w-[calc(100vw-10rem)] rounded-md border-border/70 bg-background px-2 text-sm font-semibold sm:w-[26rem]"
+                />
+              ) : (
+                <div className="group/title flex min-w-0 items-center gap-1.5">
+                  <button
+                    type="button"
+                    aria-label="Conversation title"
+                    title={`${titleLabel} — tap to rename`}
+                    className="min-w-0 truncate rounded-sm px-1 text-left text-sm font-semibold text-foreground lg:hidden"
+                    onClick={beginTopBarTitleEdit}
+                  >
+                    {titleLabel}
+                  </button>
+                  <span
+                    aria-label="Conversation title"
+                    className="hidden min-w-0 max-w-[26rem] truncate px-1 text-sm font-semibold text-foreground lg:block"
+                    title={titleLabel}
+                  >
+                    {titleLabel}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Edit conversation title"
+                    title="Edit conversation title"
+                    className="pointer-events-none hidden h-7 w-7 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/title:pointer-events-auto group-hover/title:opacity-100 lg:inline-flex"
+                    onClick={beginTopBarTitleEdit}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              )
             ) : null}
             {rootFolderLabel ? (
               <span

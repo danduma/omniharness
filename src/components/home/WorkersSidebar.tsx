@@ -3,11 +3,11 @@ import { Cpu, Moon, Sun, Terminal as TerminalIcon, XCircle } from "lucide-react"
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkerCard } from "@/components/WorkerCard";
-import type { TerminalUserMessage } from "@/components/Terminal";
 import { workersSidebarManager } from "@/components/component-state-managers";
 import { WORKER_OPTIONS } from "@/app/home/constants";
 import type { AgentSnapshot, SupervisorInterventionRecord } from "@/app/home/types";
 import { buildWorkerLists, getWorkerRuntimeLabel, type ConversationWorkerRecord } from "@/lib/conversation-workers";
+import { buildWorkerTerminalUserMessages } from "@/lib/worker-terminal-messages";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
@@ -70,6 +70,10 @@ export function ConversationWorkerCard({
   onLoadWorkerHistory,
   isStopping,
   stoppingTerminalProcessId,
+  compact = false,
+  isFocused = false,
+  canFocus = false,
+  onToggleFocus,
 }: {
   worker: ConversationWorkerRecord;
   agent?: AgentSnapshot | null;
@@ -85,6 +89,10 @@ export function ConversationWorkerCard({
   onLoadWorkerHistory?: (workerId: string) => void;
   isStopping?: boolean;
   stoppingTerminalProcessId?: string | null;
+  compact?: boolean;
+  isFocused?: boolean;
+  canFocus?: boolean;
+  onToggleFocus?: () => void;
 }) {
   const configuredModel = agent?.requestedModel || preferredModel || null;
   const configuredEffort = agent?.requestedEffort || preferredEffort || null;
@@ -93,39 +101,19 @@ export function ConversationWorkerCard({
   const pendingPermissions = agent?.pendingPermissions ?? [];
   const runtimeLabel = formatWorkerRuntime(agent?.type || worker.type);
   const runtimeDurationLabel = getWorkerRuntimeLabel(worker);
-  const fallbackAgent = agent ?? {
+  const fallbackAgent = useMemo(() => agent ?? {
     name: worker.id,
     type: worker.type,
     state: worker.status,
     currentText: "",
     lastText: "",
     displayText: fallbackPreview ?? "",
-  };
-  const userMessages = useMemo<TerminalUserMessage[]>(() => {
-    const messages: TerminalUserMessage[] = [];
-    const initialPrompt = worker.initialPrompt?.trim();
-    if (initialPrompt) {
-      messages.push({
-        id: `${worker.id}:initial-prompt`,
-        content: initialPrompt,
-        createdAt: worker.createdAt ?? new Date(0).toISOString(),
-      });
-    }
-
-    for (const intervention of supervisorInterventions) {
-      if (intervention.workerId !== worker.id || !intervention.prompt.trim()) {
-        continue;
-      }
-
-      messages.push({
-        id: intervention.id,
-        content: intervention.prompt,
-        createdAt: intervention.createdAt,
-      });
-    }
-
-    return messages;
-  }, [supervisorInterventions, worker.createdAt, worker.id, worker.initialPrompt]);
+  }, [agent, fallbackPreview, worker.id, worker.status, worker.type]);
+  const userMessages = useMemo(() => buildWorkerTerminalUserMessages({
+    worker,
+    agent: fallbackAgent,
+    supervisorInterventions,
+  }), [fallbackAgent, supervisorInterventions, worker]);
 
   return (
     <WorkerCard
@@ -143,6 +131,10 @@ export function ConversationWorkerCard({
       pendingPermissions={pendingPermissions}
       terminalHeightClass={terminalHeightClass}
       fillAvailable={fillAvailable}
+      compact={compact}
+      isFocused={isFocused}
+      canFocus={canFocus}
+      onToggleFocus={onToggleFocus}
       onStopWorker={onStopWorker ? () => onStopWorker(worker.id) : undefined}
       onStopTerminalProcess={onStopTerminalProcess ? (terminalProcess) => onStopTerminalProcess(worker.id, terminalProcess) : undefined}
       onLoadWorkerHistory={onLoadWorkerHistory ? () => onLoadWorkerHistory(worker.id) : undefined}
@@ -153,7 +145,7 @@ export function ConversationWorkerCard({
 }
 
 export function WorkersSidebar({ workers, agents, supervisorInterventions, preferredModel, preferredEffort, onStopWorker, onStopTerminalProcess, onLoadWorkerHistory, stoppingWorkerId, stoppingTerminalProcess, onClose }: WorkersSidebarProps) {
-  const { activeTab: requestedActiveTab } = useManagerSnapshot(workersSidebarManager);
+  const { activeTab: requestedActiveTab, focusedWorkerId } = useManagerSnapshot(workersSidebarManager);
   const workerGroups = buildWorkerLists(workers);
   const agentsById = useMemo(
     () => new Map(agents.map((agent) => [agent.name, agent])),
@@ -167,9 +159,55 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
       : requestedActiveTab;
   const visibleWorkers = activeTab === "active" ? workerGroups.active : workerGroups.finished;
   const hasSingleVisibleWorker = visibleWorkers.length === 1;
+  const focusedWorkerVisible = Boolean(focusedWorkerId && visibleWorkers.some((worker) => worker.id === focusedWorkerId));
+  const isFocusMode = visibleWorkers.length > 1 && focusedWorkerVisible;
+  const focusedWorker = isFocusMode ? visibleWorkers.find((worker) => worker.id === focusedWorkerId) ?? null : null;
+  const compactWorkers = isFocusMode ? visibleWorkers.filter((worker) => worker.id !== focusedWorkerId) : [];
+  const renderWorkerCard = (worker: ConversationWorkerRecord, options: { compact?: boolean; isFocused?: boolean } = {}) => {
+    const agent = agentsById.get(worker.id) ?? {
+      name: worker.id,
+      type: worker.type,
+      state: worker.status,
+      currentText: "",
+      lastText: "",
+    };
+    const isFocusedWorker = Boolean(options.isFocused);
+    const isCompactWorker = Boolean(options.compact);
+    const terminalHeightClass = hasSingleVisibleWorker || isFocusedWorker ? "h-full min-h-[24rem]" : "h-44";
+
+    return (
+      <ConversationWorkerCard
+        key={`${activeTab}-${worker.id}`}
+        worker={worker}
+        agent={agent}
+        preferredModel={preferredModel}
+        preferredEffort={preferredEffort}
+        supervisorInterventions={supervisorInterventions}
+        defaultOpen={isFocusedWorker || activeTab === "active" || hasSingleVisibleWorker}
+        terminalHeightClass={terminalHeightClass}
+        fillAvailable={hasSingleVisibleWorker || isFocusedWorker}
+        compact={isCompactWorker}
+        isFocused={isFocusedWorker}
+        canFocus={visibleWorkers.length > 1}
+        onToggleFocus={() => workersSidebarManager.toggleFocusedWorker(worker.id)}
+        onStopWorker={onStopWorker}
+        onStopTerminalProcess={onStopTerminalProcess}
+        onLoadWorkerHistory={onLoadWorkerHistory}
+        isStopping={stoppingWorkerId === worker.id}
+        stoppingTerminalProcessId={stoppingTerminalProcess?.workerId === worker.id ? stoppingTerminalProcess.terminalProcessId : null}
+      />
+    );
+  };
 
   return (
-    <div className="flex h-full min-h-0 w-full min-w-0 flex-col bg-muted/10">
+    <div
+      className="flex h-full min-h-0 w-full min-w-0 flex-col bg-muted/10"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && isFocusMode) {
+          workersSidebarManager.setFocusedWorker(null);
+        }
+      }}
+    >
       <div className="flex items-center justify-between border-b px-3 py-2.5">
         <h3 className="flex items-center gap-2 text-sm font-semibold">
           <Cpu className="h-4 w-4" /> Conversation Workers
@@ -208,48 +246,37 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
           </button>
         </div>
       </div>
-      <ScrollArea className="min-h-0 flex-1 p-3">
-        <div className={cn(
-          hasSingleVisibleWorker ? "flex h-full min-h-full flex-col" : visibleWorkers.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col",
-        )}>
-          {visibleWorkers.length > 0 ? (
-            visibleWorkers.map((worker) => {
-              const agent = agentsById.get(worker.id) ?? {
-                name: worker.id,
-                type: worker.type,
-                state: worker.status,
-                currentText: "",
-                lastText: "",
-              };
-              const terminalHeightClass = hasSingleVisibleWorker ? "h-full min-h-[24rem]" : "h-44";
-
-              return (
-                <ConversationWorkerCard
-                  key={`${activeTab}-${worker.id}`}
-                  worker={worker}
-                  agent={agent}
-                  preferredModel={preferredModel}
-                  preferredEffort={preferredEffort}
-                  supervisorInterventions={supervisorInterventions}
-                  defaultOpen={activeTab === "active" || hasSingleVisibleWorker}
-                  terminalHeightClass={terminalHeightClass}
-                  fillAvailable={hasSingleVisibleWorker}
-                  onStopWorker={onStopWorker}
-                  onStopTerminalProcess={onStopTerminalProcess}
-                  onLoadWorkerHistory={onLoadWorkerHistory}
-                  isStopping={stoppingWorkerId === worker.id}
-                  stoppingTerminalProcessId={stoppingTerminalProcess?.workerId === worker.id ? stoppingTerminalProcess.terminalProcessId : null}
-                />
-              );
-            })
-          ) : (
-            <div className="flex h-full min-h-[16rem] flex-1 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground">
-              <TerminalIcon className="mb-2 h-6 w-6 opacity-30" />
-              {activeTab === "active" ? "No active workers for this conversation." : "No finished workers for this conversation."}
+      {isFocusMode && focusedWorker ? (
+        <div className="min-h-0 flex-1 p-3">
+          <div className="flex h-full min-h-0 flex-col gap-3">
+            <div className="min-h-0 flex-1">
+              {renderWorkerCard(focusedWorker, { isFocused: true })}
             </div>
-          )}
+            {compactWorkers.length > 0 ? (
+              <ScrollArea className="max-h-64 shrink-0 pr-1">
+                <div className="space-y-2">
+                  {compactWorkers.map((worker) => renderWorkerCard(worker, { compact: true }))}
+                </div>
+              </ScrollArea>
+            ) : null}
+          </div>
         </div>
-      </ScrollArea>
+      ) : (
+        <ScrollArea className="min-h-0 flex-1 p-3">
+          <div className={cn(
+            hasSingleVisibleWorker ? "flex h-full min-h-full flex-col" : visibleWorkers.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col",
+          )}>
+            {visibleWorkers.length > 0 ? (
+              visibleWorkers.map((worker) => renderWorkerCard(worker))
+            ) : (
+              <div className="flex h-full min-h-[16rem] flex-1 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground">
+                <TerminalIcon className="mb-2 h-6 w-6 opacity-30" />
+                {activeTab === "active" ? "No active workers for this conversation." : "No finished workers for this conversation."}
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      )}
     </div>
   );
 }
