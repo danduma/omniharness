@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "OmniHarness requires pnpm. Install it with corepack or your package manager, then run omniharness again." >&2
+  exit 1
+fi
+
+cd "$ROOT_DIR"
+
+if [ ! -d "$ROOT_DIR/node_modules" ]; then
+  echo "[omniharness] Installing dependencies..."
+  pnpm install
+fi
+
+if [ ! -f "$ROOT_DIR/.next/BUILD_ID" ]; then
+  echo "[omniharness] Building production server..."
+  pnpm build
+fi
+
+exec pnpm start "$@"

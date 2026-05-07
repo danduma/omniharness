@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { LanguageSelect } from "@/components/LanguageSelect";
 import { Input } from "@/components/ui/input";
 import { type AppErrorDescriptor, appErrorKey, requestJson } from "@/lib/app-errors";
 import { LLM_PROVIDER_OPTIONS, WORKER_OPTIONS } from "@/app/home/constants";
@@ -260,6 +261,19 @@ export function SettingsDialog({
               type="button"
               className={cn(
                 "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                activeSettingsTab === "general"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              aria-pressed={activeSettingsTab === "general"}
+              onClick={() => setActiveSettingsTab("general")}
+            >
+              General
+            </button>
+            <button
+              type="button"
+              className={cn(
+                "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
                 activeSettingsTab === "llm"
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground",
@@ -284,7 +298,17 @@ export function SettingsDialog({
             </button>
           </div>
 
-          {activeSettingsTab === "llm" ? (
+          {activeSettingsTab === "general" ? (
+            <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-4">
+              <div className="space-y-1">
+                <div className="text-sm font-semibold">General</div>
+                <p className="text-xs text-muted-foreground">
+                  Configure interface preferences for this browser.
+                </p>
+              </div>
+              <LanguageSelect />
+            </div>
+          ) : activeSettingsTab === "llm" ? (
             <>
               <div className="space-y-3">
                 <div className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-1">

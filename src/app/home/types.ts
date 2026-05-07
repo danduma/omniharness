@@ -160,6 +160,7 @@ export type AuthSessionResponse = {
   currentSession: AuthSessionRecord | null;
   sessions: AuthSessionRecord[];
   configurationError?: string | null;
+  publicOrigin?: string | null;
 };
 export type EventStreamState = {
   messages: MessageRecord[];
@@ -176,7 +177,7 @@ export type EventStreamState = {
   queuedMessages?: QueuedConversationMessageRecord[];
   frontendErrors?: AppErrorDescriptor[];
 };
-export type SettingsTab = "llm" | "workers";
+export type SettingsTab = "general" | "llm" | "workers";
 export type WorkerSettingsTab = "availability" | "defaults" | "runtime";
 
 export type SidebarRun = { id: string; title: string; path: string; status: string; createdAt: string };

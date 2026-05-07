@@ -34,6 +34,7 @@ Install dependencies:
 
 ```bash
 pnpm install
+pnpm link --global
 ```
 
 Install or check local ACP adapters and common agent tools:
@@ -42,10 +43,10 @@ Install or check local ACP adapters and common agent tools:
 pnpm setup:agents
 ```
 
-Start OmniHarness and the managed agent runtime:
+Start OmniHarness in production mode with the managed agent runtime:
 
 ```bash
-pnpm dev
+omniharness
 ```
 
 Open [http://localhost:3050](http://localhost:3050).
@@ -60,10 +61,13 @@ The setup script checks tools coding agents commonly need, including `rg`, `git`
 
 ## Development
 
-`pnpm dev` starts two local processes:
+`pnpm dev` starts local development processes:
 
 - the Next.js web UI on `http://localhost:3050`
 - the in-repo agent runtime on `http://127.0.0.1:7800`
+
+`omniharness` and `pnpm start` start the built Next.js production server plus the
+same managed agent runtime.
 
 Override runtime settings with environment variables:
 

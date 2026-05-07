@@ -7,17 +7,21 @@ import { describeBridgeToolingProblem } from "../src/server/dev/bridge-health";
 import { bridgeNeedsBuild, resolveBridgeDir, resolveBridgeUrl, shouldAutoStartBridge } from "../src/server/dev/managed-bridge";
 
 const repoRoot = process.cwd();
+const serverMode = process.env.OMNIHARNESS_SERVER_MODE === "production" ? "production" : "development";
+const logLabel = serverMode === "production" ? "start" : "dev";
 const webPort = process.env.PORT || "3050";
 process.env.PORT = webPort;
 const webHost = process.env.OMNIHARNESS_WEB_HOST?.trim() || "0.0.0.0";
 const proxyPort = process.env.OMNIHARNESS_DEV_PROXY_PORT?.trim() || "3035";
-const shouldLaunchProxy = process.env.OMNIHARNESS_DEV_PROXY !== "0";
+const shouldLaunchProxy = serverMode === "development" && process.env.OMNIHARNESS_DEV_PROXY !== "0";
 process.env.OMNIHARNESS_DEV_PROXY_PORT = proxyPort;
 process.env.OMNIHARNESS_DEV_PROXY_TARGET ||= `http://127.0.0.1:${webPort}`;
 const bridgeUrl = resolveBridgeUrl(process.env);
 const bridgeDir = resolveBridgeDir(repoRoot, process.env);
 const bridgeLockPath = resolveBridgeLockPath(repoRoot);
-const webCommand = ["pnpm", ["run", "dev:web", "--hostname", webHost, "--port", webPort]] as const;
+const webCommand = serverMode === "production"
+  ? ["pnpm", ["exec", "next", "start", "-H", webHost, "-p", webPort]] as const
+  : ["pnpm", ["run", "dev:web", "--hostname", webHost, "--port", webPort]] as const;
 const proxyCommand = ["pnpm", ["run", "dev:proxy"]] as const;
 const bridgeCommand = ["pnpm", ["exec", "tsx", "scripts/agent-runtime.ts"]] as const;
 const setupCommands = [
@@ -164,7 +168,7 @@ async function stopStaleLocalBridge(reason: string) {
     return false;
   }
 
-  console.log(`[dev] Restarting stale local agent runtime at ${bridgeUrl}: ${reason}`);
+  console.log(`[${logLabel}] Restarting stale local agent runtime at ${bridgeUrl}: ${reason}`);
   for (const pid of pids) {
     try {
       process.kill(pid, "SIGTERM");
@@ -250,7 +254,7 @@ async function ensureManagedBridge() {
 
   if (lockResult.status === "locked") {
     console.log(
-      `[dev] Another OmniHarness dev process (${lockResult.owner?.pid}) is starting the agent runtime. Waiting for ${bridgeUrl}...`,
+      `[${logLabel}] Another OmniHarness process (${lockResult.owner?.pid}) is starting the agent runtime. Waiting for ${bridgeUrl}...`,
     );
     await waitForBridgeReady(30_000);
     return;
@@ -267,12 +271,12 @@ async function ensureManagedBridge() {
       await runSetupCommand(setupCommands[1].command, [...setupCommands[1].args], bridgeDir, setupCommands[1].label);
     }
 
-    console.log(`[dev] Starting OmniHarness agent runtime from ${bridgeDir}`);
+    console.log(`[${logLabel}] Starting OmniHarness agent runtime from ${bridgeDir}`);
     managedBridgeChild = spawnManaged(bridgeCommand[0], [...bridgeCommand[1]], bridgeDir, "bridge");
 
     managedBridgeChild.once("exit", (code, signal) => {
       if (!shuttingDown) {
-        console.error(`[dev] OmniHarness agent runtime exited unexpectedly with ${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}.`);
+        console.error(`[${logLabel}] OmniHarness agent runtime exited unexpectedly with ${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}.`);
         shutdown(code ?? 1);
       }
     });
@@ -286,12 +290,12 @@ async function ensureManagedBridge() {
 }
 
 function launchWeb() {
-  console.log(`[dev] Starting OmniHarness web UI on ${webHost}:${webPort}`);
+  console.log(`[${logLabel}] Starting OmniHarness web UI in ${serverMode} mode on ${webHost}:${webPort}`);
   webChild = spawnManaged(webCommand[0], [...webCommand[1]], repoRoot, "web");
 
   webChild.once("exit", (code, signal) => {
     if (!shuttingDown) {
-      console.error(`[dev] Web UI exited unexpectedly with ${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}.`);
+      console.error(`[${logLabel}] Web UI exited unexpectedly with ${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}.`);
       shutdown(code ?? 1);
     }
   });
@@ -302,12 +306,12 @@ function launchProxy() {
     return;
   }
 
-  console.log(`[dev] Starting compressed tunnel proxy on 127.0.0.1:${proxyPort}`);
+  console.log(`[${logLabel}] Starting compressed tunnel proxy on 127.0.0.1:${proxyPort}`);
   proxyChild = spawnManaged(proxyCommand[0], [...proxyCommand[1]], repoRoot, "proxy");
 
   proxyChild.once("exit", (code, signal) => {
     if (!shuttingDown) {
-      console.error(`[dev] Tunnel proxy exited unexpectedly with ${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}.`);
+      console.error(`[${logLabel}] Tunnel proxy exited unexpectedly with ${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}.`);
       shutdown(code ?? 1);
     }
   });
@@ -347,10 +351,10 @@ async function main() {
   launchWeb();
   launchProxy();
 
-  console.log(`[dev] OmniHarness will use agent runtime at ${bridgeUrl}`);
-  console.log("[dev] Next.js will print the local and network UI URLs when it is ready.");
+  console.log(`[${logLabel}] OmniHarness will use agent runtime at ${bridgeUrl}`);
+  console.log(`[${logLabel}] Next.js will print the local and network UI URLs when it is ready.`);
   if (shouldLaunchProxy) {
-    console.log(`[dev] Point Cloudflare Tunnel at http://localhost:${proxyPort} for compressed remote dev.`);
+    console.log(`[${logLabel}] Point Cloudflare Tunnel at http://localhost:${proxyPort} for compressed remote dev.`);
   }
 }
 
@@ -358,6 +362,6 @@ process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
 main().catch((error) => {
-  console.error(`[dev] ${error instanceof Error ? error.message : String(error)}`);
+  console.error(`[${logLabel}] ${error instanceof Error ? error.message : String(error)}`);
   shutdown(1);
 });

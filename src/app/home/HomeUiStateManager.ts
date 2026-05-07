@@ -73,7 +73,7 @@ const initialHomeUiState: HomeUiState = {
   themeMode: "day",
   showSettings: false,
   showPairDeviceDialog: false,
-  activeSettingsTab: "llm",
+  activeSettingsTab: "general",
   activeWorkerSettingsTab: "availability",
   activeLlmProfileTab: "supervisor",
   apiKeys: {

@@ -1,0 +1,13 @@
+{
+  "product.name": "OmniHarness",
+  "language.en": "Anglais",
+  "language.es": "Espagnol",
+  "language.fr": "Français",
+  "language.de": "Allemand",
+  "language.it": "Italien",
+  "language.pt": "Portugais",
+  "language.zh-CN": "Chinois simplifié",
+  "language.ja": "Japonais",
+  "language.ko": "Coréen",
+  "settings.language.current": "Langue actuelle : {language}"
+}
