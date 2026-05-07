@@ -280,7 +280,7 @@ export function selectLiveOutputEntries(record: AgentRecord) {
   const marker: OutputEntry = {
     id: ARCHIVE_MARKER_ID,
     type: "message",
-    text: `${stats.omittedLiveEntries} earlier output entries are stored in the worker output archive.`,
+    text: `${stats.omittedLiveEntries} older raw worker activity records are only in archived history, not in the current terminal output.`,
     timestamp: first?.timestamp ?? new Date(0).toISOString(),
     status: "archived",
   };

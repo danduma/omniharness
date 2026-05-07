@@ -10,23 +10,28 @@ describe("bridge client", () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+    vi.useRealTimers();
     warnSpy.mockClear();
   });
 
   it("retries transient bridge failures and succeeds on a later attempt", async () => {
+    vi.useFakeTimers();
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new TypeError("fetch failed"))
       .mockResolvedValueOnce(new Response(JSON.stringify({ name: "worker-1", state: "idle" }), { status: 200 }));
     global.fetch = fetchMock as typeof fetch;
 
     const { spawnAgent } = await import("@/server/bridge-client");
-    const result = await spawnAgent({ type: "codex", cwd: "/tmp", name: "worker-1" });
+    const request = spawnAgent({ type: "codex", cwd: "/tmp", name: "worker-1" });
+    await vi.advanceTimersByTimeAsync(1000);
+    const result = await request;
 
     expect(result).toEqual({ name: "worker-1", state: "idle" });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("surfaces a clear runtime message when the local runtime is down", async () => {
+    vi.useFakeTimers();
     const refused = new TypeError(
       "fetch failed",
       { cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:7800"), { code: "ECONNREFUSED" }) },
@@ -36,7 +41,9 @@ describe("bridge client", () => {
 
     const { askAgent } = await import("@/server/bridge-client");
 
-    await expect(askAgent("worker-1", "hello")).rejects.toThrow(/OmniHarness agent runtime is not running at http:\/\/127\.0\.0\.1:7800/i);
+    const expectation = expect(askAgent("worker-1", "hello")).rejects.toThrow(/OmniHarness agent runtime is not running at http:\/\/127\.0\.0\.1:7800/i);
+    await vi.advanceTimersByTimeAsync(3000);
+    await expectation;
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
@@ -113,6 +120,7 @@ describe("bridge client", () => {
   });
 
   it("retries transient bridge socket-closure errors returned as http 500s", async () => {
+    vi.useFakeTimers();
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ error: "other side closed" }), {
@@ -130,7 +138,9 @@ describe("bridge client", () => {
     global.fetch = fetchMock as typeof fetch;
 
     const { spawnAgent } = await import("@/server/bridge-client");
-    const result = await spawnAgent({ type: "codex", cwd: "/tmp", name: "worker-1" });
+    const request = spawnAgent({ type: "codex", cwd: "/tmp", name: "worker-1" });
+    await vi.advanceTimersByTimeAsync(1000);
+    const result = await request;
 
     expect(result).toEqual({ name: "worker-1", state: "idle" });
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -300,6 +310,7 @@ describe("bridge client", () => {
   });
 
   it("keeps retrying recoverable agent snapshot polling until the bridge returns", async () => {
+    vi.useFakeTimers();
     const reset = Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new TypeError("fetch failed", { cause: reset }))
@@ -315,8 +326,15 @@ describe("bridge client", () => {
 
     const { getAgent } = await import("@/server/bridge-client");
 
-    await expect(getAgent("worker-1")).resolves.toMatchObject({ name: "worker-1", state: "working" });
+    const expectation = expect(getAgent("worker-1")).resolves.toMatchObject({ name: "worker-1", state: "working" });
+    await vi.advanceTimersByTimeAsync(7000);
+    await expectation;
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(warnSpy).toHaveBeenCalledTimes(3);
+    expect(warnSpy.mock.calls[0]?.[0]).toContain("Get agent /agents/worker-1");
+    expect(warnSpy.mock.calls[0]?.[0]).toContain("retrying indefinitely");
+    expect(warnSpy.mock.calls[0]?.[0]).toContain("next delay 1000ms");
+    expect(warnSpy.mock.calls[0]?.[0]).toContain("max delay 900000ms");
+    expect(warnSpy.mock.calls[0]).toHaveLength(1);
   });
 });

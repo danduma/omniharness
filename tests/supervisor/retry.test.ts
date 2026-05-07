@@ -54,6 +54,36 @@ describe("isTransientSupervisorError", () => {
 });
 
 describe("retrySupervisorRequest", () => {
+  it("logs retryable failures as one useful line without dumping the error stack", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const reset = Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
+    const operation = vi.fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed", { cause: reset }))
+      .mockResolvedValueOnce("ok");
+
+    await expect(retrySupervisorRequest(operation, {
+      attempts: 3,
+      maxDelayMs: 15 * 60_000,
+      retryIndefinitelyWhen: isRecoverableConnectionSupervisorError,
+      sleep,
+    })).resolves.toBe("ok");
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("attempt 1"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("retrying indefinitely"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("next delay 1000ms"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("max delay 900000ms"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("TypeError: fetch failed"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("ECONNRESET: read ECONNRESET"));
+
+    const warning = warnSpy.mock.calls[0]?.[0];
+    expect(typeof warning).toBe("string");
+    expect(warning).not.toContain("\n");
+    expect(warnSpy.mock.calls[0]).toHaveLength(1);
+    warnSpy.mockRestore();
+  });
+
   it("retries a transient failure and returns the later success", async () => {
     const sleep = vi.fn().mockResolvedValue(undefined);
     const operation = vi.fn()

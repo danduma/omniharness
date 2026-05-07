@@ -76,7 +76,7 @@ describe("GET /api/agents/[name]", () => {
         {
           id: "output-archive-marker",
           type: "message",
-          text: "40 earlier output entries are stored in the worker output archive.",
+          text: "40 older raw worker activity records are only in archived history, not in the current terminal output.",
           timestamp: "2026-05-06T15:30:00.000Z",
         },
         {

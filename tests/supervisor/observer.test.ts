@@ -144,6 +144,44 @@ describe("deriveWorkerEvents", () => {
     ]);
   });
 
+  it("keeps a quiet working worker idle instead of stuck at ninety seconds", () => {
+    const { events } = deriveWorkerEvents({
+      workerId: "worker-1",
+      snapshot: {
+        state: "working",
+        currentText: "still reasoning through the implementation",
+        lastText: "still reasoning through the implementation",
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+      previous: {
+        fingerprint: JSON.stringify({
+          state: "working",
+          currentText: "still reasoning through the implementation",
+          lastText: "still reasoning through the implementation",
+          pendingPermissions: [],
+          stopReason: null,
+          stderrTail: [],
+        }),
+        lastChangedAt: 0,
+        lastMeaningfulActivityAt: 0,
+        progressSignature: JSON.stringify({
+          state: "working",
+          currentText: "still reasoning through the implementation",
+          lastText: "still reasoning through the implementation",
+          pendingPermissions: [],
+          stopReason: null,
+        }),
+        idleNotified: true,
+        stuckNotified: false,
+      },
+      now: 90_000,
+    });
+
+    expect(events.some((event) => event.type === "worker_stuck")).toBe(false);
+  });
+
   it("wakes the supervisor immediately when ACP reports a worker turn is complete", () => {
     const { nextState, events } = deriveWorkerEvents({
       workerId: "worker-1",
@@ -330,7 +368,7 @@ describe("deriveWorkerEvents", () => {
         idleNotified: true,
         stuckNotified: false,
       },
-      now: 90_000,
+      now: 5 * 60_000,
     });
 
     expect(events).toEqual(expect.arrayContaining([
@@ -342,6 +380,63 @@ describe("deriveWorkerEvents", () => {
     ]));
     expect(nextState.lastMeaningfulActivityAt).toBe(0);
     expect(nextState.stuckNotified).toBe(true);
+  });
+
+  it("does not mark a quiet worker stuck while a terminal process is still active", () => {
+    const activeToolEntry = {
+      id: "tool-1",
+      type: "tool_call" as const,
+      text: "pnpm test",
+      timestamp: new Date(0).toISOString(),
+      toolCallId: "tool-1",
+      toolKind: "execute",
+      status: "in_progress",
+      raw: {
+        kind: "execute",
+        rawInput: {
+          command: "pnpm test",
+        },
+      },
+    };
+    const quietSnapshot = {
+      state: "working",
+      currentText: "Running the focused test suite.",
+      lastText: "Running the focused test suite.",
+      pendingPermissions: [],
+      outputEntries: [activeToolEntry],
+      stderrBuffer: [],
+      stopReason: null,
+    };
+
+    const { nextState, events } = deriveWorkerEvents({
+      workerId: "worker-1",
+      snapshot: quietSnapshot,
+      previous: {
+        fingerprint: JSON.stringify({
+          state: "working",
+          currentText: "Running the focused test suite.",
+          lastText: "Running the focused test suite.",
+          pendingPermissions: [],
+          stopReason: null,
+          stderrTail: [],
+        }),
+        lastChangedAt: 0,
+        lastMeaningfulActivityAt: 0,
+        progressSignature: JSON.stringify({
+          state: "working",
+          currentText: "Running the focused test suite.",
+          lastText: "Running the focused test suite.",
+          pendingPermissions: [],
+          stopReason: null,
+        }),
+        idleNotified: true,
+        stuckNotified: false,
+      },
+      now: 90_000,
+    });
+
+    expect(events.some((event) => event.type === "worker_stuck")).toBe(false);
+    expect(nextState.stuckNotified).toBe(false);
   });
 
   it("does not reset activity for noisy snapshot churn with the same normalized progress text", () => {
@@ -886,7 +981,7 @@ describe("deriveWorkerEvents", () => {
 
     vi.spyOn(Date, "now")
       .mockReturnValueOnce(0)
-      .mockReturnValueOnce(90_000);
+      .mockReturnValueOnce(5 * 60_000);
 
     await pollRunWorkers(runId, wakeSupervisor);
     await pollRunWorkers(runId, wakeSupervisor);
@@ -952,7 +1047,7 @@ describe("deriveWorkerEvents", () => {
       await snapshotGate;
       return snapshot;
     });
-    vi.spyOn(Date, "now").mockReturnValue(90_000);
+    vi.spyOn(Date, "now").mockReturnValue(5 * 60_000);
 
     const firstPoll = pollRunWorkers(runId, wakeSupervisor);
     const secondPoll = pollRunWorkers(runId, wakeSupervisor);

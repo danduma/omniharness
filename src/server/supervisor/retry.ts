@@ -55,6 +55,7 @@ export interface RetrySupervisorRequestOptions {
   initialDelayMs?: number;
   maxDelayMs?: number;
   operationTimeoutMs?: number;
+  operationLabel?: string;
   retryIndefinitelyWhen?: (error: unknown) => boolean;
   sleep?: (delayMs: number) => Promise<void>;
 }
@@ -77,6 +78,7 @@ function extractErrorChain(error: unknown, seen = new Set<unknown>()): Array<Rec
   seen.add(error);
 
   const record = error as {
+    name?: unknown;
     message?: unknown;
     code?: unknown;
     status?: unknown;
@@ -87,6 +89,7 @@ function extractErrorChain(error: unknown, seen = new Set<unknown>()): Array<Rec
 
   return [
     {
+      name: typeof record.name === "string" ? record.name : undefined,
       message: typeof record.message === "string" ? record.message : undefined,
       code: typeof record.code === "string" ? record.code : undefined,
       status: typeof record.status === "number" ? record.status : undefined,
@@ -95,6 +98,45 @@ function extractErrorChain(error: unknown, seen = new Set<unknown>()): Array<Rec
     },
     ...extractErrorChain(record.cause, seen),
   ];
+}
+
+function compactLogText(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function describeRetryError(error: unknown) {
+  const details = extractErrorChain(error)
+    .map((entry) => {
+      const name = typeof entry.name === "string" ? compactLogText(entry.name) : "";
+      const message = typeof entry.message === "string" ? compactLogText(entry.message) : "";
+      const code = typeof entry.code === "string" ? compactLogText(entry.code).toUpperCase() : "";
+      const status = typeof entry.status === "number" ? entry.status : entry.statusCode;
+
+      if (message) {
+        if (code) {
+          return `${code}: ${message}`;
+        }
+        if (name && name !== "Error") {
+          return `${name}: ${message}`;
+        }
+        return message;
+      }
+
+      if (code) {
+        return code;
+      }
+      if (typeof status === "number") {
+        return `HTTP ${status}`;
+      }
+      return "";
+    })
+    .filter((detail) => detail.length > 0);
+
+  return details.length > 0 ? details.join("; caused by ") : String(error);
+}
+
+function formatMaxDelayMs(maxDelayMs: number) {
+  return Number.isFinite(maxDelayMs) ? `${maxDelayMs}ms` : "uncapped";
 }
 
 export function isTransientSupervisorError(error: unknown) {
@@ -165,9 +207,11 @@ export async function retrySupervisorRequest<T>(
   options: RetrySupervisorRequestOptions = {},
 ) {
   const attempts = Math.max(1, options.attempts ?? 3);
-  const initialDelayMs = Math.max(0, options.initialDelayMs ?? 250);
+  const initialDelayMs = Math.max(0, options.initialDelayMs ?? 1000);
   const maxDelayMs = Math.max(0, options.maxDelayMs ?? Number.POSITIVE_INFINITY);
   const sleep = options.sleep ?? defaultSleep;
+  const operationLabel = options.operationLabel ? compactLogText(options.operationLabel) : "";
+  const requestSubject = operationLabel ? `Supervisor request ${operationLabel}` : "Supervisor request";
 
   let lastError: unknown;
 
@@ -187,8 +231,9 @@ export async function retrySupervisorRequest<T>(
         ? `attempt ${attempt}`
         : `attempt ${attempt} of ${attempts}`;
       console.warn(
-        `Supervisor request failed with a retryable error (${attemptLabel}). Retrying in ${delayMs}ms.`,
-        error,
+        `${requestSubject} failed with a retryable error (${attemptLabel}; ` +
+        `${retryIndefinitely ? "retrying indefinitely" : "retrying while attempts remain"}; ` +
+        `next delay ${delayMs}ms; max delay ${formatMaxDelayMs(maxDelayMs)}): ${describeRetryError(error)}`,
       );
       await sleep(delayMs);
     }

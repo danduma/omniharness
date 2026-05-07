@@ -11,10 +11,11 @@ import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { isLongWorkerCompletionText, normalizeWorkerStatus } from "@/server/supervisor/worker-completion";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { deriveWorkerTerminalProcesses } from "@/lib/worker-terminal-processes";
 
 const OBSERVER_INTERVAL_MS = 5_000;
 const IDLE_THRESHOLD_MS = 30_000;
-const STUCK_THRESHOLD_MS = 90_000;
+const STUCK_THRESHOLD_MS = 5 * 60_000;
 const DUPLICATE_WORKER_EVENT_WINDOW_MS = 5 * 60_000;
 
 interface WorkerBridgeSnapshot {
@@ -191,6 +192,11 @@ function progressSignature(snapshot: WorkerBridgeSnapshot) {
     pendingPermissions: snapshot.pendingPermissions ?? [],
     stopReason: snapshot.stopReason,
   });
+}
+
+function hasActiveTerminalProcess(snapshot: WorkerBridgeSnapshot) {
+  return deriveWorkerTerminalProcesses(snapshot.outputEntries ?? [])
+    .some((process) => process.active);
 }
 
 function parseSnapshotFingerprint(fingerprint: string | undefined) {
@@ -393,7 +399,7 @@ export function deriveWorkerEvents(args: {
     idleNotified = true;
   }
 
-  if (!stuckNotified && silenceMs >= STUCK_THRESHOLD_MS) {
+  if (!stuckNotified && silenceMs >= STUCK_THRESHOLD_MS && !hasActiveTerminalProcess(args.snapshot)) {
     events.push({
       type: "worker_stuck",
       summary: `${args.workerId} appears stuck after ${Math.round(silenceMs / 1000)} seconds without meaningful progress`,

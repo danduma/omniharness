@@ -160,6 +160,7 @@ function mergeAgentSnapshots(
 ) {
   const currentAgentsByName = new Map((current.agents || []).map((agent) => [agent.name, agent]));
   const incomingWorkersById = new Map((incoming.workers || []).map((worker) => [worker.id, worker]));
+  const incomingAgentNames = new Set((incoming.agents || []).map((agent) => agent.name));
   let changed = false;
 
   const agents = (incoming.agents || []).map((incomingAgent) => {
@@ -195,6 +196,15 @@ function mergeAgentSnapshots(
 
     return incomingAgentWithHistory;
   });
+
+  for (const currentAgent of current.agents || []) {
+    if (incomingAgentNames.has(currentAgent.name) || !incomingWorkersById.has(currentAgent.name) || !hasRenderableAgentOutput(currentAgent)) {
+      continue;
+    }
+
+    agents.push(currentAgent);
+    changed = true;
+  }
 
   return changed ? { ...incoming, agents } : incoming;
 }
@@ -267,7 +277,8 @@ export class EventStreamStateManager {
     const incoming = typeof action === "function" ? action(this.state) : action;
     this.rememberOutputEntries(incoming);
     const incomingWithMessages = mergeScopedMessages(this.state, incoming);
-    const nextState = mergeAgentSnapshots(this.state, incomingWithMessages, this.outputEntriesByAgentName);
+    const mergedState = mergeAgentSnapshots(this.state, incomingWithMessages, this.outputEntriesByAgentName);
+    const nextState = this.outputLineCache.hydrateState(mergedState);
 
     if (Object.is(nextState, this.state)) {
       return this.state;

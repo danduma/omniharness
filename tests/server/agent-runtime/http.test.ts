@@ -600,7 +600,8 @@ describe("internal agent runtime HTTP API", () => {
     expect(agentJson.outputArchive.logPath).not.toContain(projectDir);
     expect(agentJson.outputArchive.totalEntries).toBeGreaterThan(agentJson.outputEntries.length);
     expect(agentJson.outputEntries[0].id).toBe("output-archive-marker");
-    expect(agentJson.outputEntries[0].text).toContain("stored in the worker output archive");
+    expect(agentJson.outputEntries[0].text).toContain("older raw worker activity records");
+    expect(agentJson.outputEntries[0].text).toContain("not in the current terminal output");
     expect(agentJson.currentText.length).toBeLessThanOrEqual(100_000);
     expect(agentJson.currentText).toContain("Earlier runtime output omitted");
     expect(agentJson.outputEntries.every((entry: { text: string }) => entry.text.length <= 5_000)).toBe(true);

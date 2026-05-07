@@ -78,12 +78,28 @@ function asNonEmptyString(value: unknown): string | null {
 }
 
 function isOmittedOutputEntriesMarker(entry: AgentOutputEntry) {
-  return entry.id.startsWith("output-entries-omitted:");
+  return entry.id === "output-archive-marker" || entry.id.startsWith("output-entries-omitted:");
 }
 
 function omittedOutputEntriesCount(text: string) {
-  const match = text.match(/^(\d+)\s+earlier output entries omitted from this live payload\./);
-  return match ? Number.parseInt(match[1], 10) || undefined : undefined;
+  const match = text.match(/^([\d,]+)\s+/);
+  return match ? Number.parseInt(match[1].replace(/,/g, ""), 10) || undefined : undefined;
+}
+
+function formatCount(value: number) {
+  return value.toLocaleString("en-US");
+}
+
+function historyGapText(entry: AgentOutputEntry, omittedCount?: number) {
+  if (entry.id === "output-archive-marker") {
+    return omittedCount
+      ? `${formatCount(omittedCount)} older raw worker activity records are only in archived history. These are tool calls, status updates, and streamed chunks, not current terminal lines.`
+      : "Older raw worker activity records are only in archived history. These are tool calls, status updates, and streamed chunks, not current terminal lines.";
+  }
+
+  return omittedCount
+    ? `${omittedCount} earlier output entries are not loaded in this live snapshot.`
+    : "Earlier output entries are not loaded in this live snapshot.";
 }
 
 function normalizeMultilineText(value: string): string {
@@ -677,9 +693,7 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
         items.push({
           id: entry.id,
           kind: "history_gap",
-          text: omittedCount
-            ? `${omittedCount} earlier output entries are not loaded in this live snapshot.`
-            : "Earlier output entries are not loaded in this live snapshot.",
+          text: historyGapText(entry, omittedCount),
           timestamp: entry.timestamp,
           omittedCount,
         });

@@ -431,6 +431,29 @@ describe("agent output normalization", () => {
     ]);
   });
 
+  it("renders worker archive markers as history gap metadata instead of chat messages", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        {
+          id: "output-archive-marker",
+          type: "message",
+          text: "9294 older raw worker activity records are only in archived history, not in the current terminal output.",
+          timestamp: "2026-05-06T15:30:00.000Z",
+        },
+      ],
+    });
+
+    expect(activity).toEqual([
+      {
+        id: "output-archive-marker",
+        kind: "history_gap",
+        text: "9,294 older raw worker activity records are only in archived history. These are tool calls, status updates, and streamed chunks, not current terminal lines.",
+        timestamp: "2026-05-06T15:30:00.000Z",
+        omittedCount: 9294,
+      },
+    ]);
+  });
+
   it("extracts the latest plain text worker turn instead of the initial chatter", () => {
     const summary = extractLatestPlainTextTurn({
       outputEntries: [
@@ -474,6 +497,27 @@ describe("agent output normalization", () => {
           id: "output-entries-omitted:msg-1:msg-2",
           type: "message",
           text: "20 earlier output entries omitted from this live payload. Open the worker detail again as it updates to see the current tail.",
+          timestamp: "2026-05-04T00:00:01.000Z",
+        },
+      ],
+    });
+
+    expect(summary).toBe("Actual worker update");
+  });
+
+  it("does not treat worker archive markers as the latest worker turn", () => {
+    const summary = extractLatestPlainTextTurn({
+      outputEntries: [
+        {
+          id: "msg-1",
+          type: "message",
+          text: "Actual worker update",
+          timestamp: "2026-05-04T00:00:00.000Z",
+        },
+        {
+          id: "output-archive-marker",
+          type: "message",
+          text: "9294 older raw worker activity records are only in archived history, not in the current terminal output.",
           timestamp: "2026-05-04T00:00:01.000Z",
         },
       ],

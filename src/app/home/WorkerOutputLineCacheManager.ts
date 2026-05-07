@@ -178,10 +178,32 @@ function outputEntryTimestampMs(entry: AgentOutputEntry | CachedEntry) {
   return Number.isFinite(value) ? value : 0;
 }
 
+function omittedOutputEntriesMarkerTailId(entry: AgentOutputEntry | CachedEntry) {
+  if (!entry.id.startsWith("output-entries-omitted:")) {
+    return null;
+  }
+
+  const markerParts = entry.id.split(":");
+  return markerParts.length >= 3 ? markerParts[2] || null : null;
+}
+
 function sortedEntries<T extends AgentOutputEntry | CachedEntry>(entries: Iterable<T>) {
   return Array.from(entries).sort((left, right) => {
     const timeDelta = outputEntryTimestampMs(left) - outputEntryTimestampMs(right);
-    return timeDelta !== 0 ? timeDelta : left.id.localeCompare(right.id);
+    if (timeDelta !== 0) {
+      return timeDelta;
+    }
+
+    const leftTailId = omittedOutputEntriesMarkerTailId(left);
+    const rightTailId = omittedOutputEntriesMarkerTailId(right);
+    if (leftTailId === right.id) {
+      return -1;
+    }
+    if (rightTailId === left.id) {
+      return 1;
+    }
+
+    return left.id.localeCompare(right.id);
   });
 }
 

@@ -250,6 +250,134 @@ describe("EventStreamStateManager", () => {
     ]);
   });
 
+  it("keeps visited worker agent output available across scoped conversation switches", () => {
+    const manager = new EventStreamStateManager(createState({
+      runs: [
+        {
+          id: "run-1",
+          planId: "plan-1",
+          status: "running",
+          createdAt: "2026-05-04T00:00:00.000Z",
+          projectPath: null,
+          title: "Run one",
+        },
+        {
+          id: "run-2",
+          planId: "plan-2",
+          status: "running",
+          createdAt: "2026-05-04T00:01:00.000Z",
+          projectPath: null,
+          title: "Run two",
+        },
+      ],
+      workers: [
+        { id: "run-1-worker-1", runId: "run-1", type: "codex", status: "working" },
+        { id: "run-2-worker-1", runId: "run-2", type: "codex", status: "working" },
+      ],
+      agents: [{
+        name: "run-1-worker-1",
+        type: "codex",
+        state: "working",
+        outputEntries: [{
+          id: "run-1-entry-1",
+          type: "message",
+          text: "Run one cached line",
+          timestamp: "2026-05-04T00:00:01.000Z",
+        }],
+      }],
+    }));
+
+    const afterSwitchAway = manager.update(createState({
+      runs: [
+        {
+          id: "run-2",
+          planId: "plan-2",
+          status: "running",
+          createdAt: "2026-05-04T00:01:00.000Z",
+          projectPath: null,
+          title: "Run two",
+        },
+        {
+          id: "run-1",
+          planId: "plan-1",
+          status: "running",
+          createdAt: "2026-05-04T00:00:00.000Z",
+          projectPath: null,
+          title: "Run one",
+        },
+      ],
+      workers: [
+        { id: "run-1-worker-1", runId: "run-1", type: "codex", status: "working" },
+        { id: "run-2-worker-1", runId: "run-2", type: "codex", status: "working" },
+      ],
+      agents: [{
+        name: "run-2-worker-1",
+        type: "codex",
+        state: "working",
+        outputEntries: [{
+          id: "run-2-entry-1",
+          type: "message",
+          text: "Run two line",
+          timestamp: "2026-05-04T00:01:01.000Z",
+        }],
+      }],
+    }));
+
+    expect(afterSwitchAway.agents.map((agent) => agent.name).sort()).toEqual([
+      "run-1-worker-1",
+      "run-2-worker-1",
+    ]);
+
+    const runOneAgent = afterSwitchAway.agents.find((agent) => agent.name === "run-1-worker-1");
+    expect(runOneAgent?.outputEntries?.map((entry) => entry.text)).toEqual(["Run one cached line"]);
+  });
+
+  it("hydrates worker output from the line cache on normal stream updates", () => {
+    const storage = new MemoryStorage();
+    const cacheOptions = {
+      storage,
+      storageKey: "test-worker-output-cache",
+      now: () => Date.parse("2026-05-04T00:00:10.000Z"),
+    };
+    const cache = new WorkerOutputLineCacheManager(cacheOptions);
+    cache.rememberState(createState({
+      agents: [{
+        name: "run-1-worker-1",
+        type: "codex",
+        state: "working",
+        outputEntries: [{
+          id: "entry-0",
+          type: "message",
+          text: "Hydrated cached line",
+          timestamp: "2026-05-04T00:00:00.000Z",
+        }],
+      }],
+    }));
+
+    const manager = new EventStreamStateManager(createState(), {
+      outputLineCache: new WorkerOutputLineCacheManager(cacheOptions),
+    });
+
+    const next = manager.update(createState({
+      agents: [{
+        name: "run-1-worker-1",
+        type: "codex",
+        state: "working",
+        outputEntries: [{
+          id: "output-entries-omitted:entry-0:entry-9",
+          type: "message",
+          text: "8 earlier output entries omitted from this live payload.",
+          timestamp: "2026-05-04T00:00:09.000Z",
+        }],
+      }],
+    }));
+
+    expect(next.agents[0].outputEntries?.map((entry) => [entry.id, entry.text])).toEqual([
+      ["entry-0", "Hydrated cached line"],
+      ["output-entries-omitted:entry-0:entry-9", "8 earlier output entries omitted from this live payload. Open the worker detail again as it updates to see the current tail."],
+    ]);
+  });
+
   it("replaces cached transcript messages for the run included in the latest payload", () => {
     const manager = new EventStreamStateManager(createState({
       runs: [

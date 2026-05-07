@@ -279,6 +279,7 @@ async function requestBridge<T>(path: string, init: RequestInit, action: string)
       return res.json() as Promise<T>;
     }, {
       maxDelayMs: BRIDGE_CONNECTION_RESET_MAX_BACKOFF_MS,
+      operationLabel: `${action} ${path}`,
       retryIndefinitelyWhen: (error) => isRecoverableConnectionSupervisorError(error) && !isBridgeConnectionRefused(error),
     });
   } catch (error) {
