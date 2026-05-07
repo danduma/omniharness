@@ -3,6 +3,7 @@ import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watc
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { createConversation } from "@/server/conversations/create";
+import { normalizeConversationMode } from "@/server/conversations/modes";
 import { normalizeChatAttachments } from "@/lib/chat-attachments";
 
 export async function POST(req: NextRequest) {
@@ -16,9 +17,8 @@ export async function POST(req: NextRequest) {
       return auth.response;
     }
 
-    await ensureSupervisorRuntimeStarted();
-
     const body = await req.json();
+    const mode = normalizeConversationMode(body?.mode);
     const command = String(body?.command ?? "").trim();
     const attachments = normalizeChatAttachments(body?.attachments);
     if (!command && attachments.length === 0) {
@@ -29,8 +29,12 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    if (mode === "implementation") {
+      await ensureSupervisorRuntimeStarted();
+    }
+
     const result = await createConversation({
-      mode: body?.mode,
+      mode,
       command,
       projectPath: typeof body?.projectPath === "string" ? body.projectPath : null,
       preferredWorkerType: typeof body?.preferredWorkerType === "string" ? body.preferredWorkerType : null,

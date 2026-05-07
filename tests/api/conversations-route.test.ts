@@ -371,6 +371,39 @@ describe("POST /api/conversations", () => {
     );
   });
 
+  it("returns a direct conversation without waiting for supervisor runtime startup", async () => {
+    const resolveStartupRef: Array<() => void> = [];
+    mockEnsureSupervisorRuntimeStarted.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveStartupRef[0] = resolve;
+    }));
+
+    const request = new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command: "Group all modified files into commits as they fit best",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+      }),
+    });
+
+    const responsePromise = POST(request);
+
+    try {
+      await expect(Promise.race([
+        responsePromise.then(() => "resolved"),
+        delay(50).then(() => "pending"),
+      ])).resolves.toBe("resolved");
+
+      const response = await responsePromise;
+      expect(response.status).toBe(200);
+      expect(mockEnsureSupervisorRuntimeStarted).not.toHaveBeenCalled();
+    } finally {
+      resolveStartupRef[0]?.();
+      await responsePromise.catch(() => null);
+    }
+  });
+
   it("returns a direct conversation before the first worker turn completes", async () => {
     const resolveAskRef: Array<(value: { response: string; state: string }) => void> = [];
     mockAskAgent.mockImplementationOnce(() => new Promise<{ response: string; state: string }>((resolve) => {
