@@ -37,6 +37,33 @@ report_tool() {
   fi
 }
 
+native_cargo_command() {
+  if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ] && have_command rustup; then
+    echo "rustup run stable-aarch64-apple-darwin cargo"
+    return 0
+  fi
+
+  echo "cargo"
+}
+
+ensure_native_cargo_toolchain() {
+  if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ] || ! have_command rustup; then
+    return 0
+  fi
+
+  if rustup toolchain list 2>/dev/null | grep -q '^stable-aarch64-apple-darwin'; then
+    return 0
+  fi
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "  -> would install Rust toolchain \`stable-aarch64-apple-darwin\` for native Apple Silicon builds"
+    return 0
+  fi
+
+  echo "  -> installing Rust toolchain \`stable-aarch64-apple-darwin\` for native Apple Silicon builds"
+  rustup toolchain install stable-aarch64-apple-darwin
+}
+
 run_install_npm() {
   local package_name="$1"
 
@@ -58,18 +85,23 @@ run_install_cargo_git() {
   local binary_name="$1"
   local git_url="$2"
   local git_branch="$3"
+  local cargo_command
 
+  cargo_command="$(native_cargo_command)"
   if [ "$DRY_RUN" -eq 1 ]; then
-    echo "  -> would install \`$binary_name\` with \`cargo install --locked --git $git_url --branch $git_branch $binary_name\`"
+    ensure_native_cargo_toolchain
+    echo "  -> would install \`$binary_name\` with \`$cargo_command install --locked --git $git_url --branch $git_branch $binary_name\`"
     return 0
   fi
 
-  if ! have_command cargo; then
-    echo "  -> cannot install \`$binary_name\`: cargo is not on PATH" >&2
+  if ! have_command cargo && ! have_command rustup; then
+    echo "  -> cannot install \`$binary_name\`: neither cargo nor rustup is on PATH" >&2
     return 1
   fi
 
-  cargo install --locked --git "$git_url" --branch "$git_branch" "$binary_name"
+  ensure_native_cargo_toolchain
+  # shellcheck disable=SC2086
+  $cargo_command install --locked --git "$git_url" --branch "$git_branch" "$binary_name"
   echo "  -> installed \`$binary_name\`"
 }
 

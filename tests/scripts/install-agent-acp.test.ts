@@ -34,6 +34,22 @@ describe("install-agent-acp.sh", () => {
     createFakeBin("opencode", binDir);
     createFakeBin("npm", binDir);
     createFakeBin("cargo", binDir);
+    createFakeBin("rustup", binDir, `#!/bin/sh
+if [ "$1" = "toolchain" ] && [ "$2" = "list" ]; then
+  echo "stable-aarch64-apple-darwin"
+  exit 0
+fi
+exit 0
+`);
+    createFakeBin("uname", binDir, `#!/bin/sh
+if [ "$1" = "-s" ]; then
+  echo "Darwin"
+elif [ "$1" = "-m" ]; then
+  echo "arm64"
+else
+  echo "Darwin"
+fi
+`);
     createFakeBin("rg", binDir);
     createFakeBin("git", binDir);
     createFakeBin("node", binDir);
@@ -57,7 +73,7 @@ describe("install-agent-acp.sh", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("codex: detected");
-    expect(result.stdout).toContain("would install `codex-acp` with `cargo install --locked --git https://github.com/danduma/codex-acp.git --branch main codex-acp`");
+    expect(result.stdout).toContain("would install `codex-acp` with `rustup run stable-aarch64-apple-darwin cargo install --locked --git https://github.com/danduma/codex-acp.git --branch main codex-acp`");
     expect(result.stdout).toContain("claude: detected");
     expect(result.stdout).toContain("would install `@agentclientprotocol/claude-agent-acp`");
     expect(result.stdout).toContain("gemini: detected");
@@ -94,13 +110,23 @@ exit 0
 `,
     );
     createFakeBin(
-      "cargo",
+      "rustup",
       binDir,
       `#!/bin/sh
 echo "$@" >> "${cargoLogPath}"
 exit 0
 `,
     );
+    createFakeBin("cargo", binDir);
+    createFakeBin("uname", binDir, `#!/bin/sh
+if [ "$1" = "-s" ]; then
+  echo "Darwin"
+elif [ "$1" = "-m" ]; then
+  echo "arm64"
+else
+  echo "Darwin"
+fi
+`);
 
     const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh"], {
       cwd: process.cwd(),
@@ -112,7 +138,7 @@ exit 0
     });
 
     expect(result.status).toBe(0);
-    expect(fs.readFileSync(cargoLogPath, "utf8")).toContain("install --locked --git https://github.com/danduma/codex-acp.git --branch main codex-acp");
+    expect(fs.readFileSync(cargoLogPath, "utf8")).toContain("run stable-aarch64-apple-darwin cargo install --locked --git https://github.com/danduma/codex-acp.git --branch main codex-acp");
     expect(result.stdout).toContain("installed `codex-acp`");
     expect(fs.readFileSync(npmLogPath, "utf8")).toContain("install -g @agentclientprotocol/claude-agent-acp");
     expect(result.stdout).toContain("installed `@agentclientprotocol/claude-agent-acp`");
@@ -129,13 +155,23 @@ exit 0
     createFakeBin("codex", binDir);
     createFakeBin("codex-acp", binDir);
     createFakeBin(
-      "cargo",
+      "rustup",
       binDir,
       `#!/bin/sh
 echo "$@" >> "${cargoLogPath}"
 exit 0
 `,
     );
+    createFakeBin("cargo", binDir);
+    createFakeBin("uname", binDir, `#!/bin/sh
+if [ "$1" = "-s" ]; then
+  echo "Darwin"
+elif [ "$1" = "-m" ]; then
+  echo "arm64"
+else
+  echo "Darwin"
+fi
+`);
 
     const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh"], {
       cwd: process.cwd(),
@@ -148,6 +184,6 @@ exit 0
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("`codex-acp` already installed; refreshing from the OmniHarness fork");
-    expect(fs.readFileSync(cargoLogPath, "utf8")).toContain("install --locked --git https://github.com/danduma/codex-acp.git --branch main codex-acp");
+    expect(fs.readFileSync(cargoLogPath, "utf8")).toContain("run stable-aarch64-apple-darwin cargo install --locked --git https://github.com/danduma/codex-acp.git --branch main codex-acp");
   });
 });
