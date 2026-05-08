@@ -199,6 +199,15 @@ function hasActiveTerminalProcess(snapshot: WorkerBridgeSnapshot) {
     .some((process) => process.active);
 }
 
+function hasLongCompletionHint(snapshot: WorkerBridgeSnapshot) {
+  if (snapshot.currentText.trim()) {
+    return isLongWorkerCompletionText(snapshot.currentText);
+  }
+
+  return normalizeWorkerStatus(snapshot.state) !== "working"
+    && isLongWorkerCompletionText(snapshot.lastText);
+}
+
 function parseSnapshotFingerprint(fingerprint: string | undefined) {
   if (!fingerprint) {
     return null;
@@ -362,9 +371,7 @@ export function deriveWorkerEvents(args: {
   );
   const currentStatus = normalizeWorkerStatus(args.snapshot.state);
   const completedByAcpState = previousStatus === "working" && currentStatus === "idle";
-  const longCompletionText = isLongWorkerCompletionText(
-    args.snapshot.lastText || args.snapshot.currentText,
-  );
+  const longCompletionText = hasLongCompletionHint(args.snapshot);
   if (!completionHintNotified && (completedByAcpState || longCompletionText)) {
     events.push({
       type: "worker_turn_completed",

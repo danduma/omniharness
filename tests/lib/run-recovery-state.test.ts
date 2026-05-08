@@ -38,7 +38,6 @@ describe("applyRunRecoveryOptimisticUpdate", () => {
         { name: "worker-2", state: "working", currentText: "Still running" },
       ],
       clarifications: [{ id: "clarification-1", runId: "run-1" }],
-      validationRuns: [{ id: "validation-1", runId: "run-1" }],
       executionEvents: [
         { id: "event-1", runId: "run-1", workerId: "worker-1", eventType: "worker_error" },
         { id: "event-2", runId: "run-1", eventType: "run_failed" },
@@ -71,7 +70,6 @@ describe("applyRunRecoveryOptimisticUpdate", () => {
     ]);
     expect(nextState.agents).toEqual([]);
     expect(nextState.clarifications).toEqual([]);
-    expect(nextState.validationRuns).toEqual([]);
     expect(nextState.executionEvents).toEqual([]);
     expect(nextState.supervisorInterventions).toEqual([]);
     expect(nextState.queuedMessages).toEqual([{ id: "queued-2", runId: "run-2" }]);
@@ -92,7 +90,6 @@ describe("applyRunRecoveryOptimisticUpdate", () => {
       workers: [],
       agents: [],
       clarifications: [],
-      validationRuns: [],
       executionEvents: [],
       supervisorInterventions: [],
     };
@@ -146,7 +143,6 @@ describe("applyRunRecoveryOptimisticUpdate", () => {
       workers: [{ id: "worker-1", runId: "run-1", type: "codex", status: "working" }],
       agents: [{ name: "worker-1", state: "working", currentText: "Still running" }],
       clarifications: [{ id: "clarification-1", runId: "run-1" }],
-      validationRuns: [{ id: "validation-1", runId: "run-1" }],
       executionEvents: [{ id: "event-1", runId: "run-1", workerId: "worker-1", eventType: "worker_output_changed" }],
       supervisorInterventions: [{ id: "intervention-1", runId: "run-1" }],
     };
@@ -168,7 +164,6 @@ describe("applyRunRecoveryOptimisticUpdate", () => {
     expect(nextState.workers).toEqual(state.workers);
     expect(nextState.agents).toEqual(state.agents);
     expect(nextState.clarifications).toEqual(state.clarifications);
-    expect(nextState.validationRuns).toEqual(state.validationRuns);
     expect(nextState.executionEvents).toEqual(state.executionEvents);
     expect(nextState.supervisorInterventions).toEqual(state.supervisorInterventions);
   });

@@ -5,7 +5,6 @@ describe("db schema", () => {
   it("defines autonomous execution tables", () => {
     expect(schema).toHaveProperty("planItems");
     expect(schema).toHaveProperty("clarifications");
-    expect(schema).toHaveProperty("validationRuns");
     expect(schema).toHaveProperty("executionEvents");
     expect(schema).toHaveProperty("workerAssignments");
     expect(schema).toHaveProperty("supervisorInterventions");

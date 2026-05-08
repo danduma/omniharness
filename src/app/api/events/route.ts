@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/server/db";
-import { messages, plans, runs, accounts, workers, planItems, clarifications, validationRuns, executionEvents, supervisorInterventions, queuedConversationMessages } from "@/server/db/schema";
+import { messages, plans, runs, accounts, workers, planItems, clarifications, executionEvents, supervisorInterventions, queuedConversationMessages } from "@/server/db/schema";
 import { BRIDGE_URL } from "@/server/bridge-client";
 import { buildAppError } from "@/server/api-errors";
-import { desc } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { syncConversationSessions } from "@/server/conversations/sync";
 import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
 import { requireApiSession } from "@/server/auth/guards";
@@ -12,12 +12,14 @@ import { waitForEventStreamNotification } from "@/server/events/live-updates";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { serializeMessageRecord } from "@/server/conversations/message-records";
 import { serializeQueuedConversationMessage } from "@/server/conversations/queued-messages";
+import { isWorkerTerminalToolCallStart } from "@/lib/worker-terminal-processes";
 
 export const dynamic = "force-dynamic";
 
 const STREAM_REFRESH_INTERVAL_MS = 15_000;
 const RUNTIME_AGENT_GRACE_MS = 150;
 const RUNTIME_AGENT_TIMEOUT_MS = 5000;
+const EXECUTION_EVENT_LIMIT = 100;
 
 async function fetchWithTimeout(url: string, timeoutMs: number) {
   const controller = new AbortController();
@@ -40,18 +42,38 @@ async function fetchWithTimeout(url: string, timeoutMs: number) {
   }
 }
 
-async function readPersistedEventRecords() {
-  const msgs = await db.select().from(messages).orderBy(messages.createdAt);
+async function readPersistedEventRecords(options: EventPayloadOptions = {}) {
+  const selectedRunId = options.selectedRunId?.trim() || null;
   const allPlans = await db.select().from(plans).orderBy(desc(plans.createdAt));
   const allRuns = await db.select().from(runs).orderBy(desc(runs.createdAt));
+  const selectedRun = selectedRunId ? allRuns.find((run) => run.id === selectedRunId) ?? null : null;
+  const selectedPlanId = selectedRun?.planId ?? null;
+
+  const msgs = selectedRunId
+    ? await db.select().from(messages).where(eq(messages.runId, selectedRunId)).orderBy(asc(messages.createdAt))
+    : [];
   const allAccounts = await db.select().from(accounts);
   const allWorkers = await db.select().from(workers);
-  const allPlanItems = await db.select().from(planItems);
-  const allClarifications = await db.select().from(clarifications).orderBy(desc(clarifications.createdAt));
-  const allValidationRuns = await db.select().from(validationRuns).orderBy(desc(validationRuns.createdAt));
-  const allExecutionEvents = await db.select().from(executionEvents).orderBy(desc(executionEvents.createdAt));
-  const allSupervisorInterventions = await db.select().from(supervisorInterventions).orderBy(desc(supervisorInterventions.createdAt));
-  const allQueuedMessages = await db.select().from(queuedConversationMessages).orderBy(desc(queuedConversationMessages.createdAt));
+  const allPlanItems = selectedPlanId
+    ? await db.select().from(planItems).where(eq(planItems.planId, selectedPlanId))
+    : [];
+  const allClarifications = selectedRunId
+    ? await db.select().from(clarifications).where(eq(clarifications.runId, selectedRunId)).orderBy(desc(clarifications.createdAt))
+    : [];
+  const allExecutionEvents = selectedRunId
+    ? await db.select().from(executionEvents).where(eq(executionEvents.runId, selectedRunId)).orderBy(desc(executionEvents.createdAt)).limit(EXECUTION_EVENT_LIMIT)
+    : [];
+  const allSupervisorInterventions = selectedRunId
+    ? await db.select().from(supervisorInterventions).where(eq(supervisorInterventions.runId, selectedRunId)).orderBy(desc(supervisorInterventions.createdAt))
+    : [];
+  const allQueuedMessages = selectedRunId
+    ? await db.select().from(queuedConversationMessages)
+      .where(and(
+        eq(queuedConversationMessages.runId, selectedRunId),
+        inArray(queuedConversationMessages.status, ["pending", "delivering"]),
+      ))
+      .orderBy(desc(queuedConversationMessages.createdAt))
+    : [];
 
   return {
     msgs,
@@ -61,7 +83,6 @@ async function readPersistedEventRecords() {
     allWorkers,
     allPlanItems,
     allClarifications,
-    allValidationRuns,
     allExecutionEvents,
     allSupervisorInterventions,
     allQueuedMessages,
@@ -83,11 +104,9 @@ const AGENT_ENTRY_RAW_STRING_LIMIT = 20_000;
 const AGENT_ENTRY_RAW_JSON_LIMIT = 60_000;
 const AGENT_OUTPUT_ENTRY_HEAD_LIMIT = 6;
 const AGENT_OUTPUT_ENTRY_TAIL_LIMIT = 24;
-const EXECUTION_EVENT_LIMIT = 100;
 const EXECUTION_EVENT_DETAIL_LIMIT = 1_000;
 const SUPERVISOR_INTERVENTION_TEXT_LIMIT = 2_000;
 const TERMINAL_TOOL_FINAL_STATUSES = new Set(["completed", "failed", "cancelled", "canceled", "done", "error"]);
-const TERMINAL_TOOL_KIND_PATTERN = /\b(execute|terminal|shell|bash|command|run)\b/i;
 
 function truncateText(value: string | null | undefined, limit: number) {
   if (!value || value.length <= limit) {
@@ -283,59 +302,10 @@ function asNonEmptyString(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-function entryCommandText(entry: LiveWorkerOutputEntry) {
-  const raw = asRecord(entry.raw);
-  const rawInput = asRecord(raw?.rawInput);
-  const rawOutput = asRecord(raw?.rawOutput);
-  const candidates = [
-    rawInput?.command,
-    rawInput?.command_string,
-    rawInput?.cmd,
-    raw?.command,
-    raw?.command_string,
-    raw?.cmd,
-    rawOutput?.command,
-    rawOutput?.command_string,
-    rawOutput?.cmd,
-  ];
-
-  for (const candidate of candidates) {
-    if (Array.isArray(candidate) && candidate.some((part) => typeof part === "string" && part.trim())) {
-      return candidate.filter((part): part is string => typeof part === "string" && part.trim().length > 0).join(" ");
-    }
-
-    const command = asNonEmptyString(candidate);
-    if (command) {
-      return command;
-    }
-  }
-
-  return null;
-}
-
-function isTerminalToolStart(entry: LiveWorkerOutputEntry) {
-  if (entry.type !== "tool_call") {
-    return false;
-  }
-
-  if (entryCommandText(entry)) {
-    return true;
-  }
-
-  const raw = asRecord(entry.raw);
-  const haystack = [
-    entry.toolKind,
-    raw?.kind,
-    raw?.title,
-    entry.text,
-  ].map((value) => typeof value === "string" ? value : "").join(" ");
-  return TERMINAL_TOOL_KIND_PATTERN.test(haystack);
-}
-
 function terminalToolIds(entries: LiveWorkerOutputEntry[]) {
   return new Set(
     entries
-      .filter(isTerminalToolStart)
+      .filter(isWorkerTerminalToolCallStart)
       .map((entry) => entry.toolCallId)
       .filter((toolCallId): toolCallId is string => Boolean(toolCallId)),
   );
@@ -473,7 +443,6 @@ function buildEventPayload(
     workers: records.allWorkers.map(compactWorkerRecord),
     planItems: filterSelectedPlanScopedRecords(records.allPlanItems, planIds),
     clarifications: filterSelectedRunScopedRecords(records.allClarifications, runIds),
-    validationRuns: filterSelectedRunScopedRecords(records.allValidationRuns, runIds),
     executionEvents: filterSelectedRunScopedRecords(records.allExecutionEvents, runIds)
       .slice(0, EXECUTION_EVENT_LIMIT)
       .map(compactExecutionEvent),
@@ -487,7 +456,7 @@ function buildEventPayload(
 }
 
 async function buildPersistedEventPayload(options: EventPayloadOptions = {}) {
-  const records = await readPersistedEventRecords();
+  const records = await readPersistedEventRecords(options);
   return buildEventPayload(
     records,
     buildLiveWorkerSnapshots({
@@ -500,7 +469,7 @@ async function buildPersistedEventPayload(options: EventPayloadOptions = {}) {
 }
 
 async function buildRuntimeEnrichedEventPayload(options: EventPayloadOptions = {}) {
-  let records = await readPersistedEventRecords();
+  let records = await readPersistedEventRecords(options);
   let agentsData = buildLiveWorkerSnapshots({
     workers: selectedRunWorkers(records, options),
     runs: records.allRuns,
@@ -513,7 +482,7 @@ async function buildRuntimeEnrichedEventPayload(options: EventPayloadOptions = {
       const rawAgentsPayload = await res.json();
       const rawAgents = Array.isArray(rawAgentsPayload) ? rawAgentsPayload : [];
       await syncConversationSessions(rawAgents);
-      records = await readPersistedEventRecords();
+      records = await readPersistedEventRecords(options);
       const scopedWorkers = selectedRunWorkers(records, options);
       agentsData = buildLiveWorkerSnapshots({
         agents: filterRuntimeAgentsForWorkers(rawAgents, scopedWorkers),

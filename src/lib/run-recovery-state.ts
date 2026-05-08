@@ -52,7 +52,6 @@ export type RecoverableConversationState = {
   workers: RecoverableWorker[];
   agents: RecoverableAgent[];
   clarifications: RecoverableRunScoped[];
-  validationRuns: RecoverableRunScoped[];
   executionEvents: RecoverableExecutionEvent[];
   supervisorInterventions: RecoverableRunScoped[];
   queuedMessages?: RecoverableQueuedMessage[];
@@ -143,7 +142,6 @@ export function applyRunRecoveryOptimisticUpdate(
     )),
     agents: state.agents.filter((agent) => !workerIds.includes(agent.name)),
     clarifications: state.clarifications.filter((item) => item.runId !== args.runId),
-    validationRuns: state.validationRuns.filter((item) => item.runId !== args.runId),
     executionEvents: state.executionEvents.filter((item) => item.runId !== args.runId),
     supervisorInterventions: state.supervisorInterventions.filter((item) => item.runId !== args.runId),
     queuedMessages: state.queuedMessages?.filter((item) => item.runId !== args.runId),

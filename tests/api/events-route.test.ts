@@ -207,6 +207,13 @@ describe("GET /api/events", () => {
     expect(payload.executionEvents[0].details).not.toContain("xxxxx");
   });
 
+  it("keeps selected-run snapshots from scanning unrelated heavy event history", async () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/app/api/events/route.ts"), "utf8");
+
+    expect(source).not.toContain("db.select().from(executionEvents).orderBy(desc(executionEvents.createdAt))");
+    expect(source).not.toContain("db.select().from(messages).orderBy(messages.createdAt)");
+  });
+
   it("serves persisted snapshots from sqlite without waiting for supervisor startup or bridge fetches", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

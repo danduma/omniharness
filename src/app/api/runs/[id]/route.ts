@@ -20,7 +20,6 @@ import {
   workers,
   clarifications,
   planItems,
-  validationRuns,
   executionEvents,
   supervisorInterventions,
   queuedConversationMessages,
@@ -107,6 +106,8 @@ async function pauseImplementationRunAfterWorkerStop(runId: string, stoppedWorke
 
   await insertExecutionEvent(runId, "worker_stop_requested", {
     summary: `Paused work because ${stoppedWorkerId} was stopped by the user.`,
+    reason: "User stopped a worker.",
+    userInitiated: true,
     stoppedWorkerId,
     cancelledWorkerIds: activeWorkers.map((worker) => worker.id),
   }, stoppedWorkerId);
@@ -209,6 +210,8 @@ export async function POST(
       }).where(eq(runs.id, runId));
       await insertExecutionEvent(runId, "supervisor_stopped", {
         summary: "Stopped supervisor and cancelled active workers.",
+        reason: "User stopped the supervisor.",
+        userInitiated: true,
         cancelledWorkerIds: activeWorkers.map((worker) => worker.id),
       });
       notifyEventStreamSubscribers();
@@ -394,7 +397,6 @@ export async function DELETE(
 
     await db.delete(messages).where(eq(messages.runId, runId));
     await db.delete(clarifications).where(eq(clarifications.runId, runId));
-    await db.delete(validationRuns).where(eq(validationRuns.runId, runId));
     await db.delete(executionEvents).where(eq(executionEvents.runId, runId));
     await db.delete(supervisorInterventions).where(eq(supervisorInterventions.runId, runId));
     await db.delete(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId));
@@ -403,7 +405,6 @@ export async function DELETE(
     await db.delete(runs).where(eq(runs.id, runId));
 
     for (const planItemId of planItemIds) {
-      await db.delete(validationRuns).where(eq(validationRuns.planItemId, planItemId));
       await db.delete(executionEvents).where(eq(executionEvents.planItemId, planItemId));
     }
 

@@ -284,6 +284,64 @@ describe("deriveWorkerEvents", () => {
     expect(events.some((event) => event.type === "worker_idle")).toBe(false);
   });
 
+  it("does not reuse stale last text as a fresh completion while the worker is already working", () => {
+    const staleFinalText = [
+      "Status: not blocked.",
+      "",
+      "Completed so far:",
+      "- Arm64 verification is green.",
+      "- Documentation has been updated.",
+      "- Web project create and duplicate now use Rust-owned project IDs.",
+      "- Web project durable writes are gated by Rust/WASM validation.",
+      "- Rename acceptance now goes through the Rust editor command path.",
+      "- Android arm64 release packaging and iOS simulator FFI builds have been verified.",
+      "",
+      "Still left:",
+      "- Full linked FFmpeg/native job coverage.",
+      "- Full compositor-backed pixel/frame rendering parity.",
+      "- Remaining web/desktop migration slices.",
+      "- AVFoundation and VideoToolbox adapter traits with iOS fixture parity.",
+      "- Broader web/desktop migration beyond the first WASM slices.",
+    ].join("\n");
+
+    const { events } = deriveWorkerEvents({
+      workerId: "worker-1",
+      snapshot: {
+        state: "working",
+        currentText: "",
+        lastText: staleFinalText,
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+      previous: {
+        fingerprint: JSON.stringify({
+          state: "idle",
+          currentText: staleFinalText,
+          lastText: staleFinalText,
+          pendingPermissions: [],
+          stopReason: "end_turn",
+          stderrTail: [],
+        }),
+        lastChangedAt: 0,
+        lastMeaningfulActivityAt: 0,
+        progressSignature: JSON.stringify({
+          state: "idle",
+          currentText: staleFinalText,
+          lastText: staleFinalText,
+          pendingPermissions: [],
+          stopReason: "end_turn",
+        }),
+        idleNotified: false,
+        stuckNotified: false,
+        completionHintNotified: true,
+      },
+      now: 1_000,
+    });
+
+    expect(events.some((event) => event.type === "worker_turn_completed")).toBe(false);
+  });
+
   it("wakes the supervisor immediately when a permission request appears", () => {
     const permission = {
       requestId: 12,

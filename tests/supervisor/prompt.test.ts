@@ -30,9 +30,10 @@ describe("SUPERVISOR_SYSTEM_PROMPT", () => {
   it("requires independent validation against mocks and fake product paths", () => {
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Independent validation");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("separate validator");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("validator/checker CLI worker");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("mocked path");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("fake control");
-    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("actually exercises the real path");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("structured validation rows");
   });
 
   it("forbids duplicate main implementers unless work is explicitly separated", () => {

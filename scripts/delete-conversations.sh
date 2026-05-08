@@ -45,7 +45,9 @@ function deleteConversationRows() {
     db.prepare("delete from credit_events where worker_id in (select id from workers)").run();
     db.prepare("delete from messages where run_id in (select id from runs)").run();
     db.prepare("delete from clarifications where run_id in (select id from runs)").run();
-    db.prepare("delete from validation_runs where run_id in (select id from runs)").run();
+    if (tables.has("validation_runs")) {
+      db.prepare("delete from validation_runs where run_id in (select id from runs)").run();
+    }
     db.prepare("delete from execution_events where run_id in (select id from runs)").run();
     if (tables.has("supervisor_interventions")) {
       db.prepare("delete from supervisor_interventions where run_id in (select id from runs)").run();
@@ -59,7 +61,9 @@ function deleteConversationRows() {
     }
     db.prepare("delete from runs").run();
 
-    db.prepare("delete from validation_runs where plan_item_id in (select id from plan_items)").run();
+    if (tables.has("validation_runs")) {
+      db.prepare("delete from validation_runs where plan_item_id in (select id from plan_items)").run();
+    }
     db.prepare("delete from execution_events where plan_item_id in (select id from plan_items)").run();
     db.prepare("delete from plan_items").run();
     db.prepare("delete from plans").run();

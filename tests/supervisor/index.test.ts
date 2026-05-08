@@ -5,7 +5,7 @@ import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { executionEvents, messages, plans, runs, settings, supervisorInterventions, workerCounters, workers } from "@/server/db/schema";
+import { clarifications, executionEvents, messages, planItems, plans, runs, settings, supervisorInterventions, workerCounters, workers } from "@/server/db/schema";
 
 const {
   mockAgentGenerate,
@@ -18,6 +18,10 @@ const {
   mockParseSupervisorToolCall,
   mockSelectSpawnableWorkerType,
   mockNotifyEventStreamSubscribers,
+  mockAgentConfigs,
+  mockGetSupervisorModelConfig,
+  mockValidateSupervisorModelConfig,
+  mockBuildMastraModelConfig,
 } = vi.hoisted(() => ({
   mockAgentGenerate: vi.fn(),
   mockSpawnAgent: vi.fn(),
@@ -29,11 +33,27 @@ const {
   mockParseSupervisorToolCall: vi.fn(),
   mockSelectSpawnableWorkerType: vi.fn(),
   mockNotifyEventStreamSubscribers: vi.fn(),
+  mockAgentConfigs: [] as unknown[],
+  mockGetSupervisorModelConfig: vi.fn((_env?: unknown, sourcePreference?: "primary" | "fallback") => ({
+    provider: sourcePreference === "fallback" ? "openai" : "gemini",
+    model: sourcePreference === "fallback" ? "gpt-5.4-mini" : "gemini-3.1-pro-preview",
+    apiKey: "key",
+    baseURL: undefined,
+    source: sourcePreference === "fallback" ? "fallback" : "primary",
+  })),
+  mockValidateSupervisorModelConfig: vi.fn(),
+  mockBuildMastraModelConfig: vi.fn((config) => ({
+    id: `${config.provider}/${config.model}`,
+    apiKey: config.apiKey,
+    url: config.baseURL,
+  })),
 }));
 
 vi.mock("@mastra/core/agent", () => ({
   Agent: class MockAgent {
-    constructor(public config: unknown) {}
+    constructor(public config: unknown) {
+      mockAgentConfigs.push(config);
+    }
 
     generate = mockAgentGenerate;
   },
@@ -48,18 +68,9 @@ vi.mock("@/server/bridge-client", () => ({
 }));
 
 vi.mock("@/server/supervisor/model-config", () => ({
-  getSupervisorModelConfig: vi.fn(() => ({
-    provider: "openai",
-    model: "gpt-5.4-mini",
-    apiKey: "key",
-    baseURL: undefined,
-  })),
-  validateSupervisorModelConfig: vi.fn(),
-  buildMastraModelConfig: vi.fn((config) => ({
-    id: `${config.provider}/${config.model}`,
-    apiKey: config.apiKey,
-    url: config.baseURL,
-  })),
+  getSupervisorModelConfig: mockGetSupervisorModelConfig,
+  validateSupervisorModelConfig: mockValidateSupervisorModelConfig,
+  buildMastraModelConfig: mockBuildMastraModelConfig,
 }));
 
 vi.mock("@/server/supervisor/runtime-settings", () => ({
@@ -102,9 +113,11 @@ function deferred<T>() {
 describe("Supervisor worker spawn flow", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockAgentConfigs.length = 0;
     vi.unstubAllEnvs();
     await db.delete(supervisorInterventions);
     await db.delete(executionEvents);
+    await db.delete(clarifications);
     await db.delete(messages);
     await db.delete(workers);
     await db.delete(workerCounters);
@@ -147,6 +160,19 @@ describe("Supervisor worker spawn flow", () => {
     mockAskAgent.mockResolvedValue({ response: "ok", state: "working" });
     mockGetAgent.mockResolvedValue(null);
     vi.spyOn(Date, "now").mockReturnValue(123456);
+    mockGetSupervisorModelConfig.mockImplementation((_env, sourcePreference?: "primary" | "fallback") => ({
+      provider: sourcePreference === "fallback" ? "openai" : "gemini",
+      model: sourcePreference === "fallback" ? "gpt-5.4-mini" : "gemini-3.1-pro-preview",
+      apiKey: sourcePreference === "fallback" ? "fallback-key" : "primary-key",
+      baseURL: undefined,
+      source: sourcePreference === "fallback" ? "fallback" : "primary",
+    }));
+    mockValidateSupervisorModelConfig.mockImplementation((config) => config);
+    mockBuildMastraModelConfig.mockImplementation((config) => ({
+      id: `${config.provider}/${config.model}`,
+      apiKey: config.apiKey,
+      url: config.baseURL,
+    }));
   });
 
   it("notifies live event subscribers when supervisor state changes", async () => {
@@ -177,6 +203,60 @@ describe("Supervisor worker spawn flow", () => {
 
     expect(mockNotifyEventStreamSubscribers).toHaveBeenCalled();
   }, 15_000);
+
+  it("requires user-visible preflight confirmation before the first implementation worker spawn", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      projectPath: "/tmp/project",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "@docs/superpowers/plans/2026-05-08-settings-reorganization.md",
+      createdAt: now,
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "paused" });
+
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    expect(mockAskAgent).not.toHaveBeenCalled();
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(persistedRun?.status).toBe("awaiting_user");
+
+    const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
+    expect(persistedMessages.map((message) => message.role)).toEqual(["user", "supervisor"]);
+    expect(persistedMessages[1]).toMatchObject({
+      kind: "clarification",
+    });
+    expect(persistedMessages[1]?.content).toContain("Before I start implementation");
+    expect(persistedMessages[1]?.content).toContain("Reply with confirmation or corrections");
+
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(events.map((event) => event.eventType)).toContain("preflight_confirmation_required");
+  });
 
   it("rechecks immediately when a worker returns long final-looking output", async () => {
     const planId = randomUUID();
@@ -384,7 +464,7 @@ describe("Supervisor worker spawn flow", () => {
       role: "user",
       kind: "checkpoint",
       content: "Keep fork changes isolated so trunk sync stays easy.",
-      createdAt: new Date(now.getTime() + 1_000),
+      createdAt: new Date(now.getTime() - 1_000),
     });
 
     mockParseSupervisorToolCall.mockReturnValueOnce({
@@ -1260,6 +1340,53 @@ describe("Supervisor worker spawn flow", () => {
     expect(mockSpawnAgent.mock.calls[0]?.[0]?.mode).toBeUndefined();
   });
 
+  it("applies fallback_api credit strategy by retrying supervisor model requests with the fallback profile", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(settings).values({
+      key: "CREDIT_STRATEGY",
+      value: "fallback_api",
+      updatedAt: new Date(),
+    });
+
+    mockAgentGenerate
+      .mockRejectedValueOnce(Object.assign(new Error("quota exceeded"), { status: 429 }))
+      .mockResolvedValueOnce({ toolCalls: [{ payload: { toolCallId: "tool-1", toolName: "worker_spawn", args: {} } }] });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    expect(mockAgentGenerate).toHaveBeenCalledTimes(2);
+    expect(mockGetSupervisorModelConfig).toHaveBeenCalledWith(expect.any(Object));
+    expect(mockGetSupervisorModelConfig).toHaveBeenCalledWith(expect.any(Object), "fallback");
+    expect(mockAgentConfigs.map((config) => (config as { model?: { id?: string } }).model?.id)).toEqual([
+      "gemini/gemini-3.1-pro-preview",
+      "openai/gpt-5.4-mini",
+    ]);
+
+    const strategyEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(strategyEvent.some((event) => event.eventType === "supervisor_credit_strategy_applied")).toBe(true);
+  });
+
   it("marks the persisted worker as errored when the initial ask fails", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -1600,6 +1727,58 @@ describe("Supervisor worker spawn flow", () => {
     const completionEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
     expect(completionEvent?.details).toContain('"interventionCount":1');
     expect(completionEvent?.details).toContain('"interventionType":"completion_gap"');
+  });
+
+  it("marks complete without running inferred plan-title validation", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      projectPath: "/tmp/project",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(planItems).values({
+      id: randomUUID(),
+      planId,
+      phase: "Regression",
+      title: "Update missing-file-that-only-exists-in-prose.txt",
+      status: "pending",
+      sourceLine: 12,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-complete",
+      name: "mark_complete",
+      args: {
+        summary: "The supervisor checked the worker evidence and accepted completion.",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "completed" });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(run?.status).toBe("done");
+
+    const completionEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+    expect(completionEvent?.eventType).toBe("run_completed");
   });
 
   it("records worker cancellation without deleting the worker before writing events", async () => {

@@ -29,7 +29,6 @@ import { parsePlan } from "@/server/plans/parser";
 import { syncPlanItems } from "@/server/plans/checklist";
 import { assessPlanReadiness } from "@/server/plans/readiness";
 import { pauseForClarifications } from "@/server/clarifications/loop";
-import { validateRun } from "@/server/validation";
 
 export interface SupervisorOptions {
   runId: string;
@@ -192,6 +191,146 @@ function formatSupervisorError(error: unknown) {
 
 function truncate(text: string, maxLength: number) {
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function stripMarkdownInline(text: string) {
+  return text
+    .replace(/[`*_#>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractPlanSummaryLines(markdown: string | null | undefined) {
+  if (!markdown) {
+    return [];
+  }
+
+  const lines: string[] = [];
+  const title = markdown.match(/^#\s+(.+)$/m)?.[1];
+  const goal = markdown.match(/^\s*(?:[-*>]\s*)?(?:\*\*)?Goal(?:\*\*)?:\s*(.+)$/im)?.[1];
+  if (title) {
+    lines.push(`Plan: ${stripMarkdownInline(title)}`);
+  }
+  if (goal) {
+    lines.push(`Goal: ${stripMarkdownInline(goal)}`);
+  }
+
+  const acceptanceStart = markdown.search(/^##\s+Acceptance Criteria\s*$/im);
+  if (acceptanceStart >= 0) {
+    const acceptanceText = markdown.slice(acceptanceStart).split(/\n#{1,6}\s+/)[0] ?? "";
+    const criteria = acceptanceText
+      .split("\n")
+      .map((line) => line.match(/^\s*-\s+(.+)$/)?.[1])
+      .filter((line): line is string => Boolean(line))
+      .slice(0, 4)
+      .map(stripMarkdownInline);
+    if (criteria.length) {
+      lines.push(`Success criteria: ${criteria.join("; ")}`);
+    }
+  }
+
+  if (lines.length < 2) {
+    const parsedPlan = parsePlan(markdown);
+    const tasks = parsedPlan.items
+      .slice(0, 4)
+      .map((item) => stripMarkdownInline(item.title))
+      .filter(Boolean);
+    if (tasks.length) {
+      lines.push(`Initial tasks: ${tasks.join("; ")}`);
+    }
+  }
+
+  return lines.filter(Boolean);
+}
+
+async function getLatestSupervisorReadFileContent(runId: string) {
+  const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+  const latestRead = events
+    .filter((event) => event.eventType === "supervisor_file_read")
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+
+  if (!latestRead?.details) {
+    return null;
+  }
+
+  try {
+    const details = JSON.parse(latestRead.details) as Record<string, unknown>;
+    return typeof details.content === "string" ? details.content : null;
+  } catch {
+    return null;
+  }
+}
+
+async function hasAnsweredPreflightConfirmation(runId: string) {
+  const runClarifications = await db.select().from(clarifications).where(eq(clarifications.runId, runId));
+  return runClarifications.some((clarification) => (
+    clarification.status === "answered"
+    && typeof clarification.answer === "string"
+    && clarification.answer.trim().length > 0
+  ));
+}
+
+async function buildPreflightConfirmationQuestion(args: {
+  runId: string;
+  title: string;
+  purpose: string;
+  prompt: string;
+}) {
+  const latestReadContent = await getLatestSupervisorReadFileContent(args.runId);
+  const planLines = extractPlanSummaryLines(latestReadContent);
+  const summaryLines = planLines.length
+    ? planLines
+    : [
+      `Work: ${stripMarkdownInline(args.title)}`,
+      args.purpose ? `Purpose: ${stripMarkdownInline(args.purpose)}` : null,
+      `Proposed first step: ${truncate(stripMarkdownInline(args.prompt), 260)}`,
+    ].filter((line): line is string => Boolean(line));
+
+  return [
+    "Before I start implementation, please confirm this is the intended job:",
+    "",
+    ...summaryLines.map((line) => `- ${line}`),
+    "",
+    "Reply with confirmation or corrections, and I'll start the worker after that.",
+  ].join("\n");
+}
+
+async function pauseForPreflightConfirmation(args: {
+  runId: string;
+  title: string;
+  purpose: string;
+  prompt: string;
+}) {
+  const existingWorkers = await db.select().from(workers).where(eq(workers.runId, args.runId));
+  if (existingWorkers.length > 0 || await hasAnsweredPreflightConfirmation(args.runId)) {
+    return false;
+  }
+
+  const userMessages = (await db.select().from(dbMessages).where(eq(dbMessages.runId, args.runId)))
+    .filter((message) => message.role === "user");
+  if (userMessages.length === 0) {
+    return false;
+  }
+
+  const question = await buildPreflightConfirmationQuestion(args);
+  const now = new Date();
+  await db.insert(clarifications).values({
+    id: randomUUID(),
+    runId: args.runId,
+    question,
+    answer: null,
+    status: "pending",
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.update(runs).set({ status: "awaiting_user", updatedAt: now }).where(eq(runs.id, args.runId));
+  await insertExecutionEvent(args.runId, "preflight_confirmation_required", {
+    summary: "Paused before first worker spawn for user confirmation.",
+    title: args.title,
+    purpose: args.purpose,
+  });
+  await insertRunMessage(args.runId, "supervisor", question, "clarification");
+  return true;
 }
 
 function isAgentBusyError(error: unknown) {
@@ -690,6 +829,14 @@ export class Supervisor {
           const prompt = asString(action.args.prompt, "prompt");
           const mode = resolveWorkerSpawnMode(action.args.mode, yoloModeEnabled);
           const purpose = typeof action.args.purpose === "string" ? action.args.purpose.trim() : "";
+          if (await pauseForPreflightConfirmation({
+            runId: this.runId,
+            title,
+            purpose,
+            prompt,
+          })) {
+            return { state: "paused" };
+          }
           const skillRoots = asOptionalStringArray(action.args.skillRoots, "skillRoots");
           const mcpServers = asOptionalMcpServers(action.args.mcpServers, "mcpServers");
           const activeMainWorker = await findActiveMainWorker(this.runId);
@@ -1060,16 +1207,6 @@ export class Supervisor {
 
         case "mark_complete": {
           const summary = asString(action.args.summary, "summary");
-          const validation = await validateRun(this.runId);
-          if (!validation.ok) {
-            const failureSummary = validation.failures.join("; ") || "Validation did not produce passing evidence.";
-            await insertExecutionEvent(this.runId, "run_validation_failed", {
-              summary: failureSummary,
-              failures: validation.failures,
-            });
-            return { state: "wait", delayMs: 1_000 };
-          }
-
           await cancelRunWorkers(this.runId);
           if (!await this.loadActiveRun()) {
             return { state: "completed" };

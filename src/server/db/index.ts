@@ -199,19 +199,6 @@ CREATE TABLE IF NOT EXISTS worker_assignments (
   FOREIGN KEY (plan_item_id) REFERENCES plan_items(id) ON UPDATE no action ON DELETE no action
 );
 
-CREATE TABLE IF NOT EXISTS validation_runs (
-  id text PRIMARY KEY NOT NULL,
-  run_id text NOT NULL,
-  plan_item_id text,
-  status text NOT NULL,
-  summary text,
-  evidence text,
-  created_at integer NOT NULL,
-  updated_at integer NOT NULL,
-  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action,
-  FOREIGN KEY (plan_item_id) REFERENCES plan_items(id) ON UPDATE no action ON DELETE no action
-);
-
 CREATE TABLE IF NOT EXISTS execution_events (
   id text PRIMARY KEY NOT NULL,
   run_id text NOT NULL,
@@ -237,6 +224,22 @@ CREATE TABLE IF NOT EXISTS supervisor_interventions (
   FOREIGN KEY (worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE no action
 );
 `);
+
+sqlite.exec(`
+CREATE INDEX IF NOT EXISTS messages_run_created_idx ON messages(run_id, created_at);
+CREATE INDEX IF NOT EXISTS workers_run_idx ON workers(run_id);
+CREATE INDEX IF NOT EXISTS plan_items_plan_idx ON plan_items(plan_id);
+CREATE INDEX IF NOT EXISTS clarifications_run_created_idx ON clarifications(run_id, created_at);
+CREATE INDEX IF NOT EXISTS execution_events_run_created_idx ON execution_events(run_id, created_at);
+CREATE INDEX IF NOT EXISTS supervisor_interventions_run_created_idx ON supervisor_interventions(run_id, created_at);
+CREATE INDEX IF NOT EXISTS queued_conversation_messages_run_status_created_idx ON queued_conversation_messages(run_id, status, created_at);
+CREATE INDEX IF NOT EXISTS runs_created_idx ON runs(created_at);
+CREATE INDEX IF NOT EXISTS plans_created_idx ON plans(created_at);
+`);
+
+// Legacy cleanup: validation is now performed by supervisor tool use and checker workers,
+// not persisted heuristic rows inferred from plan prose.
+sqlite.exec("DROP TABLE IF EXISTS validation_runs;");
 
 const runColumns = sqlite.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>;
 const runColumnNames = new Set(runColumns.map((column) => column.name));

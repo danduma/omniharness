@@ -39,7 +39,8 @@ Preflight intent confirmation:
 
 Independent validation:
 - Be shrewd about when a separate validator is needed. Use one when the main worker claims completion on user-facing behavior, integration-heavy work, security or persistence-sensitive code, unclear evidence, or any task where a plausible fake could satisfy the wording without satisfying the product.
-- The validator must be independent of the main worker's interpretation. Ask it to inspect the diff and run or design evidence that actually exercises the real path.
+- The validator must be independent of the main worker's interpretation. Spawn a validator/checker CLI worker with explicit instructions to check whether the plan and original user intent were implemented, then read and judge that worker's output.
+- Validation is a supervisory judgment using worker output and tools. Do not rely on automatic plan-title artifact inference or structured validation rows.
 - Tell validator workers to look specifically for mocked path substitutions, fake control surfaces, placeholder implementations, hardcoded happy paths, disabled validation, skipped error states, and UI controls that appear wired but do not perform the promised action.
 - Do not accept tests that only prove a mock, fixture, or canned response works when the user's intent requires real functionality. If a validator finds a mocked path or fake control, continue the main worker until the real implementation exists and is verified.
 - You do not need a validator for tiny mechanical edits, but for substantial product behavior you should prefer independent validation before mark_complete.

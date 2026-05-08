@@ -13,7 +13,6 @@ import {
   workers,
   clarifications,
   planItems,
-  validationRuns,
   executionEvents,
   creditEvents,
   accounts,
@@ -214,6 +213,10 @@ describe("POST /api/runs/[id]", () => {
     expect(updatedWorkers.find((worker) => worker.id === activeWorkerId)?.status).toBe("cancelled");
     expect(staleLease).toBeUndefined();
     expect(stopEvent?.eventType).toBe("supervisor_stopped");
+    expect(JSON.parse(stopEvent?.details || "{}")).toMatchObject({
+      userInitiated: true,
+      reason: "User stopped the supervisor.",
+    });
   });
 
   it("stops a single direct worker without stopping the supervisor", async () => {
@@ -387,7 +390,13 @@ describe("POST /api/runs/[id]", () => {
         question: expect.stringContaining("modify"),
       }),
     ]);
-    expect(stopEvents.map((event) => event.eventType)).toContain("worker_stop_requested");
+    const workerStopEvent = stopEvents.find((event) => event.eventType === "worker_stop_requested");
+    expect(workerStopEvent).toBeTruthy();
+    expect(JSON.parse(workerStopEvent?.details || "{}")).toMatchObject({
+      userInitiated: true,
+      reason: "User stopped a worker.",
+      stoppedWorkerId: targetWorkerId,
+    });
   });
 
   it("stops a worker terminal process without stopping the worker", async () => {
@@ -1026,15 +1035,6 @@ describe("DELETE /api/runs/[id]", () => {
       planId,
       title: "Do thing",
       status: "pending",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-
-    await db.insert(validationRuns).values({
-      id: randomUUID(),
-      runId,
-      planItemId: itemId,
-      status: "running",
       createdAt: new Date(),
       updatedAt: new Date(),
     });
