@@ -123,6 +123,7 @@ describe("Supervisor worker spawn flow", () => {
     await db.delete(workerCounters);
     await db.delete(settings);
     await db.delete(runs);
+    await db.delete(planItems);
     await db.delete(plans);
 
     mockAgentGenerate.mockResolvedValue({ toolCalls: [{ payload: { toolCallId: "tool-1", toolName: "worker_spawn", args: {} } }] });

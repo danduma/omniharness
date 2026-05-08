@@ -4,12 +4,14 @@ import { type UseMutationResult } from "@tanstack/react-query";
 import { type AppErrorDescriptor, mergeAppErrors } from "@/lib/app-errors";
 import type { ConversationModeOption } from "@/components/ConversationModePicker";
 import {
+  clampConversationSidebarWidth,
   clampWorkersSidebarWidth,
   COMPOSER_EFFORT_STORAGE_KEY,
   COMPOSER_MODE_STORAGE_KEY,
   COMPOSER_MODEL_STORAGE_KEY,
   COMPOSER_WORKER_STORAGE_KEY,
   EFFORT_OPTIONS,
+  getDefaultConversationSidebarWidth,
   getDefaultWorkersSidebarWidth,
   RUN_PATH_PATTERN,
   WORKER_OPTIONS,
@@ -44,8 +46,12 @@ interface UseHomeLifecycleProps {
   readMarkers: Record<string, string>;
   collapsedProjectPaths: Set<string>;
   setCollapsedProjectPaths: React.Dispatch<React.SetStateAction<Set<string>>>;
+  leftSidebarWidth: number;
+  setLeftSidebarWidth: React.Dispatch<React.SetStateAction<number>>;
   rightSidebarWidth: number;
   setRightSidebarWidth: React.Dispatch<React.SetStateAction<number>>;
+  isResizingLeftSidebar: boolean;
+  setIsResizingLeftSidebar: React.Dispatch<React.SetStateAction<boolean>>;
   isResizingRightSidebar: boolean;
   setIsResizingRightSidebar: React.Dispatch<React.SetStateAction<boolean>>;
   selectedConversationMode: ConversationModeOption;
@@ -83,8 +89,12 @@ export function useHomeLifecycle({
   readMarkers,
   collapsedProjectPaths,
   setCollapsedProjectPaths,
+  leftSidebarWidth,
+  setLeftSidebarWidth,
   rightSidebarWidth,
   setRightSidebarWidth,
+  isResizingLeftSidebar,
+  setIsResizingLeftSidebar,
   isResizingRightSidebar,
   setIsResizingRightSidebar,
   selectedConversationMode,
@@ -98,6 +108,8 @@ export function useHomeLifecycle({
   const didMountThemeEffectRef = useRef(false);
   const didHydrateCollapsedProjectsRef = useRef(false);
   const didSkipCollapsedProjectsInitialPersistRef = useRef(false);
+  const didHydrateConversationSidebarWidthRef = useRef(false);
+  const didSkipConversationSidebarInitialPersistRef = useRef(false);
   const didHydrateWorkersSidebarWidthRef = useRef(false);
   const didSkipWorkersSidebarInitialPersistRef = useRef(false);
 
@@ -258,6 +270,34 @@ export function useHomeLifecycle({
       return;
     }
 
+    const saved = window.localStorage.getItem("omni-conversations-sidebar-width");
+    if (!saved) {
+      setLeftSidebarWidth(getDefaultConversationSidebarWidth(window.innerWidth));
+      didHydrateConversationSidebarWidthRef.current = true;
+      return;
+    }
+
+    const parsed = Number(saved);
+    if (!Number.isFinite(parsed)) {
+      setRuntimeErrors((current) => mergeAppErrors(current, [{
+        message: "The saved conversations sidebar width in localStorage is invalid.",
+        source: "Frontend",
+        action: "Restore local layout state",
+        suggestion: "Clear the omni-conversations-sidebar-width localStorage entry and reload the page if the conversations sidebar size looks wrong.",
+      }]));
+      didHydrateConversationSidebarWidthRef.current = true;
+      return;
+    }
+
+    setLeftSidebarWidth(clampConversationSidebarWidth(parsed, window.innerWidth));
+    didHydrateConversationSidebarWidthRef.current = true;
+  }, [setLeftSidebarWidth, setRuntimeErrors]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
     const saved = window.localStorage.getItem("omni-workers-sidebar-width");
     if (!saved) {
       setRightSidebarWidth(getDefaultWorkersSidebarWidth(window.innerWidth));
@@ -296,6 +336,27 @@ export function useHomeLifecycle({
       }]));
     }
   }, [readMarkers, setRuntimeErrors]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !didHydrateConversationSidebarWidthRef.current) {
+      return;
+    }
+
+    if (!didSkipConversationSidebarInitialPersistRef.current) {
+      didSkipConversationSidebarInitialPersistRef.current = true;
+      return;
+    }
+
+    try {
+      window.localStorage.setItem("omni-conversations-sidebar-width", String(leftSidebarWidth));
+    } catch {
+      setRuntimeErrors((current) => mergeAppErrors(current, [{
+        message: "Failed to persist conversations sidebar width to localStorage.",
+        source: "Frontend",
+        action: "Persist local layout state",
+      }]));
+    }
+  }, [leftSidebarWidth, setRuntimeErrors]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !didHydrateWorkersSidebarWidthRef.current) {
@@ -338,6 +399,37 @@ export function useHomeLifecycle({
       }]));
     }
   }, [collapsedProjectPaths, setRuntimeErrors]);
+
+  useEffect(() => {
+    if (!isResizingLeftSidebar || typeof window === "undefined") {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const nextWidth = event.clientX;
+      setLeftSidebarWidth(clampConversationSidebarWidth(nextWidth, window.innerWidth));
+    };
+    const stopResizing = () => {
+      setIsResizingLeftSidebar(false);
+    };
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResizing);
+    window.addEventListener("pointercancel", stopResizing);
+
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResizing);
+      window.removeEventListener("pointercancel", stopResizing);
+    };
+  }, [isResizingLeftSidebar, setIsResizingLeftSidebar, setLeftSidebarWidth]);
 
   useEffect(() => {
     if (!isResizingRightSidebar || typeof window === "undefined") {

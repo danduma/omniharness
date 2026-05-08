@@ -1,7 +1,10 @@
 import type { ComposerWorkerOption, WorkerModelCatalog, WorkerType } from "./types";
 
 export const PRODUCT_NAME = "OmniHarness";
-export const DESKTOP_CONVERSATION_SIDEBAR_WIDTH = 280;
+export const DEFAULT_CONVERSATION_SIDEBAR_WIDTH = 280;
+export const DESKTOP_CONVERSATION_SIDEBAR_WIDTH = DEFAULT_CONVERSATION_SIDEBAR_WIDTH;
+export const CONVERSATION_SIDEBAR_MIN_WIDTH = 220;
+export const CONVERSATION_SIDEBAR_MAX_WIDTH_FALLBACK = 640;
 export const WORKERS_SIDEBAR_MIN_WIDTH = 320;
 export const WORKERS_SIDEBAR_MIN_MAIN_WIDTH = 360;
 export const WORKERS_SIDEBAR_MAX_WIDTH_FALLBACK = 1120;
@@ -27,6 +30,28 @@ export function clampWorkersSidebarWidth(width: number, viewportWidth?: number |
     getWorkersSidebarMaxWidth(viewportWidth),
     Math.max(WORKERS_SIDEBAR_MIN_WIDTH, Math.round(width)),
   );
+}
+
+export function getConversationSidebarMaxWidth(viewportWidth?: number | null) {
+  if (!isFiniteViewportWidth(viewportWidth)) {
+    return CONVERSATION_SIDEBAR_MAX_WIDTH_FALLBACK;
+  }
+
+  return Math.max(
+    CONVERSATION_SIDEBAR_MIN_WIDTH,
+    Math.round(viewportWidth - WORKERS_SIDEBAR_MIN_WIDTH - WORKERS_SIDEBAR_MIN_MAIN_WIDTH),
+  );
+}
+
+export function clampConversationSidebarWidth(width: number, viewportWidth?: number | null) {
+  return Math.min(
+    getConversationSidebarMaxWidth(viewportWidth),
+    Math.max(CONVERSATION_SIDEBAR_MIN_WIDTH, Math.round(width)),
+  );
+}
+
+export function getDefaultConversationSidebarWidth(viewportWidth?: number | null) {
+  return clampConversationSidebarWidth(DEFAULT_CONVERSATION_SIDEBAR_WIDTH, viewportWidth);
 }
 
 export function getDefaultWorkersSidebarWidth(viewportWidth?: number | null) {

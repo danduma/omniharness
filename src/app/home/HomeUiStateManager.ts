@@ -1,7 +1,7 @@
 import { chatAttachmentKindFromMimeType, type PendingChatAttachment } from "@/lib/chat-attachments";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { StateManager, type StateUpdate } from "@/lib/state-manager";
-import { DEFAULT_SERVER_SETTINGS, DEFAULT_WORKERS_SIDEBAR_WIDTH } from "./constants";
+import { DEFAULT_CONVERSATION_SIDEBAR_WIDTH, DEFAULT_SERVER_SETTINGS, DEFAULT_WORKERS_SIDEBAR_WIDTH } from "./constants";
 import type { ComposerWorkerOption, ConversationModeOption, EventStreamState, LlmProfileTab, MessageRecord, SettingsTab } from "./types";
 import type { CreatedConversationSnapshot } from "./utils";
 
@@ -34,8 +34,10 @@ type HomeUiState = {
   showFolderPicker: boolean;
   selectedRunId: string | null;
   leftSidebarOpen: boolean;
+  leftSidebarWidth: number;
   rightSidebarOpen: boolean;
   rightSidebarWidth: number;
+  isResizingLeftSidebar: boolean;
   isResizingRightSidebar: boolean;
   mobileNavOpen: boolean;
   mobileWorkersOpen: boolean;
@@ -78,8 +80,10 @@ const initialHomeUiState: HomeUiState = {
   showFolderPicker: false,
   selectedRunId: null,
   leftSidebarOpen: true,
+  leftSidebarWidth: DEFAULT_CONVERSATION_SIDEBAR_WIDTH,
   rightSidebarOpen: false,
   rightSidebarWidth: DEFAULT_WORKERS_SIDEBAR_WIDTH,
+  isResizingLeftSidebar: false,
   isResizingRightSidebar: false,
   mobileNavOpen: false,
   mobileWorkersOpen: false,
@@ -203,8 +207,10 @@ export const homeUiSetters = {
   setShowFolderPicker: homeUiStateManager.createSetter("showFolderPicker"),
   setSelectedRunId: homeUiStateManager.createSetter("selectedRunId"),
   setLeftSidebarOpen: homeUiStateManager.createSetter("leftSidebarOpen"),
+  setLeftSidebarWidth: homeUiStateManager.createSetter("leftSidebarWidth"),
   setRightSidebarOpen: homeUiStateManager.createSetter("rightSidebarOpen"),
   setRightSidebarWidth: homeUiStateManager.createSetter("rightSidebarWidth"),
+  setIsResizingLeftSidebar: homeUiStateManager.createSetter("isResizingLeftSidebar"),
   setIsResizingRightSidebar: homeUiStateManager.createSetter("isResizingRightSidebar"),
   setMobileNavOpen: homeUiStateManager.createSetter("mobileNavOpen"),
   setMobileWorkersOpen: homeUiStateManager.createSetter("mobileWorkersOpen"),

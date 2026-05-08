@@ -136,6 +136,7 @@ function normalizeBridgeWorkerMode(value: unknown) {
 }
 
 const WORKER_YOLO_MODE_SETTING = "WORKER_YOLO_MODE";
+const CREDIT_STRATEGY_SETTING = "CREDIT_STRATEGY";
 const SUPERVISOR_FILE_READ_LIMIT = 60_000;
 const SUPERVISOR_INSPECT_OUTPUT_LIMIT = 20_000;
 const SUPERVISOR_INSPECT_TIMEOUT_MS = 10_000;
@@ -335,6 +336,13 @@ async function pauseForPreflightConfirmation(args: {
 
 function isAgentBusyError(error: unknown) {
   return /\bagent is busy\b/i.test(formatSupervisorError(error));
+}
+
+function isCreditExhaustionError(error: unknown) {
+  const status = typeof (error as { status?: unknown })?.status === "number"
+    ? (error as { status: number }).status
+    : null;
+  return status === 429 || /\b(quota|credit|rate limit|resource exhausted)\b/i.test(formatSupervisorError(error));
 }
 
 function resolveSupervisorReadPath(requestedPath: string, projectPath: string | null | undefined) {
@@ -693,7 +701,9 @@ export class Supervisor {
 
     return {
       llmConfig,
+      fallbackLlmConfig: getSupervisorModelConfig(process.env, "fallback"),
       envParams,
+      creditStrategy: settingValues.get(CREDIT_STRATEGY_SETTING) ?? "swap_account",
       yoloModeEnabled: parseBooleanSettingValue(settingValues.get(WORKER_YOLO_MODE_SETTING), true),
     };
   }
@@ -771,7 +781,7 @@ export class Supervisor {
       return { state: "completed" };
     }
 
-    const { llmConfig, envParams, yoloModeEnabled } = await this.createModel();
+    const { llmConfig, fallbackLlmConfig, envParams, creditStrategy, yoloModeEnabled } = await this.createModel();
 
     if (!await this.loadActiveRun()) {
       return { state: "completed" };
@@ -799,7 +809,24 @@ export class Supervisor {
     const turnStepLimit = getSupervisorTurnStepLimit();
 
     for (let turnStep = 0; turnStep < turnStepLimit; turnStep += 1) {
-      const toolCalls = await this.requestToolCalls(llmConfig, turnStep);
+      let toolCalls: Awaited<ReturnType<typeof this.requestToolCalls>>;
+      try {
+        toolCalls = await this.requestToolCalls(llmConfig, turnStep);
+      } catch (error) {
+        if (creditStrategy !== "fallback_api" || !isCreditExhaustionError(error)) {
+          throw error;
+        }
+
+        validateSupervisorModelConfig(fallbackLlmConfig, []);
+        await insertExecutionEvent(this.runId, "supervisor_credit_strategy_applied", {
+          summary: "Retried supervisor model request with the fallback API profile.",
+          strategy: creditStrategy,
+          primaryProvider: llmConfig.provider,
+          fallbackProvider: fallbackLlmConfig.provider,
+          error: formatSupervisorError(error),
+        });
+        toolCalls = await this.requestToolCalls(fallbackLlmConfig, turnStep);
+      }
       if (!await this.loadActiveRun()) {
         return { state: "completed" };
       }

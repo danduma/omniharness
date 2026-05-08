@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
+import { db } from "@/server/db";
+import { settings } from "@/server/db/schema";
+import { decryptSettingValue, shouldEncryptSetting } from "@/server/settings/crypto";
+import { eq } from "drizzle-orm";
 
 interface GeminiModelRecord {
   name?: string;
@@ -98,6 +102,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json() as {
       provider?: string;
       apiKey?: string;
+      apiKeySettingKey?: string;
     };
 
     if (body.provider !== "gemini") {
@@ -108,7 +113,22 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    if (!body.apiKey?.trim()) {
+    let apiKey = body.apiKey?.trim() || "";
+    if (!apiKey && body.apiKeySettingKey?.trim()) {
+      const settingKey = body.apiKeySettingKey.trim();
+      if (!shouldEncryptSetting(settingKey)) {
+        return errorResponse("Saved model discovery credentials must reference an API key setting.", {
+          status: 400,
+          source: "LLM Settings",
+          action: "Fetch available models",
+        });
+      }
+
+      const savedCredential = await db.select().from(settings).where(eq(settings.key, settingKey)).get();
+      apiKey = savedCredential ? decryptSettingValue(savedCredential.value).trim() : "";
+    }
+
+    if (!apiKey) {
       return errorResponse("A Gemini API key is required to fetch available models.", {
         status: 400,
         source: "LLM Settings",
@@ -116,7 +136,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const models = await listGeminiModels(body.apiKey.trim());
+    const models = await listGeminiModels(apiKey);
     return NextResponse.json({ models });
   } catch (error: unknown) {
     return errorResponse(error, {

@@ -18,7 +18,7 @@ import { buildWorkerLists, isWorkerActiveStatus, mergeWorkerLiveStatus, normaliz
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
-import { COMPOSER_WORKER_OPTIONS, DESKTOP_CONVERSATION_SIDEBAR_WIDTH, WORKER_OPTIONS } from "./constants";
+import { COMPOSER_WORKER_OPTIONS, WORKER_OPTIONS } from "./constants";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
 import { parseBusyMessageAction, resolveBusyComposerBehavior, type BusyMessageAction } from "./busy-message-behavior";
 import type { AgentSnapshot, AuthSessionResponse, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, QueuedConversationMessageRecord, RunRecord, SettingsResponse, SidebarGroup, SidebarRun, SupervisorInterventionRecord, WorkerCatalogResponse, WorkerType } from "./types";
@@ -88,8 +88,10 @@ export function HomeApp() {
     showFolderPicker,
     selectedRunId,
     leftSidebarOpen,
+    leftSidebarWidth,
     rightSidebarOpen,
     rightSidebarWidth,
+    isResizingLeftSidebar,
     isResizingRightSidebar,
     mobileNavOpen,
     mobileWorkersOpen,
@@ -131,8 +133,10 @@ export function HomeApp() {
     setShowFolderPicker,
     setSelectedRunId,
     setLeftSidebarOpen,
+    setLeftSidebarWidth,
     setRightSidebarOpen,
     setRightSidebarWidth,
+    setIsResizingLeftSidebar,
     setIsResizingRightSidebar,
     setMobileNavOpen,
     setMobileWorkersOpen,
@@ -340,7 +344,7 @@ export function HomeApp() {
     return reconcileQueuedMessages(nextState);
   }, []);
 
-  useHomeLifecycle({ appUnlocked, setHasReceivedInitialEventStreamPayload, setState, setRuntimeErrors, routeReady, setRouteReady, authEnabled, authConfigurationError, pairTokenFromUrl, setPairTokenFromUrl, redeemPairMutation, pairRedeemAttempted, setPairRedeemAttempted, selectedRunId, setSelectedRunId, draftProjectPath, setDraftProjectPath, setSelectedConversationMode, setSelectedCliAgent, setSelectedModel, setSelectedEffort, setReadMarkers, readMarkers, collapsedProjectPaths, setCollapsedProjectPaths, rightSidebarWidth, setRightSidebarWidth, isResizingRightSidebar, setIsResizingRightSidebar, selectedConversationMode, selectedCliAgent, selectedModel, selectedEffort, themeMode, setThemeMode, filterEventStreamState });
+  useHomeLifecycle({ appUnlocked, setHasReceivedInitialEventStreamPayload, setState, setRuntimeErrors, routeReady, setRouteReady, authEnabled, authConfigurationError, pairTokenFromUrl, setPairTokenFromUrl, redeemPairMutation, pairRedeemAttempted, setPairRedeemAttempted, selectedRunId, setSelectedRunId, draftProjectPath, setDraftProjectPath, setSelectedConversationMode, setSelectedCliAgent, setSelectedModel, setSelectedEffort, setReadMarkers, readMarkers, collapsedProjectPaths, setCollapsedProjectPaths, leftSidebarWidth, setLeftSidebarWidth, rightSidebarWidth, setRightSidebarWidth, isResizingLeftSidebar, setIsResizingLeftSidebar, isResizingRightSidebar, setIsResizingRightSidebar, selectedConversationMode, selectedCliAgent, selectedModel, selectedEffort, themeMode, setThemeMode, filterEventStreamState });
   const isHydratingConversations = appUnlocked && !hasReceivedInitialEventStreamPayload;
 
   useEffect(() => {
@@ -1438,6 +1442,11 @@ export function HomeApp() {
     }
   }, [setRuntimeErrors, setState]);
 
+  const handleLeftSidebarResizeStart = (event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    setIsResizingLeftSidebar(true);
+  };
+
   const handleRightSidebarResizeStart = (event: React.PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     setIsResizingRightSidebar(true);
@@ -1583,10 +1592,16 @@ export function HomeApp() {
     <div className="flex h-dvh w-full overflow-hidden bg-background text-foreground lg:h-screen">
       <div
         className={`relative z-30 hidden h-full shrink-0 overflow-hidden border-r bg-background transition-[width,opacity] duration-150 ease-out lg:flex motion-reduce:transition-none ${leftSidebarOpen ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}
-        style={{ width: leftSidebarOpen ? DESKTOP_CONVERSATION_SIDEBAR_WIDTH : 0 }}
+        style={{ width: leftSidebarOpen ? leftSidebarWidth : 0 }}
         aria-hidden={!leftSidebarOpen}
         inert={!leftSidebarOpen ? true : undefined}
       >
+        <button
+          type="button"
+          className="absolute inset-y-0 right-0 z-10 w-3 translate-x-1/2 cursor-col-resize bg-transparent"
+          aria-label="Resize conversations sidebar"
+          onPointerDown={handleLeftSidebarResizeStart}
+        />
         <div className={`flex h-full min-w-0 flex-1 transition-transform duration-150 ease-out motion-reduce:transition-none ${leftSidebarOpen ? "translate-x-0" : "-translate-x-3"}`}>
           <ConversationSidebar {...sharedSidebarProps} onCollapse={() => setLeftSidebarOpen(false)} />
         </div>
@@ -1681,12 +1696,10 @@ export function HomeApp() {
         >
           <button
             type="button"
-            className="absolute inset-y-0 left-0 z-10 flex w-3 -translate-x-1/2 cursor-col-resize items-center justify-center bg-transparent"
+            className="absolute inset-y-0 left-0 z-10 w-3 -translate-x-1/2 cursor-col-resize bg-transparent"
             aria-label="Resize workers sidebar"
             onPointerDown={handleRightSidebarResizeStart}
-          >
-            <span className="h-14 w-1 rounded-full bg-border/80 transition-colors hover:bg-foreground/30" />
-          </button>
+          />
           <div className={`flex h-full min-w-0 flex-1 pl-2 transition-transform duration-150 ease-out motion-reduce:transition-none ${rightSidebarOpen ? "translate-x-0" : "translate-x-3"}`}>
             <WorkersSidebar
               workers={selectedRunWorkersForDisplay}

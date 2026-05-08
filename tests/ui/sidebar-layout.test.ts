@@ -43,10 +43,19 @@ const workersSidebarSource = fs.readFileSync(
 
 test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('leftSidebarOpen: true');
+  expect(pageSource).toContain('leftSidebarWidth: DEFAULT_CONVERSATION_SIDEBAR_WIDTH');
   expect(pageSource).toContain('setLeftSidebarOpen: homeUiStateManager.createSetter("leftSidebarOpen")');
-  expect(pageSource).toContain('style={{ width: leftSidebarOpen ? DESKTOP_CONVERSATION_SIDEBAR_WIDTH : 0 }}');
+  expect(pageSource).toContain('setLeftSidebarWidth: homeUiStateManager.createSetter("leftSidebarWidth")');
+  expect(pageSource).toContain('export const DEFAULT_CONVERSATION_SIDEBAR_WIDTH = 280;');
+  expect(pageSource).toContain('setLeftSidebarWidth(getDefaultConversationSidebarWidth(window.innerWidth));');
+  expect(pageSource).toContain('setLeftSidebarWidth(clampConversationSidebarWidth(nextWidth, window.innerWidth));');
+  expect(pageSource).toContain('window.localStorage.getItem("omni-conversations-sidebar-width")');
+  expect(pageSource).toContain('window.localStorage.setItem("omni-conversations-sidebar-width", String(leftSidebarWidth))');
+  expect(pageSource).toContain('style={{ width: leftSidebarOpen ? leftSidebarWidth : 0 }}');
   expect(pageSource).toContain('aria-hidden={!leftSidebarOpen}');
   expect(pageSource).toContain('inert={!leftSidebarOpen ? true : undefined}');
+  expect(pageSource).toContain('aria-label="Resize conversations sidebar"');
+  expect(pageSource).toContain('onPointerDown={handleLeftSidebarResizeStart}');
   expect(pageSource).toContain('leftSidebarOpen ? "translate-x-0" : "-translate-x-3"');
   expect(pageSource).toContain('onCollapse={() => setLeftSidebarOpen(false)}');
   expect(pageSource).toContain('title="Collapse conversations sidebar"');
@@ -136,6 +145,7 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('rightSidebarOpen ? "translate-x-0" : "translate-x-3"');
   expect(pageSource).toContain('aria-label="Resize workers sidebar"');
   expect(pageSource).toContain('onPointerDown={handleRightSidebarResizeStart}');
+  expect(pageSource).not.toContain('h-14 w-1 rounded-full bg-border/80 transition-colors hover:bg-foreground/30');
   expect(pageSource).toContain('export const PRODUCT_NAME = "OmniHarness";');
   expect(pageSource).toContain("<SheetTitle>{PRODUCT_NAME}</SheetTitle>");
   expect(pageSource).not.toContain("<SheetTitle>Navigation</SheetTitle>");
@@ -425,7 +435,7 @@ test("command input uses a fixed helper placeholder instead of echoing the selec
 });
 
 test("send button swaps to a spinner while a command submission is pending", () => {
-  expect(pageSource).toContain("const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || promotePlanningConversation.isPending");
+  expect(pageSource).toContain("const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || sendQueuedMessageNow.isPending");
   expect(pageSource).toContain("const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;");
   expect(pageSource).toContain('disabled={isSubmitButtonDisabled}');
   expect(pageSource).toContain('{isStoppingConversation || isSendButtonBusy ? (');
