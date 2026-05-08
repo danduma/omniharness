@@ -51,6 +51,7 @@ interface ConversationComposerProps {
   queuedMessages: QueuedConversationMessageRecord[];
   cancellingQueuedMessageIds: Set<string>;
   onEditQueuedMessage: (message: QueuedConversationMessageRecord) => void;
+  onSendQueuedMessageNow: (messageId: string) => void;
   onCancelQueuedMessage: (messageId: string) => void;
   onSendConversationMessage: (content: string, busyAction?: BusyMessageAction) => void;
   onRunCommand: (content: string) => void;
@@ -94,6 +95,7 @@ export function ConversationComposer({
   queuedMessages,
   cancellingQueuedMessageIds,
   onEditQueuedMessage,
+  onSendQueuedMessageNow,
   onCancelQueuedMessage,
   onSendConversationMessage,
   onRunCommand,
@@ -162,11 +164,12 @@ export function ConversationComposer({
         cancellingMessageIds={cancellingQueuedMessageIds}
         themeMode={themeMode}
         onEdit={onEditQueuedMessage}
+        onSendNow={onSendQueuedMessageNow}
         onCancel={onCancelQueuedMessage}
       />
       <div
         className={cn(
-          "rounded-[1.5rem] px-4 pb-0.5 pt-3 transition-all sm:px-5 sm:pb-1 sm:pt-4",
+          "rounded-[1.5rem] px-4 pb-0 pt-3 transition-all sm:px-5 sm:pb-0 sm:pt-4",
           themeMode === "night"
             ? "border border-transparent bg-muted/80 shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] focus-within:bg-muted/90 dark:bg-[#2f2f2f] dark:focus-within:bg-[#343434]"
             : "rounded-[2rem] border border-[#dededd] bg-[#fdfdfc] shadow-none focus-within:border-[#d2d2d0] focus-within:bg-[#fdfdfc] sm:rounded-[2.35rem]",
@@ -251,7 +254,7 @@ export function ConversationComposer({
           rows={1}
           className={cn(
             "w-full resize-none bg-transparent text-[15px] leading-6 outline-none",
-            hasAttachments ? "min-h-[112px]" : "min-h-[56px]",
+            hasAttachments ? "min-h-[112px]" : "min-h-[72px]",
             themeMode === "night"
               ? "text-foreground placeholder:text-muted-foreground/80"
               : "text-[#454545] placeholder:text-[#c4c4c2]",
@@ -302,7 +305,7 @@ export function ConversationComposer({
           </div>
         ) : null}
 
-        <div className="mt-1 flex items-center gap-1 sm:gap-2">
+        <div className="mt-0 flex items-center gap-1 sm:gap-2">
           <input
             ref={fileInputRef}
             type="file"
@@ -324,20 +327,20 @@ export function ConversationComposer({
               size="icon"
               onClick={() => fileInputRef.current?.click()}
               className={cn(
-                "h-9 w-9 shrink-0 rounded-full sm:h-10 sm:w-10",
+                "h-8 w-8 shrink-0 rounded-full",
                 themeMode === "night"
                   ? "text-muted-foreground hover:bg-background/45 hover:text-foreground"
                   : "text-[#959595] hover:bg-black/[0.04] hover:text-[#666666]",
               )}
               aria-label="Attach files"
             >
-              <Plus className="h-5 w-5" />
+              <Plus className="h-[18px] w-[18px]" />
             </Button>
 
           <div className="ml-auto flex min-w-0 items-center justify-end gap-1 sm:gap-2">
             {shouldLockDirectWorker ? (
               <div className={cn(
-                "min-w-0 truncate rounded-full border px-2 py-1.5 text-xs font-semibold sm:px-3 sm:py-2",
+                "min-w-0 truncate rounded-full border px-2 py-1 text-xs font-semibold sm:px-3",
                 themeMode === "night"
                   ? "border-border/60 bg-background/50 text-muted-foreground"
                   : "border-[#d8d8d8] bg-white/90 text-[#6a6a6a]",
@@ -376,10 +379,10 @@ export function ConversationComposer({
               aria-label={composerBehavior.ariaLabel}
               title={composerBehavior.ariaLabel}
               className={cn(
-                "h-[30.6px] w-[30.6px] shrink-0 rounded-full transition-all sm:h-[34px] sm:w-[34px]",
+                "h-8 w-8 shrink-0 rounded-full transition-all",
                 themeMode === "night"
                   ? "bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary/[0.45]"
-                  : "bg-[#9d9d9d] text-white hover:bg-[#8b8b8b] disabled:bg-[#c9c9c9]",
+                  : "bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary/[0.45]",
               )}
             >
               {isStoppingConversation || isSendButtonBusy ? (

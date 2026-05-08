@@ -29,6 +29,12 @@ describe("OmniHarness i18n adapter", () => {
     ]);
   });
 
+  it("keeps the i18n snapshot reference stable between locale updates", () => {
+    const snapshot = i18nManager.getSnapshot();
+
+    expect(i18nManager.getSnapshot()).toBe(snapshot);
+  });
+
   it("loads non-English locale resources on demand", async () => {
     expect(i18nManager.getSnapshot().loadedLocales).toEqual(["en"]);
 

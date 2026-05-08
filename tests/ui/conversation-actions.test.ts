@@ -18,6 +18,7 @@ const pageSource = [
 ].map(readSource).join("\n");
 const homeAppSource = readSource("src/app/home/HomeApp.tsx");
 const markdownContentSource = readSource("src/components/MarkdownContent.tsx");
+const terminalSource = readSource("src/components/Terminal.tsx");
 
 test("conversation rows expose rename and delete actions", () => {
   expect(pageSource).toContain('Rename');
@@ -119,12 +120,14 @@ test("user input messages share the direct-control bubble renderer", () => {
   const conversationMainSource = readSource("src/components/home/ConversationMain.tsx");
 
   expect(userInputSource).toContain("export function UserInputMessage");
-  expect(userInputSource).toContain('flex justify-start pl-4 sm:pl-6');
+  expect(userInputSource).toContain('flex justify-end');
+  expect(userInputSource).toContain('flex-col items-end');
   expect(userInputSource).toContain('rounded-[1.55rem] bg-[#f3f3f3]');
   expect(userInputSource).toContain('dark:bg-[#3a3a3a]');
   expect(userInputSource).toContain('const timestampLabel = createdAt ? formatUserMessageTimestamp(createdAt) : "";');
   expect(userInputSource).toContain('{timestampLabel ? <span>{timestampLabel}</span> : null}');
-  expect(userInputSource).toContain('mt-1.5 flex w-full items-center justify-end gap-2 pr-5');
+  expect(userInputSource).toContain('px-5 py-3.5');
+  expect(userInputSource).toContain('mt-1.5 flex w-full items-center justify-end gap-2 pr-4');
   expect(userInputSource).toContain('maxHeight: isExpanded ? undefined : "calc(1.5rem * 6)"');
   expect(userInputSource).toContain('aria-label={isExpanded ? "Show less message text" : "Show more message text"}');
   expect(userInputSource).toContain('aria-label="Copy message"');
@@ -143,6 +146,14 @@ test("user input image attachments keep visible attachment metadata in history",
   expect(userInputSource).toContain('{attachment.name}');
   expect(userInputSource).toContain('{formatBytes(attachment.size)}');
   expect(userInputSource).toContain('title={`Open ${attachment.name}`}');
+});
+
+test("direct-control terminal user messages render attachment metadata", () => {
+  expect(terminalSource).toContain('attachments?: ChatAttachment[]');
+  expect(terminalSource).toContain('attachments: message.attachments ?? []');
+  expect(terminalSource).toContain('activity.attachments.length > 0');
+  expect(terminalSource).toContain('title={`Open ${attachment.name}`}');
+  expect(terminalSource).toContain('{formatBytes(attachment.size)}');
 });
 
 test("saving an edited message closes the inline editor before the rerun request resolves", () => {
@@ -203,6 +214,31 @@ test("conversation error notices render below the thread content", () => {
   expect(executionIndex).toBeGreaterThan(messagesIndex);
   expect(appErrorsIndex).toBeGreaterThan(executionIndex);
   expect(failureNoticeIndex).toBeGreaterThan(appErrorsIndex);
+});
+
+test("direct control conversations show a tiny animated working indicator while stoppable", () => {
+  expect(terminalSource).toContain("function PendingAssistantActivity()");
+  expect(terminalSource).toContain('const PENDING_ASSISTANT_TEXT = "Thinking..."');
+  expect(terminalSource).toContain('kind: "pending_assistant"');
+  expect(terminalSource).toContain('aria-label="Agent is thinking"');
+  expect(terminalSource).toContain("Array.from(PENDING_ASSISTANT_TEXT)");
+  expect(terminalSource).toContain("text-[calc(var(--terminal-message-size)+1px)]");
+  expect(pageSource).toContain("showDirectControlWorkingIndicator={showDirectControlWorkingIndicator}");
+  expect(pageSource).toContain("showPendingAssistantIndicator={showDirectControlWorkingIndicator}");
+  expect(pageSource).toContain('const showDirectControlWorkingIndicator = isDirectConversation && composerBehavior.buttonKind === "stop";');
+  expect(terminalSource).toContain("showPendingAssistantIndicator = false");
+  expect(terminalSource).toContain("pendingAssistantActivity");
+  expect(terminalSource).toContain("const TERMINAL_BOTTOM_THRESHOLD_PX = 40");
+  expect(terminalSource).toContain("getTerminalScrollElement");
+  expect(terminalSource).toContain("scrollTerminalToBottom");
+  expect(terminalSource).toContain("const shouldForceFollowPendingAssistant = showPendingAssistantIndicator");
+  expect(terminalSource).toContain("(!shouldForceFollowPendingAssistant && !shouldFollowLatestRef.current)");
+  expect(terminalSource).toContain("shouldFollowLatestRef.current = true");
+  expect(terminalSource).toContain('behavior: "smooth"');
+  expect(terminalSource).toContain("inline-block animate-pulse text-foreground/80");
+  expect(terminalSource).toContain("animationDuration:");
+  expect(terminalSource).toContain("relative z-10 mt-3 flex w-full justify-start px-1");
+  expect(terminalSource).toContain("animationDelay:");
 });
 
 test("frontend transport and mutation errors render as explicit notices", () => {

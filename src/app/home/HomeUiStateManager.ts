@@ -1,8 +1,8 @@
 import { chatAttachmentKindFromMimeType, type PendingChatAttachment } from "@/lib/chat-attachments";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { StateManager, type StateUpdate } from "@/lib/state-manager";
-import { DEFAULT_ALLOWED_WORKER_TYPES } from "./constants";
-import type { ComposerWorkerOption, ConversationModeOption, EventStreamState, LlmProfileTab, MessageRecord, SettingsTab, WorkerSettingsTab } from "./types";
+import { DEFAULT_SERVER_SETTINGS, DEFAULT_WORKERS_SIDEBAR_WIDTH } from "./constants";
+import type { ComposerWorkerOption, ConversationModeOption, EventStreamState, LlmProfileTab, MessageRecord, SettingsTab } from "./types";
 import type { CreatedConversationSnapshot } from "./utils";
 
 export type ThemeMode = "day" | "night";
@@ -17,7 +17,6 @@ export const INITIAL_EVENT_STREAM_STATE: EventStreamState = {
   workers: [],
   planItems: [],
   clarifications: [],
-  validationRuns: [],
   executionEvents: [],
   supervisorInterventions: [],
   queuedMessages: [],
@@ -30,11 +29,11 @@ type HomeUiState = {
   showSettings: boolean;
   showPairDeviceDialog: boolean;
   activeSettingsTab: SettingsTab;
-  activeWorkerSettingsTab: WorkerSettingsTab;
   activeLlmProfileTab: LlmProfileTab;
   apiKeys: Record<string, string>;
   showFolderPicker: boolean;
   selectedRunId: string | null;
+  leftSidebarOpen: boolean;
   rightSidebarOpen: boolean;
   rightSidebarWidth: number;
   isResizingRightSidebar: boolean;
@@ -74,28 +73,13 @@ const initialHomeUiState: HomeUiState = {
   showSettings: false,
   showPairDeviceDialog: false,
   activeSettingsTab: "general",
-  activeWorkerSettingsTab: "availability",
   activeLlmProfileTab: "supervisor",
-  apiKeys: {
-    SUPERVISOR_LLM_PROVIDER: "gemini",
-    SUPERVISOR_LLM_MODEL: "gemini-3.1-pro-preview",
-    SUPERVISOR_LLM_BASE_URL: "",
-    SUPERVISOR_LLM_API_KEY: "",
-    SUPERVISOR_FALLBACK_LLM_PROVIDER: "openai",
-    SUPERVISOR_FALLBACK_LLM_MODEL: "gpt-5.4-mini",
-    SUPERVISOR_FALLBACK_LLM_BASE_URL: "",
-    SUPERVISOR_FALLBACK_LLM_API_KEY: "",
-    CREDIT_STRATEGY: "swap_account",
-    WORKER_DEFAULT_TYPE: "codex",
-    WORKER_ALLOWED_TYPES: DEFAULT_ALLOWED_WORKER_TYPES,
-    WORKER_YOLO_MODE: "true",
-    BUSY_MESSAGE_ACTION: "queue",
-    PROJECTS: "[]",
-  },
+  apiKeys: { ...DEFAULT_SERVER_SETTINGS },
   showFolderPicker: false,
   selectedRunId: null,
+  leftSidebarOpen: true,
   rightSidebarOpen: false,
-  rightSidebarWidth: 420,
+  rightSidebarWidth: DEFAULT_WORKERS_SIDEBAR_WIDTH,
   isResizingRightSidebar: false,
   mobileNavOpen: false,
   mobileWorkersOpen: false,
@@ -214,11 +198,11 @@ export const homeUiSetters = {
   setShowSettings: homeUiStateManager.createSetter("showSettings"),
   setShowPairDeviceDialog: homeUiStateManager.createSetter("showPairDeviceDialog"),
   setActiveSettingsTab: homeUiStateManager.createSetter("activeSettingsTab"),
-  setActiveWorkerSettingsTab: homeUiStateManager.createSetter("activeWorkerSettingsTab"),
   setActiveLlmProfileTab: homeUiStateManager.createSetter("activeLlmProfileTab"),
   setApiKeys: homeUiStateManager.createSetter("apiKeys"),
   setShowFolderPicker: homeUiStateManager.createSetter("showFolderPicker"),
   setSelectedRunId: homeUiStateManager.createSetter("selectedRunId"),
+  setLeftSidebarOpen: homeUiStateManager.createSetter("leftSidebarOpen"),
   setRightSidebarOpen: homeUiStateManager.createSetter("rightSidebarOpen"),
   setRightSidebarWidth: homeUiStateManager.createSetter("rightSidebarWidth"),
   setIsResizingRightSidebar: homeUiStateManager.createSetter("isResizingRightSidebar"),

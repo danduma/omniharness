@@ -77,6 +77,24 @@ describe("buildWorkerTerminalUserMessages", () => {
     expect(messages.map((message) => message.id)).toEqual(["intervention-visible"]);
   });
 
+  it("drops supervisor prompts that fall inside a broad loaded range without nearby output", () => {
+    const messages = buildWorkerTerminalUserMessages({
+      worker: buildWorker(),
+      agent: buildAgent([
+        "2026-05-07T00:00:05.000Z",
+        "2026-05-07T04:00:00.000Z",
+      ]),
+      supervisorInterventions: [
+        buildIntervention({
+          id: "intervention-between-loaded-ranges",
+          createdAt: "2026-05-07T02:00:00.000Z",
+        }),
+      ],
+    });
+
+    expect(messages.map((message) => message.id)).toEqual(["run-1-worker-1:initial-prompt"]);
+  });
+
   it("does not render prompt bubbles before any worker output context exists", () => {
     const messages = buildWorkerTerminalUserMessages({
       worker: buildWorker(),

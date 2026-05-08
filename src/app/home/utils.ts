@@ -25,7 +25,6 @@ export function removeRunFromHomeState(current: EventStreamState, runId: string)
     messages: (current.messages || []).filter((message: { runId: string }) => message.runId !== runId),
     workers: (current.workers || []).filter((worker: { runId: string }) => worker.runId !== runId),
     clarifications: (current.clarifications || []).filter((item: { runId: string }) => item.runId !== runId),
-    validationRuns: (current.validationRuns || []).filter((item: { runId: string }) => item.runId !== runId),
     executionEvents: (current.executionEvents || []).filter((item: { runId: string; workerId?: string | null }) =>
       item.runId !== runId && (!item.workerId || !workerIds.includes(item.workerId))
     ),
@@ -300,7 +299,6 @@ const DYNAMIC_STATUS_EVENT_TYPES = new Set([
 
 const INLINE_CONVERSATION_EVENT_TYPES = new Set([
   "clarification_requested",
-  "run_validation_failed",
   "worker_cancelled",
   "worker_error",
   "worker_permission_approved",

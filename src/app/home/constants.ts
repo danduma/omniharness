@@ -1,6 +1,62 @@
 import type { ComposerWorkerOption, WorkerModelCatalog, WorkerType } from "./types";
 
 export const PRODUCT_NAME = "OmniHarness";
+export const DESKTOP_CONVERSATION_SIDEBAR_WIDTH = 280;
+export const WORKERS_SIDEBAR_MIN_WIDTH = 320;
+export const WORKERS_SIDEBAR_MIN_MAIN_WIDTH = 360;
+export const WORKERS_SIDEBAR_MAX_WIDTH_FALLBACK = 1120;
+export const DEFAULT_WORKERS_SIDEBAR_WIDTH = 580;
+
+function isFiniteViewportWidth(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+export function getWorkersSidebarMaxWidth(viewportWidth?: number | null) {
+  if (!isFiniteViewportWidth(viewportWidth)) {
+    return WORKERS_SIDEBAR_MAX_WIDTH_FALLBACK;
+  }
+
+  return Math.max(
+    WORKERS_SIDEBAR_MIN_WIDTH,
+    Math.round(viewportWidth - DESKTOP_CONVERSATION_SIDEBAR_WIDTH - WORKERS_SIDEBAR_MIN_MAIN_WIDTH),
+  );
+}
+
+export function clampWorkersSidebarWidth(width: number, viewportWidth?: number | null) {
+  return Math.min(
+    getWorkersSidebarMaxWidth(viewportWidth),
+    Math.max(WORKERS_SIDEBAR_MIN_WIDTH, Math.round(width)),
+  );
+}
+
+export function getDefaultWorkersSidebarWidth(viewportWidth?: number | null) {
+  if (!isFiniteViewportWidth(viewportWidth)) {
+    return DEFAULT_WORKERS_SIDEBAR_WIDTH;
+  }
+
+  const remainingAfterConversationSidebar = Math.max(
+    0,
+    viewportWidth - DESKTOP_CONVERSATION_SIDEBAR_WIDTH,
+  );
+  return clampWorkersSidebarWidth(remainingAfterConversationSidebar / 2, viewportWidth);
+}
+
+export const DEFAULT_SERVER_SETTINGS: Record<string, string> = {
+  SUPERVISOR_LLM_PROVIDER: "gemini",
+  SUPERVISOR_LLM_MODEL: "gemini-3.1-pro-preview",
+  SUPERVISOR_LLM_BASE_URL: "",
+  SUPERVISOR_LLM_API_KEY: "",
+  SUPERVISOR_FALLBACK_LLM_PROVIDER: "openai",
+  SUPERVISOR_FALLBACK_LLM_MODEL: "gpt-5.4-mini",
+  SUPERVISOR_FALLBACK_LLM_BASE_URL: "",
+  SUPERVISOR_FALLBACK_LLM_API_KEY: "",
+  CREDIT_STRATEGY: "swap_account",
+  WORKER_DEFAULT_TYPE: "codex",
+  WORKER_ALLOWED_TYPES: "",
+  WORKER_YOLO_MODE: "true",
+  BUSY_MESSAGE_ACTION: "queue",
+  PROJECTS: "[]",
+};
 export const WORKER_OPTIONS: Array<{ value: WorkerType; label: string }> = [
   { value: "codex", label: "Codex" },
   { value: "claude", label: "Claude Code" },
@@ -12,6 +68,7 @@ export const COMPOSER_WORKER_OPTIONS: Array<{ value: ComposerWorkerOption; label
   ...WORKER_OPTIONS,
 ] as const;
 export const DEFAULT_ALLOWED_WORKER_TYPES = JSON.stringify(WORKER_OPTIONS.map((option) => option.value));
+DEFAULT_SERVER_SETTINGS.WORKER_ALLOWED_TYPES = DEFAULT_ALLOWED_WORKER_TYPES;
 export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
   codex: [
     { value: "gpt-5.5", label: "GPT-5.5" },

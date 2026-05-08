@@ -13,7 +13,6 @@ import {
   runs,
   settings,
   supervisorInterventions,
-  validationRuns,
   workerAssignments,
   workerCounters,
   workers,
@@ -38,6 +37,7 @@ vi.mock("@/server/supervisor/start", () => ({
 }));
 
 import { POST } from "@/app/api/conversations/[id]/messages/route";
+import { PATCH as SEND_QUEUED_NOW } from "@/app/api/conversations/[id]/queued-messages/[messageId]/route";
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -49,7 +49,6 @@ describe("POST /api/conversations/[id]/messages", () => {
     mockGetAgent.mockClear();
     mockStartSupervisorRun.mockClear();
     await db.delete(supervisorInterventions);
-    await db.delete(validationRuns);
     await db.delete(workerAssignments);
     await db.delete(executionEvents);
     await db.delete(clarifications);
@@ -265,6 +264,72 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(queuedMessages).toHaveLength(1);
     expect(storedMessages).toHaveLength(0);
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+  });
+
+  it("sends a queued implementation message immediately as steering", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const queuedMessageId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "docs/superpowers/plans/implementation.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(queuedConversationMessages).values({
+      id: queuedMessageId,
+      runId,
+      targetWorkerId: null,
+      action: "queue",
+      content: "Use this note right now.",
+      attachmentsJson: "[]",
+      status: "pending",
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+      deliveredAt: null,
+    });
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/queued-messages/${queuedMessageId}`, {
+      method: "PATCH",
+    });
+
+    const response = await SEND_QUEUED_NOW(request, { params: Promise.resolve({ id: runId, messageId: queuedMessageId }) });
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.message).toMatchObject({
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "Use this note right now.",
+    });
+    expect(payload.queuedMessage).toMatchObject({
+      id: queuedMessageId,
+      runId,
+      action: "steer",
+      status: "delivered",
+      content: "Use this note right now.",
+    });
+
+    const storedQueued = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queuedMessageId)).get();
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    expect(storedQueued?.status).toBe("delivered");
+    expect(storedQueued?.action).toBe("steer");
+    expect(storedMessages).toHaveLength(1);
+    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
   });
 
   it("uses implementation follow-ups to answer pending clarifications", async () => {

@@ -32,7 +32,8 @@ const ACTIVE_PROCESS_STATUSES = new Set<WorkerTerminalProcessStatus>([
   "running",
   "working",
 ]);
-const TERMINAL_KIND_PATTERN = /\b(execute|terminal|shell|bash|command|run)\b/i;
+const TERMINAL_TOOL_KIND_PATTERN = /\b(exec|execute|exec_command|terminal|shell|bash)\b/i;
+const NON_TERMINAL_TOOL_KIND_PATTERN = /\b(read|open|view|edit|write|replace|patch|create|search|find|grep|glob|agent|delegate|dispatch|spawn|worker)\b/i;
 const OUTPUT_TAIL_LIMIT = 640;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -230,15 +231,49 @@ function trimOutputTail(value: string): string {
   return normalized.slice(normalized.length - OUTPUT_TAIL_LIMIT).replace(/^[^\n]*\n?/, "").trim();
 }
 
-function isTerminalLike(entry: AgentOutputEntry, command: string | null): boolean {
-  if (command) {
+function explicitToolKind(entry: AgentOutputEntry): string | null {
+  const raw = asRecord(entry.raw);
+  return entry.toolKind || asNonEmptyString(raw?.kind);
+}
+
+function isTerminalToolKind(value: string | null): boolean {
+  return Boolean(value && TERMINAL_TOOL_KIND_PATTERN.test(value));
+}
+
+function isNonTerminalToolKind(value: string | null): boolean {
+  return Boolean(value && NON_TERMINAL_TOOL_KIND_PATTERN.test(value));
+}
+
+export function isWorkerTerminalToolCallStart(entry: AgentOutputEntry): boolean {
+  if (entry.type !== "tool_call") {
+    return false;
+  }
+
+  const raw = asRecord(entry.raw);
+  const toolKind = explicitToolKind(entry);
+  if (isNonTerminalToolKind(toolKind)) {
+    return false;
+  }
+
+  if (isTerminalToolKind(toolKind)) {
+    return true;
+  }
+
+  return Boolean(extractCommand(raw) || extractProcessId(raw) || isTerminalToolKind(asNonEmptyString(raw?.title)));
+}
+
+function isTerminalLike(entry: AgentOutputEntry, command: string | null, processId: string | null): boolean {
+  const toolKind = explicitToolKind(entry);
+  if (isNonTerminalToolKind(toolKind)) {
+    return false;
+  }
+
+  if (isTerminalToolKind(toolKind)) {
     return true;
   }
 
   const raw = asRecord(entry.raw);
-  const kind = entry.toolKind || asNonEmptyString(raw?.kind);
-  const title = asNonEmptyString(raw?.title);
-  return TERMINAL_KIND_PATTERN.test(`${kind ?? ""} ${title ?? ""} ${entry.text ?? ""}`);
+  return Boolean(command || processId || isTerminalToolKind(asNonEmptyString(raw?.title)));
 }
 
 function toProcess(entry: AgentOutputEntry, allowSparseUpdate = false): MutableWorkerTerminalProcess | null {
@@ -248,13 +283,13 @@ function toProcess(entry: AgentOutputEntry, allowSparseUpdate = false): MutableW
 
   const raw = asRecord(entry.raw);
   const command = extractCommand(raw);
-  if (!allowSparseUpdate && !isTerminalLike(entry, command)) {
+  const processId = extractProcessId(raw);
+  if (!allowSparseUpdate && !isTerminalLike(entry, command, processId)) {
     return null;
   }
 
   const fallbackCommand = asNonEmptyString(raw?.title) || asNonEmptyString(entry.text) || "Terminal process";
   const output = extractOutputText(raw);
-  const processId = extractProcessId(raw);
 
   return {
     id: entry.toolCallId || entry.id,

@@ -382,7 +382,6 @@ describe("home utils", () => {
       "worker_permission_requested",
       "worker_permission_approved",
       "worker_permission_denied",
-      "run_validation_failed",
       "worker_environment_mismatch",
     ];
 
@@ -553,7 +552,6 @@ describe("home utils", () => {
       workers: [],
       planItems: [],
       clarifications: [],
-      validationRuns: [],
       executionEvents: [],
       supervisorInterventions: [],
     };
@@ -591,7 +589,6 @@ describe("home utils", () => {
       workers: [],
       planItems: [],
       clarifications: [],
-      validationRuns: [],
       executionEvents: [],
       supervisorInterventions: [],
     };
@@ -621,7 +618,6 @@ describe("home utils", () => {
       workers: [],
       planItems: [],
       clarifications: [],
-      validationRuns: [],
       executionEvents: [],
       supervisorInterventions: [],
     };
@@ -682,7 +678,6 @@ describe("home utils", () => {
       workers: [],
       planItems: [],
       clarifications: [],
-      validationRuns: [],
       executionEvents: [],
       supervisorInterventions: [],
     };
@@ -751,7 +746,6 @@ describe("home utils", () => {
       workers: [],
       planItems: [],
       clarifications: [],
-      validationRuns: [],
       executionEvents: [],
       supervisorInterventions: [],
     };
@@ -803,9 +797,6 @@ describe("home utils", () => {
       clarifications: [
         { id: "clarification-1", runId: "run-2", question: "delete?", answer: null, status: "pending" },
       ],
-      validationRuns: [
-        { id: "validation-1", runId: "run-2", planItemId: null, status: "pending", summary: null, evidence: null },
-      ],
       executionEvents: [
         { id: "event-1", runId: "run-1", workerId: "worker-1", eventType: "keep", createdAt: "" },
         { id: "event-2", runId: "run-2", workerId: "worker-2", eventType: "delete", createdAt: "" },
@@ -824,7 +815,6 @@ describe("home utils", () => {
     expect(filtered.plans.map((plan) => plan.id)).toEqual(["plan-1"]);
     expect(filtered.planItems.map((item) => item.id)).toEqual(["item-1"]);
     expect(filtered.clarifications).toEqual([]);
-    expect(filtered.validationRuns).toEqual([]);
     expect(filtered.executionEvents.map((event) => event.id)).toEqual(["event-1"]);
     expect(filtered.supervisorInterventions.map((event) => event.id)).toEqual(["intervention-1"]);
   });

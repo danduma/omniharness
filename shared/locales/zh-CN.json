@@ -1,5 +1,13 @@
 {
   "product.name": "OmniHarness",
+  "settings.tabs.general": "常规",
+  "settings.tabs.models": "模型",
+  "settings.tabs.agents": "代理",
+  "settings.tabs.runtime": "运行时",
+  "settings.language.label": "语言",
+  "settings.appearance.title": "外观",
+  "settings.appearance.directTextSize": "直接控制文本大小",
+  "settings.appearance.terminalTextSize": "终端 / 代理输出文本大小",
   "language.en": "英语",
   "language.es": "西班牙语",
   "language.fr": "法语",

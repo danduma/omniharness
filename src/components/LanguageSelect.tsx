@@ -17,13 +17,13 @@ export function LanguageSelect() {
   const currentLanguageLabel = t(`language.${localeSnapshot.locale}`);
 
   return (
-    <div className="space-y-1.5">
+    <div className="inline-grid max-w-full space-y-1.5">
       <label className="text-xs font-semibold text-muted-foreground" htmlFor="OMNI_LANGUAGE">
         {t("settings.language.label")}
       </label>
       <select
         id="OMNI_LANGUAGE"
-        className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+        className="h-8 w-auto min-w-40 max-w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
         value={localeSnapshot.locale}
         onChange={handleLanguageChange}
       >

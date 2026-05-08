@@ -21,7 +21,6 @@ function createState(id: string): EventStreamState {
     workers: [],
     planItems: [],
     clarifications: [],
-    validationRuns: [],
     executionEvents: [],
     supervisorInterventions: [],
     frontendErrors: [],

@@ -52,9 +52,9 @@ export function UserInputMessage({
       : "");
 
   return (
-    <div className="flex justify-start pl-4 sm:pl-6">
-      <div className="flex w-full max-w-[min(72ch,calc(100%-1rem))] flex-col items-start sm:max-w-[min(78ch,calc(100%-1.5rem))]">
-        <div className="group/user-message relative w-full overflow-hidden rounded-[1.55rem] bg-[#f3f3f3] px-6 py-4 text-left text-sm leading-6 text-[#202124] transition-colors hover:bg-[#eeeeee] dark:bg-[#3a3a3a] dark:text-[#d8d8d8] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] dark:hover:bg-[#404040]">
+    <div className="flex justify-end">
+      <div className="flex w-full max-w-[min(72ch,calc(100%-1rem))] flex-col items-end sm:max-w-[min(78ch,calc(100%-1.5rem))]">
+        <div className="group/user-message relative w-full overflow-hidden rounded-[1.55rem] bg-[#f3f3f3] px-5 py-3.5 text-left text-sm leading-6 text-[#202124] transition-colors hover:bg-[#eeeeee] dark:bg-[#3a3a3a] dark:text-[#d8d8d8] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] dark:hover:bg-[#404040]">
           {content ? (
             <span
               className="block select-text overflow-hidden whitespace-pre-wrap break-words"
@@ -111,7 +111,7 @@ export function UserInputMessage({
                 "text-[#606164] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 dark:text-[#d8d8d8] dark:focus-visible:ring-white/45",
                 isExpanded
                   ? "mt-1 block w-full text-right text-[11px] font-semibold leading-5"
-                  : "absolute inset-x-0 bottom-0 flex justify-end bg-gradient-to-t from-[#f3f3f3] via-[#f3f3f3]/95 to-transparent px-6 pb-4 pt-6 text-[11px] font-semibold leading-5 transition-colors group-hover/user-message:from-[#eeeeee] group-hover/user-message:via-[#eeeeee]/95 dark:from-[#3a3a3a] dark:via-[#3a3a3a]/95 dark:group-hover/user-message:from-[#404040] dark:group-hover/user-message:via-[#404040]/95",
+                  : "absolute inset-x-0 bottom-0 flex justify-end bg-gradient-to-t from-[#f3f3f3] via-[#f3f3f3]/95 to-transparent px-5 pb-3.5 pt-5 text-[11px] font-semibold leading-5 transition-colors group-hover/user-message:from-[#eeeeee] group-hover/user-message:via-[#eeeeee]/95 dark:from-[#3a3a3a] dark:via-[#3a3a3a]/95 dark:group-hover/user-message:from-[#404040] dark:group-hover/user-message:via-[#404040]/95",
               )}
             >
               {isExpanded ? "less" : "...more"}
@@ -119,7 +119,7 @@ export function UserInputMessage({
           ) : null}
         </div>
         {timestampLabel || onCopy || actions.length > 0 ? (
-          <div className="mt-1.5 flex w-full items-center justify-end gap-2 pr-5 text-[13px] leading-none text-[#8a8b8e] dark:text-zinc-500">
+          <div className="mt-1.5 flex w-full items-center justify-end gap-2 pr-4 text-[13px] leading-none text-[#8a8b8e] dark:text-zinc-500">
             {timestampLabel ? <span>{timestampLabel}</span> : null}
             {onCopy ? (
               <button

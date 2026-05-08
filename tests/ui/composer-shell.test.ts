@@ -11,6 +11,7 @@ const pageSource = [
   "src/app/home/useHomeLifecycle.ts",
   "src/app/home/useRunSelectionEffects.ts",
   "src/components/home/ConversationComposer.tsx",
+  "src/components/home/QueuedMessageDrawer.tsx",
   "src/components/home/WorkersSidebar.tsx",
   "src/components/WorkerCard.tsx",
 ].map((relativePath) => fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8")).join("\n");
@@ -30,9 +31,9 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('themeMode === "night"');
   expect(pageSource).toContain('rounded-[2rem] border border-[#dededd] bg-[#fdfdfc]');
   expect(pageSource).toContain('focus-within:border-[#d2d2d0] focus-within:bg-[#fdfdfc]');
-  expect(pageSource).toContain("px-4 pb-0.5 pt-3");
+  expect(pageSource).toContain("px-4 pb-0 pt-3");
   expect(pageSource).toContain('"w-full resize-none bg-transparent text-[15px] leading-6 outline-none"');
-  expect(pageSource).toContain('hasAttachments ? "min-h-[112px]" : "min-h-[56px]"');
+  expect(pageSource).toContain('hasAttachments ? "min-h-[112px]" : "min-h-[72px]"');
   expect(pageSource).toContain("rows={1}");
   expect(composerSelectSource).toContain("<select");
   expect(composerSelectSource).not.toContain("selectedLabel");
@@ -54,7 +55,7 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain("const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {");
   expect(pageSource).toContain('workerModels?: Partial<WorkerModelCatalog>');
   expect(pageSource).toContain('const EFFORT_OPTIONS = ["Low", "Medium", "High"]');
-  expect(pageSource).toContain('bg-[#9d9d9d] text-white hover:bg-[#8b8b8b] disabled:bg-[#c9c9c9]');
+  expect(pageSource).toContain('bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary/[0.45]');
   expect(pageSource).toContain('placeholder:text-[#c4c4c2]');
 });
 
@@ -92,7 +93,7 @@ test("direct mode requires an explicit cli agent and tightens dropdown alignment
   expect(pageSource).toContain('const nextDirectWorker = selectedCliAgent === "auto" ? (autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex") : selectedCliAgent;');
   expect(pageSource).toContain('<ComposerSelect');
   expect(pageSource).toContain('<ComposerModelPicker');
-  expect(composerSelectSource).toContain('"h-8 max-w-[6.8rem] shrink truncate appearance-none border-0 bg-transparent px-1 text-right text-xs outline-none transition-colors sm:h-9 sm:max-w-none sm:px-2 sm:text-sm"');
+  expect(composerSelectSource).toContain('"h-7 max-w-[6.8rem] shrink truncate appearance-none border-0 bg-transparent px-1 text-right text-xs outline-none transition-colors sm:h-8 sm:max-w-none sm:px-2 sm:text-sm"');
 });
 
 test("composer exposes native file input, paste ingestion, previews, and removal controls", () => {
@@ -104,15 +105,15 @@ test("composer exposes native file input, paste ingestion, previews, and removal
   expect(pageSource).toContain('onAddPastedImages(pastedImages)');
   expect(pageSource).toContain('attachment.kind === "image" && attachment.previewUrl');
   expect(pageSource).toContain('aria-label={`Remove ${attachment.name}`}');
-  expect(pageSource).toContain('<Plus className="h-5 w-5" />');
+  expect(pageSource).toContain('<Plus className="h-[18px] w-[18px]" />');
   expect(pageSource).not.toContain("FileAttachmentPickerDialog");
   expect(pageSource).toContain("attachments,");
 });
 
 test("composer control row stays on one compact mobile row", () => {
-  expect(pageSource).toContain('className="mt-1 flex items-center gap-1 sm:gap-2"');
+  expect(pageSource).toContain('className="mt-0 flex items-center gap-1 sm:gap-2"');
   expect(pageSource).toContain('className="ml-auto flex min-w-0 items-center justify-end gap-1 sm:gap-2"');
-  expect(pageSource).toContain('"h-[30.6px] w-[30.6px] shrink-0 rounded-full transition-all sm:h-[34px] sm:w-[34px]"');
+  expect(pageSource).toContain('"h-8 w-8 shrink-0 rounded-full transition-all"');
   expect(pageSource).not.toContain('className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2"');
   expect(pageSource).not.toContain('className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1 sm:gap-2"');
   expect(pageSource).not.toContain('className="ml-auto flex flex-wrap items-center gap-2"');
@@ -136,6 +137,23 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain("sendConversationMessage.mutate({ runId: selectedRunId, content, attachments, busyAction })");
   expect(pageSource).toContain('composerBehavior.submitAction === "send_queue"');
   expect(pageSource).toContain("<Square className=\"h-[13.6px] w-[13.6px] fill-current\" />");
+});
+
+test("queued message drawer can send a pending item immediately as steering", () => {
+  const drawerSource = fs.readFileSync(
+    path.resolve(process.cwd(), "src/components/home/QueuedMessageDrawer.tsx"),
+    "utf8"
+  );
+  const editIndex = drawerSource.indexOf('aria-label="Edit queued message"');
+  const sendNowIndex = drawerSource.indexOf('aria-label="Send queued message now"');
+  const cancelIndex = drawerSource.indexOf('aria-label="Cancel queued message"');
+
+  expect(pageSource).toContain("onSendQueuedMessageNow");
+  expect(pageSource).toContain("sendQueuedMessageNow.mutate({ runId: selectedRunId, messageId })");
+  expect(drawerSource).toContain("onSendNow: (messageId: string) => void;");
+  expect(drawerSource).toContain("onClick={() => onSendNow(message.id)}");
+  expect(sendNowIndex).toBeGreaterThan(editIndex);
+  expect(sendNowIndex).toBeLessThan(cancelIndex);
 });
 
 test("new-conversation mode selection locks while the send mutation is pending", () => {

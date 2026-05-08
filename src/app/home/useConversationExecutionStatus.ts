@@ -71,6 +71,16 @@ export function useConversationExecutionStatus({
       };
     }
 
+    if (selectedRun?.status === "cancelled") {
+      return {
+        label: "Stopped",
+        detail: [durationLabel, latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The run was stopped by the user."]
+          .filter(Boolean)
+          .join(". "),
+        tone: "muted" as const,
+      };
+    }
+
     if (hasStuckWorker) {
       return {
         label: "Stuck",

@@ -1,4 +1,4 @@
-import { Pencil, X } from "lucide-react";
+import { Pencil, SendHorizontal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { QueuedConversationMessageRecord } from "@/app/home/types";
@@ -8,12 +8,14 @@ export function QueuedMessageDrawer({
   cancellingMessageIds,
   themeMode,
   onEdit,
+  onSendNow,
   onCancel,
 }: {
   messages: QueuedConversationMessageRecord[];
   cancellingMessageIds: Set<string>;
   themeMode: "day" | "night";
   onEdit: (message: QueuedConversationMessageRecord) => void;
+  onSendNow: (messageId: string) => void;
   onCancel: (messageId: string) => void;
 }) {
   const visibleMessages = messages.filter((message) => message.status === "pending" || message.status === "delivering");
@@ -63,6 +65,18 @@ export function QueuedMessageDrawer({
                   title="Edit queued message"
                 >
                   <Pencil className="h-3 w-3" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  disabled={isCancelling || message.status === "delivering"}
+                  onClick={() => onSendNow(message.id)}
+                  className="h-6 w-6 rounded-full text-muted-foreground hover:text-foreground"
+                  aria-label="Send queued message now"
+                  title="Send queued message now"
+                >
+                  <SendHorizontal className="h-3 w-3" />
                 </Button>
                 <Button
                   type="button"

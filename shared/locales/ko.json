@@ -1,5 +1,13 @@
 {
   "product.name": "OmniHarness",
+  "settings.tabs.general": "일반",
+  "settings.tabs.models": "모델",
+  "settings.tabs.agents": "에이전트",
+  "settings.tabs.runtime": "런타임",
+  "settings.language.label": "언어",
+  "settings.appearance.title": "모양",
+  "settings.appearance.directTextSize": "직접 제어 텍스트 크기",
+  "settings.appearance.terminalTextSize": "터미널 / 에이전트 출력 텍스트 크기",
   "language.en": "영어",
   "language.es": "스페인어",
   "language.fr": "프랑스어",

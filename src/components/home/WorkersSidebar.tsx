@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Cpu, Moon, Sun, Terminal as TerminalIcon, XCircle } from "lucide-react";
+import { Cpu, Moon, PanelRightClose, Sun, Terminal as TerminalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkerCard } from "@/components/WorkerCard";
@@ -213,8 +213,15 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
           <Cpu className="h-4 w-4" /> Conversation Workers
         </h3>
         {onClose && (
-          <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" onClick={onClose}>
-            <XCircle className="h-4 w-4" />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-muted-foreground transition-all duration-150 ease-out hover:text-foreground motion-reduce:transition-none"
+            aria-label="Collapse workers sidebar"
+            title="Collapse workers sidebar"
+            onClick={onClose}
+          >
+            <PanelRightClose className="h-4 w-4 transition-transform duration-150 ease-out group-hover/button:translate-x-0.5 motion-reduce:transition-none" />
           </Button>
         )}
       </div>

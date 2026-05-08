@@ -1,5 +1,5 @@
 import type React from "react";
-import { ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, Pencil, Plus, Search, Settings, Smartphone, Trash2 } from "lucide-react";
+import { ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -38,6 +38,7 @@ export interface ConversationSidebarProps {
   authEnabled: boolean;
   openPairDeviceDialog: () => void;
   logout: () => void;
+  onCollapse?: () => void;
 }
 
 export function ConversationSidebar({
@@ -69,21 +70,36 @@ export function ConversationSidebar({
   authEnabled,
   openPairDeviceDialog,
   logout,
+  onCollapse,
 }: ConversationSidebarProps) {
   return (
-    <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-muted/30">
+    <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#f1f1f0] dark:bg-muted/30">
       <div className="mt-2 space-y-1 p-3">
-        <Button variant="ghost" className="h-9 w-full justify-start px-2 text-sm" onClick={startNewPlan}>
-          <Plus className="mr-2 h-4 w-4" /> New chat
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" className="h-9 min-w-0 flex-1 justify-start px-2 text-sm text-[#333333] hover:bg-[#deddda] hover:text-[#1f1f1f] dark:text-zinc-200 dark:hover:bg-muted/70 dark:hover:text-zinc-100" onClick={startNewPlan}>
+            <Plus className="mr-2 h-4 w-4" /> New chat
+          </Button>
+          {onCollapse ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="hidden h-9 w-9 text-[#333333]/75 transition-all duration-150 ease-out hover:bg-[#deddda] hover:text-[#1f1f1f] lg:inline-flex dark:text-zinc-300 dark:hover:bg-muted/70 dark:hover:text-zinc-100 motion-reduce:transition-none"
+              aria-label="Collapse conversations sidebar"
+              title="Collapse conversations sidebar"
+              onClick={onCollapse}
+            >
+              <PanelLeftClose className="h-4 w-4 transition-transform duration-150 ease-out group-hover/button:-translate-x-0.5 motion-reduce:transition-none" />
+            </Button>
+          ) : null}
+        </div>
         <div className="relative mt-1">
-          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Search className="absolute left-2 top-2.5 h-4 w-4 text-[#333333] dark:text-zinc-300" />
           <Input
             type="text"
-            placeholder="Search..."
+            placeholder="Search"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-9 w-full border-transparent bg-muted/50 pl-8 text-sm transition-all hover:border-border focus-visible:border-border focus-visible:bg-background focus-visible:ring-1"
+            className="h-9 w-full border-transparent bg-[#e4e3e1] pl-8 text-sm text-[#333333] transition-all placeholder:text-[#333333]/75 hover:bg-[#deddda] focus-visible:border-[#c8c7c5] focus-visible:bg-[#e4e3e1] focus-visible:ring-1 dark:bg-muted/50 dark:text-zinc-100 dark:placeholder:text-zinc-400 dark:hover:bg-muted/60 dark:focus-visible:bg-muted/50"
           />
         </div>
       </div>
@@ -175,8 +191,8 @@ export function ConversationSidebar({
                         className={cn(
                           "group flex min-w-0 cursor-pointer overflow-hidden rounded-xl py-1.5 pl-8 pr-2 text-sm transition-colors",
                           selectedRunId === run.id
-                            ? "bg-muted text-foreground dark:bg-white/[0.08] dark:text-zinc-100"
-                            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground dark:text-zinc-300 dark:hover:bg-white/[0.045] dark:hover:text-zinc-100",
+                            ? "bg-[#e2e1df] text-[#1f1f1f] dark:bg-white/[0.08] dark:text-zinc-100"
+                            : "text-[#424242] hover:bg-[#e8e7e5] hover:text-[#1f1f1f] dark:text-zinc-300 dark:hover:bg-white/[0.045] dark:hover:text-zinc-100",
                         )}
                       >
                         <div className="min-w-0 flex-1">

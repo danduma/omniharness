@@ -3,7 +3,17 @@ import type React from "react";
 import { type UseMutationResult } from "@tanstack/react-query";
 import { type AppErrorDescriptor, mergeAppErrors } from "@/lib/app-errors";
 import type { ConversationModeOption } from "@/components/ConversationModePicker";
-import { COMPOSER_EFFORT_STORAGE_KEY, COMPOSER_MODE_STORAGE_KEY, COMPOSER_MODEL_STORAGE_KEY, COMPOSER_WORKER_STORAGE_KEY, EFFORT_OPTIONS, RUN_PATH_PATTERN, WORKER_OPTIONS } from "./constants";
+import {
+  clampWorkersSidebarWidth,
+  COMPOSER_EFFORT_STORAGE_KEY,
+  COMPOSER_MODE_STORAGE_KEY,
+  COMPOSER_MODEL_STORAGE_KEY,
+  COMPOSER_WORKER_STORAGE_KEY,
+  EFFORT_OPTIONS,
+  getDefaultWorkersSidebarWidth,
+  RUN_PATH_PATTERN,
+  WORKER_OPTIONS,
+} from "./constants";
 import { LiveEventConnectionManager } from "./LiveEventConnectionManager";
 import type { ComposerWorkerOption, EventStreamState } from "./types";
 import { buildConversationPath, buildInlineError, parseCollapsedProjectPaths } from "./utils";
@@ -88,6 +98,8 @@ export function useHomeLifecycle({
   const didMountThemeEffectRef = useRef(false);
   const didHydrateCollapsedProjectsRef = useRef(false);
   const didSkipCollapsedProjectsInitialPersistRef = useRef(false);
+  const didHydrateWorkersSidebarWidthRef = useRef(false);
+  const didSkipWorkersSidebarInitialPersistRef = useRef(false);
 
   useEffect(() => {
     if (!appUnlocked) {
@@ -248,6 +260,8 @@ export function useHomeLifecycle({
 
     const saved = window.localStorage.getItem("omni-workers-sidebar-width");
     if (!saved) {
+      setRightSidebarWidth(getDefaultWorkersSidebarWidth(window.innerWidth));
+      didHydrateWorkersSidebarWidthRef.current = true;
       return;
     }
 
@@ -259,11 +273,13 @@ export function useHomeLifecycle({
         action: "Restore local layout state",
         suggestion: "Clear the omni-workers-sidebar-width localStorage entry and reload the page if the worker sidebar size looks wrong.",
       }]));
+      didHydrateWorkersSidebarWidthRef.current = true;
       return;
     }
 
-    setRightSidebarWidth(Math.min(720, Math.max(320, parsed)));
-  }, []);
+    setRightSidebarWidth(clampWorkersSidebarWidth(parsed, window.innerWidth));
+    didHydrateWorkersSidebarWidthRef.current = true;
+  }, [setRightSidebarWidth, setRuntimeErrors]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -279,10 +295,15 @@ export function useHomeLifecycle({
         action: "Persist local conversation state",
       }]));
     }
-  }, [readMarkers]);
+  }, [readMarkers, setRuntimeErrors]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (typeof window === "undefined" || !didHydrateWorkersSidebarWidthRef.current) {
+      return;
+    }
+
+    if (!didSkipWorkersSidebarInitialPersistRef.current) {
+      didSkipWorkersSidebarInitialPersistRef.current = true;
       return;
     }
 
@@ -295,7 +316,7 @@ export function useHomeLifecycle({
         action: "Persist local layout state",
       }]));
     }
-  }, [rightSidebarWidth]);
+  }, [rightSidebarWidth, setRuntimeErrors]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !didHydrateCollapsedProjectsRef.current) {
@@ -325,7 +346,7 @@ export function useHomeLifecycle({
 
     const handlePointerMove = (event: PointerEvent) => {
       const nextWidth = window.innerWidth - event.clientX;
-      setRightSidebarWidth(Math.min(720, Math.max(320, nextWidth)));
+      setRightSidebarWidth(clampWorkersSidebarWidth(nextWidth, window.innerWidth));
     };
     const stopResizing = () => {
       setIsResizingRightSidebar(false);
@@ -347,7 +368,7 @@ export function useHomeLifecycle({
       window.removeEventListener("pointerup", stopResizing);
       window.removeEventListener("pointercancel", stopResizing);
     };
-  }, [isResizingRightSidebar]);
+  }, [isResizingRightSidebar, setIsResizingRightSidebar, setRightSidebarWidth]);
 
   useEffect(() => {
     if (typeof window === "undefined") {

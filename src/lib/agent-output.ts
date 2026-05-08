@@ -15,7 +15,8 @@ export interface AgentOutputPane {
   kind?: "text" | "diff";
 }
 
-const TERMINAL_TOOL_STATUSES = new Set(["completed", "failed", "cancelled", "done", "error"]);
+const TERMINAL_TOOL_STATUSES = new Set(["completed", "failed", "cancelled", "canceled", "done", "error"]);
+const FALLBACK_TOOL_TITLE_PATTERN = /^Tool call(?:\s+\S+)?\s+(?:updated|completed|failed|cancelled|canceled|done|error|pending|in_progress|working)(?::.*)?$/i;
 
 export type AgentActivityItem =
   | {
@@ -24,13 +25,6 @@ export type AgentActivityItem =
       text: string;
       timestamp: string;
       live?: boolean;
-    }
-  | {
-      id: string;
-      kind: "history_gap";
-      text: string;
-      timestamp: string;
-      omittedCount?: number;
     }
   | {
       id: string;
@@ -79,27 +73,6 @@ function asNonEmptyString(value: unknown): string | null {
 
 function isOmittedOutputEntriesMarker(entry: AgentOutputEntry) {
   return entry.id === "output-archive-marker" || entry.id.startsWith("output-entries-omitted:");
-}
-
-function omittedOutputEntriesCount(text: string) {
-  const match = text.match(/^([\d,]+)\s+/);
-  return match ? Number.parseInt(match[1].replace(/,/g, ""), 10) || undefined : undefined;
-}
-
-function formatCount(value: number) {
-  return value.toLocaleString("en-US");
-}
-
-function historyGapText(entry: AgentOutputEntry, omittedCount?: number) {
-  if (entry.id === "output-archive-marker") {
-    return omittedCount
-      ? `${formatCount(omittedCount)} older raw worker activity records are only in archived history. These are tool calls, status updates, and streamed chunks, not current terminal lines.`
-      : "Older raw worker activity records are only in archived history. These are tool calls, status updates, and streamed chunks, not current terminal lines.";
-  }
-
-  return omittedCount
-    ? `${omittedCount} earlier output entries are not loaded in this live snapshot.`
-    : "Earlier output entries are not loaded in this live snapshot.";
 }
 
 function normalizeMultilineText(value: string): string {
@@ -583,6 +556,23 @@ function normalizeStatus(value: string | null | undefined, fallback = "pending")
   return normalized.length > 0 ? normalized : fallback;
 }
 
+function isFinalToolStatus(value: string | null | undefined): boolean {
+  return value ? TERMINAL_TOOL_STATUSES.has(value.trim().toLowerCase()) : false;
+}
+
+function mergeToolStatus(currentStatus: string, nextStatus: string | null | undefined): string {
+  const normalizedNext = normalizeStatus(nextStatus, currentStatus);
+  if (isFinalToolStatus(currentStatus) && !isFinalToolStatus(normalizedNext)) {
+    return currentStatus;
+  }
+  return normalizedNext;
+}
+
+function isReplaceableToolTitle(value: string): boolean {
+  return ["Tool activity", "Terminal", "Read File", "Execute", "Bash"].includes(value)
+    || FALLBACK_TOOL_TITLE_PATTERN.test(value);
+}
+
 function createToolActivity(entry: AgentOutputEntry): MutableToolActivity {
   const raw = asRecord(entry.raw);
   const baseTitle = asNonEmptyString(raw?.title) || entry.text || "Tool activity";
@@ -601,12 +591,20 @@ function createToolActivity(entry: AgentOutputEntry): MutableToolActivity {
 }
 
 function applyToolUpdate(target: MutableToolActivity, entry: AgentOutputEntry): void {
-  target.status = normalizeStatus(entry.status, target.status);
+  target.status = mergeToolStatus(target.status, entry.status);
+  const raw = asRecord(entry.raw);
+  const baseTitle = asNonEmptyString(raw?.title) || entry.text || "Tool activity";
+  const incomingKind = normalizeToolKind(entry.toolKind ?? asNonEmptyString(raw?.kind), baseTitle);
+  const incomingLabel = toolLabel(incomingKind);
+  if (target.label === "Tool" && incomingLabel !== "Tool") {
+    target.label = incomingLabel;
+  }
+
   const updatedTitle = deriveToolTitle(entry);
   if (
     updatedTitle
     && updatedTitle !== target.title
-    && ["Tool activity", "Terminal", "Read File", "Execute", "Bash"].includes(target.title)
+    && isReplaceableToolTitle(target.title)
   ) {
     target.title = updatedTitle;
   }
@@ -689,14 +687,6 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
       }
       finishOpenThinking(entry.timestamp);
       if (isOmittedOutputEntriesMarker(entry)) {
-        const omittedCount = omittedOutputEntriesCount(text);
-        items.push({
-          id: entry.id,
-          kind: "history_gap",
-          text: historyGapText(entry, omittedCount),
-          timestamp: entry.timestamp,
-          omittedCount,
-        });
         continue;
       }
       items.push({

@@ -1,5 +1,13 @@
 {
   "product.name": "OmniHarness",
+  "settings.tabs.general": "Generale",
+  "settings.tabs.models": "Modelli",
+  "settings.tabs.agents": "Agenti",
+  "settings.tabs.runtime": "Runtime",
+  "settings.language.label": "Lingua",
+  "settings.appearance.title": "Aspetto",
+  "settings.appearance.directTextSize": "Dimensione testo controllo diretto",
+  "settings.appearance.terminalTextSize": "Dimensione testo terminale / output agente",
   "language.en": "Inglese",
   "language.es": "Spagnolo",
   "language.fr": "Francese",

@@ -1,5 +1,5 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
-import { AlertTriangle, GitCommitHorizontal, Menu, PanelRight, Pencil } from "lucide-react";
+import { AlertTriangle, GitCommitHorizontal, Menu, PanelLeft, PanelRight, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -13,6 +13,8 @@ import { ThemeModeToggle, WorkersSidebar } from "./WorkersSidebar";
 interface HomeHeaderProps {
   mobileNavOpen: boolean;
   setMobileNavOpen: (open: boolean) => void;
+  leftSidebarOpen: boolean;
+  setLeftSidebarOpen: (open: boolean) => void;
   filteredProjects: SidebarGroup[];
   isHydratingConversations: boolean;
   searchQuery: string;
@@ -65,6 +67,8 @@ interface HomeHeaderProps {
 export function HomeHeader({
   mobileNavOpen,
   setMobileNavOpen,
+  leftSidebarOpen,
+  setLeftSidebarOpen,
   filteredProjects,
   isHydratingConversations,
   searchQuery,
@@ -146,6 +150,18 @@ export function HomeHeader({
   return (
   <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border/50 px-3 sm:px-4">
     <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+      {!leftSidebarOpen ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="hidden h-8 w-8 text-muted-foreground transition-all duration-150 ease-out hover:text-foreground lg:inline-flex motion-reduce:transition-none"
+          aria-label="Open conversations sidebar"
+          title="Open conversations sidebar"
+          onClick={() => setLeftSidebarOpen(true)}
+        >
+          <PanelLeft className="h-4 w-4" />
+        </Button>
+      ) : null}
       <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
         <Button variant="ghost" size="icon" className="h-8 w-8 lg:hidden" aria-label="Open navigation" onClick={() => setMobileNavOpen(true)}>
           <Menu className="h-4 w-4" />

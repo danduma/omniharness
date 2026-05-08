@@ -5,7 +5,7 @@ import type { ConversationModeOption } from "@/components/ConversationModePicker
 import type { ComposerWorkerOption, MessageRecord, RunRecord, WorkerType } from "./types";
 import { parseWorkerType, resolveComposerEffortLabel, resolveComposerModelValue } from "./utils";
 
-const CONVERSATION_BOTTOM_THRESHOLD_PX = 4;
+const CONVERSATION_BOTTOM_THRESHOLD_PX = 40;
 
 export function shouldConversationFollowLatest(
   metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
@@ -89,7 +89,10 @@ export function useRunSelectionEffects({
       return;
     }
 
-    viewport.scrollTop = viewport.scrollHeight;
+    viewport.scrollTo({
+      top: viewport.scrollHeight,
+      behavior: runChanged ? "auto" : "smooth",
+    });
     shouldFollowLatestRef.current = true;
   }, [scrollRef, state.messages, selectedRunId, state.agents]);
 

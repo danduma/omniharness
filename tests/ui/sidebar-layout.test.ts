@@ -42,12 +42,24 @@ const workersSidebarSource = fs.readFileSync(
 );
 
 test("desktop conversation rail constrains overflowing run content", () => {
-  expect(pageSource).toContain('hidden h-full w-[280px] shrink-0 overflow-hidden border-r border-border lg:flex');
-  expect(pageSource).toContain('relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-muted/30');
+  expect(pageSource).toContain('leftSidebarOpen: true');
+  expect(pageSource).toContain('setLeftSidebarOpen: homeUiStateManager.createSetter("leftSidebarOpen")');
+  expect(pageSource).toContain('style={{ width: leftSidebarOpen ? DESKTOP_CONVERSATION_SIDEBAR_WIDTH : 0 }}');
+  expect(pageSource).toContain('aria-hidden={!leftSidebarOpen}');
+  expect(pageSource).toContain('inert={!leftSidebarOpen ? true : undefined}');
+  expect(pageSource).toContain('leftSidebarOpen ? "translate-x-0" : "-translate-x-3"');
+  expect(pageSource).toContain('onCollapse={() => setLeftSidebarOpen(false)}');
+  expect(pageSource).toContain('title="Collapse conversations sidebar"');
+  expect(pageSource).toContain('title="Open conversations sidebar"');
+  expect(pageSource).toContain('<PanelLeftClose');
+  expect(pageSource).toContain('<PanelLeft className="h-4 w-4" />');
+  expect(pageSource).toContain('transition-[width,opacity] duration-150 ease-out');
+  expect(pageSource).toContain('relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#f1f1f0] dark:bg-muted/30');
   expect(pageSource).toContain('min-h-0 flex-1 overflow-hidden');
   expect(pageSource).toContain('mt-auto shrink-0 border-t border-border/60 bg-background/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-background/80');
   expect(pageSource).toContain('"group flex min-w-0 cursor-pointer overflow-hidden rounded-xl py-1.5 pl-8 pr-2 text-sm transition-colors"');
-  expect(pageSource).toContain('"bg-muted text-foreground dark:bg-white/[0.08] dark:text-zinc-100"');
+  expect(pageSource).toContain('"bg-[#e2e1df] text-[#1f1f1f] dark:bg-white/[0.08] dark:text-zinc-100"');
+  expect(pageSource).toContain('"text-[#424242] hover:bg-[#e8e7e5] hover:text-[#1f1f1f] dark:text-zinc-300 dark:hover:bg-white/[0.045] dark:hover:text-zinc-100"');
   expect(pageSource).not.toContain('ml-3 group flex min-w-0 cursor-pointer gap-2 overflow-hidden rounded-lg border px-3 py-1.5 text-sm transition-colors');
   expect(pageSource).not.toContain('border-primary/20 bg-primary/10 font-medium text-primary');
   expect(pageSource).not.toContain('flex w-4 shrink-0 items-start justify-center pt-0.5');
@@ -93,10 +105,16 @@ test("desktop conversation rail constrains overflowing run content", () => {
 });
 
 test("workers sidebar is conversation-scoped and resizable", () => {
-  expect(pageSource).toContain('rightSidebarWidth: 420');
+  expect(pageSource).toContain('rightSidebarWidth: DEFAULT_WORKERS_SIDEBAR_WIDTH');
+  expect(pageSource).toContain('export const DEFAULT_WORKERS_SIDEBAR_WIDTH = 580;');
+  expect(pageSource).toContain('return clampWorkersSidebarWidth(remainingAfterConversationSidebar / 2, viewportWidth);');
+  expect(pageSource).toContain('setRightSidebarWidth(getDefaultWorkersSidebarWidth(window.innerWidth));');
+  expect(pageSource).toContain('setRightSidebarWidth(clampWorkersSidebarWidth(nextWidth, window.innerWidth));');
   expect(pageSource).toContain('window.localStorage.getItem("omni-workers-sidebar-width")');
   expect(pageSource).toContain('window.localStorage.setItem("omni-workers-sidebar-width", String(rightSidebarWidth))');
   expect(pageSource).toContain('title="Toggle Conversation Workers"');
+  expect(pageSource).toContain('title="Collapse workers sidebar"');
+  expect(pageSource).toContain('<PanelRightClose');
   expect(pageSource).toContain('<WorkersSidebar');
   expect(pageSource).toContain('workers={selectedRunWorkersForDisplay}');
   expect(pageSource).toContain('agents={conversationAgents}');
@@ -126,7 +144,7 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(workerCardSource).toContain('{runtimeDurationLabel ? (');
   expect(workerCardSource).toContain("<Clock");
   expect(workerCardSource).toContain('className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground dark:text-zinc-400"');
-  expect(workerCardSource).toContain('render={<span className="inline-flex items-center" />}');
+  expect(workerCardSource).toContain('render={<span className="block w-fit max-w-full" />}');
   expect(workerCardSource).not.toContain('title={normalized === null ? "Context usage');
   expect(workerCardSource).toContain('className="h-3.5 w-3.5"');
   expect(workerCardSource).toContain('const showStopWorker = Boolean(onStopWorker) && isWorkerActiveStatus(agent.state);');
@@ -217,6 +235,9 @@ test("worker detail renders from streamed agent state instead of per-worker poll
 });
 
 test("conversation output only follows live worker updates when already near the bottom", () => {
+  expect(pageSource).toContain("const CONVERSATION_BOTTOM_THRESHOLD_PX = 40");
+  expect(pageSource).toContain('behavior: runChanged ? "auto" : "smooth"');
+
   expect(shouldConversationFollowLatest({
     scrollTop: 696,
     clientHeight: 300,
@@ -225,6 +246,12 @@ test("conversation output only follows live worker updates when already near the
 
   expect(shouldConversationFollowLatest({
     scrollTop: 680,
+    clientHeight: 300,
+    scrollHeight: 1000,
+  })).toBe(true);
+
+  expect(shouldConversationFollowLatest({
+    scrollTop: 650,
     clientHeight: 300,
     scrollHeight: 1000,
   })).toBe(false);
@@ -266,19 +293,26 @@ test("project and terminal collapses share the side panel transition", () => {
   expect(workerCardSource).toContain("onOpenChange={(nextOpen) => workerCardManager.setOpen(workerId, nextOpen)}");
 });
 
-test("worker cards keep identity and live status visible below collapsed terminals", () => {
-  expect(workerCardSource).toContain("function WorkerStatusBar");
-  expect(workerCardSource).toContain("showTerminalControls={open}");
-  expect(workerCardSource).toContain("showContext={open}");
-  expect(workerCardSource).toContain("showTextSizeControl={open}");
-  expect(workerCardSource).toContain("workerCardManager.setOpen(workerId, true);");
-  expect(workerCardSource).toContain("workerCardManager.setTerminalProcessesOpen(workerId, true);");
+test("worker cards collapse into one header summary and keep expanded-only status at the bottom", () => {
+  expect(workerCardSource).toContain("function WorkerExpandedFooter");
+  expect(workerCardSource).toContain("const expandedHeaderSummary =");
+  expect(workerCardSource).toContain("const collapsedHeaderSummary =");
+  expect(workerCardSource).toContain("open ? expandedHeaderSummary : collapsedHeaderSummary");
+  expect(workerCardSource).toContain("{open ? (");
+  expect(workerCardSource).toContain("<WorkerExpandedFooter");
+  expect(workerCardSource).toContain("function renderContextFill");
+  expect(workerCardSource).toContain("activeModel={activeModel}");
+  expect(workerCardSource).toContain("activeEffort={activeEffort}");
+  expect(workerCardSource).toContain("{activeEffort ? <span className=\"shrink-0 text-[11px] text-muted-foreground dark:text-zinc-500\">{activeEffort} effort</span> : null}");
+  expect(workerCardSource).not.toContain("w-14 overflow-hidden rounded-full");
   expect(workerCardSource).toContain("<TerminalTextSizeControl");
   expect(workerCardSource).toContain("showTextSizeControl={false}");
+  expect(workerCardSource).not.toContain("showTerminalControls={open}");
+  expect(workerCardSource).not.toContain("showContext={open}");
 
   const workerPanelIndex = workerCardSource.indexOf("open ? COLLAPSIBLE_PANEL_OPEN_CLASS : COLLAPSIBLE_PANEL_CLOSED_CLASS", workerCardSource.indexOf("<Collapsible open={open}"));
   const workerPanelCloseIndex = workerCardSource.indexOf("</div>", workerPanelIndex);
-  const workerStatusBarIndex = workerCardSource.indexOf("<WorkerStatusBar", workerPanelCloseIndex);
+  const workerStatusBarIndex = workerCardSource.indexOf("<WorkerExpandedFooter", workerPanelCloseIndex);
 
   expect(workerPanelIndex).toBeGreaterThan(-1);
   expect(workerPanelCloseIndex).toBeGreaterThan(workerPanelIndex);
@@ -304,10 +338,12 @@ test("direct conversations render the user transcript next to the worker surface
   expect(pageSource).toContain('?? conversationAgents.find((agent) => agent.state !== "cancelled")');
   expect(pageSource).toContain('userMessages={directConversationMessages}');
   expect(pageSource).toContain('variant="native"');
+  expect(pageSource).toContain('textSizeScope="direct"');
   expect(pageSource).toContain('.filter((message) => message.role === "user")');
   expect(pageSource).not.toContain('message.role === "user" || (message.role === "worker" && message.content.trim())');
   expect(pageSource).toContain('const isExpanded = expandedDirectMessageIds.has(msg.id);');
-  expect(pageSource).toContain('className="flex justify-start pl-4 sm:pl-6"');
+  expect(pageSource).toContain('className="flex justify-end"');
+  expect(pageSource).toContain('flex-col items-end');
   expect(pageSource).toContain('const handleCopyDirectMessage = async (content: string) => {');
   expect(pageSource).toContain('await navigator.clipboard.writeText(content);');
   expect(pageSource).toContain('select-text');
@@ -324,7 +360,7 @@ test("direct conversations render the user transcript next to the worker surface
   expect(pageSource).toContain('aria-label={action.label}');
   expect(pageSource).toContain('onClick: () => handleRetryMessage(message.id)');
   expect(pageSource).toContain('rounded-[1.55rem] bg-[#f3f3f3]');
-  expect(pageSource).toContain('px-6 py-4');
+  expect(pageSource).toContain('px-5 py-3.5');
   expect(pageSource).toContain('text-sm leading-6');
   expect(pageSource).toContain('createdAt={msg.createdAt}');
   expect(pageSource).not.toContain('text-[1.375rem]');
@@ -337,59 +373,11 @@ test("direct conversations render the user transcript next to the worker surface
   expect(pageSource).not.toContain('title={selectedRun?.title || "Direct control"}');
 });
 
-test("settings render as a centered app modal with supervisor llm controls", () => {
-  expect(pageSource).toContain('import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox"');
-  expect(pageSource).toContain('import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"');
-  expect(pageSource).toContain('<Dialog open={open} onOpenChange={onOpenChange}>');
-  expect(pageSource).toContain('className="flex max-h-[min(760px,calc(100dvh-2rem))] sm:max-h-[min(760px,calc(100dvh-3rem))] sm:max-w-xl flex-col overflow-hidden"');
-  expect(pageSource).toContain('className="min-h-0 flex-1 overflow-y-auto pr-1"');
-  expect(pageSource).toContain('className="shrink-0"');
-  expect(pageSource).toContain("Supervisor LLM");
-  expect(pageSource).toContain("Fallback LLM");
-  expect(pageSource).toContain("LLM Settings");
-  expect(pageSource).toContain("General");
-  expect(pageSource).toContain("Language");
-  expect(pageSource).toContain("LanguageSelect");
+test("settings entry opens the reorganized settings dialog", () => {
   expect(pageSource).toContain('activeSettingsTab: "general"');
-  expect(pageSource).toContain('export type SettingsTab = "general" | "llm" | "workers"');
-  expect(pageSource).toContain("activeSettingsTab === \"general\"");
-  expect(pageSource).toContain("Supervisor Credentials");
-  expect(pageSource).toContain("Fallback Credentials");
-  expect(pageSource).toContain("activeSettingsTab === \"llm\"");
-  expect(pageSource).toContain("activeSettingsTab === \"workers\"");
-  expect(pageSource).toContain("SUPERVISOR_LLM_PROVIDER");
-  expect(pageSource).toContain("SUPERVISOR_LLM_MODEL");
-  expect(pageSource).toContain("SUPERVISOR_LLM_BASE_URL");
-  expect(pageSource).toContain("SUPERVISOR_LLM_API_KEY");
-  expect(pageSource).toContain("SUPERVISOR_FALLBACK_LLM_PROVIDER");
-  expect(pageSource).toContain("SUPERVISOR_FALLBACK_LLM_MODEL");
-  expect(pageSource).toContain("SUPERVISOR_FALLBACK_LLM_BASE_URL");
-  expect(pageSource).toContain("SUPERVISOR_FALLBACK_LLM_API_KEY");
-  expect(pageSource).toContain("/api/llm-models");
-  expect(pageSource).toContain("/api/agents/catalog");
-  expect(pageSource).toContain('enabled: provider === "gemini" && apiKey.trim().length > 0');
-  expect(pageSource).toContain("<Combobox");
-  expect(pageSource).toContain("Search Gemini models");
-  expect(pageSource).toContain("Gemini model ids load automatically from the API key and appear in a searchable dropdown.");
-  expect(pageSource).toContain("Worker Agents");
-  expect(pageSource).toContain('activeWorkerSettingsTab: "availability"');
-  expect(pageSource).toContain('setActiveWorkerSettingsTab: homeUiStateManager.createSetter("activeWorkerSettingsTab")');
-  expect(pageSource).toContain('export type WorkerSettingsTab = "availability" | "defaults" | "runtime"');
-  expect(pageSource).toContain('activeWorkerSettingsTab === "availability"');
-  expect(pageSource).toContain('activeWorkerSettingsTab === "defaults"');
-  expect(pageSource).toContain('activeWorkerSettingsTab === "runtime"');
-  expect(pageSource).toContain("Availability");
-  expect(pageSource).toContain("Defaults");
-  expect(pageSource).toContain("Runtime");
-  expect(pageSource).toContain("Default Worker Agent");
-  expect(pageSource).toContain("YOLO Worker Mode");
-  expect(pageSource).toContain("WORKER_YOLO_MODE");
-  expect(pageSource).toContain("Only currently available bridge workers can be enabled for new conversations.");
-  expect(pageSource).toContain("WORKER_ALLOWED_TYPES");
-  expect(pageSource).toContain("WORKER_DEFAULT_TYPE");
-  expect(pageSource).toContain('className="flex min-w-0 flex-1 items-start gap-3"');
-  expect(pageSource).toContain('className="text-sm font-medium break-words"');
-  expect(pageSource).toContain('className="text-xs break-words text-muted-foreground"');
+  expect(pageSource).toContain('export type SettingsTab = "general" | "models" | "agents" | "runtime"');
+  expect(pageSource).toContain('() => import("@/components/home/SettingsDialog").then((module) => module.SettingsDialog)');
+  expect(pageSource).toContain("settingsDraftManager");
 });
 
 test("header includes a persistent day night mode toggle beside the workers sidebar button", () => {
@@ -512,7 +500,6 @@ test("running conversations render an in-thread execution indicator and timeline
   expect(pageSource).not.toContain("SupervisorActivityDrawer");
   expect(pageSource).not.toContain("ClarificationPanel");
   expect(pageSource).not.toContain("PlanProgress");
-  expect(pageSource).not.toContain("ValidationSummary");
   expect(pageSource).not.toContain("No execution details yet.");
   expect(pageSource).not.toContain("Current status");
   expect(pageSource).not.toContain("Last bridge error");

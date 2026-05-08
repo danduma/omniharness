@@ -18,12 +18,13 @@ import { buildWorkerLists, isWorkerActiveStatus, mergeWorkerLiveStatus, normaliz
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
-import { COMPOSER_WORKER_OPTIONS, WORKER_OPTIONS } from "./constants";
+import { COMPOSER_WORKER_OPTIONS, DESKTOP_CONVERSATION_SIDEBAR_WIDTH, WORKER_OPTIONS } from "./constants";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
 import { parseBusyMessageAction, resolveBusyComposerBehavior, type BusyMessageAction } from "./busy-message-behavior";
 import type { AgentSnapshot, AuthSessionResponse, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, QueuedConversationMessageRecord, RunRecord, SettingsResponse, SidebarGroup, SidebarRun, SupervisorInterventionRecord, WorkerCatalogResponse, WorkerType } from "./types";
 import { EventStreamStateManager } from "./EventStreamStateManager";
 import { homeUiSetters, homeUiStateManager, INITIAL_EVENT_STREAM_STATE } from "./HomeUiStateManager";
+import { settingsDraftManager } from "./SettingsDraftManager";
 import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getLatestUnresolvedWorkerStuckEvent, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
 import { useAppErrors } from "./useAppErrors";
 import { useConversationExecutionStatus } from "./useConversationExecutionStatus";
@@ -82,11 +83,11 @@ export function HomeApp() {
     showSettings,
     showPairDeviceDialog,
     activeSettingsTab,
-    activeWorkerSettingsTab,
     activeLlmProfileTab,
     apiKeys,
     showFolderPicker,
     selectedRunId,
+    leftSidebarOpen,
     rightSidebarOpen,
     rightSidebarWidth,
     isResizingRightSidebar,
@@ -125,11 +126,11 @@ export function HomeApp() {
     setShowSettings,
     setShowPairDeviceDialog,
     setActiveSettingsTab,
-    setActiveWorkerSettingsTab,
     setActiveLlmProfileTab,
     setApiKeys,
     setShowFolderPicker,
     setSelectedRunId,
+    setLeftSidebarOpen,
     setRightSidebarOpen,
     setRightSidebarWidth,
     setIsResizingRightSidebar,
@@ -179,6 +180,7 @@ export function HomeApp() {
     [stateManager],
   );
   const busyMessageQueueState = useManagerSnapshot(busyMessageQueueManager);
+  const settingsDraft = useManagerSnapshot(settingsDraftManager);
   const scrollRef = useRef<HTMLDivElement>(null);
   const commandInputRef = useRef<HTMLTextAreaElement>(null);
   const pendingDeletedRunIdsRef = useRef<Set<string>>(new Set());
@@ -190,7 +192,10 @@ export function HomeApp() {
     requestAnimationFrame(() => {
       const viewport = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLDivElement | null;
       if (viewport) {
-        viewport.scrollTop = viewport.scrollHeight;
+        viewport.scrollTo({
+          top: viewport.scrollHeight,
+          behavior: "smooth",
+        });
       }
     });
   }, []);
@@ -283,7 +288,8 @@ export function HomeApp() {
         source: "Settings",
         action: "Load saved settings",
       });
-      setApiKeys(prev => ({ ...prev, ...(data.values || {}) }));
+      settingsDraftManager.hydrate(data.values || {});
+      setApiKeys(prev => ({ ...prev, ...settingsDraftManager.getSnapshot().draft }));
       setSettingsDiagnostics(data.diagnostics ?? []);
       return data;
     },
@@ -347,16 +353,22 @@ export function HomeApp() {
 
   const saveSettings = useMutation({
     mutationFn: async () => {
+      const payload = settingsDraftManager.getSavePayload();
       await requestJson<{ ok: true }>("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(apiKeys),
+        body: JSON.stringify(payload),
       }, {
         source: "Settings",
         action: "Save settings",
       });
     },
-    onSuccess: () => setShowSettings(false),
+    onSuccess: () => {
+      const savedSettings = settingsDraftManager.getSnapshot().draft;
+      settingsDraftManager.markSaved(savedSettings);
+      setApiKeys((current) => ({ ...current, ...savedSettings }));
+      setShowSettings(false);
+    },
   });
 
   const renameRun = useMutation({
@@ -560,6 +572,38 @@ export function HomeApp() {
       busyMessageQueueManager.markCancelling(messageId);
     },
     onSuccess: (_data, variables) => {
+      busyMessageQueueManager.hideQueuedMessage(variables.messageId);
+    },
+    onError: (_error, variables) => {
+      busyMessageQueueManager.unmarkCancelling(variables.messageId);
+    },
+  });
+
+  const sendQueuedMessageNow = useMutation({
+    mutationFn: async ({ runId, messageId }: { runId: string; messageId: string }) => {
+      return requestJson<{ ok: true; message?: MessageRecord; queuedMessage?: NonNullable<EventStreamState["queuedMessages"]>[number] }>(`/api/conversations/${runId}/queued-messages/${messageId}`, {
+        method: "PATCH",
+      }, {
+        source: "Conversations",
+        action: "Send queued message now",
+      });
+    },
+    onMutate: ({ messageId }) => {
+      busyMessageQueueManager.markCancelling(messageId);
+    },
+    onSuccess: (data, variables) => {
+      if (data.message) {
+        pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
+        setState((current) => appendSentConversationMessageSnapshot(current, data.message));
+        scrollConversationToBottom();
+      }
+
+      if (data.queuedMessage && (data.queuedMessage.status === "pending" || data.queuedMessage.status === "delivering")) {
+        busyMessageQueueManager.upsertQueuedMessage(data.queuedMessage);
+        busyMessageQueueManager.unmarkCancelling(variables.messageId);
+        return;
+      }
+
       busyMessageQueueManager.hideQueuedMessage(variables.messageId);
     },
     onError: (_error, variables) => {
@@ -910,10 +954,6 @@ export function HomeApp() {
       },
     }));
   }, [catalogWorkers]);
-  const configuredAllowedWorkerSet = useMemo(
-    () => new Set(configuredAllowedWorkerTypes),
-    [configuredAllowedWorkerTypes],
-  );
   const filteredMessages = useMemo(
     () => (selectedRunId
       ? state.messages?.filter((m: { runId: string }) => m.runId === selectedRunId)
@@ -1232,7 +1272,7 @@ export function HomeApp() {
     ? plans.find((p) => p.id === runs.find((r) => r.id === selectedRunId)?.planId) ?? null
     : null;
   const activeConversationCwd = selectedRun?.projectPath || activePlan?.path || draftProjectPath || null;
-  const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, runCommandError: runCommand.error, sendConversationMessageError: sendConversationMessage.error, cancelQueuedMessageError: cancelQueuedMessage.error, autoCommitChatError: autoCommitChat.error, autoCommitProjectError: autoCommitProject.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, deleteRunError: deleteRun.error, stopSupervisorError: stopSupervisor.error, stopWorkerError: stopWorker.error ?? stopWorkerTerminalProcess.error });
+  const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, runCommandError: runCommand.error, sendConversationMessageError: sendConversationMessage.error, sendQueuedMessageNowError: sendQueuedMessageNow.error, cancelQueuedMessageError: cancelQueuedMessage.error, autoCommitChatError: autoCommitChat.error, autoCommitProjectError: autoCommitProject.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, deleteRunError: deleteRun.error, stopSupervisorError: stopSupervisor.error, stopWorkerError: stopWorker.error ?? stopWorkerTerminalProcess.error });
 
   useRunSelectionEffects({ scrollRef, state, selectedRunId, selectedRun, activeComposerMode, selectedCliAgent, setSelectedCliAgent, autoSelectedWorkerType, activeAllowedWorkerTypes, hydratedRunSelectionId, setHydratedRunSelectionId, selectedModel, setSelectedModel, selectedEffort, setSelectedEffort, availableWorkerTypes, configuredAllowedWorkerTypes, apiKeys, setApiKeys, setReadMarkers });
   const activeMention = getActiveMentionQuery(command, commandCursor);
@@ -1294,26 +1334,7 @@ export function HomeApp() {
     });
   };
 
-  const handleToggleAllowedWorker = (workerType: WorkerType, checked: boolean) => {
-    const currentlyAllowed = parseWorkerTypes(apiKeys.WORKER_ALLOWED_TYPES);
-    const nextAllowed = checked
-      ? Array.from(new Set([...currentlyAllowed, workerType]))
-      : currentlyAllowed.filter((type) => type !== workerType);
-
-    if (nextAllowed.length === 0) {
-      return;
-    }
-
-    setApiKeys((current) => ({
-      ...current,
-      WORKER_ALLOWED_TYPES: JSON.stringify(nextAllowed),
-      WORKER_DEFAULT_TYPE: nextAllowed.includes(current.WORKER_DEFAULT_TYPE as WorkerType)
-        ? current.WORKER_DEFAULT_TYPE
-        : nextAllowed[0],
-    }));
-  };
-
-  const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || promotePlanningConversation.isPending || stopSupervisor.isPending || stopWorker.isPending;
+  const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || sendQueuedMessageNow.isPending || promotePlanningConversation.isPending || stopSupervisor.isPending || stopWorker.isPending;
   const isStoppingConversation = stopSupervisor.isPending || stopWorker.isPending;
   const busyMessageAction = parseBusyMessageAction(apiKeys.BUSY_MESSAGE_ACTION);
   const composerBehavior = resolveBusyComposerBehavior({
@@ -1326,6 +1347,7 @@ export function HomeApp() {
     || WORKER_OPTIONS.find((option) => option.value === autoSelectedWorkerType)?.label
     || "Direct worker";
   const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct";
+  const showDirectControlWorkingIndicator = isDirectConversation && composerBehavior.buttonKind === "stop";
 
   const handleRetryMessage = (messageId: string) => {
     if (!selectedRunId) return;
@@ -1473,6 +1495,11 @@ export function HomeApp() {
           queuedMessages={busyMessageQueueState.queuedMessages}
           cancellingQueuedMessageIds={busyMessageQueueState.cancellingMessageIds}
           onEditQueuedMessage={handleEditQueuedMessage}
+          onSendQueuedMessageNow={(messageId) => {
+            if (selectedRunId) {
+              sendQueuedMessageNow.mutate({ runId: selectedRunId, messageId });
+            }
+          }}
           onCancelQueuedMessage={(messageId) => {
             if (selectedRunId) {
               cancelQueuedMessage.mutate({ runId: selectedRunId, messageId });
@@ -1554,8 +1581,15 @@ export function HomeApp() {
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-background text-foreground lg:h-screen">
-      <div className="relative z-30 hidden h-full w-[280px] shrink-0 overflow-hidden border-r border-border lg:flex">
-        <ConversationSidebar {...sharedSidebarProps} />
+      <div
+        className={`relative z-30 hidden h-full shrink-0 overflow-hidden border-r bg-background transition-[width,opacity] duration-150 ease-out lg:flex motion-reduce:transition-none ${leftSidebarOpen ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}
+        style={{ width: leftSidebarOpen ? DESKTOP_CONVERSATION_SIDEBAR_WIDTH : 0 }}
+        aria-hidden={!leftSidebarOpen}
+        inert={!leftSidebarOpen ? true : undefined}
+      >
+        <div className={`flex h-full min-w-0 flex-1 transition-transform duration-150 ease-out motion-reduce:transition-none ${leftSidebarOpen ? "translate-x-0" : "-translate-x-3"}`}>
+          <ConversationSidebar {...sharedSidebarProps} onCollapse={() => setLeftSidebarOpen(false)} />
+        </div>
       </div>
 
       <div className="relative flex min-w-0 flex-1 flex-col bg-background">
@@ -1564,6 +1598,8 @@ export function HomeApp() {
           startRenamingRun={handleStartTopBarRenamingRun}
           mobileNavOpen={mobileNavOpen}
           setMobileNavOpen={setMobileNavOpen}
+          leftSidebarOpen={leftSidebarOpen}
+          setLeftSidebarOpen={setLeftSidebarOpen}
           activeConversationCwd={activeConversationCwd}
           selectedRun={selectedRun}
           isImplementationConversation={isImplementationConversation}
@@ -1625,6 +1661,7 @@ export function HomeApp() {
           handleCancelEditingMessage={handleCancelEditingMessage}
           handleSaveEditedMessage={handleSaveEditedMessage}
           conversationAgents={conversationAgents}
+          showDirectControlWorkingIndicator={showDirectControlWorkingIndicator}
           showConversationExecution={showConversationExecution}
           liveExecutionStatus={liveExecutionStatus}
           liveThoughts={liveThoughts}
@@ -1684,17 +1721,13 @@ export function HomeApp() {
         onOpenChange={setShowSettings}
         activeSettingsTab={activeSettingsTab}
         setActiveSettingsTab={setActiveSettingsTab}
-        activeWorkerSettingsTab={activeWorkerSettingsTab}
-        setActiveWorkerSettingsTab={setActiveWorkerSettingsTab}
         activeLlmProfileTab={activeLlmProfileTab}
         setActiveLlmProfileTab={setActiveLlmProfileTab}
-        apiKeys={apiKeys}
-        setApiKeys={setApiKeys}
+        settingsDraft={settingsDraft}
+        setSetting={(key, value) => settingsDraftManager.setField(key, value)}
+        discardSettingsDraft={() => settingsDraftManager.discardDraft()}
         secretStates={settingsQuery.data?.secrets}
         settingsWorkers={settingsWorkers}
-        configuredAllowedWorkerSet={configuredAllowedWorkerSet}
-        configuredAllowedWorkerTypes={configuredAllowedWorkerTypes}
-        handleToggleAllowedWorker={handleToggleAllowedWorker}
         workerCatalogQuery={workerCatalogQuery}
         settingsDiagnostics={settingsDiagnostics}
         saveSettings={saveSettings}

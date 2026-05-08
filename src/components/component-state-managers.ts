@@ -1,6 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
 import { StateManager, type StateUpdate } from "@/lib/state-manager";
-import type { TerminalZoomLevel } from "@/components/Terminal";
 
 export const queryClient = new QueryClient();
 
@@ -156,21 +155,17 @@ export const workerCardManager = new class extends StateManager<{
 }();
 
 export const terminalUiManager = new class extends StateManager<{
-  terminalZoom: TerminalZoomLevel;
   toolDetailsOpenById: Record<string, boolean>;
   toolOutputExpandedById: Record<string, boolean>;
   thoughtOpenById: Record<string, boolean>;
 }> {
   constructor() {
     super({
-      terminalZoom: "default",
       toolDetailsOpenById: {},
       toolOutputExpandedById: {},
       thoughtOpenById: {},
     });
   }
-
-  setTerminalZoom = (terminalZoom: TerminalZoomLevel) => this.setKey("terminalZoom", terminalZoom);
 
   setToolDetailsOpen = (id: string, open: boolean) => this.setKey("toolDetailsOpenById", (current) => ({
     ...current,

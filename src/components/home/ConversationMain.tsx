@@ -206,7 +206,7 @@ function SupervisorActivityMessage({ item }: { item: Extract<ConversationTimelin
 
   return (
     <div className="group flex w-full px-1 text-sm" aria-label="Conversation event">
-      <div className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground/65">
+      <div className="flex h-5 w-6 shrink-0 items-center justify-center pr-1 text-muted-foreground/65">
         {icon}
       </div>
       <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
@@ -303,6 +303,7 @@ interface ConversationMainProps {
   handleCancelEditingMessage: () => void;
   handleSaveEditedMessage: (messageId: string) => void;
   conversationAgents: AgentSnapshot[];
+  showDirectControlWorkingIndicator: boolean;
   showConversationExecution: boolean;
   liveExecutionStatus: ConversationExecutionStatusProps["liveExecutionStatus"];
   liveThoughts: ConversationExecutionStatusProps["liveThoughts"];
@@ -379,6 +380,7 @@ export function ConversationMain({
   handleCancelEditingMessage,
   handleSaveEditedMessage,
   conversationAgents,
+  showDirectControlWorkingIndicator,
   showConversationExecution,
   liveExecutionStatus,
   liveThoughts,
@@ -461,7 +463,9 @@ export function ConversationMain({
               userMessages={directConversationMessages}
               getUserMessageActions={getUserMessageActions}
               variant="native"
+              textSizeScope="direct"
               className="min-h-[32rem]"
+              showPendingAssistantIndicator={showDirectControlWorkingIndicator}
             />
           </DirectControlTerminalColumn>
         </div>

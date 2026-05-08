@@ -43,7 +43,7 @@ export function ComposerModelPicker({
     );
   }, [options, query]);
   const buttonClassName = cn(
-    "h-8 max-w-[6.8rem] shrink truncate px-1 text-xs font-normal sm:h-9 sm:max-w-none sm:px-2 sm:text-sm",
+    "h-7 max-w-[6.8rem] shrink truncate px-1 text-xs font-normal sm:h-8 sm:max-w-none sm:px-2 sm:text-sm",
     themeMode === "night"
       ? "text-muted-foreground hover:bg-background/45 hover:text-foreground"
       : "text-[#8f8f8f] hover:bg-black/[0.04] hover:text-[#5e5e5e]",

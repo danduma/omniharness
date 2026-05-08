@@ -1,10 +1,14 @@
 import fs from "fs";
 import path from "path";
 import { test, expect } from "vitest";
-import { shouldTerminalFollowLatest } from "@/components/Terminal";
+import { shouldTerminalConnectorExtend, shouldTerminalFollowLatest } from "@/components/Terminal";
 
 const terminalSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/Terminal.tsx"),
+  "utf8"
+);
+const terminalPreferenceSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/app/home/AppearancePreferencesManager.ts"),
   "utf8"
 );
 
@@ -21,8 +25,8 @@ test("terminal renders a structured activity feed instead of replaying xterm tex
   expect(terminalSource).toContain("buildAgentOutputActivity");
   expect(terminalSource).toContain('activity.kind === "thinking"');
   expect(terminalSource).toContain('activity.kind === "tool"');
-  expect(terminalSource).toContain('activity.kind === "history_gap"');
-  expect(terminalSource).toContain("Live payload summary");
+  expect(terminalSource).not.toContain('activity.kind === "history_gap"');
+  expect(terminalSource).not.toContain("Live payload summary");
   expect(terminalSource).not.toContain("@xterm/xterm");
 });
 
@@ -117,32 +121,53 @@ test("terminal uses the same measured expansion animation for thoughts", () => {
 });
 
 test("terminal exposes a text size icon menu with tiny through three notches larger", () => {
-  expect(terminalSource).toContain("TERMINAL_ZOOM_LEVELS");
-  expect(terminalSource).toContain('value: "tiny"');
-  expect(terminalSource).toContain('value: "largest"');
-  expect(terminalSource).toContain("notch: 3");
+  expect(terminalSource).toContain("TERMINAL_TEXT_SIZE_LEVELS");
+  expect(terminalPreferenceSource).toContain('value: "tiny"');
+  expect(terminalPreferenceSource).toContain('value: "largest"');
+  expect(terminalPreferenceSource).toContain("notch: 3");
   expect(terminalSource).toContain('aria-label="Terminal text size"');
   expect(terminalSource).toContain("<ALargeSmall");
   expect(terminalSource).toContain("<DropdownMenuGroup>");
   expect(terminalSource).toContain("<DropdownMenuLabel>Text size</DropdownMenuLabel>");
   expect(terminalSource).toContain("</DropdownMenuGroup>");
-  expect(terminalSource).toContain("setTerminalZoom(level.value)");
+  expect(terminalSource).toContain("appearancePreferencesManager.setTerminalTextSize(level.value)");
   expect(terminalSource).toContain("--terminal-message-size");
   expect(terminalSource).toContain("text-[length:var(--terminal-message-size)]");
   expect(terminalSource).not.toContain("text-[var(--terminal-message-size)]");
+});
+
+test("terminal can use direct-control text sizing separately from terminal output sizing", () => {
+  expect(terminalSource).toContain('textSizeScope?: "terminal" | "direct"');
+  expect(terminalSource).toContain('textSizeScope = "terminal"');
+  expect(terminalSource).toContain('textSizeScope === "direct"');
+  expect(terminalSource).toContain("getDirectTerminalTextSizeStyle(directTextSize)");
+  expect(terminalSource).toContain("getTerminalTextSizeStyle(terminalTextSize)");
 });
 
 test("terminal aligns timeline markers with row text and connects the rail", () => {
   expect(terminalSource).toContain("items-start gap-3");
   expect(terminalSource).toContain("mt-[0.32rem]");
   expect(terminalSource).toContain("absolute left-2 top-0 h-[0.57rem] w-px");
-  expect(terminalSource).toContain("absolute -bottom-2.5 left-2 top-[0.57rem] w-px");
+  expect(terminalSource).toContain("absolute -bottom-2 left-2 top-[0.57rem] w-px");
+  expect(terminalSource).toContain("shouldTerminalConnectorExtend(entry.kind, previousEntry?.kind)");
+  expect(terminalSource).toContain("shouldTerminalConnectorExtend(entry.kind, nextEntry?.kind)");
+  expect(terminalSource).not.toContain('previousEntry?.kind !== "user_message"');
+  expect(terminalSource).not.toContain('nextEntry?.kind !== "user_message"');
   expect(terminalSource).not.toContain("space-y-3");
 });
 
-test("terminal user messages render as left-indented transcript blocks outside the rail", () => {
+test("terminal rail connectors only extend toward an existing rail item", () => {
+  expect(shouldTerminalConnectorExtend("message", "tool")).toBe(true);
+  expect(shouldTerminalConnectorExtend("tool", "thinking")).toBe(true);
+  expect(shouldTerminalConnectorExtend("message", undefined)).toBe(false);
+  expect(shouldTerminalConnectorExtend("message", "user_message")).toBe(false);
+  expect(shouldTerminalConnectorExtend("user_message", "tool")).toBe(false);
+});
+
+test("terminal user messages render as right-aligned transcript blocks outside the rail", () => {
   expect(terminalSource).toContain('if (activity.kind === "user_message")');
-  expect(terminalSource).toContain('relative z-10 pl-4 sm:pl-6');
+  expect(terminalSource).toContain('relative z-10 flex w-full flex-col items-end');
+  expect(terminalSource).toContain('mt-1 flex items-center justify-end gap-1 pr-1');
   expect(terminalSource).toContain('rounded-[1.55rem] bg-[#f3f3f3]');
   expect(terminalSource).toContain('dark:bg-[#3a3a3a]');
   expect(terminalSource).toContain('dark:text-[#d8d8d8]');
@@ -165,6 +190,12 @@ test("terminal only follows live output while the viewport is already near the b
 
   expect(shouldTerminalFollowLatest({
     scrollTop: 690,
+    clientHeight: 300,
+    scrollHeight: 1000,
+  })).toBe(true);
+
+  expect(shouldTerminalFollowLatest({
+    scrollTop: 650,
     clientHeight: 300,
     scrollHeight: 1000,
   })).toBe(false);

@@ -105,13 +105,23 @@ function renderContextMeter(fullnessPercent: number | null | undefined) {
   );
 }
 
-function formatContextAvailability(fullnessPercent: number | null | undefined) {
-  if (typeof fullnessPercent !== "number" || !Number.isFinite(fullnessPercent)) {
-    return null;
-  }
+function renderContextFill(fullnessPercent: number | null | undefined) {
+  const normalized = typeof fullnessPercent === "number" && Number.isFinite(fullnessPercent)
+    ? Math.min(100, Math.max(0, Math.round(fullnessPercent)))
+    : null;
+  const label = normalized === null ? "Context --" : `Context ${normalized}%`;
+  const title = normalized === null ? "Context usage not reported" : `Context usage ${normalized}%`;
 
-  const normalized = Math.max(0, Math.min(100, Math.round(fullnessPercent)));
-  return `Context usage ${normalized}%`;
+  return (
+    <div
+      aria-label={title}
+      title={title}
+      className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground dark:text-zinc-400"
+    >
+      {renderContextMeter(fullnessPercent)}
+      <span className="shrink-0">{label}</span>
+    </div>
+  );
 }
 
 function formatWorkerStateLabel(state: string) {
@@ -141,12 +151,9 @@ function hasOmittedWorkerHistory(agent: WorkerCardAgent) {
   )));
 }
 
-function WorkerStatusBar({
+function WorkerExpandedFooter({
   workerId,
   displayId,
-  workerNumberLabel,
-  showWorkerNumberAfterTitle,
-  runtimeLabel,
   runtimeDurationLabel,
   activeModel,
   activeEffort,
@@ -154,18 +161,11 @@ function WorkerStatusBar({
   stateLabel,
   contextFullnessPercent,
   processes,
-  showTerminalControls,
-  showContext,
-  showTextSizeControl,
-  onActivateTerminalSummary,
   onStopTerminalProcess,
   stoppingTerminalProcessId,
 }: {
   workerId: string;
   displayId: string;
-  workerNumberLabel: string | null;
-  showWorkerNumberAfterTitle: boolean;
-  runtimeLabel: string | null;
   runtimeDurationLabel?: string | null;
   activeModel: string | null;
   activeEffort: string | null;
@@ -173,27 +173,17 @@ function WorkerStatusBar({
   stateLabel: string;
   contextFullnessPercent?: number | null;
   processes: WorkerTerminalProcess[];
-  showTerminalControls: boolean;
-  showContext: boolean;
-  showTextSizeControl: boolean;
-  onActivateTerminalSummary: () => void;
   onStopTerminalProcess?: (terminalProcess: WorkerTerminalProcess) => void;
   stoppingTerminalProcessId?: string | null;
 }) {
   const { terminalProcessesOpenByWorkerId } = useManagerSnapshot(workerCardManager);
   const activeProcesses = processes.filter((process) => process.active);
   const visibleProcesses = activeProcesses.slice(0, 3);
-  const open = showTerminalControls && (terminalProcessesOpenByWorkerId[workerId] ?? activeProcesses.length === 1);
+  const open = terminalProcessesOpenByWorkerId[workerId] ?? activeProcesses.length === 1;
   const summary = `Running ${activeProcesses.length} terminal${activeProcesses.length === 1 ? "" : "s"}`;
-  const contextLabel = showContext ? formatContextAvailability(contextFullnessPercent) : null;
 
   const handleTerminalSummaryClick = () => {
     if (activeProcesses.length === 0) {
-      return;
-    }
-
-    if (!showTerminalControls) {
-      onActivateTerminalSummary();
       return;
     }
 
@@ -202,12 +192,22 @@ function WorkerStatusBar({
 
   return (
     <div className="shrink-0 border-t border-border/70 bg-muted/45 text-foreground dark:border-white/8 dark:bg-[#242426] dark:text-zinc-200">
-      {activeProcesses.length > 0 && showTerminalControls ? (
+      {activeProcesses.length > 0 ? (
         <Collapsible
           open={open}
           onOpenChange={(nextOpen) => workerCardManager.setTerminalProcessesOpen(workerId, nextOpen)}
           className="border-b border-border/60 dark:border-white/8"
         >
+          <button
+            type="button"
+            className="flex h-9 min-w-0 items-center gap-2 px-3.5 text-[12px] font-medium text-muted-foreground transition-colors hover:text-foreground dark:text-zinc-400 dark:hover:text-zinc-100"
+            onClick={handleTerminalSummaryClick}
+            title={open ? "Collapse running terminals" : "Expand running terminals"}
+          >
+            <SquareTerminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground dark:text-zinc-400" />
+            <span className="truncate">{summary}</span>
+            <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-180")} />
+          </button>
           <div
             className={cn(
               COLLAPSIBLE_PANEL_TRANSITION_CLASS,
@@ -254,36 +254,11 @@ function WorkerStatusBar({
       ) : null}
       <div className="flex min-h-10 min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-3.5 py-2">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1.5">
-          <div className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] font-medium text-foreground dark:text-zinc-100" title={workerId}>
-            <span className="truncate">{displayId}</span>
-            {showWorkerNumberAfterTitle ? (
-              <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-border/70 bg-muted/35 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-400">
-                <Hash className="h-3 w-3" />
-                {workerNumberLabel}
-              </span>
-            ) : null}
-          </div>
-          <div className="inline-flex min-w-0 shrink items-center gap-1.5 text-[11px] text-muted-foreground dark:text-zinc-400">
-            <Bot className="h-3.5 w-3.5 text-muted-foreground/80 dark:text-zinc-500" />
-            <span className="truncate" title={runtimeLabel || "Unknown"}>{runtimeLabel || "Unknown"}</span>
-          </div>
           <div className="inline-flex min-w-0 shrink items-center gap-1.5 text-[11px] text-muted-foreground dark:text-zinc-400">
             <Cpu className="h-3.5 w-3.5 text-muted-foreground/80 dark:text-zinc-500" />
             <span className="truncate" title={activeModel || "Default"}>{activeModel || "Default"}</span>
           </div>
           {activeEffort ? <span className="shrink-0 text-[11px] text-muted-foreground dark:text-zinc-500">{activeEffort} effort</span> : null}
-          {activeProcesses.length > 0 ? (
-            <button
-              type="button"
-              className="inline-flex min-w-0 shrink items-center gap-1.5 rounded px-1 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:text-zinc-400 dark:hover:bg-white/[0.08] dark:hover:text-zinc-100"
-              onClick={handleTerminalSummaryClick}
-              title={showTerminalControls ? (open ? "Collapse running terminals" : "Expand running terminals") : "Expand worker terminal"}
-            >
-              <SquareTerminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground dark:text-zinc-400" />
-              <span className="truncate">{summary}</span>
-              {showTerminalControls ? <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} /> : null}
-            </button>
-          ) : null}
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-2.5 gap-y-1.5">
           <div className="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium text-muted-foreground dark:text-zinc-400">
@@ -299,21 +274,8 @@ function WorkerStatusBar({
               <span title={runtimeDurationLabel}>{runtimeDurationLabel}</span>
             </div>
           ) : null}
-          {contextLabel ? (
-            <Tooltip>
-              <TooltipTrigger
-                closeOnClick={false}
-                onClick={(event) => event.stopPropagation()}
-                render={<span className="inline-flex items-center" />}
-              >
-                {renderContextMeter(contextFullnessPercent)}
-              </TooltipTrigger>
-              <TooltipContent side="top" align="center" sideOffset={8}>
-                {contextLabel}
-              </TooltipContent>
-            </Tooltip>
-          ) : null}
-          {showTextSizeControl ? <TerminalTextSizeControl className="h-6 w-6 shadow-none" /> : null}
+          {renderContextFill(contextFullnessPercent)}
+          <TerminalTextSizeControl className="h-6 w-6 shadow-none" />
         </div>
       </div>
     </div>
@@ -442,18 +404,21 @@ export function WorkerCard({
     activeModel || "Default",
     runtimeDurationLabel,
   ].filter(Boolean).join(" · ");
-  const headerSummary = (
+  const workerTitleSummary = (
+    <div className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] font-medium text-foreground dark:text-zinc-100" title={workerId}>
+      <span className="break-words">{displayId}</span>
+      {showWorkerNumberAfterTitle ? (
+        <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-border/70 bg-muted/35 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-400">
+          <Hash className="h-3 w-3" />
+          {workerNumberLabel}
+        </span>
+      ) : null}
+    </div>
+  );
+  const expandedHeaderSummary = (
     <div className="min-w-0 flex-1 space-y-1.5">
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
-        <div className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] font-medium text-foreground dark:text-zinc-100" title={workerId}>
-          <span className="break-words">{displayId}</span>
-          {showWorkerNumberAfterTitle ? (
-            <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-border/70 bg-muted/35 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-400">
-              <Hash className="h-3 w-3" />
-              {workerNumberLabel}
-            </span>
-          ) : null}
-        </div>
+        {workerTitleSummary}
       </div>
       {showPromptPreview && !compact ? (
         <Tooltip>
@@ -475,6 +440,32 @@ export function WorkerCard({
           </TooltipContent>
         </Tooltip>
       ) : null}
+    </div>
+  );
+  const collapsedHeaderSummary = (
+    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1.5">
+      {workerTitleSummary}
+      <div className="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium text-muted-foreground dark:text-zinc-400">
+        <span className={cn(
+          "h-1.5 w-1.5 rounded-full",
+          isWorkerActiveStatus(agent.state) ? "bg-emerald-500 dark:bg-emerald-300" : "bg-muted-foreground dark:bg-zinc-500",
+        )} />
+        <span className="capitalize">{stateLabel}</span>
+      </div>
+      {runtimeDurationLabel ? (
+        <div className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground dark:text-zinc-400">
+          <Clock className="h-3.5 w-3.5 text-muted-foreground/80 dark:text-zinc-500" />
+          <span title={runtimeDurationLabel}>{runtimeDurationLabel}</span>
+        </div>
+      ) : null}
+      <div className="inline-flex min-w-0 shrink items-center gap-1.5 text-[11px] text-muted-foreground dark:text-zinc-400">
+        <Bot className="h-3.5 w-3.5 text-muted-foreground/80 dark:text-zinc-500" />
+        <span className="truncate" title={runtimeLabel || "Unknown"}>{runtimeLabel || "Unknown"}</span>
+      </div>
+      <div className="inline-flex min-w-0 shrink items-center gap-1.5 text-[11px] text-muted-foreground dark:text-zinc-400">
+        <Cpu className="h-3.5 w-3.5 text-muted-foreground/80 dark:text-zinc-500" />
+        <span className="truncate" title={activeModel || "Default"}>{activeModel || "Default"}</span>
+      </div>
     </div>
   );
   const actionControls = (
@@ -568,7 +559,7 @@ export function WorkerCard({
         <div className="shrink-0 border-b border-border/70 bg-card px-3.5 py-3 dark:border-white/8 dark:bg-[#111315]">
           <div className="flex items-start justify-between gap-4">
             <CollapsibleTrigger className="min-w-0 flex-1 text-left">
-              {headerSummary}
+              {open ? expandedHeaderSummary : collapsedHeaderSummary}
             </CollapsibleTrigger>
             {actionControls}
           </div>
@@ -599,29 +590,21 @@ export function WorkerCard({
             </div>
           </div>
         </div>
-        <WorkerStatusBar
-          workerId={workerId}
-          displayId={displayId}
-          workerNumberLabel={workerNumberLabel}
-          showWorkerNumberAfterTitle={showWorkerNumberAfterTitle}
-          runtimeLabel={runtimeLabel}
-          runtimeDurationLabel={runtimeDurationLabel}
-          activeModel={activeModel}
-          activeEffort={activeEffort}
-          state={agent.state}
-          stateLabel={stateLabel}
-          contextFullnessPercent={agent.contextUsage?.fullnessPercent}
-          processes={terminalProcesses}
-          showTerminalControls={open}
-          showContext={open}
-          showTextSizeControl={open}
-          onActivateTerminalSummary={() => {
-            workerCardManager.setOpen(workerId, true);
-            workerCardManager.setTerminalProcessesOpen(workerId, true);
-          }}
-          onStopTerminalProcess={showStopWorker ? onStopTerminalProcess : undefined}
-          stoppingTerminalProcessId={stoppingTerminalProcessId}
-        />
+        {open ? (
+          <WorkerExpandedFooter
+            workerId={workerId}
+            displayId={displayId}
+            runtimeDurationLabel={runtimeDurationLabel}
+            activeModel={activeModel}
+            activeEffort={activeEffort}
+            state={agent.state}
+            stateLabel={stateLabel}
+            contextFullnessPercent={agent.contextUsage?.fullnessPercent}
+            processes={terminalProcesses}
+            onStopTerminalProcess={showStopWorker ? onStopTerminalProcess : undefined}
+            stoppingTerminalProcessId={stoppingTerminalProcessId}
+          />
+        ) : null}
       </div>
     </Collapsible>
   );

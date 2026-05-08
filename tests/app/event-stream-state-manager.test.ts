@@ -29,7 +29,6 @@ function createState(overrides: Partial<EventStreamState> = {}): EventStreamStat
     workers: [],
     planItems: [],
     clarifications: [],
-    validationRuns: [],
     executionEvents: [],
     supervisorInterventions: [],
     frontendErrors: [],

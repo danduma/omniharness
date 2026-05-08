@@ -10,6 +10,7 @@ interface UseAppErrorsProps {
   settingsError: unknown;
   runCommandError: unknown;
   sendConversationMessageError?: unknown;
+  sendQueuedMessageNowError?: unknown;
   cancelQueuedMessageError?: unknown;
   autoCommitChatError?: unknown;
   autoCommitProjectError?: unknown;
@@ -31,6 +32,7 @@ export function useAppErrors({
   settingsError,
   runCommandError,
   sendConversationMessageError,
+  sendQueuedMessageNowError,
   cancelQueuedMessageError,
   autoCommitChatError,
   autoCommitProjectError,
@@ -78,6 +80,13 @@ export function useAppErrors({
       errors.push(buildInlineError(cancelQueuedMessageError, {
         source: "Conversations",
         action: "Cancel queued message",
+      }));
+    }
+
+    if (sendQueuedMessageNowError) {
+      errors.push(buildInlineError(sendQueuedMessageNowError, {
+        source: "Conversations",
+        action: "Send queued message now",
       }));
     }
 
@@ -141,6 +150,7 @@ export function useAppErrors({
     renameRunError,
     runCommandError,
     sendConversationMessageError,
+    sendQueuedMessageNowError,
     settingsError,
     stopSupervisorError,
     stopWorkerError,

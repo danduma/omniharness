@@ -109,6 +109,55 @@ describe("agent output normalization", () => {
     });
   });
 
+  it("hydrates lifecycle-only tool updates when the matching start entry loads later", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        {
+          id: "update-1",
+          type: "tool_call_update",
+          text: "Tool call call_IHHguba6n9yj9Tr2QhK4maQS completed",
+          timestamp: "2026-05-04T14:31:01.000Z",
+          toolCallId: "call_IHHguba6n9yj9Tr2QhK4maQS",
+          status: "completed",
+          raw: {
+            toolCallId: "call_IHHguba6n9yj9Tr2QhK4maQS",
+            status: "completed",
+          },
+        },
+        {
+          id: "start-1",
+          type: "tool_call",
+          text: "Terminal",
+          timestamp: "2026-05-04T14:31:00.000Z",
+          toolCallId: "call_IHHguba6n9yj9Tr2QhK4maQS",
+          toolKind: "execute",
+          status: "in_progress",
+          raw: {
+            title: "Run focused tests",
+            kind: "execute",
+            rawInput: {
+              command: "pnpm test tests/lib/agent-output.test.ts",
+              description: "Run focused tests",
+            },
+          },
+        },
+      ],
+    });
+
+    expect(activity).toHaveLength(1);
+    expect(activity[0]).toMatchObject({
+      id: "call_IHHguba6n9yj9Tr2QhK4maQS",
+      kind: "tool",
+      label: "Bash",
+      title: "Run focused tests",
+      status: "completed",
+      inputPane: {
+        label: "IN",
+        text: "pnpm test tests/lib/agent-output.test.ts",
+      },
+    });
+  });
+
   it("uses bridge descriptions and tool response payloads for bash activities", () => {
     const activity = buildAgentOutputActivity({
       outputEntries: [
@@ -408,7 +457,7 @@ describe("agent output normalization", () => {
     ]);
   });
 
-  it("renders compact live payload markers as history gap metadata", () => {
+  it("does not render compact live payload markers as conversation activity", () => {
     const activity = buildAgentOutputActivity({
       outputEntries: [
         {
@@ -420,18 +469,10 @@ describe("agent output normalization", () => {
       ],
     });
 
-    expect(activity).toEqual([
-      {
-        id: "output-entries-omitted:entry-5:entry-66",
-        kind: "history_gap",
-        text: "60 earlier output entries are not loaded in this live snapshot.",
-        timestamp: "2026-05-04T00:01:06.000Z",
-        omittedCount: 60,
-      },
-    ]);
+    expect(activity).toEqual([]);
   });
 
-  it("renders worker archive markers as history gap metadata instead of chat messages", () => {
+  it("does not render worker archive markers as conversation activity", () => {
     const activity = buildAgentOutputActivity({
       outputEntries: [
         {
@@ -443,15 +484,7 @@ describe("agent output normalization", () => {
       ],
     });
 
-    expect(activity).toEqual([
-      {
-        id: "output-archive-marker",
-        kind: "history_gap",
-        text: "9,294 older raw worker activity records are only in archived history. These are tool calls, status updates, and streamed chunks, not current terminal lines.",
-        timestamp: "2026-05-06T15:30:00.000Z",
-        omittedCount: 9294,
-      },
-    ]);
+    expect(activity).toEqual([]);
   });
 
   it("extracts the latest plain text worker turn instead of the initial chatter", () => {

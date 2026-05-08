@@ -4,7 +4,9 @@ import { askAgent } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { executionEvents, messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { startSupervisorRun } from "@/server/supervisor/start";
 import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
+import { serializeMessageRecord } from "./message-records";
 
 export type BusyMessageAction = "queue" | "steer";
 export type QueuedConversationMessageStatus = "pending" | "delivering" | "delivered" | "cancelled" | "failed";
@@ -145,6 +147,201 @@ export async function cancelQueuedConversationMessage({
     status: "cancelled",
     updatedAt: now,
   });
+}
+
+export async function sendQueuedConversationMessageNow({
+  runId,
+  messageId,
+}: {
+  runId: string;
+  messageId: string;
+}) {
+  const record = await db
+    .select()
+    .from(queuedConversationMessages)
+    .where(eq(queuedConversationMessages.id, messageId))
+    .get();
+
+  if (!record || record.runId !== runId || record.status !== "pending") {
+    throw Object.assign(new Error("Queued message not found"), { status: 404 });
+  }
+
+  const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+  if (!run) {
+    throw Object.assign(new Error("Conversation not found"), { status: 404 });
+  }
+
+  const normalizedAttachments = normalizeChatAttachments(record.attachmentsJson ? JSON.parse(record.attachmentsJson) : []);
+  const workerContent = appendAttachmentContext(record.content, normalizedAttachments);
+  const startedAt = new Date();
+
+  await db.update(queuedConversationMessages).set({
+    action: "steer",
+    status: "delivering",
+    lastError: null,
+    updatedAt: startedAt,
+  }).where(eq(queuedConversationMessages.id, messageId));
+
+  if (run.mode === "implementation") {
+    const message = {
+      id: randomUUID(),
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: record.content,
+      attachmentsJson: record.attachmentsJson,
+      createdAt: startedAt,
+    };
+
+    await db.insert(messages).values(message);
+    await db.update(runs).set({
+      status: "running",
+      failedAt: null,
+      lastError: null,
+      updatedAt: startedAt,
+    }).where(eq(runs.id, runId));
+
+    const deliveredAt = new Date();
+    await db.update(queuedConversationMessages).set({
+      action: "steer",
+      status: "delivered",
+      lastError: null,
+      updatedAt: deliveredAt,
+      deliveredAt,
+    }).where(eq(queuedConversationMessages.id, messageId));
+    await insertQueueExecutionEvent(runId, "queued_message_sent_now", {
+      summary: "Sent queued message immediately as steering.",
+      queuedMessageId: messageId,
+      action: "steer",
+    });
+    startSupervisorRun(runId);
+    notifyEventStreamSubscribers();
+
+    return {
+      ok: true,
+      message: serializeMessageRecord(message),
+      queuedMessage: serializeQueuedConversationMessage({
+        ...record,
+        action: "steer",
+        status: "delivered",
+        lastError: null,
+        updatedAt: deliveredAt,
+        deliveredAt,
+      }),
+    };
+  }
+
+  const worker = record.targetWorkerId
+    ? await db.select().from(workers).where(eq(workers.id, record.targetWorkerId)).get()
+    : await db.select().from(workers).where(eq(workers.runId, runId)).get();
+  if (!worker || worker.runId !== runId) {
+    await db.update(queuedConversationMessages).set({
+      status: "pending",
+      updatedAt: new Date(),
+    }).where(eq(queuedConversationMessages.id, messageId));
+    throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
+  }
+
+  const userMessage = {
+    id: randomUUID(),
+    runId,
+    role: "user",
+    kind: "checkpoint",
+    content: record.content,
+    attachmentsJson: record.attachmentsJson,
+    createdAt: startedAt,
+  };
+
+  await db.insert(messages).values(userMessage);
+  await db.update(runs).set({
+    status: run.mode === "planning" ? "working" : "running",
+    failedAt: null,
+    lastError: null,
+    updatedAt: startedAt,
+  }).where(eq(runs.id, runId));
+  await db.update(workers).set({
+    status: "working",
+    updatedAt: startedAt,
+  }).where(eq(workers.id, worker.id));
+
+  try {
+    const response = await askAgent(worker.id, workerContent);
+    const deliveredAt = new Date();
+    await db.update(workers).set({
+      status: response.state,
+      updatedAt: deliveredAt,
+    }).where(eq(workers.id, worker.id));
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "worker",
+      kind: run.mode,
+      content: response.response,
+      workerId: worker.id,
+      createdAt: deliveredAt,
+    });
+    await db.update(queuedConversationMessages).set({
+      action: "steer",
+      status: "delivered",
+      lastError: null,
+      updatedAt: deliveredAt,
+      deliveredAt,
+    }).where(eq(queuedConversationMessages.id, messageId));
+    await insertQueueExecutionEvent(runId, "queued_message_sent_now", {
+      summary: `Sent queued message immediately to ${worker.id}.`,
+      queuedMessageId: messageId,
+      action: "steer",
+    }, worker.id);
+    notifyEventStreamSubscribers();
+
+    return {
+      ok: true,
+      message: serializeMessageRecord(userMessage),
+      queuedMessage: serializeQueuedConversationMessage({
+        ...record,
+        targetWorkerId: worker.id,
+        action: "steer",
+        status: "delivered",
+        lastError: null,
+        updatedAt: deliveredAt,
+        deliveredAt,
+      }),
+    };
+  } catch (error) {
+    const failedAt = new Date();
+    await db.delete(messages).where(eq(messages.id, userMessage.id));
+    await db.update(queuedConversationMessages).set({
+      action: "steer",
+      status: isAgentBusyError(error) ? "pending" : "failed",
+      lastError: errorMessage(error),
+      updatedAt: failedAt,
+    }).where(eq(queuedConversationMessages.id, messageId));
+    await insertQueueExecutionEvent(runId, isAgentBusyError(error) ? "queued_message_deferred" : "queued_message_failed", {
+      summary: isAgentBusyError(error)
+        ? `Worker ${worker.id} is still busy; queued message will be retried.`
+        : `Queued message delivery failed for ${worker.id}.`,
+      queuedMessageId: messageId,
+      action: "steer",
+      error: errorMessage(error),
+    }, worker.id);
+    notifyEventStreamSubscribers();
+
+    if (isAgentBusyError(error)) {
+      return {
+        ok: true,
+        queuedMessage: serializeQueuedConversationMessage({
+          ...record,
+          targetWorkerId: worker.id,
+          action: "steer",
+          status: "pending",
+          lastError: errorMessage(error),
+          updatedAt: failedAt,
+        }),
+      };
+    }
+
+    throw error;
+  }
 }
 
 async function pendingQueueRecords(runId: string, workerId?: string | null) {

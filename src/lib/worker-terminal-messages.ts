@@ -38,10 +38,9 @@ function hasLoadedOutputContext(createdAt: string, outputTimes: number[]) {
     return false;
   }
 
-  const firstOutputTime = outputTimes[0];
-  const lastOutputTime = outputTimes[outputTimes.length - 1];
-  return promptTime >= firstOutputTime - PROMPT_OUTPUT_CONTEXT_TOLERANCE_MS
-    && promptTime <= lastOutputTime + PROMPT_OUTPUT_CONTEXT_TOLERANCE_MS;
+  return outputTimes.some((outputTime) => (
+    Math.abs(outputTime - promptTime) <= PROMPT_OUTPUT_CONTEXT_TOLERANCE_MS
+  ));
 }
 
 export function buildWorkerTerminalUserMessages({

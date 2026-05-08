@@ -1,11 +1,20 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 import { ALargeSmall, Check, ChevronDown, LoaderCircle } from "lucide-react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { terminalUiManager } from "@/components/component-state-managers";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  appearancePreferencesManager,
+  getDirectTerminalTextSizeStyle,
+  getTerminalTextSizeStyle,
+  TERMINAL_TEXT_SIZE_LEVELS,
+  type TerminalTextSizeLevel,
+} from "@/app/home/AppearancePreferencesManager";
 import { buildAgentOutputActivity, formatActivityStatus, type AgentActivityItem, type AgentOutputEntry } from "@/lib/agent-output";
+import { formatBytes, type ChatAttachment } from "@/lib/chat-attachments";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 
@@ -16,14 +25,17 @@ interface TerminalProps {
   hasMoreHistory?: boolean;
   onRequestMoreHistory?: () => void;
   variant?: "terminal" | "native";
+  textSizeScope?: "terminal" | "direct";
   className?: string;
   showTextSizeControl?: boolean;
+  showPendingAssistantIndicator?: boolean;
 }
 
 export interface TerminalUserMessage {
   id: string;
   content: string;
   createdAt: string;
+  attachments?: ChatAttachment[];
 }
 
 export interface TerminalUserMessageAction {
@@ -46,8 +58,14 @@ type TerminalActivityItem = AgentActivityItem | {
   kind: "user_message";
   text: string;
   timestamp: string;
+  attachments: ChatAttachment[];
   actions: TerminalUserMessageAction[];
+} | {
+  id: string;
+  kind: "pending_assistant";
+  timestamp: string;
 };
+export type TerminalActivityKind = TerminalActivityItem["kind"];
 
 const TOOL_OUTPUT_PREVIEW_LINES = 3;
 const TOOL_OUTPUT_COLLAPSED_MAX_HEIGHT = "calc(var(--terminal-pane-size) * 4.65 + 1rem)";
@@ -56,51 +74,12 @@ const TERMINAL_REVEAL_CLASS = "grid transition-[grid-template-rows,opacity,trans
 const TERMINAL_REVEAL_OPEN_CLASS = "grid-rows-[1fr] opacity-100 translate-y-0";
 const TERMINAL_REVEAL_CLOSED_CLASS = "grid-rows-[0fr] opacity-0 -translate-y-1 pointer-events-none";
 const TERMINAL_TOOL_STATUSES = new Set(["completed", "done", "failed", "error", "cancelled"]);
-const TERMINAL_BOTTOM_THRESHOLD_PX = 4;
-const TERMINAL_BASE_FONT_SIZES = {
-  message: 13,
-  thought: 12,
-  thoughtLabel: 12,
-  toolLabel: 12,
-  toolTitle: 11,
-  pane: 10,
-  paneLabel: 9,
-  badge: 9,
-  permissionTitle: 12,
-  permissionText: 11,
-};
-
-export const TERMINAL_ZOOM_LEVELS = [
-  { value: "tiny", label: "Tiny", notch: -1, scale: 0.82 },
-  { value: "default", label: "Default", notch: 0, scale: 1 },
-  { value: "large", label: "Large", notch: 1, scale: 1.12 },
-  { value: "larger", label: "Larger", notch: 2, scale: 1.24 },
-  { value: "largest", label: "Largest", notch: 3, scale: 1.36 },
-] as const;
-
-export type TerminalZoomLevel = (typeof TERMINAL_ZOOM_LEVELS)[number]["value"];
-
-function toScaledPx(baseSize: number, scale: number) {
-  return `${Math.round(baseSize * scale * 10) / 10}px`;
-}
-
-export function getTerminalZoomStyle(level: TerminalZoomLevel): CSSProperties {
-  const zoomLevel = TERMINAL_ZOOM_LEVELS.find((candidate) => candidate.value === level) ?? TERMINAL_ZOOM_LEVELS[1];
-  const { scale } = zoomLevel;
-
-  return {
-    "--terminal-message-size": toScaledPx(TERMINAL_BASE_FONT_SIZES.message, scale),
-    "--terminal-thought-size": toScaledPx(TERMINAL_BASE_FONT_SIZES.thought, scale),
-    "--terminal-thought-label-size": toScaledPx(TERMINAL_BASE_FONT_SIZES.thoughtLabel, scale),
-    "--terminal-tool-label-size": toScaledPx(TERMINAL_BASE_FONT_SIZES.toolLabel, scale),
-    "--terminal-tool-title-size": toScaledPx(TERMINAL_BASE_FONT_SIZES.toolTitle, scale),
-    "--terminal-pane-size": toScaledPx(TERMINAL_BASE_FONT_SIZES.pane, scale),
-    "--terminal-pane-label-size": toScaledPx(TERMINAL_BASE_FONT_SIZES.paneLabel, scale),
-    "--terminal-badge-size": toScaledPx(TERMINAL_BASE_FONT_SIZES.badge, scale),
-    "--terminal-permission-title-size": toScaledPx(TERMINAL_BASE_FONT_SIZES.permissionTitle, scale),
-    "--terminal-permission-text-size": toScaledPx(TERMINAL_BASE_FONT_SIZES.permissionText, scale),
-  } as CSSProperties;
-}
+const TERMINAL_BOTTOM_THRESHOLD_PX = 40;
+const TERMINAL_TOP_THRESHOLD_PX = 4;
+const PENDING_ASSISTANT_TEXT = "Thinking...";
+export { TERMINAL_TEXT_SIZE_LEVELS };
+export type TerminalZoomLevel = TerminalTextSizeLevel;
+export const getTerminalZoomStyle = getTerminalTextSizeStyle;
 
 export function shouldTerminalFollowLatest(
   metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
@@ -108,8 +87,17 @@ export function shouldTerminalFollowLatest(
   return metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop <= TERMINAL_BOTTOM_THRESHOLD_PX;
 }
 
+export function shouldTerminalConnectorExtend(
+  activityKind: TerminalActivityKind,
+  adjacentActivityKind: TerminalActivityKind | undefined,
+) {
+  return activityKind !== "user_message"
+    && adjacentActivityKind !== undefined
+    && adjacentActivityKind !== "user_message";
+}
+
 export function TerminalTextSizeControl({ className }: { className?: string }) {
-  const { terminalZoom } = useManagerSnapshot(terminalUiManager);
+  const { terminalTextSize } = useManagerSnapshot(appearancePreferencesManager);
 
   return (
     <DropdownMenu>
@@ -126,14 +114,14 @@ export function TerminalTextSizeControl({ className }: { className?: string }) {
       <DropdownMenuContent align="end" className="min-w-36">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Text size</DropdownMenuLabel>
-          {TERMINAL_ZOOM_LEVELS.map((level) => (
+          {TERMINAL_TEXT_SIZE_LEVELS.map((level) => (
             <DropdownMenuItem
               key={level.value}
-              onClick={() => terminalUiManager.setTerminalZoom(level.value)}
+              onClick={() => appearancePreferencesManager.setTerminalTextSize(level.value)}
               className="text-xs"
             >
               <span className="w-4">
-                {terminalZoom === level.value ? <Check className="h-3.5 w-3.5" /> : null}
+                {terminalTextSize === level.value ? <Check className="h-3.5 w-3.5" /> : null}
               </span>
               <span>{level.label}</span>
               {level.notch > 0 ? <span className="ml-auto text-muted-foreground">+{level.notch}</span> : null}
@@ -148,7 +136,22 @@ export function TerminalTextSizeControl({ className }: { className?: string }) {
 function shouldTerminalRequestMoreHistory(
   metrics: Pick<HTMLDivElement, "scrollTop">,
 ) {
-  return metrics.scrollTop <= TERMINAL_BOTTOM_THRESHOLD_PX;
+  return metrics.scrollTop <= TERMINAL_TOP_THRESHOLD_PX;
+}
+
+function getTerminalScrollElement(container: HTMLDivElement, variant: "terminal" | "native") {
+  if (variant === "terminal") {
+    return container;
+  }
+
+  return (container.closest('[data-radix-scroll-area-viewport]') as HTMLDivElement | null) ?? container;
+}
+
+function scrollTerminalToBottom(container: HTMLDivElement) {
+  container.scrollTo({
+    top: container.scrollHeight,
+    behavior: "smooth",
+  });
 }
 
 function activityTimestampMs(timestamp: string) {
@@ -160,7 +163,7 @@ function activityKindOrder(activity: TerminalActivityItem) {
   switch (activity.kind) {
     case "user_message":
       return 0;
-    case "history_gap":
+    case "pending_assistant":
       return 1;
     case "thinking":
       return 2;
@@ -515,6 +518,80 @@ function ThinkingDots({ variant }: { variant: "terminal" | "native" }) {
   );
 }
 
+function PendingAssistantActivity() {
+  return (
+    <div
+      className="inline-flex items-baseline text-[calc(var(--terminal-message-size)+1px)] font-medium leading-5 text-muted-foreground/55"
+      aria-label="Agent is thinking"
+    >
+      {Array.from(PENDING_ASSISTANT_TEXT).map((character, index) => (
+        <span
+          key={index}
+          className="inline-block animate-pulse text-foreground/80"
+          style={{
+            animationDelay: `${index * 90}ms`,
+            animationDuration: "1.15s",
+          }}
+        >
+          {character}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function terminalAttachmentUrl(attachment: ChatAttachment) {
+  return attachment.previewUrl
+    || (attachment.storagePath
+      ? `/api/attachments?path=${encodeURIComponent(attachment.storagePath)}&mimeType=${encodeURIComponent(attachment.mimeType)}`
+      : "");
+}
+
+function UserMessageAttachments({ attachments }: { attachments: ChatAttachment[] }) {
+  if (attachments.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {attachments.map((attachment) => {
+        const url = terminalAttachmentUrl(attachment);
+        return attachment.kind === "image" && url ? (
+          <a
+            key={attachment.id}
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="group/attachment inline-flex max-w-full items-center gap-2 overflow-hidden rounded-xl border border-border/60 bg-[#e9e9e9] p-1.5 pr-3 text-xs dark:border-white/10 dark:bg-black/15"
+            title={`Open ${attachment.name}`}
+          >
+            <Image
+              src={url}
+              alt={attachment.name}
+              width={72}
+              height={72}
+              unoptimized
+              className="h-[72px] w-[72px] rounded-lg object-cover transition-transform group-hover/attachment:scale-105"
+            />
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate font-medium">{attachment.name}</span>
+              <span className="opacity-60">{formatBytes(attachment.size)}</span>
+            </span>
+          </a>
+        ) : (
+          <div
+            key={attachment.id}
+            className="inline-flex max-w-full items-center gap-2 rounded-full border border-border/60 bg-[#e9e9e9] px-3 py-1.5 text-xs dark:border-white/10 dark:bg-black/15"
+          >
+            <span className="truncate">{attachment.name}</span>
+            <span className="shrink-0 opacity-60">{formatBytes(attachment.size)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ToolActivity({
   activity,
   variant,
@@ -530,7 +607,7 @@ function ToolActivity({
   const hasToolPanes = Boolean(activity.inputPane || activity.outputPane);
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       <button
         type="button"
         className="group/tool flex w-full flex-wrap items-center gap-1.5 text-left"
@@ -591,7 +668,7 @@ function ToolActivity({
           aria-hidden={!detailsOpen}
         >
           <div className="min-h-0 overflow-hidden">
-            <div className="space-y-2 pb-0.5 pt-0.5">
+            <div className="space-y-1.5 pb-0.5 pt-0.5">
               {activity.inputPane ? <ActivityPane label={activity.inputPane.label} text={activity.inputPane.text} variant={variant} /> : null}
               {activity.outputPane?.kind === "diff" ? (
                 <DiffPane
@@ -633,7 +710,7 @@ function ThoughtActivity({
   const open = thoughtOpenById[activity.id] ?? activity.inProgress;
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1">
       <button
         type="button"
         className="group/thought flex w-full items-center gap-1.5 text-left"
@@ -695,12 +772,13 @@ function ActivityRow({
 }) {
   if (activity.kind === "user_message") {
     return (
-      <div className="relative z-10 pl-4 sm:pl-6">
-        <div className="max-w-[min(72ch,calc(100%-1rem))] rounded-[1.55rem] bg-[#f3f3f3] px-6 py-4 text-[length:var(--terminal-message-size)] leading-[1.55] text-[#202124] dark:bg-[#3a3a3a] dark:text-[#d8d8d8] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:max-w-[min(78ch,calc(100%-1.5rem))]">
-          <p className="max-w-none whitespace-pre-wrap">{activity.text}</p>
+      <div className="relative z-10 flex w-full flex-col items-end">
+        <div className="max-w-[min(72ch,calc(100%-1rem))] rounded-[1.55rem] bg-[#f3f3f3] px-5 py-3.5 text-[length:var(--terminal-message-size)] leading-[1.55] text-[#202124] dark:bg-[#3a3a3a] dark:text-[#d8d8d8] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:max-w-[min(78ch,calc(100%-1.5rem))]">
+          {activity.text ? <p className="max-w-none whitespace-pre-wrap">{activity.text}</p> : null}
+          {activity.attachments.length > 0 ? <UserMessageAttachments attachments={activity.attachments} /> : null}
         </div>
         {activity.actions.length > 0 ? (
-          <div className="mt-1 flex items-center gap-1 pl-1 text-muted-foreground/70">
+          <div className="mt-1 flex items-center justify-end gap-1 pr-1 text-muted-foreground/70">
             {activity.actions.map((action) => (
               <button
                 key={action.label}
@@ -716,6 +794,14 @@ function ActivityRow({
             ))}
           </div>
         ) : null}
+      </div>
+    );
+  }
+
+  if (activity.kind === "pending_assistant") {
+    return (
+      <div className="relative z-10 mt-3 flex w-full justify-start px-1" aria-live="polite">
+        <PendingAssistantActivity />
       </div>
     );
   }
@@ -737,7 +823,7 @@ function ActivityRow({
       ) : null}
       {connectorExtendsAfter ? (
         <div className={cn(
-          "absolute -bottom-2.5 left-2 top-[0.57rem] w-px",
+          "absolute -bottom-2 left-2 top-[0.57rem] w-px",
           variant === "native" ? "bg-border/80" : "bg-border/80 dark:bg-white/14",
         )} />
       ) : null}
@@ -753,23 +839,6 @@ function ActivityRow({
                 : "text-foreground [&_blockquote]:border-border/70 [&_blockquote]:bg-muted/30 [&_blockquote]:text-muted-foreground [&_code]:bg-muted/70 [&_code]:text-inherit [&_h3]:text-inherit [&_h4]:text-inherit [&_pre]:border-border/70 [&_pre]:bg-muted/30 [&_pre]:text-inherit [&_strong]:text-inherit dark:text-zinc-100/95 dark:[&_blockquote]:border-white/10 dark:[&_blockquote]:bg-white/5 dark:[&_blockquote]:text-zinc-300 dark:[&_code]:bg-white/10 dark:[&_pre]:border-white/10 dark:[&_pre]:bg-white/5",
             )}
           />
-        ) : null}
-        {activity.kind === "history_gap" ? (
-          <div
-            className={cn(
-              "inline-flex max-w-[min(72ch,100%)] flex-col gap-1 rounded-md border border-dashed px-2.5 py-2",
-              variant === "native"
-                ? "border-border bg-muted/20 text-muted-foreground"
-                : "border-border/80 bg-muted/25 text-muted-foreground dark:border-white/12 dark:bg-white/5 dark:text-zinc-400",
-            )}
-          >
-            <div className="font-mono text-[length:var(--terminal-badge-size)] font-semibold uppercase tracking-[0.12em]">
-              Live payload summary
-            </div>
-            <div className="text-[length:var(--terminal-thought-size)] leading-[1.45]">
-              {activity.text}
-            </div>
-          </div>
         ) : null}
         {activity.kind === "thinking" ? <ThoughtActivity activity={activity} variant={variant} /> : null}
         {activity.kind === "tool" ? <ToolActivity activity={activity} variant={variant} /> : null}
@@ -796,12 +865,15 @@ export function Terminal({
   hasMoreHistory = false,
   onRequestMoreHistory,
   variant = "terminal",
+  textSizeScope = "terminal",
   className,
   showTextSizeControl = true,
+  showPendingAssistantIndicator = false,
 }: TerminalProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const shouldFollowLatestRef = useRef(true);
-  const { terminalZoom } = useManagerSnapshot(terminalUiManager);
+  const { directTextSize, terminalTextSize } = useManagerSnapshot(appearancePreferencesManager);
 
   const activity = useMemo(() => {
     const agentActivity = buildAgentOutputActivity({
@@ -815,26 +887,61 @@ export function Terminal({
       kind: "user_message",
       text: message.content,
       timestamp: message.createdAt,
+      attachments: message.attachments ?? [],
       actions: getUserMessageActions?.(message) ?? [],
     }));
+    const latestActivityTimestamp = [...userActivity, ...agentActivity]
+      .map((item) => activityTimestampMs(item.timestamp))
+      .reduce((latest, timestamp) => Math.max(latest, timestamp), 0);
+    const pendingAssistantActivity: TerminalActivityItem[] = showPendingAssistantIndicator
+      ? [{
+          id: "pending-assistant",
+          kind: "pending_assistant",
+          timestamp: new Date((latestActivityTimestamp || Date.now()) + 1).toISOString(),
+        }]
+      : [];
 
-    return [...userActivity, ...agentActivity].sort((a, b) => {
+    return [...userActivity, ...agentActivity, ...pendingAssistantActivity].sort((a, b) => {
       const timeDelta = activityTimestampMs(a.timestamp) - activityTimestampMs(b.timestamp);
       if (timeDelta !== 0) {
         return timeDelta;
       }
       return activityKindOrder(a) - activityKindOrder(b) || a.id.localeCompare(b.id);
     });
-  }, [agent, getUserMessageActions, userMessages]);
-  const terminalZoomStyle = useMemo(() => getTerminalZoomStyle(terminalZoom), [terminalZoom]);
+  }, [agent, getUserMessageActions, showPendingAssistantIndicator, userMessages]);
+  const terminalZoomStyle = useMemo(() => (
+    textSizeScope === "direct"
+      ? getDirectTerminalTextSizeStyle(directTextSize)
+      : getTerminalTextSizeStyle(terminalTextSize)
+  ), [directTextSize, terminalTextSize, textSizeScope]);
 
   useEffect(() => {
     const container = scrollRef.current;
-    if (!container || !shouldFollowLatestRef.current) {
+    if (!container) {
       return;
     }
-    container.scrollTop = container.scrollHeight;
-  }, [activity]);
+
+    const scrollContainer = getTerminalScrollElement(container, variant);
+    scrollContainerRef.current = scrollContainer;
+
+    const updateFollowState = () => {
+      shouldFollowLatestRef.current = shouldTerminalFollowLatest(scrollContainer);
+    };
+
+    updateFollowState();
+    scrollContainer.addEventListener("scroll", updateFollowState, { passive: true });
+    return () => scrollContainer.removeEventListener("scroll", updateFollowState);
+  }, [variant]);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    const shouldForceFollowPendingAssistant = showPendingAssistantIndicator;
+    if (!container || (!shouldForceFollowPendingAssistant && !shouldFollowLatestRef.current)) {
+      return;
+    }
+    shouldFollowLatestRef.current = true;
+    requestAnimationFrame(() => scrollTerminalToBottom(container));
+  }, [activity, showPendingAssistantIndicator]);
 
   return (
     <div className={cn(
@@ -852,7 +959,9 @@ export function Terminal({
       <div
         ref={scrollRef}
         onScroll={(event) => {
-          shouldFollowLatestRef.current = shouldTerminalFollowLatest(event.currentTarget);
+          if (variant === "terminal") {
+            shouldFollowLatestRef.current = shouldTerminalFollowLatest(event.currentTarget);
+          }
           if (hasMoreHistory && shouldTerminalRequestMoreHistory(event.currentTarget)) {
             onRequestMoreHistory?.();
           }
@@ -864,18 +973,17 @@ export function Terminal({
         )}
       >
         {activity.length > 0 ? (
-          <div className="relative flex flex-col gap-2.5">
+          <div className="relative flex flex-col gap-2">
             {activity.map((entry, index) => {
               const previousEntry = activity[index - 1];
               const nextEntry = activity[index + 1];
-              const isUserMessage = entry.kind === "user_message";
 
               return (
                 <ActivityRow
                   key={entry.id}
                   activity={entry}
-                  connectorExtendsBefore={!isUserMessage && previousEntry?.kind !== "user_message"}
-                  connectorExtendsAfter={!isUserMessage && nextEntry?.kind !== "user_message"}
+                  connectorExtendsBefore={shouldTerminalConnectorExtend(entry.kind, previousEntry?.kind)}
+                  connectorExtendsAfter={shouldTerminalConnectorExtend(entry.kind, nextEntry?.kind)}
                   variant={variant}
                 />
               );

@@ -28,7 +28,6 @@ export type RunRecord = {
 };
 export type PlanItemRecord = { id: string; planId: string; title: string; phase: string | null; status: string };
 export type ClarificationRecord = { id: string; runId: string; question: string; answer: string | null; status: string };
-export type ValidationRunRecord = { id: string; runId: string; planItemId?: string | null; status: string; summary: string | null; evidence: string | null };
 export type MessageRecord = {
   id: string;
   runId: string;
@@ -171,14 +170,12 @@ export type EventStreamState = {
   workers: ConversationWorkerRecord[];
   planItems: PlanItemRecord[];
   clarifications: ClarificationRecord[];
-  validationRuns: ValidationRunRecord[];
   executionEvents: ExecutionEventRecord[];
   supervisorInterventions: SupervisorInterventionRecord[];
   queuedMessages?: QueuedConversationMessageRecord[];
   frontendErrors?: AppErrorDescriptor[];
 };
-export type SettingsTab = "general" | "llm" | "workers";
-export type WorkerSettingsTab = "availability" | "defaults" | "runtime";
+export type SettingsTab = "general" | "models" | "agents" | "runtime";
 
 export type SidebarRun = { id: string; title: string; path: string; status: string; createdAt: string };
 export type SidebarGroup = { path: string; name: string; runs: SidebarRun[] };

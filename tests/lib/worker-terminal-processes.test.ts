@@ -172,19 +172,37 @@ describe("worker terminal process derivation", () => {
     });
   });
 
-  it("ignores non-terminal tools unless a command-like input is present", () => {
+  it("ignores non-terminal tools even when file names or adapter internals mention terminals", () => {
     const outputEntries: AgentOutputEntry[] = [
       {
         id: "read-1",
         type: "tool_call",
-        text: "Read File",
+        text: "Read Terminal.tsx",
         timestamp: "2026-05-03T00:00:00.000Z",
         toolCallId: "read-1",
         toolKind: "read",
-        status: "completed",
+        status: "in_progress",
         raw: {
+          title: "Read Terminal.tsx",
           rawInput: {
-            path: "/tmp/example.ts",
+            command: ["/bin/zsh", "-lc", "sed -n '1,260p' Terminal.tsx"],
+            path: "/tmp/Terminal.tsx",
+          },
+        },
+      },
+      {
+        id: "edit-1",
+        type: "tool_call",
+        text: "Edit /workspace/tests/ui/terminal-fit.test.ts",
+        timestamp: "2026-05-03T00:00:01.000Z",
+        toolCallId: "edit-1",
+        toolKind: "edit",
+        status: "in_progress",
+        raw: {
+          title: "Edit /workspace/tests/ui/terminal-fit.test.ts",
+          rawInput: {
+            path: "/workspace/tests/ui/terminal-fit.test.ts",
+            text: "Success. Updated the following files: M tests/ui/terminal-fit.test.ts",
           },
         },
       },
