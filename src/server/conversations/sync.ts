@@ -8,6 +8,7 @@ import { isTerminalRunStatus } from "@/server/runs/status";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { isRecoverableConnectionSupervisorError, isTransientSupervisorError } from "@/server/supervisor/retry";
 import { parseWorkerOutputEntries, serializeWorkerOutputEntries } from "@/server/workers/snapshots";
+import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
 import { drainQueuedWorkerMessages } from "./queued-messages";
 
 const MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC = "Worker is idle with no recorded output, and the bridge no longer has a live session for it.";
@@ -163,6 +164,15 @@ export async function syncConversationSessions(rawAgents: unknown[]) {
           await clearMatchingRunFailureMessage(run);
           startSupervisorRun(run.id);
         }
+        continue;
+      }
+
+      const recoveryResult = await reconcileRunRecovery({
+        runId: run.id,
+        liveAgents: agents,
+        source: "conversation-sync",
+      });
+      if (recoveryResult.action !== "none" && recoveryResult.action !== "wait_for_backoff") {
         continue;
       }
 

@@ -5,6 +5,7 @@ import { db } from "@/server/db";
 import { executionEvents, messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { startSupervisorRun } from "@/server/supervisor/start";
+import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
 import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import { serializeMessageRecord } from "./message-records";
 
@@ -233,6 +234,19 @@ async function continueQueuedWorkerSteering(args: {
       action: "steer",
       error: errorMessage(error),
     }, args.worker.id);
+    if (isAgentNotFoundError(error)) {
+      await insertQueueExecutionEvent(args.run.id, "queued_message_recovery_blocked", {
+        summary: `Queued message ${args.messageId} is blocked because ${args.worker.id} is missing.`,
+        queuedMessageId: args.messageId,
+        action: "steer",
+        error: errorMessage(error),
+      }, args.worker.id);
+      await reconcileRunRecovery({
+        runId: args.run.id,
+        liveAgents: [],
+        source: "queued-message-delivery",
+      });
+    }
     notifyEventStreamSubscribers();
   }
 }
@@ -547,6 +561,19 @@ export async function drainQueuedWorkerMessages({
         queuedMessageId: record.id,
         error: errorMessage(error),
       }, workerId);
+
+      if (isAgentNotFoundError(error)) {
+        await insertQueueExecutionEvent(runId, "queued_message_recovery_blocked", {
+          summary: `Queued message ${record.id} is blocked because ${workerId} is missing.`,
+          queuedMessageId: record.id,
+          error: errorMessage(error),
+        }, workerId);
+        await reconcileRunRecovery({
+          runId,
+          liveAgents: [],
+          source: "queued-message-drain",
+        });
+      }
 
       if (!isAgentBusyError(error)) {
         break;

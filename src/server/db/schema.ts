@@ -82,6 +82,21 @@ export const queuedConversationMessages = sqliteTable('queued_conversation_messa
   deliveredAt: integer('delivered_at', { mode: 'timestamp' }),
 });
 
+export const recoveryIncidents = sqliteTable('recovery_incidents', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').references(() => runs.id).notNull(),
+  workerId: text('worker_id').references(() => workers.id),
+  queuedMessageId: text('queued_message_id').references(() => queuedConversationMessages.id),
+  kind: text('kind').notNull(),
+  status: text('status').notNull(),
+  autoAttemptCount: integer('auto_attempt_count').notNull().default(0),
+  lastError: text('last_error'),
+  details: text('details'),
+  detectedAt: integer('detected_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  resolvedAt: integer('resolved_at', { mode: 'timestamp' }),
+});
+
 export const accounts = sqliteTable('accounts', {
   id: text('id').primaryKey(),
   provider: text('provider').notNull(),
