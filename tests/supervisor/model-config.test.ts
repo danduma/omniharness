@@ -64,6 +64,24 @@ describe("supervisor model config", () => {
     });
   });
 
+  it("can explicitly load the fallback profile", () => {
+    const config = getSupervisorModelConfig({
+      SUPERVISOR_LLM_PROVIDER: "gemini",
+      SUPERVISOR_LLM_API_KEY: "primary-key",
+      SUPERVISOR_FALLBACK_LLM_PROVIDER: "openai",
+      SUPERVISOR_FALLBACK_LLM_MODEL: "gpt-5.4-mini",
+      SUPERVISOR_FALLBACK_LLM_API_KEY: "fallback-key",
+    }, "fallback");
+
+    expect(config).toEqual({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      apiKey: "fallback-key",
+      baseURL: undefined,
+      source: "fallback",
+    });
+  });
+
   it("fails with a clear recovery message when the supervisor key cannot be decrypted", () => {
     const config = getSupervisorModelConfig({});
 

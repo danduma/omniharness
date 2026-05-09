@@ -54,7 +54,7 @@ function formatSettingChoices(settingNames: string[]) {
   return `${settingNames.slice(0, -1).join(", ")}, or ${settingNames.at(-1)}`;
 }
 
-export function getSupervisorModelConfig(env: EnvLike) {
+export function getSupervisorModelConfig(env: EnvLike, source?: "primary" | "fallback") {
   const primaryProvider = env.SUPERVISOR_LLM_PROVIDER?.trim() || DEFAULT_PROVIDER;
   const fallbackProvider = env.SUPERVISOR_FALLBACK_LLM_PROVIDER?.trim() || DEFAULT_FALLBACK_PROVIDER;
 
@@ -73,6 +73,13 @@ export function getSupervisorModelConfig(env: EnvLike) {
     baseURL: env.SUPERVISOR_FALLBACK_LLM_BASE_URL?.trim() || undefined,
     source: "fallback",
   };
+
+  if (source === "primary") {
+    return primaryConfig;
+  }
+  if (source === "fallback") {
+    return fallbackConfig;
+  }
 
   return primaryConfig.apiKey ? primaryConfig : fallbackConfig.apiKey ? fallbackConfig : primaryConfig;
 }
