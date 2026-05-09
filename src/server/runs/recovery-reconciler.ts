@@ -224,6 +224,25 @@ export async function reconcileRunRecovery(args: {
     },
   });
   const policy = await getRecoveryPolicy();
+  const decision = decideRecoveryAction({
+    runMode: run.mode,
+    recoveryState: state,
+    policy,
+    autoAttemptCount: incident.autoAttemptCount,
+    force: args.force,
+  });
+  if (decision.action === "needs_user") {
+    await markNeedsUser({
+      incidentId: incident.id,
+      runId: run.id,
+      workerId: state.workerId,
+      reason: decision.reason,
+      state,
+    });
+    notifyEventStreamSubscribers();
+    return { action: "needs_user" as const, runId: run.id, recoveryState: state };
+  }
+
   const nextAttemptAt = incident.autoAttemptCount > 0 && !args.force
     ? computeRecoveryBackoff({
       policy,
@@ -239,14 +258,6 @@ export async function reconcileRunRecovery(args: {
     });
     return { action: "wait_for_backoff" as const, runId: run.id, recoveryState: state, nextAttemptAt };
   }
-
-  const decision = decideRecoveryAction({
-    runMode: run.mode,
-    recoveryState: state,
-    policy,
-    autoAttemptCount: incident.autoAttemptCount,
-    force: args.force,
-  });
 
   try {
     if (decision.action === "resume_session") {
@@ -281,18 +292,6 @@ export async function reconcileRunRecovery(args: {
       });
       notifyEventStreamSubscribers();
       return { action: "failed" as const, runId: run.id, recoveryState: state };
-    }
-
-    if (decision.action === "needs_user") {
-      await markNeedsUser({
-        incidentId: incident.id,
-        runId: run.id,
-        workerId: state.workerId,
-        reason: decision.reason,
-        state,
-      });
-      notifyEventStreamSubscribers();
-      return { action: "needs_user" as const, runId: run.id, recoveryState: state };
     }
 
     return { action: "none" as const, runId: run.id, recoveryState: state };

@@ -4,6 +4,20 @@ import { recoveryIncidents } from "@/server/db/schema";
 import { reconcileRunRecovery } from "./recovery-reconciler";
 import type { RecoveryLiveAgentLike } from "./recovery-state";
 
+function parseDetails(details: string | null | undefined): Record<string, unknown> {
+  if (!details) {
+    return {};
+  }
+  try {
+    const parsed: unknown = JSON.parse(details);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function listRunRecoveryIncidents(runId: string) {
   return db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
 }
@@ -49,7 +63,7 @@ export async function acknowledgeRecoveryIncident(args: {
   }
   await db.update(recoveryIncidents).set({
     details: JSON.stringify({
-      ...(incident.details ? JSON.parse(incident.details) : {}),
+      ...parseDetails(incident.details),
       acknowledgedAt: new Date().toISOString(),
     }),
     updatedAt: new Date(),

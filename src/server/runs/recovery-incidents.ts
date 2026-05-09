@@ -12,6 +12,20 @@ function serializeDetails(details: Record<string, unknown> | null | undefined) {
   return details ? JSON.stringify(details) : null;
 }
 
+function parseDetails(details: string | null | undefined): Record<string, unknown> {
+  if (!details) {
+    return {};
+  }
+  try {
+    const parsed: unknown = JSON.parse(details);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 async function insertRecoveryEvent(
   runId: string,
   workerId: string | null | undefined,
@@ -61,12 +75,13 @@ export async function openRecoveryIncident(args: {
   const existing = await findOpenIncident(args);
   const now = new Date();
   if (existing) {
+    const details = { ...parseDetails(existing.details), ...(args.details ?? {}) };
     await db.update(recoveryIncidents).set({
-      details: serializeDetails({ ...JSON.parse(existing.details || "{}"), ...(args.details ?? {}) }),
+      details: serializeDetails(details),
       lastError: args.lastError ?? existing.lastError,
       updatedAt: now,
     }).where(eq(recoveryIncidents.id, existing.id));
-    return { ...existing, details: serializeDetails({ ...JSON.parse(existing.details || "{}"), ...(args.details ?? {}) }), updatedAt: now };
+    return { ...existing, details: serializeDetails(details), updatedAt: now };
   }
 
   const record = {
@@ -109,7 +124,7 @@ export async function markRecoveryIncidentRecovering(args: {
     status: "recovering",
     autoAttemptCount: nextAttempts,
     details: serializeDetails({
-      ...(incident?.details ? JSON.parse(incident.details) : {}),
+      ...parseDetails(incident?.details),
       decision: args.decision,
       ...(args.details ?? {}),
     }),
