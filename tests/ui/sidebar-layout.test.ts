@@ -1,7 +1,12 @@
 import fs from "fs";
 import path from "path";
 import { test, expect } from "vitest";
-import { shouldConversationFollowLatest } from "@/app/home/useRunSelectionEffects";
+import {
+  getConversationOutputVersion,
+  shouldConversationFollowLatest,
+  shouldConversationKeepFollowingLatest,
+  shouldConversationShowOutputBelow,
+} from "@/app/home/useRunSelectionEffects";
 
 const readSource = (relativePath: string) => fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 const pageSource = [
@@ -245,8 +250,11 @@ test("worker detail renders from streamed agent state instead of per-worker poll
 });
 
 test("conversation output only follows live worker updates when already near the bottom", () => {
-  expect(pageSource).toContain("const CONVERSATION_BOTTOM_THRESHOLD_PX = 40");
+  expect(pageSource).toContain("const CONVERSATION_BOTTOM_THRESHOLD_PX = 8");
   expect(pageSource).toContain('behavior: runChanged ? "auto" : "smooth"');
+  expect(pageSource).toContain("const outputVersion = getConversationOutputVersion(selectedRunId, state.messages, state.agents);");
+  expect(pageSource).toContain("if (!runChanged && !outputChanged) {");
+  expect(pageSource).toContain("}, [scrollRef, outputVersion, selectedRunId]);");
 
   expect(shouldConversationFollowLatest({
     scrollTop: 696,
@@ -254,17 +262,99 @@ test("conversation output only follows live worker updates when already near the
     scrollHeight: 1000,
   })).toBe(true);
 
+  expect(shouldConversationKeepFollowingLatest({
+    scrollTop: 696,
+    clientHeight: 300,
+    scrollHeight: 1000,
+  }, 700)).toBe(false);
+
+  expect(shouldConversationKeepFollowingLatest({
+    scrollTop: 696,
+    clientHeight: 300,
+    scrollHeight: 1000,
+  }, 695)).toBe(true);
+
   expect(shouldConversationFollowLatest({
     scrollTop: 680,
     clientHeight: 300,
     scrollHeight: 1000,
-  })).toBe(true);
+  })).toBe(false);
 
   expect(shouldConversationFollowLatest({
     scrollTop: 650,
     clientHeight: 300,
     scrollHeight: 1000,
   })).toBe(false);
+
+  expect(shouldConversationShowOutputBelow({
+    scrollTop: 696,
+    clientHeight: 300,
+    scrollHeight: 1000,
+  })).toBe(false);
+
+  expect(shouldConversationShowOutputBelow({
+    scrollTop: 691,
+    clientHeight: 300,
+    scrollHeight: 1000,
+  })).toBe(true);
+
+  expect(
+    shouldConversationShowOutputBelow({
+      scrollTop: 680,
+      clientHeight: 300,
+      scrollHeight: 1000,
+    }) && shouldConversationFollowLatest({
+      scrollTop: 680,
+      clientHeight: 300,
+      scrollHeight: 1000,
+    })
+  ).toBe(false);
+});
+
+test("conversation output version ignores state refreshes without new rendered output", () => {
+  const baseMessages = [{
+    id: "message-1",
+    runId: "run-1",
+    role: "user",
+    content: "hello",
+    createdAt: "2026-05-09T00:00:00.000Z",
+  }];
+  const baseAgents = [{
+    name: "worker-1",
+    state: "working",
+    currentText: "working",
+    lastText: "started",
+    outputEntries: [{
+      id: "entry-1",
+      type: "message" as const,
+      text: "line",
+      timestamp: "2026-05-09T00:00:01.000Z",
+    }],
+  }];
+
+  expect(getConversationOutputVersion("run-1", baseMessages, baseAgents)).toBe(
+    getConversationOutputVersion("run-1", [...baseMessages], baseAgents.map((agent) => ({ ...agent })))
+  );
+  expect(getConversationOutputVersion("run-1", baseMessages, baseAgents)).not.toBe(
+    getConversationOutputVersion("run-1", [{ ...baseMessages[0], content: "hello again" }], baseAgents)
+  );
+  expect(getConversationOutputVersion("run-1", baseMessages, baseAgents)).not.toBe(
+    getConversationOutputVersion("run-1", baseMessages, [{ ...baseAgents[0], currentText: "working more" }])
+  );
+});
+
+test("conversation has a floating latest-output indicator above the composer", () => {
+  const conversationMainSource = fs.readFileSync(path.resolve(process.cwd(), "src/components/home/ConversationMain.tsx"), "utf8");
+  const managerSource = fs.readFileSync(path.resolve(process.cwd(), "src/components/component-state-managers.ts"), "utf8");
+  const runSelectionEffectsSource = fs.readFileSync(path.resolve(process.cwd(), "src/app/home/useRunSelectionEffects.ts"), "utf8");
+
+  expect(managerSource).toContain("hasOutputBelow: boolean;");
+  expect(managerSource).toContain("setHasOutputBelow");
+  expect(runSelectionEffectsSource).toContain("conversationMainManager.setHasOutputBelow(shouldConversationShowOutputBelow(viewport))");
+  expect(conversationMainSource).toContain("const { hasOutputBelow } = useManagerSnapshot(conversationMainManager);");
+  expect(conversationMainSource).toContain('aria-label="Scroll to latest output"');
+  expect(conversationMainSource).toContain("<ArrowDown");
+  expect(conversationMainSource).toContain("bg-primary text-primary-foreground");
 });
 
 test("main conversation does not duplicate worker panes from the sidebar", () => {

@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { BootShell } from "@/components/BootShell";
 import { LoginShell } from "@/components/LoginShell";
+import { AttachmentImagePreviewDialog } from "@/components/AttachmentImagePreviewDialog";
 import { ConversationComposer } from "@/components/home/ConversationComposer";
 import { ConversationMain } from "@/components/home/ConversationMain";
 import { ConversationSidebar } from "@/components/home/ConversationSidebar";
@@ -194,7 +195,7 @@ export function HomeApp() {
   const autoResumeRunKeysRef = useRef<Set<string>>(new Set());
   const scrollConversationToBottom = useCallback(() => {
     requestAnimationFrame(() => {
-      const viewport = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLDivElement | null;
+      const viewport = scrollRef.current?.querySelector('[data-slot="scroll-area-viewport"], [data-radix-scroll-area-viewport]') as HTMLDivElement | null;
       if (viewport) {
         viewport.scrollTo({
           top: viewport.scrollHeight,
@@ -1276,7 +1277,7 @@ export function HomeApp() {
     ? plans.find((p) => p.id === runs.find((r) => r.id === selectedRunId)?.planId) ?? null
     : null;
   const activeConversationCwd = selectedRun?.projectPath || activePlan?.path || draftProjectPath || null;
-  const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, runCommandError: runCommand.error, sendConversationMessageError: sendConversationMessage.error, sendQueuedMessageNowError: sendQueuedMessageNow.error, cancelQueuedMessageError: cancelQueuedMessage.error, autoCommitChatError: autoCommitChat.error, autoCommitProjectError: autoCommitProject.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, deleteRunError: deleteRun.error, stopSupervisorError: stopSupervisor.error, stopWorkerError: stopWorker.error ?? stopWorkerTerminalProcess.error });
+  const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, runCommandError: runCommand.error, sendConversationMessageError: sendConversationMessage.error, cancelQueuedMessageError: cancelQueuedMessage.error, autoCommitChatError: autoCommitChat.error, autoCommitProjectError: autoCommitProject.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, deleteRunError: deleteRun.error, stopSupervisorError: stopSupervisor.error, stopWorkerError: stopWorker.error ?? stopWorkerTerminalProcess.error });
 
   useRunSelectionEffects({ scrollRef, state, selectedRunId, selectedRun, activeComposerMode, selectedCliAgent, setSelectedCliAgent, autoSelectedWorkerType, activeAllowedWorkerTypes, hydratedRunSelectionId, setHydratedRunSelectionId, selectedModel, setSelectedModel, selectedEffort, setSelectedEffort, availableWorkerTypes, configuredAllowedWorkerTypes, apiKeys, setApiKeys, setReadMarkers });
   const activeMention = getActiveMentionQuery(command, commandCursor);
@@ -1759,6 +1760,8 @@ export function HomeApp() {
         onOpenChange={setShowFolderPicker}
         onSelect={handleAddProject}
       />
+
+      <AttachmentImagePreviewDialog />
     </div>
   );
 }

@@ -37,6 +37,22 @@ export const fileAttachmentPickerManager = new class extends StateManager<{ sear
   );
 }();
 
+export type AttachmentImagePreview = {
+  url: string;
+  name: string;
+  size: number;
+};
+
+export const attachmentImagePreviewManager = new class extends StateManager<{ preview: AttachmentImagePreview | null }> {
+  constructor() {
+    super({ preview: null });
+  }
+
+  open = (preview: AttachmentImagePreview) => this.setKey("preview", preview);
+
+  close = () => this.setKey("preview", null);
+}();
+
 export type PairingState<TPairing, TStatus> = {
   pairing: TPairing | null;
   pairingStatus: TStatus | null;
@@ -93,9 +109,10 @@ export const composerModelPickerManager = new class extends StateManager<{ open:
 export const conversationMainManager = new class extends StateManager<{
   fullOutputOpenByMessageId: Record<string, boolean>;
   runLogOpenByRunId: Record<string, boolean>;
+  hasOutputBelow: boolean;
 }> {
   constructor() {
-    super({ fullOutputOpenByMessageId: {}, runLogOpenByRunId: {} });
+    super({ fullOutputOpenByMessageId: {}, runLogOpenByRunId: {}, hasOutputBelow: false });
   }
 
   setFullOutputOpen = (messageId: string, open: boolean) => this.setKey("fullOutputOpenByMessageId", (current) => ({
@@ -107,6 +124,12 @@ export const conversationMainManager = new class extends StateManager<{
     ...current,
     [runId]: open,
   }));
+
+  setHasOutputBelow = (hasOutputBelow: boolean) => this.update((current) => (
+    current.hasOutputBelow === hasOutputBelow
+      ? current
+      : { ...current, hasOutputBelow }
+  ));
 }();
 
 export const workersSidebarManager = new class extends StateManager<{

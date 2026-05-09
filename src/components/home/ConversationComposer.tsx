@@ -305,7 +305,7 @@ export function ConversationComposer({
           </div>
         ) : null}
 
-        <div className="mt-0 flex items-center gap-1 sm:gap-2">
+        <div className="mt-0 flex items-center gap-1 pb-2 sm:gap-2">
           <input
             ref={fileInputRef}
             type="file"

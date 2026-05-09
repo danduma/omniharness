@@ -1,4 +1,4 @@
-import { Pencil, SendHorizontal, X } from "lucide-react";
+import { ArrowUp, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { QueuedConversationMessageRecord } from "@/app/home/types";
@@ -76,7 +76,7 @@ export function QueuedMessageDrawer({
                   aria-label="Send queued message now"
                   title="Send queued message now"
                 >
-                  <SendHorizontal className="h-3 w-3" />
+                  <ArrowUp className="h-[17px] w-[17px]" />
                 </Button>
                 <Button
                   type="button"

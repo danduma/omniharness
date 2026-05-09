@@ -1,7 +1,12 @@
 import fs from "fs";
 import path from "path";
 import { test, expect } from "vitest";
-import { shouldTerminalConnectorExtend, shouldTerminalFollowLatest } from "@/components/Terminal";
+import {
+  getTerminalActivityVersion,
+  shouldTerminalConnectorExtend,
+  shouldTerminalFollowLatest,
+  shouldTerminalKeepFollowingLatest,
+} from "@/components/Terminal";
 
 const terminalSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/Terminal.tsx"),
@@ -182,6 +187,10 @@ test("terminal surfaces fetch failures in the frontend instead of silently dropp
 });
 
 test("terminal only follows live output while the viewport is already near the bottom", () => {
+  expect(terminalSource).toContain("const TERMINAL_BOTTOM_THRESHOLD_PX = 1");
+  expect(terminalSource).not.toContain("shouldForceFollowPendingAssistant");
+  expect(terminalSource).toContain("const activityChanged = previousActivityVersionRef.current !== activityVersion;");
+
   expect(shouldTerminalFollowLatest({
     scrollTop: 700,
     clientHeight: 300,
@@ -192,11 +201,31 @@ test("terminal only follows live output while the viewport is already near the b
     scrollTop: 690,
     clientHeight: 300,
     scrollHeight: 1000,
-  })).toBe(true);
+  })).toBe(false);
 
   expect(shouldTerminalFollowLatest({
     scrollTop: 650,
     clientHeight: 300,
     scrollHeight: 1000,
   })).toBe(false);
+
+  expect(shouldTerminalKeepFollowingLatest({
+    scrollTop: 699.5,
+    clientHeight: 300,
+    scrollHeight: 1000,
+  }, 700)).toBe(false);
+});
+
+test("terminal activity version ignores pending assistant timestamp churn", () => {
+  expect(getTerminalActivityVersion([
+    { id: "pending-assistant", kind: "pending_assistant", timestamp: "2026-05-09T00:00:00.000Z" },
+  ])).toBe(getTerminalActivityVersion([
+    { id: "pending-assistant", kind: "pending_assistant", timestamp: "2026-05-09T00:00:01.000Z" },
+  ]));
+
+  expect(getTerminalActivityVersion([
+    { id: "message-1", kind: "message", text: "hello", timestamp: "2026-05-09T00:00:00.000Z" },
+  ])).not.toBe(getTerminalActivityVersion([
+    { id: "message-1", kind: "message", text: "hello again", timestamp: "2026-05-09T00:00:00.000Z" },
+  ]));
 });

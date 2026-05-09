@@ -1,6 +1,7 @@
 import Image from "next/image";
 import type React from "react";
 import { Copy } from "lucide-react";
+import { attachmentImagePreviewManager } from "@/components/component-state-managers";
 import { formatBytes, type ChatAttachment } from "@/lib/chat-attachments";
 import { cn } from "@/lib/utils";
 
@@ -68,13 +69,13 @@ export function UserInputMessage({
               {attachments.map((attachment) => {
                 const url = attachmentUrl(attachment);
                 return attachment.kind === "image" && url ? (
-                  <a
+                  <button
+                    type="button"
                     key={attachment.id}
-                    href={url}
-                    target="_blank"
-                    rel="noreferrer"
+                    onClick={() => attachmentImagePreviewManager.open({ url, name: attachment.name, size: attachment.size })}
                     className="group/attachment inline-flex max-w-full items-center gap-2 overflow-hidden rounded-xl border border-border/60 bg-[#e9e9e9] p-1.5 pr-3 text-xs dark:border-white/10 dark:bg-black/15"
-                    title={`Open ${attachment.name}`}
+                    title={`Preview ${attachment.name}`}
+                    aria-label={`Preview ${attachment.name}`}
                   >
                     <Image
                       src={url}
@@ -88,7 +89,7 @@ export function UserInputMessage({
                       <span className="truncate font-medium">{attachment.name}</span>
                       <span className="opacity-60">{formatBytes(attachment.size)}</span>
                     </span>
-                  </a>
+                  </button>
                 ) : (
                   <div
                     key={attachment.id}

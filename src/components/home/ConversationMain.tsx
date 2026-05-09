@@ -1,5 +1,5 @@
 import type React from "react";
-import { Blocks, ChevronDown, CirclePlay, CircleStop, GitBranch, ListTree, Pencil, RotateCcw, Route } from "lucide-react";
+import { ArrowDown, Blocks, ChevronDown, CirclePlay, CircleStop, GitBranch, ListTree, Pencil, RotateCcw, Route } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -387,6 +387,7 @@ export function ConversationMain({
   executionEvents,
   emptyComposer,
 }: ConversationMainProps) {
+  const { hasOutputBelow } = useManagerSnapshot(conversationMainManager);
   const handleCopyDirectMessage = async (content: string) => {
     try {
       await navigator.clipboard.writeText(content);
@@ -430,9 +431,17 @@ export function ConversationMain({
       },
     ];
   };
+  const handleScrollToLatestOutput = () => {
+    const viewport = scrollRef.current?.querySelector('[data-slot="scroll-area-viewport"], [data-radix-scroll-area-viewport]') as HTMLDivElement | null;
+    viewport?.scrollTo({
+      top: viewport.scrollHeight,
+      behavior: "smooth",
+    });
+  };
 
   return (
-  <ScrollArea className="min-h-0 flex-1" ref={scrollRef}>
+  <div className="relative min-h-0 flex-1">
+  <ScrollArea className="h-full" ref={scrollRef}>
     {selectedRunId ? (
       isDirectConversation ? (
         <div className="mx-auto flex h-full w-full max-w-6xl flex-col gap-4 p-4 pb-24 sm:p-6 sm:pb-20">
@@ -650,6 +659,26 @@ export function ConversationMain({
       </div>
     )}
   </ScrollArea>
+  <div
+    className={cn(
+      "pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center transition-all duration-150 ease-out motion-reduce:transition-none",
+      hasOutputBelow ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0",
+    )}
+    aria-hidden={!hasOutputBelow}
+  >
+    <Button
+      type="button"
+      size="icon"
+      tabIndex={hasOutputBelow ? 0 : -1}
+      onClick={handleScrollToLatestOutput}
+      aria-label="Scroll to latest output"
+      title="Scroll to latest output"
+      className="pointer-events-auto h-8 w-8 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/15 transition-all hover:bg-primary/90"
+    >
+      <ArrowDown className="h-[17px] w-[17px]" />
+    </Button>
+  </div>
+  </div>
 
   );
 }

@@ -145,15 +145,30 @@ test("user input image attachments keep visible attachment metadata in history",
   expect(userInputSource).toContain('alt={attachment.name}');
   expect(userInputSource).toContain('{attachment.name}');
   expect(userInputSource).toContain('{formatBytes(attachment.size)}');
-  expect(userInputSource).toContain('title={`Open ${attachment.name}`}');
+  expect(userInputSource).toContain('attachmentImagePreviewManager.open({ url, name: attachment.name, size: attachment.size })');
+  expect(userInputSource).toContain('title={`Preview ${attachment.name}`}');
 });
 
 test("direct-control terminal user messages render attachment metadata", () => {
   expect(terminalSource).toContain('attachments?: ChatAttachment[]');
   expect(terminalSource).toContain('attachments: message.attachments ?? []');
   expect(terminalSource).toContain('activity.attachments.length > 0');
-  expect(terminalSource).toContain('title={`Open ${attachment.name}`}');
+  expect(terminalSource).toContain('attachmentImagePreviewManager.open({ url, name: attachment.name, size: attachment.size })');
+  expect(terminalSource).toContain('title={`Preview ${attachment.name}`}');
   expect(terminalSource).toContain('{formatBytes(attachment.size)}');
+});
+
+test("attachment image previews use a global full-screen dialog", () => {
+  const homeSource = readSource("src/app/home/HomeApp.tsx");
+  const dialogSource = readSource("src/components/AttachmentImagePreviewDialog.tsx");
+  const managerSource = readSource("src/components/component-state-managers.ts");
+
+  expect(homeSource).toContain("<AttachmentImagePreviewDialog />");
+  expect(managerSource).toContain("attachmentImagePreviewManager");
+  expect(dialogSource).toContain("h-dvh w-screen max-w-none");
+  expect(dialogSource).toContain("download={preview.name}");
+  expect(dialogSource).toContain("aria-label=\"Close image preview\"");
+  expect(dialogSource).toContain("right-4 top-4");
 });
 
 test("saving an edited message closes the inline editor before the rerun request resolves", () => {
@@ -216,6 +231,14 @@ test("conversation error notices render below the thread content", () => {
   expect(failureNoticeIndex).toBeGreaterThan(appErrorsIndex);
 });
 
+test("send queued now failures do not leak into every conversation notice stack", () => {
+  const useAppErrorsSource = readSource("src/app/home/useAppErrors.ts");
+
+  expect(homeAppSource).not.toContain("sendQueuedMessageNowError: sendQueuedMessageNow.error");
+  expect(useAppErrorsSource).not.toContain("sendQueuedMessageNowError");
+  expect(useAppErrorsSource).not.toContain('action: "Send queued message now"');
+});
+
 test("direct control conversations show a tiny animated working indicator while stoppable", () => {
   expect(terminalSource).toContain("function PendingAssistantActivity()");
   expect(terminalSource).toContain('const PENDING_ASSISTANT_TEXT = "Thinking..."');
@@ -228,11 +251,12 @@ test("direct control conversations show a tiny animated working indicator while 
   expect(pageSource).toContain('const showDirectControlWorkingIndicator = isDirectConversation && composerBehavior.buttonKind === "stop";');
   expect(terminalSource).toContain("showPendingAssistantIndicator = false");
   expect(terminalSource).toContain("pendingAssistantActivity");
-  expect(terminalSource).toContain("const TERMINAL_BOTTOM_THRESHOLD_PX = 40");
+  expect(terminalSource).toContain("const TERMINAL_BOTTOM_THRESHOLD_PX = 1");
   expect(terminalSource).toContain("getTerminalScrollElement");
   expect(terminalSource).toContain("scrollTerminalToBottom");
-  expect(terminalSource).toContain("const shouldForceFollowPendingAssistant = showPendingAssistantIndicator");
-  expect(terminalSource).toContain("(!shouldForceFollowPendingAssistant && !shouldFollowLatestRef.current)");
+  expect(terminalSource).not.toContain("shouldForceFollowPendingAssistant");
+  expect(terminalSource).toContain("const activityChanged = previousActivityVersionRef.current !== activityVersion;");
+  expect(terminalSource).toContain("if (!container || !activityChanged || !shouldFollowLatestRef.current)");
   expect(terminalSource).toContain("shouldFollowLatestRef.current = true");
   expect(terminalSource).toContain('behavior: "smooth"');
   expect(terminalSource).toContain("inline-block animate-pulse text-foreground/80");

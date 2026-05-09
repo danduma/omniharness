@@ -111,7 +111,7 @@ test("composer exposes native file input, paste ingestion, previews, and removal
 });
 
 test("composer control row stays on one compact mobile row", () => {
-  expect(pageSource).toContain('className="mt-0 flex items-center gap-1 sm:gap-2"');
+  expect(pageSource).toContain('className="mt-0 flex items-center gap-1 pb-2 sm:gap-2"');
   expect(pageSource).toContain('className="ml-auto flex min-w-0 items-center justify-end gap-1 sm:gap-2"');
   expect(pageSource).toContain('"h-8 w-8 shrink-0 rounded-full transition-all"');
   expect(pageSource).not.toContain('className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2"');
@@ -152,6 +152,8 @@ test("queued message drawer can send a pending item immediately as steering", ()
   expect(pageSource).toContain("sendQueuedMessageNow.mutate({ runId: selectedRunId, messageId })");
   expect(drawerSource).toContain("onSendNow: (messageId: string) => void;");
   expect(drawerSource).toContain("onClick={() => onSendNow(message.id)}");
+  expect(drawerSource).toContain('<ArrowUp className="h-[17px] w-[17px]" />');
+  expect(drawerSource).not.toContain("SendHorizontal");
   expect(sendNowIndex).toBeGreaterThan(editIndex);
   expect(sendNowIndex).toBeLessThan(cancelIndex);
 });

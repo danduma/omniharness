@@ -1,11 +1,13 @@
 import { useEffect, useRef } from "react";
 import type React from "react";
+import { conversationMainManager } from "@/components/component-state-managers";
 import { getRunLatestMessageTimestamp } from "@/lib/conversation-state";
 import type { ConversationModeOption } from "@/components/ConversationModePicker";
-import type { ComposerWorkerOption, MessageRecord, RunRecord, WorkerType } from "./types";
+import type { AgentSnapshot, ComposerWorkerOption, MessageRecord, RunRecord, WorkerType } from "./types";
 import { parseWorkerType, resolveComposerEffortLabel, resolveComposerModelValue } from "./utils";
 
-const CONVERSATION_BOTTOM_THRESHOLD_PX = 40;
+const CONVERSATION_BOTTOM_THRESHOLD_PX = 8;
+const SCROLL_AREA_VIEWPORT_SELECTOR = '[data-slot="scroll-area-viewport"], [data-radix-scroll-area-viewport]';
 
 export function shouldConversationFollowLatest(
   metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
@@ -13,9 +15,51 @@ export function shouldConversationFollowLatest(
   return metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop <= CONVERSATION_BOTTOM_THRESHOLD_PX;
 }
 
+export function shouldConversationShowOutputBelow(
+  metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
+) {
+  return !shouldConversationFollowLatest(metrics);
+}
+
+export function shouldConversationKeepFollowingLatest(
+  metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
+  previousScrollTop: number,
+) {
+  if (metrics.scrollTop < previousScrollTop) {
+    return false;
+  }
+
+  return shouldConversationFollowLatest(metrics);
+}
+
+export function getConversationOutputVersion(
+  selectedRunId: string | null,
+  messages: MessageRecord[] | undefined,
+  agents: AgentSnapshot[] | undefined,
+) {
+  if (!selectedRunId) {
+    return "empty";
+  }
+
+  const messageVersion = (messages ?? [])
+    .filter((message) => message.runId === selectedRunId)
+    .map((message) => `${message.id}:${message.createdAt}:${message.content.length}`)
+    .join("|");
+  const agentVersion = (agents ?? [])
+    .map((agent) => {
+      const outputEntriesVersion = (agent.outputEntries ?? [])
+        .map((entry) => `${entry.id}:${entry.text.length}:${entry.timestamp}`)
+        .join(",");
+      return `${agent.name}:${agent.currentText?.length ?? 0}:${agent.lastText?.length ?? 0}:${outputEntriesVersion}`;
+    })
+    .join("|");
+
+  return `${selectedRunId}::${messageVersion}::${agentVersion}`;
+}
+
 interface UseRunSelectionEffectsProps {
   scrollRef: React.RefObject<HTMLDivElement | null>;
-  state: { messages?: MessageRecord[]; agents?: unknown[] };
+  state: { messages?: MessageRecord[]; agents?: AgentSnapshot[] };
   selectedRunId: string | null;
   selectedRun: RunRecord | null;
   activeComposerMode: ConversationModeOption;
@@ -59,31 +103,60 @@ export function useRunSelectionEffects({
   setReadMarkers,
 }: UseRunSelectionEffectsProps) {
   const shouldFollowLatestRef = useRef(true);
+  const previousScrollTopRef = useRef(0);
   const previousSelectedRunIdRef = useRef<string | null>(null);
+  const previousOutputVersionRef = useRef<string | null>(null);
+  const outputVersion = getConversationOutputVersion(selectedRunId, state.messages, state.agents);
 
   useEffect(() => {
-    const viewport = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLDivElement | null;
+    const viewport = scrollRef.current?.querySelector(SCROLL_AREA_VIEWPORT_SELECTOR) as HTMLDivElement | null;
     if (!viewport) {
+      conversationMainManager.setHasOutputBelow(false);
       return;
     }
 
+    const updateOutputBelowState = () => {
+      conversationMainManager.setHasOutputBelow(shouldConversationShowOutputBelow(viewport));
+    };
+
+    previousScrollTopRef.current = viewport.scrollTop;
+
     const updateFollowState = () => {
-      shouldFollowLatestRef.current = shouldConversationFollowLatest(viewport);
+      shouldFollowLatestRef.current = shouldConversationKeepFollowingLatest(viewport, previousScrollTopRef.current);
+      previousScrollTopRef.current = viewport.scrollTop;
+      updateOutputBelowState();
     };
 
     updateFollowState();
     viewport.addEventListener("scroll", updateFollowState, { passive: true });
-    return () => viewport.removeEventListener("scroll", updateFollowState);
+
+    const resizeObserver = new ResizeObserver(updateOutputBelowState);
+    resizeObserver.observe(viewport);
+    if (viewport.firstElementChild) {
+      resizeObserver.observe(viewport.firstElementChild);
+    }
+
+    return () => {
+      viewport.removeEventListener("scroll", updateFollowState);
+      resizeObserver.disconnect();
+      conversationMainManager.setHasOutputBelow(false);
+    };
   }, [scrollRef, selectedRunId]);
 
   useEffect(() => {
-    const viewport = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLDivElement | null;
+    const viewport = scrollRef.current?.querySelector(SCROLL_AREA_VIEWPORT_SELECTOR) as HTMLDivElement | null;
     if (!viewport) {
       return;
     }
 
     const runChanged = previousSelectedRunIdRef.current !== selectedRunId;
     previousSelectedRunIdRef.current = selectedRunId;
+    const outputChanged = previousOutputVersionRef.current !== outputVersion;
+    previousOutputVersionRef.current = outputVersion;
+
+    if (!runChanged && !outputChanged) {
+      return;
+    }
 
     if (!runChanged && !shouldFollowLatestRef.current) {
       return;
@@ -94,7 +167,8 @@ export function useRunSelectionEffects({
       behavior: runChanged ? "auto" : "smooth",
     });
     shouldFollowLatestRef.current = true;
-  }, [scrollRef, state.messages, selectedRunId, state.agents]);
+    previousScrollTopRef.current = viewport.scrollHeight;
+  }, [scrollRef, outputVersion, selectedRunId]);
 
   useEffect(() => {
     if (!selectedRunId || !selectedRun) {

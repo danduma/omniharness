@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 import { ALargeSmall, Check, ChevronDown, LoaderCircle } from "lucide-react";
 import { MarkdownContent } from "@/components/MarkdownContent";
-import { terminalUiManager } from "@/components/component-state-managers";
+import { attachmentImagePreviewManager, terminalUiManager } from "@/components/component-state-managers";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   appearancePreferencesManager,
@@ -74,7 +74,7 @@ const TERMINAL_REVEAL_CLASS = "grid transition-[grid-template-rows,opacity,trans
 const TERMINAL_REVEAL_OPEN_CLASS = "grid-rows-[1fr] opacity-100 translate-y-0";
 const TERMINAL_REVEAL_CLOSED_CLASS = "grid-rows-[0fr] opacity-0 -translate-y-1 pointer-events-none";
 const TERMINAL_TOOL_STATUSES = new Set(["completed", "done", "failed", "error", "cancelled"]);
-const TERMINAL_BOTTOM_THRESHOLD_PX = 40;
+const TERMINAL_BOTTOM_THRESHOLD_PX = 1;
 const TERMINAL_TOP_THRESHOLD_PX = 4;
 const PENDING_ASSISTANT_TEXT = "Thinking...";
 export { TERMINAL_TEXT_SIZE_LEVELS };
@@ -85,6 +85,35 @@ export function shouldTerminalFollowLatest(
   metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
 ) {
   return metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop <= TERMINAL_BOTTOM_THRESHOLD_PX;
+}
+
+export function shouldTerminalKeepFollowingLatest(
+  metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
+  previousScrollTop: number,
+) {
+  if (metrics.scrollTop < previousScrollTop) {
+    return false;
+  }
+
+  return shouldTerminalFollowLatest(metrics);
+}
+
+export function getTerminalActivityVersion(activity: TerminalActivityItem[]) {
+  return activity.map((item) => {
+    switch (item.kind) {
+      case "pending_assistant":
+        return `${item.id}:${item.kind}`;
+      case "thinking":
+        return `${item.id}:${item.kind}:${item.timestamp}:${item.inProgress}:${item.thoughts.join("\n").length}`;
+      case "tool":
+        return `${item.id}:${item.kind}:${item.timestamp}:${item.status}:${item.title.length}:${item.inputPane?.text.length ?? 0}:${item.outputPane?.text.length ?? 0}`;
+      case "permission":
+        return `${item.id}:${item.kind}:${item.timestamp}:${item.title.length}:${item.text.length}`;
+      case "message":
+      case "user_message":
+        return `${item.id}:${item.kind}:${item.timestamp}:${item.text.length}`;
+    }
+  }).join("|");
 }
 
 export function shouldTerminalConnectorExtend(
@@ -144,7 +173,7 @@ function getTerminalScrollElement(container: HTMLDivElement, variant: "terminal"
     return container;
   }
 
-  return (container.closest('[data-radix-scroll-area-viewport]') as HTMLDivElement | null) ?? container;
+  return (container.closest('[data-slot="scroll-area-viewport"], [data-radix-scroll-area-viewport]') as HTMLDivElement | null) ?? container;
 }
 
 function scrollTerminalToBottom(container: HTMLDivElement) {
@@ -557,13 +586,13 @@ function UserMessageAttachments({ attachments }: { attachments: ChatAttachment[]
       {attachments.map((attachment) => {
         const url = terminalAttachmentUrl(attachment);
         return attachment.kind === "image" && url ? (
-          <a
+          <button
+            type="button"
             key={attachment.id}
-            href={url}
-            target="_blank"
-            rel="noreferrer"
+            onClick={() => attachmentImagePreviewManager.open({ url, name: attachment.name, size: attachment.size })}
             className="group/attachment inline-flex max-w-full items-center gap-2 overflow-hidden rounded-xl border border-border/60 bg-[#e9e9e9] p-1.5 pr-3 text-xs dark:border-white/10 dark:bg-black/15"
-            title={`Open ${attachment.name}`}
+            title={`Preview ${attachment.name}`}
+            aria-label={`Preview ${attachment.name}`}
           >
             <Image
               src={url}
@@ -577,7 +606,7 @@ function UserMessageAttachments({ attachments }: { attachments: ChatAttachment[]
               <span className="truncate font-medium">{attachment.name}</span>
               <span className="opacity-60">{formatBytes(attachment.size)}</span>
             </span>
-          </a>
+          </button>
         ) : (
           <div
             key={attachment.id}
@@ -873,6 +902,8 @@ export function Terminal({
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const shouldFollowLatestRef = useRef(true);
+  const previousScrollTopRef = useRef(0);
+  const previousActivityVersionRef = useRef<string | null>(null);
   const { directTextSize, terminalTextSize } = useManagerSnapshot(appearancePreferencesManager);
 
   const activity = useMemo(() => {
@@ -923,9 +954,11 @@ export function Terminal({
 
     const scrollContainer = getTerminalScrollElement(container, variant);
     scrollContainerRef.current = scrollContainer;
+    previousScrollTopRef.current = scrollContainer.scrollTop;
 
     const updateFollowState = () => {
-      shouldFollowLatestRef.current = shouldTerminalFollowLatest(scrollContainer);
+      shouldFollowLatestRef.current = shouldTerminalKeepFollowingLatest(scrollContainer, previousScrollTopRef.current);
+      previousScrollTopRef.current = scrollContainer.scrollTop;
     };
 
     updateFollowState();
@@ -935,13 +968,20 @@ export function Terminal({
 
   useEffect(() => {
     const container = scrollContainerRef.current;
-    const shouldForceFollowPendingAssistant = showPendingAssistantIndicator;
-    if (!container || (!shouldForceFollowPendingAssistant && !shouldFollowLatestRef.current)) {
+    const activityVersion = getTerminalActivityVersion(activity);
+    const activityChanged = previousActivityVersionRef.current !== activityVersion;
+    previousActivityVersionRef.current = activityVersion;
+
+    if (!container || !activityChanged || !shouldFollowLatestRef.current) {
       return;
     }
+
     shouldFollowLatestRef.current = true;
-    requestAnimationFrame(() => scrollTerminalToBottom(container));
-  }, [activity, showPendingAssistantIndicator]);
+    requestAnimationFrame(() => {
+      scrollTerminalToBottom(container);
+      previousScrollTopRef.current = container.scrollHeight;
+    });
+  }, [activity]);
 
   return (
     <div className={cn(
@@ -960,7 +1000,8 @@ export function Terminal({
         ref={scrollRef}
         onScroll={(event) => {
           if (variant === "terminal") {
-            shouldFollowLatestRef.current = shouldTerminalFollowLatest(event.currentTarget);
+            shouldFollowLatestRef.current = shouldTerminalKeepFollowingLatest(event.currentTarget, previousScrollTopRef.current);
+            previousScrollTopRef.current = event.currentTarget.scrollTop;
           }
           if (hasMoreHistory && shouldTerminalRequestMoreHistory(event.currentTarget)) {
             onRequestMoreHistory?.();
