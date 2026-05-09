@@ -11,6 +11,7 @@ const pageSource = [
   "src/app/home/useHomeLifecycle.ts",
   "src/app/home/LiveEventConnectionManager.ts",
   "src/app/home/utils.ts",
+  "src/lib/conversation-visuals.ts",
   "src/components/home/ConversationMain.tsx",
   "src/components/home/ConversationSidebar.tsx",
   "src/components/home/HomeHeader.tsx",
