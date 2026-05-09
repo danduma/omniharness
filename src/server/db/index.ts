@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS runs (
   status text NOT NULL,
   failed_at integer,
   last_error text,
+  archived_at integer,
   created_at integer NOT NULL,
   updated_at integer NOT NULL,
   FOREIGN KEY (plan_id) REFERENCES plans(id) ON UPDATE no action ON DELETE no action
@@ -317,6 +318,10 @@ if (!runColumnNames.has("failed_at")) {
 
 if (!runColumnNames.has("last_error")) {
   sqlite.exec("ALTER TABLE runs ADD COLUMN last_error text;");
+}
+
+if (!runColumnNames.has("archived_at")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN archived_at integer;");
 }
 
 const messageColumns = sqlite.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>;

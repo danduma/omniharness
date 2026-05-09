@@ -1,5 +1,5 @@
 import type React from "react";
-import { Bolt, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Trash2 } from "lucide-react";
+import { Archive, Bolt, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -57,6 +57,7 @@ export interface ConversationSidebarProps {
   startRenamingRun: (run: SidebarRun) => void;
   commitRenamingRun: (runId: string) => void;
   cancelRenamingRun: () => void;
+  archiveRun: (run: SidebarRun) => void;
   deleteRun: (run: SidebarRun) => void;
   authEnabled: boolean;
   openPairDeviceDialog: () => void;
@@ -89,6 +90,7 @@ export function ConversationSidebar({
   startRenamingRun,
   commitRenamingRun,
   cancelRenamingRun,
+  archiveRun,
   deleteRun,
   authEnabled,
   openPairDeviceDialog,
@@ -208,7 +210,9 @@ export function ConversationSidebar({
                       )
                     ) : null}
                     {group.runs.map((run) => {
-                      const visualConfig = CONVERSATION_VISUAL_CONFIG[getConversationVisualKind(run, messages ?? [])];
+                      const visualKind = getConversationVisualKind(run, messages ?? []);
+                      const isCommitConversation = visualKind === "commit";
+                      const visualConfig = CONVERSATION_VISUAL_CONFIG[visualKind];
                       const ConversationIcon = visualConfig.Icon;
 
                       return (
@@ -265,6 +269,21 @@ export function ConversationSidebar({
                               }) ? (
                                 <div className="h-2 w-2 shrink-0 rounded-full bg-blue-500" />
                               ) : null}
+                              {isCommitConversation ? (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 shrink-0 text-muted-foreground opacity-100 hover:text-foreground lg:opacity-0 lg:group-hover:opacity-100"
+                                  aria-label={`Archive ${run.title}`}
+                                  title={`Archive ${run.title}`}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    archiveRun(run);
+                                  }}
+                                >
+                                  <Archive className="h-3.5 w-3.5" />
+                                </Button>
+                              ) : null}
                               <DropdownMenu>
                                 <DropdownMenuTrigger
                                   onClick={(event) => event.stopPropagation()}
@@ -283,6 +302,17 @@ export function ConversationSidebar({
                                   >
                                     <Pencil className="mr-2 h-4 w-4" /> Rename
                                   </DropdownMenuItem>
+                                  {isCommitConversation ? (
+                                    <DropdownMenuItem
+                                      className="cursor-pointer whitespace-nowrap"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        archiveRun(run);
+                                      }}
+                                    >
+                                      <Archive className="mr-2 h-4 w-4" /> Archive
+                                    </DropdownMenuItem>
+                                  ) : null}
                                   <DropdownMenuItem
                                     variant="destructive"
                                     className="cursor-pointer whitespace-nowrap"

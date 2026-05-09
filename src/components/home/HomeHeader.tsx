@@ -47,6 +47,7 @@ interface HomeHeaderProps {
   startRenamingRun: (run: SidebarRun) => void;
   commitRenamingRun: (runId: string) => void;
   cancelRenamingRun: () => void;
+  archiveRun: (run: SidebarRun) => void;
   deleteRun: (run: SidebarRun) => void;
   authEnabled: boolean;
   openPairDeviceDialog: () => void;
@@ -102,6 +103,7 @@ export function HomeHeader({
   startRenamingRun,
   commitRenamingRun,
   cancelRenamingRun,
+  archiveRun,
   deleteRun,
   authEnabled,
   openPairDeviceDialog,
@@ -206,6 +208,7 @@ export function HomeHeader({
             startRenamingRun={startRenamingRun}
             commitRenamingRun={commitRenamingRun}
             cancelRenamingRun={cancelRenamingRun}
+            archiveRun={archiveRun}
             deleteRun={deleteRun}
             authEnabled={authEnabled}
             openPairDeviceDialog={openPairDeviceDialog}

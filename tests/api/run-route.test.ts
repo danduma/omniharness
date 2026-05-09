@@ -136,6 +136,49 @@ describe("PATCH /api/runs/[id]", () => {
 });
 
 describe("POST /api/runs/[id]", () => {
+  it("archives a conversation without deleting its persisted records", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/archive-test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      title: "Commit changes",
+      status: "done",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "user",
+      content: "commit this",
+      createdAt: new Date(),
+    });
+
+    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "archive" }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(updatedRun).toBeTruthy();
+    expect(updatedRun?.archivedAt).toBeInstanceOf(Date);
+    expect(await db.select().from(messages).where(eq(messages.runId, runId))).toHaveLength(1);
+  });
+
   it("stops the supervisor run and cancels active workers", async () => {
     mockCancelAgent.mockClear();
     mockStopRunObserver.mockClear();

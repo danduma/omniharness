@@ -3,7 +3,7 @@ import { db } from "@/server/db";
 import { messages, plans, runs, accounts, workers, planItems, clarifications, executionEvents, supervisorInterventions, queuedConversationMessages, recoveryIncidents } from "@/server/db/schema";
 import { BRIDGE_URL } from "@/server/bridge-client";
 import { buildAppError } from "@/server/api-errors";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { syncConversationSessions } from "@/server/conversations/sync";
 import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
 import { requireApiSession } from "@/server/auth/guards";
@@ -45,7 +45,7 @@ async function fetchWithTimeout(url: string, timeoutMs: number) {
 async function readPersistedEventRecords(options: EventPayloadOptions = {}) {
   const selectedRunId = options.selectedRunId?.trim() || null;
   const allPlans = await db.select().from(plans).orderBy(desc(plans.createdAt));
-  const allRuns = await db.select().from(runs).orderBy(desc(runs.createdAt));
+  const allRuns = await db.select().from(runs).where(isNull(runs.archivedAt)).orderBy(desc(runs.createdAt));
   const selectedRun = selectedRunId ? allRuns.find((run) => run.id === selectedRunId) ?? null : null;
   const selectedPlanId = selectedRun?.planId ?? null;
 

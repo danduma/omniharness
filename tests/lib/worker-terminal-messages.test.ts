@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildWorkerTerminalUserMessages } from "@/lib/worker-terminal-messages";
+import { buildDirectTerminalUserMessages, buildWorkerTerminalUserMessages } from "@/lib/worker-terminal-messages";
 import type { AgentSnapshot, SupervisorInterventionRecord } from "@/app/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 
@@ -105,5 +105,54 @@ describe("buildWorkerTerminalUserMessages", () => {
     });
 
     expect(messages).toEqual([]);
+  });
+});
+
+describe("buildDirectTerminalUserMessages", () => {
+  it("drops stale direct prompts when compacted output no longer includes their surrounding worker activity", () => {
+    const messages = buildDirectTerminalUserMessages({
+      messages: [
+        {
+          id: "initial-prompt",
+          runId: "run-1",
+          role: "user",
+          kind: "checkpoint",
+          content: "Group all modified files into commits as they fit best",
+          createdAt: "2026-05-09T09:12:12.000Z",
+        },
+        {
+          id: "follow-up",
+          runId: "run-1",
+          role: "user",
+          kind: "checkpoint",
+          content: "yes add tmp to gitignore. check what else should go in there too",
+          createdAt: "2026-05-09T10:26:30.000Z",
+        },
+      ],
+      agent: buildAgent([
+        "2026-05-09T10:30:05.563Z",
+        "2026-05-09T10:30:18.423Z",
+      ]),
+    });
+
+    expect(messages.map((message) => message.id)).toEqual(["follow-up"]);
+  });
+
+  it("keeps direct prompts while no worker output has loaded yet", () => {
+    const messages = buildDirectTerminalUserMessages({
+      messages: [
+        {
+          id: "pending-prompt",
+          runId: "run-1",
+          role: "user",
+          kind: "checkpoint",
+          content: "Start the task",
+          createdAt: "2026-05-09T10:00:00.000Z",
+        },
+      ],
+      agent: buildAgent([]),
+    });
+
+    expect(messages.map((message) => message.id)).toEqual(["pending-prompt"]);
   });
 });

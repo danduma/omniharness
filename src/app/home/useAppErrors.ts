@@ -15,6 +15,7 @@ interface UseAppErrorsProps {
   autoCommitProjectError?: unknown;
   recoverRunError: unknown;
   renameRunError: unknown;
+  archiveRunError?: unknown;
   deleteRunError: unknown;
   stopSupervisorError?: unknown;
   stopWorkerError?: unknown;
@@ -36,6 +37,7 @@ export function useAppErrors({
   autoCommitProjectError,
   recoverRunError,
   renameRunError,
+  archiveRunError,
   deleteRunError,
   stopSupervisorError,
   stopWorkerError,
@@ -109,6 +111,13 @@ export function useAppErrors({
       }));
     }
 
+    if (archiveRunError) {
+      errors.push(buildInlineError(archiveRunError, {
+        source: "Runs",
+        action: "Archive",
+      }));
+    }
+
     if (deleteRunError) {
       errors.push(buildInlineError(deleteRunError, {
         source: "Runs",
@@ -134,6 +143,7 @@ export function useAppErrors({
   }, [
     autoCommitChatError,
     autoCommitProjectError,
+    archiveRunError,
     cancelQueuedMessageError,
     deleteRunError,
     projectFilesError,

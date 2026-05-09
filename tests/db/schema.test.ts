@@ -29,5 +29,6 @@ describe("db schema", () => {
     expect(schema.runs).toHaveProperty("specPath");
     expect(schema.runs).toHaveProperty("artifactPlanPath");
     expect(schema.runs).toHaveProperty("plannerArtifactsJson");
+    expect(schema.runs).toHaveProperty("archivedAt");
   });
 });

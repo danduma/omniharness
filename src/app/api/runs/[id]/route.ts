@@ -49,6 +49,8 @@ function actionLabelForPostAction(action: unknown) {
       return "Stop worker";
     case "stop_worker_terminal":
       return "Stop worker terminal";
+    case "archive":
+      return "Archive";
     case "retry":
     case "edit":
     case "fork":
@@ -183,6 +185,26 @@ export async function POST(
     const body = await req.json();
     const action = body?.action;
     postActionLabel = actionLabelForPostAction(action);
+    if (action === "archive") {
+      const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+      if (!run) {
+        return errorResponse("Run not found", {
+          status: 404,
+          source: "Runs",
+          action: "Archive",
+        });
+      }
+
+      const archivedAt = new Date();
+      await db.update(runs).set({
+        archivedAt,
+        updatedAt: archivedAt,
+      }).where(eq(runs.id, runId));
+      notifyEventStreamSubscribers();
+
+      return NextResponse.json({ ok: true, runId, archivedAt });
+    }
+
     if (action === "stop_supervisor") {
       const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
       if (!run) {

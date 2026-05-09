@@ -20,6 +20,7 @@ import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
+import { buildDirectTerminalUserMessages, type WorkerTerminalUserMessage } from "@/lib/worker-terminal-messages";
 import { COMPOSER_WORKER_OPTIONS, WORKER_OPTIONS } from "./constants";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
 import { parseBusyMessageAction, resolveBusyComposerBehavior, type BusyMessageAction } from "./busy-message-behavior";
@@ -469,6 +470,69 @@ export function HomeApp() {
     },
   });
 
+  const archiveRun = useMutation({
+    onMutate: (variables: { runId: string }) => {
+      const previousState = state;
+      const previousSelectedRunId = selectedRunId;
+      const previousRenamingRunId = renamingRunId;
+      const previousRenameValue = renameValue;
+      const previousRenameSource = renameSource;
+      const previousPendingCreatedSnapshot = pendingCreatedConversationSnapshotsRef.current.get(variables.runId);
+      const hadPendingCreatedSnapshot = pendingCreatedConversationSnapshotsRef.current.has(variables.runId);
+
+      pendingDeletedRunIdsRef.current.add(variables.runId);
+      pendingCreatedConversationSnapshotsRef.current.delete(variables.runId);
+      setState((current: typeof state) => removeRunFromHomeState(current, variables.runId));
+
+      if (selectedRunId === variables.runId) {
+        setSelectedRunId(null);
+      }
+      if (renamingRunId === variables.runId) {
+        setRenamingRunId(null);
+        setRenameValue("");
+        setRenameSource(null);
+      }
+
+      return {
+        previousState,
+        previousSelectedRunId,
+        previousRenamingRunId,
+        previousRenameValue,
+        previousRenameSource,
+        previousPendingCreatedSnapshot,
+        hadPendingCreatedSnapshot,
+      };
+    },
+    mutationFn: async ({ runId }: { runId: string }) => {
+      return requestJson(`/api/runs/${runId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "archive" }),
+      }, {
+        source: "Runs",
+        action: "Archive",
+      });
+    },
+    onSuccess: (_data, variables) => {
+      setState((current: typeof state) => removeRunFromHomeState(current, variables.runId));
+    },
+    onError: (_error, variables, context) => {
+      pendingDeletedRunIdsRef.current.delete(variables.runId);
+      if (!context) {
+        return;
+      }
+
+      if (context.hadPendingCreatedSnapshot && context.previousPendingCreatedSnapshot) {
+        pendingCreatedConversationSnapshotsRef.current.set(variables.runId, context.previousPendingCreatedSnapshot);
+      }
+      setState(context.previousState);
+      setSelectedRunId(context.previousSelectedRunId);
+      setRenamingRunId(context.previousRenamingRunId);
+      setRenameValue(context.previousRenameValue);
+      setRenameSource(context.previousRenameSource);
+    },
+  });
+
   const recoverRun = useMutation({
     mutationFn: async ({ runId, action, targetMessageId, content }: { runId: string; action: "retry" | "edit" | "fork"; targetMessageId: string; content?: string }) => {
       return requestJson<{ runId?: string }>(`/api/runs/${runId}`, {
@@ -901,6 +965,10 @@ export function HomeApp() {
     deleteRun.mutate({ runId: run.id });
   };
 
+  const handleArchiveRun = (run: SidebarRun) => {
+    archiveRun.mutate({ runId: run.id });
+  };
+
   const runs = (state.runs || []) as RunRecord[];
   const plans = (state.plans || []) as PlanRecord[];
   const selectedRun = selectedRunId ? runs.find((run) => run.id === selectedRunId) ?? null : null;
@@ -1210,13 +1278,14 @@ export function HomeApp() {
   const conversationTimelineActivityCount = conversationTimelineItems.filter((item) => item.type === "activity").length;
   const directConversationMessages = useMemo(() => {
     if (!isDirectConversation) {
-      return [] as MessageRecord[];
+      return [] as WorkerTerminalUserMessage[];
     }
 
-    return ((filteredMessages || []) as MessageRecord[])
-      .filter((message) => message.role === "user")
-      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-  }, [filteredMessages, isDirectConversation]);
+    return buildDirectTerminalUserMessages({
+      messages: (filteredMessages || []) as MessageRecord[],
+      agent: primaryConversationAgent,
+    });
+  }, [filteredMessages, isDirectConversation, primaryConversationAgent]);
   const pendingPermissionAgent = activeConversationAgents.find((agent) => (agent.pendingPermissions?.length ?? 0) > 0) ?? null;
   const erroredAgent = activeConversationAgents.find((agent) => {
     if (agent.state === "error") {
@@ -1299,7 +1368,7 @@ export function HomeApp() {
     ? plans.find((p) => p.id === runs.find((r) => r.id === selectedRunId)?.planId) ?? null
     : null;
   const activeConversationCwd = selectedRun?.projectPath || activePlan?.path || draftProjectPath || null;
-  const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, runCommandError: runCommand.error, sendConversationMessageError: sendConversationMessage.error, cancelQueuedMessageError: cancelQueuedMessage.error, autoCommitChatError: autoCommitChat.error, autoCommitProjectError: autoCommitProject.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, deleteRunError: deleteRun.error, stopSupervisorError: stopSupervisor.error, stopWorkerError: stopWorker.error ?? stopWorkerTerminalProcess.error });
+  const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, runCommandError: runCommand.error, sendConversationMessageError: sendConversationMessage.error, cancelQueuedMessageError: cancelQueuedMessage.error, autoCommitChatError: autoCommitChat.error, autoCommitProjectError: autoCommitProject.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, archiveRunError: archiveRun.error, deleteRunError: deleteRun.error, stopSupervisorError: stopSupervisor.error, stopWorkerError: stopWorker.error ?? stopWorkerTerminalProcess.error });
 
   useRunSelectionEffects({ scrollRef, state, selectedRunId, selectedRun, activeComposerMode, selectedCliAgent, setSelectedCliAgent, autoSelectedWorkerType, activeAllowedWorkerTypes, hydratedRunSelectionId, setHydratedRunSelectionId, selectedModel, setSelectedModel, selectedEffort, setSelectedEffort, availableWorkerTypes, configuredAllowedWorkerTypes, apiKeys, setApiKeys, setReadMarkers });
   const activeMention = getActiveMentionQuery(command, commandCursor);
@@ -1608,6 +1677,7 @@ export function HomeApp() {
     startRenamingRun: handleStartRenamingRun,
     commitRenamingRun: handleCommitRenamingRun,
     cancelRenamingRun: handleCancelRenamingRun,
+    archiveRun: handleArchiveRun,
     deleteRun: handleDeleteRun,
     authEnabled,
     openPairDeviceDialog: () => setShowPairDeviceDialog(true),

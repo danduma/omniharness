@@ -26,6 +26,7 @@ export const runs = sqliteTable('runs', {
   status: text('status').notNull(), // 'running', 'done', 'failed'
   failedAt: integer('failed_at', { mode: 'timestamp' }),
   lastError: text('last_error'),
+  archivedAt: integer('archived_at', { mode: 'timestamp' }),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });

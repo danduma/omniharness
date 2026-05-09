@@ -132,6 +132,58 @@ describe("GET /api/events", () => {
     expect(payload.supervisorInterventions).toEqual([]);
   });
 
+  it("omits archived conversations from event snapshots", async () => {
+    const visiblePlanId = randomUUID();
+    const archivedPlanId = randomUUID();
+    const visibleRunId = randomUUID();
+    const archivedRunId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values([
+      {
+        id: visiblePlanId,
+        path: "vibes/ad-hoc/visible-conversation.md",
+        status: "done",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: archivedPlanId,
+        path: "vibes/ad-hoc/archived-conversation.md",
+        status: "done",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+    await db.insert(runs).values([
+      {
+        id: visibleRunId,
+        planId: visiblePlanId,
+        status: "done",
+        title: "Visible conversation",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: archivedRunId,
+        planId: archivedPlanId,
+        status: "done",
+        title: "Archived conversation",
+        archivedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+    const response = await GET(new NextRequest("http://localhost/api/events?snapshot=1"));
+    const payload = await response.json();
+
+    expect(payload.runs.map((run: { id: string }) => run.id)).toContain(visibleRunId);
+    expect(payload.runs.map((run: { id: string }) => run.id)).not.toContain(archivedRunId);
+  });
+
   it("bounds selected-run live snapshots to recent compact terminal and event data", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

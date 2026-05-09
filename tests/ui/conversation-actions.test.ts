@@ -29,6 +29,19 @@ test("conversation rows expose rename and delete actions", () => {
   expect(pageSource).toContain('requestJson(`/api/runs/${runId}`');
 });
 
+test("commit conversation rows expose archive as an inline icon and overflow action", () => {
+  const sidebarSource = readSource("src/components/home/ConversationSidebar.tsx");
+
+  expect(sidebarSource).toContain("Archive");
+  expect(sidebarSource).toContain("isCommitConversation");
+  expect(sidebarSource).toContain('aria-label={`Archive ${run.title}`}');
+  expect(sidebarSource).toContain("archiveRun(run)");
+  expect(homeAppSource).toContain("const archiveRun = useMutation({");
+  expect(homeAppSource).toContain('body: JSON.stringify({ action: "archive" })');
+  expect(homeAppSource).toContain('action: "Archive"');
+  expect(homeAppSource).toContain("archiveRun: handleArchiveRun");
+});
+
 test("top bar exposes an auto commit action for the selected chat", () => {
   expect(pageSource).toContain("AUTO_COMMIT_CHAT_PROMPT");
   expect(pageSource).toContain("AUTO_COMMIT_CHAT_PUSH_PROMPT");

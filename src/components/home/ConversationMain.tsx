@@ -5,7 +5,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AgentSurface } from "@/components/AgentSurface";
 import { MarkdownContent } from "@/components/MarkdownContent";
-import { Terminal } from "@/components/Terminal";
+import { Terminal, type TerminalUserMessage } from "@/components/Terminal";
 import { PlanningArtifactsPanel } from "@/components/PlanningArtifactsPanel";
 import { conversationMainManager } from "@/components/component-state-managers";
 import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
@@ -284,7 +284,7 @@ interface ConversationMainProps {
   isImplementationConversation: boolean;
   appErrors: AppErrorDescriptor[];
   conversationFailure: NoticeDescriptor | null;
-  directConversationMessages: MessageRecord[];
+  directConversationMessages: TerminalUserMessage[];
   expandedDirectMessageIds: Set<string>;
   toggleDirectMessageExpansion: (messageId: string) => void;
   primaryConversationAgent: AgentSnapshot | null;

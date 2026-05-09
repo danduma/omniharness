@@ -16,6 +16,7 @@ export type RunRecord = {
   updatedAt?: string | null;
   failedAt?: string | null;
   lastError?: string | null;
+  archivedAt?: string | null;
   projectPath: string | null;
   title: string | null;
   preferredWorkerType?: string | null;
