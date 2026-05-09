@@ -1,5 +1,5 @@
 import type React from "react";
-import { ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Trash2, Workflow } from "lucide-react";
+import { Bolt, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -12,12 +12,12 @@ import type { SidebarGroup, SidebarRun } from "@/app/home/types";
 
 const CONVERSATION_VISUAL_CONFIG: Record<ConversationVisualKind, {
   label: string;
-  Icon: typeof Workflow;
+  Icon: typeof Bolt;
   className: string;
 }> = {
   supervisor: {
     label: "Supervisor",
-    Icon: Workflow,
+    Icon: Bolt,
     className: "border-[#858a68]/25 bg-[#858a68]/10 text-[#5f6548] dark:border-[#c5ca9a]/25 dark:bg-[#c5ca9a]/10 dark:text-[#c5ca9a]",
   },
   direct: {
@@ -216,7 +216,7 @@ export function ConversationSidebar({
                         key={run.id}
                         onClick={() => selectRun(run.id)}
                         className={cn(
-                          "group flex min-w-0 cursor-pointer overflow-hidden rounded-xl py-1.5 pl-8 pr-2 text-sm transition-colors",
+                          "group flex min-w-0 cursor-pointer overflow-hidden rounded-xl py-1.5 pl-4 pr-2 text-sm transition-colors",
                           selectedRunId === run.id
                             ? "bg-[#e2e1df] text-[#1f1f1f] dark:bg-white/[0.08] dark:text-zinc-100"
                             : "text-[#424242] hover:bg-[#e8e7e5] hover:text-[#1f1f1f] dark:text-zinc-300 dark:hover:bg-white/[0.045] dark:hover:text-zinc-100",

@@ -127,6 +127,7 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain("const stoppableConversationWorkerId = busyConversationWorkerId ?? pendingConversationWorkerId");
   expect(pageSource).toContain("const isConversationStoppable = isSupervisorRunning || Boolean(stoppableConversationWorkerId)");
   expect(pageSource).toContain('const isStopButtonVisible = composerBehavior.buttonKind === "stop"');
+  expect(pageSource).toContain('const isSubmitButtonDisabled = isStopButtonVisible\n    ? false');
   expect(pageSource).toContain("resolveBusyComposerBehavior({");
   expect(pageSource).toContain("disabled={isSubmitButtonDisabled}");
   expect(pageSource).toContain("aria-label={composerBehavior.ariaLabel}");
@@ -136,6 +137,7 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain("if (selectedRunId) {");
   expect(pageSource).toContain("sendConversationMessage.mutate({ runId: selectedRunId, content, attachments, busyAction })");
   expect(pageSource).toContain('composerBehavior.submitAction === "send_queue"');
+  expect(pageSource).toContain("isSendButtonBusy ? (");
   expect(pageSource).toContain("<Square className=\"h-[13.6px] w-[13.6px] fill-current\" />");
 });
 

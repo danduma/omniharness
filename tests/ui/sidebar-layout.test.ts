@@ -71,7 +71,7 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#f1f1f0] dark:bg-muted/30');
   expect(pageSource).toContain('min-h-0 flex-1 overflow-hidden');
   expect(pageSource).toContain('mt-auto shrink-0 border-t border-border/60 bg-background/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-background/80');
-  expect(pageSource).toContain('"group flex min-w-0 cursor-pointer overflow-hidden rounded-xl py-1.5 pl-8 pr-2 text-sm transition-colors"');
+  expect(pageSource).toContain('"group flex min-w-0 cursor-pointer overflow-hidden rounded-xl py-1.5 pl-4 pr-2 text-sm transition-colors"');
   expect(pageSource).toContain('"bg-[#e2e1df] text-[#1f1f1f] dark:bg-white/[0.08] dark:text-zinc-100"');
   expect(pageSource).toContain('"text-[#424242] hover:bg-[#e8e7e5] hover:text-[#1f1f1f] dark:text-zinc-300 dark:hover:bg-white/[0.045] dark:hover:text-zinc-100"');
   expect(pageSource).not.toContain('ml-3 group flex min-w-0 cursor-pointer gap-2 overflow-hidden rounded-lg border px-3 py-1.5 text-sm transition-colors');
@@ -528,7 +528,7 @@ test("send button swaps to a spinner while a command submission is pending", () 
   expect(pageSource).toContain("const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || sendQueuedMessageNow.isPending");
   expect(pageSource).toContain("const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;");
   expect(pageSource).toContain('disabled={isSubmitButtonDisabled}');
-  expect(pageSource).toContain('{isStoppingConversation || isSendButtonBusy ? (');
+  expect(pageSource).toContain('{isSendButtonBusy ? (');
   expect(pageSource).toContain('<LoaderCircle className="h-[17px] w-[17px] animate-spin" />');
   expect(pageSource).toContain(') : isStopButtonVisible ? (');
   expect(pageSource).toContain('<Square className="h-[13.6px] w-[13.6px] fill-current" />');

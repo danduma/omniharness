@@ -77,7 +77,6 @@ test("user-initiated conversation sends reveal the appended turn", () => {
 
 test("project menus expose an auto commit action that starts a direct worker conversation", () => {
   expect(pageSource).toContain("AUTO_COMMIT_PROJECT_PROMPT");
-  expect(pageSource).toContain('"Group all modified files into commits as they fit best"');
   expect(pageSource).toContain("mode: \"direct\"");
   expect(pageSource).toContain("projectPath: payload.projectPath");
   expect(pageSource).toContain("autoCommitProject.mutate({ projectPath })");

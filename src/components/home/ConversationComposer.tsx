@@ -46,7 +46,6 @@ interface ConversationComposerProps {
   setSelectedEffort: (value: string) => void;
   isComposerSubmitting: boolean;
   isConversationStoppable: boolean;
-  isStoppingConversation: boolean;
   composerBehavior: BusyComposerBehavior;
   queuedMessages: QueuedConversationMessageRecord[];
   cancellingQueuedMessageIds: Set<string>;
@@ -90,7 +89,6 @@ export function ConversationComposer({
   selectedEffort,
   setSelectedEffort,
   isComposerSubmitting,
-  isStoppingConversation,
   composerBehavior,
   queuedMessages,
   cancellingQueuedMessageIds,
@@ -107,7 +105,7 @@ export function ConversationComposer({
   const isStopButtonVisible = composerBehavior.buttonKind === "stop";
   const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;
   const isSubmitButtonDisabled = isStopButtonVisible
-    ? isStoppingConversation
+    ? false
     : isComposerSubmitting || (!trimmedCommand && !hasAttachments);
 
   return (
@@ -385,7 +383,7 @@ export function ConversationComposer({
                   : "bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary/[0.45]",
               )}
             >
-              {isStoppingConversation || isSendButtonBusy ? (
+              {isSendButtonBusy ? (
                 <LoaderCircle className="h-[17px] w-[17px] animate-spin" />
               ) : isStopButtonVisible ? (
                 <Square className="h-[13.6px] w-[13.6px] fill-current" />

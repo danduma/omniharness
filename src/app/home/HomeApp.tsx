@@ -1361,8 +1361,7 @@ export function HomeApp() {
     });
   };
 
-  const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || sendQueuedMessageNow.isPending || promotePlanningConversation.isPending || stopSupervisor.isPending || stopWorker.isPending;
-  const isStoppingConversation = stopSupervisor.isPending || stopWorker.isPending;
+  const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || sendQueuedMessageNow.isPending || promotePlanningConversation.isPending;
   const busyMessageAction = parseBusyMessageAction(apiKeys.BUSY_MESSAGE_ACTION);
   const composerBehavior = resolveBusyComposerBehavior({
     hasBusyConversation: isSupervisorRunning || Boolean(stoppableConversationWorkerId),
@@ -1527,7 +1526,6 @@ export function HomeApp() {
           setSelectedEffort={setSelectedEffort}
           isComposerSubmitting={isComposerSubmitting}
           isConversationStoppable={isConversationStoppable}
-          isStoppingConversation={isStoppingConversation}
           composerBehavior={composerBehavior}
           queuedMessages={busyMessageQueueState.queuedMessages}
           cancellingQueuedMessageIds={busyMessageQueueState.cancellingMessageIds}
