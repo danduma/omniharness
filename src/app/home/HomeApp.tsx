@@ -16,6 +16,7 @@ import { type AppErrorDescriptor, mergeAppErrors, requestJson } from "@/lib/app-
 import type { ChatAttachment, PendingChatAttachment } from "@/lib/chat-attachments";
 import { buildConversationGroups } from "@/lib/conversations";
 import { buildWorkerLists, isWorkerActiveStatus, mergeWorkerLiveStatus, normalizeWorkerStatus, type ConversationWorkerRecord } from "@/lib/conversation-workers";
+import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
@@ -24,13 +25,14 @@ import { busyMessageQueueManager } from "./BusyMessageQueueManager";
 import { parseBusyMessageAction, resolveBusyComposerBehavior, type BusyMessageAction } from "./busy-message-behavior";
 import type { AgentSnapshot, AuthSessionResponse, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, QueuedConversationMessageRecord, RunRecord, SettingsResponse, SidebarGroup, SidebarRun, SupervisorInterventionRecord, WorkerCatalogResponse, WorkerType } from "./types";
 import { EventStreamStateManager } from "./EventStreamStateManager";
-import { homeUiSetters, homeUiStateManager, INITIAL_EVENT_STREAM_STATE } from "./HomeUiStateManager";
+import { homeUiSetters, homeUiStateManager, INITIAL_EVENT_STREAM_STATE, type AutoCommitChatAction } from "./HomeUiStateManager";
 import { settingsDraftManager } from "./SettingsDraftManager";
 import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getLatestUnresolvedWorkerStuckEvent, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
 import { useAppErrors } from "./useAppErrors";
 import { useConversationExecutionStatus } from "./useConversationExecutionStatus";
 import { useHomeLifecycle } from "./useHomeLifecycle";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import { useRunRecoveryState } from "./useRunRecoveryState";
 import { useRunSelectionEffects } from "./useRunSelectionEffects";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 
@@ -75,7 +77,11 @@ function resolveRepoName(projectPath: string | null) {
 }
 
 const AUTO_COMMIT_CHAT_PROMPT = "Create a git commit including the changes you've made";
-const AUTO_COMMIT_PROJECT_PROMPT = "Group all modified files into commits as they fit best";
+const AUTO_COMMIT_CHAT_PUSH_PROMPT = "Create a git commit including the changes you've made, then push the current branch";
+
+function getAutoCommitChatPrompt(action: AutoCommitChatAction) {
+  return action === "commit-push" ? AUTO_COMMIT_CHAT_PUSH_PROMPT : AUTO_COMMIT_CHAT_PROMPT;
+}
 
 export function HomeApp() {
   const {
@@ -114,6 +120,7 @@ export function HomeApp() {
     selectedCliAgent,
     selectedModel,
     selectedEffort,
+    autoCommitChatAction,
     hydratedRunSelectionId,
     attachments,
     pairTokenFromUrl,
@@ -159,6 +166,7 @@ export function HomeApp() {
     setSelectedCliAgent,
     setSelectedModel,
     setSelectedEffort,
+    setAutoCommitChatAction,
     setHydratedRunSelectionId,
     addAttachmentFiles,
     addPastedImages,
@@ -345,7 +353,7 @@ export function HomeApp() {
     return reconcileQueuedMessages(nextState);
   }, []);
 
-  useHomeLifecycle({ appUnlocked, setHasReceivedInitialEventStreamPayload, setState, setRuntimeErrors, routeReady, setRouteReady, authEnabled, authConfigurationError, pairTokenFromUrl, setPairTokenFromUrl, redeemPairMutation, pairRedeemAttempted, setPairRedeemAttempted, selectedRunId, setSelectedRunId, draftProjectPath, setDraftProjectPath, setSelectedConversationMode, setSelectedCliAgent, setSelectedModel, setSelectedEffort, setReadMarkers, readMarkers, collapsedProjectPaths, setCollapsedProjectPaths, leftSidebarWidth, setLeftSidebarWidth, rightSidebarWidth, setRightSidebarWidth, isResizingLeftSidebar, setIsResizingLeftSidebar, isResizingRightSidebar, setIsResizingRightSidebar, selectedConversationMode, selectedCliAgent, selectedModel, selectedEffort, themeMode, setThemeMode, filterEventStreamState });
+  useHomeLifecycle({ appUnlocked, setHasReceivedInitialEventStreamPayload, setState, setRuntimeErrors, routeReady, setRouteReady, authEnabled, authConfigurationError, pairTokenFromUrl, setPairTokenFromUrl, redeemPairMutation, pairRedeemAttempted, setPairRedeemAttempted, selectedRunId, setSelectedRunId, draftProjectPath, setDraftProjectPath, setSelectedConversationMode, setSelectedCliAgent, setSelectedModel, setSelectedEffort, setAutoCommitChatAction, setReadMarkers, readMarkers, collapsedProjectPaths, setCollapsedProjectPaths, leftSidebarWidth, setLeftSidebarWidth, rightSidebarWidth, setRightSidebarWidth, isResizingLeftSidebar, setIsResizingLeftSidebar, isResizingRightSidebar, setIsResizingRightSidebar, selectedConversationMode, selectedCliAgent, selectedModel, selectedEffort, autoCommitChatAction, themeMode, setThemeMode, filterEventStreamState });
   const isHydratingConversations = appUnlocked && !hasReceivedInitialEventStreamPayload;
 
   useEffect(() => {
@@ -498,6 +506,15 @@ export function HomeApp() {
     },
   });
 
+  const resumeRunRecovery = useMutation({
+    mutationFn: async ({ runId }: { runId: string }) => requestJson<{ ok: true; runId: string; recovery?: unknown }>(`/api/runs/${runId}/resume`, {
+      method: "POST",
+    }, {
+      source: "Runs",
+      action: "Resume run",
+    }),
+  });
+
   const runCommand = useMutation({
     mutationFn: async (payload: { content: string; attachments: PendingChatAttachment[] }) => {
       const isAutoWorkerSelection = selectedCliAgent === "auto";
@@ -617,11 +634,11 @@ export function HomeApp() {
   });
 
   const autoCommitChat = useMutation({
-    mutationFn: async ({ runId }: { runId: string }) => {
+    mutationFn: async ({ runId, action }: { runId: string; action: AutoCommitChatAction }) => {
       return requestJson<{ ok: true; message?: MessageRecord }>(`/api/conversations/${runId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: AUTO_COMMIT_CHAT_PROMPT }),
+        body: JSON.stringify({ content: getAutoCommitChatPrompt(action) }),
       }, {
         source: "Conversations",
         action: "Auto commit chat",
@@ -799,12 +816,13 @@ export function HomeApp() {
     fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updatedKeys) });
   };
 
-  const handleAutoCommitChat = () => {
+  const handleAutoCommitChat = (action: AutoCommitChatAction = autoCommitChatAction) => {
     if (!selectedRunId) {
       return;
     }
 
-    autoCommitChat.mutate({ runId: selectedRunId });
+    setAutoCommitChatAction(action);
+    autoCommitChat.mutate({ runId: selectedRunId, action });
   };
 
   const handleAutoCommitProject = (projectPath: string) => {
@@ -1054,6 +1072,10 @@ export function HomeApp() {
         .filter((message) => message.role === "user")
         .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null
     : null;
+  const { selectedRecoveryState, selectedRecoveryIncidents } = useRunRecoveryState({
+    state,
+    selectedRunId,
+  });
   const liveThoughts = useMemo(() => {
     const seen = new Set<string>();
 
@@ -1359,6 +1381,11 @@ export function HomeApp() {
     recoverRun.mutate({ runId: selectedRunId, action: "retry", targetMessageId: messageId });
   };
 
+  const handleResumeRunRecovery = () => {
+    if (!selectedRunId) return;
+    resumeRunRecovery.mutate({ runId: selectedRunId });
+  };
+
   function toggleDirectMessageExpansion(messageId: string) {
     setExpandedDirectMessageIds((current) => {
       const next = new Set(current);
@@ -1629,6 +1656,7 @@ export function HomeApp() {
           conversationAgents={conversationAgents}
           supervisorInterventions={selectedRunSupervisorInterventions}
           onAutoCommitChat={handleAutoCommitChat}
+          autoCommitChatAction={autoCommitChatAction}
           isAutoCommitChatPending={autoCommitChat.isPending}
           onStopWorker={(workerId) => {
             if (selectedRunId) {
@@ -1665,10 +1693,14 @@ export function HomeApp() {
           promotePlanningConversation={promotePlanningConversation}
           conversationTimelineItems={conversationTimelineItems}
           recoverRun={recoverRun}
+          recoveryState={selectedRecoveryState}
+          recoveryIncidents={selectedRecoveryIncidents}
+          resumeRunRecovery={resumeRunRecovery}
           showRecoverableRunningState={showRecoverableRunningState}
           hasStuckWorker={hasStuckWorker}
           latestUserCheckpoint={latestUserCheckpoint}
           handleRetryMessage={handleRetryMessage}
+          handleResumeRunRecovery={handleResumeRunRecovery}
           handleStartEditingMessage={handleStartEditingMessage}
           handleForkMessage={handleForkMessage}
           editingMessageId={editingMessageId}

@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/server/db";
 import { eq } from "drizzle-orm";
 import { messages, plans, runs, workerCounters, workers } from "@/server/db/schema";
+import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
 
 const {
   mockStartSupervisorRun,
@@ -402,6 +403,28 @@ describe("POST /api/conversations", () => {
       resolveStartupRef[0]?.();
       await responsePromise.catch(() => null);
     }
+  });
+
+  it("keeps project auto-commit conversations titled Commit", async () => {
+    const request = new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command: AUTO_COMMIT_PROJECT_PROMPT,
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+      }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+
+    expect(payload.run.title).toBe("Commit");
+    expect(createdRun?.title).toBe("Commit");
+    expect(mockQueueConversationTitleGeneration).not.toHaveBeenCalled();
   });
 
   it("returns a direct conversation before the first worker turn completes", async () => {

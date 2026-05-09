@@ -16,6 +16,7 @@ import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
+import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
 import { serializeMessageRecord } from "./message-records";
 
 
@@ -55,6 +56,14 @@ function buildEmptyWorkerOutputMessage(snapshot: AgentRecord | null, responseSta
 
 function isAgentBusyError(error: unknown) {
   return /\bagent is busy\b/i.test(formatErrorMessage(error));
+}
+
+function getDefaultConversationTitle(mode: ConversationMode, command: string) {
+  if (mode === "direct" && command === AUTO_COMMIT_PROJECT_PROMPT) {
+    return "Commit";
+  }
+
+  return "New conversation";
 }
 
 async function buildCreatedConversationResponse(args: {
@@ -255,6 +264,7 @@ export async function createConversation(args: {
   const preferredWorkerType = args.preferredWorkerType?.trim()
     ? normalizeWorkerType(args.preferredWorkerType)
     : null;
+  const defaultTitle = getDefaultConversationTitle(mode, command);
   const allowedWorkerTypes = parseAllowedWorkerTypes(
     Array.isArray(args.allowedWorkerTypes)
       ? JSON.stringify(args.allowedWorkerTypes)
@@ -279,7 +289,7 @@ export async function createConversation(args: {
     planId,
     mode,
     projectPath,
-    title: "New conversation",
+    title: defaultTitle,
     preferredWorkerType,
     preferredWorkerModel: args.preferredWorkerModel?.trim() || null,
     preferredWorkerEffort: args.preferredWorkerEffort?.trim().toLowerCase() || null,
@@ -363,15 +373,19 @@ export async function createConversation(args: {
       });
     }
 
-    queueConversationTitleGeneration({ runId, command }).catch((error) => {
-      console.error("Conversation title generation failed:", error);
-    });
+    if (defaultTitle === "New conversation") {
+      queueConversationTitleGeneration({ runId, command }).catch((error) => {
+        console.error("Conversation title generation failed:", error);
+      });
+    }
     return response;
   }
 
-  queueConversationTitleGeneration({ runId, command }).catch((error) => {
-    console.error("Conversation title generation failed:", error);
-  });
+  if (defaultTitle === "New conversation") {
+    queueConversationTitleGeneration({ runId, command }).catch((error) => {
+      console.error("Conversation title generation failed:", error);
+    });
+  }
 
   return buildCreatedConversationResponse({ planId, runId, messageId: initialMessageId, mode });
 }

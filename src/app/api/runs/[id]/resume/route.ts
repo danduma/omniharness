@@ -19,10 +19,10 @@ export async function POST(
     }
 
     const { id: runId } = await params;
-    await resumeSupervisorRun(runId);
+    const result = await resumeSupervisorRun(runId);
     notifyEventStreamSubscribers();
 
-    return NextResponse.json({ ok: true, runId });
+    return NextResponse.json({ ok: true, runId, recovery: result });
   } catch (error: unknown) {
     return errorResponse(error, {
       status: 500,

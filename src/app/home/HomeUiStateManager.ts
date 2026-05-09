@@ -7,6 +7,7 @@ import type { CreatedConversationSnapshot } from "./utils";
 
 export type ThemeMode = "day" | "night";
 export type RenameSource = "sidebar" | "topbar";
+export type AutoCommitChatAction = "commit" | "commit-push";
 
 export const INITIAL_EVENT_STREAM_STATE: EventStreamState = {
   messages: [],
@@ -20,6 +21,8 @@ export const INITIAL_EVENT_STREAM_STATE: EventStreamState = {
   executionEvents: [],
   supervisorInterventions: [],
   queuedMessages: [],
+  recoveryIncidents: [],
+  recoveryState: null,
   frontendErrors: [],
 };
 
@@ -59,6 +62,7 @@ type HomeUiState = {
   selectedCliAgent: ComposerWorkerOption;
   selectedModel: string;
   selectedEffort: string;
+  autoCommitChatAction: AutoCommitChatAction;
   hydratedRunSelectionId: string | null;
   attachments: PendingChatAttachment[];
   pairTokenFromUrl: string | null;
@@ -105,6 +109,7 @@ const initialHomeUiState: HomeUiState = {
   selectedCliAgent: "auto",
   selectedModel: "gpt-5.4",
   selectedEffort: "High",
+  autoCommitChatAction: "commit",
   hydratedRunSelectionId: null,
   attachments: [],
   pairTokenFromUrl: null,
@@ -232,6 +237,7 @@ export const homeUiSetters = {
   setSelectedCliAgent: homeUiStateManager.createSetter("selectedCliAgent"),
   setSelectedModel: homeUiStateManager.createSetter("selectedModel"),
   setSelectedEffort: homeUiStateManager.createSetter("selectedEffort"),
+  setAutoCommitChatAction: homeUiStateManager.createSetter("autoCommitChatAction"),
   setHydratedRunSelectionId: homeUiStateManager.createSetter("hydratedRunSelectionId"),
   setAttachments: homeUiStateManager.createSetter("attachments"),
   addAttachmentFiles: (files: File[]) => homeUiStateManager.addAttachmentFiles(files),

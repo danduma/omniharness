@@ -70,6 +70,32 @@ export type QueuedConversationMessageRecord = {
   updatedAt: string;
   deliveredAt?: string | null;
 };
+export type RecoveryIncidentRecord = {
+  id: string;
+  runId: string;
+  workerId?: string | null;
+  queuedMessageId?: string | null;
+  kind: string;
+  status: string;
+  autoAttemptCount: number;
+  lastError?: string | null;
+  details?: string | null;
+  detectedAt: string;
+  updatedAt: string;
+  resolvedAt?: string | null;
+};
+export type RunRecoveryState = {
+  kind: string;
+  status: string;
+  workerId?: string | null;
+  queuedMessageId?: string | null;
+  message?: string | null;
+  recommendedAction?: string | null;
+  lastError?: string | null;
+  attemptCount?: number | null;
+  nextAttemptAt?: string | null;
+  policyDecision?: string | null;
+};
 export type AgentSnapshot = {
   name: string;
   type?: string;
@@ -173,6 +199,8 @@ export type EventStreamState = {
   executionEvents: ExecutionEventRecord[];
   supervisorInterventions: SupervisorInterventionRecord[];
   queuedMessages?: QueuedConversationMessageRecord[];
+  recoveryIncidents?: RecoveryIncidentRecord[];
+  recoveryState?: RunRecoveryState | null;
   frontendErrors?: AppErrorDescriptor[];
 };
 export type SettingsTab = "general" | "models" | "agents" | "runtime";

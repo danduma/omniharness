@@ -11,10 +11,13 @@ import { conversationMainManager } from "@/components/component-state-managers";
 import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
 import { extractLatestPlainTextTurn } from "@/lib/agent-output";
 import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, NoticeDescriptor, RunRecord } from "@/app/home/types";
+import type { RecoveryIncidentRecord, RunRecoveryState } from "@/app/home/types";
 import { formatExecutionTimestamp, getExecutionEventDetailRows, summarizeExecutionEvent, type ConversationTimelineItem } from "@/app/home/utils";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { ErrorNotice } from "./ErrorNotice";
+import { RecoveryIncidentInspector } from "./RecoveryIncidentInspector";
+import { RunRecoveryNotice } from "./RunRecoveryNotice";
 import { UserInputMessage, type UserInputMessageAction } from "./UserInputMessage";
 
 interface ConversationExecutionStatusProps {
@@ -291,10 +294,14 @@ interface ConversationMainProps {
   };
   conversationTimelineItems: ConversationTimelineItem[];
   recoverRun: { isPending: boolean };
+  recoveryState: RunRecoveryState | null;
+  recoveryIncidents: RecoveryIncidentRecord[];
+  resumeRunRecovery: { isPending: boolean };
   showRecoverableRunningState: boolean;
   hasStuckWorker: boolean;
   latestUserCheckpoint: MessageRecord | null;
   handleRetryMessage: (messageId: string) => void;
+  handleResumeRunRecovery: () => void;
   handleStartEditingMessage: (message: Pick<MessageRecord, "id" | "content">) => void;
   handleForkMessage: (message: Pick<MessageRecord, "id" | "content">) => void;
   editingMessageId: string | null;
@@ -368,10 +375,14 @@ export function ConversationMain({
   promotePlanningConversation,
   conversationTimelineItems,
   recoverRun,
+  recoveryState,
+  recoveryIncidents,
+  resumeRunRecovery,
   showRecoverableRunningState,
   hasStuckWorker,
   latestUserCheckpoint,
   handleRetryMessage,
+  handleResumeRunRecovery,
   handleStartEditingMessage,
   handleForkMessage,
   editingMessageId,
@@ -496,6 +507,14 @@ export function ConversationMain({
             />
           ) : null}
 
+          {isImplementationConversation ? (
+            <RunRecoveryNotice
+              recoveryState={recoveryState}
+              isResuming={resumeRunRecovery.isPending}
+              onResume={handleResumeRunRecovery}
+            />
+          ) : null}
+
           {conversationTimelineItems.length > 0 ? (
             conversationTimelineItems.map((item: ConversationTimelineItem) => {
               if (item.type === "activity") {
@@ -596,6 +615,13 @@ export function ConversationMain({
             <ConversationRunLog
               runId={selectedRunId}
               executionEvents={executionEvents}
+            />
+          ) : null}
+
+          {isImplementationConversation ? (
+            <RecoveryIncidentInspector
+              runId={selectedRunId}
+              incidents={recoveryIncidents}
             />
           ) : null}
 

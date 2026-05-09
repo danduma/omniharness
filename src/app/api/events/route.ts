@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/server/db";
-import { messages, plans, runs, accounts, workers, planItems, clarifications, executionEvents, supervisorInterventions, queuedConversationMessages } from "@/server/db/schema";
+import { messages, plans, runs, accounts, workers, planItems, clarifications, executionEvents, supervisorInterventions, queuedConversationMessages, recoveryIncidents } from "@/server/db/schema";
 import { BRIDGE_URL } from "@/server/bridge-client";
 import { buildAppError } from "@/server/api-errors";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
@@ -74,6 +74,12 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}) {
       ))
       .orderBy(desc(queuedConversationMessages.createdAt))
     : [];
+  const allRecoveryIncidents = selectedRunId
+    ? await db.select().from(recoveryIncidents)
+      .where(eq(recoveryIncidents.runId, selectedRunId))
+      .orderBy(desc(recoveryIncidents.updatedAt))
+      .limit(20)
+    : [];
 
   return {
     msgs,
@@ -86,6 +92,7 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}) {
     allExecutionEvents,
     allSupervisorInterventions,
     allQueuedMessages,
+    allRecoveryIncidents,
   };
 }
 
@@ -213,6 +220,57 @@ function compactSupervisorIntervention(intervention: PersistedEventRecords["allS
     ...intervention,
     prompt: truncateText(intervention.prompt, SUPERVISOR_INTERVENTION_TEXT_LIMIT),
     summary: truncateText(intervention.summary, SUPERVISOR_INTERVENTION_TEXT_LIMIT),
+  };
+}
+
+function compactRecoveryIncident(incident: PersistedEventRecords["allRecoveryIncidents"][number]) {
+  return {
+    id: incident.id,
+    runId: incident.runId,
+    workerId: incident.workerId,
+    queuedMessageId: incident.queuedMessageId,
+    kind: incident.kind,
+    status: incident.status,
+    autoAttemptCount: incident.autoAttemptCount,
+    lastError: truncateText(incident.lastError, 2_000),
+    details: compactExecutionEventDetails(incident.details),
+    detectedAt: incident.detectedAt,
+    updatedAt: incident.updatedAt,
+    resolvedAt: incident.resolvedAt,
+  };
+}
+
+function deriveRecoveryState(incidents: PersistedEventRecords["allRecoveryIncidents"]) {
+  const active = incidents.find((incident) => (
+    incident.status === "open"
+    || incident.status === "recovering"
+    || incident.status === "needs_user"
+    || incident.status === "failed"
+  ));
+  if (!active) {
+    return null;
+  }
+
+  let parsedDetails: Record<string, unknown> = {};
+  try {
+    parsedDetails = active.details ? JSON.parse(active.details) as Record<string, unknown> : {};
+  } catch {
+    parsedDetails = {};
+  }
+
+  return {
+    kind: String(parsedDetails.recoveryState ?? active.kind),
+    status: active.status,
+    workerId: active.workerId,
+    queuedMessageId: active.queuedMessageId,
+    message: typeof parsedDetails.reason === "string" ? parsedDetails.reason : active.lastError,
+    recommendedAction: String(parsedDetails.recommendedAction ?? (
+      active.status === "recovering" ? "none" : "manual_resume"
+    )),
+    lastError: active.lastError,
+    attemptCount: active.autoAttemptCount,
+    nextAttemptAt: typeof parsedDetails.nextAttemptAt === "string" ? parsedDetails.nextAttemptAt : null,
+    policyDecision: typeof parsedDetails.decision === "string" ? parsedDetails.decision : null,
   };
 }
 
@@ -451,6 +509,9 @@ function buildEventPayload(
     queuedMessages: filterSelectedRunScopedRecords(records.allQueuedMessages, runIds)
       .filter((message) => message.status === "pending" || message.status === "delivering")
       .map(serializeQueuedConversationMessage),
+    recoveryIncidents: filterSelectedRunScopedRecords(records.allRecoveryIncidents, runIds)
+      .map(compactRecoveryIncident),
+    recoveryState: runIds ? deriveRecoveryState(records.allRecoveryIncidents) : null,
     frontendErrors,
   };
 }

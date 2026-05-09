@@ -21,7 +21,7 @@ export type ConversationWorkerAgent = {
   bridgeMissing?: boolean;
 };
 
-const ACTIVE_WORKER_STATES = new Set(["starting", "working", "idle", "stuck"]);
+const ACTIVE_WORKER_STATES = new Set(["starting", "working", "idle", "stuck", "recovering"]);
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 

@@ -80,6 +80,16 @@ export const DEFAULT_SERVER_SETTINGS: Record<string, string> = {
   WORKER_ALLOWED_TYPES: "",
   WORKER_YOLO_MODE: "true",
   BUSY_MESSAGE_ACTION: "queue",
+  RECOVERY_POLICY: JSON.stringify({
+    autoRecoverImplementationRuns: true,
+    autoRecoverDirectRuns: false,
+    maxAutoAttemptsPerIncident: 3,
+    baseBackoffMs: 5000,
+    maxBackoffMs: 60000,
+    sessionResumeFirst: true,
+    restartFromCheckpointWhenSessionMissing: true,
+    preserveQueuedMessages: true,
+  }),
   PROJECTS: "[]",
 };
 export const WORKER_OPTIONS: Array<{ value: WorkerType; label: string }> = [
@@ -123,6 +133,7 @@ export const COMPOSER_WORKER_STORAGE_KEY = "omni-composer-worker";
 export const COMPOSER_MODEL_STORAGE_KEY = "omni-composer-model";
 export const COMPOSER_EFFORT_STORAGE_KEY = "omni-composer-effort";
 export const COMPOSER_MODE_STORAGE_KEY = "omni-composer-mode";
+export const AUTO_COMMIT_CHAT_ACTION_STORAGE_KEY = "omni-auto-commit-chat-action";
 export const RUN_PATH_PATTERN = /^\/session\/([0-9a-fA-F]{12}|[0-9a-fA-F-]{36})\/?$/;
 
 export const LLM_PROVIDER_OPTIONS = [

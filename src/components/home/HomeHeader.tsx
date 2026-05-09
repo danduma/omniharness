@@ -1,9 +1,17 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
-import { AlertTriangle, GitCommitHorizontal, Menu, PanelLeft, PanelRight, Pencil } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, GitCommitHorizontal, Menu, PanelLeft, PanelRight, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { PRODUCT_NAME } from "@/app/home/constants";
+import type { AutoCommitChatAction } from "@/app/home/HomeUiStateManager";
 import type { AgentSnapshot, MessageRecord, RunRecord, SidebarGroup, SidebarRun, SupervisorInterventionRecord } from "@/app/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
@@ -55,7 +63,8 @@ interface HomeHeaderProps {
   selectedRunWorkers: ConversationWorkerRecord[];
   conversationAgents: AgentSnapshot[];
   supervisorInterventions: SupervisorInterventionRecord[];
-  onAutoCommitChat: () => void;
+  onAutoCommitChat: (action?: AutoCommitChatAction) => void;
+  autoCommitChatAction: AutoCommitChatAction;
   isAutoCommitChatPending: boolean;
   onStopWorker?: (workerId: string) => void;
   onStopTerminalProcess?: (workerId: string, terminalProcess: WorkerTerminalProcess) => void;
@@ -110,6 +119,7 @@ export function HomeHeader({
   conversationAgents,
   supervisorInterventions,
   onAutoCommitChat,
+  autoCommitChatAction,
   isAutoCommitChatPending,
   onStopWorker,
   onStopTerminalProcess,
@@ -123,6 +133,7 @@ export function HomeHeader({
   const rootFolderLabel = activeConversationCwd
     ? activeConversationCwd.split(/[\\/]/).filter(Boolean).pop() || activeConversationCwd
     : "";
+  const autoCommitChatLabel = autoCommitChatAction === "commit-push" ? "Auto commit & push" : "Auto commit";
 
   const beginTopBarTitleEdit = () => {
     if (!selectedRun) {
@@ -283,18 +294,48 @@ export function HomeHeader({
 
     <div className="flex items-center gap-2">
       {selectedRunId ? (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
-          aria-label="Auto Commit Chat"
-          title="Create a git commit for this chat"
-          onClick={onAutoCommitChat}
-          disabled={isAutoCommitChatPending}
-        >
-          <GitCommitHorizontal className="h-3.5 w-3.5" />
-          <span className="hidden md:inline">Auto Commit Chat</span>
-        </Button>
+        <ButtonGroup aria-label="Auto Commit Chat actions">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+            aria-label={autoCommitChatLabel}
+            title={autoCommitChatAction === "commit-push" ? "Commit and push changes from this chat" : "Create a git commit for this chat"}
+            onClick={() => onAutoCommitChat(autoCommitChatAction)}
+            disabled={isAutoCommitChatPending}
+          >
+            <GitCommitHorizontal className="h-3.5 w-3.5" />
+            <span className="hidden md:inline">{autoCommitChatLabel}</span>
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={(
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="h-8 w-7 text-muted-foreground hover:text-foreground"
+                  aria-label="Choose auto commit chat action"
+                  title="Choose auto commit chat action"
+                  disabled={isAutoCommitChatPending}
+                >
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            />
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem onClick={() => onAutoCommitChat("commit")} disabled={isAutoCommitChatPending}>
+                <GitCommitHorizontal className="h-4 w-4" />
+                <span>Auto commit</span>
+                {autoCommitChatAction === "commit" ? <Check className="ml-auto h-4 w-4" /> : null}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onAutoCommitChat("commit-push")} disabled={isAutoCommitChatPending}>
+                <GitCommitHorizontal className="h-4 w-4" />
+                <span>Auto commit &amp; push</span>
+                {autoCommitChatAction === "commit-push" ? <Check className="ml-auto h-4 w-4" /> : null}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </ButtonGroup>
       ) : null}
       <ThemeModeToggle themeMode={themeMode} setThemeMode={setThemeMode} />
       {selectedRunId && isImplementationConversation ? (
