@@ -807,11 +807,20 @@ export class AgentRuntimeManager {
       return false;
     }
     try {
+      const cancelParams = { sessionId: record.sessionId } as Parameters<acp.ClientSideConnection["cancel"]>[0];
+      void record.connection.cancel(cancelParams).catch(() => undefined);
       this.cancelAllPendingPermissions(record);
       cleanupSkillLinks(record.managedSkillLinks);
       record.state = "stopped";
       record.updatedAt = nowIso();
-      record.child.kill("SIGTERM");
+      const child = record.child;
+      child.kill("SIGTERM");
+      const forceKillTimer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      }, 500);
+      forceKillTimer.unref?.();
     } finally {
       this.agents.delete(name);
     }

@@ -82,11 +82,9 @@ async function insertExecutionEvent(
 }
 
 async function cancelWorker(worker: typeof workers.$inferSelect) {
-  try {
-    await cancelAgent(worker.id);
-  } catch {
-    // best effort: the bridge process may already be gone
-  }
+  void cancelAgent(worker.id).catch(() => {
+    // best effort: the bridge process may already be gone or wedged
+  });
 
   await db.update(workers).set({
     status: "cancelled",

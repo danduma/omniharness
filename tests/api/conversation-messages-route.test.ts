@@ -538,4 +538,69 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(updatedWorker?.status).toBe("working");
     expect(systemErrors.filter((message) => message.kind === "error")).toHaveLength(0);
   });
+
+  it("keeps a direct worker cancelled when a late response arrives after stop", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+    let resolveAsk!: (value: { response: string; state: string }) => void;
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-cancel-race.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockAskAgent.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveAsk = resolve;
+    }));
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "Keep working until I stop you" }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    await db.update(workers).set({
+      status: "cancelled",
+      updatedAt: new Date(),
+    }).where(eq(workers.id, workerId));
+
+    resolveAsk({ response: "Late answer that should be ignored.", state: "idle" });
+    await delay(20);
+
+    const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const workerMessages = await db.select().from(messages).where(eq(messages.workerId, workerId));
+
+    expect(updatedWorker?.status).toBe("cancelled");
+    expect(workerMessages).toHaveLength(0);
+  });
 });

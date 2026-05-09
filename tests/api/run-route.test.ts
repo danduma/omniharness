@@ -292,6 +292,67 @@ describe("POST /api/runs/[id]", () => {
     expect(stopEvent?.eventType).toBe("worker_cancelled");
   });
 
+  it("marks a direct worker cancelled without waiting for the bridge stop to finish", async () => {
+    mockCancelAgent.mockClear();
+    mockStopRunObserver.mockClear();
+    mockCancelSupervisorWake.mockClear();
+    mockCancelAgent.mockImplementationOnce(() => new Promise(() => {}));
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const targetWorkerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/stop-worker-immediate.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Immediate stop worker",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: targetWorkerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "stop_worker", workerId: targetWorkerId }),
+    });
+
+    const response = await Promise.race([
+      POST(request, { params: Promise.resolve({ id: runId }) }),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 25)),
+    ]);
+    if (response === "timeout") {
+      throw new Error("Stop worker request waited for bridge cancellation");
+    }
+    expect(response.status).toBe(200);
+
+    const updatedWorker = await db.select().from(workers).where(eq(workers.id, targetWorkerId)).get();
+    const stopEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+
+    expect(mockCancelAgent).toHaveBeenCalledWith(targetWorkerId);
+    expect(updatedWorker?.status).toBe("cancelled");
+    expect(stopEvent?.eventType).toBe("worker_cancelled");
+  });
+
   it("pauses implementation work and asks for user direction when a worker is stopped", async () => {
     mockCancelAgent.mockClear();
     mockStopRunObserver.mockClear();

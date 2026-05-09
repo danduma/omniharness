@@ -21,6 +21,10 @@ function isAgentBusyError(error: unknown) {
   return /\bagent is busy\b/i.test(formatErrorMessage(error));
 }
 
+function isWorkerCancelled(worker: WorkerRecord | null | undefined) {
+  return worker?.status.trim().toLowerCase().split(":")[0]?.trim() === "cancelled";
+}
+
 async function continueWorkerConversation({
   run,
   worker,
@@ -31,6 +35,11 @@ async function continueWorkerConversation({
   content: string;
 }) {
   try {
+    const currentWorker = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
+    if (isWorkerCancelled(currentWorker)) {
+      return;
+    }
+
     await db.update(workers).set({
       status: "working",
       updatedAt: new Date(),
@@ -38,9 +47,21 @@ async function continueWorkerConversation({
     notifyEventStreamSubscribers();
 
     const response = await askAgent(worker.id, content);
+    const workerAfterResponse = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
+    if (isWorkerCancelled(workerAfterResponse)) {
+      notifyEventStreamSubscribers();
+      return;
+    }
+
     const snapshot = await getAgent(worker.id).catch(() => null);
     if (snapshot) {
       await persistWorkerSnapshot(worker.id, snapshot);
+    }
+
+    const workerAfterSnapshot = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
+    if (isWorkerCancelled(workerAfterSnapshot)) {
+      notifyEventStreamSubscribers();
+      return;
     }
 
     await db.update(workers).set({
@@ -74,6 +95,12 @@ async function continueWorkerConversation({
 
     notifyEventStreamSubscribers();
   } catch (error) {
+    const currentWorker = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
+    if (isWorkerCancelled(currentWorker)) {
+      notifyEventStreamSubscribers();
+      return;
+    }
+
     if (isAgentBusyError(error)) {
       const now = new Date();
       await db.update(workers).set({
