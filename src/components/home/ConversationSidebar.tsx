@@ -1,13 +1,36 @@
 import type React from "react";
-import { ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, Trash2 } from "lucide-react";
+import { ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Trash2, Workflow } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { getRunLatestMessageTimestamp, isRunUnread } from "@/lib/conversation-state";
+import { getConversationVisualKind, type ConversationVisualKind } from "@/lib/conversation-visuals";
 import { cn } from "@/lib/utils";
 import type { SidebarGroup, SidebarRun } from "@/app/home/types";
+
+const CONVERSATION_VISUAL_CONFIG: Record<ConversationVisualKind, {
+  label: string;
+  Icon: typeof Workflow;
+  className: string;
+}> = {
+  supervisor: {
+    label: "Supervisor",
+    Icon: Workflow,
+    className: "border-[#858a68]/25 bg-[#858a68]/10 text-[#5f6548] dark:border-[#c5ca9a]/25 dark:bg-[#c5ca9a]/10 dark:text-[#c5ca9a]",
+  },
+  direct: {
+    label: "Direct control",
+    Icon: SquareTerminal,
+    className: "border-[#6688a0]/25 bg-[#6688a0]/10 text-[#4d6f87] dark:border-[#9fc8df]/25 dark:bg-[#9fc8df]/10 dark:text-[#9fc8df]",
+  },
+  commit: {
+    label: "Commit",
+    Icon: GitCommitHorizontal,
+    className: "border-[#ad8247]/30 bg-[#ad8247]/10 text-[#846233] dark:border-[#e2b36b]/25 dark:bg-[#e2b36b]/10 dark:text-[#e2b36b]",
+  },
+};
 
 export interface ConversationSidebarProps {
   filteredProjects: SidebarGroup[];
@@ -15,7 +38,7 @@ export interface ConversationSidebarProps {
   searchQuery: string;
   setSearchQuery: (value: string) => void;
   selectedRunId: string | null;
-  messages: Array<{ runId: string; createdAt: string }> | undefined;
+  messages: Array<{ runId: string; role?: string | null; kind?: string | null; content?: string | null; createdAt: string }> | undefined;
   readMarkers: Record<string, string>;
   collapsedProjectPaths: Set<string>;
   onProjectOpenChange: (projectPath: string, open: boolean) => void;
@@ -184,7 +207,11 @@ export function ConversationSidebar({
                         <div className="py-1 pl-8 text-xs italic text-muted-foreground/60">No conversations</div>
                       )
                     ) : null}
-                    {group.runs.map((run) => (
+                    {group.runs.map((run) => {
+                      const visualConfig = CONVERSATION_VISUAL_CONFIG[getConversationVisualKind(run, messages ?? [])];
+                      const ConversationIcon = visualConfig.Icon;
+
+                      return (
                       <div
                         key={run.id}
                         onClick={() => selectRun(run.id)}
@@ -197,28 +224,37 @@ export function ConversationSidebar({
                       >
                         <div className="min-w-0 flex-1">
                           <div className="min-w-0 flex items-center justify-between gap-2" title={run.path}>
-                            {renamingRunId === run.id && renameSource !== "topbar" ? (
-                              <Input
-                                value={renameValue}
-                                onChange={(event) => setRenameValue(event.target.value)}
-                                onClick={(event) => event.stopPropagation()}
-                                onKeyDown={(event) => {
-                                  event.stopPropagation();
-                                  if (event.key === "Enter") {
-                                    event.preventDefault();
-                                    commitRenamingRun(run.id);
-                                  } else if (event.key === "Escape") {
-                                    event.preventDefault();
-                                    cancelRenamingRun();
-                                  }
-                                }}
-                                onBlur={() => commitRenamingRun(run.id)}
-                                autoFocus
-                                className="h-7 min-w-0 text-[13px]"
-                              />
-                            ) : (
-                              <span className="truncate text-[13px]">{run.title}</span>
-                            )}
+                            <div className="flex min-w-0 flex-1 items-center gap-2">
+                              <span
+                                className={cn("inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border", visualConfig.className)}
+                                title={`${visualConfig.label} conversation`}
+                                aria-label={`${visualConfig.label} conversation`}
+                              >
+                                <ConversationIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                              </span>
+                              {renamingRunId === run.id && renameSource !== "topbar" ? (
+                                <Input
+                                  value={renameValue}
+                                  onChange={(event) => setRenameValue(event.target.value)}
+                                  onClick={(event) => event.stopPropagation()}
+                                  onKeyDown={(event) => {
+                                    event.stopPropagation();
+                                    if (event.key === "Enter") {
+                                      event.preventDefault();
+                                      commitRenamingRun(run.id);
+                                    } else if (event.key === "Escape") {
+                                      event.preventDefault();
+                                      cancelRenamingRun();
+                                    }
+                                  }}
+                                  onBlur={() => commitRenamingRun(run.id)}
+                                  autoFocus
+                                  className="h-7 min-w-0 text-[13px]"
+                                />
+                              ) : (
+                                <span className="truncate text-[13px]">{run.title}</span>
+                              )}
+                            </div>
                             <div className="flex shrink-0 items-center gap-1">
                               {run.status === "running" ? (
                                 <LoaderCircle className="h-3.5 w-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" />
@@ -263,7 +299,8 @@ export function ConversationSidebar({
                           </div>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </Collapsible>

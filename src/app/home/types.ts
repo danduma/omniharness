@@ -177,7 +177,7 @@ export type EventStreamState = {
 };
 export type SettingsTab = "general" | "models" | "agents" | "runtime";
 
-export type SidebarRun = { id: string; title: string; path: string; status: string; createdAt: string };
+export type SidebarRun = { id: string; title: string; path: string; mode?: ConversationModeOption | null; status: string; createdAt: string };
 export type SidebarGroup = { path: string; name: string; runs: SidebarRun[] };
 
 export type NoticeTone = "error" | "warning" | "success";

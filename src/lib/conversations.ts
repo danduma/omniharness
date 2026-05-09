@@ -2,6 +2,7 @@ type PlanRecord = { id: string; path: string };
 type RunRecord = {
   id: string;
   planId: string;
+  mode?: string | null;
   status: string;
   createdAt: string;
   projectPath?: string | null;
@@ -15,6 +16,7 @@ export type ConversationGroup = {
     id: string;
     title: string;
     path: string;
+    mode?: string | null;
     status: string;
     createdAt: string;
   }>;
@@ -51,6 +53,7 @@ export function buildConversationGroups(args: {
         groupPath: projectPath ? normalizeProjectPath(projectPath) : "other",
         title: run.title || "New conversation",
         path: plan.path,
+        mode: run.mode,
         status: run.status,
         createdAt: run.createdAt,
       };
@@ -88,6 +91,7 @@ export function buildConversationGroups(args: {
         id: run.id,
         title: run.title,
         path: run.path,
+        mode: run.mode,
         status: run.status,
         createdAt: run.createdAt,
       })),
@@ -99,6 +103,7 @@ export function buildConversationGroups(args: {
       id: run.id,
       title: run.title,
       path: run.path,
+      mode: run.mode,
       status: run.status,
       createdAt: run.createdAt,
     }));
