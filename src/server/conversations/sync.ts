@@ -121,7 +121,7 @@ async function clearMatchingRunFailureMessage(run: typeof runs.$inferSelect) {
   ));
 }
 
-export async function syncConversationSessions(rawAgents: unknown[]) {
+export async function syncConversationSessions(rawAgents: unknown[], options: { selectedRunId?: string | null } = {}) {
   const agents = rawAgents.map((agent) => normalizeAgentRecord(agent));
   const allRuns = await db.select().from(runs);
   const allWorkers = await db.select().from(workers);
@@ -167,13 +167,15 @@ export async function syncConversationSessions(rawAgents: unknown[]) {
         continue;
       }
 
-      const recoveryResult = await reconcileRunRecovery({
-        runId: run.id,
-        liveAgents: agents,
-        source: "conversation-sync",
-      });
-      if (recoveryResult.action !== "none" && recoveryResult.action !== "wait_for_backoff") {
-        continue;
+      if (!options.selectedRunId || options.selectedRunId === run.id) {
+        const recoveryResult = await reconcileRunRecovery({
+          runId: run.id,
+          liveAgents: agents,
+          source: "conversation-sync",
+        });
+        if (recoveryResult.action !== "none" && recoveryResult.action !== "wait_for_backoff") {
+          continue;
+        }
       }
 
       if (!staleImplementationTransientFailure) {

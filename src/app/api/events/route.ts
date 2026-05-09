@@ -542,7 +542,9 @@ async function buildRuntimeEnrichedEventPayload(options: EventPayloadOptions = {
     if (res.ok) {
       const rawAgentsPayload = await res.json();
       const rawAgents = Array.isArray(rawAgentsPayload) ? rawAgentsPayload : [];
-      await syncConversationSessions(rawAgents);
+      await syncConversationSessions(rawAgents, {
+        selectedRunId: options.selectedRunId,
+      });
       records = await readPersistedEventRecords(options);
       const scopedWorkers = selectedRunWorkers(records, options);
       agentsData = buildLiveWorkerSnapshots({
