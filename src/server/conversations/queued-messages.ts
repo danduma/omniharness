@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { asc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { askAgent } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { executionEvents, messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
@@ -24,6 +24,20 @@ function isAgentBusyError(error: unknown) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isAgentNotFoundError(error: unknown) {
+  return /\bagent not found\b/i.test(errorMessage(error));
+}
+
+async function getLatestRunWorker(runId: string, excludedWorkerId?: string | null) {
+  const records = await db
+    .select()
+    .from(workers)
+    .where(eq(workers.runId, runId))
+    .orderBy(desc(workers.createdAt));
+
+  return records.find((worker) => worker.id !== excludedWorkerId) ?? null;
 }
 
 async function insertQueueExecutionEvent(
@@ -149,6 +163,80 @@ export async function cancelQueuedConversationMessage({
   });
 }
 
+async function deliverQueuedWorkerSteering(args: {
+  run: typeof runs.$inferSelect;
+  worker: typeof workers.$inferSelect;
+  messageId: string;
+  content: string;
+}) {
+  const response = await askAgent(args.worker.id, args.content);
+  const deliveredAt = new Date();
+  await db.update(workers).set({
+    status: response.state,
+    updatedAt: deliveredAt,
+  }).where(eq(workers.id, args.worker.id));
+  await db.insert(messages).values({
+    id: randomUUID(),
+    runId: args.run.id,
+    role: "worker",
+    kind: args.run.mode,
+    content: response.response,
+    workerId: args.worker.id,
+    createdAt: deliveredAt,
+  });
+  await insertQueueExecutionEvent(args.run.id, "queued_message_delivered", {
+    summary: `Delivered immediate queued steering to ${args.worker.id}.`,
+    queuedMessageId: args.messageId,
+    action: "steer",
+  }, args.worker.id);
+  notifyEventStreamSubscribers();
+}
+
+async function continueQueuedWorkerSteering(args: {
+  run: typeof runs.$inferSelect;
+  worker: typeof workers.$inferSelect;
+  messageId: string;
+  content: string;
+}) {
+  try {
+    await deliverQueuedWorkerSteering(args);
+    return;
+  } catch (error) {
+    if (isAgentNotFoundError(error)) {
+      const fallbackWorker = await getLatestRunWorker(args.run.id, args.worker.id);
+      if (fallbackWorker) {
+        try {
+          await db.update(queuedConversationMessages).set({
+            targetWorkerId: fallbackWorker.id,
+            updatedAt: new Date(),
+          }).where(eq(queuedConversationMessages.id, args.messageId));
+          await deliverQueuedWorkerSteering({
+            ...args,
+            worker: fallbackWorker,
+          });
+          return;
+        } catch (fallbackError) {
+          error = fallbackError;
+        }
+      }
+    }
+
+    const failedAt = new Date();
+    await db.update(queuedConversationMessages).set({
+      status: "failed",
+      lastError: errorMessage(error),
+      updatedAt: failedAt,
+    }).where(eq(queuedConversationMessages.id, args.messageId));
+    await insertQueueExecutionEvent(args.run.id, "queued_message_failed", {
+      summary: `Immediate queued steering failed for ${args.worker.id}.`,
+      queuedMessageId: args.messageId,
+      action: "steer",
+      error: errorMessage(error),
+    }, args.worker.id);
+    notifyEventStreamSubscribers();
+  }
+}
+
 export async function sendQueuedConversationMessageNow({
   runId,
   messageId,
@@ -231,9 +319,12 @@ export async function sendQueuedConversationMessageNow({
     };
   }
 
-  const worker = record.targetWorkerId
+  const targetWorker = record.targetWorkerId
     ? await db.select().from(workers).where(eq(workers.id, record.targetWorkerId)).get()
-    : await db.select().from(workers).where(eq(workers.runId, runId)).get();
+    : null;
+  const worker = targetWorker && targetWorker.runId === runId
+    ? targetWorker
+    : await getLatestRunWorker(runId, record.targetWorkerId);
   if (!worker || worker.runId !== runId) {
     await db.update(queuedConversationMessages).set({
       status: "pending",
@@ -264,84 +355,44 @@ export async function sendQueuedConversationMessageNow({
     updatedAt: startedAt,
   }).where(eq(workers.id, worker.id));
 
-  try {
-    const response = await askAgent(worker.id, workerContent);
-    const deliveredAt = new Date();
-    await db.update(workers).set({
-      status: response.state,
-      updatedAt: deliveredAt,
-    }).where(eq(workers.id, worker.id));
-    await db.insert(messages).values({
-      id: randomUUID(),
-      runId,
-      role: "worker",
-      kind: run.mode,
-      content: response.response,
-      workerId: worker.id,
-      createdAt: deliveredAt,
-    });
-    await db.update(queuedConversationMessages).set({
+  const deliveredAt = new Date();
+  await db.update(queuedConversationMessages).set({
+    action: "steer",
+    targetWorkerId: worker.id,
+    status: "delivered",
+    lastError: null,
+    updatedAt: deliveredAt,
+    deliveredAt,
+  }).where(eq(queuedConversationMessages.id, messageId));
+  await insertQueueExecutionEvent(runId, "queued_message_sent_now", {
+    summary: `Accepted queued message for immediate steering to ${worker.id}.`,
+    queuedMessageId: messageId,
+    action: "steer",
+  }, worker.id);
+  notifyEventStreamSubscribers();
+
+  continueQueuedWorkerSteering({
+    run,
+    worker,
+    messageId,
+    content: workerContent,
+  }).catch((error) => {
+    console.error("Queued message immediate steering failed:", error);
+  });
+
+  return {
+    ok: true,
+    message: serializeMessageRecord(userMessage),
+    queuedMessage: serializeQueuedConversationMessage({
+      ...record,
+      targetWorkerId: worker.id,
       action: "steer",
       status: "delivered",
       lastError: null,
       updatedAt: deliveredAt,
       deliveredAt,
-    }).where(eq(queuedConversationMessages.id, messageId));
-    await insertQueueExecutionEvent(runId, "queued_message_sent_now", {
-      summary: `Sent queued message immediately to ${worker.id}.`,
-      queuedMessageId: messageId,
-      action: "steer",
-    }, worker.id);
-    notifyEventStreamSubscribers();
-
-    return {
-      ok: true,
-      message: serializeMessageRecord(userMessage),
-      queuedMessage: serializeQueuedConversationMessage({
-        ...record,
-        targetWorkerId: worker.id,
-        action: "steer",
-        status: "delivered",
-        lastError: null,
-        updatedAt: deliveredAt,
-        deliveredAt,
-      }),
-    };
-  } catch (error) {
-    const failedAt = new Date();
-    await db.delete(messages).where(eq(messages.id, userMessage.id));
-    await db.update(queuedConversationMessages).set({
-      action: "steer",
-      status: isAgentBusyError(error) ? "pending" : "failed",
-      lastError: errorMessage(error),
-      updatedAt: failedAt,
-    }).where(eq(queuedConversationMessages.id, messageId));
-    await insertQueueExecutionEvent(runId, isAgentBusyError(error) ? "queued_message_deferred" : "queued_message_failed", {
-      summary: isAgentBusyError(error)
-        ? `Worker ${worker.id} is still busy; queued message will be retried.`
-        : `Queued message delivery failed for ${worker.id}.`,
-      queuedMessageId: messageId,
-      action: "steer",
-      error: errorMessage(error),
-    }, worker.id);
-    notifyEventStreamSubscribers();
-
-    if (isAgentBusyError(error)) {
-      return {
-        ok: true,
-        queuedMessage: serializeQueuedConversationMessage({
-          ...record,
-          targetWorkerId: worker.id,
-          action: "steer",
-          status: "pending",
-          lastError: errorMessage(error),
-          updatedAt: failedAt,
-        }),
-      };
-    }
-
-    throw error;
-  }
+    }),
+  };
 }
 
 async function pendingQueueRecords(runId: string, workerId?: string | null) {

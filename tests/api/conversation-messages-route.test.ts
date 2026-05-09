@@ -332,6 +332,89 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
   });
 
+  it("acknowledges queued worker steering before the bridge turn finishes", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const queuedMessageId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(queuedConversationMessages).values({
+      id: queuedMessageId,
+      runId,
+      targetWorkerId: workerId,
+      action: "queue",
+      content: "Use this worker note now.",
+      attachmentsJson: "[]",
+      status: "pending",
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+      deliveredAt: null,
+    });
+    mockAskAgent.mockImplementationOnce(() => new Promise(() => {}));
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/queued-messages/${queuedMessageId}`, {
+      method: "PATCH",
+    });
+    const response = await Promise.race([
+      SEND_QUEUED_NOW(request, { params: Promise.resolve({ id: runId, messageId: queuedMessageId }) }),
+      delay(50).then(() => "timeout" as const),
+    ]);
+
+    expect(response).not.toBe("timeout");
+    if (response === "timeout") {
+      throw new Error("send-now timed out");
+    }
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.message).toMatchObject({
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "Use this worker note now.",
+    });
+    expect(payload.queuedMessage).toMatchObject({
+      id: queuedMessageId,
+      action: "steer",
+      status: "delivered",
+    });
+
+    const storedQueued = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queuedMessageId)).get();
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    expect(storedQueued?.status).toBe("delivered");
+    expect(storedMessages.map((message) => message.content)).toEqual(["Use this worker note now."]);
+  });
+
   it("uses implementation follow-ups to answer pending clarifications", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
