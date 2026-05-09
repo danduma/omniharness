@@ -144,6 +144,94 @@ describe("GET /api/agents/[name]", () => {
     expect(mockGetAgentOutput).toHaveBeenCalledWith(workerId, { limit: 20_000 });
   });
 
+  it("keeps archived tool output compact when full history is requested", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `worker-${randomUUID()}`;
+    const verboseOutput = [
+      "```sh",
+      ...Array.from({ length: 20_000 }, (_, index) => `./src/file-${index}.ts:${index}: ${"x".repeat(80)}`),
+      "```",
+    ].join("\n");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/compact-archive.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      title: "Compact archived tool output",
+      status: "running",
+      lastError: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "",
+      currentText: "",
+      lastText: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockGetAgent.mockResolvedValue({
+      name: workerId,
+      type: "codex",
+      cwd: process.cwd(),
+      state: "working",
+      outputEntries: [],
+      currentText: "",
+      lastText: "",
+      renderedOutput: "",
+      stderrBuffer: [],
+      stopReason: null,
+    });
+    mockGetAgentOutput.mockResolvedValue({
+      name: workerId,
+      cursor: 0,
+      nextCursor: null,
+      totalEntries: 1,
+      entries: [
+        {
+          id: "verbose-tool-update",
+          type: "tool_call_update",
+          text: `Tool call call_verbose updated: ${verboseOutput}`,
+          toolCallId: "call_verbose",
+          status: "updated",
+          timestamp: "2026-05-06T15:40:00.000Z",
+          raw: {
+            rawOutput: {
+              formatted_output: verboseOutput,
+            },
+          },
+        },
+      ],
+    });
+
+    const response = await GET(new NextRequest(`http://localhost/api/agents/${workerId}?history=full`), {
+      params: Promise.resolve({ name: workerId }),
+    });
+    const payload = await response.json();
+    const [entry] = payload.outputEntries;
+
+    expect(response.status).toBe(200);
+    expect(entry.text.length).toBeLessThanOrEqual(2_100);
+    expect(entry.text).toContain("Truncated");
+    expect(entry.raw.rawOutput.formatted_output.length).toBeLessThanOrEqual(8_100);
+  });
+
   it("returns a persisted fallback snapshot when the bridge temporarily loses the worker", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

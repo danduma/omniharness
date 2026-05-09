@@ -12,6 +12,8 @@ const FULL_HISTORY_ENTRY_LIMIT = 20_000;
 const HISTORY_ENTRY_TEXT_LIMIT = 20_000;
 const HISTORY_RAW_STRING_LIMIT = 20_000;
 const HISTORY_RAW_JSON_LIMIT = 80_000;
+const HISTORY_TOOL_ENTRY_TEXT_LIMIT = 2_000;
+const HISTORY_TOOL_RAW_STRING_LIMIT = 8_000;
 const HISTORY_MESSAGE_CHUNK_MAX_GAP_MS = 3_000;
 
 function isMissingAgentError(error: unknown) {
@@ -65,10 +67,13 @@ function compactRawValue(value: unknown, stringLimit = HISTORY_RAW_STRING_LIMIT,
 }
 
 function compactHistoryEntry(entry: WorkerOutputEntry): WorkerOutputEntry {
+  const isToolEntry = entry.type === "tool_call" || entry.type === "tool_call_update" || entry.type === "permission";
   return {
     ...entry,
-    text: truncateText(entry.text, HISTORY_ENTRY_TEXT_LIMIT),
-    raw: entry.raw === undefined ? undefined : compactRawValue(entry.raw),
+    text: truncateText(entry.text, isToolEntry ? HISTORY_TOOL_ENTRY_TEXT_LIMIT : HISTORY_ENTRY_TEXT_LIMIT),
+    raw: entry.raw === undefined
+      ? undefined
+      : compactRawValue(entry.raw, isToolEntry ? HISTORY_TOOL_RAW_STRING_LIMIT : HISTORY_RAW_STRING_LIMIT),
   };
 }
 

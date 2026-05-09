@@ -10,6 +10,9 @@ const LIVE_OUTPUT_ENTRY_TEXT_CHARS = 5_000;
 const LIVE_RAW_STRING_CHARS = 4_000;
 const ARCHIVE_ENTRY_TEXT_CHARS = 1_000_000;
 const ARCHIVE_RAW_STRING_CHARS = 1_000_000;
+const ARCHIVE_TOOL_ENTRY_TEXT_CHARS = 2_000;
+const ARCHIVE_TOOL_RAW_STRING_CHARS = 8_000;
+const TOOL_CALL_UPDATE_SUMMARY_CHARS = 2_000;
 const RAW_ARRAY_ITEMS = 200;
 const RAW_OBJECT_KEYS = 100;
 const RAW_DEPTH = 8;
@@ -88,15 +91,16 @@ function compactRawValue(
 }
 
 function createArchiveEntry(input: OutputEntryInput): OutputEntry {
+  const isToolEntry = input.type === "tool_call" || input.type === "tool_call_update" || input.type === "permission";
   return {
     id: randomUUID(),
     timestamp: input.timestamp ?? nowIso(),
     type: input.type,
-    text: truncateString(input.text, ARCHIVE_ENTRY_TEXT_CHARS),
+    text: truncateString(input.text, isToolEntry ? ARCHIVE_TOOL_ENTRY_TEXT_CHARS : ARCHIVE_ENTRY_TEXT_CHARS),
     toolCallId: input.toolCallId,
     toolKind: input.toolKind,
     status: input.status,
-    raw: compactRawValue(input.raw, ARCHIVE_RAW_STRING_CHARS),
+    raw: compactRawValue(input.raw, isToolEntry ? ARCHIVE_TOOL_RAW_STRING_CHARS : ARCHIVE_RAW_STRING_CHARS),
   };
 }
 
@@ -310,7 +314,7 @@ export function summarizeToolCallUpdate(update: Record<string, unknown>) {
   const toolCallId = typeof update.toolCallId === "string" ? update.toolCallId : "";
   const status = typeof update.status === "string" ? update.status : "updated";
   const base = `Tool call ${toolCallId} ${status}`.trim();
-  return contentSummary ? `${base}: ${contentSummary}` : base;
+  return truncateString(contentSummary ? `${base}: ${contentSummary}` : base, TOOL_CALL_UPDATE_SUMMARY_CHARS);
 }
 
 export function renderOutputEntries(entries: OutputEntry[]) {

@@ -627,7 +627,9 @@ describe("internal agent runtime HTTP API", () => {
       type: "tool_call_update",
       toolCallId: "verbose-0",
     });
-    expect(archivePage.entries[1].raw.rawOutput.formatted_output).toBe("x".repeat(250000));
+    expect(archivePage.entries[1].text.length).toBeLessThanOrEqual(2_000);
+    expect(archivePage.entries[1].raw.rawOutput.formatted_output.length).toBeLessThanOrEqual(8_050);
+    expect(archivePage.entries[1].raw.rawOutput.formatted_output).toContain("[truncated");
 
     const nextPageResponse = await fetch(`${baseUrl}/agents/verbose-worker/output?cursor=${archivePage.nextCursor}&limit=2`);
     expect(nextPageResponse.status).toBe(200);
