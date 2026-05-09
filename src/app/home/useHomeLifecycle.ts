@@ -201,7 +201,17 @@ export function useHomeLifecycle({
     }
 
     setRouteReady(true);
-  }, []);
+  }, [
+    setAutoCommitChatAction,
+    setDraftProjectPath,
+    setPairTokenFromUrl,
+    setRouteReady,
+    setSelectedCliAgent,
+    setSelectedConversationMode,
+    setSelectedEffort,
+    setSelectedModel,
+    setSelectedRunId,
+  ]);
 
   useEffect(() => {
     if (!routeReady || !authEnabled || authConfigurationError || appUnlocked || !pairTokenFromUrl || redeemPairMutation.isPending || pairRedeemAttempted) {

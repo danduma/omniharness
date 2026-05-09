@@ -10,6 +10,7 @@ import {
   planItems,
   plans,
   queuedConversationMessages,
+  recoveryIncidents,
   runs,
   supervisorInterventions,
   workers,
@@ -60,6 +61,7 @@ async function clearRunDerivedState(runId: string, planId: string) {
   await db.delete(clarifications).where(eq(clarifications.runId, runId));
   await db.delete(executionEvents).where(eq(executionEvents.runId, runId));
   await db.delete(supervisorInterventions).where(eq(supervisorInterventions.runId, runId));
+  await db.delete(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
   await db.delete(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId));
   await db.delete(planItems).where(eq(planItems.planId, planId));
 }

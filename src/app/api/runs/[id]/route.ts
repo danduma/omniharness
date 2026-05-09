@@ -23,6 +23,7 @@ import {
   executionEvents,
   supervisorInterventions,
   queuedConversationMessages,
+  recoveryIncidents,
   creditEvents,
   workerCounters,
 } from "@/server/db/schema";
@@ -399,6 +400,7 @@ export async function DELETE(
     await db.delete(clarifications).where(eq(clarifications.runId, runId));
     await db.delete(executionEvents).where(eq(executionEvents.runId, runId));
     await db.delete(supervisorInterventions).where(eq(supervisorInterventions.runId, runId));
+    await db.delete(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
     await db.delete(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId));
     await db.delete(workers).where(eq(workers.runId, runId));
     await db.delete(workerCounters).where(eq(workerCounters.runId, runId));

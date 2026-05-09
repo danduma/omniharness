@@ -31,9 +31,17 @@ test("conversation rows expose rename and delete actions", () => {
 
 test("top bar exposes an auto commit action for the selected chat", () => {
   expect(pageSource).toContain("AUTO_COMMIT_CHAT_PROMPT");
+  expect(pageSource).toContain("AUTO_COMMIT_CHAT_PUSH_PROMPT");
   expect(pageSource).toContain('"Create a git commit including the changes you\'ve made"');
-  expect(pageSource).toContain("autoCommitChat.mutate({ runId: selectedRunId })");
-  expect(pageSource).toContain("Auto Commit Chat");
+  expect(pageSource).toContain('"Create a git commit including the changes you\'ve made, then push the current branch"');
+  expect(pageSource).toContain("autoCommitChat.mutate({ runId: selectedRunId, action })");
+  expect(pageSource).toContain("ButtonGroup");
+  expect(pageSource).toContain("DropdownMenu");
+  expect(pageSource).toContain("Auto Commit Chat actions");
+  expect(pageSource).toContain("Auto commit &amp; push");
+  expect(pageSource).toContain("AUTO_COMMIT_CHAT_ACTION_STORAGE_KEY");
+  expect(pageSource).toContain('window.localStorage.getItem(AUTO_COMMIT_CHAT_ACTION_STORAGE_KEY)');
+  expect(pageSource).toContain('window.localStorage.setItem(AUTO_COMMIT_CHAT_ACTION_STORAGE_KEY, autoCommitChatAction)');
 });
 
 test("top bar conversation title is plain text until explicitly edited", () => {
