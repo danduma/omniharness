@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import fs from "fs";
 import { db } from "@/server/db";
-import { getAppDataPath } from "@/server/app-root";
+import { getAppDataPath, getAppRoot } from "@/server/app-root";
 import { plans, runs, messages } from "@/server/db/schema";
 import { persistRunFailure } from "@/server/runs/failures";
 
@@ -73,7 +73,7 @@ describe("POST /api/supervisor", () => {
     expect(insertedPlan?.path).toMatch(/^vibes\/ad-hoc\/.+\.md$/);
     expect(insertedRun?.planId).toBe(payload.planId);
     expect(insertedRun?.title).toBe("New conversation");
-    expect(insertedRun?.projectPath).toBeNull();
+    expect(insertedRun?.projectPath).toBe(getAppRoot());
     expect(insertedMessage?.content).toBe(command);
     expect(mockSyncAccounts).toHaveBeenCalledOnce();
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);

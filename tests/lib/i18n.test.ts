@@ -6,9 +6,18 @@ import {
   supportedLocaleOptions,
   t,
 } from "@/lib/i18n";
+import de from "../../shared/locales/de.json";
+import en from "../../shared/locales/en.json";
+import es from "../../shared/locales/es.json";
+import fr from "../../shared/locales/fr.json";
+import itLocale from "../../shared/locales/it.json";
+import ja from "../../shared/locales/ja.json";
+import ko from "../../shared/locales/ko.json";
+import pt from "../../shared/locales/pt.json";
+import zhCN from "../../shared/locales/zh-CN.json";
 
 describe("OmniHarness i18n adapter", () => {
-  it("loads application strings from the linked i18n resource", () => {
+  it("loads application strings through the shared i18n dependency", () => {
     expect(t("product.name")).toBe("OmniHarness");
     expect(t("settings.language.current", { language: "English" })).toBe("Current language: English");
   });
@@ -44,5 +53,18 @@ describe("OmniHarness i18n adapter", () => {
     expect(i18nManager.getSnapshot().loadedLocales).toContain("es");
     expect(t("settings.language.current", { language: "Español" })).toBe("Idioma actual: Español");
     expect(Object.keys(localeLoaders)).toEqual(["es", "fr", "de", "it", "pt", "zh-CN", "ja", "ko"]);
+  });
+
+  it("keeps all locale files in key parity with English", () => {
+    const englishKeys = Object.keys(en).sort();
+
+    expect(Object.keys(es).sort()).toEqual(englishKeys);
+    expect(Object.keys(fr).sort()).toEqual(englishKeys);
+    expect(Object.keys(de).sort()).toEqual(englishKeys);
+    expect(Object.keys(itLocale).sort()).toEqual(englishKeys);
+    expect(Object.keys(pt).sort()).toEqual(englishKeys);
+    expect(Object.keys(zhCN).sort()).toEqual(englishKeys);
+    expect(Object.keys(ja).sort()).toEqual(englishKeys);
+    expect(Object.keys(ko).sort()).toEqual(englishKeys);
   });
 });

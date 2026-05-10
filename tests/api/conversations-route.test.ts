@@ -4,6 +4,7 @@ import { db } from "@/server/db";
 import { eq } from "drizzle-orm";
 import { messages, plans, runs, workerCounters, workers } from "@/server/db/schema";
 import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
+import { getAppRoot } from "@/server/app-root";
 
 const {
   mockStartSupervisorRun,
@@ -153,6 +154,28 @@ describe("POST /api/conversations", () => {
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
     expect(mockSpawnAgent).not.toHaveBeenCalled();
     expect(mockNotifyEventStreamSubscribers).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores the app root as the project path when no project is selected", async () => {
+    const request = new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "implementation",
+        command: "Check where this session is running",
+        preferredWorkerType: "codex",
+        allowedWorkerTypes: ["codex"],
+      }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    const run = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+
+    expect(run?.projectPath).toBe(getAppRoot());
+    expect(payload.run.projectPath).toBe(getAppRoot());
+    expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
   });
 
   it("starts a planning conversation with one direct worker and no supervisor", async () => {
@@ -331,7 +354,7 @@ describe("POST /api/conversations", () => {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
-        command: "Group all modified files into commits as they fit best",
+        command: AUTO_COMMIT_PROJECT_PROMPT,
         projectPath: "/workspace/app",
         preferredWorkerType: "codex",
       }),
@@ -382,7 +405,7 @@ describe("POST /api/conversations", () => {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
-        command: "Group all modified files into commits as they fit best",
+        command: AUTO_COMMIT_PROJECT_PROMPT,
         projectPath: "/workspace/app",
         preferredWorkerType: "codex",
       }),

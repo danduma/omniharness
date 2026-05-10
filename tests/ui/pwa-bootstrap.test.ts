@@ -15,7 +15,7 @@ describe("PWA installability", () => {
     expect(layoutSource).toContain('manifest: "/manifest.webmanifest"');
     expect(layoutSource).toContain("appleWebApp");
     expect(layoutSource).toContain('"apple-mobile-web-app-capable": "yes"');
-    expect(layoutSource).toContain("/icons/apple-touch-icon.png");
+    expect(layoutSource).toContain("/icons/apple-touch-icon-v2.png");
     expect(layoutSource).toContain("export const viewport");
     expect(layoutSource).toContain("<PwaBootstrap");
   });
@@ -28,16 +28,17 @@ describe("PWA installability", () => {
     expect(manifest.start_url).toBe("/");
     expect(manifest.scope).toBe("/");
     expect(manifest.display).toBe("standalone");
+    expect(manifest).not.toHaveProperty("orientation");
     expect(manifest.prefer_related_applications).toBe(false);
     expect(manifest.icons).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          src: "/icons/icon-192.png",
+          src: "/icons/icon-192-v2.png",
           sizes: "192x192",
           type: "image/png",
         }),
         expect.objectContaining({
-          src: "/icons/icon-512.png",
+          src: "/icons/icon-512-v2.png",
           sizes: "512x512",
           type: "image/png",
           purpose: "any maskable",
@@ -67,5 +68,14 @@ describe("PWA installability", () => {
     expect(serviceWorkerSource).toContain('request.mode === "navigate"');
     expect(serviceWorkerSource).toContain("/offline.html");
     expect(serviceWorkerSource).toContain('pathname.startsWith("/api/")');
+  });
+
+  test("service worker notification clicks reopen the relevant conversation", () => {
+    const serviceWorkerSource = readText("public/sw.js");
+
+    expect(serviceWorkerSource).toContain('self.addEventListener("notificationclick"');
+    expect(serviceWorkerSource).toContain("event.notification.data?.url");
+    expect(serviceWorkerSource).toContain("client.url === targetUrl.href");
+    expect(serviceWorkerSource).toContain("self.clients.openWindow(targetUrl.href)");
   });
 });

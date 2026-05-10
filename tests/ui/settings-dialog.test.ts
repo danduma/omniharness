@@ -6,6 +6,7 @@ const readSource = (relativePath: string) => fs.readFileSync(path.resolve(proces
 const settingsSource = [
   "src/components/home/SettingsDialog.tsx",
   "src/components/LanguageSelect.tsx",
+  "src/components/ui/select.tsx",
   "src/components/settings/SettingsDialog.tsx",
   "src/components/settings/GeneralSettingsPanel.tsx",
   "src/components/settings/AppearanceSettingsPanel.tsx",
@@ -26,14 +27,15 @@ const generalSettingsSource = [
 ].map(readSource).join("\n");
 
 test("settings dialog exposes General, Models, Agents, and Runtime tabs in order", () => {
-  expect(settingsSource).toContain('const SETTINGS_TABS: Array<{ value: SettingsTab; label: string }> = [');
-  expect(settingsSource).toContain('{ value: "general", label: "General" }');
-  expect(settingsSource).toContain('{ value: "models", label: "Models" }');
-  expect(settingsSource).toContain('{ value: "agents", label: "Agents" }');
-  expect(settingsSource).toContain('{ value: "runtime", label: "Runtime" }');
-  expect(settingsSource.indexOf('{ value: "general", label: "General" }')).toBeLessThan(settingsSource.indexOf('{ value: "models", label: "Models" }'));
-  expect(settingsSource.indexOf('{ value: "models", label: "Models" }')).toBeLessThan(settingsSource.indexOf('{ value: "agents", label: "Agents" }'));
-  expect(settingsSource.indexOf('{ value: "agents", label: "Agents" }')).toBeLessThan(settingsSource.indexOf('{ value: "runtime", label: "Runtime" }'));
+  expect(settingsSource).toContain('const SETTINGS_TABS: Array<{ value: SettingsTab; labelKey: string }> = [');
+  expect(settingsSource).toContain('{ value: "general", labelKey: "settings.tabs.general" }');
+  expect(settingsSource).toContain('{ value: "models", labelKey: "settings.tabs.models" }');
+  expect(settingsSource).toContain('{ value: "agents", labelKey: "settings.tabs.agents" }');
+  expect(settingsSource).toContain('{ value: "runtime", labelKey: "settings.tabs.runtime" }');
+  expect(settingsSource).not.toContain("Configure browser preferences, model routing, worker agents, and runtime behavior for this workspace.");
+  expect(settingsSource.indexOf('{ value: "general", labelKey: "settings.tabs.general" }')).toBeLessThan(settingsSource.indexOf('{ value: "models", labelKey: "settings.tabs.models" }'));
+  expect(settingsSource.indexOf('{ value: "models", labelKey: "settings.tabs.models" }')).toBeLessThan(settingsSource.indexOf('{ value: "agents", labelKey: "settings.tabs.agents" }'));
+  expect(settingsSource.indexOf('{ value: "agents", labelKey: "settings.tabs.agents" }')).toBeLessThan(settingsSource.indexOf('{ value: "runtime", labelKey: "settings.tabs.runtime" }'));
   expect(settingsSource).toContain('export type SettingsTab = "general" | "models" | "agents" | "runtime"');
   expect(settingsSource).not.toContain('activeSettingsTab === "llm"');
   expect(settingsSource).not.toContain('activeSettingsTab === "workers"');
@@ -42,22 +44,24 @@ test("settings dialog exposes General, Models, Agents, and Runtime tabs in order
 test("general settings owns language and local text-size preferences without theme controls", () => {
   expect(settingsSource).toContain("LanguageSelect");
   expect(settingsSource).toContain("inline-grid max-w-full space-y-1.5");
-  expect(settingsSource).toContain("h-8 w-auto min-w-40 max-w-full");
-  expect(settingsSource).toContain("Direct-control text size");
-  expect(settingsSource).toContain("Terminal / agent-output text size");
+  expect(settingsSource).toContain("w-auto min-w-40 max-w-full");
+  expect(settingsSource).toContain('t("settings.appearance.directTextSize")');
+  expect(settingsSource).toContain('t("settings.appearance.terminalTextSize")');
   expect(settingsSource).toContain("DIRECT_TEXT_SIZE_STORAGE_KEY");
   expect(settingsSource).toContain('"omni-direct-text-size"');
   expect(settingsSource).toContain("TERMINAL_TEXT_SIZE_STORAGE_KEY");
   expect(settingsSource).toContain('"omni-terminal-text-size"');
-  expect(settingsSource).toContain("Theme stays in the header");
+  expect(settingsSource).not.toContain("Theme stays in the header");
+  expect(settingsSource).not.toContain("Configure browser-local preferences.");
+  expect(settingsSource).not.toContain("Personal readability preferences apply immediately in this browser.");
   expect(generalSettingsSource).not.toContain("Theme Mode");
   expect(generalSettingsSource).not.toContain("setThemeMode");
 });
 
 test("models, agents, and runtime panels preserve server-backed settings", () => {
-  expect(settingsSource).toContain("Supervisor LLM");
-  expect(settingsSource).toContain("Fallback LLM");
-  expect(settingsSource).toContain("Credit / failover strategy");
+  expect(settingsSource).toContain('t("settings.models.supervisorTitle")');
+  expect(settingsSource).toContain('t("settings.models.fallbackTitle")');
+  expect(settingsSource).toContain('t("settings.models.creditStrategy.label")');
   expect(settingsSource).toContain("SUPERVISOR_LLM_PROVIDER");
   expect(settingsSource).toContain("SUPERVISOR_LLM_MODEL");
   expect(settingsSource).toContain("SUPERVISOR_LLM_BASE_URL");
@@ -67,27 +71,58 @@ test("models, agents, and runtime panels preserve server-backed settings", () =>
   expect(settingsSource).toContain("SUPERVISOR_FALLBACK_LLM_BASE_URL");
   expect(settingsSource).toContain("SUPERVISOR_FALLBACK_LLM_API_KEY");
   expect(settingsSource).toContain("/api/llm-models");
-  expect(settingsSource).toContain("Worker availability status");
-  expect(settingsSource).toContain("Default Worker Agent");
-  expect(settingsSource).toContain("YOLO / permission posture");
+  expect(settingsSource).toContain('t("settings.agents.workerAvailability")');
+  expect(settingsSource).toContain('t("settings.agents.defaultWorker")');
+  expect(settingsSource).toContain('t("settings.agents.yoloPosture")');
+  expect(settingsSource.indexOf('t("settings.agents.defaultWorker")')).toBeLessThan(settingsSource.indexOf('t("settings.agents.yoloPosture")'));
+  expect(settingsSource.indexOf('t("settings.agents.yoloPosture")')).toBeLessThan(settingsSource.indexOf('t("settings.agents.workerAvailability")'));
+  expect(settingsSource).not.toContain("Tune availability, allowed workers, default agent selection, and permission posture.");
+  expect(settingsSource).not.toContain("Ready to spawn");
+  expect(settingsSource).toContain("<Switch");
+  expect(settingsSource).toContain('t("settings.agents.installedDir")');
+  expect(settingsSource).toContain('t("settings.agents.version")');
+  expect(settingsSource).toContain('t("settings.tabs.models")');
+  expect(settingsSource).toContain("workerModels={workerCatalogQuery.data?.workerModels}");
   expect(settingsSource).toContain("WORKER_ALLOWED_TYPES");
   expect(settingsSource).toContain("WORKER_DEFAULT_TYPE");
   expect(settingsSource).toContain("WORKER_YOLO_MODE");
-  expect(settingsSource).toContain("Busy-message behavior");
+  expect(settingsSource).toContain('t("settings.runtime.defaultSendBehaviour")');
+  expect(settingsSource).toContain('role="radiogroup" aria-label={t("settings.runtime.defaultSendBehaviour")}');
+  expect(settingsSource).toContain('["steer", t("settings.runtime.steer")]');
+  expect(settingsSource).toContain('["queue", t("settings.runtime.queue")]');
   expect(settingsSource).toContain("BUSY_MESSAGE_ACTION");
-  expect(settingsSource).toContain('<option value="queue">Queue</option>');
-  expect(settingsSource).toContain('<option value="steer">Steer immediately</option>');
+  expect(settingsSource).not.toContain("Busy-message behavior");
+  expect(settingsSource).not.toContain("Send behaviour");
+  expect(settingsSource).not.toContain("Only currently available bridge workers can be enabled for new conversations.");
+  expect(settingsSource).not.toContain("Default new workers to the runtime");
+  expect(settingsSource).not.toContain('type="checkbox"');
+  expect(settingsSource).not.toContain("<select");
+  expect(settingsSource).not.toContain("<option");
   expect(settingsSource).not.toContain("Queue messages until the next safe turn");
   expect(settingsSource).not.toContain("Steer immediately, queue if the worker is busy");
+  expect(settingsSource).not.toContain("Control how OmniHarness handles active work.");
+  expect(settingsSource).not.toContain("Controls automatic rescue for disconnected workers and stale running conversations.");
+  expect(settingsSource).not.toContain("Configure the provider, model, endpoint, and credentials used first for supervisor turns.");
+  expect(settingsSource).not.toContain("Use a second provider profile if the primary supervisor credentials are unavailable.");
 });
 
-test("settings save and cancel use draft semantics for server-backed values only", () => {
+test("settings save and cancel use draft semantics for server-backed values", () => {
   expect(settingsSource).toContain("class SettingsDraftManager");
   expect(settingsSource).toContain("dirtyKeys");
   expect(settingsSource).toContain("discardDraft()");
   expect(settingsSource).toContain("getSavePayload()");
   expect(settingsSource).toContain("settingsDraftManager.getSavePayload()");
   expect(settingsSource).toContain("settingsDraftManager.markSaved(savedSettings)");
-  expect(settingsSource).toContain("Local preferences apply immediately. Save persists only workspace and runtime settings.");
+  expect(settingsSource).not.toContain("Local preferences are saved in this browser. Save persists workspace and runtime settings.");
   expect(settingsSource).toContain('disabled={saveSettings.isPending || !isDirty}');
+});
+
+test("appearance preference edits participate in settings save and cancel controls", () => {
+  expect(settingsSource).toContain("appearancePreferencesManager.saveDraft()");
+  expect(settingsSource).toContain("appearancePreferencesManager.discardDraft()");
+  expect(settingsSource).toContain("appearancePreferences.dirtyKeys.size > 0");
+  expect(settingsSource).toContain("const isDirty = serverSettingsDirty || localPreferencesDirty");
+  expect(settingsSource).toContain("const handleSave = () => {");
+  expect(settingsSource).toContain("const isServerDirty = settingsDraft.dirtyKeys.size > 0");
+  expect(settingsSource).toContain("appearancePreferencesManager.saveDraft()");
 });

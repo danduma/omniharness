@@ -16,7 +16,7 @@ describe("selectSpawnableWorkerType", () => {
   it("uses the requested worker type when it is spawnable", async () => {
     mockExecFileSync.mockImplementation((command: string, args: string[]) => {
       if (args[0] === "gemini") {
-        return Buffer.from("");
+        return Buffer.from("/usr/local/bin/gemini\n");
       }
       throw new Error("not found");
     });
@@ -33,7 +33,7 @@ describe("selectSpawnableWorkerType", () => {
   it("falls back when the requested worker binary is unavailable", async () => {
     mockExecFileSync.mockImplementation((command: string, args: string[]) => {
       if (args[0] === "opencode") {
-        return Buffer.from("");
+        return Buffer.from("/usr/local/bin/opencode\n");
       }
       throw new Error("not found");
     });
@@ -50,7 +50,7 @@ describe("selectSpawnableWorkerType", () => {
   it("accepts codex when the ACP adapter is available even without OPENAI_API_KEY", async () => {
     mockExecFileSync.mockImplementation((command: string, args: string[]) => {
       if (args[0] === "codex-acp") {
-        return Buffer.from("");
+        return Buffer.from("/usr/local/bin/codex-acp\n");
       }
       throw new Error("not found");
     });
@@ -67,7 +67,7 @@ describe("selectSpawnableWorkerType", () => {
   it("falls back from codex when only the MCP-only codex binary is installed", async () => {
     mockExecFileSync.mockImplementation((command: string, args: string[]) => {
       if (args[0] === "codex" || args[0] === "opencode") {
-        return Buffer.from("");
+        return Buffer.from(`/usr/local/bin/${args[0]}\n`);
       }
       throw new Error("not found");
     });
@@ -84,7 +84,7 @@ describe("selectSpawnableWorkerType", () => {
   it("accepts claude when the ACP adapter is available even without Anthropic env vars", async () => {
     mockExecFileSync.mockImplementation((command: string, args: string[]) => {
       if (args[0] === "claude-agent-acp") {
-        return Buffer.from("");
+        return Buffer.from("/usr/local/bin/claude-agent-acp\n");
       }
       throw new Error("not found");
     });
@@ -101,7 +101,7 @@ describe("selectSpawnableWorkerType", () => {
   it("accepts gemini when the CLI is available even without GEMINI_API_KEY", async () => {
     mockExecFileSync.mockImplementation((command: string, args: string[]) => {
       if (args[0] === "gemini") {
-        return Buffer.from("");
+        return Buffer.from("/usr/local/bin/gemini\n");
       }
       throw new Error("not found");
     });

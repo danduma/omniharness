@@ -487,6 +487,45 @@ describe("internal agent runtime HTTP API", () => {
     expect(readdirSync(join(projectDir, ".agents", "skills")).some((entry) => entry.includes("reviewer"))).toBe(false);
   }, 120_000);
 
+  it("streams ask progress before the final worker response", async () => {
+    const projectDir = createTempDir("omni-runtime-stream-project-");
+    const binDir = createTempDir("omni-runtime-stream-bin-");
+    const fakeAgent = createExecutable(binDir, "fake-acp-agent", fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "stream-worker",
+      }),
+    });
+    expect(spawnResponse.status).toBe(201);
+
+    const askResponse = await fetch(`${baseUrl}/agents/stream-worker/ask?stream=true`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "hello" }),
+    });
+    expect(askResponse.status).toBe(200);
+    const streamText = await askResponse.text();
+
+    expect(streamText).toContain("event: progress");
+    expect(streamText).toContain("event: chunk");
+    expect(streamText).toContain("event: done");
+  }, 15_000);
+
   it("stops a single reported terminal process without deleting the agent", async () => {
     const projectDir = createTempDir("omni-runtime-terminal-project-");
     const binDir = createTempDir("omni-runtime-terminal-bin-");

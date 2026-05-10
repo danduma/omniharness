@@ -35,6 +35,17 @@ test("terminal renders a structured activity feed instead of replaying xterm tex
   expect(terminalSource).not.toContain("@xterm/xterm");
 });
 
+test("terminal intercepts project file links from agent output", () => {
+  expect(terminalSource).toContain("parseProjectFileReference");
+  expect(terminalSource).toContain("projectRoot?: string | null");
+  expect(terminalSource).toContain("onOpenProjectFile?: (file: ProjectFileReference) => void");
+  expect(terminalSource).toContain("handleProjectFileReferenceClick");
+  expect(terminalSource).toContain("ProjectFileReferenceText");
+  expect(terminalSource).toContain("onOpenProjectFile(reference)");
+  expect(terminalSource).toContain("projectRoot={projectRoot}");
+  expect(terminalSource).toContain("onOpenProjectFile={onOpenProjectFile}");
+});
+
 test("terminal renders thoughts behind a collapsible thinking summary", () => {
   expect(terminalSource).toContain("ThoughtActivity");
   expect(terminalSource).toContain("Thinking");

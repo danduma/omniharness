@@ -35,10 +35,10 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('"w-full resize-none bg-transparent text-[15px] leading-6 outline-none"');
   expect(pageSource).toContain('hasAttachments ? "min-h-[112px]" : "min-h-[72px]"');
   expect(pageSource).toContain("rows={1}");
-  expect(composerSelectSource).toContain("<select");
+  expect(composerSelectSource).toContain("<Select");
+  expect(composerSelectSource).not.toContain("<select");
   expect(composerSelectSource).not.toContain("selectedLabel");
   expect(composerSelectSource).not.toContain("opacity-0");
-  expect(composerSelectSource).not.toContain("ChevronDown");
   expect(pageSource).toContain("<ComposerModelPicker");
   expect(pageSource).toContain('ariaLabel="Worker effort"');
   expect(composerModelPickerSource).toContain("Choose model");
@@ -69,7 +69,7 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain("preferredWorkerEffort: selectedEffort.toLowerCase()");
   expect(pageSource).toContain("allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent]");
   expect(pageSource).toContain("options={composerWorkerOptions}");
-  expect(composerSelectSource).toContain("options.map((option) => (");
+  expect(composerSelectSource).toContain("options={options}");
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)');
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)');
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_EFFORT_STORAGE_KEY)');
@@ -93,7 +93,7 @@ test("direct mode requires an explicit cli agent and tightens dropdown alignment
   expect(pageSource).toContain('const nextDirectWorker = selectedCliAgent === "auto" ? (autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex") : selectedCliAgent;');
   expect(pageSource).toContain('<ComposerSelect');
   expect(pageSource).toContain('<ComposerModelPicker');
-  expect(composerSelectSource).toContain('"h-7 max-w-[6.8rem] shrink truncate appearance-none border-0 bg-transparent px-1 text-right text-xs outline-none transition-colors sm:h-8 sm:max-w-none sm:px-2 sm:text-sm"');
+  expect(composerSelectSource).toContain('"h-7 max-w-[7.8rem] shrink border-0 bg-transparent px-1 text-xs shadow-none sm:h-8 sm:max-w-none sm:px-2 sm:text-sm [&>span]:text-right"');
 });
 
 test("composer exposes native file input, paste ingestion, previews, and removal controls", () => {
@@ -108,6 +108,14 @@ test("composer exposes native file input, paste ingestion, previews, and removal
   expect(pageSource).toContain('<Plus className="h-[18px] w-[18px]" />');
   expect(pageSource).not.toContain("FileAttachmentPickerDialog");
   expect(pageSource).toContain("attachments,");
+});
+
+test("composer mention picker can open a project file without inserting it", () => {
+  expect(pageSource).toContain("onOpenProjectFile?: (filePath: string) => void;");
+  expect(pageSource).toContain("onOpenProjectFile(filePath)");
+  expect(pageSource).toContain("Open ${filePath} in side window");
+  expect(pageSource).toContain("event.stopPropagation()");
+  expect(pageSource).toContain("applyMention(filePath)");
 });
 
 test("composer control row stays on one compact mobile row", () => {
@@ -130,13 +138,16 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain('const isSubmitButtonDisabled = isStopButtonVisible\n    ? false');
   expect(pageSource).toContain("resolveBusyComposerBehavior({");
   expect(pageSource).toContain("disabled={isSubmitButtonDisabled}");
-  expect(pageSource).toContain("aria-label={composerBehavior.ariaLabel}");
+  expect(pageSource).toContain("aria-label={sendButtonAriaLabel}");
   expect(pageSource).toContain('composerBehavior.submitAction === "stop"');
   expect(pageSource).toContain("stopSupervisor.mutate({ runId: selectedRunId })");
   expect(pageSource).toContain("stopWorker.mutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId })");
   expect(pageSource).toContain("if (selectedRunId) {");
   expect(pageSource).toContain("sendConversationMessage.mutate({ runId: selectedRunId, content, attachments, busyAction })");
-  expect(pageSource).toContain('composerBehavior.submitAction === "send_queue"');
+  expect(pageSource).toContain("resolveBusyMessageActionForSubmitAction(composerBehavior.submitAction");
+  expect(pageSource).toContain("shouldUseAlternateComposerSubmitKeyDown({");
+  expect(pageSource).toContain("getComposerSubmitShortcutLabel(isAppleComposerShortcutPlatform())");
+  expect(pageSource).toContain("sendButtonTitle");
   expect(pageSource).toContain("isSendButtonBusy ? (");
   expect(pageSource).toContain("<Square className=\"h-[13.6px] w-[13.6px] fill-current\" />");
 });

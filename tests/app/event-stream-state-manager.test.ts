@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EventStreamStateManager } from "@/app/home/EventStreamStateManager";
+import { EventStreamSnapshotCacheManager } from "@/app/home/EventStreamSnapshotCacheManager";
 import { WorkerOutputLineCacheManager } from "@/app/home/WorkerOutputLineCacheManager";
 import type { EventStreamState } from "@/app/home/types";
 
@@ -37,6 +38,49 @@ function createState(overrides: Partial<EventStreamState> = {}): EventStreamStat
 }
 
 describe("EventStreamStateManager", () => {
+  it("hydrates a scoped event stream snapshot before the next network update arrives", () => {
+    const storage = new MemoryStorage();
+    const snapshotCache = new EventStreamSnapshotCacheManager({
+      storage,
+      storageKey: "test-event-stream-snapshot-cache",
+    });
+
+    const cachedState = createState({
+      messages: [{
+        id: "message-1",
+        runId: "run-1",
+        role: "user",
+        kind: "message",
+        content: "Already visible before reload",
+        createdAt: "2026-05-04T00:00:00.000Z",
+      }],
+      runs: [{
+        id: "run-1",
+        planId: "plan-1",
+        mode: "implementation",
+        status: "running",
+        createdAt: "2026-05-04T00:00:00.000Z",
+        projectPath: "/repo",
+        title: "Cached conversation",
+      }],
+    });
+
+    snapshotCache.rememberState(cachedState, "run-1");
+
+    const reloadedManager = new EventStreamStateManager(createState(), {
+      snapshotCache: new EventStreamSnapshotCacheManager({
+        storage,
+        storageKey: "test-event-stream-snapshot-cache",
+      }),
+      snapshotCacheScope: "run-1",
+    });
+
+    expect(reloadedManager.getSnapshot().runs.map((run) => run.title)).toEqual(["Cached conversation"]);
+    expect(reloadedManager.getSnapshot().messages.map((message) => message.content)).toEqual([
+      "Already visible before reload",
+    ]);
+  });
+
   it("persists worker output lines once globally and hydrates them after a reload", () => {
     const storage = new MemoryStorage();
     const cacheOptions = {

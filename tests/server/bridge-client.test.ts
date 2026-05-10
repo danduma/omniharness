@@ -1,11 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const { mockNotifyEventStreamSubscribers } = vi.hoisted(() => ({
+  mockNotifyEventStreamSubscribers: vi.fn(),
+}));
+
+vi.mock("@/server/events/live-updates", () => ({
+  notifyEventStreamSubscribers: mockNotifyEventStreamSubscribers,
+}));
+
 describe("bridge client", () => {
   const originalFetch = global.fetch;
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
   beforeEach(() => {
     vi.resetModules();
+    mockNotifyEventStreamSubscribers.mockClear();
   });
 
   afterEach(() => {
@@ -45,6 +54,40 @@ describe("bridge client", () => {
     await vi.advanceTimersByTimeAsync(3000);
     await expectation;
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("uses the ask stream and wakes live subscribers for incremental worker output", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response([
+        "event: progress",
+        "data: {\"updatedAt\":\"2026-05-10T00:00:00.000Z\"}",
+        "",
+        "event: chunk",
+        "data: {\"chunk\":\"hello\"}",
+        "",
+        "event: done",
+        "data: {\"response\":\"hello\",\"state\":\"idle\",\"stopReason\":\"end_turn\"}",
+        "",
+      ].join("\n"), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { askAgent } = await import("@/server/bridge-client");
+    const result = await askAgent("worker-1", "hello");
+
+    expect(result).toEqual({
+      response: "hello",
+      state: "idle",
+      stopReason: "end_turn",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:7800/agents/worker-1/ask?stream=true",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(mockNotifyEventStreamSubscribers).toHaveBeenCalledTimes(3);
   });
 
   it("preserves structured bridge error messages instead of collapsing them to status text", async () => {

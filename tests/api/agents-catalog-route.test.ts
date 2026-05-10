@@ -3,12 +3,14 @@ import { NextRequest } from "next/server";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
 
-const { mockGetCatalogSnapshot, mockIsSpawnableWorkerType } = vi.hoisted(() => ({
+const { mockGetCatalogSnapshot, mockGetWorkerInstallationInfo, mockIsSpawnableWorkerType } = vi.hoisted(() => ({
   mockGetCatalogSnapshot: vi.fn(),
+  mockGetWorkerInstallationInfo: vi.fn(),
   mockIsSpawnableWorkerType: vi.fn(),
 }));
 
 vi.mock("@/server/supervisor/worker-availability", () => ({
+  getWorkerInstallationInfo: mockGetWorkerInstallationInfo,
   isSpawnableWorkerType: mockIsSpawnableWorkerType,
 }));
 
@@ -42,6 +44,13 @@ describe("GET /api/agents/catalog", () => {
       refreshing: true,
     });
     mockIsSpawnableWorkerType.mockReset();
+    mockGetWorkerInstallationInfo.mockReset();
+    mockGetWorkerInstallationInfo.mockImplementation((type: string) => ({
+      command: type === "codex" ? "codex-acp" : type,
+      path: `/opt/omni/bin/${type}`,
+      dir: "/opt/omni/bin",
+      version: `${type} 1.2.3`,
+    }));
     return db.delete(settings);
   });
 
@@ -83,6 +92,12 @@ describe("GET /api/agents/catalog", () => {
     expect(payload.diagnostics).toEqual([]);
     expect(codex?.availability.status).toBe("ok");
     expect(codex?.availability.message).toBe("Ready to spawn.");
+    expect(codex?.installation).toEqual({
+      command: "codex-acp",
+      path: "/opt/omni/bin/codex",
+      dir: "/opt/omni/bin",
+      version: "codex 1.2.3",
+    });
     expect(payload.workerModels.codex).toEqual(expect.arrayContaining([
       { value: "gpt-5.4", label: "GPT-5.4" },
       { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },

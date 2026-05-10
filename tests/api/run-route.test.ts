@@ -179,6 +179,43 @@ describe("POST /api/runs/[id]", () => {
     expect(await db.select().from(messages).where(eq(messages.runId, runId))).toHaveLength(1);
   });
 
+  it("rejects archiving a running conversation", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/running-archive-test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      title: "Still working",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "archive" }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    const payload = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(payload.error.message).toContain("Only finished conversations can be archived");
+
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(updatedRun?.archivedAt).toBeNull();
+  });
+
   it("stops the supervisor run and cancels active workers", async () => {
     mockCancelAgent.mockClear();
     mockStopRunObserver.mockClear();

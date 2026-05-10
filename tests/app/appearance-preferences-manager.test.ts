@@ -45,7 +45,7 @@ describe("AppearancePreferencesManager", () => {
     });
   });
 
-  it("hydrates and persists browser-local preference changes", () => {
+  it("hydrates and previews browser-local preference changes", () => {
     const storage = installLocalStorage();
     storage.set(DIRECT_TEXT_SIZE_STORAGE_KEY, "large");
     storage.set(TERMINAL_TEXT_SIZE_STORAGE_KEY, "larger");
@@ -62,8 +62,56 @@ describe("AppearancePreferencesManager", () => {
     manager.setDirectTextSize("compact");
     manager.setTerminalTextSize("largest");
 
+    expect(manager.getSnapshot()).toMatchObject({
+      directTextSize: "compact",
+      terminalTextSize: "largest",
+    });
+    expect(storage.get(DIRECT_TEXT_SIZE_STORAGE_KEY)).toBe("large");
+    expect(storage.get(TERMINAL_TEXT_SIZE_STORAGE_KEY)).toBe("larger");
+  });
+
+  it("keeps browser-local preference edits as a saveable draft", () => {
+    const storage = installLocalStorage();
+    storage.set(DIRECT_TEXT_SIZE_STORAGE_KEY, "large");
+    storage.set(TERMINAL_TEXT_SIZE_STORAGE_KEY, "larger");
+    const manager = new AppearancePreferencesManager();
+
+    manager.hydrateFromLocalStorage();
+    manager.setDirectTextSize("compact");
+    manager.setTerminalTextSize("largest");
+
+    expect(manager.getSnapshot()).toMatchObject({
+      directTextSize: "compact",
+      terminalTextSize: "largest",
+      savedDirectTextSize: "large",
+      savedTerminalTextSize: "larger",
+    });
+    expect(manager.getSnapshot().dirtyKeys).toEqual(new Set(["directTextSize", "terminalTextSize"]));
+    expect(storage.get(DIRECT_TEXT_SIZE_STORAGE_KEY)).toBe("large");
+    expect(storage.get(TERMINAL_TEXT_SIZE_STORAGE_KEY)).toBe("larger");
+
+    manager.saveDraft();
+
+    expect(manager.getSnapshot().dirtyKeys).toEqual(new Set());
     expect(storage.get(DIRECT_TEXT_SIZE_STORAGE_KEY)).toBe("compact");
     expect(storage.get(TERMINAL_TEXT_SIZE_STORAGE_KEY)).toBe("largest");
+  });
+
+  it("discards browser-local appearance draft edits", () => {
+    const storage = installLocalStorage();
+    storage.set(DIRECT_TEXT_SIZE_STORAGE_KEY, "large");
+    const manager = new AppearancePreferencesManager();
+
+    manager.hydrateFromLocalStorage();
+    manager.setDirectTextSize("compact");
+    manager.discardDraft();
+
+    expect(manager.getSnapshot()).toMatchObject({
+      directTextSize: "large",
+      savedDirectTextSize: "large",
+    });
+    expect(manager.getSnapshot().dirtyKeys).toEqual(new Set());
+    expect(storage.get(DIRECT_TEXT_SIZE_STORAGE_KEY)).toBe("large");
   });
 
   it("excludes appearance preferences from server settings payloads", () => {

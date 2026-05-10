@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveBusyComposerBehavior } from "@/app/home/busy-message-behavior";
+import {
+  resolveBusyComposerBehavior,
+  resolveBusyMessageActionForSubmitAction,
+} from "@/app/home/busy-message-behavior";
 
 describe("busy message behavior", () => {
   it("keeps stop available for empty input while a conversation is stoppable", () => {
@@ -11,7 +14,7 @@ describe("busy message behavior", () => {
     })).toMatchObject({
       buttonKind: "stop",
       submitAction: "stop",
-      ariaLabel: "Stop conversation",
+      ariaLabelKey: "conversation.composer.sendButton.stop",
     });
   });
 
@@ -24,7 +27,7 @@ describe("busy message behavior", () => {
     })).toMatchObject({
       buttonKind: "send",
       submitAction: "send_queue",
-      ariaLabel: "Queue message",
+      ariaLabelKey: "conversation.composer.sendButton.queue",
     });
   });
 
@@ -37,7 +40,7 @@ describe("busy message behavior", () => {
     })).toMatchObject({
       buttonKind: "send",
       submitAction: "send_steer",
-      ariaLabel: "Steer active work",
+      ariaLabelKey: "conversation.composer.sendButton.steer",
     });
   });
 
@@ -50,7 +53,19 @@ describe("busy message behavior", () => {
     })).toMatchObject({
       buttonKind: "send",
       submitAction: "send_normal",
-      ariaLabel: "Send message",
+      ariaLabelKey: "conversation.composer.sendButton.send",
     });
+  });
+
+  it("resolves the alternate busy action from the configured default", () => {
+    expect(resolveBusyMessageActionForSubmitAction("send_queue")).toBe("queue");
+    expect(resolveBusyMessageActionForSubmitAction("send_queue", { useAlternate: true })).toBe("steer");
+    expect(resolveBusyMessageActionForSubmitAction("send_steer")).toBe("steer");
+    expect(resolveBusyMessageActionForSubmitAction("send_steer", { useAlternate: true })).toBe("queue");
+  });
+
+  it("does not invent a busy action for normal sends or stop controls", () => {
+    expect(resolveBusyMessageActionForSubmitAction("send_normal")).toBeUndefined();
+    expect(resolveBusyMessageActionForSubmitAction("stop", { useAlternate: true })).toBeUndefined();
   });
 });

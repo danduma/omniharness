@@ -29,13 +29,17 @@ test("conversation rows expose rename and delete actions", () => {
   expect(pageSource).toContain('requestJson(`/api/runs/${runId}`');
 });
 
-test("commit conversation rows expose archive as an inline icon and overflow action", () => {
+test("conversation rows expose archive in the overflow menu and commit rows expose an inline archive icon", () => {
   const sidebarSource = readSource("src/components/home/ConversationSidebar.tsx");
 
   expect(sidebarSource).toContain("Archive");
   expect(sidebarSource).toContain("isCommitConversation");
+  expect(sidebarSource).toContain("const canArchiveConversation = isArchivableRunStatus(run.status);");
   expect(sidebarSource).toContain('aria-label={`Archive ${run.title}`}');
   expect(sidebarSource).toContain("archiveRun(run)");
+  expect(sidebarSource).toContain("{canArchiveConversation && isCommitConversation ? (");
+  expect(sidebarSource).toContain("{canArchiveConversation ? (");
+  expect(sidebarSource).not.toContain('{isCommitConversation ? (\n                                    <DropdownMenuItem');
   expect(homeAppSource).toContain("const archiveRun = useMutation({");
   expect(homeAppSource).toContain('body: JSON.stringify({ action: "archive" })');
   expect(homeAppSource).toContain('action: "Archive"');
@@ -45,8 +49,8 @@ test("commit conversation rows expose archive as an inline icon and overflow act
 test("top bar exposes an auto commit action for the selected chat", () => {
   expect(pageSource).toContain("AUTO_COMMIT_CHAT_PROMPT");
   expect(pageSource).toContain("AUTO_COMMIT_CHAT_PUSH_PROMPT");
-  expect(pageSource).toContain('"Create a git commit including the changes you\'ve made"');
-  expect(pageSource).toContain('"Create a git commit including the changes you\'ve made, then push the current branch"');
+  expect(pageSource).toContain('"Group the modified files from this conversation into logical git commits. Do not run tests. Do not modify files or do anything else. Only inspect the modified files as needed, create commits, and stop."');
+  expect(pageSource).toContain('"Group the modified files from this conversation into logical git commits, then push the current branch. Do not run tests. Do not modify files or do anything else. Only inspect the modified files as needed, create commits, push, and stop."');
   expect(pageSource).toContain("autoCommitChat.mutate({ runId: selectedRunId, action })");
   expect(pageSource).toContain("ButtonGroup");
   expect(pageSource).toContain("DropdownMenu");
@@ -234,7 +238,8 @@ test("clarification requests stay in the normal supervisor conversation", () => 
 
 test("supervisor conversation messages render markdown", () => {
   expect(pageSource).toContain('msg.role === "supervisor"');
-  expect(pageSource).toContain("<MarkdownContent content={msg.content}");
+  expect(pageSource).toContain("<MarkdownContent");
+  expect(pageSource).toContain("content={msg.content}");
   expect(markdownContentSource).toContain("function renderInlineMarkdown");
   expect(markdownContentSource).toContain("export function MarkdownContent");
   expect(markdownContentSource).not.toContain("dangerouslySetInnerHTML");

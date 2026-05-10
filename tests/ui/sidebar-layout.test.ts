@@ -12,6 +12,7 @@ const readSource = (relativePath: string) => fs.readFileSync(path.resolve(proces
 const pageSource = [
   "src/app/page.tsx",
   "src/app/home/HomeApp.tsx",
+  "src/app/home/SideWindowManager.ts",
   "src/app/home/HomeUiStateManager.ts",
   "src/app/home/constants.ts",
   "src/app/home/types.ts",
@@ -24,6 +25,8 @@ const pageSource = [
   "src/components/home/ConversationMain.tsx",
   "src/components/home/ConversationSidebar.tsx",
   "src/components/home/HomeHeader.tsx",
+  "src/components/home/SideWindow.tsx",
+  "src/components/home/FileViewerPanel.tsx",
   "src/components/home/SettingsDialog.tsx",
   "src/components/home/UserInputMessage.tsx",
   "src/components/home/WorkersSidebar.tsx",
@@ -43,6 +46,10 @@ const workerCardSource = fs.readFileSync(
 );
 const workersSidebarSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/home/WorkersSidebar.tsx"),
+  "utf8"
+);
+const sideWindowSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/components/home/SideWindow.tsx"),
   "utf8"
 );
 
@@ -69,6 +76,9 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('<PanelLeft className="h-4 w-4" />');
   expect(pageSource).toContain('transition-[width,opacity] duration-150 ease-out');
   expect(pageSource).toContain('relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#f1f1f0] dark:bg-muted/30');
+  expect(pageSource).toContain('space-y-1 px-3 pb-3 pt-2 lg:px-3 lg:pb-3 lg:pt-2');
+  expect(pageSource).toContain('hidden min-w-0 flex-1 items-center gap-2 lg:flex');
+  expect(pageSource).toContain('h-9 w-full shrink-0 justify-start px-2 text-sm text-[#333333]');
   expect(pageSource).toContain('min-h-0 flex-1 overflow-hidden');
   expect(pageSource).toContain('mt-auto shrink-0 border-t border-border/60 bg-background/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-background/80');
   expect(pageSource).toContain('"group flex min-w-0 cursor-pointer overflow-hidden rounded-xl py-1.5 pl-4 pr-2 text-sm transition-colors"');
@@ -126,12 +136,15 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('setRightSidebarWidth(clampWorkersSidebarWidth(nextWidth, window.innerWidth));');
   expect(pageSource).toContain('window.localStorage.getItem("omni-workers-sidebar-width")');
   expect(pageSource).toContain('window.localStorage.setItem("omni-workers-sidebar-width", String(rightSidebarWidth))');
-  expect(pageSource).toContain('title="Toggle Conversation Workers"');
-  expect(pageSource).toContain('title="Collapse workers sidebar"');
+  expect(pageSource).toContain("{workspaceSideWindowAvailable && !rightSidebarOpen ? (");
+  expect(pageSource).toContain('title="Toggle workspace side window"');
+  expect(pageSource).toContain('title={closeButtonLabel}');
+  expect(pageSource).toContain('const closeButtonLabel = closeButtonVariant === "back" ? "Back" : "Collapse workspace side window";');
+  expect(pageSource).toContain('const CloseButtonIcon = closeButtonVariant === "back" ? ArrowLeft : PanelRightClose;');
   expect(pageSource).toContain('<PanelRightClose');
-  expect(pageSource).toContain('<WorkersSidebar');
-  expect(pageSource).toContain('workers={selectedRunWorkersForDisplay}');
-  expect(pageSource).toContain('agents={conversationAgents}');
+  expect(pageSource).toContain('<SideWindow');
+  expect(pageSource).toContain('workers={selectedRunId && isImplementationConversation ? selectedRunWorkersForDisplay : []}');
+  expect(pageSource).toContain('agents={selectedRunId && isImplementationConversation ? conversationAgents : []}');
   expect(pageSource).toContain('workersSidebarManager');
   expect(pageSource).toContain('activeTab: "active"');
   expect(pageSource).toContain("Active ({workerGroups.active.length})");
@@ -139,8 +152,9 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('const liveAgentsById = new Map(');
   expect(pageSource).toContain('preferredModel={selectedRun?.preferredWorkerModel ?? null}');
   expect(pageSource).toContain('preferredEffort={selectedRun?.preferredWorkerEffort ?? null}');
-  expect(pageSource).toContain('onClose={() => setMobileWorkersOpen(false)}');
-  expect(pageSource).toContain('onClose={() => setRightSidebarOpen(false)}');
+  expect(pageSource).toContain('onCloseWindow={() => setMobileWorkersOpen(false)}');
+  expect(pageSource).toContain('closeButtonVariant="back"');
+  expect(pageSource).toContain('onCloseWindow={() => setRightSidebarOpen(false)}');
   expect(pageSource).toContain('if (selectedRunId && isImplementationConversation && selectedRunWorkersForDisplay.length > 0) {');
   expect(pageSource).toContain('setRightSidebarOpen(true);');
   expect(pageSource).toContain('transition-[width,opacity] duration-150 ease-out');
@@ -148,12 +162,18 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('aria-hidden={!rightSidebarOpen}');
   expect(pageSource).toContain('inert={!rightSidebarOpen ? true : undefined}');
   expect(pageSource).toContain('rightSidebarOpen ? "translate-x-0" : "translate-x-3"');
-  expect(pageSource).toContain('aria-label="Resize workers sidebar"');
+  expect(pageSource).toContain('aria-label="Resize workspace side window"');
   expect(pageSource).toContain('onPointerDown={handleRightSidebarResizeStart}');
   expect(pageSource).not.toContain('h-14 w-1 rounded-full bg-border/80 transition-colors hover:bg-foreground/30');
   expect(pageSource).toContain('export const PRODUCT_NAME = "OmniHarness";');
-  expect(pageSource).toContain("<SheetTitle>{PRODUCT_NAME}</SheetTitle>");
+  expect(pageSource).toContain('<SheetTitle className="flex items-center gap-2 text-left">');
+  expect(pageSource).toContain('<span>{PRODUCT_NAME}</span>');
   expect(pageSource).not.toContain("<SheetTitle>Navigation</SheetTitle>");
+  expect(pageSource).toContain('<Sheet open={mobileWorkersOpen} onOpenChange={setMobileWorkersOpen} disablePointerDismissal>');
+  expect(pageSource).toContain('className="!inset-0 h-[100dvh] !w-screen !max-w-none gap-0 !border-0 p-0 sm:!max-w-none lg:hidden"');
+  expect(pageSource).toContain('<SheetTitle className="sr-only">Workspace tools</SheetTitle>');
+  expect(pageSource).not.toContain('<SheetTitle>Workspace side window</SheetTitle>');
+  expect(pageSource).toContain('className="hidden min-w-0 flex-1 items-center gap-2 lg:flex"');
   expect(pageSource).not.toContain('queryClient.removeQueries({ queryKey: ["conversation-agent", workerId], exact: true })');
   expect(workerCardSource).toContain('function renderContextMeter(fullnessPercent: number | null | undefined)');
   expect(workerCardSource).toContain('{runtimeDurationLabel ? (');
@@ -190,6 +210,30 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).not.toContain('border border-emerald-400/30 bg-emerald-400/10');
   expect(pageSource).not.toContain("Global Workers");
   expect(pageSource).not.toContain('<WorkersSidebar agents={state.agents ?? []} onClose={() => setRightSidebarOpen(false)} />');
+});
+
+test("workspace side window owns workers and file tabs", () => {
+  expect(pageSource).toContain("sideWindowManager");
+  expect(pageSource).toContain("handleOpenProjectFile");
+  expect(pageSource).toContain("shouldOpenMobileSideWindow()");
+  expect(pageSource).toContain("<SideWindow");
+  expect(pageSource).toContain('projectRoot={currentProjectScope}');
+  expect(pageSource).toContain("onOpenProjectFile={handleOpenProjectFile}");
+  expect(pageSource).toContain("Boolean(selectedRunId || draftProjectPath) && Boolean(currentProjectScope)");
+  expect(pageSource).toContain('title="Toggle workspace side window"');
+  expect(pageSource).toContain('aria-label="Resize workspace side window"');
+  expect(pageSource).toContain('onCloseWindow={() => setRightSidebarOpen(false)}');
+  expect(pageSource).toContain('onCloseWindow={() => setMobileWorkersOpen(false)}');
+  expect(pageSource).toContain("sideWindowManager.resetFileTabs()");
+  expect(sideWindowSource).toContain('Conversation Workers');
+  expect(sideWindowSource).toContain("FileViewerPanel");
+  expect(sideWindowSource).toContain("sideWindowManager.closeTab(tab.id)");
+  expect(sideWindowSource).toContain("sideWindowManager.selectTab(tab.id)");
+  expect(sideWindowSource).toContain("tab.kind === \"file\"");
+  expect(sideWindowSource.indexOf('aria-label={`Close ${tab.relativePath}`}')).toBeLessThan(
+    sideWindowSource.indexOf('<span className="truncate">{tab.title}</span>'),
+  );
+  expect(sideWindowSource).toContain("showHeader={false}");
 });
 
 test("workers sidebar gives a single visible worker the full available window and scrolls multi-worker lists", () => {
@@ -491,13 +535,13 @@ test("header includes a persistent day night mode toggle beside the workers side
   expect(pageSource).toContain('setThemeMode((current) => (current === "day" ? "night" : "day"))');
   expect(pageSource).toContain('themeMode === "night" ? <Sun');
   expect(pageSource).toContain(': <Moon');
-  expect(pageSource).toContain('title="Toggle Conversation Workers"');
+  expect(pageSource).toContain('title="Toggle workspace side window"');
   expect(pageSource).not.toContain(">Day<");
   expect(pageSource).not.toContain(">Night<");
 });
 
 test("sidebar phone pairing entry point lives in the settings menu", () => {
-  expect(pageSource).toContain('<DropdownMenuItem className="cursor-pointer whitespace-nowrap" onClick={openPairDeviceDialog}>');
+  expect(pageSource).toContain('<DropdownMenuItem className="cursor-pointer whitespace-nowrap max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5" onClick={openPairDeviceDialog}>');
   expect(pageSource).toContain('<Smartphone className="mr-2 h-4 w-4" /> Connect Phone');
   expect(pageSource).not.toContain('className="mb-1 hidden h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground lg:flex"');
 });
@@ -616,6 +660,7 @@ test("new conversations expose a mode picker and only existing direct runs lock 
   expect(conversationModePickerSource).toContain("Create plan");
   expect(conversationModePickerSource).toContain("Implement plan");
   expect(conversationModePickerSource).toContain("Direct control");
+  expect(conversationModePickerSource).toContain('const MODE_ORDER: ConversationModeOption[] = ["direct", "planning", "implementation"]');
   expect(pageSource).toContain('const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct"');
   expect(pageSource).not.toContain("Direct worker:");
   expect(pageSource).toContain("{shouldLockDirectWorker ? (");

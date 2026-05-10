@@ -117,7 +117,7 @@ describe("buildDirectTerminalUserMessages", () => {
           runId: "run-1",
           role: "user",
           kind: "checkpoint",
-          content: "Group all modified files into commits as they fit best",
+          content: "Group all currently modified files into logical git commits. Do not run tests. Do not modify files or do anything else. Only inspect the modified files as needed, create commits, and stop.",
           createdAt: "2026-05-09T09:12:12.000Z",
         },
         {
