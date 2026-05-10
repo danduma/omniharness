@@ -2,14 +2,15 @@ import { useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { LLM_PROVIDER_OPTIONS } from "@/app/home/constants";
 import type { LlmFieldPrefix } from "@/app/home/types";
 import { requestJson } from "@/lib/app-errors";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 
 interface ModelProfileFormProps {
   prefix: LlmFieldPrefix;
   title: string;
-  description: string;
   settings: Record<string, string>;
   setSetting: (key: string, value: string) => void;
   secretStates?: Record<string, { configured: boolean; updatedAt: string }>;
@@ -18,11 +19,11 @@ interface ModelProfileFormProps {
 export function ModelProfileForm({
   prefix,
   title,
-  description,
   settings,
   setSetting,
   secretStates,
 }: ModelProfileFormProps) {
+  useI18nSnapshot();
   const providerKey = `${prefix}_PROVIDER`;
   const modelKey = `${prefix}_MODEL`;
   const baseUrlKey = `${prefix}_BASE_URL`;
@@ -46,8 +47,8 @@ export function ModelProfileForm({
           apiKey,
         }),
       }, {
-        source: "LLM Settings",
-        action: "Fetch available models",
+        source: t("settings.models.errorSource"),
+        action: t("settings.models.fetchAvailableModels"),
       });
     },
   });
@@ -65,29 +66,22 @@ export function ModelProfileForm({
     <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
       <div className="space-y-1">
         <div className="text-sm font-semibold">{title}</div>
-        <p className="text-xs text-muted-foreground">{description}</p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
           <label className="text-xs font-semibold text-muted-foreground" htmlFor={providerKey}>
-            Provider
+            {t("settings.models.provider")}
           </label>
-          <select
+          <Select
             id={providerKey}
-            className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
             value={provider}
-            onChange={(event) => setSetting(providerKey, event.target.value)}
-          >
-            {LLM_PROVIDER_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            options={LLM_PROVIDER_OPTIONS}
+            onValueChange={(value) => setSetting(providerKey, value)}
+          />
         </div>
         <div className="space-y-1.5">
           <label className="text-xs font-semibold text-muted-foreground" htmlFor={modelKey}>
-            Model
+            {t("settings.models.model")}
           </label>
           {provider === "gemini" ? (
             <Combobox
@@ -99,23 +93,23 @@ export function ModelProfileForm({
             >
               <ComboboxInput
                 id={modelKey}
-                aria-label="Model"
+                aria-label={t("settings.models.model")}
                 placeholder={
                   !apiKey.trim()
-                    ? "Enter API key first"
+                    ? t("settings.models.enterApiKeyFirst")
                     : geminiModelsQuery.isPending
-                      ? "Loading models..."
-                      : "Search Gemini models"
+                      ? t("settings.models.loadingModels")
+                      : t("settings.models.searchGeminiModels")
                 }
                 className="w-full"
               />
               <ComboboxContent className="w-[var(--anchor-width)]">
                 <ComboboxEmpty>
                   {!apiKey.trim()
-                    ? "Enter API key first"
+                    ? t("settings.models.enterApiKeyFirst")
                     : geminiModelsQuery.isPending
-                      ? "Loading models..."
-                      : "No Gemini models available"}
+                      ? t("settings.models.loadingModels")
+                      : t("settings.models.noGeminiModels")}
                 </ComboboxEmpty>
                 <ComboboxList>
                   {(model) => (
@@ -140,42 +134,42 @@ export function ModelProfileForm({
           )}
           {geminiModelsQuery.isError ? (
             <p className="text-[11px] text-destructive">
-              {geminiModelsQuery.error instanceof Error ? geminiModelsQuery.error.message : "Unable to fetch available models."}
+              {geminiModelsQuery.error instanceof Error ? geminiModelsQuery.error.message : t("settings.models.unableToFetchModels")}
             </p>
           ) : null}
           {provider === "gemini" ? (
             <p className="text-[11px] text-muted-foreground">
-              Gemini model ids load automatically from the API key and appear in a searchable dropdown.
+              {t("settings.models.geminiModelHelp")}
             </p>
           ) : null}
         </div>
         <div className="space-y-1.5">
           <label className="text-xs font-semibold text-muted-foreground" htmlFor={baseUrlKey}>
-            Endpoint
+            {t("settings.models.endpoint")}
           </label>
           <Input
             id={baseUrlKey}
             value={settings[baseUrlKey] || ""}
             onChange={(event) => setSetting(baseUrlKey, event.target.value)}
-            placeholder="Optional custom base URL"
+            placeholder={t("settings.models.optionalBaseUrl")}
             className="h-8 bg-muted/50 text-xs"
           />
         </div>
         <div className="space-y-1.5">
           <label className="text-xs font-semibold text-muted-foreground" htmlFor={apiKeyKey}>
-            API Key
+            {t("settings.models.apiKey")}
           </label>
           <Input
             id={apiKeyKey}
             type="password"
             value={settings[apiKeyKey] || ""}
             onChange={(event) => setSetting(apiKeyKey, event.target.value)}
-            placeholder={apiKeyConfigured ? "Saved credential" : "Provider credential"}
+            placeholder={apiKeyConfigured ? t("settings.models.savedCredential") : t("settings.models.providerCredential")}
             className="h-8 bg-muted/50 text-xs"
           />
           {apiKeyConfigured && !settings[apiKeyKey]?.trim() ? (
             <p className="text-[11px] text-muted-foreground">
-              Credential saved. Enter a new value to replace it.
+              {t("settings.models.credentialSaved")}
             </p>
           ) : null}
         </div>

@@ -1,3 +1,7 @@
+import { cn } from "@/lib/utils";
+import { Switch } from "@/components/ui/switch";
+import { t, useI18nSnapshot } from "@/lib/i18n";
+
 interface RuntimeSettingsPanelProps {
   settings: Record<string, string>;
   setSetting: (key: string, value: string) => void;
@@ -43,71 +47,71 @@ function setRecoveryPolicyValue(
 }
 
 export function RuntimeSettingsPanel({ settings, setSetting }: RuntimeSettingsPanelProps) {
+  useI18nSnapshot();
   const recoveryPolicy = parseRecoveryPolicy(settings.RECOVERY_POLICY);
+  const busyMessageAction = settings.BUSY_MESSAGE_ACTION === "steer" ? "steer" : "queue";
 
   return (
     <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
-      <div className="space-y-1">
-        <div className="text-sm font-semibold">Runtime</div>
-        <p className="text-xs text-muted-foreground">
-          Control how OmniHarness handles active work.
-        </p>
-      </div>
-
       <div className="space-y-1.5">
-        <label className="text-xs font-semibold text-muted-foreground" htmlFor="BUSY_MESSAGE_ACTION">
-          Busy-message behavior
-        </label>
-        <select
-          id="BUSY_MESSAGE_ACTION"
-          className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
-          value={settings.BUSY_MESSAGE_ACTION === "steer" ? "steer" : "queue"}
-          onChange={(event) => setSetting("BUSY_MESSAGE_ACTION", event.target.value)}
-        >
-          <option value="queue">Queue</option>
-          <option value="steer">Steer immediately</option>
-        </select>
-        <p className="text-[11px] text-muted-foreground">
-          Controls what happens when you send text while a supervisor or worker is already running.
-        </p>
+        <div className="text-xs font-semibold text-muted-foreground">{t("settings.runtime.defaultSendBehaviour")}</div>
+        <div className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-1" role="radiogroup" aria-label={t("settings.runtime.defaultSendBehaviour")}>
+          {([
+            ["steer", t("settings.runtime.steer")],
+            ["queue", t("settings.runtime.queue")],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={busyMessageAction === value}
+              className={cn(
+                "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                busyMessageAction === value
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => setSetting("BUSY_MESSAGE_ACTION", value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="space-y-3 border-t border-border/60 pt-4">
         <div className="space-y-1">
-          <div className="text-xs font-semibold text-muted-foreground">Recovery</div>
-          <p className="text-[11px] text-muted-foreground">
-            Controls automatic rescue for disconnected workers and stale running conversations.
-          </p>
+          <div className="text-xs font-semibold text-muted-foreground">{t("settings.runtime.recovery")}</div>
         </div>
 
-        <label className="flex items-center justify-between gap-3 text-xs">
-          <span>Auto-recover implementation runs</span>
-          <input
-            type="checkbox"
+        <label className="flex items-center gap-3 text-xs">
+          <Switch
+            aria-label={t("settings.runtime.autoRecoverImplementationRuns")}
             checked={recoveryPolicy.autoRecoverImplementationRuns}
-            onChange={(event) => setRecoveryPolicyValue(settings, setSetting, { autoRecoverImplementationRuns: event.target.checked })}
+            onCheckedChange={(checked) => setRecoveryPolicyValue(settings, setSetting, { autoRecoverImplementationRuns: checked })}
           />
+          <span>{t("settings.runtime.autoRecoverImplementationRuns")}</span>
         </label>
-        <label className="flex items-center justify-between gap-3 text-xs">
-          <span>Auto-recover direct runs</span>
-          <input
-            type="checkbox"
+        <label className="flex items-center gap-3 text-xs">
+          <Switch
+            aria-label={t("settings.runtime.autoRecoverDirectRuns")}
             checked={recoveryPolicy.autoRecoverDirectRuns}
-            onChange={(event) => setRecoveryPolicyValue(settings, setSetting, { autoRecoverDirectRuns: event.target.checked })}
+            onCheckedChange={(checked) => setRecoveryPolicyValue(settings, setSetting, { autoRecoverDirectRuns: checked })}
           />
+          <span>{t("settings.runtime.autoRecoverDirectRuns")}</span>
         </label>
-        <label className="flex items-center justify-between gap-3 text-xs">
-          <span>Preserve queued messages</span>
-          <input
-            type="checkbox"
+        <label className="flex items-center gap-3 text-xs">
+          <Switch
+            aria-label={t("settings.runtime.preserveQueuedMessages")}
             checked={recoveryPolicy.preserveQueuedMessages}
-            onChange={(event) => setRecoveryPolicyValue(settings, setSetting, { preserveQueuedMessages: event.target.checked })}
+            onCheckedChange={(checked) => setRecoveryPolicyValue(settings, setSetting, { preserveQueuedMessages: checked })}
           />
+          <span>{t("settings.runtime.preserveQueuedMessages")}</span>
         </label>
 
         <div className="grid gap-2 sm:grid-cols-3">
           <label className="space-y-1 text-xs">
-            <span className="font-medium text-muted-foreground">Attempts</span>
+            <span className="font-medium text-muted-foreground">{t("settings.runtime.attempts")}</span>
             <input
               type="number"
               min={1}
@@ -118,7 +122,7 @@ export function RuntimeSettingsPanel({ settings, setSetting }: RuntimeSettingsPa
             />
           </label>
           <label className="space-y-1 text-xs">
-            <span className="font-medium text-muted-foreground">Base backoff ms</span>
+            <span className="font-medium text-muted-foreground">{t("settings.runtime.baseBackoffMs")}</span>
             <input
               type="number"
               min={1000}
@@ -129,7 +133,7 @@ export function RuntimeSettingsPanel({ settings, setSetting }: RuntimeSettingsPa
             />
           </label>
           <label className="space-y-1 text-xs">
-            <span className="font-medium text-muted-foreground">Max backoff ms</span>
+            <span className="font-medium text-muted-foreground">{t("settings.runtime.maxBackoffMs")}</span>
             <input
               type="number"
               min={1000}

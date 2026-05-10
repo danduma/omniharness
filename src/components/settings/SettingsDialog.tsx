@@ -1,23 +1,26 @@
 import type React from "react";
+import { appearancePreferencesManager } from "@/app/home/AppearancePreferencesManager";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { SettingsDraftState } from "@/app/home/SettingsDraftManager";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { appErrorKey } from "@/lib/app-errors";
-import type { LlmProfileTab, SettingsTab, WorkerAvailability } from "@/app/home/types";
+import type { LlmProfileTab, SettingsTab, WorkerAvailability, WorkerCatalogResponse } from "@/app/home/types";
 import { cn } from "@/lib/utils";
 import { ErrorNotice } from "@/components/home/ErrorNotice";
 import { buildInlineError } from "@/app/home/utils";
+import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 import { ModelsSettingsPanel } from "./ModelsSettingsPanel";
 import { AgentsSettingsPanel } from "./AgentsSettingsPanel";
 import { RuntimeSettingsPanel } from "./RuntimeSettingsPanel";
 
-const SETTINGS_TABS: Array<{ value: SettingsTab; label: string }> = [
-  { value: "general", label: "General" },
-  { value: "models", label: "Models" },
-  { value: "agents", label: "Agents" },
-  { value: "runtime", label: "Runtime" },
+const SETTINGS_TABS: Array<{ value: SettingsTab; labelKey: string }> = [
+  { value: "general", labelKey: "settings.tabs.general" },
+  { value: "models", labelKey: "settings.tabs.models" },
+  { value: "agents", labelKey: "settings.tabs.agents" },
+  { value: "runtime", labelKey: "settings.tabs.runtime" },
 ];
 
 interface SettingsDialogProps {
@@ -35,7 +38,7 @@ interface SettingsDialogProps {
   workerCatalogQuery: {
     isError: boolean;
     error: unknown;
-    data?: { diagnostics?: AppErrorDescriptor[] };
+    data?: Partial<WorkerCatalogResponse> & { diagnostics?: AppErrorDescriptor[] };
   };
   settingsDiagnostics: AppErrorDescriptor[];
   saveSettings: {
@@ -61,23 +64,36 @@ export function SettingsDialog({
   settingsDiagnostics,
   saveSettings,
 }: SettingsDialogProps) {
-  const isDirty = settingsDraft.dirtyKeys.size > 0;
+  const appearancePreferences = useManagerSnapshot(appearancePreferencesManager);
+  useI18nSnapshot();
+  const serverSettingsDirty = settingsDraft.dirtyKeys.size > 0;
+  const localPreferencesDirty = appearancePreferences.dirtyKeys.size > 0;
+  const isDirty = serverSettingsDirty || localPreferencesDirty;
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen) {
       discardSettingsDraft();
+      appearancePreferencesManager.discardDraft();
     }
     onOpenChange(nextOpen);
   };
   const handleCancel = () => handleOpenChange(false);
+  const handleSave = () => {
+    const isServerDirty = settingsDraft.dirtyKeys.size > 0;
+
+    if (isServerDirty) {
+      saveSettings.mutate();
+      return;
+    }
+
+    appearancePreferencesManager.saveDraft();
+    handleOpenChange(false);
+  };
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="flex max-h-[min(760px,calc(100dvh-2rem))] flex-col overflow-hidden sm:max-h-[min(760px,calc(100dvh-3rem))] sm:max-w-2xl">
         <DialogHeader className="shrink-0 pr-8">
-          <DialogTitle>OmniHarness Settings</DialogTitle>
-          <DialogDescription>
-            Configure browser preferences, model routing, worker agents, and runtime behavior for this workspace.
-          </DialogDescription>
+          <DialogTitle>{t("settings.dialog.title")}</DialogTitle>
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto pr-1">
@@ -96,7 +112,7 @@ export function SettingsDialog({
                   aria-pressed={activeSettingsTab === tab.value}
                   onClick={() => setActiveSettingsTab(tab.value)}
                 >
-                  {tab.label}
+                  {t(tab.labelKey)}
                 </button>
               ))}
             </div>
@@ -118,6 +134,8 @@ export function SettingsDialog({
                 settings={settingsDraft.draft}
                 setSetting={setSetting}
                 settingsWorkers={settingsWorkers}
+                workerModels={workerCatalogQuery.data?.workerModels}
+                workerModelsRefreshing={workerCatalogQuery.data?.workerModelsRefreshing}
                 workerCatalogQuery={workerCatalogQuery}
               />
             ) : null}
@@ -152,16 +170,11 @@ export function SettingsDialog({
           </div>
         </div>
 
-        <DialogFooter className="shrink-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            Local preferences apply immediately. Save persists only workspace and runtime settings.
-          </p>
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={handleCancel}>Cancel</Button>
-            <Button onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending || !isDirty}>
-              {isDirty ? "Save" : "Saved"}
-            </Button>
-          </div>
+        <DialogFooter className="shrink-0">
+          <Button variant="ghost" onClick={handleCancel}>{t("common.cancel")}</Button>
+          <Button onClick={handleSave} disabled={saveSettings.isPending || !isDirty}>
+            {isDirty ? t("common.save") : t("common.saved")}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

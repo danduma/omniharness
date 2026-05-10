@@ -1,6 +1,8 @@
 import type React from "react";
 import type { LlmProfileTab } from "@/app/home/types";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { Select } from "@/components/ui/select";
 import { ModelProfileForm } from "./ModelProfileForm";
 
 interface ModelsSettingsPanelProps {
@@ -18,12 +20,20 @@ export function ModelsSettingsPanel({
   setSetting,
   secretStates,
 }: ModelsSettingsPanelProps) {
+  useI18nSnapshot();
+  const creditStrategyOptions = [
+    { value: "swap_account", label: t("settings.models.creditStrategy.swapAccount") },
+    { value: "fallback_api", label: t("settings.models.creditStrategy.fallbackApi") },
+    { value: "wait_for_reset", label: t("settings.models.creditStrategy.waitForReset") },
+    { value: "cross_provider", label: t("settings.models.creditStrategy.crossProvider") },
+  ];
+
   return (
     <div className="space-y-4">
       <div className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-1">
         {([
-          ["supervisor", "Supervisor Credentials"],
-          ["fallback", "Fallback Credentials"],
+          ["supervisor", t("settings.models.tabs.supervisorCredentials")],
+          ["fallback", t("settings.models.tabs.fallbackCredentials")],
         ] as Array<[LlmProfileTab, string]>).map(([tab, label]) => (
           <button
             key={tab}
@@ -45,8 +55,7 @@ export function ModelsSettingsPanel({
       {activeLlmProfileTab === "supervisor" ? (
         <ModelProfileForm
           prefix="SUPERVISOR_LLM"
-          title="Supervisor LLM"
-          description="Configure the provider, model, endpoint, and credentials used first for supervisor turns."
+          title={t("settings.models.supervisorTitle")}
           settings={settings}
           setSetting={setSetting}
           secretStates={secretStates}
@@ -54,8 +63,7 @@ export function ModelsSettingsPanel({
       ) : (
         <ModelProfileForm
           prefix="SUPERVISOR_FALLBACK_LLM"
-          title="Fallback LLM"
-          description="Use a second provider profile if the primary supervisor credentials are unavailable."
+          title={t("settings.models.fallbackTitle")}
           settings={settings}
           setSetting={setSetting}
           secretStates={secretStates}
@@ -64,19 +72,14 @@ export function ModelsSettingsPanel({
 
       <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/20 p-4">
         <label className="text-xs font-semibold text-muted-foreground" htmlFor="CREDIT_STRATEGY">
-          Credit / failover strategy
+          {t("settings.models.creditStrategy.label")}
         </label>
-        <select
+        <Select
           id="CREDIT_STRATEGY"
-          className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
           value={settings.CREDIT_STRATEGY || "swap_account"}
-          onChange={(event) => setSetting("CREDIT_STRATEGY", event.target.value)}
-        >
-          <option value="swap_account">Swap Account</option>
-          <option value="fallback_api">Fallback API</option>
-          <option value="wait_for_reset">Wait for Reset</option>
-          <option value="cross_provider">Cross Provider</option>
-        </select>
+          options={creditStrategyOptions}
+          onValueChange={(value) => setSetting("CREDIT_STRATEGY", value)}
+        />
       </div>
     </div>
   );

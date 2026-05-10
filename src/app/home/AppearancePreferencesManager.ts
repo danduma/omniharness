@@ -25,12 +25,18 @@ export type TerminalTextSizeLevel = (typeof TERMINAL_TEXT_SIZE_LEVELS)[number]["
 type AppearancePreferencesState = {
   directTextSize: DirectTextSizeLevel;
   terminalTextSize: TerminalTextSizeLevel;
+  savedDirectTextSize: DirectTextSizeLevel;
+  savedTerminalTextSize: TerminalTextSizeLevel;
+  dirtyKeys: Set<"directTextSize" | "terminalTextSize">;
   hydrated: boolean;
 };
 
 const DEFAULT_APPEARANCE_PREFERENCES: AppearancePreferencesState = {
   directTextSize: "default",
   terminalTextSize: "default",
+  savedDirectTextSize: "default",
+  savedTerminalTextSize: "default",
+  dirtyKeys: new Set(),
   hydrated: false,
 };
 
@@ -64,6 +70,25 @@ function removeLocalPreference(key: string) {
   }
 
   window.localStorage.removeItem(key);
+}
+
+function getAppearanceDirtyKeys(
+  directTextSize: DirectTextSizeLevel,
+  terminalTextSize: TerminalTextSizeLevel,
+  savedDirectTextSize: DirectTextSizeLevel,
+  savedTerminalTextSize: TerminalTextSizeLevel,
+) {
+  const dirtyKeys = new Set<"directTextSize" | "terminalTextSize">();
+
+  if (directTextSize !== savedDirectTextSize) {
+    dirtyKeys.add("directTextSize");
+  }
+
+  if (terminalTextSize !== savedTerminalTextSize) {
+    dirtyKeys.add("terminalTextSize");
+  }
+
+  return dirtyKeys;
 }
 
 function toScaledPx(baseSize: number, scale: number) {
@@ -130,27 +155,73 @@ export class AppearancePreferencesManager extends StateManager<AppearancePrefere
       return;
     }
 
+    const directTextSize = parseDirectTextSize(window.localStorage.getItem(DIRECT_TEXT_SIZE_STORAGE_KEY));
+    const terminalTextSize = parseTerminalTextSize(window.localStorage.getItem(TERMINAL_TEXT_SIZE_STORAGE_KEY));
+
     this.patch({
-      directTextSize: parseDirectTextSize(window.localStorage.getItem(DIRECT_TEXT_SIZE_STORAGE_KEY)),
-      terminalTextSize: parseTerminalTextSize(window.localStorage.getItem(TERMINAL_TEXT_SIZE_STORAGE_KEY)),
+      directTextSize,
+      terminalTextSize,
+      savedDirectTextSize: directTextSize,
+      savedTerminalTextSize: terminalTextSize,
+      dirtyKeys: new Set(),
       hydrated: true,
     });
   }
 
   setDirectTextSize(directTextSize: DirectTextSizeLevel) {
-    writeLocalPreference(DIRECT_TEXT_SIZE_STORAGE_KEY, directTextSize);
-    this.patch({ directTextSize, hydrated: true });
+    this.patch((current) => ({
+      directTextSize,
+      dirtyKeys: getAppearanceDirtyKeys(
+        directTextSize,
+        current.terminalTextSize,
+        current.savedDirectTextSize,
+        current.savedTerminalTextSize,
+      ),
+      hydrated: true,
+    }));
   }
 
   setTerminalTextSize(terminalTextSize: TerminalTextSizeLevel) {
+    this.patch((current) => ({
+      terminalTextSize,
+      dirtyKeys: getAppearanceDirtyKeys(
+        current.directTextSize,
+        terminalTextSize,
+        current.savedDirectTextSize,
+        current.savedTerminalTextSize,
+      ),
+      hydrated: true,
+    }));
+  }
+
+  saveDraft() {
+    const { directTextSize, terminalTextSize } = this.getSnapshot();
+    writeLocalPreference(DIRECT_TEXT_SIZE_STORAGE_KEY, directTextSize);
     writeLocalPreference(TERMINAL_TEXT_SIZE_STORAGE_KEY, terminalTextSize);
-    this.patch({ terminalTextSize, hydrated: true });
+    this.patch({
+      savedDirectTextSize: directTextSize,
+      savedTerminalTextSize: terminalTextSize,
+      dirtyKeys: new Set(),
+      hydrated: true,
+    });
+  }
+
+  discardDraft() {
+    this.patch((current) => ({
+      directTextSize: current.savedDirectTextSize,
+      terminalTextSize: current.savedTerminalTextSize,
+      dirtyKeys: new Set(),
+      hydrated: true,
+    }));
   }
 
   reset() {
     removeLocalPreference(DIRECT_TEXT_SIZE_STORAGE_KEY);
     removeLocalPreference(TERMINAL_TEXT_SIZE_STORAGE_KEY);
-    this.patch(DEFAULT_APPEARANCE_PREFERENCES);
+    this.patch({
+      ...DEFAULT_APPEARANCE_PREFERENCES,
+      dirtyKeys: new Set(),
+    });
   }
 }
 

@@ -1,14 +1,19 @@
 import { WORKER_OPTIONS } from "@/app/home/constants";
-import type { WorkerAvailability, WorkerType } from "@/app/home/types";
+import type { WorkerAvailability, WorkerModelCatalog, WorkerType } from "@/app/home/types";
 import { buildInlineError, parseBooleanSetting, parseWorkerType, parseWorkerTypes } from "@/app/home/utils";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { cn } from "@/lib/utils";
 import { ErrorNotice } from "@/components/home/ErrorNotice";
+import { Select } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 
 interface AgentsSettingsPanelProps {
   settings: Record<string, string>;
   setSetting: (key: string, value: string) => void;
   settingsWorkers: WorkerAvailability[];
+  workerModels?: Partial<WorkerModelCatalog>;
+  workerModelsRefreshing?: boolean;
   workerCatalogQuery: {
     isError: boolean;
     error: unknown;
@@ -20,11 +25,18 @@ export function AgentsSettingsPanel({
   settings,
   setSetting,
   settingsWorkers,
+  workerModels,
+  workerModelsRefreshing = false,
   workerCatalogQuery,
 }: AgentsSettingsPanelProps) {
+  useI18nSnapshot();
   const configuredAllowedWorkerTypes = parseWorkerTypes(settings.WORKER_ALLOWED_TYPES);
   const configuredAllowedWorkerSet = new Set(configuredAllowedWorkerTypes);
   const defaultWorkerType = parseWorkerType(settings.WORKER_DEFAULT_TYPE) ?? configuredAllowedWorkerTypes[0] ?? "codex";
+  const yoloEnabled = parseBooleanSetting(settings.WORKER_YOLO_MODE, true);
+  const defaultWorkerOptions = WORKER_OPTIONS
+    .filter((option) => configuredAllowedWorkerSet.has(option.value))
+    .map((option) => ({ value: option.value, label: option.label }));
   const toggleAllowedWorker = (workerType: WorkerType, checked: boolean) => {
     const nextAllowed = checked
       ? Array.from(new Set([...configuredAllowedWorkerTypes, workerType]))
@@ -42,21 +54,39 @@ export function AgentsSettingsPanel({
 
   return (
     <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
-      <div className="space-y-1">
-        <div className="text-sm font-semibold">Worker Agents</div>
-        <p className="text-xs text-muted-foreground">
-          Tune availability, allowed workers, default agent selection, and permission posture.
-        </p>
+      <div className="space-y-1.5">
+        <label className="text-xs font-semibold text-muted-foreground" htmlFor="WORKER_DEFAULT_TYPE">
+          {t("settings.agents.defaultWorker")}
+        </label>
+        <Select
+          id="WORKER_DEFAULT_TYPE"
+          value={defaultWorkerType}
+          options={defaultWorkerOptions}
+          onValueChange={(value) => setSetting("WORKER_DEFAULT_TYPE", value)}
+        />
+      </div>
+
+      <div className="flex items-center gap-3 rounded-lg border border-border/60 bg-background/70 p-3">
+        <Switch
+          id="WORKER_YOLO_MODE"
+          aria-label={t("settings.agents.toggleYolo")}
+          checked={yoloEnabled}
+          onCheckedChange={(checked) => setSetting("WORKER_YOLO_MODE", checked ? "true" : "false")}
+        />
+        <div className="min-w-0 space-y-1">
+          <div className="text-sm font-medium">{t("settings.agents.yoloPosture")}</div>
+        </div>
       </div>
 
       <div className="space-y-2">
-        <div className="text-xs font-semibold text-muted-foreground">Worker availability status</div>
-        <p className="text-xs text-muted-foreground">
-          Only currently available bridge workers can be enabled for new conversations.
-        </p>
+        <div className="text-xs font-semibold text-muted-foreground">{t("settings.agents.workerAvailability")}</div>
         {settingsWorkers.map((worker) => {
           const isAvailable = worker.availability.status === "ok";
           const isChecked = configuredAllowedWorkerSet.has(worker.type);
+          const modelOptions = workerModels?.[worker.type] ?? [];
+          const availabilityMessage = isAvailable
+            ? null
+            : worker.availability.message || t("settings.agents.unavailableNow");
           const availabilityTone =
             worker.availability.status === "ok"
               ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
@@ -65,7 +95,7 @@ export function AgentsSettingsPanel({
                 : "bg-destructive/10 text-destructive";
 
           return (
-            <label
+            <div
               key={worker.type}
               className={cn(
                 "flex items-start justify-between gap-3 rounded-lg border border-border/60 bg-background/70 p-3",
@@ -73,12 +103,12 @@ export function AgentsSettingsPanel({
               )}
             >
               <div className="flex min-w-0 flex-1 items-start gap-3">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 rounded border-border"
+                <Switch
+                  aria-label={t("settings.agents.toggleWorker", { worker: worker.label })}
+                  className="mt-0.5"
                   checked={isChecked}
                   disabled={!isAvailable || (isChecked && configuredAllowedWorkerTypes.length === 1)}
-                  onChange={(event) => toggleAllowedWorker(worker.type, event.target.checked)}
+                  onCheckedChange={(checked) => toggleAllowedWorker(worker.type, checked)}
                 />
                 <div className="min-w-0 space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -87,57 +117,47 @@ export function AgentsSettingsPanel({
                       {worker.availability.status}
                     </span>
                   </div>
-                  <p className="text-xs break-words text-muted-foreground">
-                    {worker.availability.message || (isAvailable ? "Ready to spawn from the bridge." : "Unavailable right now.")}
-                  </p>
+                  {availabilityMessage ? (
+                    <p className="text-xs break-words text-muted-foreground">
+                      {availabilityMessage}
+                    </p>
+                  ) : null}
+                  <dl className="grid gap-1 pt-1 text-[11px] text-muted-foreground sm:grid-cols-[5.75rem_minmax(0,1fr)]">
+                    <dt className="font-medium text-foreground/70">{t("settings.agents.installedDir")}</dt>
+                    <dd className="break-all" title={worker.installation?.path ?? undefined}>
+                      {worker.installation?.dir ?? (worker.availability.binary ? t("common.unknown") : t("settings.agents.notInstalled"))}
+                    </dd>
+                    <dt className="font-medium text-foreground/70">{t("settings.agents.version")}</dt>
+                    <dd className="break-words">
+                      {worker.installation?.version ?? (worker.availability.binary ? t("common.unknown") : t("settings.agents.notInstalled"))}
+                    </dd>
+                    <dt className="font-medium text-foreground/70">{t("settings.tabs.models")}</dt>
+                    <dd className="min-w-0">
+                      {modelOptions.length > 0 ? (
+                        <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto pr-1">
+                          {modelOptions.map((model) => (
+                            <span key={model.value} className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] text-foreground/80">
+                              {model.label}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span>{workerModelsRefreshing ? t("settings.models.loadingModels") : t("settings.agents.noModelsReported")}</span>
+                      )}
+                    </dd>
+                  </dl>
                 </div>
               </div>
-            </label>
+            </div>
           );
         })}
       </div>
 
-      <div className="space-y-1.5">
-        <label className="text-xs font-semibold text-muted-foreground" htmlFor="WORKER_DEFAULT_TYPE">
-          Default Worker Agent
-        </label>
-        <select
-          id="WORKER_DEFAULT_TYPE"
-          className="h-8 w-full rounded border bg-muted/50 px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
-          value={defaultWorkerType}
-          onChange={(event) => setSetting("WORKER_DEFAULT_TYPE", event.target.value)}
-        >
-          {WORKER_OPTIONS
-            .filter((option) => configuredAllowedWorkerSet.has(option.value))
-            .map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-        </select>
-      </div>
-
-      <label className="flex items-start justify-between gap-3 rounded-lg border border-border/60 bg-background/70 p-3" htmlFor="WORKER_YOLO_MODE">
-        <div className="min-w-0 space-y-1">
-          <div className="text-sm font-medium">YOLO / permission posture</div>
-          <p className="text-xs text-muted-foreground">
-            Default new workers to the runtime&apos;s most permissive mode so routine approvals rarely interrupt execution.
-          </p>
-        </div>
-        <input
-          id="WORKER_YOLO_MODE"
-          type="checkbox"
-          className="mt-0.5 h-4 w-4 rounded border-border"
-          checked={parseBooleanSetting(settings.WORKER_YOLO_MODE, true)}
-          onChange={(event) => setSetting("WORKER_YOLO_MODE", event.target.checked ? "true" : "false")}
-        />
-      </label>
-
       {workerCatalogQuery.isError ? (
         <ErrorNotice
           error={buildInlineError(workerCatalogQuery.error, {
-            source: "Agent runtime",
-            action: "Load worker availability",
+            source: t("settings.agents.errorSource"),
+            action: t("settings.agents.loadWorkerAvailability"),
           })}
         />
       ) : null}

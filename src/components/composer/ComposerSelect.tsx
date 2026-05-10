@@ -1,5 +1,6 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 export type ComposerSelectOption<TValue extends string = string> = {
@@ -23,20 +24,18 @@ export function ComposerSelect<TValue extends string>({
   ariaLabel,
 }: ComposerSelectProps<TValue>) {
   return (
-    <select
-      aria-label={ariaLabel}
+    <Select
+      ariaLabel={ariaLabel}
       value={value}
-      onChange={(event) => onChange(event.target.value as TValue)}
+      options={options}
+      onValueChange={(nextValue) => onChange(nextValue as TValue)}
       className={cn(
-        "h-7 max-w-[6.8rem] shrink truncate appearance-none border-0 bg-transparent px-1 text-right text-xs outline-none transition-colors sm:h-8 sm:max-w-none sm:px-2 sm:text-sm",
+        "h-7 max-w-[7.8rem] shrink border-0 bg-transparent px-1 text-xs shadow-none sm:h-8 sm:max-w-none sm:px-2 sm:text-sm [&>span]:text-right",
         themeMode === "night"
           ? "text-muted-foreground hover:text-foreground"
           : "text-[#8f8f8f] hover:text-[#5e5e5e]",
       )}
-    >
-      {options.map((option) => (
-        <option key={option.value} value={option.value}>{option.label}</option>
-      ))}
-    </select>
+      contentClassName="min-w-40"
+    />
   );
 }
