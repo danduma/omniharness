@@ -1,10 +1,11 @@
-const CACHE_VERSION = "omniharness-pwa-v1";
+const CACHE_VERSION = "omniharness-pwa-v3";
 const OFFLINE_URL = "/offline.html";
 const CORE_ASSETS = [
   OFFLINE_URL,
   "/manifest.webmanifest",
-  "/icons/icon-192.png",
-  "/icons/icon-512.png",
+  "/icons/icon-192-v2.png",
+  "/icons/icon-512-v2.png",
+  "/icons/apple-touch-icon-v2.png",
 ];
 
 self.addEventListener("install", (event) => {
@@ -75,16 +76,19 @@ self.addEventListener("fetch", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+  const targetUrl = new URL(event.notification.data?.url || "/", self.location.origin);
   event.waitUntil(
     self.clients.matchAll({ type: "window" }).then((clients) => {
-      const existingClient = clients.find((client) => "focus" in client);
+      const existingClient = clients.find((client) => {
+        return "focus" in client && client.url === targetUrl.href;
+      }) || clients.find((client) => "focus" in client);
 
       if (existingClient) {
         return existingClient.focus();
       }
 
       if (self.clients.openWindow) {
-        return self.clients.openWindow("/");
+        return self.clients.openWindow(targetUrl.href);
       }
 
       return undefined;

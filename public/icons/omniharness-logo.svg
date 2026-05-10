@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<svg width="64" height="64" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg">
+ <title id="omniharness-logo-title">OmniHarness logo</title>
+ <desc id="omniharness-logo-desc">Two connected circular nodes with an arched line above them.</desc>
+ <g class="layer">
+  <title>Layer 1</title>
+  <rect fill="#fff" height="64" id="svg_1" width="64"/>
+  <g fill="none" id="svg_2" stroke="#0d0d0d" stroke-linecap="round" stroke-linejoin="round" stroke-width="3.75" transform="matrix(1 0 0 1 0 0) matrix(1 0 0 1 0 0)">
+   <path d="m12.95,19.97a21.75,21.75 0 0 1 39.55,0.01" id="svg_3" stroke-linejoin="bevel" transform="matrix(1 0 0 1 0 0)"/>
+   <path d="m4.6,32l43.05,0" id="svg_5" transform="matrix(1 0 0 1 0 0) matrix(0.727062 0 0 1 13.0055 0)"/>
+   <circle cx="10.25" cy="32" fill="none" id="svg_6" r="5.65" transform="matrix(1 0 0 1 0 0)"/>
+   <circle cx="53.75" cy="32" fill="none" id="svg_7" r="5.65"/>
+   <path d="m12.7,44.17a21.75,21.75 0 0 0 39.82,0.12" id="svg_14" transform="matrix(1 0 0 1 0 0)"/>
+  </g>
+ </g>
+</svg>
