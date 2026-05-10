@@ -18,12 +18,14 @@ export interface WorkersSidebarProps {
   supervisorInterventions: SupervisorInterventionRecord[];
   preferredModel: string | null;
   preferredEffort: string | null;
+  projectRoot?: string | null;
   onStopWorker?: (workerId: string) => void;
   onStopTerminalProcess?: (workerId: string, terminalProcess: WorkerTerminalProcess) => void;
   onLoadWorkerHistory?: (workerId: string) => void;
   stoppingWorkerId?: string | null;
   stoppingTerminalProcess?: { workerId: string; terminalProcessId: string } | null;
   onClose?: () => void;
+  showHeader?: boolean;
 }
 
 interface ThemeModeToggleProps {
@@ -60,6 +62,7 @@ export function ConversationWorkerCard({
   agent,
   preferredModel,
   preferredEffort,
+  projectRoot,
   defaultOpen,
   terminalHeightClass,
   fillAvailable = false,
@@ -79,6 +82,7 @@ export function ConversationWorkerCard({
   agent?: AgentSnapshot | null;
   preferredModel?: string | null;
   preferredEffort?: string | null;
+  projectRoot?: string | null;
   defaultOpen: boolean;
   terminalHeightClass: string;
   fillAvailable?: boolean;
@@ -128,6 +132,7 @@ export function ConversationWorkerCard({
       activeEffort={activeEffort}
       promptPreview={worker.initialPrompt}
       userMessages={userMessages}
+      projectRoot={projectRoot}
       pendingPermissions={pendingPermissions}
       terminalHeightClass={terminalHeightClass}
       fillAvailable={fillAvailable}
@@ -144,7 +149,7 @@ export function ConversationWorkerCard({
   );
 }
 
-export function WorkersSidebar({ workers, agents, supervisorInterventions, preferredModel, preferredEffort, onStopWorker, onStopTerminalProcess, onLoadWorkerHistory, stoppingWorkerId, stoppingTerminalProcess, onClose }: WorkersSidebarProps) {
+export function WorkersSidebar({ workers, agents, supervisorInterventions, preferredModel, preferredEffort, projectRoot, onStopWorker, onStopTerminalProcess, onLoadWorkerHistory, stoppingWorkerId, stoppingTerminalProcess, onClose, showHeader = true }: WorkersSidebarProps) {
   const { activeTab: requestedActiveTab, focusedWorkerId } = useManagerSnapshot(workersSidebarManager);
   const workerGroups = buildWorkerLists(workers);
   const agentsById = useMemo(
@@ -182,6 +187,7 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
         agent={agent}
         preferredModel={preferredModel}
         preferredEffort={preferredEffort}
+        projectRoot={projectRoot}
         supervisorInterventions={supervisorInterventions}
         defaultOpen={isFocusedWorker || activeTab === "active" || hasSingleVisibleWorker}
         terminalHeightClass={terminalHeightClass}
@@ -208,6 +214,7 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
         }
       }}
     >
+      {showHeader ? (
       <div className="flex items-center justify-between border-b px-3 py-2.5">
         <h3 className="flex items-center gap-2 text-sm font-semibold">
           <Cpu className="h-4 w-4" /> Conversation Workers
@@ -225,6 +232,7 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
           </Button>
         )}
       </div>
+      ) : null}
       <div className="border-b border-border/60 px-3 py-2">
         <div className="inline-flex rounded-lg border border-border/60 bg-muted/30 p-0.5">
           <button

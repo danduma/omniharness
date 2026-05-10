@@ -11,7 +11,7 @@ import { ConversationComposer } from "@/components/home/ConversationComposer";
 import { ConversationMain } from "@/components/home/ConversationMain";
 import { ConversationSidebar } from "@/components/home/ConversationSidebar";
 import { HomeHeader } from "@/components/home/HomeHeader";
-import { WorkersSidebar } from "@/components/home/WorkersSidebar";
+import { SideWindow } from "@/components/home/SideWindow";
 import { type AppErrorDescriptor, mergeAppErrors, requestJson } from "@/lib/app-errors";
 import type { ChatAttachment, PendingChatAttachment } from "@/lib/chat-attachments";
 import { buildConversationGroups } from "@/lib/conversations";
@@ -19,14 +19,18 @@ import { buildWorkerLists, isWorkerActiveStatus, mergeWorkerLiveStatus, normaliz
 import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { resolveProjectScope } from "@/lib/project-scope";
+import type { ProjectFileReference } from "@/lib/project-file-links";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
 import { buildDirectTerminalUserMessages, type WorkerTerminalUserMessage } from "@/lib/worker-terminal-messages";
-import { COMPOSER_WORKER_OPTIONS, WORKER_OPTIONS } from "./constants";
+import { COMPOSER_WORKER_OPTIONS, RUN_PATH_PATTERN, WORKER_OPTIONS } from "./constants";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
-import { parseBusyMessageAction, resolveBusyComposerBehavior, type BusyMessageAction } from "./busy-message-behavior";
+import { conversationNotificationManager } from "./ConversationNotificationManager";
+import { sideWindowManager } from "./SideWindowManager";
+import { parseBusyMessageAction, resolveBusyComposerBehavior, resolveBusyMessageActionForSubmitAction, type BusyMessageAction } from "./busy-message-behavior";
 import type { AgentSnapshot, AuthSessionResponse, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, QueuedConversationMessageRecord, RunRecord, SettingsResponse, SidebarGroup, SidebarRun, SupervisorInterventionRecord, WorkerCatalogResponse, WorkerType } from "./types";
 import { EventStreamStateManager } from "./EventStreamStateManager";
 import { homeUiSetters, homeUiStateManager, INITIAL_EVENT_STREAM_STATE, type AutoCommitChatAction } from "./HomeUiStateManager";
+import { appearancePreferencesManager } from "./AppearancePreferencesManager";
 import { settingsDraftManager } from "./SettingsDraftManager";
 import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getLatestUnresolvedWorkerStuckEvent, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
 import { useAppErrors } from "./useAppErrors";
@@ -35,6 +39,7 @@ import { useHomeLifecycle } from "./useHomeLifecycle";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { useRunRecoveryState } from "./useRunRecoveryState";
 import { useRunSelectionEffects } from "./useRunSelectionEffects";
+import { shouldOpenMobileSideWindow } from "./side-window-viewport";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 
 const FolderPickerDialog = dynamic(
@@ -77,8 +82,16 @@ function resolveRepoName(projectPath: string | null) {
   return normalized.split(/[/\\]/).filter(Boolean).pop() || "omniharness";
 }
 
-const AUTO_COMMIT_CHAT_PROMPT = "Create a git commit including the changes you've made";
-const AUTO_COMMIT_CHAT_PUSH_PROMPT = "Create a git commit including the changes you've made, then push the current branch";
+const AUTO_COMMIT_CHAT_PROMPT = "Group the modified files from this conversation into logical git commits. Do not run tests. Do not modify files or do anything else. Only inspect the modified files as needed, create commits, and stop.";
+const AUTO_COMMIT_CHAT_PUSH_PROMPT = "Group the modified files from this conversation into logical git commits, then push the current branch. Do not run tests. Do not modify files or do anything else. Only inspect the modified files as needed, create commits, push, and stop.";
+
+function getInitialEventStreamSnapshotScope() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return window.location.pathname.match(RUN_PATH_PATTERN)?.[1]?.trim() || null;
+}
 
 function getAutoCommitChatPrompt(action: AutoCommitChatAction) {
   return action === "commit-push" ? AUTO_COMMIT_CHAT_PUSH_PROMPT : AUTO_COMMIT_CHAT_PROMPT;
@@ -181,17 +194,21 @@ export function HomeApp() {
     setSettingsDiagnostics,
   } = homeUiSetters;
   
-  const stateManager = useMemo(() => new EventStreamStateManager(INITIAL_EVENT_STREAM_STATE), []);
+  const stateManager = useMemo(() => new EventStreamStateManager(INITIAL_EVENT_STREAM_STATE, {
+    snapshotCacheScope: getInitialEventStreamSnapshotScope(),
+  }), []);
   const state = useSyncExternalStore(
     useCallback((listener) => stateManager.subscribe(listener), [stateManager]),
     useCallback(() => stateManager.getSnapshot(), [stateManager]),
     () => INITIAL_EVENT_STREAM_STATE,
   );
+  const notificationState = useManagerSnapshot(conversationNotificationManager);
   const setState = useCallback<React.Dispatch<React.SetStateAction<EventStreamState>>>(
     (action) => {
+      stateManager.setSnapshotCacheScope(selectedRunId);
       stateManager.update(action);
     },
-    [stateManager],
+    [selectedRunId, stateManager],
   );
   const busyMessageQueueState = useManagerSnapshot(busyMessageQueueManager);
   const settingsDraft = useManagerSnapshot(settingsDraftManager);
@@ -212,6 +229,16 @@ export function HomeApp() {
         });
       }
     });
+  }, []);
+  const enableNotifications = useCallback(() => {
+    void conversationNotificationManager.requestEnable();
+  }, []);
+  const disableNotifications = useCallback(() => {
+    conversationNotificationManager.disable();
+  }, []);
+
+  useEffect(() => {
+    conversationNotificationManager.hydrateFromBrowser();
   }, []);
 
   const sessionQuery = useQuery<AuthSessionResponse>({
@@ -358,6 +385,7 @@ export function HomeApp() {
   const isHydratingConversations = appUnlocked && !hasReceivedInitialEventStreamPayload;
 
   useEffect(() => {
+    sideWindowManager.resetFileTabs();
     if (!selectedRunId) {
       setRightSidebarOpen(false);
       setMobileWorkersOpen(false);
@@ -379,6 +407,7 @@ export function HomeApp() {
     },
     onSuccess: () => {
       const savedSettings = settingsDraftManager.getSnapshot().draft;
+      appearancePreferencesManager.saveDraft();
       settingsDraftManager.markSaved(savedSettings);
       setApiKeys((current) => ({ ...current, ...savedSettings }));
       setShowSettings(false);
@@ -843,11 +872,7 @@ export function HomeApp() {
           runId: selectedRunId,
           content: command,
           attachments,
-          busyAction: composerBehavior.submitAction === "send_queue"
-            ? "queue"
-            : composerBehavior.submitAction === "send_steer"
-              ? "steer"
-              : undefined,
+          busyAction: resolveBusyMessageActionForSubmitAction(composerBehavior.submitAction),
         });
         return;
       }
@@ -1036,6 +1061,12 @@ export function HomeApp() {
     return WORKER_OPTIONS.map((option) => ({
       type: option.value,
       label: option.label,
+      installation: {
+        command: option.value,
+        path: null,
+        dir: null,
+        version: null,
+      },
       availability: {
         status: "warning" as const,
         binary: false,
@@ -1350,6 +1381,7 @@ export function HomeApp() {
     runs,
     explicitProjects,
   });
+  const workspaceSideWindowAvailable = Boolean(selectedRunId || draftProjectPath) && Boolean(currentProjectScope);
   const welcomeRepoName = resolveRepoName(currentProjectScope);
 
   const projectFilesQuery = useQuery<ProjectFilesResponse>({
@@ -1405,6 +1437,26 @@ export function HomeApp() {
       commandInputRef.current?.setSelectionRange(nextCursor, nextCursor);
     });
   };
+
+  const handleOpenProjectFile = useCallback((filePathOrReference: string | ProjectFileReference) => {
+    const file = typeof filePathOrReference === "string"
+      ? currentProjectScope
+        ? { root: currentProjectScope, relativePath: filePathOrReference }
+        : null
+      : filePathOrReference;
+
+    if (!file?.root || !file.relativePath) {
+      return;
+    }
+
+    sideWindowManager.openFile(file);
+    if (shouldOpenMobileSideWindow()) {
+      setMobileWorkersOpen(true);
+      return;
+    }
+
+    setRightSidebarOpen(true);
+  }, [currentProjectScope, setMobileWorkersOpen, setRightSidebarOpen]);
 
   const handleAddAttachmentFiles = (files: File[]) => {
     addAttachmentFiles(files);
@@ -1578,6 +1630,7 @@ export function HomeApp() {
           mentionIndex={mentionIndex}
           setMentionIndex={setMentionIndex}
           applyMention={applyMention}
+          onOpenProjectFile={handleOpenProjectFile}
           themeMode={themeMode}
           attachments={attachments}
           handleRemoveAttachment={handleRemoveAttachment}
@@ -1714,6 +1767,8 @@ export function HomeApp() {
           activeConversationCwd={activeConversationCwd}
           selectedRun={selectedRun}
           isImplementationConversation={isImplementationConversation}
+          workspaceSideWindowAvailable={workspaceSideWindowAvailable}
+          projectRoot={currentProjectScope}
           themeMode={themeMode}
           setThemeMode={setThemeMode}
           rightSidebarOpen={rightSidebarOpen}
@@ -1726,6 +1781,9 @@ export function HomeApp() {
           onAutoCommitChat={handleAutoCommitChat}
           autoCommitChatAction={autoCommitChatAction}
           isAutoCommitChatPending={autoCommitChat.isPending}
+          notificationState={notificationState}
+          onEnableNotifications={enableNotifications}
+          onDisableNotifications={disableNotifications}
           onStopWorker={(workerId) => {
             if (selectedRunId) {
               stopWorker.mutate({ runId: selectedRunId, workerId });
@@ -1783,12 +1841,14 @@ export function HomeApp() {
           liveThoughts={liveThoughts}
           executionEvents={selectedRunExecutionEvents}
           emptyComposer={renderComposer("mt-2 w-full pt-0 sm:pt-0")}
+          projectRoot={currentProjectScope}
+          onOpenProjectFile={handleOpenProjectFile}
         />
 
         {selectedRunId ? renderComposer("w-full") : null}
       </div>
 
-      {selectedRunId && isImplementationConversation ? (
+      {workspaceSideWindowAvailable ? (
         <div
           className={`relative hidden h-full shrink-0 overflow-hidden border-l bg-background transition-[width,opacity] duration-150 ease-out lg:flex motion-reduce:transition-none ${rightSidebarOpen ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}
           style={{ width: rightSidebarOpen ? rightSidebarWidth : 0 }}
@@ -1798,14 +1858,15 @@ export function HomeApp() {
           <button
             type="button"
             className="absolute inset-y-0 left-0 z-10 w-3 -translate-x-1/2 cursor-col-resize bg-transparent"
-            aria-label="Resize workers sidebar"
+            aria-label="Resize workspace side window"
             onPointerDown={handleRightSidebarResizeStart}
           />
           <div className={`flex h-full min-w-0 flex-1 pl-2 transition-transform duration-150 ease-out motion-reduce:transition-none ${rightSidebarOpen ? "translate-x-0" : "translate-x-3"}`}>
-            <WorkersSidebar
-              workers={selectedRunWorkersForDisplay}
-              agents={conversationAgents}
-              supervisorInterventions={selectedRunSupervisorInterventions}
+            <SideWindow
+              projectRoot={currentProjectScope}
+              workers={selectedRunId && isImplementationConversation ? selectedRunWorkersForDisplay : []}
+              agents={selectedRunId && isImplementationConversation ? conversationAgents : []}
+              supervisorInterventions={selectedRunId && isImplementationConversation ? selectedRunSupervisorInterventions : []}
               preferredModel={selectedRun?.preferredWorkerModel ?? null}
               preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
               onStopWorker={(workerId) => {
@@ -1824,7 +1885,7 @@ export function HomeApp() {
                 workerId: stopWorkerTerminalProcess.variables.workerId,
                 terminalProcessId: stopWorkerTerminalProcess.variables.terminalProcess.id,
               } : null}
-              onClose={() => setRightSidebarOpen(false)}
+              onCloseWindow={() => setRightSidebarOpen(false)}
             />
           </div>
         </div>

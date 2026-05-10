@@ -1,16 +1,19 @@
 import Image from "next/image";
 import { useRef } from "react";
 import type React from "react";
-import { ArrowUp, LoaderCircle, Plus, Square, X } from "lucide-react";
+import { useMediaQuery } from "@base-ui/react/unstable-use-media-query";
+import { ArrowUp, LoaderCircle, PanelRightOpen, Plus, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ComposerModelPicker } from "@/components/composer/ComposerModelPicker";
 import { ComposerSelect } from "@/components/composer/ComposerSelect";
 import { ConversationModePicker, type ConversationModeOption } from "@/components/ConversationModePicker";
 import { QueuedMessageDrawer } from "./QueuedMessageDrawer";
 import { EFFORT_OPTIONS } from "@/app/home/constants";
-import type { BusyComposerBehavior, BusyMessageAction } from "@/app/home/busy-message-behavior";
+import { resolveBusyMessageActionForSubmitAction, type BusyComposerBehavior, type BusyMessageAction } from "@/app/home/busy-message-behavior";
+import { getComposerSubmitShortcutLabel, isAppleComposerShortcutPlatform, shouldSubmitComposerKeyDown, shouldUseAlternateComposerSubmitKeyDown } from "@/app/home/composer-keyboard";
 import type { ComposerWorkerOption, QueuedConversationMessageRecord, WorkerModelOption } from "@/app/home/types";
 import { formatBytes, type PendingChatAttachment } from "@/lib/chat-attachments";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 interface ConversationComposerProps {
@@ -29,6 +32,7 @@ interface ConversationComposerProps {
   mentionIndex: number;
   setMentionIndex: React.Dispatch<React.SetStateAction<number>>;
   applyMention: (filePath: string) => void;
+  onOpenProjectFile?: (filePath: string) => void;
   themeMode: "day" | "night";
   attachments: PendingChatAttachment[];
   handleRemoveAttachment: (attachmentId: string) => void;
@@ -73,6 +77,7 @@ export function ConversationComposer({
   mentionIndex,
   setMentionIndex,
   applyMention,
+  onOpenProjectFile,
   themeMode,
   attachments,
   handleRemoveAttachment,
@@ -99,14 +104,26 @@ export function ConversationComposer({
   onRunCommand,
   onStopConversation,
 }: ConversationComposerProps) {
+  useI18nSnapshot();
   const trimmedCommand = command.trim();
   const hasAttachments = attachments.length > 0;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const isDesktopComposerViewport = useMediaQuery("(min-width: 640px)", {
+    defaultMatches: false,
+    noSsr: true,
+  });
   const isStopButtonVisible = composerBehavior.buttonKind === "stop";
   const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;
   const isSubmitButtonDisabled = isStopButtonVisible
     ? false
     : isComposerSubmitting || (!trimmedCommand && !hasAttachments);
+  const alternateSubmitShortcutLabel = getComposerSubmitShortcutLabel(isAppleComposerShortcutPlatform());
+  const sendButtonAriaLabel = t(composerBehavior.ariaLabelKey);
+  const sendButtonTitle = composerBehavior.submitAction === "send_queue"
+    ? t("conversation.composer.sendButton.queueTitle", { shortcut: alternateSubmitShortcutLabel })
+    : composerBehavior.submitAction === "send_steer"
+      ? t("conversation.composer.sendButton.steerTitle", { shortcut: alternateSubmitShortcutLabel })
+      : t(`${composerBehavior.ariaLabelKey}Title`);
 
   return (
   <div className={cn("relative z-20 w-full shrink-0 bg-background p-3 sm:p-4", className)}>
@@ -137,17 +154,36 @@ export function ConversationComposer({
           <div className="max-h-72 overflow-y-auto p-2">
             {filteredProjectFiles.length > 0 ? (
               filteredProjectFiles.map((filePath, index) => (
-                <button
+                <div
                   key={filePath}
-                  type="button"
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => applyMention(filePath)}
                   className={`flex w-full items-center rounded-xl px-3 py-2 text-left text-sm transition-colors ${
                     index === mentionIndex ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted/60"
                   }`}
                 >
-                  <span className="truncate">{filePath}</span>
-                </button>
+                  <button
+                    type="button"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => applyMention(filePath)}
+                    className="min-w-0 flex-1 truncate text-left"
+                  >
+                    {filePath}
+                  </button>
+                  {onOpenProjectFile ? (
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onOpenProjectFile(filePath);
+                      }}
+                      className="ml-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
+                      aria-label={`Open ${filePath} in side window`}
+                      title={`Open ${filePath} in side window`}
+                    >
+                      <PanelRightOpen className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                </div>
               ))
             ) : (
               <div className="px-3 py-2 text-sm text-muted-foreground">
@@ -222,8 +258,19 @@ export function ConversationComposer({
               }
             }
 
-            if (e.key === "Enter" && !e.shiftKey) {
+            if (shouldSubmitComposerKeyDown({
+              key: e.key,
+              shiftKey: e.shiftKey,
+              isMobileViewport: !isDesktopComposerViewport,
+            })) {
               e.preventDefault();
+              const useAlternateBusyAction = shouldUseAlternateComposerSubmitKeyDown({
+                key: e.key,
+                shiftKey: e.shiftKey,
+                metaKey: e.metaKey,
+                ctrlKey: e.ctrlKey,
+                isApplePlatform: isAppleComposerShortcutPlatform(),
+              });
               if (isStopButtonVisible) {
                 if (!trimmedCommand) {
                   onStopConversation();
@@ -235,11 +282,9 @@ export function ConversationComposer({
                 if (selectedRunId) {
                   onSendConversationMessage(
                     command,
-                    composerBehavior.submitAction === "send_queue"
-                      ? "queue"
-                      : composerBehavior.submitAction === "send_steer"
-                        ? "steer"
-                        : undefined,
+                    resolveBusyMessageActionForSubmitAction(composerBehavior.submitAction, {
+                      useAlternate: useAlternateBusyAction,
+                    }),
                   );
                 } else {
                   onRunCommand(command);
@@ -374,8 +419,8 @@ export function ConversationComposer({
               type="submit"
               size="icon"
               disabled={isSubmitButtonDisabled}
-              aria-label={composerBehavior.ariaLabel}
-              title={composerBehavior.ariaLabel}
+              aria-label={sendButtonAriaLabel}
+              title={sendButtonTitle}
               className={cn(
                 "h-8 w-8 shrink-0 rounded-full transition-all",
                 themeMode === "night"

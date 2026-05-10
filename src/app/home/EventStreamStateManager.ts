@@ -1,5 +1,6 @@
 import { isWorkerActiveStatus } from "@/lib/conversation-workers";
 import type { AgentSnapshot, EventStreamState, MessageRecord } from "./types";
+import { EventStreamSnapshotCacheManager } from "./EventStreamSnapshotCacheManager";
 import { WorkerOutputLineCacheManager } from "./WorkerOutputLineCacheManager";
 
 type EventStreamStateListener = (state: EventStreamState) => void;
@@ -254,10 +255,19 @@ export class EventStreamStateManager {
   private readonly listeners = new Set<EventStreamStateListener>();
   private readonly outputEntriesByAgentName = new Map<string, Map<string, AgentOutputEntry>>();
   private readonly outputLineCache: WorkerOutputLineCacheManager;
+  private readonly snapshotCache: EventStreamSnapshotCacheManager;
+  private snapshotCacheScope: string | null;
 
-  constructor(initialState: EventStreamState, options: { outputLineCache?: WorkerOutputLineCacheManager } = {}) {
+  constructor(initialState: EventStreamState, options: {
+    outputLineCache?: WorkerOutputLineCacheManager;
+    snapshotCache?: EventStreamSnapshotCacheManager;
+    snapshotCacheScope?: string | null;
+  } = {}) {
     this.outputLineCache = options.outputLineCache ?? new WorkerOutputLineCacheManager();
-    const hydratedInitialState = this.outputLineCache.hydrateState(initialState);
+    this.snapshotCache = options.snapshotCache ?? new EventStreamSnapshotCacheManager();
+    this.snapshotCacheScope = options.snapshotCacheScope?.trim() || null;
+    const cachedInitialState = this.snapshotCache.hydrateState(initialState, this.snapshotCacheScope);
+    const hydratedInitialState = this.outputLineCache.hydrateState(cachedInitialState);
     this.state = hydratedInitialState;
     this.rememberOutputEntries(hydratedInitialState);
   }
@@ -273,6 +283,10 @@ export class EventStreamStateManager {
     };
   }
 
+  setSnapshotCacheScope(scope: string | null | undefined) {
+    this.snapshotCacheScope = scope?.trim() || null;
+  }
+
   update(action: EventStreamStateAction) {
     const incoming = typeof action === "function" ? action(this.state) : action;
     this.rememberOutputEntries(incoming);
@@ -286,6 +300,7 @@ export class EventStreamStateManager {
 
     this.state = nextState;
     this.rememberOutputEntries(nextState);
+    this.snapshotCache.rememberState(nextState, this.snapshotCacheScope);
     this.listeners.forEach((listener) => listener(this.state));
     return this.state;
   }

@@ -15,6 +15,7 @@ import {
 } from "@/app/home/AppearancePreferencesManager";
 import { buildAgentOutputActivity, formatActivityStatus, type AgentActivityItem, type AgentOutputEntry } from "@/lib/agent-output";
 import { formatBytes, type ChatAttachment } from "@/lib/chat-attachments";
+import { parseProjectFileReference, type ProjectFileReference } from "@/lib/project-file-links";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 
@@ -29,6 +30,8 @@ interface TerminalProps {
   className?: string;
   showTextSizeControl?: boolean;
   showPendingAssistantIndicator?: boolean;
+  projectRoot?: string | null;
+  onOpenProjectFile?: (file: ProjectFileReference) => void;
 }
 
 export interface TerminalUserMessage {
@@ -342,6 +345,8 @@ function ActivityPane({
   label,
   text,
   variant,
+  projectRoot,
+  onOpenProjectFile,
   preview = false,
   expanded = true,
   interactive = true,
@@ -350,6 +355,8 @@ function ActivityPane({
   label: string;
   text: string;
   variant: "terminal" | "native";
+  projectRoot?: string | null;
+  onOpenProjectFile?: (file: ProjectFileReference) => void;
   preview?: boolean;
   expanded?: boolean;
   interactive?: boolean;
@@ -401,7 +408,11 @@ function ActivityPane({
           clipped && "line-clamp-[3]",
           variant === "native" ? "text-foreground" : "text-foreground dark:text-zinc-200",
         )}>
-          {text}
+          <ProjectFileReferenceText
+            text={text}
+            projectRoot={projectRoot}
+            onOpenProjectFile={onOpenProjectFile}
+          />
         </pre>
       </div>
     </div>
@@ -621,12 +632,74 @@ function UserMessageAttachments({ attachments }: { attachments: ChatAttachment[]
   );
 }
 
+const PROJECT_FILE_REFERENCE_TOKEN_PATTERN = /(https?:\/\/[^\s<>()]+|\/[A-Za-z0-9._~/%+-][^\s<>()]*:\d+(?::\d+)?)/g;
+
+function ProjectFileReferenceText({
+  text,
+  projectRoot,
+  onOpenProjectFile,
+}: {
+  text: string;
+  projectRoot?: string | null;
+  onOpenProjectFile?: (file: ProjectFileReference) => void;
+}) {
+  if (!projectRoot || !onOpenProjectFile) {
+    return text;
+  }
+
+  const nodes: ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  PROJECT_FILE_REFERENCE_TOKEN_PATTERN.lastIndex = 0;
+  while ((match = PROJECT_FILE_REFERENCE_TOKEN_PATTERN.exec(text))) {
+    const token = match[0];
+    const reference = parseProjectFileReference(token, projectRoot);
+    if (!reference) {
+      continue;
+    }
+
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+
+    nodes.push(
+      <button
+        key={`${match.index}:${token}`}
+        type="button"
+        className="inline font-mono text-inherit underline decoration-current/35 underline-offset-4 hover:decoration-current"
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenProjectFile(reference);
+        }}
+      >
+        {token}
+      </button>,
+    );
+    lastIndex = match.index + token.length;
+  }
+
+  if (nodes.length === 0) {
+    return text;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes;
+}
+
 function ToolActivity({
   activity,
   variant,
+  projectRoot,
+  onOpenProjectFile,
 }: {
   activity: Extract<AgentActivityItem, { kind: "tool" }>;
   variant: "terminal" | "native";
+  projectRoot?: string | null;
+  onOpenProjectFile?: (file: ProjectFileReference) => void;
 }) {
   const isDone = isTerminalToolStatus(activity.status);
   const showToolLabel = activity.label !== "Tool";
@@ -698,7 +771,15 @@ function ToolActivity({
         >
           <div className="min-h-0 overflow-hidden">
             <div className="space-y-1.5 pb-0.5 pt-0.5">
-              {activity.inputPane ? <ActivityPane label={activity.inputPane.label} text={activity.inputPane.text} variant={variant} /> : null}
+              {activity.inputPane ? (
+                <ActivityPane
+                  label={activity.inputPane.label}
+                  text={activity.inputPane.text}
+                  variant={variant}
+                  projectRoot={projectRoot}
+                  onOpenProjectFile={onOpenProjectFile}
+                />
+              ) : null}
               {activity.outputPane?.kind === "diff" ? (
                 <DiffPane
                   label={activity.outputPane.label}
@@ -714,6 +795,8 @@ function ToolActivity({
                   label={activity.outputPane.label}
                   text={activity.outputPane.text}
                   variant={variant}
+                  projectRoot={projectRoot}
+                  onOpenProjectFile={onOpenProjectFile}
                   preview
                   expanded={outputExpanded}
                   interactive={detailsOpen}
@@ -731,9 +814,13 @@ function ToolActivity({
 function ThoughtActivity({
   activity,
   variant,
+  projectRoot,
+  onOpenProjectFile,
 }: {
   activity: Extract<AgentActivityItem, { kind: "thinking" }>;
   variant: "terminal" | "native";
+  projectRoot?: string | null;
+  onOpenProjectFile?: (file: ProjectFileReference) => void;
 }) {
   const { thoughtOpenById } = useManagerSnapshot(terminalUiManager);
   const open = thoughtOpenById[activity.id] ?? activity.inProgress;
@@ -773,6 +860,8 @@ function ThoughtActivity({
                 key={`${activity.id}:${index}`}
                 content={thought}
                 inheritTextColor
+                projectRoot={projectRoot}
+                onOpenProjectFile={onOpenProjectFile}
                 className={cn(
                   "space-y-1 text-[length:var(--terminal-thought-size)] leading-[1.5]",
                   variant === "native"
@@ -793,11 +882,15 @@ function ActivityRow({
   connectorExtendsAfter = false,
   connectorExtendsBefore = false,
   variant,
+  projectRoot,
+  onOpenProjectFile,
 }: {
   activity: TerminalActivityItem;
   connectorExtendsAfter?: boolean;
   connectorExtendsBefore?: boolean;
   variant: "terminal" | "native";
+  projectRoot?: string | null;
+  onOpenProjectFile?: (file: ProjectFileReference) => void;
 }) {
   if (activity.kind === "user_message") {
     return (
@@ -861,6 +954,8 @@ function ActivityRow({
         {activity.kind === "message" ? (
           <MarkdownContent
             content={activity.text}
+            projectRoot={projectRoot}
+            onOpenProjectFile={onOpenProjectFile}
             className={cn(
               "text-[length:var(--terminal-message-size)] leading-[1.55]",
               variant === "native"
@@ -869,8 +964,22 @@ function ActivityRow({
             )}
           />
         ) : null}
-        {activity.kind === "thinking" ? <ThoughtActivity activity={activity} variant={variant} /> : null}
-        {activity.kind === "tool" ? <ToolActivity activity={activity} variant={variant} /> : null}
+        {activity.kind === "thinking" ? (
+          <ThoughtActivity
+            activity={activity}
+            variant={variant}
+            projectRoot={projectRoot}
+            onOpenProjectFile={onOpenProjectFile}
+          />
+        ) : null}
+        {activity.kind === "tool" ? (
+          <ToolActivity
+            activity={activity}
+            variant={variant}
+            projectRoot={projectRoot}
+            onOpenProjectFile={onOpenProjectFile}
+          />
+        ) : null}
         {activity.kind === "permission" ? (
           <div className={cn(
             "rounded-[0.85rem] border px-2.5 py-2",
@@ -898,6 +1007,8 @@ export function Terminal({
   className,
   showTextSizeControl = true,
   showPendingAssistantIndicator = false,
+  projectRoot,
+  onOpenProjectFile,
 }: TerminalProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -945,6 +1056,11 @@ export function Terminal({
       ? getDirectTerminalTextSizeStyle(directTextSize)
       : getTerminalTextSizeStyle(terminalTextSize)
   ), [directTextSize, terminalTextSize, textSizeScope]);
+  const handleProjectFileReferenceClick = useMemo(() => (
+    projectRoot && onOpenProjectFile
+      ? (file: ProjectFileReference) => onOpenProjectFile(file)
+      : undefined
+  ), [onOpenProjectFile, projectRoot]);
 
   useEffect(() => {
     const container = scrollRef.current;
@@ -1026,6 +1142,8 @@ export function Terminal({
                   connectorExtendsBefore={shouldTerminalConnectorExtend(entry.kind, previousEntry?.kind)}
                   connectorExtendsAfter={shouldTerminalConnectorExtend(entry.kind, nextEntry?.kind)}
                   variant={variant}
+                  projectRoot={projectRoot}
+                  onOpenProjectFile={handleProjectFileReferenceClick}
                 />
               );
             })}

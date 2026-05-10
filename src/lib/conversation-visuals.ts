@@ -1,6 +1,6 @@
 export type ConversationVisualKind = "supervisor" | "direct" | "commit";
 
-export const AUTO_COMMIT_PROJECT_PROMPT = "Group all modified files into commits as they fit best";
+export const AUTO_COMMIT_PROJECT_PROMPT = "Group all currently modified files into logical git commits. Do not run tests. Do not modify files or do anything else. Only inspect the modified files as needed, create commits, and stop.";
 
 type ConversationVisualRun = {
   id: string;

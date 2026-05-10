@@ -142,11 +142,18 @@ export type AgentSnapshot = {
   bridgeMissing?: boolean;
 };
 export type ProjectFilesResponse = { root: string; files: string[] };
+export type ProjectFileContentResponse = { root: string; path: string; content: string; size: number; truncated: boolean };
 export type WorkerType = "codex" | "claude" | "gemini" | "opencode";
 export type ComposerWorkerOption = WorkerType | "auto";
 export type WorkerAvailability = {
   type: WorkerType;
   label: string;
+  installation?: {
+    command: string;
+    path: string | null;
+    dir: string | null;
+    version: string | null;
+  };
   availability: {
     status: "ok" | "warning" | "error";
     binary: boolean;

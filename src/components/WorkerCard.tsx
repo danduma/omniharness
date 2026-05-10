@@ -6,6 +6,7 @@ import { Terminal, TerminalTextSizeControl, type AgentTerminalPayload, type Term
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { workerCardManager } from "@/components/component-state-managers";
+import { sideWindowManager } from "@/app/home/SideWindowManager";
 import { isWorkerActiveStatus } from "@/lib/conversation-workers";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
@@ -49,6 +50,7 @@ export type WorkerCardProps = {
   activeEffort: string | null;
   promptPreview?: string | null;
   userMessages?: TerminalUserMessage[];
+  projectRoot?: string | null;
   pendingPermissions: PendingPermissionRecord[];
   terminalHeightClass: string;
   fillAvailable?: boolean;
@@ -361,6 +363,7 @@ export function WorkerCard({
   activeEffort,
   promptPreview,
   userMessages = [],
+  projectRoot,
   pendingPermissions,
   terminalHeightClass,
   fillAvailable = false,
@@ -583,6 +586,8 @@ export function WorkerCard({
               <Terminal
                 agent={agent}
                 userMessages={userMessages}
+                projectRoot={projectRoot}
+                onOpenProjectFile={(file) => sideWindowManager.openFile(file)}
                 hasMoreHistory={hasOmittedWorkerHistory(agent)}
                 onRequestMoreHistory={onLoadWorkerHistory}
                 showTextSizeControl={false}

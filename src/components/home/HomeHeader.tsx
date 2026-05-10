@@ -1,5 +1,5 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
-import { AlertTriangle, Check, ChevronDown, GitCommitHorizontal, Menu, PanelLeft, PanelRight, Pencil } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, Check, ChevronDown, GitCommitHorizontal, Menu, PanelLeft, PanelRight, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import {
@@ -10,13 +10,16 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { OmniHarnessMark } from "@/components/OmniHarnessMark";
 import { PRODUCT_NAME } from "@/app/home/constants";
 import type { AutoCommitChatAction } from "@/app/home/HomeUiStateManager";
+import type { ConversationNotificationState } from "@/app/home/ConversationNotificationManager";
 import type { AgentSnapshot, MessageRecord, RunRecord, SidebarGroup, SidebarRun, SupervisorInterventionRecord } from "@/app/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { ConversationSidebar } from "./ConversationSidebar";
-import { ThemeModeToggle, WorkersSidebar } from "./WorkersSidebar";
+import { SideWindow } from "./SideWindow";
+import { ThemeModeToggle } from "./WorkersSidebar";
 
 interface HomeHeaderProps {
   mobileNavOpen: boolean;
@@ -55,6 +58,8 @@ interface HomeHeaderProps {
   activeConversationCwd: string | null;
   selectedRun: RunRecord | null;
   isImplementationConversation: boolean;
+  workspaceSideWindowAvailable: boolean;
+  projectRoot: string | null;
   themeMode: "day" | "night";
   setThemeMode: Dispatch<SetStateAction<"day" | "night">>;
   rightSidebarOpen: boolean;
@@ -67,6 +72,9 @@ interface HomeHeaderProps {
   onAutoCommitChat: (action?: AutoCommitChatAction) => void;
   autoCommitChatAction: AutoCommitChatAction;
   isAutoCommitChatPending: boolean;
+  notificationState: ConversationNotificationState;
+  onEnableNotifications: () => void;
+  onDisableNotifications: () => void;
   onStopWorker?: (workerId: string) => void;
   onStopTerminalProcess?: (workerId: string, terminalProcess: WorkerTerminalProcess) => void;
   onLoadWorkerHistory?: (workerId: string) => void;
@@ -111,6 +119,8 @@ export function HomeHeader({
   activeConversationCwd,
   selectedRun,
   isImplementationConversation,
+  workspaceSideWindowAvailable,
+  projectRoot,
   themeMode,
   setThemeMode,
   rightSidebarOpen,
@@ -123,6 +133,9 @@ export function HomeHeader({
   onAutoCommitChat,
   autoCommitChatAction,
   isAutoCommitChatPending,
+  notificationState,
+  onEnableNotifications,
+  onDisableNotifications,
   onStopWorker,
   onStopTerminalProcess,
   onLoadWorkerHistory,
@@ -136,6 +149,16 @@ export function HomeHeader({
     ? activeConversationCwd.split(/[\\/]/).filter(Boolean).pop() || activeConversationCwd
     : "";
   const autoCommitChatLabel = autoCommitChatAction === "commit-push" ? "Auto commit & push" : "Auto commit";
+  const notificationsActive = notificationState.enabled && notificationState.permission === "granted";
+  const notificationsBlocked = notificationState.permission === "denied";
+  const notificationsUnsupported = notificationState.permission === "unsupported";
+  const notificationButtonLabel = notificationsUnsupported
+    ? "Notifications unavailable"
+    : notificationsBlocked
+    ? "Notifications blocked"
+    : notificationsActive
+    ? "Disable notifications"
+    : "Enable notifications";
 
   const beginTopBarTitleEdit = () => {
     if (!selectedRun) {
@@ -181,7 +204,10 @@ export function HomeHeader({
         </Button>
         <SheetContent side="left" className="w-[min(22rem,calc(100vw-1rem))] p-0 lg:hidden" showCloseButton={false}>
           <SheetHeader className="border-b border-border/60">
-            <SheetTitle>{PRODUCT_NAME}</SheetTitle>
+            <SheetTitle className="flex items-center gap-2 text-left">
+              <OmniHarnessMark className="h-8 w-8 p-1" />
+              <span>{PRODUCT_NAME}</span>
+            </SheetTitle>
           </SheetHeader>
           <ConversationSidebar
             filteredProjects={filteredProjects as SidebarGroup[]}
@@ -340,21 +366,40 @@ export function HomeHeader({
           </DropdownMenu>
         </ButtonGroup>
       ) : null}
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8 text-muted-foreground hover:text-foreground"
+        aria-label={notificationButtonLabel}
+        title={notificationState.lastError || notificationButtonLabel}
+        onClick={notificationsActive ? onDisableNotifications : onEnableNotifications}
+        disabled={notificationsUnsupported}
+      >
+        {notificationsActive ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
+      </Button>
       <ThemeModeToggle themeMode={themeMode} setThemeMode={setThemeMode} />
-      {selectedRunId && isImplementationConversation ? (
-        <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-muted-foreground hover:text-foreground lg:inline-flex" title="Toggle Conversation Workers" onClick={() => setRightSidebarOpen(!rightSidebarOpen)}>
+      {workspaceSideWindowAvailable && !rightSidebarOpen ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="hidden h-8 w-8 text-muted-foreground hover:text-foreground lg:inline-flex"
+          aria-label="Toggle workspace side window"
+          title="Toggle workspace side window"
+          onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
+        >
           <PanelRight className="h-4 w-4" />
         </Button>
       ) : null}
-      <Sheet open={mobileWorkersOpen} onOpenChange={setMobileWorkersOpen}>
-        <Button variant="ghost" size="icon" className="h-8 w-8 lg:hidden" aria-label="Open workers" onClick={() => setMobileWorkersOpen(true)}>
-          <PanelRight className="h-4 w-4" />
-        </Button>
-        <SheetContent side="right" className="w-[min(22rem,calc(100vw-1rem))] p-0 lg:hidden" showCloseButton={false}>
-          <SheetHeader className="border-b border-border/60">
-            <SheetTitle>Workers</SheetTitle>
-          </SheetHeader>
-          <WorkersSidebar
+      <Sheet open={mobileWorkersOpen} onOpenChange={setMobileWorkersOpen} disablePointerDismissal>
+        {workspaceSideWindowAvailable ? (
+          <Button variant="ghost" size="icon" className="h-8 w-8 lg:hidden" aria-label="Open workspace side window" onClick={() => setMobileWorkersOpen(true)}>
+            <PanelRight className="h-4 w-4" />
+          </Button>
+        ) : null}
+        <SheetContent side="right" className="!inset-0 h-[100dvh] !w-screen !max-w-none gap-0 !border-0 p-0 sm:!max-w-none lg:hidden" showCloseButton={false}>
+          <SheetTitle className="sr-only">Workspace tools</SheetTitle>
+          <SideWindow
+            projectRoot={projectRoot}
             workers={selectedRunId && isImplementationConversation ? selectedRunWorkers : []}
             agents={selectedRunId && isImplementationConversation ? conversationAgents : []}
             supervisorInterventions={selectedRunId && isImplementationConversation ? supervisorInterventions : []}
@@ -365,7 +410,8 @@ export function HomeHeader({
             onLoadWorkerHistory={onLoadWorkerHistory}
             stoppingWorkerId={stoppingWorkerId}
             stoppingTerminalProcess={stoppingTerminalProcess}
-            onClose={() => setMobileWorkersOpen(false)}
+            onCloseWindow={() => setMobileWorkersOpen(false)}
+            closeButtonVariant="back"
           />
         </SheetContent>
       </Sheet>

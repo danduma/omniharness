@@ -130,3 +130,109 @@
     font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
   }
 }
+
+@layer components {
+  .syntax-highlight {
+    color: color-mix(in oklch, var(--foreground) 88%, transparent);
+  }
+
+  .syntax-highlight .hljs-keyword,
+  .syntax-highlight .hljs-selector-tag,
+  .syntax-highlight .hljs-subst {
+    color: oklch(0.48 0.19 272);
+  }
+
+  .syntax-highlight .hljs-string,
+  .syntax-highlight .hljs-regexp,
+  .syntax-highlight .hljs-attr {
+    color: oklch(0.46 0.13 150);
+  }
+
+  .syntax-highlight .hljs-number,
+  .syntax-highlight .hljs-literal,
+  .syntax-highlight .hljs-variable,
+  .syntax-highlight .hljs-template-variable {
+    color: oklch(0.53 0.17 35);
+  }
+
+  .syntax-highlight .hljs-title,
+  .syntax-highlight .hljs-title.function_,
+  .syntax-highlight .hljs-section,
+  .syntax-highlight .hljs-name {
+    color: oklch(0.45 0.14 248);
+  }
+
+  .syntax-highlight .hljs-comment,
+  .syntax-highlight .hljs-quote {
+    color: color-mix(in oklch, var(--muted-foreground) 78%, transparent);
+    font-style: italic;
+  }
+
+  .syntax-highlight .hljs-tag,
+  .syntax-highlight .hljs-built_in,
+  .syntax-highlight .hljs-type,
+  .syntax-highlight .hljs-class .hljs-title {
+    color: oklch(0.5 0.16 205);
+  }
+
+  .syntax-highlight .hljs-meta,
+  .syntax-highlight .hljs-doctag,
+  .syntax-highlight .hljs-attribute {
+    color: oklch(0.5 0.14 74);
+  }
+
+  .syntax-highlight .hljs-addition {
+    color: oklch(0.48 0.14 150);
+  }
+
+  .syntax-highlight .hljs-deletion {
+    color: oklch(0.52 0.2 25);
+  }
+
+  .dark .syntax-highlight .hljs-keyword,
+  .dark .syntax-highlight .hljs-selector-tag,
+  .dark .syntax-highlight .hljs-subst {
+    color: oklch(0.76 0.15 292);
+  }
+
+  .dark .syntax-highlight .hljs-string,
+  .dark .syntax-highlight .hljs-regexp,
+  .dark .syntax-highlight .hljs-attr {
+    color: oklch(0.78 0.12 155);
+  }
+
+  .dark .syntax-highlight .hljs-number,
+  .dark .syntax-highlight .hljs-literal,
+  .dark .syntax-highlight .hljs-variable,
+  .dark .syntax-highlight .hljs-template-variable {
+    color: oklch(0.78 0.15 55);
+  }
+
+  .dark .syntax-highlight .hljs-title,
+  .dark .syntax-highlight .hljs-title.function_,
+  .dark .syntax-highlight .hljs-section,
+  .dark .syntax-highlight .hljs-name {
+    color: oklch(0.76 0.13 235);
+  }
+
+  .dark .syntax-highlight .hljs-tag,
+  .dark .syntax-highlight .hljs-built_in,
+  .dark .syntax-highlight .hljs-type,
+  .dark .syntax-highlight .hljs-class .hljs-title {
+    color: oklch(0.78 0.12 200);
+  }
+
+  .dark .syntax-highlight .hljs-meta,
+  .dark .syntax-highlight .hljs-doctag,
+  .dark .syntax-highlight .hljs-attribute {
+    color: oklch(0.82 0.12 78);
+  }
+
+  .dark .syntax-highlight .hljs-addition {
+    color: oklch(0.78 0.12 150);
+  }
+
+  .dark .syntax-highlight .hljs-deletion {
+    color: oklch(0.78 0.15 25);
+  }
+}

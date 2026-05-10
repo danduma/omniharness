@@ -5,8 +5,11 @@ import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAP
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { OmniHarnessMark } from "@/components/OmniHarnessMark";
+import { PRODUCT_NAME } from "@/app/home/constants";
 import { getRunLatestMessageTimestamp, isRunUnread } from "@/lib/conversation-state";
 import { getConversationVisualKind, type ConversationVisualKind } from "@/lib/conversation-visuals";
+import { isArchivableRunStatus } from "@/lib/run-status";
 import { cn } from "@/lib/utils";
 import type { SidebarGroup, SidebarRun } from "@/app/home/types";
 
@@ -99,11 +102,14 @@ export function ConversationSidebar({
 }: ConversationSidebarProps) {
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#f1f1f0] dark:bg-muted/30">
-      <div className="mt-2 space-y-1 p-3">
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" className="h-9 min-w-0 flex-1 justify-start px-2 text-sm text-[#333333] hover:bg-[#deddda] hover:text-[#1f1f1f] dark:text-zinc-200 dark:hover:bg-muted/70 dark:hover:text-zinc-100" onClick={startNewPlan}>
-            <Plus className="mr-2 h-4 w-4" /> New chat
-          </Button>
+      <div className="space-y-1 px-3 pb-3 pt-2 lg:px-3 lg:pb-3 lg:pt-2">
+        <div className="flex items-center gap-1.5">
+          <div className="hidden min-w-0 flex-1 items-center gap-2 lg:flex">
+            <OmniHarnessMark className="h-8 w-8" />
+            <span className="min-w-0 truncate text-sm font-semibold text-[#333333] dark:text-zinc-100">
+              {PRODUCT_NAME}
+            </span>
+          </div>
           {onCollapse ? (
             <Button
               variant="ghost"
@@ -117,7 +123,10 @@ export function ConversationSidebar({
             </Button>
           ) : null}
         </div>
-        <div className="relative mt-1">
+        <Button variant="ghost" className="h-9 w-full shrink-0 justify-start px-2 text-sm text-[#333333] hover:bg-[#deddda] hover:text-[#1f1f1f] dark:text-zinc-200 dark:hover:bg-muted/70 dark:hover:text-zinc-100" onClick={startNewPlan}>
+          <Plus className="mr-2 h-4 w-4" /> New session
+        </Button>
+        <div className="relative">
           <Search className="absolute left-2 top-2.5 h-4 w-4 text-[#333333] dark:text-zinc-300" />
           <Input
             type="text"
@@ -149,7 +158,7 @@ export function ConversationSidebar({
                 open={projectOpen}
                 onOpenChange={(open) => onProjectOpenChange(group.path, open)}
               >
-                <div className="group mb-1 flex items-center justify-between rounded px-2 hover:bg-muted/30">
+                <div className="group mb-1 flex items-center justify-between gap-0.5 rounded px-2 hover:bg-muted/30">
                   <CollapsibleTrigger className="flex flex-1 items-center gap-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
                     <Folder className="h-4 w-4 shrink-0 text-primary/70" />
                     <span className="truncate">{group.name}</span>
@@ -212,6 +221,7 @@ export function ConversationSidebar({
                     {group.runs.map((run) => {
                       const visualKind = getConversationVisualKind(run, messages ?? []);
                       const isCommitConversation = visualKind === "commit";
+                      const canArchiveConversation = isArchivableRunStatus(run.status);
                       const visualConfig = CONVERSATION_VISUAL_CONFIG[visualKind];
                       const ConversationIcon = visualConfig.Icon;
 
@@ -269,7 +279,7 @@ export function ConversationSidebar({
                               }) ? (
                                 <div className="h-2 w-2 shrink-0 rounded-full bg-blue-500" />
                               ) : null}
-                              {isCommitConversation ? (
+                              {canArchiveConversation && isCommitConversation ? (
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -302,7 +312,7 @@ export function ConversationSidebar({
                                   >
                                     <Pencil className="mr-2 h-4 w-4" /> Rename
                                   </DropdownMenuItem>
-                                  {isCommitConversation ? (
+                                  {canArchiveConversation ? (
                                     <DropdownMenuItem
                                       className="cursor-pointer whitespace-nowrap"
                                       onClick={(event) => {
@@ -348,15 +358,20 @@ export function ConversationSidebar({
           <DropdownMenuTrigger className="inline-flex h-9 w-full items-center justify-start rounded-md px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50">
             <Settings className="mr-2 h-4 w-4" /> Settings
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" side="top" className="w-56">
-            <DropdownMenuItem className="cursor-pointer whitespace-nowrap" onClick={() => setShowSettings(true)}>
+          <DropdownMenuContent
+            align="start"
+            side="top"
+            className="w-56 max-lg:w-[min(20rem,calc(100vw-2rem))] max-lg:rounded-xl max-lg:p-2 max-lg:shadow-2xl"
+            positionerClassName="max-lg:!fixed max-lg:!inset-0 max-lg:!flex max-lg:!items-center max-lg:!justify-center max-lg:!p-4 max-lg:!transform-none max-lg:bg-background/55 max-lg:backdrop-blur-sm"
+          >
+            <DropdownMenuItem className="cursor-pointer whitespace-nowrap max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5" onClick={() => setShowSettings(true)}>
               <Settings className="mr-2 h-4 w-4" /> Settings
             </DropdownMenuItem>
-            <DropdownMenuItem className="cursor-pointer whitespace-nowrap" onClick={openPairDeviceDialog}>
+            <DropdownMenuItem className="cursor-pointer whitespace-nowrap max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5" onClick={openPairDeviceDialog}>
               <Smartphone className="mr-2 h-4 w-4" /> Connect Phone
             </DropdownMenuItem>
             {authEnabled ? (
-              <DropdownMenuItem variant="destructive" className="cursor-pointer whitespace-nowrap" onClick={logout}>
+              <DropdownMenuItem variant="destructive" className="cursor-pointer whitespace-nowrap max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5" onClick={logout}>
                 <LogOut className="mr-2 h-4 w-4" /> Sign Out
               </DropdownMenuItem>
             ) : null}

@@ -1,6 +1,7 @@
 "use client";
 
 import { Terminal, type AgentTerminalPayload } from "@/components/Terminal";
+import type { ProjectFileReference } from "@/lib/project-file-links";
 import { cn } from "@/lib/utils";
 
 export interface AgentSurfaceAgent extends AgentTerminalPayload {
@@ -14,11 +15,15 @@ export function AgentSurface({
   title,
   subtitle,
   agent,
+  projectRoot,
+  onOpenProjectFile,
   className,
 }: {
   title: string;
   subtitle?: string | null;
   agent: AgentSurfaceAgent | null;
+  projectRoot?: string | null;
+  onOpenProjectFile?: (file: ProjectFileReference) => void;
   className?: string;
 }) {
   return (
@@ -42,7 +47,7 @@ export function AgentSurface({
         ) : null}
       </div>
       <div className="h-full min-h-[20rem] bg-muted/20 p-2 dark:bg-[#050607]">
-        <Terminal agent={agent} />
+        <Terminal agent={agent} projectRoot={projectRoot} onOpenProjectFile={onOpenProjectFile} />
       </div>
     </div>
   );

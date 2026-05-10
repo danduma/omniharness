@@ -28,7 +28,7 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.14.1",
     "@base-ui/react": "^1.4.1",
-    "@danduma/i18n": "file:../i18n",
+    "@danduma/i18n": "github:danduma/i18n#6db001b7cd5c35eab55909599218829435118ffc",
     "@mastra/core": "^1.28.0",
     "@node-rs/argon2": "^2.0.2",
     "@tanstack/react-query": "^5.99.1",
@@ -38,6 +38,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",
+    "highlight.js": "^11.11.1",
     "js-yaml": "^4.1.1",
     "lucide-react": "^1.8.0",
     "next": "15.5.15",

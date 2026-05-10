@@ -15,6 +15,7 @@ import type { RecoveryIncidentRecord, RunRecoveryState } from "@/app/home/types"
 import { formatExecutionTimestamp, getExecutionEventDetailRows, summarizeExecutionEvent, type ConversationTimelineItem } from "@/app/home/utils";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import type { ProjectFileReference } from "@/lib/project-file-links";
 import { ErrorNotice } from "./ErrorNotice";
 import { RecoveryIncidentInspector } from "./RecoveryIncidentInspector";
 import { RunRecoveryNotice } from "./RunRecoveryNotice";
@@ -227,9 +228,13 @@ function SupervisorActivityMessage({ item }: { item: Extract<ConversationTimelin
 function WorkerOutputMessage({
   message,
   agent,
+  projectRoot,
+  onOpenProjectFile,
 }: {
   message: MessageRecord;
   agent: AgentSnapshot | null;
+  projectRoot?: string | null;
+  onOpenProjectFile?: (file: ProjectFileReference) => void;
 }) {
   const { fullOutputOpenByMessageId } = useManagerSnapshot(conversationMainManager);
   const fullOutputOpen = Boolean(fullOutputOpenByMessageId[message.id]);
@@ -250,9 +255,12 @@ function WorkerOutputMessage({
     <Collapsible open={fullOutputOpen} onOpenChange={(open) => conversationMainManager.setFullOutputOpen(message.id, open)}>
       <div className="overflow-hidden rounded-xl border border-emerald-600/20 bg-emerald-950/[0.08] shadow-sm">
         <div className="space-y-3 p-4">
-          <div className="whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
-            {summaryText}
-          </div>
+          <MarkdownContent
+            content={summaryText}
+            className="text-foreground"
+            projectRoot={projectRoot}
+            onOpenProjectFile={onOpenProjectFile}
+          />
           <CollapsibleTrigger
             className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium text-emerald-700 transition-colors hover:text-emerald-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-emerald-300 dark:hover:text-emerald-100"
             aria-label={fullOutputOpen ? "Hide full worker output" : "Show full worker output"}
@@ -266,6 +274,8 @@ function WorkerOutputMessage({
             <Terminal
               agent={fullOutputAgent}
               className="h-72"
+              projectRoot={projectRoot}
+              onOpenProjectFile={onOpenProjectFile}
             />
           </div>
         </CollapsibleContent>
@@ -316,6 +326,8 @@ interface ConversationMainProps {
   liveThoughts: ConversationExecutionStatusProps["liveThoughts"];
   executionEvents: ExecutionEventRecord[];
   emptyComposer: React.ReactNode;
+  projectRoot?: string | null;
+  onOpenProjectFile?: (file: ProjectFileReference) => void;
 }
 
 function LatestRecoveryAction({
@@ -397,6 +409,8 @@ export function ConversationMain({
   liveThoughts,
   executionEvents,
   emptyComposer,
+  projectRoot,
+  onOpenProjectFile,
 }: ConversationMainProps) {
   const { hasOutputBelow } = useManagerSnapshot(conversationMainManager);
   const handleCopyDirectMessage = async (content: string) => {
@@ -486,6 +500,8 @@ export function ConversationMain({
               textSizeScope="direct"
               className="min-h-[32rem]"
               showPendingAssistantIndicator={showDirectControlWorkingIndicator}
+              projectRoot={projectRoot}
+              onOpenProjectFile={onOpenProjectFile}
             />
           </DirectControlTerminalColumn>
         </div>
@@ -578,6 +594,8 @@ export function ConversationMain({
                   <WorkerOutputMessage
                     message={msg}
                     agent={conversationAgents.find((agent) => agent.name === inferWorkerIdFromMessage(msg)) ?? null}
+                    projectRoot={projectRoot}
+                    onOpenProjectFile={onOpenProjectFile}
                   />
                 ) : (
                   <div className={cn(
@@ -588,7 +606,12 @@ export function ConversationMain({
                       : "border-border bg-card",
                   )}>
                     {msg.role === "supervisor" ? (
-                      <MarkdownContent content={msg.content} className="text-foreground" />
+                      <MarkdownContent
+                        content={msg.content}
+                        className="text-foreground"
+                        projectRoot={projectRoot}
+                        onOpenProjectFile={onOpenProjectFile}
+                      />
                     ) : msg.content}
                   </div>
                 )}
@@ -665,6 +688,8 @@ export function ConversationMain({
               title="Planning agent"
               subtitle={selectedRun?.projectPath || "Using the current project root as cwd"}
               agent={primaryConversationAgent}
+              projectRoot={projectRoot}
+              onOpenProjectFile={onOpenProjectFile}
               className="min-h-[22rem]"
             />
           ) : null}

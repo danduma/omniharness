@@ -17,6 +17,7 @@ import {
   RUN_PATH_PATTERN,
   WORKER_OPTIONS,
 } from "./constants";
+import { conversationNotificationManager } from "./ConversationNotificationManager";
 import { LiveEventConnectionManager } from "./LiveEventConnectionManager";
 import type { AutoCommitChatAction } from "./HomeUiStateManager";
 import type { ComposerWorkerOption, EventStreamState } from "./types";
@@ -120,7 +121,7 @@ export function useHomeLifecycle({
   const didSkipWorkersSidebarInitialPersistRef = useRef(false);
 
   useEffect(() => {
-    if (!appUnlocked) {
+    if (!shouldStartLiveEventConnection({ appUnlocked, routeReady })) {
       setHasReceivedInitialEventStreamPayload(false);
       return;
     }
@@ -133,6 +134,7 @@ export function useHomeLifecycle({
 
       const nextState = filterEventStreamState?.(data) ?? data;
       setState(nextState);
+      conversationNotificationManager.handleEventStreamState(nextState);
       setHasReceivedInitialEventStreamPayload(true);
       setRuntimeErrors((current) => mergeAppErrors(
         current.filter((error) => error.source !== "Events"),
@@ -156,7 +158,15 @@ export function useHomeLifecycle({
       isActive = false;
       connectionManager.stop();
     };
-  }, [appUnlocked, filterEventStreamState, selectedRunId]);
+  }, [
+    appUnlocked,
+    filterEventStreamState,
+    routeReady,
+    selectedRunId,
+    setHasReceivedInitialEventStreamPayload,
+    setRuntimeErrors,
+    setState,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -555,4 +565,8 @@ export function useHomeLifecycle({
 
     window.localStorage.setItem(AUTO_COMMIT_CHAT_ACTION_STORAGE_KEY, autoCommitChatAction);
   }, [autoCommitChatAction]);
+}
+
+export function shouldStartLiveEventConnection(args: { appUnlocked: boolean; routeReady: boolean }) {
+  return args.appUnlocked && args.routeReady;
 }
