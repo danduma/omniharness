@@ -5,7 +5,7 @@ export type BusyComposerSubmitAction = "send_normal" | "send_queue" | "send_stee
 export type BusyComposerBehavior = {
   buttonKind: BusyComposerButtonKind;
   submitAction: BusyComposerSubmitAction;
-  ariaLabel: string;
+  ariaLabelKey: string;
 };
 
 export function parseBusyMessageAction(value: string | null | undefined): BusyMessageAction {
@@ -27,7 +27,7 @@ export function resolveBusyComposerBehavior({
     return {
       buttonKind: "stop",
       submitAction: "stop",
-      ariaLabel: "Stop conversation",
+      ariaLabelKey: "conversation.composer.sendButton.stop",
     };
   }
 
@@ -36,18 +36,33 @@ export function resolveBusyComposerBehavior({
       ? {
           buttonKind: "send",
           submitAction: "send_steer",
-          ariaLabel: "Steer active work",
+          ariaLabelKey: "conversation.composer.sendButton.steer",
         }
       : {
           buttonKind: "send",
           submitAction: "send_queue",
-          ariaLabel: "Queue message",
+          ariaLabelKey: "conversation.composer.sendButton.queue",
         };
   }
 
   return {
     buttonKind: "send",
     submitAction: "send_normal",
-    ariaLabel: "Send message",
+    ariaLabelKey: "conversation.composer.sendButton.send",
   };
+}
+
+export function resolveBusyMessageActionForSubmitAction(
+  submitAction: BusyComposerSubmitAction,
+  options: { useAlternate?: boolean } = {},
+): BusyMessageAction | undefined {
+  if (submitAction === "send_queue") {
+    return options.useAlternate ? "steer" : "queue";
+  }
+
+  if (submitAction === "send_steer") {
+    return options.useAlternate ? "queue" : "steer";
+  }
+
+  return undefined;
 }

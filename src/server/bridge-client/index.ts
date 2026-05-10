@@ -1,4 +1,5 @@
 import { isRecoverableConnectionSupervisorError, isTransientSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
+import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 
 export const BRIDGE_URL = process.env.OMNIHARNESS_BRIDGE_URL?.trim() || "http://127.0.0.1:7800";
 const BRIDGE_CONNECTION_RESET_MAX_BACKOFF_MS = 15 * 60_000;
@@ -297,6 +298,107 @@ async function requestBridge<T>(path: string, init: RequestInit, action: string)
   }
 }
 
+type AskStreamEvent = {
+  event: string;
+  data: string;
+};
+
+function parseServerSentEventBlock(block: string): AskStreamEvent | null {
+  let event = "message";
+  const dataLines: string[] = [];
+
+  for (const line of block.split(/\r?\n/g)) {
+    if (line.startsWith("event:")) {
+      event = line.slice("event:".length).trim();
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trimStart());
+    }
+  }
+
+  if (dataLines.length === 0) {
+    return null;
+  }
+
+  return {
+    event,
+    data: dataLines.join("\n"),
+  };
+}
+
+async function readAskStream(response: Response): Promise<{ response: string; state: string; stopReason?: string | null }> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("Ask stream response did not include a readable body.");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let completed: { response: string; state: string; stopReason?: string | null } | null = null;
+
+  const handleEvent = (streamEvent: AskStreamEvent) => {
+    if (streamEvent.event === "progress" || streamEvent.event === "chunk") {
+      notifyEventStreamSubscribers();
+      return;
+    }
+
+    if (streamEvent.event === "done") {
+      notifyEventStreamSubscribers();
+      completed = JSON.parse(streamEvent.data) as typeof completed;
+      return;
+    }
+
+    if (streamEvent.event === "error") {
+      let message = streamEvent.data;
+      let status: number | undefined;
+      try {
+        const payload = JSON.parse(streamEvent.data) as { error?: unknown; statusCode?: unknown };
+        if (typeof payload.error === "string" && payload.error.trim()) {
+          message = payload.error.trim();
+        }
+        if (typeof payload.statusCode === "number") {
+          status = payload.statusCode;
+        }
+      } catch {
+        // Fall back to the raw SSE data.
+      }
+      throw Object.assign(new Error(message), { status });
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done });
+    }
+
+    let separatorIndex = buffer.search(/\r?\n\r?\n/);
+    while (separatorIndex >= 0) {
+      const block = buffer.slice(0, separatorIndex);
+      buffer = buffer.slice(buffer[separatorIndex] === "\r" ? separatorIndex + 4 : separatorIndex + 2);
+      const streamEvent = parseServerSentEventBlock(block);
+      if (streamEvent) {
+        handleEvent(streamEvent);
+      }
+      separatorIndex = buffer.search(/\r?\n\r?\n/);
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  const trailingEvent = parseServerSentEventBlock(buffer.trim());
+  if (trailingEvent) {
+    handleEvent(trailingEvent);
+  }
+
+  if (!completed) {
+    throw new Error("Ask stream ended before the agent returned a result.");
+  }
+
+  return completed;
+}
+
 export async function spawnAgent(params: {
   type: string;
   cwd: string;
@@ -326,15 +428,45 @@ export async function spawnAgent(params: {
 }
 
 export async function askAgent(name: string, prompt: string) {
-  return requestBridge<{ response: string; state: string; stopReason?: string | null }>(
-    `/agents/${name}/ask`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
-    },
-    "Ask",
-  );
+  try {
+    return await retrySupervisorRequest(async () => {
+      const path = `/agents/${name}/ask?stream=true`;
+      const res = await fetch(`${BRIDGE_URL}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      if (!res.ok) {
+        let detail = `${res.status} ${res.statusText}`;
+        try {
+          const payload = await res.json() as { error?: unknown };
+          if (typeof payload.error === "string" && payload.error.trim()) {
+            detail = payload.error.trim();
+          }
+        } catch {
+          // ignore malformed/non-json bodies and fall back to status text
+        }
+        throw Object.assign(new Error(`Ask failed: ${detail}`), { status: res.status });
+      }
+      return readAskStream(res);
+    }, {
+      maxDelayMs: BRIDGE_CONNECTION_RESET_MAX_BACKOFF_MS,
+      operationLabel: `Ask /agents/${name}/ask`,
+      retryIndefinitelyWhen: (error) => isRecoverableConnectionSupervisorError(error) && !isBridgeConnectionRefused(error),
+    });
+  } catch (error) {
+    if (isBridgeConnectionRefused(error)) {
+      throw new Error(
+        `OmniHarness agent runtime is not running at ${BRIDGE_URL}. Start it with pnpm dev or ` +
+        `pnpm exec tsx scripts/agent-runtime.ts. Original error: ${describeError(error)}`,
+      );
+    }
+
+    const detail = describeError(error);
+    const normalizedDetail = stripRepeatedActionPrefix(detail, "Ask");
+
+    throw new Error(`Ask failed: ${normalizedDetail}`);
+  }
 }
 
 export async function getAgent(name: string) {

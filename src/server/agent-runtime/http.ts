@@ -4,6 +4,7 @@ import { AgentRuntimeManager } from "./manager";
 import { RuntimeHttpError } from "./types";
 
 type EnvLike = Record<string, string | undefined>;
+const ASK_STREAM_PROGRESS_INTERVAL_MS = 750;
 
 export type CreateAgentRuntimeServerOptions = {
   config?: AgentRuntimeConfig;
@@ -144,6 +145,13 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
         res.setHeader("connection", "keep-alive");
         res.flushHeaders();
 
+        const writeProgress = () => {
+          writeSse(res, "progress", { updatedAt: new Date().toISOString() });
+        };
+        writeProgress();
+        const progressTimer = setInterval(writeProgress, ASK_STREAM_PROGRESS_INTERVAL_MS);
+        progressTimer.unref?.();
+
         try {
           const result = await manager.askAgent(parts[1], body.prompt, (chunk) => {
             writeSse(res, "chunk", { chunk });
@@ -156,6 +164,7 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
             writeSse(res, "error", { error: error instanceof Error ? error.message : String(error), statusCode: 500 });
           }
         } finally {
+          clearInterval(progressTimer);
           res.end();
         }
         return;

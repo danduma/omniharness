@@ -13,6 +13,7 @@ import { getAppDataPath } from "@/server/app-root";
 import { requireApiSession } from "@/server/auth/guards";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { pauseForClarifications } from "@/server/clarifications/loop";
+import { isArchivableRunStatus } from "@/server/runs/status";
 import {
   plans,
   runs,
@@ -192,6 +193,14 @@ export async function POST(
           status: 404,
           source: "Runs",
           action: "Archive",
+        });
+      }
+      if (!isArchivableRunStatus(run.status)) {
+        return errorResponse("Only finished conversations can be archived", {
+          status: 409,
+          source: "Runs",
+          action: "Archive",
+          details: [`Current status: ${run.status}`],
         });
       }
 

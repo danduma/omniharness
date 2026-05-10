@@ -4,7 +4,7 @@ import { BRIDGE_URL } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
 import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
-import { isSpawnableWorkerType } from "@/server/supervisor/worker-availability";
+import { getWorkerInstallationInfo, isSpawnableWorkerType } from "@/server/supervisor/worker-availability";
 import { SUPPORTED_WORKER_TYPES, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
 import { buildAppError, errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
@@ -95,6 +95,7 @@ export async function GET(req: NextRequest) {
       workers: SUPPORTED_WORKER_TYPES.map((type) => ({
         type,
         label: WORKER_TYPE_LABELS[type],
+        installation: getWorkerInstallationInfo(type),
         availability: (() => {
           const doctorAvailability = byType.get(type);
           const localAvailability = isSpawnableWorkerType(type);

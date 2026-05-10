@@ -15,6 +15,7 @@ import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
+import { getAppRoot } from "@/server/app-root";
 import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
 import { serializeMessageRecord } from "./message-records";
@@ -257,7 +258,7 @@ export async function createConversation(args: {
 }) {
   const mode = normalizeConversationMode(args.mode);
   const command = args.command.trim();
-  const projectPath = args.projectPath?.trim() || null;
+  const projectPath = args.projectPath?.trim() || getAppRoot();
   const attachments = normalizeChatAttachments(args.attachments ?? []);
   const attachmentsJson = serializeChatAttachments(attachments);
   const workerPrompt = appendAttachmentContext(command, attachments);

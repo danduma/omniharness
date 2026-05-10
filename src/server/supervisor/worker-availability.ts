@@ -1,29 +1,45 @@
 import { execFileSync } from "child_process";
+import { dirname } from "path";
 import { SUPPORTED_WORKER_TYPES, type SupportedWorkerType, normalizeWorkerType } from "./worker-types";
 
 type EnvLike = Record<string, string | undefined>;
 
 const FALLBACK_ORDER: SupportedWorkerType[] = ["codex", "claude", "gemini", "opencode"];
 
-function commandExists(command: string) {
+const WORKER_BINARY_COMMANDS: Record<SupportedWorkerType, string> = {
+  codex: "codex-acp",
+  claude: "claude-agent-acp",
+  gemini: "gemini",
+  opencode: "opencode",
+};
+
+function resolveCommandPath(command: string) {
   try {
-    execFileSync("which", [command], { stdio: "ignore" });
-    return true;
+    return String(execFileSync("which", [command], {
+      encoding: "utf8",
+      timeout: 1_500,
+      maxBuffer: 64 * 1024,
+    })).trim() || null;
   } catch {
-    return false;
+    return null;
   }
 }
 
 function workerBinaryAvailable(type: SupportedWorkerType) {
-  switch (type) {
-    case "codex":
-      return commandExists("codex-acp");
-    case "claude":
-      return commandExists("claude-agent-acp");
-    case "gemini":
-      return commandExists("gemini");
-    case "opencode":
-      return commandExists("opencode");
+  return resolveCommandPath(WORKER_BINARY_COMMANDS[type]) !== null;
+}
+
+function readCommandVersion(commandPath: string) {
+  try {
+    const output = String(execFileSync(commandPath, ["--version"], {
+      encoding: "utf8",
+      timeout: 2_000,
+      maxBuffer: 128 * 1024,
+    })).trim();
+
+    return output.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -81,6 +97,22 @@ export function isSpawnableWorkerType(type: string) {
   return {
     ok: true,
     type: supportedType,
+  };
+}
+
+export function getWorkerInstallationInfo(type: string) {
+  const normalized = normalizeWorkerType(type);
+  const supportedType = SUPPORTED_WORKER_TYPES.includes(normalized as SupportedWorkerType)
+    ? normalized as SupportedWorkerType
+    : null;
+  const command = supportedType ? WORKER_BINARY_COMMANDS[supportedType] : normalized;
+  const path = resolveCommandPath(command);
+
+  return {
+    command,
+    path,
+    dir: path ? dirname(path) : null,
+    version: path ? readCommandVersion(path) : null,
   };
 }
 
