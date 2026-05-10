@@ -2,19 +2,21 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use ultrapowers:subagent-driven-development (recommended) or ultrapowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Give each OmniHarness installation a permanent, automatically generated, memorable three-word hostname like `solar-maple-signal.app.omniharness.dev` that tunnels phone traffic to the user's local OmniHarness web app through Cloudflare Tunnel.
+**Goal:** Give paid registered OmniHarness users an optional permanent, automatically generated, memorable three-word hostname like `solar-maple-signal.omniharness.dev` that tunnels phone traffic to the user's local OmniHarness web app through an Omni-provided Cloudflare Tunnel.
 
-**Architecture:** Add a hosted OmniHarness remote-access control plane that owns slug allocation, Cloudflare named tunnel provisioning, DNS records, token rotation, and billing/account ownership. The local OmniHarness app becomes a tunnel client: it stores only its assigned remote installation id, public origin, and scoped tunnel token, runs `cloudflared` against `http://127.0.0.1:3050`, and feeds the active public origin into the existing QR pairing flow. The ACP bridge remains private on loopback; only the Next.js web app is exposed.
+**Architecture:** Keep OmniHarness fully usable offline with no registration, and keep bring-your-own tunnel setup available without an OmniHarness account. Add a hosted OmniHarness remote-access control plane only for the paid Omni managed tunnel path: it owns slug allocation, Cloudflare named tunnel provisioning, DNS records, token rotation, and billing/account ownership. The local OmniHarness app becomes a tunnel client only when the user opts into the managed service: it stores only its assigned remote installation id, public origin, and scoped tunnel token, runs `cloudflared` against `http://127.0.0.1:3050`, and feeds the active public origin into the existing QR pairing flow. The ACP bridge remains private on loopback; only the Next.js web app is exposed.
 
 **Tech Stack:** Next.js 15, React, TypeScript, SQLite/Drizzle for local state, hosted persistence for remote installations, Cloudflare Tunnel API, Cloudflare DNS API, `cloudflared`, encrypted settings, existing OmniHarness auth and QR pairing, Vitest, Playwright.
 
-**North Star Product:** Remote access feels like claiming a personal agent address rather than configuring networking: a user clicks "Enable remote access", receives a delightful permanent URL, scans a phone QR, installs the PWA, and can supervise agents from anywhere.
+**North Star Product:** OmniHarness works as a local/offline agent supervisor by default. Users who prefer their own network setup can bring a tunnel or LAN URL without registering. Users who want the managed paid experience can register, log in, click "Enable hosted remote access", receive a delightful permanent URL, scan a phone QR, install the PWA, and supervise agents from anywhere without configuring networking.
 
-**Current Milestone:** Ship the Cloudflare named-tunnel path with generated three-word hostnames under `app.omniharness.dev`, complete provisioning, local connector lifecycle, public-origin handoff, phone pairing, status UI, diagnostics, and token revocation/regeneration.
+**Current Milestone:** Ship the paid Omni managed Cloudflare named-tunnel path with generated three-word hostnames under `omniharness.dev`, complete registration/login handoff, entitlement check, provisioning, local connector lifecycle, public-origin handoff, phone pairing, status UI, diagnostics, and token revocation/regeneration.
+
+**Hosted Control Plane Prerequisite:** The paid managed hostname and tunnel flow depends on the hosted control-plane plan in `docs/superpowers/plans/2026-05-10-hosted-remote-access-control-plane.md`, which owns Supabase registration/login, paid managed-tunnel entitlements, installation records, Cloudflare API credentials, DNS/tunnel provisioning, audit events, health, and revocation. Local/offline mode and bring-your-own tunnel mode must not depend on this hosted control plane.
 
 **Later Milestones / Deferred But Intentional:** Omni Relay on Cloudflare Workers and Durable Objects, custom domains, user-selected slug edits, organization/team hostnames, read-only share links, fleet management, usage-based billing enforcement, and multi-device native apps.
 
-**Final Functionality Standard:** A real hosted control plane provisions a real Cloudflare named tunnel and DNS record; a real local OmniHarness installation starts `cloudflared`; the public hostname reaches the local web app; existing login, SSE, QR pairing, PWA, and session flows work through that hostname; failures are explicit in UI, logs, and a scriptable status path. Quick tunnels, mocked tunnel responses, canned DNS records, and placeholder success states do not count as delivery.
+**Final Functionality Standard:** Local/offline OmniHarness remains fully usable without registration, and user-supplied tunnel/LAN origins remain available without an OmniHarness account. For the paid managed path, a real hosted control plane provisions a real Cloudflare named tunnel and DNS record for a registered account with an active entitlement; a real local OmniHarness installation starts `cloudflared`; the public hostname reaches the local web app; existing login, SSE, QR pairing, PWA, and session flows work through that hostname; failures are explicit in UI, logs, and a scriptable status path. Quick tunnels, mocked tunnel responses, canned DNS records, forced registration for local use, and placeholder success states do not count as delivery.
 
 ---
 
@@ -24,6 +26,12 @@
 
 As a builder, I want OmniHarness to generate a memorable remote address for me, so I can open it from my phone without copying a random tunnel URL.
 
+As a builder, I want to use OmniHarness fully offline without registration, so the core local supervisor is not tied to hosted services.
+
+As a builder, I want to bring my own tunnel or LAN URL without registration, so I can use my own Cloudflare Tunnel, ngrok, Tailscale, reverse proxy, or domain if I prefer.
+
+As a builder, I want to register and log in only when I choose the paid Omni managed tunnel, so account setup feels tied to hosted value rather than local app access.
+
 As a builder, I want that address to be permanent across restarts, network changes, and laptop reboots, so my phone bookmark and installed PWA keep working.
 
 As a builder, I want setup to feel immediate: enable remote access, wait for health, scan QR, and land in my authenticated mobile session.
@@ -32,22 +40,32 @@ As a builder, I want remote status to explain whether the hostname, Cloudflare t
 
 As a paying customer, I want my slug and tunnel to belong to my account and survive local app reinstall, while still allowing token revocation if my machine is lost.
 
+### Product Mode Boundary
+
+Remote access has three distinct modes:
+
+- **Local/offline:** no registration, no tunnel, no hosted control plane. The app remains fully usable on the local machine.
+- **Bring-your-own tunnel:** no OmniHarness registration. The user supplies a public/LAN origin through `OMNIHARNESS_PUBLIC_ORIGIN` or the remote-access UI, OmniHarness validates it, and phone pairing uses that origin.
+- **Omni managed tunnel:** registration/login and an active paid managed-tunnel entitlement are required. OmniHarness provisions and owns the `omniharness.dev` hostname, Cloudflare Tunnel, DNS record, scoped tunnel token, health, audit, and revocation.
+
+Implementation must preserve all three modes. The managed tunnel is an optional paid convenience, not a prerequisite for using OmniHarness.
+
 ### Slug Experience
 
 The default generated hostname format is:
 
 ```text
-<adjective>-<noun>-<noun>.app.omniharness.dev
+<adjective>-<noun>-<noun>.omniharness.dev
 ```
 
 Examples:
 
 ```text
-lunar-copper-harbor.app.omniharness.dev
-quiet-neon-signal.app.omniharness.dev
-mint-paper-orbit.app.omniharness.dev
-silver-river-echo.app.omniharness.dev
-velvet-spark-cabin.app.omniharness.dev
+lunar-copper-harbor.omniharness.dev
+quiet-neon-signal.omniharness.dev
+mint-paper-orbit.omniharness.dev
+silver-river-echo.omniharness.dev
+velvet-spark-cabin.omniharness.dev
 ```
 
 Slug rules:
@@ -70,7 +88,7 @@ Only the local Next.js app is published through Cloudflare Tunnel:
 
 ```text
 public phone browser
-  -> https://<slug>.app.omniharness.dev
+  -> https://<slug>.omniharness.dev
   -> Cloudflare edge
   -> Cloudflare Tunnel
   -> cloudflared on user's laptop or VPS
@@ -102,7 +120,7 @@ remote_installations {
   id: string;                  // immutable UUID
   ownerAccountId: string;       // billing/account owner
   slug: string;                 // "solar-maple-signal"
-  hostname: string;             // "solar-maple-signal.app.omniharness.dev"
+  hostname: string;             // "solar-maple-signal.omniharness.dev"
   cloudflareAccountId: string;
   cloudflareZoneId: string;
   cloudflareTunnelId: string;
@@ -239,7 +257,7 @@ The repo instruction says not to use file-based routing. Do not add new user-fac
 
 - [ ] **Step 0.1: Confirm Cloudflare zone setup**
 
-Verify that `omniharness.dev` is in the OmniHarness Cloudflare account and that `app.omniharness.dev` can host per-installation subdomains.
+Verify that `omniharness.dev` is in the OmniHarness Cloudflare account and that `omniharness.dev` can host per-installation subdomains.
 
 Required Cloudflare resources:
 
@@ -251,7 +269,7 @@ Required Cloudflare resources:
 For v1, use one CNAME per client hostname:
 
 ```text
-<slug>.app.omniharness.dev CNAME <tunnel-id>.cfargotunnel.com
+<slug>.omniharness.dev CNAME <tunnel-id>.cfargotunnel.com
 ```
 
 - [ ] **Step 0.2: Confirm local port and service target**
@@ -311,7 +329,7 @@ Create `src/lib/remote-access-slugs.ts` with:
 - `isValidRemoteSlug(slug: string): boolean`,
 - `validateRemoteHostname(hostname: string): ValidationResult`,
 - `containsReservedRemoteWord(slug: string): boolean`,
-- `REMOTE_HOSTNAME_SUFFIX = ".app.omniharness.dev"`.
+- `REMOTE_HOSTNAME_SUFFIX = ".omniharness.dev"`.
 
 Validation must reject:
 
@@ -351,7 +369,7 @@ Expected coverage:
 - banned words never appear,
 - collisions retry,
 - exhausted retries return a precise error,
-- generated hostnames end in `.app.omniharness.dev`,
+- generated hostnames end in `.omniharness.dev`,
 - no generated label violates DNS limits.
 
 ---
@@ -392,7 +410,7 @@ Tunnel ingress for each installation should route:
 
 ```json
 {
-  "hostname": "<slug>.app.omniharness.dev",
+  "hostname": "<slug>.omniharness.dev",
   "service": "http://localhost:3050",
   "originRequest": {}
 }
@@ -514,7 +532,7 @@ Do not write token values to logs, diagnostics, UI, tests, or error messages.
 After starting the connector, validate:
 
 ```text
-https://<slug>.app.omniharness.dev/api/auth/session
+https://<slug>.omniharness.dev/api/auth/session
 ```
 
 Expected responses:
@@ -563,7 +581,7 @@ A managed origin is healthy only if:
 - the hostname matches the assigned installation hostname,
 - the latest connector/reachability state is active,
 - it uses HTTPS,
-- it ends with `.app.omniharness.dev` for this milestone.
+- it ends with `.omniharness.dev` for this milestone.
 
 - [ ] **Step 4.2: Update pairing QR behavior**
 
@@ -698,7 +716,7 @@ Show:
 If remote access is active, the QR should feel like the natural next step:
 
 ```text
-Scan to open solar-maple-signal.app.omniharness.dev
+Scan to open solar-maple-signal.omniharness.dev
 ```
 
 - [ ] **Step 5.4: Wire entry points without growing HomeApp**
@@ -816,7 +834,7 @@ OMNIHARNESS_E2E_CLOUDFLARE=1
 OMNIHARNESS_E2E_ACCOUNT_ID
 OMNIHARNESS_E2E_ZONE_ID
 OMNIHARNESS_E2E_API_TOKEN
-OMNIHARNESS_E2E_DOMAIN_SUFFIX=app.omniharness.dev
+OMNIHARNESS_E2E_DOMAIN_SUFFIX=omniharness.dev
 ```
 
 Skip the test unless the flag and credentials are present.

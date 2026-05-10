@@ -20,9 +20,10 @@ OmniHarness is early open-source software under active development. Expect sharp
 
 ## Requirements
 
-- Node.js 22.x. Run `nvm use` from the repo root to match `.nvmrc`.
-- `pnpm`
-- At least one supported coding agent:
+- macOS or Linux with a normal developer shell.
+- Node.js 22.x. If you use `nvm`, run `nvm use` from the repo root.
+- `pnpm` 9.6.x. The easiest path is `corepack enable`, then let `packageManager` select the pinned pnpm version.
+- At least one supported coding agent when you want to run real workers:
   - Codex CLI plus `codex-acp`
   - Claude CLI plus `claude-agent-acp`
   - Gemini CLI with native ACP mode
@@ -30,44 +31,111 @@ OmniHarness is early open-source software under active development. Expect sharp
 
 ## Quick Start
 
-Install dependencies:
+Clone the repo, enter it, and select Node 22:
 
 ```bash
+git clone <repo-url> omniharness
+cd omniharness
+nvm use
+```
+
+Install dependencies with pnpm:
+
+```bash
+corepack enable
 pnpm install
-pnpm link --global
 ```
 
-Install or check local ACP adapters and common agent tools:
+Start the local development app:
 
 ```bash
-pnpm setup:agents
-```
-
-Start OmniHarness in production mode with the managed agent runtime:
-
-```bash
-omniharness
+pnpm dev
 ```
 
 Open [http://localhost:3050](http://localhost:3050).
 
-To preview what agent setup would do without installing adapters:
+`pnpm dev` starts both pieces OmniHarness needs:
+
+- the Next.js web UI on `http://localhost:3050`
+- the in-repo agent runtime on `http://127.0.0.1:7800`
+
+## Optional Setup
+
+Create a local env file only if you want password auth, phone pairing, public-origin links, or API-key based agent/model access:
+
+```bash
+cp .env.example .env
+```
+
+Local agent CLIs that are already logged in usually work without API keys. If you want the supervisor model or runtime workers to use provider keys from the environment, fill in the relevant variables in `.env`.
+
+## Password Auth
+
+OmniHarness requires a password before the web UI can create an authenticated session or pair a phone.
+
+For the simplest local setup, add a password to `.env`:
+
+```bash
+cp .env.example .env
+printf 'OMNIHARNESS_AUTH_PASSWORD=%s\n' 'choose-a-long-local-password' >> .env
+pnpm dev
+```
+
+Then open [http://localhost:3050](http://localhost:3050) and log in with that password.
+
+If you do not want the plaintext password in `.env`, store an Argon2 hash instead:
+
+```bash
+read -rsp "OmniHarness password: " OMNI_PASSWORD; echo
+OMNIHARNESS_AUTH_PASSWORD_HASH="$(
+  OMNI_PASSWORD="$OMNI_PASSWORD" node --input-type=module -e '
+    import { hash } from "@node-rs/argon2";
+    console.log(await hash(process.env.OMNI_PASSWORD, {
+      algorithm: 2,
+      memoryCost: 19456,
+      timeCost: 2,
+      parallelism: 1,
+      outputLen: 32
+    }));
+  '
+)"
+printf 'OMNIHARNESS_AUTH_PASSWORD_HASH=%s\n' "$OMNIHARNESS_AUTH_PASSWORD_HASH" >> .env
+unset OMNI_PASSWORD OMNIHARNESS_AUTH_PASSWORD_HASH
+pnpm dev
+```
+
+Use either `OMNIHARNESS_AUTH_PASSWORD` or `OMNIHARNESS_AUTH_PASSWORD_HASH`; the hash wins if both are set. Restart OmniHarness after changing either value.
+
+Preview the agent adapter setup before it installs or refreshes global tools:
 
 ```bash
 scripts/install-agent-acp.sh --dry-run
 ```
 
-The setup script checks tools coding agents commonly need, including `rg`, `git`, `node`, shell/file utilities, package managers, Python, `jq`, `gh`, `cargo`, `uv`, `fd`, and `make`.
+Then run the installer when you are ready:
 
-## Development
+```bash
+pnpm setup:agents
+```
 
-`pnpm dev` starts local development processes:
+The setup script detects supported local coding agents and installs or refreshes the ACP adapters they need. It also checks common agent tools including `rg`, `git`, `node`, shell/file utilities, package managers, Python, `jq`, `gh`, `cargo`, `uv`, `fd`, and `make`.
 
-- the Next.js web UI on `http://localhost:3050`
-- the in-repo agent runtime on `http://127.0.0.1:7800`
+To install the `omniharness` command for this checkout:
+
+```bash
+pnpm link --global
+```
+
+Then you can start the production wrapper from the repo with:
+
+```bash
+omniharness
+```
 
 `omniharness` and `pnpm start` start the built Next.js production server plus the
 same managed agent runtime.
+
+## Development
 
 Override runtime settings with environment variables:
 
@@ -146,6 +214,15 @@ curl http://127.0.0.1:7800/doctor
 ```
 
 The doctor response reports adapter availability, API key status, endpoint reachability, and tool diagnostics.
+
+## Troubleshooting Setup
+
+- **`This repository is pnpm-only`:** run commands with `pnpm`, not `npm install` or `yarn`.
+- **Wrong Node major:** run `nvm use`, then retry. If you already installed dependencies with a different Node major, run `pnpm rebuild better-sqlite3`.
+- **Native SQLite binding errors:** run `pnpm rebuild better-sqlite3` under Node 22.
+- **No supported worker appears:** install or log into at least one supported agent CLI, then run `scripts/install-agent-acp.sh --dry-run` and inspect `curl http://127.0.0.1:7800/doctor`.
+- **Port already in use:** stop the previous OmniHarness process, or set `PORT` and `OMNIHARNESS_AGENT_RUNTIME_PORT` before starting.
+- **Phone pairing asks for auth:** set `OMNIHARNESS_AUTH_PASSWORD` or `OMNIHARNESS_AUTH_PASSWORD_HASH` in `.env` and restart.
 
 ## Repository Layout
 
