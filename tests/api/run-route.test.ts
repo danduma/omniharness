@@ -949,6 +949,129 @@ describe("POST /api/runs/[id]", () => {
     expect(fs.readFileSync(adHocAbsolutePath, "utf-8")).toContain("rerun this direct prompt");
   });
 
+  it("resumes a failed direct conversation from the saved worker session", async () => {
+    mockAskAgent.mockClear();
+    mockCancelAgent.mockClear();
+    mockGetAgent.mockClear();
+    mockSpawnAgent.mockClear();
+    mockStartSupervisorRun.mockClear();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const userMessageId = randomUUID();
+    const failureMessageId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: path.join("vibes", "ad-hoc", `${randomUUID()}.md`),
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Direct resume",
+      projectPath: "/workspace/app",
+      preferredWorkerType: "claude",
+      preferredWorkerModel: "claude-sonnet-4",
+      preferredWorkerEffort: "high",
+      status: "failed",
+      lastError: `Ask failed: Agent not found: ${workerId}`,
+      failedAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "error",
+      cwd: "/workspace/app",
+      bridgeSessionId: "saved-session",
+      bridgeSessionMode: "direct",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "Previous answer.",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(messages).values([
+      {
+        id: userMessageId,
+        runId,
+        role: "user",
+        kind: "checkpoint",
+        content: "continue the walkthrough",
+        createdAt: new Date("2026-05-10T10:55:32Z"),
+      },
+      {
+        id: failureMessageId,
+        runId,
+        role: "system",
+        kind: "error",
+        content: `Run failed: Ask failed: Agent not found: ${workerId}`,
+        createdAt: new Date("2026-05-10T10:55:33Z"),
+      },
+    ]);
+
+    mockSpawnAgent.mockResolvedValueOnce({
+      name: workerId,
+      type: "claude",
+      state: "idle",
+      cwd: "/workspace/app",
+      sessionId: "resumed-session",
+      sessionMode: "direct",
+      lastText: "Previous answer.",
+      currentText: "",
+      outputEntries: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+    mockAskAgent.mockResolvedValueOnce({
+      response: "Recovered and continuing.",
+      state: "idle",
+    });
+
+    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
+    const resumeEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+
+    expect(mockCancelAgent).not.toHaveBeenCalled();
+    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      name: workerId,
+      type: "claude",
+      cwd: "/workspace/app",
+      mode: "direct",
+      model: "claude-sonnet-4",
+      effort: "high",
+      resumeSessionId: "saved-session",
+    }));
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "continue the walkthrough");
+    expect(updatedRun?.status).toBe("running");
+    expect(updatedRun?.lastError).toBeNull();
+    expect(updatedRun?.failedAt).toBeNull();
+    expect(updatedWorker?.bridgeSessionId).toBe("resumed-session");
+    expect(storedMessages.map((message) => message.id)).not.toContain(failureMessageId);
+    expect(storedMessages.at(-1)?.content).toBe("Recovered and continuing.");
+    expect(resumeEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
+  });
+
   it("edits a user checkpoint in place before rerunning", async () => {
     mockStartSupervisorRun.mockClear();
     const planId = randomUUID();

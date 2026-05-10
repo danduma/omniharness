@@ -22,7 +22,7 @@ export function Switch({
       aria-checked={checked}
       disabled={disabled}
       className={cn(
-        "relative h-6 w-10 shrink-0 rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50",
+        "relative h-5 w-9 shrink-0 rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50",
         checked ? "border-primary bg-primary" : "border-border bg-muted",
         className,
       )}
@@ -31,8 +31,8 @@ export function Switch({
     >
       <span
         className={cn(
-          "absolute left-0 top-1/2 size-4 -translate-y-1/2 rounded-full bg-background shadow-sm transition-transform",
-          checked ? "translate-x-5" : "translate-x-1",
+          "absolute left-0 top-1/2 size-3.5 -translate-y-1/2 rounded-full bg-background shadow-sm transition-transform",
+          checked ? "translate-x-[1.125rem]" : "translate-x-1",
         )}
       />
     </button>

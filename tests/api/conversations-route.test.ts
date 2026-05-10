@@ -517,6 +517,77 @@ describe("POST /api/conversations", () => {
     expect(storedMessages.some((message) => message.role === "worker" && message.content === "Ready for the next prompt.")).toBe(true);
   });
 
+  it("persists direct worker session metadata before the first worker turn completes", async () => {
+    const resolveAskRef: Array<(value: { response: string; state: string }) => void> = [];
+    mockSpawnAgent.mockResolvedValueOnce({
+      name: "worker-session",
+      type: "codex",
+      state: "idle",
+      cwd: "/workspace/app",
+      sessionId: "session-before-ask",
+      sessionMode: "full-access",
+      lastText: "",
+      currentText: "",
+      stderrBuffer: [],
+      stopReason: null,
+    });
+    mockAskAgent.mockImplementationOnce(() => new Promise<{ response: string; state: string }>((resolve) => {
+      resolveAskRef[0] = resolve;
+    }));
+    mockGetAgent.mockResolvedValueOnce({
+      name: "worker-session",
+      type: "codex",
+      state: "idle",
+      cwd: "/workspace/app",
+      sessionId: "session-before-ask",
+      sessionMode: "full-access",
+      lastText: "Ready.",
+      currentText: "",
+      renderedOutput: "",
+      outputEntries: [
+        {
+          id: "entry-ready",
+          type: "message",
+          text: "Ready.",
+          timestamp: new Date(0).toISOString(),
+        },
+      ],
+      stderrBuffer: [],
+      stopReason: "end_turn",
+    });
+
+    const request = new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command: "Open a direct Codex session in this repo",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+      }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+
+    const createdWorker = await waitFor(
+      () => db.select().from(workers).where(eq(workers.runId, payload.runId)).get(),
+      (worker) => worker?.status === "working",
+    );
+
+    try {
+      expect(createdWorker?.bridgeSessionId).toBe("session-before-ask");
+      expect(createdWorker?.bridgeSessionMode).toBe("full-access");
+    } finally {
+      resolveAskRef[0]?.({ response: "Ready.", state: "idle" });
+    }
+
+    await waitFor(
+      () => db.select().from(runs).where(eq(runs.id, payload.runId)).get(),
+      (run) => run?.status === "done",
+    );
+  });
+
   it("does not mark a new direct conversation failed when the first worker turn is already busy", async () => {
     mockAskAgent.mockRejectedValueOnce(new Error("Ask failed: Agent is busy: direct-worker"));
 

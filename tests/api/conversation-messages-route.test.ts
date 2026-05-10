@@ -18,18 +18,30 @@ import {
   workers,
 } from "@/server/db/schema";
 
-const { mockAskAgent, mockGetAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
+const { mockAskAgent, mockGetAgent, mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
   mockAskAgent: vi.fn().mockResolvedValue({
     response: "Here is the next planning step.",
     state: "working",
   }),
   mockGetAgent: vi.fn().mockResolvedValue(null),
+  mockSpawnAgent: vi.fn().mockResolvedValue({
+    name: "worker-1",
+    type: "claude",
+    cwd: "/workspace/app",
+    state: "idle",
+    sessionId: "resumed-session",
+    sessionMode: "direct",
+    outputEntries: [],
+    currentText: "",
+    lastText: "",
+  }),
   mockStartSupervisorRun: vi.fn(),
 }));
 
 vi.mock("@/server/bridge-client", () => ({
   askAgent: mockAskAgent,
   getAgent: mockGetAgent,
+  spawnAgent: mockSpawnAgent,
 }));
 
 vi.mock("@/server/supervisor/start", () => ({
@@ -47,6 +59,7 @@ describe("POST /api/conversations/[id]/messages", () => {
   beforeEach(async () => {
     mockAskAgent.mockClear();
     mockGetAgent.mockClear();
+    mockSpawnAgent.mockClear();
     mockStartSupervisorRun.mockClear();
     await db.delete(supervisorInterventions);
     await db.delete(workerAssignments);
@@ -537,6 +550,102 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(updatedRun?.lastError).toBeNull();
     expect(updatedWorker?.status).toBe("working");
     expect(systemErrors.filter((message) => message.kind === "error")).toHaveLength(0);
+  });
+
+  it("automatically resumes a missing direct worker before sending a follow-up", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-resume.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      preferredWorkerType: "claude",
+      preferredWorkerModel: "claude-sonnet-4",
+      preferredWorkerEffort: "high",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "idle",
+      cwd: "/workspace/app",
+      bridgeSessionId: "saved-session",
+      bridgeSessionMode: "direct",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockAskAgent
+      .mockRejectedValueOnce(new Error(`Ask failed: Agent not found: ${workerId}`))
+      .mockResolvedValueOnce({
+        response: "Continuing from the restored session.",
+        state: "idle",
+      });
+    mockSpawnAgent.mockResolvedValueOnce({
+      name: workerId,
+      type: "claude",
+      cwd: "/workspace/app",
+      state: "idle",
+      sessionId: "resumed-session",
+      sessionMode: "direct",
+      outputEntries: [],
+      currentText: "",
+      lastText: "Restored session.",
+    });
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "Please continue the demo work." }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    await delay(20);
+
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      name: workerId,
+      type: "claude",
+      cwd: "/workspace/app",
+      mode: "direct",
+      model: "claude-sonnet-4",
+      effort: "high",
+      resumeSessionId: "saved-session",
+    }));
+    expect(mockAskAgent).toHaveBeenNthCalledWith(1, workerId, "Please continue the demo work.");
+    expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, "Please continue the demo work.");
+
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
+    const resumeEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+
+    expect(updatedRun?.status).toBe("running");
+    expect(updatedRun?.lastError).toBeNull();
+    expect(updatedWorker?.status).toBe("idle");
+    expect(updatedWorker?.bridgeSessionId).toBe("resumed-session");
+    expect(storedMessages.map((message) => message.role)).toEqual(["user", "worker"]);
+    expect(storedMessages[1]?.content).toBe("Continuing from the restored session.");
+    expect(resumeEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
   });
 
   it("keeps a direct worker cancelled when a late response arrives after stop", async () => {

@@ -49,7 +49,6 @@ describe("GET /api/agents/catalog", () => {
       command: type === "codex" ? "codex-acp" : type,
       path: `/opt/omni/bin/${type}`,
       dir: "/opt/omni/bin",
-      version: `${type} 1.2.3`,
     }));
     return db.delete(settings);
   });
@@ -96,7 +95,6 @@ describe("GET /api/agents/catalog", () => {
       command: "codex-acp",
       path: "/opt/omni/bin/codex",
       dir: "/opt/omni/bin",
-      version: "codex 1.2.3",
     });
     expect(payload.workerModels.codex).toEqual(expect.arrayContaining([
       { value: "gpt-5.4", label: "GPT-5.4" },

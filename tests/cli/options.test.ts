@@ -43,8 +43,32 @@ describe("parseOmniCliArgs", () => {
     expect(parsed.watch).toBe(true);
   });
 
+  it("parses compact implementation mode and worker flags", () => {
+    const parsed = parseOmniCliArgs(["-i", "-w", "codex", "implement plan.md"]);
+
+    expect(parsed.command).toBe("implement plan.md");
+    expect(parsed.mode).toBe("implementation");
+    expect(parsed.preferredWorkerType).toBe("codex");
+  });
+
+  it("parses compact planning mode and worker flags", () => {
+    const parsed = parseOmniCliArgs(["-p", "-w", "gemini", "write a plan"]);
+
+    expect(parsed.command).toBe("write a plan");
+    expect(parsed.mode).toBe("planning");
+    expect(parsed.preferredWorkerType).toBe("gemini");
+  });
+
+  it("defaults normal commands to direct mode", () => {
+    const parsed = parseOmniCliArgs(["-w", "codex", "inspect repo state"]);
+
+    expect(parsed.command).toBe("inspect repo state");
+    expect(parsed.mode).toBe("direct");
+    expect(parsed.preferredWorkerType).toBe("codex");
+  });
+
   it("documents the ACP harness subcommand", () => {
-    expect(omniCliUsage()).toContain("pnpm exec tsx omni-cli.ts acp");
+    expect(omniCliUsage()).toContain("omni acp");
     expect(omniCliUsage()).toContain("Run OmniHarness itself as an ACP agent over stdio");
   });
 });

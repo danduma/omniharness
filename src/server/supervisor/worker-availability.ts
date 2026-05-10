@@ -29,20 +29,6 @@ function workerBinaryAvailable(type: SupportedWorkerType) {
   return resolveCommandPath(WORKER_BINARY_COMMANDS[type]) !== null;
 }
 
-function readCommandVersion(commandPath: string) {
-  try {
-    const output = String(execFileSync(commandPath, ["--version"], {
-      encoding: "utf8",
-      timeout: 2_000,
-      maxBuffer: 128 * 1024,
-    })).trim();
-
-    return output.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? null;
-  } catch {
-    return null;
-  }
-}
-
 function workerHasApiKey(type: SupportedWorkerType) {
   switch (type) {
     case "codex":
@@ -112,7 +98,6 @@ export function getWorkerInstallationInfo(type: string) {
     command,
     path,
     dir: path ? dirname(path) : null,
-    version: path ? readCommandVersion(path) : null,
   };
 }
 

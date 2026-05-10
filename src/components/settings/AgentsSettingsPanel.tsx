@@ -54,12 +54,13 @@ export function AgentsSettingsPanel({
 
   return (
     <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
-      <div className="space-y-1.5">
-        <label className="text-xs font-semibold text-muted-foreground" htmlFor="WORKER_DEFAULT_TYPE">
+      <div className="flex items-center gap-3">
+        <label className="shrink-0 text-xs font-semibold text-muted-foreground" htmlFor="WORKER_DEFAULT_TYPE">
           {t("settings.agents.defaultWorker")}
         </label>
         <Select
           id="WORKER_DEFAULT_TYPE"
+          className="flex-1"
           value={defaultWorkerType}
           options={defaultWorkerOptions}
           onValueChange={(value) => setSetting("WORKER_DEFAULT_TYPE", value)}
@@ -69,12 +70,12 @@ export function AgentsSettingsPanel({
       <div className="flex items-center gap-3 rounded-lg border border-border/60 bg-background/70 p-3">
         <Switch
           id="WORKER_YOLO_MODE"
-          aria-label={t("settings.agents.toggleYolo")}
+          aria-label={t("settings.agents.toggleDangerouslySkipPermissions")}
           checked={yoloEnabled}
           onCheckedChange={(checked) => setSetting("WORKER_YOLO_MODE", checked ? "true" : "false")}
         />
         <div className="min-w-0 space-y-1">
-          <div className="text-sm font-medium">{t("settings.agents.yoloPosture")}</div>
+          <div className="text-sm font-medium">{t("settings.agents.dangerouslySkipPermissions")}</div>
         </div>
       </div>
 
@@ -122,16 +123,12 @@ export function AgentsSettingsPanel({
                       {availabilityMessage}
                     </p>
                   ) : null}
-                  <dl className="grid gap-1 pt-1 text-[11px] text-muted-foreground sm:grid-cols-[5.75rem_minmax(0,1fr)]">
-                    <dt className="font-medium text-foreground/70">{t("settings.agents.installedDir")}</dt>
-                    <dd className="break-all" title={worker.installation?.path ?? undefined}>
+                  <dl className="grid gap-x-3 gap-y-1 pt-1 text-[11px] text-muted-foreground sm:grid-cols-[max-content_minmax(0,1fr)]">
+                    <dt className="whitespace-nowrap font-medium text-foreground/70">{t("settings.agents.installedDir")}</dt>
+                    <dd className="min-w-0 truncate" title={worker.installation?.path ?? undefined}>
                       {worker.installation?.dir ?? (worker.availability.binary ? t("common.unknown") : t("settings.agents.notInstalled"))}
                     </dd>
-                    <dt className="font-medium text-foreground/70">{t("settings.agents.version")}</dt>
-                    <dd className="break-words">
-                      {worker.installation?.version ?? (worker.availability.binary ? t("common.unknown") : t("settings.agents.notInstalled"))}
-                    </dd>
-                    <dt className="font-medium text-foreground/70">{t("settings.tabs.models")}</dt>
+                    <dt className="whitespace-nowrap font-medium text-foreground/70">{t("settings.tabs.models")}</dt>
                     <dd className="min-w-0">
                       {modelOptions.length > 0 ? (
                         <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto pr-1">

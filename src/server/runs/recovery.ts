@@ -26,6 +26,7 @@ import { PLANNER_SYSTEM_PROMPT } from "@/server/prompts";
 import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/supervisor/worker-types";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
+import { isRecoverableAgentMissingError } from "./recovery-state";
 
 export type RecoveryAction = "retry" | "edit" | "fork";
 
@@ -178,6 +179,111 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string) 
   });
 }
 
+function isAgentAlreadyExistsError(error: unknown, workerId: string) {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return message.includes("agent already exists") && message.includes(workerId.toLowerCase());
+}
+
+async function resumeDirectRunFromSavedSession(
+  run: typeof runs.$inferSelect,
+  targetMessage: typeof messages.$inferSelect,
+  content: string,
+) {
+  if (!isRecoverableAgentMissingError(run.lastError)) {
+    return null;
+  }
+
+  const worker = (await db.select().from(workers).where(eq(workers.runId, run.id)))
+    .find((candidate) => candidate.bridgeSessionId?.trim());
+  const sessionId = worker?.bridgeSessionId?.trim();
+  if (!worker || !sessionId) {
+    return null;
+  }
+
+  const laterMessages = await db.select().from(messages).where(eq(messages.runId, run.id));
+  const laterMessageIds = laterMessages
+    .filter((message) => message.createdAt > targetMessage.createdAt)
+    .map((message) => message.id);
+
+  if (laterMessageIds.length > 0) {
+    await db.delete(messages).where(inArray(messages.id, laterMessageIds));
+  }
+
+  const sessionMode = worker.bridgeSessionMode?.trim();
+  let resumedWorker: AgentRecord;
+  try {
+    resumedWorker = await spawnAgent({
+      type: worker.type,
+      cwd: worker.cwd,
+      name: worker.id,
+      ...(sessionMode ? { mode: sessionMode } : {}),
+      ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+      ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+      resumeSessionId: sessionId,
+    });
+  } catch (error) {
+    if (!isAgentAlreadyExistsError(error, worker.id)) {
+      throw error;
+    }
+    resumedWorker = await getAgent(worker.id);
+  }
+
+  const resumedAt = new Date();
+  await db.insert(executionEvents).values({
+    id: randomUUID(),
+    runId: run.id,
+    workerId: worker.id,
+    planItemId: null,
+    eventType: "worker_session_resumed",
+    details: JSON.stringify({
+      summary: `Resumed ${worker.id} from saved session`,
+      sessionId,
+    }),
+    createdAt: resumedAt,
+  });
+
+  await db.update(workers).set({
+    status: "working",
+    bridgeSessionId: resumedWorker.sessionId ?? sessionId,
+    bridgeSessionMode: resumedWorker.sessionMode ?? sessionMode ?? null,
+    updatedAt: resumedAt,
+  }).where(eq(workers.id, worker.id));
+  await persistWorkerSnapshot(worker.id, resumedWorker);
+
+  await db.update(runs).set({
+    status: "running",
+    failedAt: null,
+    lastError: null,
+    updatedAt: resumedAt,
+  }).where(eq(runs.id, run.id));
+
+  const response = await askAgent(worker.id, buildDirectWorkerPrompt(run.mode, content));
+  let snapshot: AgentRecord | null = null;
+  try {
+    snapshot = await getAgent(worker.id);
+    await persistWorkerSnapshot(worker.id, snapshot);
+  } catch {
+    // The restored worker response is enough to update the conversation.
+  }
+
+  const completedAt = new Date();
+  await db.update(workers).set({
+    status: snapshot?.state ?? response.state,
+    updatedAt: completedAt,
+  }).where(eq(workers.id, worker.id));
+  await db.insert(messages).values({
+    id: randomUUID(),
+    runId: run.id,
+    role: "worker",
+    kind: run.mode,
+    content: response.response,
+    workerId: worker.id,
+    createdAt: completedAt,
+  });
+
+  return { runId: run.id };
+}
+
 async function startImplementationRerun(
   run: typeof runs.$inferSelect,
   plan: typeof plans.$inferSelect,
@@ -294,6 +400,13 @@ export async function recoverRun(args: RecoverRunArgs) {
 
   if (run.mode !== "direct") {
     throw new Error("Recovery actions are only available in direct control conversations");
+  }
+
+  if (args.action === "retry") {
+    const resumed = await resumeDirectRunFromSavedSession(run, targetMessage, nextContent);
+    if (resumed) {
+      return resumed;
+    }
   }
 
   if (args.action === "fork") {

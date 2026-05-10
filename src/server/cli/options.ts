@@ -39,7 +39,8 @@ function looksLikePlanPath(value: string) {
 }
 
 export function parseOmniCliArgs(argv: string[]): OmniCliOptions {
-  let mode: ConversationMode = "implementation";
+  let mode: ConversationMode = "direct";
+  let modeWasSpecified = false;
   let projectPath: string | null = null;
   let preferredWorkerType: string | null = null;
   let preferredWorkerModel: string | null = null;
@@ -57,7 +58,18 @@ export function parseOmniCliArgs(argv: string[]): OmniCliOptions {
     }
     if (arg === "--mode" || arg === "-m") {
       mode = normalizeMode(readOptionValue(argv, index, arg));
+      modeWasSpecified = true;
       index += 1;
+      continue;
+    }
+    if (arg === "-i") {
+      mode = "implementation";
+      modeWasSpecified = true;
+      continue;
+    }
+    if (arg === "-p") {
+      mode = "planning";
+      modeWasSpecified = true;
       continue;
     }
     if (arg === "--cwd" || arg === "--project") {
@@ -65,7 +77,7 @@ export function parseOmniCliArgs(argv: string[]): OmniCliOptions {
       index += 1;
       continue;
     }
-    if (arg === "--worker" || arg === "--agent") {
+    if (arg === "--worker" || arg === "--agent" || arg === "-w") {
       preferredWorkerType = readOptionValue(argv, index, arg);
       index += 1;
       continue;
@@ -113,10 +125,16 @@ export function parseOmniCliArgs(argv: string[]): OmniCliOptions {
     throw new OmniCliUsageError("Command cannot be empty.");
   }
 
-  const command =
-    commandFromFlag === null && positional.length === 1 && mode === "implementation" && looksLikePlanPath(rawCommand)
-      ? `implement ${rawCommand}`
-      : rawCommand;
+  const shouldExpandPlanPath =
+    commandFromFlag === null
+    && positional.length === 1
+    && looksLikePlanPath(rawCommand)
+    && !rawCommand.toLowerCase().startsWith("implement ")
+    && (mode === "implementation" || !modeWasSpecified);
+  const command = shouldExpandPlanPath ? `implement ${rawCommand}` : rawCommand;
+  if (shouldExpandPlanPath && !modeWasSpecified) {
+    mode = "implementation";
+  }
 
   return {
     command,
@@ -133,13 +151,14 @@ export function parseOmniCliArgs(argv: string[]): OmniCliOptions {
 
 export function omniCliUsage() {
   return [
-    "Usage: pnpm exec tsx omni-cli.ts [options] <command>",
-    "       pnpm exec tsx omni-cli.ts acp",
+    "Usage: omni [options] <command>",
+    "       omni acp",
     "",
     "Options:",
-    "  -m, --mode <mode>             implementation, planning, or direct",
+    "  -i                            Implementation mode",
+    "  -p                            Planning mode",
     "      --cwd <path>              Project directory for spawned workers",
-    "      --worker <type>           Preferred ACP worker type, e.g. codex, claude, gemini, opencode",
+    "  -w, --worker, --agent <type>  Preferred worker type, e.g. codex, claude, gemini, opencode",
     "      --model <model>           Preferred worker model",
     "      --effort <effort>         Preferred worker reasoning effort",
     "      --allowed-worker <type>   Allowed worker type; repeatable",
@@ -147,10 +166,12 @@ export function omniCliUsage() {
     "      --json                    Print the created conversation as JSON",
     "      --watch / --no-watch      Stream conversation updates after creation",
     "",
+    "Direct mode is the default when no mode flag is supplied.",
+    "",
     "ACP harness mode:",
     "  acp                           Run OmniHarness itself as an ACP agent over stdio",
     "",
     "Legacy shorthand:",
-    "  pnpm exec tsx omni-cli.ts docs/superpowers/plans/example.md",
+    "  omni docs/superpowers/plans/example.md",
   ].join("\n");
 }

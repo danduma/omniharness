@@ -4,6 +4,7 @@
   "description": "Local web UI, CLI, and ACP control plane for supervising coding agents.",
   "private": true,
   "bin": {
+    "omni": "./omni",
     "omniharness": "./omniharness"
   },
   "packageManager": "pnpm@9.6.0",

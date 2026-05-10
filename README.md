@@ -39,22 +39,22 @@ cd omniharness
 nvm use
 ```
 
-Install dependencies with pnpm:
+Enable Corepack so the repo can use its pinned pnpm version:
 
 ```bash
 corepack enable
-pnpm install
 ```
 
-Start the local development app:
+Start OmniHarness normally:
 
 ```bash
-pnpm dev
+./omniharness
 ```
 
 Open [http://localhost:3050](http://localhost:3050).
 
-`pnpm dev` starts both pieces OmniHarness needs:
+`./omniharness` installs dependencies when needed, builds the production server
+when needed, then starts both pieces OmniHarness needs:
 
 - the Next.js web UI on `http://localhost:3050`
 - the in-repo agent runtime on `http://127.0.0.1:7800`
@@ -78,7 +78,7 @@ For the simplest local setup, add a password to `.env`:
 ```bash
 cp .env.example .env
 printf 'OMNIHARNESS_AUTH_PASSWORD=%s\n' 'choose-a-long-local-password' >> .env
-pnpm dev
+./omniharness
 ```
 
 Then open [http://localhost:3050](http://localhost:3050) and log in with that password.
@@ -101,39 +101,29 @@ OMNIHARNESS_AUTH_PASSWORD_HASH="$(
 )"
 printf 'OMNIHARNESS_AUTH_PASSWORD_HASH=%s\n' "$OMNIHARNESS_AUTH_PASSWORD_HASH" >> .env
 unset OMNI_PASSWORD OMNIHARNESS_AUTH_PASSWORD_HASH
-pnpm dev
+./omniharness
 ```
 
 Use either `OMNIHARNESS_AUTH_PASSWORD` or `OMNIHARNESS_AUTH_PASSWORD_HASH`; the hash wins if both are set. Restart OmniHarness after changing either value.
 
-Preview the agent adapter setup before it installs or refreshes global tools:
+The launcher does not require a global `omniharness` install. Run the app from
+the checkout with `./omniharness`, and run CLI conversations from the checkout
+with `./omni`.
+
+Preview the agent adapter setup only when you want to install or refresh
+optional ACP adapters:
 
 ```bash
 scripts/install-agent-acp.sh --dry-run
 ```
 
-Then run the installer when you are ready:
+Then run the installer directly when you are ready:
 
 ```bash
-pnpm setup:agents
+scripts/install-agent-acp.sh
 ```
 
 The setup script detects supported local coding agents and installs or refreshes the ACP adapters they need. It also checks common agent tools including `rg`, `git`, `node`, shell/file utilities, package managers, Python, `jq`, `gh`, `cargo`, `uv`, `fd`, and `make`.
-
-To install the `omniharness` command for this checkout:
-
-```bash
-pnpm link --global
-```
-
-Then you can start the production wrapper from the repo with:
-
-```bash
-omniharness
-```
-
-`omniharness` and `pnpm start` start the built Next.js production server plus the
-same managed agent runtime.
 
 ## Development
 
@@ -156,21 +146,21 @@ pnpm build
 Run the same ACP-backed conversation modes from the terminal:
 
 ```bash
-pnpm exec tsx omni-cli.ts --mode implementation "implement docs/superpowers/plans/example.md"
-pnpm exec tsx omni-cli.ts --mode planning --worker codex "write a plan for the CLI parity work"
-pnpm exec tsx omni-cli.ts --mode direct --worker opencode "inspect the current repo state"
+./omni -i -w codex "implement docs/superpowers/plans/example.md"
+./omni -p -w gemini "write a plan for the CLI parity work"
+./omni -w codex "inspect the current repo state"
 ```
 
-By default, the CLI watches the created run and prints messages, execution events, and worker output updates. Use `--no-watch` for fire-and-return behavior or `--json` to print the created conversation payload. The legacy shorthand still works:
+By default, the CLI starts direct-control conversations, watches the created run, and prints messages, execution events, and worker output updates. Use `-i` for implementation, `-p` for planning, `-w` to choose a worker, `--no-watch` for fire-and-return behavior, or `--json` to print the created conversation payload. The legacy implementation shorthand still works:
 
 ```bash
-pnpm exec tsx omni-cli.ts docs/superpowers/plans/example.md
+./omni docs/superpowers/plans/example.md
 ```
 
 Run OmniHarness itself as an ACP agent over stdio:
 
 ```bash
-pnpm exec tsx omni-cli.ts acp
+./omni acp
 ```
 
 In ACP mode, clients can create sessions, list persisted Omni runs, load or resume a run, fork a fresh ACP session from an existing run, switch between `implementation`, `planning`, and `direct`, prompt OmniHarness to start or continue conversations, and receive streamed run updates as ACP `session/update` notifications.

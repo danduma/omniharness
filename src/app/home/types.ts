@@ -152,7 +152,6 @@ export type WorkerAvailability = {
     command: string;
     path: string | null;
     dir: string | null;
-    version: string | null;
   };
   availability: {
     status: "ok" | "warning" | "error";

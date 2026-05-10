@@ -1065,7 +1065,6 @@ export function HomeApp() {
         command: option.value,
         path: null,
         dir: null,
-        version: null,
       },
       availability: {
         status: "warning" as const,
@@ -1242,7 +1241,7 @@ export function HomeApp() {
     if (
       !selectedRunId
       || !selectedRun
-      || !isImplementationConversation
+      || (!isImplementationConversation && !isDirectConversation)
       || selectedRun.status !== "failed"
       || failedWorkerAvailability?.availability.status !== "ok"
       || workerFailureDetail
@@ -1265,6 +1264,7 @@ export function HomeApp() {
     });
   }, [
     failedWorkerAvailability?.availability.status,
+    isDirectConversation,
     isImplementationConversation,
     latestUserCheckpoint,
     recoverRun,

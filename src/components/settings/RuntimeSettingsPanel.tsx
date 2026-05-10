@@ -1,4 +1,3 @@
-import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 
@@ -53,28 +52,26 @@ export function RuntimeSettingsPanel({ settings, setSetting }: RuntimeSettingsPa
 
   return (
     <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
-      <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-3">
         <div className="text-xs font-semibold text-muted-foreground">{t("settings.runtime.defaultSendBehaviour")}</div>
-        <div className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-1" role="radiogroup" aria-label={t("settings.runtime.defaultSendBehaviour")}>
+        <div className="flex items-center gap-4" role="radiogroup" aria-label={t("settings.runtime.defaultSendBehaviour")}>
           {([
             ["steer", t("settings.runtime.steer")],
             ["queue", t("settings.runtime.queue")],
           ] as const).map(([value, label]) => (
-            <button
+            <label
               key={value}
-              type="button"
-              role="radio"
-              aria-checked={busyMessageAction === value}
-              className={cn(
-                "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
-                busyMessageAction === value
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-              onClick={() => setSetting("BUSY_MESSAGE_ACTION", value)}
+              className="flex items-center gap-1.5 text-xs font-medium text-foreground"
             >
+              <input
+                type="radio"
+                name="BUSY_MESSAGE_ACTION"
+                value={value}
+                checked={busyMessageAction === value}
+                onChange={() => setSetting("BUSY_MESSAGE_ACTION", value)}
+              />
               {label}
-            </button>
+            </label>
           ))}
         </div>
       </div>

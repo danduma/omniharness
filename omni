@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "OmniHarness CLI requires pnpm. Install it with corepack or your package manager, then run omni again." >&2
+  exit 1
+fi
+
+if [ ! -d "$ROOT_DIR/node_modules" ]; then
+  echo "OmniHarness dependencies are not installed. Run pnpm install from $ROOT_DIR first." >&2
+  exit 1
+fi
+
+cd "$ROOT_DIR"
+exec pnpm exec tsx "$ROOT_DIR/omni-cli.ts" "$@"

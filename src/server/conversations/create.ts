@@ -99,6 +99,10 @@ async function runInitialWorkerTurn(args: {
   try {
     await db.update(workers).set({
       status: "working",
+      type: args.agent.type || args.workerType,
+      cwd: args.agent.cwd || args.cwd,
+      bridgeSessionId: args.agent.sessionId ?? null,
+      bridgeSessionMode: args.agent.sessionMode ?? null,
       updatedAt: new Date(),
     }).where(eq(workers.id, args.workerId));
     if (args.mode === "planning") {

@@ -1,8 +1,8 @@
 import { randomUUID } from "crypto";
 import { and, asc, eq } from "drizzle-orm";
-import { askAgent, getAgent } from "@/server/bridge-client";
+import { askAgent, getAgent, spawnAgent } from "@/server/bridge-client";
 import { db } from "@/server/db";
-import { clarifications, messages, runs, workers } from "@/server/db/schema";
+import { clarifications, executionEvents, messages, runs, workers } from "@/server/db/schema";
 import { answerClarification } from "@/server/clarifications/store";
 import { resumeRunAfterClarification } from "@/server/clarifications/loop";
 import { startSupervisorRun } from "@/server/supervisor/start";
@@ -21,8 +21,89 @@ function isAgentBusyError(error: unknown) {
   return /\bagent is busy\b/i.test(formatErrorMessage(error));
 }
 
+function isAgentNotFoundError(error: unknown) {
+  return /\b(agent not found|not_found|session not found|404)\b/i.test(formatErrorMessage(error));
+}
+
+function isAgentAlreadyExistsError(error: unknown, workerId: string) {
+  const message = formatErrorMessage(error).toLowerCase();
+  return message.includes("agent already exists") && message.includes(workerId.toLowerCase());
+}
+
 function isWorkerCancelled(worker: WorkerRecord | null | undefined) {
   return worker?.status.trim().toLowerCase().split(":")[0]?.trim() === "cancelled";
+}
+
+async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRecord) {
+  const sessionId = worker.bridgeSessionId?.trim();
+  if (!sessionId) {
+    return null;
+  }
+
+  const sessionMode = worker.bridgeSessionMode?.trim();
+  let resumedWorker;
+  try {
+    resumedWorker = await spawnAgent({
+      type: worker.type,
+      cwd: worker.cwd,
+      name: worker.id,
+      ...(sessionMode ? { mode: sessionMode } : {}),
+      ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+      ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+      resumeSessionId: sessionId,
+    });
+  } catch (error) {
+    if (!isAgentAlreadyExistsError(error, worker.id)) {
+      throw error;
+    }
+    resumedWorker = await getAgent(worker.id);
+  }
+
+  await db.insert(executionEvents).values({
+    id: randomUUID(),
+    runId: run.id,
+    workerId: worker.id,
+    planItemId: null,
+    eventType: "worker_session_resumed",
+    details: JSON.stringify({
+      summary: `Resumed ${worker.id} from saved session`,
+      sessionId,
+    }),
+    createdAt: new Date(),
+  });
+
+  await db.update(workers).set({
+    status: resumedWorker.state,
+    bridgeSessionId: resumedWorker.sessionId ?? sessionId,
+    bridgeSessionMode: resumedWorker.sessionMode ?? sessionMode ?? null,
+    updatedAt: new Date(),
+  }).where(eq(workers.id, worker.id));
+
+  await persistWorkerSnapshot(worker.id, resumedWorker);
+  notifyEventStreamSubscribers();
+  return resumedWorker;
+}
+
+async function askDirectWorkerWithResume(run: RunRecord, worker: WorkerRecord, content: string) {
+  try {
+    return await askAgent(worker.id, content);
+  } catch (error) {
+    if (!isAgentNotFoundError(error)) {
+      throw error;
+    }
+
+    const currentWorker = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
+    if (isWorkerCancelled(currentWorker)) {
+      throw error;
+    }
+
+    const resumedWorker = await resumeMissingDirectWorker(run, currentWorker ?? worker);
+    if (!resumedWorker) {
+      throw error;
+    }
+
+    return askAgent(worker.id, content);
+  }
 }
 
 async function continueWorkerConversation({
@@ -46,7 +127,7 @@ async function continueWorkerConversation({
     }).where(eq(workers.id, worker.id));
     notifyEventStreamSubscribers();
 
-    const response = await askAgent(worker.id, content);
+    const response = await askDirectWorkerWithResume(run, worker, content);
     const workerAfterResponse = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
     if (isWorkerCancelled(workerAfterResponse)) {
       notifyEventStreamSubscribers();

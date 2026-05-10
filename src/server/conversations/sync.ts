@@ -108,6 +108,11 @@ function isWorkerQueueDrainableStatus(status: string) {
   return Boolean(normalized) && !["starting", "working", "stuck", "error", "cancelled"].includes(normalized);
 }
 
+function isRecoverableMissingDirectWorkerStatus(status: string) {
+  const normalized = status.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  return ["starting", "working", "stuck", "recovering"].includes(normalized);
+}
+
 async function clearMatchingRunFailureMessage(run: typeof runs.$inferSelect) {
   if (!run.lastError) {
     return;
@@ -286,6 +291,21 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
     const worker = allWorkers.find((candidate) => candidate.runId === run.id);
     if (!worker || agents.some((agent) => agent.name === worker.id)) {
       continue;
+    }
+
+    if (
+      run.mode === "direct"
+      && options.selectedRunId === run.id
+      && isRecoverableMissingDirectWorkerStatus(worker.status)
+    ) {
+      const recoveryResult = await reconcileRunRecovery({
+        runId: run.id,
+        liveAgents: agents,
+        source: "conversation-sync",
+      });
+      if (recoveryResult.action !== "none" && recoveryResult.action !== "wait_for_backoff") {
+        continue;
+      }
     }
 
     if (isEmptyIdlePersistedWorker(worker)) {
