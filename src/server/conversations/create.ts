@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { messages as dbMessages, plans, runs, workers } from "@/server/db/schema";
+import { messages as dbMessages, plans, runs, settings, workers } from "@/server/db/schema";
 import { createAdHocPlan } from "@/server/runs/ad-hoc-plan";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { askAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
@@ -17,7 +17,13 @@ import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { getAppRoot } from "@/server/app-root";
 import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
-import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
+import { MANUAL_COMMIT_PROJECT_PROMPTS } from "@/lib/conversation-visuals";
+import {
+  GIT_AUTO_COMMIT_MILESTONES_SETTING,
+  GIT_PUSH_ON_COMMIT_SETTING,
+  parseBooleanSetting,
+} from "@/lib/commit-workflow";
+import { captureGitBaseline } from "@/server/git/auto-commit";
 import { serializeMessageRecord } from "./message-records";
 
 
@@ -60,7 +66,7 @@ function isAgentBusyError(error: unknown) {
 }
 
 function getDefaultConversationTitle(mode: ConversationMode, command: string) {
-  if (mode === "direct" && command === AUTO_COMMIT_PROJECT_PROMPT) {
+  if (mode === "direct" && MANUAL_COMMIT_PROJECT_PROMPTS.has(command)) {
     return "Commit";
   }
 
@@ -68,7 +74,16 @@ function getDefaultConversationTitle(mode: ConversationMode, command: string) {
 }
 
 function shouldGenerateConversationTitle(mode: ConversationMode, command: string) {
-  return !(mode === "direct" && command === AUTO_COMMIT_PROJECT_PROMPT) && Boolean(command.trim());
+  return !(mode === "direct" && MANUAL_COMMIT_PROJECT_PROMPTS.has(command)) && Boolean(command.trim());
+}
+
+async function readCommitWorkflowSettings() {
+  const rows = await db.select().from(settings);
+  const values = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  return {
+    autoCommitMilestones: parseBooleanSetting(values[GIT_AUTO_COMMIT_MILESTONES_SETTING], false),
+    pushOnCommit: parseBooleanSetting(values[GIT_PUSH_ON_COMMIT_SETTING], false),
+  };
 }
 
 function buildInitialConversationTitle(command: string) {
@@ -302,6 +317,12 @@ export async function createConversation(args: {
   );
 
   const planPath = createAdHocPlan(command, attachments);
+  const commitWorkflowSettings = mode === "implementation"
+    ? await readCommitWorkflowSettings()
+    : { autoCommitMilestones: false, pushOnCommit: false };
+  const gitBaseline = mode === "implementation" && commitWorkflowSettings.autoCommitMilestones
+    ? captureGitBaseline(projectPath)
+    : null;
   const planId = randomUUID();
   await db.insert(plans).values({
     id: planId,
@@ -322,6 +343,10 @@ export async function createConversation(args: {
     preferredWorkerModel: args.preferredWorkerModel?.trim() || null,
     preferredWorkerEffort: args.preferredWorkerEffort?.trim().toLowerCase() || null,
     allowedWorkerTypes: JSON.stringify(allowedWorkerTypes),
+    autoCommitMilestones: commitWorkflowSettings.autoCommitMilestones,
+    pushOnCommit: commitWorkflowSettings.pushOnCommit,
+    gitBaselineJson: gitBaseline ? JSON.stringify(gitBaseline) : null,
+    completionCommitSha: null,
     status: mode === "planning" ? "starting" : "running",
     createdAt: new Date(),
     updatedAt: new Date(),

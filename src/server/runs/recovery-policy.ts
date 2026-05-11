@@ -86,7 +86,7 @@ export async function getRecoveryPolicy() {
   }
 }
 
-export async function saveRecoveryPolicy(policy: RecoveryPolicy) {
+export async function saveRecoveryPolicy(policy: Partial<RecoveryPolicy>) {
   const normalized = normalizeRecoveryPolicy(policy);
   await db.insert(settings).values({
     key: RECOVERY_POLICY_SETTING_KEY,

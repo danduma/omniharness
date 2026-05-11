@@ -31,6 +31,7 @@ import { parsePlan } from "@/server/plans/parser";
 import { syncPlanItems } from "@/server/plans/checklist";
 import { assessPlanReadiness } from "@/server/plans/readiness";
 import { pauseForClarifications } from "@/server/clarifications/loop";
+import { runMilestoneAutoCommit } from "@/server/git/run-auto-commit";
 
 export interface SupervisorOptions {
   runId: string;
@@ -1319,6 +1320,7 @@ export class Supervisor {
               createdAt: intervention.createdAt.toISOString(),
             })),
           });
+          await runMilestoneAutoCommit(this.runId, summary);
           await insertRunMessage(this.runId, "supervisor", completionSummary, "completion");
           return { state: "completed" };
         }

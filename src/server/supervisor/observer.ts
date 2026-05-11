@@ -1,4 +1,4 @@
-import { and, desc, eq, gt } from "drizzle-orm";
+import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import path from "path";
 import * as bridge from "@/server/bridge-client";
@@ -19,6 +19,16 @@ const OBSERVER_INTERVAL_MS = 5_000;
 const IDLE_THRESHOLD_MS = 30_000;
 const STUCK_THRESHOLD_MS = 5 * 60_000;
 const DUPLICATE_WORKER_EVENT_WINDOW_MS = 5 * 60_000;
+const WORKER_TURN_COMPLETED_EVENT_TYPE = "worker_turn_completed";
+const WORKER_TURN_COMPLETION_RESET_EVENT_TYPES = [
+  "worker_prompted",
+  "worker_spawned",
+  "worker_session_resumed",
+];
+const WORKER_TURN_COMPLETION_RELATED_EVENT_TYPES = [
+  WORKER_TURN_COMPLETED_EVENT_TYPE,
+  ...WORKER_TURN_COMPLETION_RESET_EVENT_TYPES,
+];
 
 interface WorkerBridgeSnapshot {
   state: string;
@@ -374,6 +384,12 @@ export function deriveWorkerEvents(args: {
   let idleNotified = previous?.idleNotified ?? false;
   let stuckNotified = previous?.stuckNotified ?? false;
   let completionHintNotified = previous?.completionHintNotified ?? false;
+  const previousStatus = normalizeWorkerStatus(
+    typeof previousSnapshot?.state === "string" ? previousSnapshot.state : null,
+  );
+  const currentStatus = normalizeWorkerStatus(args.snapshot.state);
+  const completedByAcpState = previousStatus === "working" && currentStatus === "idle";
+  const longCompletionText = hasLongCompletionHint(args.snapshot);
 
   if (changed) {
     events.push({
@@ -385,19 +401,15 @@ export function deriveWorkerEvents(args: {
     if (madeMeaningfulProgress) {
       idleNotified = false;
       stuckNotified = false;
-      completionHintNotified = false;
+      if (!completedByAcpState && !longCompletionText) {
+        completionHintNotified = false;
+      }
     }
   }
 
-  const previousStatus = normalizeWorkerStatus(
-    typeof previousSnapshot?.state === "string" ? previousSnapshot.state : null,
-  );
-  const currentStatus = normalizeWorkerStatus(args.snapshot.state);
-  const completedByAcpState = previousStatus === "working" && currentStatus === "idle";
-  const longCompletionText = hasLongCompletionHint(args.snapshot);
   if (!completionHintNotified && (completedByAcpState || longCompletionText)) {
     events.push({
-      type: "worker_turn_completed",
+      type: WORKER_TURN_COMPLETED_EVENT_TYPE,
       summary: completedByAcpState
         ? `${args.workerId} completed a worker turn`
         : `${args.workerId} produced a long final-looking text turn`,
@@ -473,6 +485,28 @@ export function deriveWorkerEvents(args: {
   };
 }
 
+async function hasExistingWorkerTurnCompletionForCurrentPrompt(runId: string, workerId: string) {
+  const latestRelatedEvents = await db.select({
+    eventType: executionEvents.eventType,
+  }).from(executionEvents).where(and(
+    eq(executionEvents.runId, runId),
+    eq(executionEvents.workerId, workerId),
+    inArray(executionEvents.eventType, WORKER_TURN_COMPLETION_RELATED_EVENT_TYPES),
+  )).orderBy(desc(executionEvents.createdAt)).limit(25);
+
+  for (const event of latestRelatedEvents) {
+    if (event.eventType === WORKER_TURN_COMPLETED_EVENT_TYPE) {
+      return true;
+    }
+
+    if (WORKER_TURN_COMPLETION_RESET_EVENT_TYPES.includes(event.eventType)) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
 async function insertExecutionEvent(
   runId: string,
   workerId: string,
@@ -480,6 +514,13 @@ async function insertExecutionEvent(
   details: Record<string, unknown>,
 ) {
   const serializedDetails = JSON.stringify(details);
+  if (eventType === WORKER_TURN_COMPLETED_EVENT_TYPE) {
+    const duplicate = await hasExistingWorkerTurnCompletionForCurrentPrompt(runId, workerId);
+    if (duplicate) {
+      return false;
+    }
+  }
+
   const dedupeScope = TYPE_DEDUPED_WORKER_EVENT_TYPES.has(eventType)
     ? "type"
     : EXACT_DEDUPED_WORKER_EVENT_TYPES.has(eventType)
