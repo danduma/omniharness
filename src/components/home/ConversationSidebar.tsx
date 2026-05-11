@@ -1,5 +1,5 @@
 import type React from "react";
-import { Archive, Bolt, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Trash2 } from "lucide-react";
+import { Archive, Bolt, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Trash2, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -9,7 +9,9 @@ import { OmniHarnessMark } from "@/components/OmniHarnessMark";
 import { PRODUCT_NAME } from "@/app/home/constants";
 import { getRunLatestMessageTimestamp, isRunUnread } from "@/lib/conversation-state";
 import { getConversationVisualKind, type ConversationVisualKind } from "@/lib/conversation-visuals";
-import { isArchivableRunStatus } from "@/lib/run-status";
+import type { ManualCommitAction } from "@/lib/commit-workflow";
+import { t, useI18nSnapshot } from "@/lib/i18n";
+import { isArchivableRunStatus, normalizeRunStatus } from "@/lib/run-status";
 import { cn } from "@/lib/utils";
 import type { SidebarGroup, SidebarRun } from "@/app/home/types";
 
@@ -49,7 +51,7 @@ export interface ConversationSidebarProps {
   openFolderPicker: () => void;
   startNewPlan: () => void;
   beginConversationInProject: (projectPath: string) => void;
-  autoCommitProject: (projectPath: string) => void;
+  autoCommitProject: (projectPath: string, action?: ManualCommitAction) => void;
   isAutoCommitProjectPending: boolean;
   handleRemoveProject: (pathToRemove: string) => void;
   selectRun: (runId: string) => void;
@@ -100,6 +102,7 @@ export function ConversationSidebar({
   logout,
   onCollapse,
 }: ConversationSidebarProps) {
+  useI18nSnapshot();
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#f1f1f0] dark:bg-muted/30">
       <div className="space-y-1 px-3 pb-3 pt-2 lg:px-3 lg:pb-3 lg:pt-2">
@@ -140,7 +143,7 @@ export function ConversationSidebar({
 
       <div className="min-h-0 flex-1 overflow-hidden">
         <ScrollArea className="h-full px-3">
-          <div className="space-y-3 py-4">
+          <div className="space-y-3 pb-4 pt-0.5">
           <div className="ml-2 mr-1 flex items-center justify-between">
             <h3 className="text-xs font-semibold text-muted-foreground">PROJECTS</h3>
             <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={openFolderPicker}>
@@ -189,7 +192,7 @@ export function ConversationSidebar({
                             disabled={isAutoCommitProjectPending}
                             onClick={() => autoCommitProject(group.path)}
                           >
-                            <GitCommitHorizontal className="mr-2 h-4 w-4" /> Auto Commit Project
+                            <GitCommitHorizontal className="mr-2 h-4 w-4" /> {t("commit.menu.commitProjectNow")}
                           </DropdownMenuItem>
                           <DropdownMenuItem className="cursor-pointer whitespace-nowrap text-destructive focus:bg-destructive/10 focus:text-destructive" onClick={() => handleRemoveProject(group.path)}>
                             <Trash2 className="mr-2 h-4 w-4" /> Remove Project
@@ -222,6 +225,18 @@ export function ConversationSidebar({
                       const visualKind = getConversationVisualKind(run, messages ?? []);
                       const isCommitConversation = visualKind === "commit";
                       const canArchiveConversation = isArchivableRunStatus(run.status);
+                      const normalizedRunStatus = normalizeRunStatus(run.status);
+                      const runIsUnread = isRunUnread({
+                        latestMessageAt: getRunLatestMessageTimestamp(run.id, messages || []),
+                        lastReadAt: readMarkers[run.id] ?? null,
+                      });
+                      const showCompletedAttentionIndicator = normalizedRunStatus === "done" && runIsUnread;
+                      const showAwaitingUserIndicator = normalizedRunStatus === "awaiting_user";
+                      const statusIndicatorLabel = showAwaitingUserIndicator
+                        ? t("conversation.sidebar.status.awaitingUser")
+                        : showCompletedAttentionIndicator
+                          ? t("conversation.sidebar.status.completedAttention")
+                          : null;
                       const visualConfig = CONVERSATION_VISUAL_CONFIG[visualKind];
                       const ConversationIcon = visualConfig.Icon;
 
@@ -239,6 +254,26 @@ export function ConversationSidebar({
                         <div className="min-w-0 flex-1">
                           <div className="min-w-0 flex items-center justify-between gap-2" title={run.path}>
                             <div className="flex min-w-0 flex-1 items-center gap-2">
+                              <span className="inline-flex h-5 w-3 shrink-0 items-center justify-center">
+                                {showAwaitingUserIndicator && statusIndicatorLabel ? (
+                                  <span
+                                    className="inline-flex h-4 w-4 items-center justify-center text-amber-500"
+                                    aria-label={statusIndicatorLabel}
+                                    role="img"
+                                    title={statusIndicatorLabel}
+                                  >
+                                    <TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />
+                                  </span>
+                                ) : null}
+                                {showCompletedAttentionIndicator && statusIndicatorLabel && !showAwaitingUserIndicator ? (
+                                  <span
+                                    className="h-2 w-2 rounded-full bg-sky-300"
+                                    aria-label={statusIndicatorLabel}
+                                    role="img"
+                                    title={statusIndicatorLabel}
+                                  />
+                                ) : null}
+                              </span>
                               <span
                                 className={cn("inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border", visualConfig.className)}
                                 title={`${visualConfig.label} conversation`}
@@ -273,10 +308,7 @@ export function ConversationSidebar({
                               {run.status === "running" ? (
                                 <LoaderCircle className="h-3.5 w-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" />
                               ) : null}
-                              {isRunUnread({
-                                latestMessageAt: getRunLatestMessageTimestamp(run.id, messages || []),
-                                lastReadAt: readMarkers[run.id] ?? null,
-                              }) ? (
+                              {runIsUnread && !showCompletedAttentionIndicator ? (
                                 <div className="h-2 w-2 shrink-0 rounded-full bg-blue-500" />
                               ) : null}
                               {canArchiveConversation && isCommitConversation ? (

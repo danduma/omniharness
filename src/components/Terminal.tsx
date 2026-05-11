@@ -38,6 +38,10 @@ interface TerminalProps {
   className?: string;
   showTextSizeControl?: boolean;
   showPendingAssistantIndicator?: boolean;
+  activityFilter?: (activity: TerminalActivityItem) => boolean;
+  thoughtsDefaultOpen?: boolean;
+  toolGroupsDefaultOpen?: boolean;
+  emptyState?: ReactNode;
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
 }
@@ -59,12 +63,13 @@ export interface TerminalUserMessageAction {
 
 export interface AgentTerminalPayload {
   outputEntries?: AgentOutputEntry[];
+  state?: string | null;
   currentText?: string;
   lastText?: string;
   displayText?: string;
 }
 
-type TerminalActivityItem = AgentActivityItem | {
+export type TerminalActivityItem = AgentActivityItem | {
   id: string;
   kind: "user_message";
   messageId: string;
@@ -946,17 +951,19 @@ function NestedToolActivityRow({
 function ToolGroupActivity({
   activity,
   variant,
+  toolGroupsDefaultOpen,
   projectRoot,
   onOpenProjectFile,
 }: {
   activity: Extract<AgentActivityItem, { kind: "tool_group" }>;
   variant: "terminal" | "native";
+  toolGroupsDefaultOpen: boolean;
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
 }) {
   useI18nSnapshot();
   const { toolGroupOpenById } = useManagerSnapshot(terminalUiManager);
-  const open = toolGroupOpenById[activity.id] ?? false;
+  const open = toolGroupOpenById[activity.id] ?? toolGroupsDefaultOpen;
   const summary = formatToolGroupSummary(activity.counts);
 
   return (
@@ -1038,16 +1045,18 @@ function ToolGroupActivity({
 function ThoughtActivity({
   activity,
   variant,
+  thoughtsDefaultOpen,
   projectRoot,
   onOpenProjectFile,
 }: {
   activity: Extract<AgentActivityItem, { kind: "thinking" }>;
   variant: "terminal" | "native";
+  thoughtsDefaultOpen: boolean;
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
 }) {
   const { thoughtOpenById } = useManagerSnapshot(terminalUiManager);
-  const open = thoughtOpenById[activity.id] ?? activity.inProgress;
+  const open = (thoughtOpenById[activity.id] ?? thoughtsDefaultOpen) || activity.inProgress;
 
   return (
     <div className="space-y-1">
@@ -1112,6 +1121,8 @@ function ActivityRow({
   onEditingUserMessageValueChange,
   onCancelEditingUserMessage,
   onSaveEditedUserMessage,
+  thoughtsDefaultOpen,
+  toolGroupsDefaultOpen,
   projectRoot,
   onOpenProjectFile,
 }: {
@@ -1125,6 +1136,8 @@ function ActivityRow({
   onEditingUserMessageValueChange?: (value: string) => void;
   onCancelEditingUserMessage?: () => void;
   onSaveEditedUserMessage?: (messageId: string) => void;
+  thoughtsDefaultOpen: boolean;
+  toolGroupsDefaultOpen: boolean;
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
 }) {
@@ -1220,6 +1233,7 @@ function ActivityRow({
           <ThoughtActivity
             activity={activity}
             variant={variant}
+            thoughtsDefaultOpen={thoughtsDefaultOpen}
             projectRoot={projectRoot}
             onOpenProjectFile={onOpenProjectFile}
           />
@@ -1236,6 +1250,7 @@ function ActivityRow({
           <ToolGroupActivity
             activity={activity}
             variant={variant}
+            toolGroupsDefaultOpen={toolGroupsDefaultOpen}
             projectRoot={projectRoot}
             onOpenProjectFile={onOpenProjectFile}
           />
@@ -1273,9 +1288,14 @@ export function Terminal({
   className,
   showTextSizeControl = true,
   showPendingAssistantIndicator = false,
+  activityFilter,
+  thoughtsDefaultOpen = false,
+  toolGroupsDefaultOpen = false,
+  emptyState,
   projectRoot,
   onOpenProjectFile,
 }: TerminalProps) {
+  useI18nSnapshot();
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const shouldFollowLatestRef = useRef(true);
@@ -1286,6 +1306,7 @@ export function Terminal({
   const activity = useMemo(() => {
     const agentActivity = buildAgentOutputActivity({
       outputEntries: agent?.outputEntries,
+      state: agent?.state,
       currentText: agent?.currentText,
       lastText: agent?.lastText,
       displayText: agent?.displayText,
@@ -1318,6 +1339,10 @@ export function Terminal({
       return activityKindOrder(a) - activityKindOrder(b) || a.id.localeCompare(b.id);
     });
   }, [agent, getUserMessageActions, showPendingAssistantIndicator, userMessages]);
+  const filteredActivity = useMemo(
+    () => activityFilter ? activity.filter(activityFilter) : activity,
+    [activity, activityFilter],
+  );
   const terminalZoomStyle = useMemo(() => (
     textSizeScope === "conversation"
       ? getConversationTerminalTextSizeStyle(conversationTextSize)
@@ -1351,7 +1376,7 @@ export function Terminal({
 
   useEffect(() => {
     const container = scrollContainerRef.current;
-    const activityVersion = getTerminalActivityVersion(activity);
+    const activityVersion = getTerminalActivityVersion(filteredActivity);
     const activityChanged = previousActivityVersionRef.current !== activityVersion;
     previousActivityVersionRef.current = activityVersion;
 
@@ -1364,7 +1389,7 @@ export function Terminal({
       scrollTerminalToBottom(container);
       previousScrollTopRef.current = container.scrollHeight;
     });
-  }, [activity]);
+  }, [filteredActivity]);
 
   return (
     <div className={cn(
@@ -1397,11 +1422,11 @@ export function Terminal({
             : "h-full overflow-y-auto px-3 pb-2.5 pt-9 [scrollbar-color:rgba(113,113,122,0.28)_transparent] [scrollbar-width:thin] dark:[scrollbar-color:rgba(255,255,255,0.16)_transparent]",
         )}
       >
-        {activity.length > 0 ? (
+        {filteredActivity.length > 0 ? (
           <div className="relative flex flex-col gap-2">
-            {activity.map((entry, index) => {
-              const previousEntry = activity[index - 1];
-              const nextEntry = activity[index + 1];
+            {filteredActivity.map((entry, index) => {
+              const previousEntry = filteredActivity[index - 1];
+              const nextEntry = filteredActivity[index + 1];
 
               return (
                 <ActivityRow
@@ -1416,12 +1441,16 @@ export function Terminal({
                   onEditingUserMessageValueChange={onEditingUserMessageValueChange}
                   onCancelEditingUserMessage={onCancelEditingUserMessage}
                   onSaveEditedUserMessage={onSaveEditedUserMessage}
+                  thoughtsDefaultOpen={thoughtsDefaultOpen}
+                  toolGroupsDefaultOpen={toolGroupsDefaultOpen}
                   projectRoot={projectRoot}
                   onOpenProjectFile={handleProjectFileReferenceClick}
                 />
               );
             })}
           </div>
+        ) : emptyState !== undefined ? (
+          <>{emptyState}</>
         ) : (
           <div className={cn(
             "flex h-full min-h-full items-center justify-center rounded-xl border border-dashed px-4 text-center text-sm",
@@ -1429,7 +1458,7 @@ export function Terminal({
               ? "border-border bg-muted/20 text-muted-foreground"
               : "border-border/70 bg-muted/25 text-muted-foreground dark:border-white/10 dark:bg-black/10 dark:text-zinc-500",
           )}>
-            Waiting for structured agent output...
+            {t("terminal.empty.loadingSession")}
           </div>
         )}
       </div>

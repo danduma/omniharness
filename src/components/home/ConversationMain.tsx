@@ -9,6 +9,7 @@ import { PlanningArtifactsPanel } from "@/components/PlanningArtifactsPanel";
 import { conversationMainManager } from "@/components/component-state-managers";
 import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
 import { extractLatestPlainTextTurn } from "@/lib/agent-output";
+import { shouldShowPlanningTerminalActivity } from "@/lib/planning-output";
 import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, NoticeDescriptor, RunRecord, WorkerAvailability } from "@/app/home/types";
 import type { RecoveryIncidentRecord, RunRecoveryState } from "@/app/home/types";
 import { formatExecutionTimestamp, getExecutionEventDetailRows, summarizeExecutionEvent, type ConversationTimelineItem } from "@/app/home/utils";
@@ -163,7 +164,7 @@ function inferWorkerIdFromMessage(message: MessageRecord) {
 }
 
 function renderSupervisorActivityText(text: string) {
-  const match = text.match(/^(Starting worker \d+|Steering worker \d+)([\s\S]*)$/);
+  const match = text.match(/^(Starting (?:worker \d+|planning agent)|Steering worker \d+)([\s\S]*)$/);
   if (!match) {
     return text;
   }
@@ -180,7 +181,7 @@ function renderSupervisorActivityIcon(item: Extract<ConversationTimelineItem, { 
   const eventType = item.event?.eventType;
   const text = item.text.trim();
 
-  if (eventType === "worker_spawned" || text.startsWith("Starting worker ")) {
+  if (eventType === "worker_spawned" || item.id.startsWith("worker-start:") || text.startsWith("Starting worker ") || text.startsWith("Starting planning agent")) {
     return <CirclePlay className="h-3.5 w-3.5" aria-hidden="true" strokeWidth={1.8} />;
   }
 
@@ -215,7 +216,7 @@ function SupervisorActivityMessage({ item }: { item: Extract<ConversationTimelin
         {icon}
       </div>
       <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
-        <p className="min-w-0 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-muted-foreground">
+        <p className="min-w-0 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-foreground">
           {renderSupervisorActivityText(item.text)}
         </p>
         <span className="shrink-0 text-[10px] text-muted-foreground/50">
@@ -296,16 +297,22 @@ function PlannerOutputMessage({
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
 }) {
-  const summaryText = extractLatestPlainTextTurn({
-    outputEntries: agent?.outputEntries,
-    currentText: agent?.currentText,
-    lastText: agent?.lastText || message.content,
-  }) || message.content.trim();
+  const terminalAgent = agent ?? {
+    name: inferWorkerIdFromMessage(message) ?? "planning-agent",
+    state: "done",
+    currentText: "",
+    lastText: message.content,
+  };
 
   return (
-    <MarkdownContent
-      content={summaryText}
-      className="px-1 text-foreground"
+    <Terminal
+      agent={terminalAgent}
+      variant="native"
+      textSizeScope="conversation"
+      showTextSizeControl={false}
+      activityFilter={shouldShowPlanningTerminalActivity}
+      thoughtsDefaultOpen
+      emptyState={null}
       projectRoot={projectRoot}
       onOpenProjectFile={onOpenProjectFile}
     />
@@ -668,9 +675,11 @@ export function ConversationMain({
 
               const msg = item.message;
               const isUserMessage = msg.role === "user";
+              const isCurrentRunMessage = msg.runId === selectedRunId;
+              const isPlanningWorkerMessage = msg.role === "worker" && msg.kind === "planning";
               const isExpanded = expandedDirectMessageIds.has(msg.id);
-              const userMessageActions: UserInputMessageAction[] = getUserMessageActions(msg);
-              const speakerLabel = isPlanningConversation && msg.role === "worker"
+              const userMessageActions: UserInputMessageAction[] = isCurrentRunMessage ? getUserMessageActions(msg) : [];
+              const speakerLabel = (isPlanningConversation && msg.role === "worker") || isPlanningWorkerMessage
                 ? t("planning.agent.label")
                 : msg.role;
 
@@ -722,7 +731,7 @@ export function ConversationMain({
                     onCopy={handleCopyDirectMessage}
                     actions={userMessageActions}
                   />
-                ) : isPlanningConversation && msg.role === "worker" ? (
+                ) : (isPlanningConversation && msg.role === "worker") || isPlanningWorkerMessage ? (
                   <PlannerOutputMessage
                     message={msg}
                     agent={conversationAgents.find((agent) => agent.name === inferWorkerIdFromMessage(msg)) ?? null}

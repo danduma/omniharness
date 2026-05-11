@@ -49,6 +49,7 @@ interface ConversationComposerProps {
   selectedEffort: string;
   setSelectedEffort: (value: string) => void;
   isComposerSubmitting: boolean;
+  isStopConversationPending: boolean;
   isConversationStoppable: boolean;
   composerBehavior: BusyComposerBehavior;
   queuedMessages: QueuedConversationMessageRecord[];
@@ -94,6 +95,7 @@ export function ConversationComposer({
   selectedEffort,
   setSelectedEffort,
   isComposerSubmitting,
+  isStopConversationPending,
   composerBehavior,
   queuedMessages,
   cancellingQueuedMessageIds,
@@ -114,8 +116,9 @@ export function ConversationComposer({
   });
   const isStopButtonVisible = composerBehavior.buttonKind === "stop";
   const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;
+  const isStopButtonBusy = isStopButtonVisible && isStopConversationPending;
   const isSubmitButtonDisabled = isStopButtonVisible
-    ? false
+    ? isStopConversationPending
     : isComposerSubmitting || (!trimmedCommand && !hasAttachments);
   const alternateSubmitShortcutLabel = getComposerSubmitShortcutLabel(isAppleComposerShortcutPlatform());
   const sendButtonAriaLabel = t(composerBehavior.ariaLabelKey);
@@ -138,6 +141,9 @@ export function ConversationComposer({
       onSubmit={(event) => {
         if (isStopButtonVisible) {
           event.preventDefault();
+          if (isStopConversationPending) {
+            return;
+          }
           onStopConversation();
           return;
         }
@@ -153,53 +159,6 @@ export function ConversationComposer({
           disabled={isComposerSubmitting}
         />
       ) : null}
-      {showMentionPicker && (
-        <div className="absolute inset-x-0 bottom-full mb-3 overflow-hidden rounded-2xl border border-border bg-background shadow-xl">
-          <div className="border-b border-border/60 px-4 py-2 text-xs text-muted-foreground">
-            {currentProjectScope}
-          </div>
-          <div className="max-h-72 overflow-y-auto p-2">
-            {filteredProjectFiles.length > 0 ? (
-              filteredProjectFiles.map((filePath, index) => (
-                <div
-                  key={filePath}
-                  className={`flex w-full items-center rounded-xl px-3 py-2 text-left text-sm transition-colors ${
-                    index === mentionIndex ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted/60"
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => applyMention(filePath)}
-                    className="min-w-0 flex-1 truncate text-left"
-                  >
-                    {filePath}
-                  </button>
-                  {onOpenProjectFile ? (
-                    <button
-                      type="button"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onOpenProjectFile(filePath);
-                      }}
-                      className="ml-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
-                      aria-label={`Open ${filePath} in side window`}
-                      title={`Open ${filePath} in side window`}
-                    >
-                      <FileText className="h-3.5 w-3.5" />
-                    </button>
-                  ) : null}
-                </div>
-              ))
-            ) : (
-              <div className="px-3 py-2 text-sm text-muted-foreground">
-                No matching files in this project.
-              </div>
-            )}
-          </div>
-        </div>
-      )}
       <QueuedMessageDrawer
         messages={queuedMessages}
         cancellingMessageIds={cancellingQueuedMessageIds}
@@ -208,6 +167,54 @@ export function ConversationComposer({
         onSendNow={onSendQueuedMessageNow}
         onCancel={onCancelQueuedMessage}
       />
+      <div className="relative">
+        {showMentionPicker && (
+          <div className="absolute inset-x-0 bottom-full z-30 mb-3 overflow-hidden rounded-2xl border border-border bg-background shadow-xl">
+            <div className="border-b border-border/60 px-4 py-2 text-xs text-muted-foreground">
+              {currentProjectScope}
+            </div>
+            <div className="max-h-[min(45dvh,18rem)] overflow-y-auto p-2">
+              {filteredProjectFiles.length > 0 ? (
+                filteredProjectFiles.map((filePath, index) => (
+                  <div
+                    key={filePath}
+                    className={`flex w-full items-center rounded-xl px-3 py-2 text-left text-sm transition-colors ${
+                      index === mentionIndex ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted/60"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => applyMention(filePath)}
+                      className="min-w-0 flex-1 truncate text-left"
+                    >
+                      {filePath}
+                    </button>
+                    {onOpenProjectFile ? (
+                      <button
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onOpenProjectFile(filePath);
+                        }}
+                        className="ml-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
+                        aria-label={`Open ${filePath} in side window`}
+                        title={`Open ${filePath} in side window`}
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                      </button>
+                    ) : null}
+                  </div>
+                ))
+              ) : (
+                <div className="px-3 py-2 text-sm text-muted-foreground">
+                  No matching files in this project.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       <div
         className={cn(
           "rounded-[1.5rem] px-4 pb-0 pt-3 transition-all sm:px-5 sm:pb-0 sm:pt-4",
@@ -280,7 +287,7 @@ export function ConversationComposer({
                 isApplePlatform: isAppleComposerShortcutPlatform(),
               });
               if (isStopButtonVisible) {
-                if (!trimmedCommand) {
+                if (!trimmedCommand && !isStopConversationPending) {
                   onStopConversation();
                 }
                 return;
@@ -356,7 +363,7 @@ export function ConversationComposer({
           </div>
         ) : null}
 
-        <div className="mt-0 flex flex-wrap items-center gap-x-1 gap-y-1 pb-2 sm:flex-nowrap sm:gap-2">
+        <div className="mt-0 flex items-center gap-1 pb-2 sm:gap-2">
           <input
             ref={fileInputRef}
             type="file"
@@ -388,7 +395,7 @@ export function ConversationComposer({
               <Plus className="h-[18px] w-[18px]" />
             </Button>
 
-          <div className="order-3 flex min-w-0 basis-full items-center justify-end gap-1 sm:order-none sm:basis-auto sm:flex-1 sm:gap-2">
+          <div className="ml-auto flex min-w-0 items-center justify-end gap-1 sm:gap-2">
             {shouldLockDirectWorker ? (
               <div className={cn(
                 "w-max min-w-0 max-w-[8.5rem] shrink truncate rounded-full border px-2 py-1 text-xs font-semibold sm:px-3",
@@ -431,13 +438,13 @@ export function ConversationComposer({
             aria-label={sendButtonAriaLabel}
             title={sendButtonTitle}
             className={cn(
-              "order-2 ml-auto h-8 w-8 shrink-0 rounded-full transition-all sm:order-none sm:ml-0",
+              "h-8 w-8 shrink-0 rounded-full transition-all",
               themeMode === "night"
                 ? "bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary/[0.45]"
                 : "bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary/[0.45]",
             )}
           >
-            {isSendButtonBusy ? (
+            {isSendButtonBusy || isStopButtonBusy ? (
               <LoaderCircle className="h-[17px] w-[17px] animate-spin" />
             ) : isStopButtonVisible ? (
               <Square className="h-[13.6px] w-[13.6px] fill-current" />
@@ -446,6 +453,7 @@ export function ConversationComposer({
             )}
           </Button>
         </div>
+      </div>
       </div>
     </form>
   </div>
