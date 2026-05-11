@@ -160,17 +160,18 @@ function createBrowserPushClient(): ConversationPushClient {
       && (window.isSecureContext || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
     ),
     subscribe: async (publicKey) => {
-      const registration = await registerServiceWorker({ allowDevelopment: true });
-      if (!registration) {
+      await registerServiceWorker({ allowDevelopment: true });
+      if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
         throw new Error(t("notifications.error.serviceWorkerUnavailable"));
       }
 
-      const existingSubscription = await registration.pushManager.getSubscription();
+      const readyRegistration = await navigator.serviceWorker.ready;
+      const existingSubscription = await readyRegistration.pushManager.getSubscription();
       if (existingSubscription) {
         return normalizePushSubscription(existingSubscription);
       }
 
-      const subscription = await registration.pushManager.subscribe({
+      const subscription = await readyRegistration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicKey),
       });

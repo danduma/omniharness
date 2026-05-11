@@ -13,6 +13,7 @@ import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import { isLongWorkerCompletionText, normalizeWorkerStatus } from "@/server/supervisor/worker-completion";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { notifyRunLifecycleEventBestEffort } from "@/server/notifications/triggers";
 import { deriveWorkerTerminalProcesses } from "@/lib/worker-terminal-processes";
 
 const OBSERVER_INTERVAL_MS = 5_000;
@@ -568,6 +569,7 @@ async function insertExecutionEvent(
     details: serializedDetails,
     createdAt: new Date(),
   });
+  await notifyRunLifecycleEventBestEffort({ runId, eventType, details });
   notifyEventStreamSubscribers();
   return true;
 }

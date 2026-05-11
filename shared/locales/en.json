@@ -200,5 +200,20 @@
   "conversation.composer.placeholder.planning": "Reply to planning agent...",
   "conversation.composer.placeholder.direct": "Send to CLI...",
   "conversation.composer.placeholder.implementation": "Ask supervisor...",
-  "planning.agent.label": "planning agent"
+  "planning.agent.label": "planning agent",
+  "notifications.button.unavailable": "Notifications unavailable",
+  "notifications.button.blocked": "Notifications blocked",
+  "notifications.button.disable": "Disable notifications",
+  "notifications.button.enable": "Enable notifications",
+  "notifications.error.unsupported": "This browser does not support notifications.",
+  "notifications.error.blocked": "Notifications are blocked for this browser.",
+  "notifications.error.notEnabled": "Notifications were not enabled.",
+  "notifications.error.invalidSubscription": "The browser returned an invalid push subscription.",
+  "notifications.error.serviceWorkerUnavailable": "OmniHarness could not start the notification service worker.",
+  "notifications.push.fallbackConversationTitle": "Conversation",
+  "notifications.push.conversationComplete": "Conversation complete",
+  "notifications.push.conversationCompleteBody": "{title} is complete.",
+  "notifications.push.needsInput": "OmniHarness needs input",
+  "notifications.push.needsInputBody": "{title} is waiting for your input.",
+  "notifications.push.permissionBody": "{title} has a permission request waiting."
 }

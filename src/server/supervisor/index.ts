@@ -32,6 +32,7 @@ import { syncPlanItems } from "@/server/plans/checklist";
 import { assessPlanReadiness } from "@/server/plans/readiness";
 import { pauseForClarifications } from "@/server/clarifications/loop";
 import { runMilestoneAutoCommit } from "@/server/git/run-auto-commit";
+import { notifyRunLifecycleEventBestEffort } from "@/server/notifications/triggers";
 
 export interface SupervisorOptions {
   runId: string;
@@ -508,6 +509,7 @@ async function insertExecutionEvent(
     details: JSON.stringify(details),
     createdAt: new Date(),
   });
+  await notifyRunLifecycleEventBestEffort({ runId, eventType, details });
   notifyEventStreamSubscribers();
 }
 

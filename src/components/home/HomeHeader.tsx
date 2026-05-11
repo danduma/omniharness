@@ -166,12 +166,12 @@ export function HomeHeader({
   const notificationsBlocked = notificationState.permission === "denied";
   const notificationsUnsupported = notificationState.permission === "unsupported";
   const notificationButtonLabel = notificationsUnsupported
-    ? "Notifications unavailable"
+    ? t("notifications.button.unavailable")
     : notificationsBlocked
-    ? "Notifications blocked"
+    ? t("notifications.button.blocked")
     : notificationsActive
-    ? "Disable notifications"
-    : "Enable notifications";
+    ? t("notifications.button.disable")
+    : t("notifications.button.enable");
 
   const beginTopBarTitleEdit = () => {
     if (!selectedRun) {

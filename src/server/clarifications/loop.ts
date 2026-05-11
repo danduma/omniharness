@@ -3,6 +3,7 @@ import { db } from "../db";
 import { clarifications, runs, executionEvents } from "../db/schema";
 import { eq, and } from "drizzle-orm";
 import { resumeSupervisorRun } from "../supervisor/resume";
+import { notifyRunLifecycleEventBestEffort } from "@/server/notifications/triggers";
 
 export async function pauseForClarifications(runId: string, questions: string[]) {
   const now = new Date();
@@ -26,6 +27,11 @@ export async function pauseForClarifications(runId: string, questions: string[])
     eventType: "clarifications_requested",
     details: JSON.stringify({ count: questions.length }),
     createdAt: now,
+  });
+  await notifyRunLifecycleEventBestEffort({
+    runId,
+    eventType: "clarifications_requested",
+    details: { count: questions.length },
   });
 
   await db.update(runs).set({ status: "awaiting_user", updatedAt: now }).where(eq(runs.id, runId));
