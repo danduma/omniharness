@@ -5,6 +5,7 @@ import { settings } from "@/server/db/schema";
 import { encryptSettingValue, shouldEncryptSetting } from "@/server/settings/crypto";
 import { buildAppError, errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
+import { canonicalizePersistedProjectRoots } from "@/server/projects/canonicalize";
 
 function isInternalSettingKey(key: string) {
   return key.startsWith("__");
@@ -21,6 +22,10 @@ export async function GET(req: NextRequest) {
     }
 
     const allSettings = await db.select().from(settings);
+    const projectSetting = allSettings.find((setting) => setting.key === "PROJECTS");
+    if (projectSetting) {
+      await canonicalizePersistedProjectRoots(projectSetting.value);
+    }
     const diagnostics: ReturnType<typeof buildAppError>[] = [];
     const values = Object.fromEntries(allSettings.flatMap((setting) => {
       if (isInternalSettingKey(setting.key)) {
@@ -70,12 +75,16 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
+    let projectSettingValue: string | null = null;
     for (const [key, value] of Object.entries(body)) {
       if (isInternalSettingKey(key)) {
         continue;
       }
 
       if (typeof value === "string") {
+        if (key === "PROJECTS") {
+          projectSettingValue = value;
+        }
         const isSecret = shouldEncryptSetting(key);
         if (isSecret && value.trim() === "") {
           const existing = await db.select().from(settings).where(eq(settings.key, key)).get();
@@ -89,6 +98,9 @@ export async function POST(req: NextRequest) {
           .values({ key, value: storedValue, updatedAt: new Date() })
           .onConflictDoUpdate({ target: settings.key, set: { value: storedValue, updatedAt: new Date() } });
       }
+    }
+    if (projectSettingValue !== null) {
+      await canonicalizePersistedProjectRoots(projectSettingValue);
     }
     return NextResponse.json({ ok: true });
   } catch (err: unknown) {

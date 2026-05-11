@@ -1,3 +1,5 @@
+import { resolveStaleProjectFallback, resolveStoredProjectRoot } from "@/lib/project-paths";
+
 type PlanRecord = { id: string; path: string };
 type RunRecord = { id: string; planId: string; projectPath?: string | null };
 
@@ -17,8 +19,13 @@ export function resolveProjectScope(args: {
   }
 
   const run = args.runs.find((candidate) => candidate.id === args.selectedRunId);
-  if (run?.projectPath) {
-    return run.projectPath;
+  const staleFallbackProject = resolveStaleProjectFallback(
+    args.explicitProjects,
+    args.runs.map((candidate) => candidate.projectPath),
+  );
+  const projectRoot = resolveStoredProjectRoot(run?.projectPath, args.explicitProjects, { staleFallbackProject });
+  if (projectRoot) {
+    return projectRoot;
   }
 
   const plan = run ? args.plans.find((candidate) => candidate.id === run.planId) : null;
