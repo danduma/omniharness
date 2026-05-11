@@ -6,6 +6,10 @@ CRITICAL!!:
 - When the user gives a UUID and asks what is going on with it, treat it as an OmniHarness conversation/session lookup: check `sqlite.db`, starting with the `runs` row for that UUID, then inspect related `workers`, `messages`, `execution_events`, queued messages, and validation/plan records as needed.
 - To delete all conversations and associated persisted artifacts, use `scripts/delete-conversations.sh`
 
+Testing:
+- When testing the app, use the already-running process if one exists instead of starting another server.
+- The normal local app URL is `http://localhost:3035`; the compressed Next dev server is usually at `http://localhost:3050`.
+
 Frontend i18n:
 - EVERY user-facing frontend string MUST live in `shared/locales/*.json` and be rendered with the `t()` function from `@/lib/i18n`.
 - NEVER hardcode user-facing JSX text, button labels, dialog titles, aria-labels, titles, placeholders, empty states, status labels, help text, error fallback text, or visible option labels directly in components.
