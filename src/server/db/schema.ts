@@ -23,6 +23,10 @@ export const runs = sqliteTable('runs', {
   plannerArtifactsJson: text('planner_artifacts_json'),
   parentRunId: text('parent_run_id'),
   forkedFromMessageId: text('forked_from_message_id'),
+  autoCommitMilestones: integer('auto_commit_milestones', { mode: 'boolean' }).notNull().default(false),
+  pushOnCommit: integer('push_on_commit', { mode: 'boolean' }).notNull().default(false),
+  gitBaselineJson: text('git_baseline_json'),
+  completionCommitSha: text('completion_commit_sha'),
   status: text('status').notNull(), // 'running', 'done', 'failed'
   failedAt: integer('failed_at', { mode: 'timestamp' }),
   lastError: text('last_error'),
@@ -147,6 +151,21 @@ export const authSessions = sqliteTable('auth_sessions', {
   revokedAt: integer('revoked_at', { mode: 'timestamp' }),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const notificationSubscriptions = sqliteTable('notification_subscriptions', {
+  id: text('id').primaryKey(),
+  endpoint: text('endpoint').notNull().unique(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  sessionId: text('session_id').references(() => authSessions.id),
+  userAgent: text('user_agent'),
+  failureCount: integer('failure_count').notNull().default(0),
+  lastError: text('last_error'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  lastSeenAt: integer('last_seen_at', { mode: 'timestamp' }).notNull(),
+  revokedAt: integer('revoked_at', { mode: 'timestamp' }),
 });
 
 export const authPairTokens = sqliteTable('auth_pair_tokens', {

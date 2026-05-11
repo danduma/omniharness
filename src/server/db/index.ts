@@ -31,6 +31,10 @@ CREATE TABLE IF NOT EXISTS runs (
   planner_artifacts_json text,
   parent_run_id text,
   forked_from_message_id text,
+  auto_commit_milestones integer NOT NULL DEFAULT 0,
+  push_on_commit integer NOT NULL DEFAULT 0,
+  git_baseline_json text,
+  completion_commit_sha text,
   status text NOT NULL,
   failed_at integer,
   last_error text,
@@ -171,6 +175,22 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   updated_at integer NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS notification_subscriptions (
+  id text PRIMARY KEY NOT NULL,
+  endpoint text NOT NULL UNIQUE,
+  p256dh text NOT NULL,
+  auth text NOT NULL,
+  session_id text,
+  user_agent text,
+  failure_count integer NOT NULL DEFAULT 0,
+  last_error text,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  last_seen_at integer NOT NULL,
+  revoked_at integer,
+  FOREIGN KEY (session_id) REFERENCES auth_sessions(id) ON UPDATE no action ON DELETE no action
+);
+
 CREATE TABLE IF NOT EXISTS auth_pair_tokens (
   id text PRIMARY KEY NOT NULL,
   token_hash text NOT NULL,
@@ -269,6 +289,7 @@ CREATE INDEX IF NOT EXISTS recovery_incidents_run_status_updated_idx ON recovery
 CREATE INDEX IF NOT EXISTS supervisor_scheduled_wakes_wake_at_idx ON supervisor_scheduled_wakes(wake_at);
 CREATE INDEX IF NOT EXISTS runs_created_idx ON runs(created_at);
 CREATE INDEX IF NOT EXISTS plans_created_idx ON plans(created_at);
+CREATE INDEX IF NOT EXISTS notification_subscriptions_revoked_idx ON notification_subscriptions(revoked_at);
 `);
 
 // Legacy cleanup: validation is now performed by supervisor tool use and checker workers,
@@ -324,6 +345,22 @@ if (!runColumnNames.has("parent_run_id")) {
 
 if (!runColumnNames.has("forked_from_message_id")) {
   sqlite.exec("ALTER TABLE runs ADD COLUMN forked_from_message_id text;");
+}
+
+if (!runColumnNames.has("auto_commit_milestones")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN auto_commit_milestones integer NOT NULL DEFAULT 0;");
+}
+
+if (!runColumnNames.has("push_on_commit")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN push_on_commit integer NOT NULL DEFAULT 0;");
+}
+
+if (!runColumnNames.has("git_baseline_json")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN git_baseline_json text;");
+}
+
+if (!runColumnNames.has("completion_commit_sha")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN completion_commit_sha text;");
 }
 
 if (!runColumnNames.has("failed_at")) {
