@@ -61,6 +61,12 @@ const SettingsDialog = dynamic(
   () => import("@/components/home/SettingsDialog").then((m) => m.SettingsDialog),
   { ssr: false },
 );
+const OnboardingSetupDialog = dynamic(
+  () => import("@/components/home/OnboardingSetupDialog").then((m) => m.OnboardingSetupDialog),
+  { ssr: false },
+);
+
+const ONBOARDING_SEEN_STORAGE_KEY = "omni.onboarding.seen";
 
 type HomeAppState = Omit<HomeUiState, "command" | "commandCursor" | "mentionIndex" | "attachments">;
 
@@ -82,6 +88,7 @@ export function HomeApp() {
   const {
     themeMode,
     showSettings,
+    showOnboarding,
     showPairDeviceDialog,
     activeSettingsTab,
     activeLlmProfileTab,
@@ -124,6 +131,7 @@ export function HomeApp() {
   const {
     setThemeMode,
     setShowSettings,
+    setShowOnboarding,
     setShowPairDeviceDialog,
     setActiveSettingsTab,
     setActiveLlmProfileTab,
@@ -311,6 +319,29 @@ export function HomeApp() {
     workspaceSideWindowAvailable,
     conversationTimelineItems,
   } = vm;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (catalogWorkers.length === 0) return;
+    try {
+      if (window.localStorage.getItem(ONBOARDING_SEEN_STORAGE_KEY) === "1") return;
+    } catch {
+      return;
+    }
+    const needsSetup = catalogWorkers.some((worker) => (
+      worker.availability.status !== "ok"
+      || worker.authentication?.status === "not_authenticated"
+      || worker.authentication?.status === "unknown"
+    ));
+    if (needsSetup) {
+      setShowOnboarding(true);
+    }
+    try {
+      window.localStorage.setItem(ONBOARDING_SEEN_STORAGE_KEY, "1");
+    } catch {
+      // ignore
+    }
+  }, [catalogWorkers, setShowOnboarding]);
 
   // Mutations
   const mutations = useHomeMutations({
@@ -643,6 +674,7 @@ export function HomeApp() {
     collapsedProjectPaths,
     onProjectOpenChange: actions.handleProjectOpenChange,
     setShowSettings,
+    openOnboarding: () => setShowOnboarding(true),
     openFolderPicker: () => setShowFolderPicker(true),
     startNewPlan: actions.handleStartNewPlan,
     beginConversationInProject: actions.beginConversationInProject,
@@ -773,8 +805,6 @@ export function HomeApp() {
           liveExecutionStatus={liveExecutionStatus}
           liveThoughts={liveThoughts}
           executionEvents={selectedRunExecutionEvents}
-          cliSetupWorkers={catalogWorkers}
-          onOpenAgentSettings={() => { setActiveSettingsTab("agents"); setShowSettings(true); }}
           emptyComposer={renderComposer("mt-2 w-full pt-0 sm:pt-0")}
           projectRoot={currentProjectScope}
           onOpenProjectFile={actions.handleOpenProjectFile}
@@ -821,6 +851,13 @@ export function HomeApp() {
           </div>
         </div>
       ) : null}
+
+      <OnboardingSetupDialog
+        open={showOnboarding}
+        onOpenChange={setShowOnboarding}
+        workers={catalogWorkers}
+        onOpenAgentSettings={() => { setActiveSettingsTab("agents"); setShowSettings(true); }}
+      />
 
       <SettingsDialog
         open={showSettings}

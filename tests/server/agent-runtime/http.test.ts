@@ -33,6 +33,19 @@ function listen(server: Server) {
   });
 }
 
+async function waitFor<T>(read: () => Promise<T>, matches: (value: T) => boolean) {
+  const deadline = Date.now() + 5_000;
+  let lastValue: T | undefined;
+  do {
+    lastValue = await read();
+    if (matches(lastValue)) {
+      return lastValue;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  } while (Date.now() < deadline);
+  throw new Error(`Timed out waiting for condition. Last value: ${JSON.stringify(lastValue)}`);
+}
+
 async function closeServer(server: Server) {
   await new Promise<void>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
@@ -228,6 +241,66 @@ process.stdin.on('data', (chunk) => {
     } else if (message.id === 1002) {
       append({ method: 'fs/write_text_file/response', result: message.result });
       write({ jsonrpc: '2.0', id: sessionRequestId, result: { sessionId: 'session-1' } });
+    }
+  }
+});
+`;
+
+const fakePermissionAcpAgentScript = `#!/usr/bin/env node
+process.stdin.setEncoding('utf8');
+let buffer = '';
+let promptRequestId = null;
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + '\\n');
+}
+
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\\r?\\n/g);
+  buffer = lines.pop() ?? '';
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === 'initialize') {
+      write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+    } else if (message.method === 'session/new') {
+      write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-1' } });
+    } else if (message.method === 'session/prompt') {
+      promptRequestId = message.id;
+      write({
+        jsonrpc: '2.0',
+        id: 7001,
+        method: 'session/request_permission',
+        params: {
+          sessionId: message.params.sessionId,
+          toolCall: {
+            toolCallId: 'permission-call-1',
+            title: 'Run command',
+            kind: 'execute',
+            status: 'pending',
+            rawInput: { command: 'pnpm test' },
+          },
+          options: [
+            { optionId: 'allow_always', kind: 'allow_always', name: 'Always Allow' },
+            { optionId: 'allow_once', kind: 'allow_once', name: 'Allow' },
+            { optionId: 'reject_once', kind: 'reject_once', name: 'Reject' },
+          ],
+        },
+      });
+    } else if (message.id === 7001) {
+      write({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'permission response ' + JSON.stringify(message.result) },
+          },
+        },
+      });
+      write({ jsonrpc: '2.0', id: promptRequestId, result: { stopReason: 'end_turn' } });
     }
   }
 });
@@ -676,6 +749,80 @@ describe("internal agent runtime HTTP API", () => {
     expect(nextPage.cursor).toBe(archivePage.nextCursor);
     expect(nextPage.entries).toHaveLength(2);
     expect(nextPage.entries[0].toolCallId).toBe("verbose-2");
+  }, 30_000);
+
+  it("records both permission requests and selected permission outcomes", async () => {
+    const projectDir = createTempDir("omni-runtime-permission-project-");
+    const binDir = createTempDir("omni-runtime-permission-bin-");
+    const fakeAgent = createExecutable(binDir, "fake-permission-acp-agent", fakePermissionAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "permission-worker",
+      }),
+    });
+    expect(spawnResponse.status).toBe(201);
+
+    const askPromise = fetch(`${baseUrl}/agents/permission-worker/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "need permission" }),
+    });
+
+    const pendingAgent = await waitFor(
+      async () => {
+        const response = await fetch(`${baseUrl}/agents/permission-worker`);
+        expect(response.status).toBe(200);
+        return response.json() as Promise<{
+          pendingPermissions?: unknown[];
+          outputEntries?: Array<{ type: string; status?: string; raw?: unknown }>;
+        }>;
+      },
+      (agent) => (agent.pendingPermissions?.length ?? 0) === 1,
+    );
+    const requestEntry = pendingAgent.outputEntries?.find((entry) => entry.type === "permission" && entry.status === "pending");
+    expect(requestEntry).toMatchObject({
+      raw: expect.objectContaining({ requestId: 1 }),
+    });
+
+    const approveResponse = await fetch(`${baseUrl}/agents/permission-worker/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ optionId: "allow_once" }),
+    });
+    expect(approveResponse.status).toBe(200);
+    expect(await askPromise.then((response) => response.status)).toBe(200);
+
+    const agentResponse = await fetch(`${baseUrl}/agents/permission-worker`);
+    expect(agentResponse.status).toBe(200);
+    const agent = await agentResponse.json() as { outputEntries: Array<{ type: string; text: string; status?: string; raw?: unknown }> };
+    const permissionEntries = agent.outputEntries.filter((entry) => entry.type === "permission");
+    expect(permissionEntries).toMatchObject([
+      {
+        text: "Permission requested: allow_always Always Allow, allow_once Allow, reject_once Reject",
+        status: "pending",
+        raw: expect.objectContaining({ requestId: 1 }),
+      },
+      {
+        text: "Permission approved for request 1: allow_once Allow",
+        status: "approved",
+        raw: expect.objectContaining({ requestId: 1, decision: "approve", optionId: "allow_once" }),
+      },
+    ]);
   }, 30_000);
 
   it("keeps nonfatal agent stderr diagnostics out of lastError", async () => {

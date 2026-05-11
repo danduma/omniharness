@@ -29,6 +29,7 @@ export type HomeUiState = {
   command: string;
   themeMode: ThemeMode;
   showSettings: boolean;
+  showOnboarding: boolean;
   showPairDeviceDialog: boolean;
   activeSettingsTab: SettingsTab;
   activeLlmProfileTab: LlmProfileTab;
@@ -75,6 +76,7 @@ const initialHomeUiState: HomeUiState = {
   command: "",
   themeMode: "day",
   showSettings: false,
+  showOnboarding: false,
   showPairDeviceDialog: false,
   activeSettingsTab: "general",
   activeLlmProfileTab: "supervisor",
@@ -202,6 +204,7 @@ export const homeUiSetters = {
   setCommand: homeUiStateManager.createSetter("command"),
   setThemeMode: homeUiStateManager.createSetter("themeMode"),
   setShowSettings: homeUiStateManager.createSetter("showSettings"),
+  setShowOnboarding: homeUiStateManager.createSetter("showOnboarding"),
   setShowPairDeviceDialog: homeUiStateManager.createSetter("showPairDeviceDialog"),
   setActiveSettingsTab: homeUiStateManager.createSetter("activeSettingsTab"),
   setActiveLlmProfileTab: homeUiStateManager.createSetter("activeLlmProfileTab"),

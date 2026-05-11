@@ -632,6 +632,32 @@ describe("agent output normalization", () => {
     expect(activity).toEqual([]);
   });
 
+  it("labels permission activity from the stored outcome status", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        {
+          id: "permission-request",
+          type: "permission",
+          text: "Permission requested: allow_once Allow, reject_once Reject",
+          timestamp: "2026-05-10T00:00:00.000Z",
+          status: "pending",
+        },
+        {
+          id: "permission-result",
+          type: "permission",
+          text: "Permission approved for request 1: allow_once Allow",
+          timestamp: "2026-05-10T00:00:01.000Z",
+          status: "approved",
+        },
+      ],
+    });
+
+    expect(activity).toMatchObject([
+      { kind: "permission", title: "terminal.permission.requested", status: "pending" },
+      { kind: "permission", title: "terminal.permission.approved", status: "approved" },
+    ]);
+  });
+
   it("extracts the latest plain text worker turn instead of the initial chatter", () => {
     const summary = extractLatestPlainTextTurn({
       outputEntries: [

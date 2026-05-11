@@ -430,17 +430,18 @@ class RuntimeClient implements acp.Client {
     if (!record) {
       return { outcome: { outcome: "cancelled" } };
     }
+    const requestId = nextPermissionRequestId++;
     record.updatedAt = nowIso();
     record.state = "working";
     appendOutputEntry(record, {
       type: "permission",
       text: `Permission requested${params.options.length > 0 ? `: ${params.options.map((option) => `${option.kind} ${option.name}`).join(", ")}` : ""}`,
       status: "pending",
-      raw: params,
+      raw: { ...params, requestId },
     });
     return new Promise((resolve) => {
       record.pendingPermissions.push({
-        requestId: nextPermissionRequestId++,
+        requestId,
         params,
         requestedAt: nowIso(),
         resolve,
@@ -1127,11 +1128,39 @@ export class AgentRuntimeManager {
 
     if (decision === "cancel") {
       pending.resolve({ outcome: { outcome: "cancelled" } });
+      appendOutputEntry(record, {
+        type: "permission",
+        text: `Permission cancelled for request ${pending.requestId}`,
+        status: "cancelled",
+        raw: { requestId: pending.requestId, decision },
+      });
     } else {
       const optionId = this.findPermissionOptionId(pending.params, decision, explicitOptionId);
       pending.resolve(optionId
         ? { outcome: { outcome: "selected", optionId } }
         : { outcome: { outcome: "cancelled" } });
+      const option = optionId
+        ? pending.params.options.find((candidate) => candidate.optionId === optionId)
+        : null;
+      const status = optionId
+        ? decision === "approve" ? "approved" : "denied"
+        : "cancelled";
+      const optionLabel = option
+        ? `${option.kind} ${option.name}`.trim()
+        : optionId;
+      appendOutputEntry(record, {
+        type: "permission",
+        text: optionLabel
+          ? `Permission ${status} for request ${pending.requestId}: ${optionLabel}`
+          : `Permission ${status} for request ${pending.requestId}`,
+        status,
+        raw: {
+          requestId: pending.requestId,
+          decision,
+          optionId: optionId ?? null,
+          option: option ?? null,
+        },
+      });
     }
     record.updatedAt = nowIso();
     return pending;

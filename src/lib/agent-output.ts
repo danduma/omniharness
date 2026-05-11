@@ -604,6 +604,19 @@ function normalizeStatus(value: string | null | undefined, fallback = "pending")
   return normalized.length > 0 ? normalized : fallback;
 }
 
+function permissionTitleKeyForStatus(status: string) {
+  if (status === "approved") {
+    return "terminal.permission.approved";
+  }
+  if (status === "denied") {
+    return "terminal.permission.denied";
+  }
+  if (status === "cancelled" || status === "canceled") {
+    return "terminal.permission.cancelled";
+  }
+  return "terminal.permission.requested";
+}
+
 function isFinalToolStatus(value: string | null | undefined): boolean {
   return value ? TERMINAL_TOOL_STATUSES.has(value.trim().toLowerCase()) : false;
 }
@@ -869,13 +882,14 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
         continue;
       }
       finishOpenThinking(entry.timestamp);
+      const status = normalizeStatus(entry.status);
       items.push({
         id: entry.id,
         kind: "permission",
-        title: "Permission requested",
+        title: permissionTitleKeyForStatus(status),
         text,
         timestamp: entry.timestamp,
-        status: normalizeStatus(entry.status),
+        status,
       });
       continue;
     }

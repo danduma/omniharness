@@ -1,5 +1,5 @@
 import type React from "react";
-import { Archive, Bolt, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Trash2, TriangleAlert } from "lucide-react";
+import { Archive, Bolt, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Trash2, TriangleAlert, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -48,6 +48,7 @@ export interface ConversationSidebarProps {
   collapsedProjectPaths: Set<string>;
   onProjectOpenChange: (projectPath: string, open: boolean) => void;
   setShowSettings: React.Dispatch<React.SetStateAction<boolean>>;
+  openOnboarding: () => void;
   openFolderPicker: () => void;
   startNewPlan: () => void;
   beginConversationInProject: (projectPath: string) => void;
@@ -81,6 +82,7 @@ export function ConversationSidebar({
   collapsedProjectPaths,
   onProjectOpenChange,
   setShowSettings,
+  openOnboarding,
   openFolderPicker,
   startNewPlan,
   beginConversationInProject,
@@ -398,6 +400,9 @@ export function ConversationSidebar({
           >
             <DropdownMenuItem className="cursor-pointer whitespace-nowrap max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5" onClick={() => setShowSettings(true)}>
               <Settings className="mr-2 h-4 w-4" /> Settings
+            </DropdownMenuItem>
+            <DropdownMenuItem className="cursor-pointer whitespace-nowrap max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5" onClick={openOnboarding}>
+              <Wand2 className="mr-2 h-4 w-4" /> Setup CLIs
             </DropdownMenuItem>
             <DropdownMenuItem className="hidden cursor-pointer whitespace-nowrap lg:flex" onClick={openPairDeviceDialog}>
               <Smartphone className="mr-2 h-4 w-4" /> Connect Phone

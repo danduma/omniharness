@@ -1,5 +1,5 @@
 import type React from "react";
-import { ArrowDown, Blocks, CheckCircle2, ChevronDown, CircleAlert, CirclePlay, CircleStop, GitBranch, ListTree, Pencil, RotateCcw, Route, Settings, Terminal as TerminalIcon } from "lucide-react";
+import { ArrowDown, Blocks, ChevronDown, CirclePlay, CircleStop, GitBranch, ListTree, Pencil, RotateCcw, Route } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -10,7 +10,7 @@ import { conversationMainManager } from "@/components/component-state-managers";
 import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
 import { extractLatestPlainTextTurn } from "@/lib/agent-output";
 import { shouldShowPlanningTerminalActivity } from "@/lib/planning-output";
-import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, NoticeDescriptor, RunRecord, WorkerAvailability } from "@/app/home/types";
+import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, NoticeDescriptor, RunRecord } from "@/app/home/types";
 import type { RecoveryIncidentRecord, RunRecoveryState } from "@/app/home/types";
 import { formatExecutionTimestamp, getExecutionEventDetailRows, summarizeExecutionEvent, type ConversationTimelineItem } from "@/app/home/utils";
 import { cn } from "@/lib/utils";
@@ -21,7 +21,6 @@ import { RecoveryIncidentInspector } from "./RecoveryIncidentInspector";
 import { RunRecoveryNotice } from "./RunRecoveryNotice";
 import { UserInputMessage, type UserInputMessageAction } from "./UserInputMessage";
 import { t, useI18nSnapshot } from "@/lib/i18n";
-import { getWorkerAvailabilityMessage, getWorkerSetupCommand } from "@/components/settings/worker-availability-copy";
 
 interface ConversationExecutionStatusProps {
   liveExecutionStatus: { label: string; detail: string; tone: "error" | "warning" | "muted" | "active" };
@@ -360,117 +359,9 @@ interface ConversationMainProps {
   liveExecutionStatus: ConversationExecutionStatusProps["liveExecutionStatus"];
   liveThoughts: ConversationExecutionStatusProps["liveThoughts"];
   executionEvents: ExecutionEventRecord[];
-  cliSetupWorkers: WorkerAvailability[];
-  onOpenAgentSettings: () => void;
   emptyComposer: React.ReactNode;
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
-}
-
-function getCliSetupTone(worker: WorkerAvailability) {
-  if (worker.availability.status === "ok" && worker.authentication?.status !== "not_authenticated") {
-    return "ready";
-  }
-  if (!worker.availability.binary) {
-    return "missing";
-  }
-  if (worker.authentication?.status === "not_authenticated") {
-    return "auth";
-  }
-  return "check";
-}
-
-function getCliSetupLabelKey(worker: WorkerAvailability) {
-  const tone = getCliSetupTone(worker);
-  if (tone === "ready") {
-    return "settings.agents.onboarding.ready";
-  }
-  if (tone === "missing") {
-    return "settings.agents.onboarding.install";
-  }
-  if (tone === "auth") {
-    return "settings.agents.onboarding.signIn";
-  }
-  return "settings.agents.onboarding.check";
-}
-
-function CliSetupOnboarding({
-  workers,
-  onOpenAgentSettings,
-}: {
-  workers: WorkerAvailability[];
-  onOpenAgentSettings: () => void;
-}) {
-  const visibleWorkers = workers.filter((worker) => (
-    worker.availability.status !== "ok"
-    || worker.authentication?.status === "not_authenticated"
-    || worker.authentication?.status === "unknown"
-  ));
-
-  if (visibleWorkers.length === 0) {
-    return null;
-  }
-
-  return (
-    <section
-      className="mb-6 w-full rounded-lg border border-border/70 bg-muted/20 p-3 text-left shadow-sm"
-      aria-label={t("settings.agents.onboarding.ariaLabel")}
-    >
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-foreground">{t("settings.agents.onboarding.title")}</h2>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">{t("settings.agents.onboarding.description")}</p>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-8 shrink-0 gap-1.5 px-2 text-xs"
-          onClick={onOpenAgentSettings}
-        >
-          <Settings className="h-3.5 w-3.5" />
-          {t("settings.agents.onboarding.openSettings")}
-        </Button>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {visibleWorkers.map((worker) => {
-          const tone = getCliSetupTone(worker);
-          const isReady = tone === "ready";
-          const command = getWorkerSetupCommand(worker);
-          const detail = getWorkerAvailabilityMessage(worker) || t("settings.agents.onboarding.statusUnknown");
-
-          return (
-            <div key={worker.type} className="min-w-0 rounded-md border border-border/60 bg-background/75 p-3">
-              <div className="flex min-w-0 items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  {isReady ? (
-                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
-                  ) : (
-                    <CircleAlert className="h-4 w-4 shrink-0 text-amber-600" />
-                  )}
-                  <span className="min-w-0 truncate text-sm font-medium text-foreground">{worker.label}</span>
-                </div>
-                <span className={cn(
-                  "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase",
-                  isReady ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
-                )}>
-                  {t(getCliSetupLabelKey(worker))}
-                </span>
-              </div>
-              <p className="mt-2 min-h-8 text-xs leading-4 text-muted-foreground">{detail}</p>
-              {!isReady ? (
-                <div className="mt-3 flex items-center gap-2 rounded-md bg-muted/60 px-2 py-1.5 font-mono text-[11px] text-foreground">
-                  <TerminalIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <span className="shrink-0 text-muted-foreground">{t("settings.agents.onboarding.command")}</span>
-                  <code className="min-w-0 truncate">{command}</code>
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
 }
 
 function LatestRecoveryAction({
@@ -551,8 +442,6 @@ export function ConversationMain({
   liveExecutionStatus,
   liveThoughts,
   executionEvents,
-  cliSetupWorkers,
-  onOpenAgentSettings,
   emptyComposer,
   projectRoot,
   onOpenProjectFile,
@@ -860,7 +749,6 @@ export function ConversationMain({
             ))}
           </div>
         ) : null}
-        <CliSetupOnboarding workers={cliSetupWorkers} onOpenAgentSettings={onOpenAgentSettings} />
         <h1 className="mb-4 text-[1.7rem] font-semibold leading-tight">What shall we build in {welcomeRepoName}?</h1>
         {emptyComposer}
       </div>

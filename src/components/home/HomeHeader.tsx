@@ -38,6 +38,7 @@ interface HomeHeaderProps {
   collapsedProjectPaths: Set<string>;
   onProjectOpenChange: (projectPath: string, open: boolean) => void;
   setShowSettings: Dispatch<SetStateAction<boolean>>;
+  openOnboarding: () => void;
   openFolderPicker: () => void;
   startNewPlan: () => void;
   beginConversationInProject: (projectPath: string) => void;
@@ -104,6 +105,7 @@ export function HomeHeader({
   collapsedProjectPaths,
   onProjectOpenChange,
   setShowSettings,
+  openOnboarding,
   openFolderPicker,
   startNewPlan,
   beginConversationInProject,
@@ -233,6 +235,7 @@ export function HomeHeader({
             collapsedProjectPaths={collapsedProjectPaths}
             onProjectOpenChange={onProjectOpenChange}
             setShowSettings={setShowSettings}
+            openOnboarding={openOnboarding}
             openFolderPicker={openFolderPicker}
             startNewPlan={startNewPlan}
             beginConversationInProject={beginConversationInProject}
