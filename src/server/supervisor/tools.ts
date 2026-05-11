@@ -2,6 +2,8 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { SUPPORTED_WORKER_TYPES } from "./worker-types";
 
+type SupervisorTool = ReturnType<typeof createTool>;
+
 const queuedToolResult = async () => ({ queued: true });
 
 const mcpEnvVariableSchema = z.object({
@@ -28,11 +30,59 @@ const mcpServerSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
-export function buildSupervisorTools(options?: { allowedWorkerTypes?: string[]; preferredWorkerType?: string | null }) {
+export function buildSupervisorTools(options?: {
+  allowedWorkerTypes?: string[];
+  preferredWorkerType?: string | null;
+  memoryEnabled?: boolean;
+}) {
   const allowedWorkerTypes = options?.allowedWorkerTypes?.length ? options.allowedWorkerTypes : [...SUPPORTED_WORKER_TYPES];
   const preferredWorkerType = options?.preferredWorkerType?.trim() || null;
+  const memoryEnabled = options?.memoryEnabled !== false;
 
-  return {
+  const memoryTools: Record<string, SupervisorTool> = memoryEnabled
+    ? {
+        memory_list: createTool({
+          id: "memory_list",
+          description:
+            "List durable project memory files under .omniharness/memory/. Use this to discover what project-level memory exists before reading or updating it. Memory holds project conventions, decisions, gotchas, verification commands, and reusable lessons across conversations.",
+          inputSchema: z.object({}),
+          execute: queuedToolResult,
+        }),
+        memory_read: createTool({
+          id: "memory_read",
+          description:
+            "Read a project memory file under .omniharness/memory/. Use before steering or completing if the task touches project conventions, prior decisions, known gotchas, or verification.",
+          inputSchema: z.object({
+            path: z.string().describe("Path relative to .omniharness/memory/, such as gotchas.md or decisions.md."),
+          }),
+          execute: queuedToolResult,
+        }),
+        memory_write: createTool({
+          id: "memory_write",
+          description:
+            "Replace a project memory file under .omniharness/memory/. Use for intentional cleanup or replacing a clearly stale section. Prefer memory_append for ordinary updates.",
+          inputSchema: z.object({
+            path: z.string(),
+            content: z.string(),
+            reason: z.string().optional().describe("Short explanation of why this write happens."),
+          }),
+          execute: queuedToolResult,
+        }),
+        memory_append: createTool({
+          id: "memory_append",
+          description:
+            "Append content to a project memory file under .omniharness/memory/. Prefer dated bullets for new durable lessons. Use this for normal memory updates.",
+          inputSchema: z.object({
+            path: z.string(),
+            content: z.string(),
+            reason: z.string().optional(),
+          }),
+          execute: queuedToolResult,
+        }),
+      }
+    : {};
+
+  const baseTools = {
     worker_spawn: createTool({
       id: "worker_spawn",
       description:
@@ -187,4 +237,6 @@ export function buildSupervisorTools(options?: { allowedWorkerTypes?: string[]; 
       execute: queuedToolResult,
     }),
   };
+
+  return Object.assign({}, baseTools, memoryTools) as typeof baseTools & Record<string, SupervisorTool>;
 }

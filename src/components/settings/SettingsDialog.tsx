@@ -15,12 +15,15 @@ import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 import { ModelsSettingsPanel } from "./ModelsSettingsPanel";
 import { AgentsSettingsPanel } from "./AgentsSettingsPanel";
 import { RuntimeSettingsPanel } from "./RuntimeSettingsPanel";
+import { ProjectMemorySettingsPanel } from "./ProjectMemorySettingsPanel";
+import { parseBooleanSetting } from "@/app/home/utils";
 
 const SETTINGS_TABS: Array<{ value: SettingsTab; labelKey: string }> = [
   { value: "general", labelKey: "settings.tabs.general" },
   { value: "models", labelKey: "settings.tabs.models" },
   { value: "agents", labelKey: "settings.tabs.agents" },
   { value: "runtime", labelKey: "settings.tabs.runtime" },
+  { value: "memory", labelKey: "settings.tabs.memory" },
 ];
 
 interface SettingsDialogProps {
@@ -46,6 +49,7 @@ interface SettingsDialogProps {
     isPending: boolean;
     mutate: () => void;
   };
+  activeProjectPath: string | null;
 }
 
 export function SettingsDialog({
@@ -63,6 +67,7 @@ export function SettingsDialog({
   workerCatalogQuery,
   settingsDiagnostics,
   saveSettings,
+  activeProjectPath,
 }: SettingsDialogProps) {
   const appearancePreferences = useManagerSnapshot(appearancePreferencesManager);
   useI18nSnapshot();
@@ -141,6 +146,12 @@ export function SettingsDialog({
             ) : null}
             {activeSettingsTab === "runtime" ? (
               <RuntimeSettingsPanel settings={settingsDraft.draft} setSetting={setSetting} />
+            ) : null}
+            {activeSettingsTab === "memory" ? (
+              <ProjectMemorySettingsPanel
+                projectPath={activeProjectPath}
+                globalMemoryEnabled={parseBooleanSetting(settingsDraft.draft.SUPERVISOR_MEMORY_ENABLED, true)}
+              />
             ) : null}
 
             {settingsDiagnostics.length > 0 ? (

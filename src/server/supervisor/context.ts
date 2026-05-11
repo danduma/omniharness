@@ -7,6 +7,8 @@ import { db } from "@/server/db";
 import { clarifications, executionEvents, messages, plans, runs, workers } from "@/server/db/schema";
 import { appendAttachmentContext, parseChatAttachmentsJson } from "@/lib/chat-attachments";
 import { parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
+import { getMemoryRoot } from "@/server/supervisor/memory-paths";
+import { listMemory } from "@/server/supervisor/memory-tools";
 
 function truncate(text: string, maxLength: number) {
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
@@ -34,6 +36,23 @@ export interface WorkerObservation {
   stopReason: string | null;
 }
 
+export interface ProjectMemoryMetadata {
+  root: string;
+  files: Array<{ path: string; size: number; updatedAt: string }>;
+}
+
+export interface ProjectMemoryRecentRead {
+  path: string;
+  content: string;
+  truncated: boolean;
+}
+
+export interface ProjectMemoryRecentWrite {
+  path: string;
+  operation: "write" | "append";
+  reason: string | null;
+}
+
 export interface SupervisorTurnContext {
   runId: string;
   projectPath: string | null;
@@ -52,6 +71,9 @@ export interface SupervisorTurnContext {
   activeWorkers: WorkerObservation[];
   recentEvents: Array<{ eventType: string; summary: string; createdAt: string; workerId: string | null }>;
   compactedMemory: string | null;
+  projectMemory: ProjectMemoryMetadata | null;
+  projectMemoryRecentReads: ProjectMemoryRecentRead[];
+  projectMemoryRecentWrites: ProjectMemoryRecentWrite[];
 }
 
 function parseCompactedMemory(details: string | null) {
@@ -132,6 +154,44 @@ function parseRepoInspectionEvent(details: string | null) {
   }
 }
 
+function parseMemoryReadEvent(details: string | null): ProjectMemoryRecentRead | null {
+  if (!details) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(details) as Record<string, unknown>;
+    if (typeof parsed.path !== "string" || typeof parsed.content !== "string") {
+      return null;
+    }
+    return {
+      path: parsed.path,
+      content: parsed.content,
+      truncated: parsed.truncated === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseMemoryWriteEvent(details: string | null, operation: "write" | "append"): ProjectMemoryRecentWrite | null {
+  if (!details) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(details) as Record<string, unknown>;
+    if (typeof parsed.path !== "string") {
+      return null;
+    }
+    return {
+      path: parsed.path,
+      operation,
+      reason: typeof parsed.reason === "string" ? parsed.reason : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function parseWorkerHistoryReadEvent(details: string | null) {
   if (!details) {
     return null;
@@ -153,7 +213,10 @@ function parseWorkerHistoryReadEvent(details: string | null) {
   }
 }
 
-export async function buildSupervisorTurnContext(runId: string): Promise<SupervisorTurnContext> {
+export async function buildSupervisorTurnContext(
+  runId: string,
+  options?: { memoryEnabled?: boolean },
+): Promise<SupervisorTurnContext> {
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
   if (!run) {
     throw new Error(`Run ${runId} not found`);
@@ -268,6 +331,32 @@ export async function buildSupervisorTurnContext(runId: string): Promise<Supervi
       };
     });
 
+  const memoryEnabled = options?.memoryEnabled !== false;
+  let projectMemory: ProjectMemoryMetadata | null = null;
+  let projectMemoryRecentReads: ProjectMemoryRecentRead[] = [];
+  let projectMemoryRecentWrites: ProjectMemoryRecentWrite[] = [];
+
+  if (memoryEnabled && run.projectPath) {
+    const root = getMemoryRoot(run.projectPath);
+    const files = listMemory(run.projectPath).slice(0, 12);
+    projectMemory = { root, files };
+
+    projectMemoryRecentReads = allEvents
+      .filter((event) => event.eventType === "supervisor_memory_read")
+      .map((event) => parseMemoryReadEvent(event.details))
+      .filter((entry): entry is ProjectMemoryRecentRead => Boolean(entry))
+      .slice(0, 4);
+
+    projectMemoryRecentWrites = allEvents
+      .filter((event) => event.eventType === "supervisor_memory_written" || event.eventType === "supervisor_memory_appended")
+      .map((event) => parseMemoryWriteEvent(
+        event.details,
+        event.eventType === "supervisor_memory_appended" ? "append" : "write",
+      ))
+      .filter((entry): entry is ProjectMemoryRecentWrite => Boolean(entry))
+      .slice(0, 6);
+  }
+
   return {
     runId,
     projectPath: run.projectPath,
@@ -289,5 +378,8 @@ export async function buildSupervisorTurnContext(runId: string): Promise<Supervi
     activeWorkers,
     recentEvents,
     compactedMemory,
+    projectMemory,
+    projectMemoryRecentReads,
+    projectMemoryRecentWrites,
   };
 }

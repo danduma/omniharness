@@ -35,6 +35,7 @@ export function AgentsSettingsPanel({
   const configuredAllowedWorkerSet = new Set(configuredAllowedWorkerTypes);
   const defaultWorkerType = parseWorkerType(settings.WORKER_DEFAULT_TYPE) ?? configuredAllowedWorkerTypes[0] ?? "codex";
   const yoloEnabled = parseBooleanSetting(settings.WORKER_YOLO_MODE, true);
+  const memoryEnabled = parseBooleanSetting(settings.SUPERVISOR_MEMORY_ENABLED, true);
   const defaultWorkerOptions = WORKER_OPTIONS
     .filter((option) => configuredAllowedWorkerSet.has(option.value))
     .map((option) => ({ value: option.value, label: option.label }));
@@ -77,6 +78,19 @@ export function AgentsSettingsPanel({
         />
         <div className="min-w-0 space-y-1">
           <div className="text-sm font-medium">{t("settings.agents.dangerouslySkipPermissions")}</div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 rounded-lg border border-border/60 bg-background/70 p-3">
+        <Switch
+          id="SUPERVISOR_MEMORY_ENABLED"
+          aria-label={t("settings.agents.toggleSupervisorMemory")}
+          checked={memoryEnabled}
+          onCheckedChange={(checked) => setSetting("SUPERVISOR_MEMORY_ENABLED", checked ? "true" : "false")}
+        />
+        <div className="min-w-0 space-y-1">
+          <div className="text-sm font-medium">{t("settings.agents.supervisorMemory")}</div>
+          <p className="text-xs text-muted-foreground">{t("settings.agents.supervisorMemoryHelp")}</p>
         </div>
       </div>
 

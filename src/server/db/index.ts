@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS runs (
   failed_at integer,
   last_error text,
   archived_at integer,
+  memory_metadata_revision integer NOT NULL DEFAULT 0,
+  last_memory_consolidation_at integer,
   created_at integer NOT NULL,
   updated_at integer NOT NULL,
   FOREIGN KEY (plan_id) REFERENCES plans(id) ON UPDATE no action ON DELETE no action
@@ -373,6 +375,14 @@ if (!runColumnNames.has("last_error")) {
 
 if (!runColumnNames.has("archived_at")) {
   sqlite.exec("ALTER TABLE runs ADD COLUMN archived_at integer;");
+}
+
+if (!runColumnNames.has("memory_metadata_revision")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN memory_metadata_revision integer NOT NULL DEFAULT 0;");
+}
+
+if (!runColumnNames.has("last_memory_consolidation_at")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN last_memory_consolidation_at integer;");
 }
 
 const messageColumns = sqlite.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>;

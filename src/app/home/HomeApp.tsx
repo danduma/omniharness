@@ -10,14 +10,12 @@ import { ConversationMain } from "@/components/home/ConversationMain";
 import { ConversationSidebar } from "@/components/home/ConversationSidebar";
 import { HomeHeader } from "@/components/home/HomeHeader";
 import { SideWindow } from "@/components/home/SideWindow";
-import type { PendingChatAttachment } from "@/lib/chat-attachments";
-import type { ProjectFileReference } from "@/lib/project-file-links";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { WORKER_OPTIONS, RUN_PATH_PATTERN } from "./constants";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
 import { conversationNotificationManager } from "./ConversationNotificationManager";
 import { sideWindowManager } from "./SideWindowManager";
-import { parseBusyMessageAction, type BusyMessageAction } from "./busy-message-behavior";
+import { parseBusyMessageAction } from "./busy-message-behavior";
 import { EventStreamStateManager } from "./EventStreamStateManager";
 import {
   homeUiSetters,
@@ -42,18 +40,14 @@ import { useHomeLifecycle } from "./useHomeLifecycle";
 import { shallowEqualRecord, useManagerSelector, useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { useRunRecoveryState } from "./useRunRecoveryState";
 import { useRunSelectionEffects } from "./useRunSelectionEffects";
-import type {
-  ConversationModeOption,
-  EventStreamState,
-  MessageRecord,
-  SidebarGroup,
-} from "./types";
+import type { EventStreamState, MessageRecord, SidebarGroup } from "./types";
 import { useHomeQueries } from "./useHomeQueries";
 import { useHomeViewModel } from "./useHomeViewModel";
 import { useHomeMutations } from "./useHomeMutations";
 import { useConversationActions } from "./useConversationActions";
 import { useHomeLayoutController } from "./useHomeLayoutController";
 import { ComposerContainer } from "./ComposerContainer";
+import { t } from "@/lib/i18n";
 
 const FolderPickerDialog = dynamic(
   () => import("@/components/FolderPickerDialog").then((m) => m.FolderPickerDialog),
@@ -148,10 +142,7 @@ export function HomeApp() {
     setDraftProjectPath,
     setReadMarkers,
     setCollapsedProjectPaths,
-    setRenamingRunId,
     setRenameValue,
-    setRenameSource,
-    setEditingMessageId,
     setEditingMessageValue,
     setExpandedDirectMessageIds,
     setRouteReady,
@@ -161,13 +152,10 @@ export function HomeApp() {
     setSelectedModel,
     setSelectedEffort,
     setHydratedRunSelectionId,
-    clearAttachments,
     setPairTokenFromUrl,
     setAuthError,
-    setPairRedeemError,
     setPairRedeemAttempted,
     setRuntimeErrors,
-    setSettingsDiagnostics,
   } = homeUiSetters;
 
   // Event stream state
@@ -205,13 +193,13 @@ export function HomeApp() {
   );
   useEffect(() => {
     const body = document.body;
-    const styles = appearanceTextSizeStyle as Record<string, string | number | undefined>;
+    const textSizeStyles = appearanceTextSizeStyle as Record<string, string | number | undefined>;
     body.classList.add("omni-app-text-scale");
-    for (const [prop, val] of Object.entries(styles)) {
-      if (typeof val === "string" || typeof val === "number") body.style.setProperty(prop, String(val));
+    for (const [property, value] of Object.entries(textSizeStyles)) {
+      if (typeof value === "string" || typeof value === "number") body.style.setProperty(property, String(value));
     }
     return () => {
-      for (const prop of Object.keys(styles)) body.style.removeProperty(prop);
+      for (const property of Object.keys(textSizeStyles)) body.style.removeProperty(property);
       body.classList.remove("omni-app-text-scale");
     };
   }, [appearanceTextSizeStyle]);
@@ -282,7 +270,6 @@ export function HomeApp() {
 
   const {
     runs,
-    plans,
     selectedRun,
     isImplementationConversation,
     isPlanningConversation,
@@ -302,7 +289,6 @@ export function HomeApp() {
     conversationAgents,
     activeConversationAgents,
     busyConversationWorkerId,
-    isConversationStoppable,
     latestUserCheckpoint,
     liveThoughts,
     selectedRunExecutionEvents,
@@ -559,12 +545,12 @@ export function HomeApp() {
   const pendingConversationWorkerId = !isImplementationConversation && sendConversationMessage.isPending
     ? selectedRunWorkersForDisplay[0]?.id ?? null
     : null;
-  const effectiveStoppableWorkerId = busyConversationWorkerId ?? pendingConversationWorkerId;
-  const effectiveIsConversationStoppable = isSupervisorRunning || Boolean(effectiveStoppableWorkerId);
+  const stoppableConversationWorkerId = busyConversationWorkerId ?? pendingConversationWorkerId;
+  const effectiveIsConversationStoppable = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
   const isStopConversationPending = stopSupervisor.isPending || stopWorker.isPending;
   const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || sendQueuedMessageNow.isPending || promotePlanningConversation.isPending || isStopConversationPending;
   const busyMessageAction = parseBusyMessageAction(apiKeys.BUSY_MESSAGE_ACTION);
-  const hasBusyConversation = isSupervisorRunning || Boolean(effectiveStoppableWorkerId);
+  const hasBusyConversation = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
   const lockedDirectWorkerLabel = WORKER_OPTIONS.find((o) => o.value === (selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent))?.label
     || WORKER_OPTIONS.find((o) => o.value === autoSelectedWorkerType)?.label
     || "Direct worker";
@@ -578,7 +564,7 @@ export function HomeApp() {
   const handleStopConversation = () => {
     if (!selectedRunId || isStopConversationPending) return;
     if (isSupervisorRunning) { stopSupervisor.mutate({ runId: selectedRunId }); return; }
-    if (effectiveStoppableWorkerId) stopWorker.mutate({ runId: selectedRunId, workerId: effectiveStoppableWorkerId });
+    if (stoppableConversationWorkerId) stopWorker.mutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId });
   };
 
   const renderComposer = (className: string) => (
@@ -692,7 +678,7 @@ export function HomeApp() {
         <button
           type="button"
           className="absolute inset-y-0 right-0 z-10 w-3 translate-x-1/2 cursor-col-resize bg-transparent"
-          aria-label="Resize conversations sidebar"
+          aria-label={t("sidebar.resize.conversations")}
           onPointerDown={layout.handleLeftSidebarResizeStart}
         />
         <div className={`flex h-full min-w-0 flex-1 transition-transform duration-150 ease-out motion-reduce:transition-none ${leftSidebarOpen ? "translate-x-0" : "-translate-x-3"}`}>
@@ -807,7 +793,7 @@ export function HomeApp() {
           <button
             type="button"
             className="absolute inset-y-0 left-0 z-10 w-3 -translate-x-1/2 cursor-col-resize bg-transparent"
-            aria-label="Resize workspace side window"
+            aria-label={t("sidebar.resize.workspace")}
             onPointerDown={layout.handleRightSidebarResizeStart}
           />
           <div className={`flex h-full min-w-0 flex-1 pl-2 transition-transform duration-150 ease-out motion-reduce:transition-none ${rightSidebarOpen ? "translate-x-0" : "translate-x-3"}`}>
@@ -851,6 +837,7 @@ export function HomeApp() {
         workerCatalogQuery={workerCatalogQuery}
         settingsDiagnostics={settingsDiagnostics}
         saveSettings={saveSettings}
+        activeProjectPath={activeConversationCwd ?? null}
       />
 
       <PairDeviceDialog

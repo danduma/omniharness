@@ -33,6 +33,9 @@ import { assessPlanReadiness } from "@/server/plans/readiness";
 import { pauseForClarifications } from "@/server/clarifications/loop";
 import { runMilestoneAutoCommit } from "@/server/git/run-auto-commit";
 import { notifyRunLifecycleEventBestEffort } from "@/server/notifications/triggers";
+import { isProjectMemoryEnabled } from "@/server/projects/config";
+import { appendMemory, listMemory, readMemory, writeMemory } from "@/server/supervisor/memory-tools";
+import { consolidateProjectMemory } from "@/server/supervisor/memory-consolidation";
 
 export interface SupervisorOptions {
   runId: string;
@@ -142,6 +145,7 @@ function normalizeBridgeWorkerMode(value: unknown) {
 
 const WORKER_YOLO_MODE_SETTING = "WORKER_YOLO_MODE";
 const CREDIT_STRATEGY_SETTING = "CREDIT_STRATEGY";
+const SUPERVISOR_MEMORY_ENABLED_SETTING = "SUPERVISOR_MEMORY_ENABLED";
 const SUPERVISOR_FILE_READ_LIMIT = 60_000;
 const SUPERVISOR_INSPECT_OUTPUT_LIMIT = 20_000;
 const SUPERVISOR_INSPECT_TIMEOUT_MS = 10_000;
@@ -193,6 +197,22 @@ function isMissingAgentError(error: unknown) {
 
 function formatSupervisorError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isInfraFailureReason(reason: string) {
+  const normalized = reason.toLowerCase();
+  return [
+    "quota",
+    "rate limit",
+    "rate-limit",
+    "credit",
+    "econn",
+    "etimedout",
+    "network",
+    "bridge",
+    "spawn",
+    "agent not found",
+  ].some((pattern) => normalized.includes(pattern));
 }
 
 function truncate(text: string, maxLength: number) {
@@ -494,6 +514,17 @@ async function insertRunMessage(runId: string, role: string, content: string, ki
   notifyEventStreamSubscribers();
 }
 
+async function bumpMemoryMetadataRevision(runId: string) {
+  const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+  if (!run) {
+    return;
+  }
+  await db.update(runs).set({
+    memoryMetadataRevision: (run.memoryMetadataRevision ?? 0) + 1,
+    updatedAt: new Date(),
+  }).where(eq(runs.id, runId));
+}
+
 async function insertExecutionEvent(
   runId: string,
   eventType: string,
@@ -698,17 +729,27 @@ export class Supervisor {
     const llmConfig = getSupervisorModelConfig(process.env);
     validateSupervisorModelConfig(llmConfig, decryptionFailures);
 
+    const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+    const globalMemoryEnabled = parseBooleanSettingValue(settingValues.get(SUPERVISOR_MEMORY_ENABLED_SETTING), true);
+    const projectMemoryEnabled = run?.projectPath ? isProjectMemoryEnabled(run.projectPath) : false;
+    const memoryEnabled = globalMemoryEnabled && projectMemoryEnabled;
+
     return {
       llmConfig,
       fallbackLlmConfig: getSupervisorModelConfig(process.env, "fallback"),
       envParams,
       creditStrategy: settingValues.get(CREDIT_STRATEGY_SETTING) ?? "swap_account",
       yoloModeEnabled: parseBooleanSettingValue(settingValues.get(WORKER_YOLO_MODE_SETTING), true),
+      memoryEnabled,
     };
   }
 
-  private async requestToolCalls(llmConfig: ReturnType<typeof getSupervisorModelConfig>, heartbeatCount: number) {
-    const context = await buildSupervisorTurnContext(this.runId);
+  private async requestToolCalls(
+    llmConfig: ReturnType<typeof getSupervisorModelConfig>,
+    heartbeatCount: number,
+    options?: { memoryEnabled?: boolean },
+  ) {
+    const context = await buildSupervisorTurnContext(this.runId, { memoryEnabled: options?.memoryEnabled !== false });
     const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
     if (!run) {
       throw new Error(`Run ${this.runId} not found`);
@@ -729,6 +770,21 @@ export class Supervisor {
         reason: promptBundle.stats.reason,
         memorySummary: promptBundle.stats.memorySummary,
       });
+
+      if (options?.memoryEnabled !== false) {
+        try {
+          await consolidateProjectMemory({
+            runId: this.runId,
+            trigger: "compaction",
+          });
+        } catch (consolidationError) {
+          await insertExecutionEvent(this.runId, "supervisor_memory_consolidation_failed", {
+            summary: "Memory consolidation failed during compaction; continuing.",
+            trigger: "compaction",
+            error: formatSupervisorError(consolidationError),
+          });
+        }
+      }
     }
 
     const agent = new Agent({
@@ -739,6 +795,7 @@ export class Supervisor {
       tools: buildSupervisorTools({
         preferredWorkerType: context.preferredWorkerType,
         allowedWorkerTypes: context.allowedWorkerTypes,
+        memoryEnabled: options?.memoryEnabled !== false,
       }),
     });
 
@@ -780,7 +837,7 @@ export class Supervisor {
       return { state: "completed" };
     }
 
-    const { llmConfig, fallbackLlmConfig, envParams, creditStrategy, yoloModeEnabled } = await this.createModel();
+    const { llmConfig, fallbackLlmConfig, envParams, creditStrategy, yoloModeEnabled, memoryEnabled } = await this.createModel();
 
     if (!await this.loadActiveRun()) {
       return { state: "completed" };
@@ -810,7 +867,7 @@ export class Supervisor {
     for (let turnStep = 0; turnStep < turnStepLimit; turnStep += 1) {
       let toolCalls: Awaited<ReturnType<typeof this.requestToolCalls>>;
       try {
-        toolCalls = await this.requestToolCalls(llmConfig, turnStep);
+        toolCalls = await this.requestToolCalls(llmConfig, turnStep, { memoryEnabled });
       } catch (error) {
         const quotaInfo = extractQuotaResetInfo(error, { provider: llmConfig.provider });
         if (!quotaInfo.isQuotaError) {
@@ -1272,6 +1329,82 @@ export class Supervisor {
           continue;
         }
 
+        case "memory_list": {
+          if (!memoryEnabled) {
+            throw new SupervisorProtocolError("Project memory is disabled for this run.");
+          }
+          const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+          const files = listMemory(run?.projectPath);
+          await insertExecutionEvent(this.runId, "supervisor_memory_listed", {
+            summary: `Listed ${files.length} project memory file(s).`,
+            files,
+          });
+          continue;
+        }
+
+        case "memory_read": {
+          if (!memoryEnabled) {
+            throw new SupervisorProtocolError("Project memory is disabled for this run.");
+          }
+          const requestedPath = asString(action.args.path, "path");
+          const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+          const result = readMemory(run?.projectPath, requestedPath);
+          await insertExecutionEvent(this.runId, "supervisor_memory_read", {
+            summary: `Read project memory file ${result.path}.`,
+            path: result.path,
+            absolutePath: result.absolutePath,
+            content: result.content,
+            truncated: result.truncated,
+            size: result.size,
+            updatedAt: result.updatedAt,
+          });
+          continue;
+        }
+
+        case "memory_write": {
+          if (!memoryEnabled) {
+            throw new SupervisorProtocolError("Project memory is disabled for this run.");
+          }
+          const requestedPath = asString(action.args.path, "path");
+          const content = asString(action.args.content, "content");
+          const reason = asOptionalString(action.args.reason, "reason");
+          const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+          const result = writeMemory(run?.projectPath, requestedPath, content);
+          await bumpMemoryMetadataRevision(this.runId);
+          await insertExecutionEvent(this.runId, "supervisor_memory_written", {
+            summary: `Wrote project memory file ${result.path}${reason ? `: ${reason}` : "."}`,
+            path: result.path,
+            absolutePath: result.absolutePath,
+            operation: "write",
+            bytesWritten: result.bytesWritten,
+            newSize: result.newSize,
+            reason,
+          });
+          continue;
+        }
+
+        case "memory_append": {
+          if (!memoryEnabled) {
+            throw new SupervisorProtocolError("Project memory is disabled for this run.");
+          }
+          const requestedPath = asString(action.args.path, "path");
+          const content = asString(action.args.content, "content");
+          const reason = asOptionalString(action.args.reason, "reason");
+          const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+          const result = appendMemory(run?.projectPath, requestedPath, content);
+          await bumpMemoryMetadataRevision(this.runId);
+          await insertExecutionEvent(this.runId, "supervisor_memory_appended", {
+            summary: `Appended to project memory file ${result.path}${reason ? `: ${reason}` : "."}`,
+            path: result.path,
+            absolutePath: result.absolutePath,
+            operation: "append",
+            bytesWritten: result.bytesWritten,
+            newSize: result.newSize,
+            reason,
+          });
+          continue;
+        }
+
         case "wait_until": {
           const seconds = Math.max(1, Math.min(300, Math.round(asNumber(action.args.seconds, "seconds"))));
           const reason = asString(action.args.reason, "reason");
@@ -1300,6 +1433,21 @@ export class Supervisor {
           await cancelRunWorkers(this.runId);
           if (!await this.loadActiveRun()) {
             return { state: "completed" };
+          }
+          if (memoryEnabled) {
+            try {
+              await consolidateProjectMemory({
+                runId: this.runId,
+                trigger: "completion",
+                outcomeSummary: summary,
+              });
+            } catch (consolidationError) {
+              await insertExecutionEvent(this.runId, "supervisor_memory_consolidation_failed", {
+                summary: "Memory consolidation failed during run completion; continuing.",
+                trigger: "completion",
+                error: formatSupervisorError(consolidationError),
+              });
+            }
           }
           const interventions = await db
             .select()
@@ -1332,6 +1480,21 @@ export class Supervisor {
           await cancelRunWorkers(this.runId);
           if (!await this.loadActiveRun()) {
             return { state: "completed" };
+          }
+          if (memoryEnabled && !isInfraFailureReason(reason)) {
+            try {
+              await consolidateProjectMemory({
+                runId: this.runId,
+                trigger: "failure",
+                outcomeSummary: reason,
+              });
+            } catch (consolidationError) {
+              await insertExecutionEvent(this.runId, "supervisor_memory_consolidation_failed", {
+                summary: "Memory consolidation failed during run failure; continuing.",
+                trigger: "failure",
+                error: formatSupervisorError(consolidationError),
+              });
+            }
           }
           await insertExecutionEvent(this.runId, "run_failed", { reason });
           await persistRunFailure(this.runId, reason);

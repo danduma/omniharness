@@ -31,6 +31,8 @@ export const runs = sqliteTable('runs', {
   failedAt: integer('failed_at', { mode: 'timestamp' }),
   lastError: text('last_error'),
   archivedAt: integer('archived_at', { mode: 'timestamp' }),
+  memoryMetadataRevision: integer('memory_metadata_revision').notNull().default(0),
+  lastMemoryConsolidationAt: integer('last_memory_consolidation_at', { mode: 'timestamp' }),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });

@@ -45,6 +45,12 @@ export interface SupervisorTurnContextForPrompt {
   activeWorkers: WorkerObservationForPrompt[];
   recentEvents: Array<{ eventType: string; summary: string; createdAt: string; workerId?: string | null }>;
   compactedMemory?: string | null;
+  projectMemory?: {
+    root: string;
+    files: Array<{ path: string; size: number; updatedAt: string }>;
+  } | null;
+  projectMemoryRecentReads?: Array<{ path: string; content: string; truncated: boolean }>;
+  projectMemoryRecentWrites?: Array<{ path: string; operation: "write" | "append"; reason: string | null }>;
 }
 
 export interface SupervisorContextBudget {
@@ -459,6 +465,52 @@ function buildObservationSummary(
   }, null, 2);
 }
 
+function formatBytes(size: number) {
+  if (size < 1024) {
+    return `${size} B`;
+  }
+  return `${(size / 1024).toFixed(1)} KB`;
+}
+
+function buildProjectMemoryBlock(context: SupervisorTurnContextForPrompt) {
+  const projectMemory = context.projectMemory;
+  if (!projectMemory) {
+    return null;
+  }
+
+  const fileLines = projectMemory.files.length > 0
+    ? projectMemory.files
+        .slice(0, 12)
+        .map((file) => `  - ${file.path} (${formatBytes(file.size)})`)
+        .join("\n")
+    : "  (no memory files yet)";
+
+  return [
+    `Project memory root: ${projectMemory.root}`,
+    `Project memory files:`,
+    fileLines,
+    "Read with memory_read before steering or completing if the task touches conventions, decisions, gotchas, or verification.",
+  ].join("\n");
+}
+
+function buildProjectMemoryEvidenceBlock(context: SupervisorTurnContextForPrompt) {
+  const reads = context.projectMemoryRecentReads ?? [];
+  const writes = context.projectMemoryRecentWrites ?? [];
+  if (reads.length === 0 && writes.length === 0) {
+    return "";
+  }
+
+  const sections: string[] = ["Recent project memory activity:"];
+  for (const read of reads.slice(0, 4)) {
+    const excerpt = truncate(normalizeWhitespace(read.content), 480) || "(empty)";
+    sections.push(`- read ${read.path}${read.truncated ? " (truncated)" : ""}: ${excerpt}`);
+  }
+  for (const write of writes.slice(0, 6)) {
+    sections.push(`- ${write.operation} ${write.path}${write.reason ? ` (${write.reason})` : ""}`);
+  }
+  return sections.join("\n");
+}
+
 function buildMessages(args: {
   systemPrompt: string;
   context: SupervisorTurnContextForPrompt;
@@ -471,12 +523,22 @@ function buildMessages(args: {
     { role: "system", content: args.systemPrompt },
   ];
 
+  const projectMemoryBlock = buildProjectMemoryBlock(args.context);
+  if (projectMemoryBlock) {
+    messages.push({
+      role: "system",
+      content: projectMemoryBlock,
+    });
+  }
+
   if (args.memorySummary) {
     messages.push({
       role: "system",
       content: `Prior supervision memory (compacted to fit the context window):\n\n${args.memorySummary}`,
     });
   }
+
+  const projectMemoryEvidence = buildProjectMemoryEvidenceBlock(args.context);
 
   messages.push({
     role: "user" as const,
@@ -488,6 +550,8 @@ function buildMessages(args: {
       buildRelevantEventSummary(args.context),
       "",
       args.objectiveAndPlanContext,
+      "",
+      projectMemoryEvidence,
       "",
       "Current worker state and run snapshot:",
       args.observationSummary,
