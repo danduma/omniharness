@@ -3,7 +3,7 @@ import { CONVERSATION_MODES, type ConversationMode } from "@/server/conversation
 export interface OmniCliOptions {
   command: string;
   mode: ConversationMode;
-  projectPath: string | null;
+  projectPath: string;
   preferredWorkerType: string | null;
   preferredWorkerModel: string | null;
   preferredWorkerEffort: string | null;
@@ -41,7 +41,7 @@ function looksLikePlanPath(value: string) {
 export function parseOmniCliArgs(argv: string[]): OmniCliOptions {
   let mode: ConversationMode = "direct";
   let modeWasSpecified = false;
-  let projectPath: string | null = null;
+  let projectPath: string = process.cwd();
   let preferredWorkerType: string | null = null;
   let preferredWorkerModel: string | null = null;
   let preferredWorkerEffort: string | null = null;
