@@ -17,6 +17,7 @@ export type RunRecord = {
   failedAt?: string | null;
   lastError?: string | null;
   archivedAt?: string | null;
+  parentRunId?: string | null;
   projectPath: string | null;
   title: string | null;
   preferredWorkerType?: string | null;
@@ -26,6 +27,10 @@ export type RunRecord = {
   specPath?: string | null;
   artifactPlanPath?: string | null;
   plannerArtifactsJson?: string | null;
+  autoCommitMilestones?: boolean | null;
+  pushOnCommit?: boolean | null;
+  gitBaselineJson?: string | null;
+  completionCommitSha?: string | null;
 };
 export type PlanItemRecord = { id: string; planId: string; title: string; phase: string | null; status: string };
 export type ClarificationRecord = { id: string; runId: string; question: string; answer: string | null; status: string };

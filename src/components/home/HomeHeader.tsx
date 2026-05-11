@@ -1,22 +1,24 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
-import { AlertTriangle, Bell, BellOff, Check, ChevronDown, GitCommitHorizontal, Menu, PanelLeft, PanelRight, Pencil } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, ChevronDown, GitCommitHorizontal, Menu, PanelLeft, PanelRight, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
 import { OmniHarnessMark } from "@/components/OmniHarnessMark";
 import { PRODUCT_NAME } from "@/app/home/constants";
-import type { AutoCommitChatAction } from "@/app/home/HomeUiStateManager";
 import type { ConversationNotificationState } from "@/app/home/ConversationNotificationManager";
 import type { AgentSnapshot, MessageRecord, RunRecord, SidebarGroup, SidebarRun, SupervisorInterventionRecord } from "@/app/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 import { ConversationSidebar } from "./ConversationSidebar";
 import { SideWindow } from "./SideWindow";
 import { ThemeModeToggle } from "./WorkersSidebar";
@@ -69,8 +71,13 @@ interface HomeHeaderProps {
   selectedRunWorkers: ConversationWorkerRecord[];
   conversationAgents: AgentSnapshot[];
   supervisorInterventions: SupervisorInterventionRecord[];
-  onAutoCommitChat: (action?: AutoCommitChatAction) => void;
-  autoCommitChatAction: AutoCommitChatAction;
+  onPrimaryCommit: () => void;
+  onCommitNow: () => void;
+  onCommitAndPushNow: () => void;
+  autoCommitMilestonesEnabled: boolean;
+  pushOnCommitEnabled: boolean;
+  onAutoCommitMilestonesChange: (checked: boolean) => void;
+  onPushOnCommitChange: (checked: boolean) => void;
   isAutoCommitChatPending: boolean;
   notificationState: ConversationNotificationState;
   onEnableNotifications: () => void;
@@ -130,8 +137,13 @@ export function HomeHeader({
   selectedRunWorkers,
   conversationAgents,
   supervisorInterventions,
-  onAutoCommitChat,
-  autoCommitChatAction,
+  onPrimaryCommit,
+  onCommitNow,
+  onCommitAndPushNow,
+  autoCommitMilestonesEnabled,
+  pushOnCommitEnabled,
+  onAutoCommitMilestonesChange,
+  onPushOnCommitChange,
   isAutoCommitChatPending,
   notificationState,
   onEnableNotifications,
@@ -142,13 +154,14 @@ export function HomeHeader({
   stoppingWorkerId,
   stoppingTerminalProcess,
 }: HomeHeaderProps) {
+  useI18nSnapshot();
   const conversationTitle = selectedRun?.title?.trim() || "New conversation";
   const titleLabel = selectedRun ? conversationTitle : "";
   const isEditingTitle = Boolean(selectedRun && renamingRunId === selectedRun.id && renameSource === "topbar");
   const rootFolderLabel = activeConversationCwd
     ? activeConversationCwd.split(/[\\/]/).filter(Boolean).pop() || activeConversationCwd
     : "";
-  const autoCommitChatLabel = autoCommitChatAction === "commit-push" ? "Auto commit & push" : "Auto commit";
+  const commitButtonLabel = pushOnCommitEnabled ? t("commit.menu.commitAndPushNow") : t("commit.menu.commitNow");
   const notificationsActive = notificationState.enabled && notificationState.permission === "granted";
   const notificationsBlocked = notificationState.permission === "denied";
   const notificationsUnsupported = notificationState.permission === "unsupported";
@@ -323,18 +336,18 @@ export function HomeHeader({
 
     <div className="flex items-center gap-2">
       {selectedRunId ? (
-        <ButtonGroup aria-label="Auto Commit Chat actions">
+        <ButtonGroup aria-label={t("commit.menu.label")}>
           <Button
             variant="ghost"
             size="sm"
             className="h-8 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
-            aria-label={autoCommitChatLabel}
-            title={autoCommitChatAction === "commit-push" ? "Commit and push changes from this chat" : "Create a git commit for this chat"}
-            onClick={() => onAutoCommitChat(autoCommitChatAction)}
+            aria-label={commitButtonLabel}
+            title={commitButtonLabel}
+            onClick={onPrimaryCommit}
             disabled={isAutoCommitChatPending}
           >
             <GitCommitHorizontal className="h-3.5 w-3.5" />
-            <span className="hidden md:inline">{autoCommitChatLabel}</span>
+            <span className="hidden md:inline">{commitButtonLabel}</span>
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -343,24 +356,59 @@ export function HomeHeader({
                   variant="ghost"
                   size="icon-sm"
                   className="h-8 w-7 text-muted-foreground hover:text-foreground"
-                  aria-label="Choose auto commit chat action"
-                  title="Choose auto commit chat action"
+                  aria-label={t("commit.menu.label")}
+                  title={t("commit.menu.label")}
                   disabled={isAutoCommitChatPending}
                 >
                   <ChevronDown className="h-3.5 w-3.5" />
                 </Button>
               )}
             />
-            <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuItem onClick={() => onAutoCommitChat("commit")} disabled={isAutoCommitChatPending}>
-                <GitCommitHorizontal className="h-4 w-4" />
-                <span>Auto commit</span>
-                {autoCommitChatAction === "commit" ? <Check className="ml-auto h-4 w-4" /> : null}
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuItem
+                onClick={(event) => {
+                  event.preventDefault();
+                  onAutoCommitMilestonesChange(!autoCommitMilestonesEnabled);
+                }}
+                className="gap-3"
+              >
+                <Switch
+                  checked={autoCommitMilestonesEnabled}
+                  onCheckedChange={onAutoCommitMilestonesChange}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onAutoCommitMilestonesChange(!autoCommitMilestonesEnabled);
+                  }}
+                  aria-label={t("commit.menu.autoCommitMilestones")}
+                />
+                <span>{t("commit.menu.autoCommitMilestones")}</span>
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onAutoCommitChat("commit-push")} disabled={isAutoCommitChatPending}>
+              <DropdownMenuItem
+                onClick={(event) => {
+                  event.preventDefault();
+                  onPushOnCommitChange(!pushOnCommitEnabled);
+                }}
+                className="gap-3"
+              >
+                <Switch
+                  checked={pushOnCommitEnabled}
+                  onCheckedChange={onPushOnCommitChange}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onPushOnCommitChange(!pushOnCommitEnabled);
+                  }}
+                  aria-label={t("commit.menu.alwaysPushOnCommit")}
+                />
+                <span>{t("commit.menu.alwaysPushOnCommit")}</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={onCommitNow} disabled={isAutoCommitChatPending}>
                 <GitCommitHorizontal className="h-4 w-4" />
-                <span>Auto commit &amp; push</span>
-                {autoCommitChatAction === "commit-push" ? <Check className="ml-auto h-4 w-4" /> : null}
+                <span>{t("commit.menu.commitNow")}</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onCommitAndPushNow} disabled={isAutoCommitChatPending}>
+                <GitCommitHorizontal className="h-4 w-4" />
+                <span>{t("commit.menu.commitAndPushNow")}</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

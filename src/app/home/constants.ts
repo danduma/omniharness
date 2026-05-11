@@ -1,4 +1,5 @@
 import type { ComposerWorkerOption, WorkerModelCatalog, WorkerType } from "./types";
+import { GIT_AUTO_COMMIT_MILESTONES_SETTING, GIT_PUSH_ON_COMMIT_SETTING } from "@/lib/commit-workflow";
 
 export const PRODUCT_NAME = "OmniHarness";
 export const DEFAULT_CONVERSATION_SIDEBAR_WIDTH = 280;
@@ -80,6 +81,8 @@ export const DEFAULT_SERVER_SETTINGS: Record<string, string> = {
   WORKER_ALLOWED_TYPES: "",
   WORKER_YOLO_MODE: "true",
   BUSY_MESSAGE_ACTION: "queue",
+  [GIT_AUTO_COMMIT_MILESTONES_SETTING]: "false",
+  [GIT_PUSH_ON_COMMIT_SETTING]: "false",
   RECOVERY_POLICY: JSON.stringify({
     autoRecoverImplementationRuns: true,
     autoRecoverDirectRuns: false,
@@ -133,7 +136,6 @@ export const COMPOSER_WORKER_STORAGE_KEY = "omni-composer-worker";
 export const COMPOSER_MODEL_STORAGE_KEY = "omni-composer-model";
 export const COMPOSER_EFFORT_STORAGE_KEY = "omni-composer-effort";
 export const COMPOSER_MODE_STORAGE_KEY = "omni-composer-mode";
-export const AUTO_COMMIT_CHAT_ACTION_STORAGE_KEY = "omni-auto-commit-chat-action";
 export const RUN_PATH_PATTERN = /^\/session\/([0-9a-fA-F]{12}|[0-9a-fA-F-]{36})\/?$/;
 
 export const LLM_PROVIDER_OPTIONS = [

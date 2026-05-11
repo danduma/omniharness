@@ -8,6 +8,7 @@ interface UseAppErrorsProps {
   runtimeErrors: AppErrorDescriptor[];
   projectFilesError: unknown;
   settingsError: unknown;
+  commitWorkflowSettingsError?: unknown;
   runCommandError: unknown;
   sendConversationMessageError?: unknown;
   cancelQueuedMessageError?: unknown;
@@ -30,6 +31,7 @@ export function useAppErrors({
   runtimeErrors,
   projectFilesError,
   settingsError,
+  commitWorkflowSettingsError,
   runCommandError,
   sendConversationMessageError,
   cancelQueuedMessageError,
@@ -62,6 +64,13 @@ export function useAppErrors({
       }));
     }
 
+    if (commitWorkflowSettingsError) {
+      errors.push(buildInlineError(commitWorkflowSettingsError, {
+        source: "Settings",
+        action: "Save commit workflow settings",
+      }));
+    }
+
     if (runCommandError) {
       errors.push(buildInlineError(runCommandError, {
         source: "Supervisor",
@@ -86,14 +95,14 @@ export function useAppErrors({
     if (autoCommitChatError) {
       errors.push(buildInlineError(autoCommitChatError, {
         source: "Conversations",
-        action: "Auto commit chat",
+        action: "Commit chat",
       }));
     }
 
     if (autoCommitProjectError) {
       errors.push(buildInlineError(autoCommitProjectError, {
         source: "Conversations",
-        action: "Auto commit project",
+        action: "Commit project",
       }));
     }
 
@@ -145,6 +154,7 @@ export function useAppErrors({
     autoCommitProjectError,
     archiveRunError,
     cancelQueuedMessageError,
+    commitWorkflowSettingsError,
     deleteRunError,
     projectFilesError,
     recoverRunError,

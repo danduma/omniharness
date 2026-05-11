@@ -84,6 +84,28 @@ export class SettingsDraftManager extends StateManager<SettingsDraftState> {
     });
   }
 
+  markFieldsSaved(values: ServerSettingsValues) {
+    this.patch((current) => {
+      const nextBaseline = {
+        ...current.baseline,
+        ...values,
+      };
+      const nextDraft = {
+        ...current.draft,
+        ...values,
+      };
+      const dirtyKeys = cloneDirtyKeys(current.dirtyKeys);
+      Object.keys(values).forEach((key) => dirtyKeys.delete(key));
+
+      return {
+        baseline: nextBaseline,
+        draft: nextDraft,
+        dirtyKeys,
+        hydrated: true,
+      };
+    });
+  }
+
   getSavePayload() {
     const { draft, dirtyKeys } = this.getSnapshot();
     return Object.fromEntries(

@@ -6,7 +6,6 @@ import type { ConversationModeOption } from "@/components/ConversationModePicker
 import {
   clampConversationSidebarWidth,
   clampWorkersSidebarWidth,
-  AUTO_COMMIT_CHAT_ACTION_STORAGE_KEY,
   COMPOSER_EFFORT_STORAGE_KEY,
   COMPOSER_MODE_STORAGE_KEY,
   COMPOSER_MODEL_STORAGE_KEY,
@@ -19,7 +18,6 @@ import {
 } from "./constants";
 import { conversationNotificationManager } from "./ConversationNotificationManager";
 import { LiveEventConnectionManager } from "./LiveEventConnectionManager";
-import type { AutoCommitChatAction } from "./HomeUiStateManager";
 import type { ComposerWorkerOption, EventStreamState } from "./types";
 import { buildConversationPath, buildInlineError, parseCollapsedProjectPaths } from "./utils";
 
@@ -48,7 +46,6 @@ interface UseHomeLifecycleProps {
   setSelectedCliAgent: React.Dispatch<React.SetStateAction<ComposerWorkerOption>>;
   setSelectedModel: React.Dispatch<React.SetStateAction<string>>;
   setSelectedEffort: React.Dispatch<React.SetStateAction<string>>;
-  setAutoCommitChatAction: React.Dispatch<React.SetStateAction<AutoCommitChatAction>>;
   setReadMarkers: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   readMarkers: Record<string, string>;
   collapsedProjectPaths: Set<string>;
@@ -65,7 +62,6 @@ interface UseHomeLifecycleProps {
   selectedCliAgent: ComposerWorkerOption;
   selectedModel: string;
   selectedEffort: string;
-  autoCommitChatAction: AutoCommitChatAction;
   themeMode: "day" | "night";
   setThemeMode: React.Dispatch<React.SetStateAction<"day" | "night">>;
   filterEventStreamState?: (state: EventStreamState) => EventStreamState;
@@ -102,7 +98,6 @@ export function useHomeLifecycle({
   setSelectedCliAgent,
   setSelectedModel,
   setSelectedEffort,
-  setAutoCommitChatAction,
   setReadMarkers,
   readMarkers,
   collapsedProjectPaths,
@@ -119,7 +114,6 @@ export function useHomeLifecycle({
   selectedCliAgent,
   selectedModel,
   selectedEffort,
-  autoCommitChatAction,
   themeMode,
   setThemeMode,
   filterEventStreamState,
@@ -194,7 +188,6 @@ export function useHomeLifecycle({
     const savedWorker = window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)?.trim() || "";
     const savedModel = window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)?.trim() || "";
     const savedEffort = window.localStorage.getItem(COMPOSER_EFFORT_STORAGE_KEY)?.trim() || "";
-    const savedAutoCommitChatAction = window.localStorage.getItem(AUTO_COMMIT_CHAT_ACTION_STORAGE_KEY)?.trim() || "";
 
     setPairTokenFromUrl(routePairToken || null);
 
@@ -218,13 +211,8 @@ export function useHomeLifecycle({
     if (EFFORT_OPTIONS.includes(savedEffort)) {
       setSelectedEffort(savedEffort);
     }
-    if (savedAutoCommitChatAction === "commit" || savedAutoCommitChatAction === "commit-push") {
-      setAutoCommitChatAction(savedAutoCommitChatAction);
-    }
-
     setRouteReady(true);
   }, [
-    setAutoCommitChatAction,
     setDraftProjectPath,
     setPairTokenFromUrl,
     setRouteReady,
@@ -569,13 +557,6 @@ export function useHomeLifecycle({
     window.localStorage.setItem(COMPOSER_EFFORT_STORAGE_KEY, selectedEffort);
   }, [selectedEffort]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    window.localStorage.setItem(AUTO_COMMIT_CHAT_ACTION_STORAGE_KEY, autoCommitChatAction);
-  }, [autoCommitChatAction]);
 }
 
 export function shouldStartLiveEventConnection(args: { appUnlocked: boolean; routeReady: boolean }) {

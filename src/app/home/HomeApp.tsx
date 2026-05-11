@@ -16,7 +16,15 @@ import { type AppErrorDescriptor, mergeAppErrors, requestJson } from "@/lib/app-
 import type { ChatAttachment, PendingChatAttachment } from "@/lib/chat-attachments";
 import { buildConversationGroups } from "@/lib/conversations";
 import { buildWorkerLists, isWorkerActiveStatus, mergeWorkerLiveStatus, normalizeWorkerStatus, selectPrimaryConversationAgent, type ConversationWorkerRecord } from "@/lib/conversation-workers";
-import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
+import {
+  GIT_AUTO_COMMIT_MILESTONES_SETTING,
+  GIT_PUSH_ON_COMMIT_SETTING,
+  getManualCommitPrompt,
+  getManualProjectCommitPrompt,
+  parseBooleanSetting,
+  serializeBooleanSetting,
+  type ManualCommitAction,
+} from "@/lib/commit-workflow";
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { resolveProjectScope } from "@/lib/project-scope";
 import type { ProjectFileReference } from "@/lib/project-file-links";
@@ -29,10 +37,10 @@ import { sideWindowManager } from "./SideWindowManager";
 import { parseBusyMessageAction, resolveBusyComposerBehavior, resolveBusyMessageActionForSubmitAction, type BusyMessageAction } from "./busy-message-behavior";
 import type { AgentSnapshot, AuthSessionResponse, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, QueuedConversationMessageRecord, RunRecord, SettingsResponse, SidebarGroup, SidebarRun, SupervisorInterventionRecord, WorkerCatalogResponse, WorkerModelOption, WorkerType } from "./types";
 import { EventStreamStateManager } from "./EventStreamStateManager";
-import { homeUiSetters, homeUiStateManager, INITIAL_EVENT_STREAM_STATE, type AutoCommitChatAction, type HomeUiState } from "./HomeUiStateManager";
+import { homeUiSetters, homeUiStateManager, INITIAL_EVENT_STREAM_STATE, type HomeUiState } from "./HomeUiStateManager";
 import { appearancePreferencesManager, getAppearanceTextSizeStyle } from "./AppearancePreferencesManager";
 import { settingsDraftManager } from "./SettingsDraftManager";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getLatestUnresolvedWorkerStuckEvent, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, getConversationTranscriptRunIds, getLatestUnresolvedWorkerStuckEvent, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
 import { useAppErrors } from "./useAppErrors";
 import { useConversationExecutionStatus } from "./useConversationExecutionStatus";
 import { useHomeLifecycle } from "./useHomeLifecycle";
@@ -82,19 +90,12 @@ function resolveRepoName(projectPath: string | null) {
   return normalized.split(/[/\\]/).filter(Boolean).pop() || "omniharness";
 }
 
-const AUTO_COMMIT_CHAT_PROMPT = "Group the modified files from this conversation into logical git commits. Do not run tests. Do not modify files or do anything else. Only inspect the modified files as needed, create commits, and stop.";
-const AUTO_COMMIT_CHAT_PUSH_PROMPT = "Group the modified files from this conversation into logical git commits, then push the current branch. Do not run tests. Do not modify files or do anything else. Only inspect the modified files as needed, create commits, push, and stop.";
-
 function getInitialEventStreamSnapshotScope() {
   if (typeof window === "undefined") {
     return null;
   }
 
   return window.location.pathname.match(RUN_PATH_PATTERN)?.[1]?.trim() || null;
-}
-
-function getAutoCommitChatPrompt(action: AutoCommitChatAction) {
-  return action === "commit-push" ? AUTO_COMMIT_CHAT_PUSH_PROMPT : AUTO_COMMIT_CHAT_PROMPT;
 }
 
 type HomeAppState = Omit<HomeUiState, "command" | "commandCursor" | "mentionIndex" | "attachments">;
@@ -140,6 +141,7 @@ interface ComposerContainerProps {
   selectedEffort: string;
   setSelectedEffort: (value: string) => void;
   isComposerSubmitting: boolean;
+  isStopConversationPending: boolean;
   isConversationStoppable: boolean;
   hasBusyConversation: boolean;
   busyMessageAction: BusyMessageAction;
@@ -175,6 +177,7 @@ function ComposerContainer({
   selectedEffort,
   setSelectedEffort,
   isComposerSubmitting,
+  isStopConversationPending,
   isConversationStoppable,
   hasBusyConversation,
   busyMessageAction,
@@ -297,6 +300,7 @@ function ComposerContainer({
       selectedEffort={selectedEffort}
       setSelectedEffort={setSelectedEffort}
       isComposerSubmitting={isComposerSubmitting}
+      isStopConversationPending={isStopConversationPending}
       isConversationStoppable={isConversationStoppable}
       composerBehavior={composerBehavior}
       queuedMessages={queuedMessages}
@@ -347,7 +351,6 @@ export function HomeApp() {
     selectedCliAgent,
     selectedModel,
     selectedEffort,
-    autoCommitChatAction,
     hydratedRunSelectionId,
     pairTokenFromUrl,
     authError,
@@ -391,7 +394,6 @@ export function HomeApp() {
     setSelectedCliAgent,
     setSelectedModel,
     setSelectedEffort,
-    setAutoCommitChatAction,
     setHydratedRunSelectionId,
     clearAttachments,
     setPairTokenFromUrl,
@@ -611,7 +613,7 @@ export function HomeApp() {
     return reconcileQueuedMessages(nextState);
   }, []);
 
-  useHomeLifecycle({ appUnlocked, setHasReceivedInitialEventStreamPayload, setState, setRuntimeErrors, routeReady, setRouteReady, authEnabled, authConfigurationError, pairTokenFromUrl, setPairTokenFromUrl, redeemPairMutation, pairRedeemAttempted, setPairRedeemAttempted, selectedRunId, setSelectedRunId, draftProjectPath, setDraftProjectPath, setSelectedConversationMode, setSelectedCliAgent, setSelectedModel, setSelectedEffort, setAutoCommitChatAction, setReadMarkers, readMarkers, collapsedProjectPaths, setCollapsedProjectPaths, leftSidebarWidth, setLeftSidebarWidth, rightSidebarWidth, setRightSidebarWidth, isResizingLeftSidebar, setIsResizingLeftSidebar, isResizingRightSidebar, setIsResizingRightSidebar, selectedConversationMode, selectedCliAgent, selectedModel, selectedEffort, autoCommitChatAction, themeMode, setThemeMode, filterEventStreamState });
+  useHomeLifecycle({ appUnlocked, setHasReceivedInitialEventStreamPayload, setState, setRuntimeErrors, routeReady, setRouteReady, authEnabled, authConfigurationError, pairTokenFromUrl, setPairTokenFromUrl, redeemPairMutation, pairRedeemAttempted, setPairRedeemAttempted, selectedRunId, setSelectedRunId, draftProjectPath, setDraftProjectPath, setSelectedConversationMode, setSelectedCliAgent, setSelectedModel, setSelectedEffort, setReadMarkers, readMarkers, collapsedProjectPaths, setCollapsedProjectPaths, leftSidebarWidth, setLeftSidebarWidth, rightSidebarWidth, setRightSidebarWidth, isResizingLeftSidebar, setIsResizingLeftSidebar, isResizingRightSidebar, setIsResizingRightSidebar, selectedConversationMode, selectedCliAgent, selectedModel, selectedEffort, themeMode, setThemeMode, filterEventStreamState });
   const isHydratingConversations = appUnlocked && !hasReceivedInitialEventStreamPayload;
 
   useEffect(() => {
@@ -641,6 +643,37 @@ export function HomeApp() {
       settingsDraftManager.markSaved(savedSettings);
       setApiKeys((current) => ({ ...current, ...savedSettings }));
       setShowSettings(false);
+    },
+  });
+
+  const commitWorkflowSettings = useMutation({
+    mutationFn: async ({ key, value }: { key: string; value: string }) => {
+      await requestJson<{ ok: true }>("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [key]: value }),
+      }, {
+        source: "Settings",
+        action: "Save commit workflow settings",
+      });
+      return { key, value };
+    },
+    onMutate: ({ key, value }) => {
+      const previousValue = apiKeys[key];
+      setApiKeys((current) => ({ ...current, [key]: value }));
+      settingsDraftManager.setField(key, value);
+      return { key, previousValue };
+    },
+    onSuccess: ({ key, value }) => {
+      settingsDraftManager.markFieldsSaved({ [key]: value });
+    },
+    onError: (_error, _variables, context) => {
+      if (!context) {
+        return;
+      }
+      const previousValue = context.previousValue ?? "";
+      setApiKeys((current) => ({ ...current, [context.key]: previousValue }));
+      settingsDraftManager.setField(context.key, previousValue);
     },
   });
 
@@ -957,14 +990,14 @@ export function HomeApp() {
   });
 
   const autoCommitChat = useMutation({
-    mutationFn: async ({ runId, action }: { runId: string; action: AutoCommitChatAction }) => {
+    mutationFn: async ({ runId, action }: { runId: string; action: ManualCommitAction }) => {
       return requestJson<{ ok: true; message?: MessageRecord }>(`/api/conversations/${runId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: getAutoCommitChatPrompt(action) }),
+        body: JSON.stringify({ content: getManualCommitPrompt(action) }),
       }, {
         source: "Conversations",
-        action: "Auto commit chat",
+        action: "Commit chat",
       });
     },
     onSuccess: (data) => {
@@ -977,7 +1010,7 @@ export function HomeApp() {
   });
 
   const autoCommitProject = useMutation({
-    mutationFn: async (payload: { projectPath: string }) => {
+    mutationFn: async (payload: { projectPath: string; action: ManualCommitAction }) => {
       const isAutoWorkerSelection = selectedCliAgent === "auto";
       const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel);
       return requestJson<({ runId?: string } & CreatedConversationSnapshot)>("/api/conversations", {
@@ -985,7 +1018,7 @@ export function HomeApp() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mode: "direct",
-          command: AUTO_COMMIT_PROJECT_PROMPT,
+          command: getManualProjectCommitPrompt(payload.action),
           projectPath: payload.projectPath,
           preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
           preferredWorkerModel: resolvedSelectedModel,
@@ -994,7 +1027,7 @@ export function HomeApp() {
         }),
       }, {
         source: "Conversations",
-        action: "Auto commit project",
+        action: "Commit project",
       });
     },
     onSuccess: (data) => {
@@ -1101,17 +1134,23 @@ export function HomeApp() {
     fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updatedKeys) });
   };
 
-  const handleAutoCommitChat = (action: AutoCommitChatAction = autoCommitChatAction) => {
+  const autoCommitMilestonesEnabled = parseBooleanSetting(apiKeys[GIT_AUTO_COMMIT_MILESTONES_SETTING], false);
+  const pushOnCommitEnabled = parseBooleanSetting(apiKeys[GIT_PUSH_ON_COMMIT_SETTING], false);
+
+  const updateCommitWorkflowSetting = (key: string, value: boolean) => {
+    commitWorkflowSettings.mutate({ key, value: serializeBooleanSetting(value) });
+  };
+
+  const handleManualCommitChat = (action: ManualCommitAction = pushOnCommitEnabled ? "commit-push" : "commit") => {
     if (!selectedRunId) {
       return;
     }
 
-    setAutoCommitChatAction(action);
     autoCommitChat.mutate({ runId: selectedRunId, action });
   };
 
-  const handleAutoCommitProject = (projectPath: string) => {
-    autoCommitProject.mutate({ projectPath });
+  const handleManualCommitProject = (projectPath: string, action: ManualCommitAction = "commit") => {
+    autoCommitProject.mutate({ projectPath, action });
   };
 
   const beginConversationInProject = (projectPath: string) => {
@@ -1271,12 +1310,26 @@ export function HomeApp() {
       },
     }));
   }, [catalogWorkers]);
-  const filteredMessages = useMemo(
+  const selectedRunMessages = useMemo(
     () => (selectedRunId
       ? state.messages?.filter((m: { runId: string }) => m.runId === selectedRunId)
       : []),
     [selectedRunId, state.messages],
   );
+  const transcriptRunIds = useMemo(
+    () => new Set(getConversationTranscriptRunIds({ selectedRunId, selectedRun })),
+    [selectedRun, selectedRunId],
+  );
+  const filteredMessages = useMemo(() => {
+    const messages = selectedRunId
+      ? ((state.messages || []) as MessageRecord[]).filter((message) => transcriptRunIds.has(message.runId))
+      : [];
+
+    return filterPromotedPlanningTranscriptMessages({
+      messages,
+      selectedRun,
+    });
+  }, [selectedRun, selectedRunId, state.messages, transcriptRunIds]);
 
   useEffect(() => {
     if (activeWorkerModelOptions.length === 0) {
@@ -1353,7 +1406,7 @@ export function HomeApp() {
   const stoppableConversationWorkerId = busyConversationWorkerId ?? pendingConversationWorkerId;
   const isConversationStoppable = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
   const latestUserCheckpoint = selectedRunId
-    ? [...((filteredMessages || []) as MessageRecord[])]
+    ? [...((selectedRunMessages || []) as MessageRecord[])]
         .filter((message) => message.role === "user")
         .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null
     : null;
@@ -1420,8 +1473,8 @@ export function HomeApp() {
     return null;
   }, [catalogWorkers, selectedRun, selectedRunAllowedWorkerTypes]);
   const workerFailureDetail = useMemo(
-    () => extractWorkerFailureDetail((filteredMessages || []) as MessageRecord[]),
-    [filteredMessages],
+    () => extractWorkerFailureDetail((selectedRunMessages || []) as MessageRecord[]),
+    [selectedRunMessages],
   );
 
   useEffect(() => {
@@ -1492,7 +1545,8 @@ export function HomeApp() {
     executionEvents: selectedRunExecutionEvents,
     supervisorInterventions: selectedRunSupervisorInterventions,
     workers: selectedRunWorkersForDisplay,
-  }), [selectedRunExecutionEvents, selectedRunSupervisorInterventions, selectedRunWorkersForDisplay, visibleMessages]);
+    runMode: selectedRun?.mode ?? null,
+  }), [selectedRun?.mode, selectedRunExecutionEvents, selectedRunSupervisorInterventions, selectedRunWorkersForDisplay, visibleMessages]);
   const conversationTimelineActivityCount = conversationTimelineItems.filter((item) => item.type === "activity").length;
   const directConversationMessages = useMemo(() => {
     if (!isDirectConversation) {
@@ -1587,7 +1641,7 @@ export function HomeApp() {
     ? plans.find((p) => p.id === runs.find((r) => r.id === selectedRunId)?.planId) ?? null
     : null;
   const activeConversationCwd = selectedRun?.projectPath || activePlan?.path || draftProjectPath || null;
-  const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, runCommandError: runCommand.error, sendConversationMessageError: sendConversationMessage.error, cancelQueuedMessageError: cancelQueuedMessage.error, autoCommitChatError: autoCommitChat.error, autoCommitProjectError: autoCommitProject.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, archiveRunError: archiveRun.error, deleteRunError: deleteRun.error, stopSupervisorError: stopSupervisor.error, stopWorkerError: stopWorker.error ?? stopWorkerTerminalProcess.error });
+  const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, commitWorkflowSettingsError: commitWorkflowSettings.error, runCommandError: runCommand.error, sendConversationMessageError: sendConversationMessage.error, cancelQueuedMessageError: cancelQueuedMessage.error, autoCommitChatError: autoCommitChat.error, autoCommitProjectError: autoCommitProject.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, archiveRunError: archiveRun.error, deleteRunError: deleteRun.error, stopSupervisorError: stopSupervisor.error, stopWorkerError: stopWorker.error ?? stopWorkerTerminalProcess.error });
 
   useRunSelectionEffects({ scrollRef, state, selectedRunId, selectedRun, activeComposerMode, selectedCliAgent, setSelectedCliAgent, autoSelectedWorkerType, activeAllowedWorkerTypes, hydratedRunSelectionId, setHydratedRunSelectionId, selectedModel, setSelectedModel, selectedEffort, setSelectedEffort, availableWorkerTypes, configuredAllowedWorkerTypes, apiKeys, setApiKeys, setReadMarkers });
 
@@ -1623,7 +1677,8 @@ export function HomeApp() {
     });
   };
 
-  const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || sendQueuedMessageNow.isPending || promotePlanningConversation.isPending;
+  const isStopConversationPending = stopSupervisor.isPending || stopWorker.isPending;
+  const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || sendQueuedMessageNow.isPending || promotePlanningConversation.isPending || isStopConversationPending;
   const busyMessageAction = parseBusyMessageAction(apiKeys.BUSY_MESSAGE_ACTION);
   const hasBusyConversation = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
   const lockedDirectWorkerLabel = WORKER_OPTIONS.find((option) => option.value === (selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent))?.label
@@ -1772,6 +1827,7 @@ export function HomeApp() {
           selectedEffort={selectedEffort}
           setSelectedEffort={setSelectedEffort}
           isComposerSubmitting={isComposerSubmitting}
+          isStopConversationPending={isStopConversationPending}
           isConversationStoppable={isConversationStoppable}
           hasBusyConversation={hasBusyConversation}
           busyMessageAction={busyMessageAction}
@@ -1795,7 +1851,7 @@ export function HomeApp() {
           }}
           onRunCommand={(content, attachments) => runCommand.mutate({ content, attachments })}
           onStopConversation={() => {
-            if (!selectedRunId) {
+            if (!selectedRunId || isStopConversationPending) {
               return;
             }
 
@@ -1845,7 +1901,7 @@ export function HomeApp() {
     openFolderPicker: () => setShowFolderPicker(true),
     startNewPlan: handleStartNewPlan,
     beginConversationInProject,
-    autoCommitProject: handleAutoCommitProject,
+    autoCommitProject: handleManualCommitProject,
     isAutoCommitProjectPending: autoCommitProject.isPending,
     handleRemoveProject,
     selectRun: handleSelectRun,
@@ -1904,8 +1960,13 @@ export function HomeApp() {
           selectedRunWorkers={selectedRunWorkersForDisplay}
           conversationAgents={conversationAgents}
           supervisorInterventions={selectedRunSupervisorInterventions}
-          onAutoCommitChat={handleAutoCommitChat}
-          autoCommitChatAction={autoCommitChatAction}
+          onCommitNow={() => handleManualCommitChat("commit")}
+          onCommitAndPushNow={() => handleManualCommitChat("commit-push")}
+          onPrimaryCommit={() => handleManualCommitChat()}
+          autoCommitMilestonesEnabled={autoCommitMilestonesEnabled}
+          pushOnCommitEnabled={pushOnCommitEnabled}
+          onAutoCommitMilestonesChange={(checked) => updateCommitWorkflowSetting(GIT_AUTO_COMMIT_MILESTONES_SETTING, checked)}
+          onPushOnCommitChange={(checked) => updateCommitWorkflowSetting(GIT_PUSH_ON_COMMIT_SETTING, checked)}
           isAutoCommitChatPending={autoCommitChat.isPending}
           notificationState={notificationState}
           onEnableNotifications={enableNotifications}

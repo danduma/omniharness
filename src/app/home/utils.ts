@@ -3,6 +3,7 @@ import { formatHumanDuration, type ConversationWorkerRecord } from "@/lib/conver
 import { getLatestUnresolvedWorkerStuckEvent } from "@/lib/worker-stuck-events";
 import { WORKER_OPTIONS, FALLBACK_WORKER_MODEL_OPTIONS } from "./constants";
 import type { AgentSnapshot, EventStreamState, ExecutionEventRecord, MessageRecord, PlanItemRecord, PlanRecord, RunRecord, SupervisorInterventionRecord, WorkerModelCatalog, WorkerType } from "./types";
+import { t } from "@/lib/i18n";
 
 export { getLatestUnresolvedWorkerStuckEvent };
 
@@ -39,6 +40,51 @@ export function removeRunFromHomeState(current: EventStreamState, runId: string)
       ? (current.planItems || []).filter((item: PlanItemRecord) => item.planId !== runToDelete.planId)
       : current.planItems,
   };
+}
+
+export function getConversationTranscriptRunIds({
+  selectedRunId,
+  selectedRun,
+}: {
+  selectedRunId: string | null;
+  selectedRun: RunRecord | null;
+}) {
+  if (!selectedRunId) {
+    return [] as string[];
+  }
+
+  if (selectedRun?.mode === "implementation" && selectedRun.parentRunId?.trim()) {
+    return [selectedRun.parentRunId.trim(), selectedRunId];
+  }
+
+  return [selectedRunId];
+}
+
+export function filterPromotedPlanningTranscriptMessages({
+  messages,
+  selectedRun,
+}: {
+  messages: MessageRecord[];
+  selectedRun: RunRecord | null;
+}) {
+  const parentRunId = selectedRun?.parentRunId?.trim();
+  if (!selectedRun || !parentRunId || selectedRun.mode !== "implementation") {
+    return messages;
+  }
+
+  const parentUserMessageKeys = new Set(
+    messages
+      .filter((message) => message.runId === parentRunId && message.role === "user")
+      .map((message) => `${message.kind ?? ""}\n${message.content.trim()}`),
+  );
+
+  return messages.filter((message) => {
+    if (message.runId !== selectedRun.id || message.role !== "user") {
+      return true;
+    }
+
+    return !parentUserMessageKeys.has(`${message.kind ?? ""}\n${message.content.trim()}`);
+  });
 }
 
 export function filterOptimisticallyDeletedRuns(
@@ -298,6 +344,11 @@ const DYNAMIC_STATUS_EVENT_TYPES = new Set([
 ]);
 
 const INLINE_CONVERSATION_EVENT_TYPES = new Set([
+  "auto_commit_created",
+  "auto_commit_failed",
+  "auto_commit_push_created",
+  "auto_commit_push_failed",
+  "auto_commit_skipped",
   "clarification_requested",
   "worker_cancelled",
   "worker_error",
@@ -394,11 +445,13 @@ export function buildConversationTimelineItems({
   executionEvents,
   supervisorInterventions = [],
   workers = [],
+  runMode = null,
 }: {
   messages: MessageRecord[];
   executionEvents: ExecutionEventRecord[];
   supervisorInterventions?: SupervisorInterventionRecord[];
   workers?: ConversationWorkerRecord[];
+  runMode?: RunRecord["mode"] | null;
 }): ConversationTimelineItem[] {
   const items: ConversationTimelineItem[] = messages
     .filter(shouldRenderMessageInMainConversation)
@@ -427,7 +480,7 @@ export function buildConversationTimelineItems({
       type: "activity",
       id: `worker-start:${worker.id}`,
       createdAt: worker.createdAt,
-      text: summarizeWorkerStartRecord(worker),
+      text: summarizeWorkerStartRecord(worker, runMode),
     });
   }
 
@@ -436,7 +489,9 @@ export function buildConversationTimelineItems({
       continue;
     }
 
-    const text = summarizeInlineEvent(event)?.trim() ?? "";
+    const text = (event.eventType === "worker_spawned"
+      ? summarizeWorkerSpawnEvent(event, runMode)
+      : summarizeInlineEvent(event))?.trim() ?? "";
     if (!text) {
       continue;
     }
@@ -651,7 +706,15 @@ function summarizeTaskText(value: string) {
   return normalizeSentence(truncated);
 }
 
-function summarizeWorkerSpawnEvent(event: ExecutionEventRecord) {
+function isPlanningRunMode(runMode: RunRecord["mode"] | null | undefined) {
+  return runMode === "planning";
+}
+
+function summarizeWorkerSpawnEvent(event: ExecutionEventRecord, runMode?: RunRecord["mode"] | null) {
+  if (isPlanningRunMode(runMode)) {
+    return t("conversation.activity.startPlanningAgent");
+  }
+
   const details = parseExecutionEventDetails(event.details);
   const summary = typeof details.summary === "string" ? details.summary.trim() : "";
   const purpose = typeof details.purpose === "string" ? details.purpose.trim() : "";
@@ -666,7 +729,11 @@ function summarizeWorkerSpawnEvent(event: ExecutionEventRecord) {
     : `Starting ${workerLabel}.`;
 }
 
-function summarizeWorkerStartRecord(worker: ConversationWorkerRecord) {
+function summarizeWorkerStartRecord(worker: ConversationWorkerRecord, runMode?: RunRecord["mode"] | null) {
+  if (isPlanningRunMode(runMode)) {
+    return t("conversation.activity.startPlanningAgent");
+  }
+
   const workerLabel = typeof worker.workerNumber === "number"
     ? `worker ${worker.workerNumber}`
     : formatConversationWorkerLabel(worker.id);
@@ -808,6 +875,29 @@ export function summarizeExecutionEvent(event: ExecutionEventRecord) {
 
   if (event.eventType === "run_completed") {
     return `Completed${summary ? `: ${summary}` : ""}`;
+  }
+
+  if (event.eventType === "auto_commit_created") {
+    const shortSha = typeof details.shortSha === "string" ? details.shortSha : "";
+    const subject = typeof details.subject === "string" ? details.subject : "";
+    return t("commit.status.autoCommitCreated", { commit: [shortSha, subject].filter(Boolean).join(" ") });
+  }
+
+  if (event.eventType === "auto_commit_skipped") {
+    return t("commit.status.autoCommitSkipped", { reason: reason || summary || "skipped" });
+  }
+
+  if (event.eventType === "auto_commit_failed") {
+    return t("commit.status.autoCommitFailed", { reason: reason || summary || error || "failed" });
+  }
+
+  if (event.eventType === "auto_commit_push_created") {
+    const shortSha = typeof details.shortSha === "string" ? details.shortSha : "";
+    return t("commit.status.pushCreated", { commit: shortSha });
+  }
+
+  if (event.eventType === "auto_commit_push_failed") {
+    return t("commit.status.pushFailed", { reason: error || summary || "failed" });
   }
 
   if (event.eventType === "worker_prompt_failed") {
