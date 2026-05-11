@@ -34,6 +34,11 @@ test("terminal can render in native conversation mode without window chrome", ()
   expect(terminalSource).not.toContain("text-[var(--terminal-pane-size)]");
 });
 
+test("terminal uses localized loading copy for empty structured output", () => {
+  expect(terminalSource).toContain('t("terminal.empty.loadingSession")');
+  expect(terminalSource).not.toContain("Waiting for structured agent output");
+});
+
 test("terminal renders a structured activity feed instead of replaying xterm text", () => {
   expect(terminalSource).toContain("buildAgentOutputActivity");
   expect(terminalSource).toContain('activity.kind === "thinking"');
@@ -61,7 +66,7 @@ test("terminal renders thoughts behind a collapsible thinking summary", () => {
   expect(terminalSource).toContain('return duration ? `Thought for ${duration}` : "Thought";');
   expect(terminalSource).not.toContain('return "<1s";');
   expect(terminalSource).toContain("animate-pulse");
-  expect(terminalSource).toContain("thoughtOpenById[activity.id] ?? activity.inProgress");
+  expect(terminalSource).toContain("const open = (thoughtOpenById[activity.id] ?? thoughtsDefaultOpen) || activity.inProgress;");
 });
 
 test("terminal renders model thoughts as markdown while preserving thought tone", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, classifyExecutionEvent, filterOptimisticallyDeletedRuns, formatExecutionWorkerLabel, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/app/home/utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, classifyExecutionEvent, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/app/home/utils";
 import type { EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord, SupervisorInterventionRecord } from "@/app/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 
@@ -67,6 +67,57 @@ function buildWorker(overrides: Partial<ConversationWorkerRecord>): Conversation
 }
 
 describe("home utils", () => {
+  it("includes the parent planning run in promoted implementation transcripts", () => {
+    expect(getConversationTranscriptRunIds({
+      selectedRunId: "implementation-run",
+      selectedRun: buildRun({
+        id: "implementation-run",
+        mode: "implementation",
+        parentRunId: "planning-run",
+      }),
+    })).toEqual(["planning-run", "implementation-run"]);
+  });
+
+  it("hides copied promotion checkpoint messages when the parent planning transcript is visible", () => {
+    const selectedRun = buildRun({
+      id: "implementation-run",
+      mode: "implementation",
+      parentRunId: "planning-run",
+      createdAt: "2026-05-11T05:52:18.000Z",
+    });
+    const messages = [
+      buildMessage({
+        id: "planning-user",
+        runId: "planning-run",
+        role: "user",
+        kind: "checkpoint",
+        content: "Plan the intermediate scene assets section.",
+        createdAt: "2026-05-11T05:51:00.000Z",
+      }),
+      buildMessage({
+        id: "planning-worker",
+        runId: "planning-run",
+        role: "worker",
+        kind: "planning",
+        content: "Created the spec and implementation plan.",
+        createdAt: "2026-05-11T05:51:30.000Z",
+      }),
+      buildMessage({
+        id: "implementation-copy",
+        runId: "implementation-run",
+        role: "user",
+        kind: "checkpoint",
+        content: "Plan the intermediate scene assets section.",
+        createdAt: "2026-05-11T05:52:18.000Z",
+      }),
+    ];
+
+    expect(filterPromotedPlanningTranscriptMessages({
+      messages,
+      selectedRun,
+    }).map((message) => message.id)).toEqual(["planning-user", "planning-worker"]);
+  });
+
   it("formats completed supervisor run duration from the completion timestamp", () => {
     expect(getRunDurationLabel(
       buildRun({ status: "done", updatedAt: "2026-04-27T03:00:00.000Z" }),
@@ -225,6 +276,44 @@ describe("home utils", () => {
     expect(timeline.map((item) => item.type === "message" ? item.message.content : item.text)).toEqual([
       "Implement the mobile parity plan.",
       "Starting worker 9 to implement mobile-desktop feature parity plan.",
+    ]);
+  });
+
+  it("labels planning run worker starts as the planning agent", () => {
+    const timeline = buildConversationTimelineItems({
+      messages: [
+        buildMessage({
+          id: "message-1",
+          role: "user",
+          kind: "checkpoint",
+          content: "How should we implement this?",
+          createdAt: "2026-04-27T00:00:00.000Z",
+        }),
+      ],
+      executionEvents: [
+        buildExecutionEvent({
+          id: "event-start",
+          workerId: "run-1-worker-1",
+          eventType: "worker_spawned",
+          details: JSON.stringify({ summary: "Spawned planning worker." }),
+          createdAt: "2026-04-27T00:00:10.000Z",
+        }),
+      ],
+      workers: [
+        buildWorker({
+          id: "run-1-worker-1",
+          workerNumber: 1,
+          title: null,
+          initialPrompt: null,
+          createdAt: "2026-04-27T00:00:10.000Z",
+        }),
+      ],
+      runMode: "planning",
+    });
+
+    expect(timeline.map((item) => item.type === "message" ? item.message.content : item.text)).toEqual([
+      "How should we implement this?",
+      "Starting planning agent.",
     ]);
   });
 

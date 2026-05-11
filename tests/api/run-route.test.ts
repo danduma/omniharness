@@ -299,6 +299,69 @@ describe("POST /api/runs/[id]", () => {
     });
   });
 
+  it("treats repeated supervisor stop requests as already settled", async () => {
+    mockCancelAgent.mockClear();
+    mockStopRunObserver.mockClear();
+    mockCancelSupervisorWake.mockClear();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const activeWorkerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/repeated-stop-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      title: "Repeated stop supervisor",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: activeWorkerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const firstResponse = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "stop_supervisor" }),
+    }), { params: Promise.resolve({ id: runId }) });
+    expect(firstResponse.status).toBe(200);
+
+    mockCancelAgent.mockClear();
+    mockStopRunObserver.mockClear();
+    mockCancelSupervisorWake.mockClear();
+
+    const secondResponse = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "stop_supervisor" }),
+    }), { params: Promise.resolve({ id: runId }) });
+    const secondPayload = await secondResponse.json();
+    const stopEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+
+    expect(secondResponse.status).toBe(200);
+    expect(secondPayload).toMatchObject({ ok: true, alreadyStopped: true, status: "cancelled" });
+    expect(mockCancelAgent).not.toHaveBeenCalled();
+    expect(mockCancelSupervisorWake).not.toHaveBeenCalled();
+    expect(mockStopRunObserver).not.toHaveBeenCalled();
+    expect(stopEvents.filter((event) => event.eventType === "supervisor_stopped")).toHaveLength(1);
+  });
+
   it("stops a single direct worker without stopping the supervisor", async () => {
     mockCancelAgent.mockClear();
     mockStopRunObserver.mockClear();

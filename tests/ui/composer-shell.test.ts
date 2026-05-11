@@ -119,12 +119,25 @@ test("composer mention picker can open a project file without inserting it", () 
   expect(pageSource).toContain("applyMention(filePath)");
 });
 
-test("composer controls use the available mobile width for readable labels", () => {
-  expect(pageSource).toContain('className="mt-0 flex flex-wrap items-center gap-x-1 gap-y-1 pb-2 sm:flex-nowrap sm:gap-2"');
-  expect(pageSource).toContain('className="order-3 flex min-w-0 basis-full items-center justify-end gap-1 sm:order-none sm:basis-auto sm:flex-1 sm:gap-2"');
-  expect(pageSource).toContain('"order-2 ml-auto h-8 w-8 shrink-0 rounded-full transition-all sm:order-none sm:ml-0"');
-  expect(pageSource).not.toContain('className="mt-0 flex items-center gap-1 pb-2 sm:gap-2"');
-  expect(pageSource).not.toContain('className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1 sm:gap-2"');
+test("composer mention picker anchors above the typing shell on mobile", () => {
+  const queuedDrawerIndex = pageSource.indexOf("<QueuedMessageDrawer");
+  const mentionPickerIndex = pageSource.indexOf("{showMentionPicker && (");
+  const typingShellIndex = pageSource.indexOf('data-composer-input="true"');
+
+  expect(pageSource).toContain('<div className="relative">');
+  expect(pageSource).toContain("absolute inset-x-0 bottom-full z-30 mb-3");
+  expect(pageSource).toContain("max-h-[min(45dvh,18rem)]");
+  expect(queuedDrawerIndex).toBeGreaterThan(-1);
+  expect(mentionPickerIndex).toBeGreaterThan(queuedDrawerIndex);
+  expect(typingShellIndex).toBeGreaterThan(mentionPickerIndex);
+});
+
+test("composer controls stay on one mobile row while keeping readable label widths", () => {
+  expect(pageSource).toContain('className="mt-0 flex items-center gap-1 pb-2 sm:gap-2"');
+  expect(pageSource).toContain('className="ml-auto flex min-w-0 items-center justify-end gap-1 sm:gap-2"');
+  expect(pageSource).toContain('"h-8 w-8 shrink-0 rounded-full transition-all"');
+  expect(pageSource).not.toContain('className="mt-0 flex flex-wrap items-center gap-x-1 gap-y-1 pb-2 sm:flex-nowrap sm:gap-2"');
+  expect(pageSource).not.toContain('className="order-3 flex min-w-0 basis-full items-center justify-end gap-1 sm:order-none sm:basis-auto sm:flex-1 sm:gap-2"');
   expect(pageSource).not.toContain('className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2"');
 });
 
@@ -142,8 +155,9 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain("const pendingConversationWorkerId = !isImplementationConversation && sendConversationMessage.isPending");
   expect(pageSource).toContain("const stoppableConversationWorkerId = busyConversationWorkerId ?? pendingConversationWorkerId");
   expect(pageSource).toContain("const isConversationStoppable = isSupervisorRunning || Boolean(stoppableConversationWorkerId)");
+  expect(pageSource).toContain("const isStopConversationPending = stopSupervisor.isPending || stopWorker.isPending");
   expect(pageSource).toContain('const isStopButtonVisible = composerBehavior.buttonKind === "stop"');
-  expect(pageSource).toContain('const isSubmitButtonDisabled = isStopButtonVisible\n    ? false');
+  expect(pageSource).toContain('const isSubmitButtonDisabled = isStopButtonVisible\n    ? isStopConversationPending');
   expect(pageSource).toContain("resolveBusyComposerBehavior({");
   expect(pageSource).toContain("disabled={isSubmitButtonDisabled}");
   expect(pageSource).toContain("aria-label={sendButtonAriaLabel}");
@@ -156,7 +170,7 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain("shouldUseAlternateComposerSubmitKeyDown({");
   expect(pageSource).toContain("getComposerSubmitShortcutLabel(isAppleComposerShortcutPlatform())");
   expect(pageSource).toContain("sendButtonTitle");
-  expect(pageSource).toContain("isSendButtonBusy ? (");
+  expect(pageSource).toContain("isSendButtonBusy || isStopButtonBusy ? (");
   expect(pageSource).toContain("<Square className=\"h-[13.6px] w-[13.6px] fill-current\" />");
 });
 

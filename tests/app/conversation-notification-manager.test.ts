@@ -52,12 +52,27 @@ describe("ConversationNotificationManager", () => {
   let storage: MemoryStorage;
   let notify: ReturnType<typeof vi.fn>;
   let requestPermission: ReturnType<typeof vi.fn>;
+  let subscribe: ReturnType<typeof vi.fn>;
+  let saveSubscription: ReturnType<typeof vi.fn>;
+  let loadConfig: ReturnType<typeof vi.fn>;
   let manager: ConversationNotificationManager;
   let permission: NotificationPermission;
 
   beforeEach(() => {
     storage = new MemoryStorage();
     notify = vi.fn().mockResolvedValue(undefined);
+    subscribe = vi.fn().mockResolvedValue({
+      endpoint: "https://push.example.test/subscription/abc123",
+      keys: {
+        p256dh: "p256dh-key",
+        auth: "auth-secret",
+      },
+    });
+    saveSubscription = vi.fn().mockResolvedValue(undefined);
+    loadConfig = vi.fn().mockResolvedValue({
+      supported: true,
+      publicKey: "public-key",
+    });
     permission = "granted";
     requestPermission = vi.fn().mockImplementation(async () => {
       permission = "granted";
@@ -72,6 +87,16 @@ describe("ConversationNotificationManager", () => {
         isSupported: () => true,
       },
       visibilityProvider: () => "hidden",
+      pushClient: {
+        isSupported: () => true,
+        subscribe,
+        unsubscribe: vi.fn().mockResolvedValue("https://push.example.test/subscription/abc123"),
+      },
+      subscriptionApi: {
+        loadConfig,
+        saveSubscription,
+        removeSubscription: vi.fn().mockResolvedValue(undefined),
+      },
     });
   });
 
@@ -86,6 +111,48 @@ describe("ConversationNotificationManager", () => {
       enabled: true,
       permission: "granted",
     });
+    expect(loadConfig).toHaveBeenCalledTimes(1);
+    expect(subscribe).toHaveBeenCalledWith("public-key");
+    expect(saveSubscription).toHaveBeenCalledWith({
+      endpoint: "https://push.example.test/subscription/abc123",
+      keys: {
+        p256dh: "p256dh-key",
+        auth: "auth-secret",
+      },
+    });
+  });
+
+  it("removes the server push subscription when notifications are disabled", async () => {
+    const unsubscribe = vi.fn().mockResolvedValue("https://push.example.test/subscription/abc123");
+    const removeSubscription = vi.fn().mockResolvedValue(undefined);
+    manager = new ConversationNotificationManager({
+      storage,
+      notifier: { notify },
+      permissionProvider: {
+        getPermission: () => permission,
+        requestPermission,
+        isSupported: () => true,
+      },
+      visibilityProvider: () => "hidden",
+      pushClient: {
+        isSupported: () => true,
+        subscribe,
+        unsubscribe,
+      },
+      subscriptionApi: {
+        loadConfig,
+        saveSubscription,
+        removeSubscription,
+      },
+    });
+    await manager.requestEnable();
+
+    manager.disable();
+    await Promise.resolve();
+
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(removeSubscription).toHaveBeenCalledWith("https://push.example.test/subscription/abc123");
+    expect(storage.getItem("omni-notifications-enabled")).toBe("false");
   });
 
   it("does not notify for the initial snapshot, then notifies when a conversation starts awaiting input", async () => {

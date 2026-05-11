@@ -511,6 +511,31 @@ describe("agent output normalization", () => {
     ]);
   });
 
+  it("marks trailing thoughts complete when the agent is done", () => {
+    const activity = buildAgentOutputActivity({
+      state: "done",
+      outputEntries: [
+        {
+          id: "thought-1",
+          type: "thought",
+          text: "Reviewing the final result.",
+          timestamp: "2026-04-22T00:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(activity).toEqual([
+      {
+        id: "thought-1",
+        kind: "thinking",
+        thoughts: ["Reviewing the final result."],
+        timestamp: "2026-04-22T00:00:00.000Z",
+        inProgress: false,
+        durationMs: 0,
+      },
+    ]);
+  });
+
   it("falls back to display text when structured activity fields are empty", () => {
     const activity = buildAgentOutputActivity({
       outputEntries: [],

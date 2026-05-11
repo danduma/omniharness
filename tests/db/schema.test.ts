@@ -32,4 +32,11 @@ describe("db schema", () => {
     expect(schema.runs).toHaveProperty("plannerArtifactsJson");
     expect(schema.runs).toHaveProperty("archivedAt");
   });
+
+  it("persists commit workflow metadata on runs", () => {
+    expect(schema.runs).toHaveProperty("autoCommitMilestones");
+    expect(schema.runs).toHaveProperty("pushOnCommit");
+    expect(schema.runs).toHaveProperty("gitBaselineJson");
+    expect(schema.runs).toHaveProperty("completionCommitSha");
+  });
 });

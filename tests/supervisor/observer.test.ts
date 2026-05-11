@@ -284,6 +284,57 @@ describe("deriveWorkerEvents", () => {
     expect(events.some((event) => event.type === "worker_idle")).toBe(false);
   });
 
+  it("does not re-emit long final-looking completion while the same answer keeps streaming", () => {
+    const previousFinalText = [
+      "Implemented the quota recovery slice and verified the focused tests.",
+      "",
+      "Changed:",
+      "- Added durable quota wake handling.",
+      "- Preserved worker session metadata.",
+      "- Rehydrated pending wake state after restart.",
+      "",
+      "Verification:",
+      "- Focused quota tests passed.",
+      "- Supervisor wake tests passed.",
+      "- The production build passed with pre-existing warnings.",
+      "- I checked the persisted records and confirmed the recovery incident state.",
+      "- No mocked path substitutions or fake controls were introduced.",
+      "- The supervisor can safely resume after the reset window because the wake lease, persisted run state, and worker session metadata now agree on the next action.",
+      "- I also checked the negative path where the run disappears before the wake fires, so the scheduler exits without throwing while reading run status.",
+    ].join("\n");
+    const nextFinalText = `${previousFinalText}\n- Re-ran the build after the final wake fix.`;
+
+    const { nextState } = deriveWorkerEvents({
+      workerId: "worker-1",
+      snapshot: {
+        state: "working",
+        currentText: previousFinalText,
+        lastText: previousFinalText,
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+      previous: undefined,
+      now: 1_000,
+    });
+    const { events } = deriveWorkerEvents({
+      workerId: "worker-1",
+      snapshot: {
+        state: "working",
+        currentText: nextFinalText,
+        lastText: nextFinalText,
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+      previous: nextState,
+      now: 2_000,
+    });
+
+    expect(nextState.completionHintNotified).toBe(true);
+    expect(events.some((event) => event.type === "worker_turn_completed")).toBe(false);
+  });
+
   it("does not reuse stale last text as a fresh completion while the worker is already working", () => {
     const staleFinalText = [
       "Status: not blocked.",
@@ -993,6 +1044,78 @@ describe("deriveWorkerEvents", () => {
     expect(failedRun?.lastError).toContain("Invalid worker snapshot");
     expect(failedRun?.lastError).toContain("stderrBuffer was missing or not an array");
     expect(runMessages.some((message) => message.content.includes("stderrBuffer was missing or not an array"))).toBe(true);
+  });
+
+  it("does not persist duplicate worker turn completion events for the same prompt", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+    const finalText = [
+      "Implemented the quota reset auto-resume flow and verified the critical path.",
+      "",
+      "Verification:",
+      "- `pnpm build` passed with pre-existing warnings.",
+      "- Focused quota recovery tests passed.",
+      "- Supervisor wake scheduling tests passed.",
+      "- Persisted recovery incident state was checked in SQLite.",
+      "- Worker session metadata survives the quota wait transition.",
+      "- The durable wake scheduler rehydrates pending quota waits on startup.",
+      "- Missing run records are handled before reading status.",
+      "- No placeholder implementation paths remain in the quota recovery code.",
+    ].join("\n");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "opencode",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(executionEvents).values({
+      id: randomUUID(),
+      runId,
+      workerId,
+      eventType: "worker_turn_completed",
+      details: JSON.stringify({ summary: `${workerId} produced a long final-looking text turn` }),
+      createdAt: new Date(),
+    });
+
+    mockGetAgent.mockResolvedValue({
+      state: "working",
+      currentText: finalText,
+      lastText: finalText,
+      pendingPermissions: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    await pollRunWorkers(runId, wakeSupervisor);
+
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+
+    expect(workerEvents.filter((event) => event.eventType === "worker_turn_completed")).toHaveLength(1);
+    expect(wakeSupervisor).not.toHaveBeenCalled();
   });
 
   it("persists a stuck status and wakes the supervisor when a worker stops making meaningful progress", async () => {

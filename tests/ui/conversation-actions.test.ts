@@ -46,6 +46,26 @@ test("conversation rows expose archive in the overflow menu and commit rows expo
   expect(homeAppSource).toContain("archiveRun: handleArchiveRun");
 });
 
+test("conversation rows show left-side status attention indicators", () => {
+  const sidebarSource = readSource("src/components/home/ConversationSidebar.tsx");
+  const localeSource = readSource("shared/locales/en.json");
+
+  expect(sidebarSource).toContain("TriangleAlert");
+  expect(sidebarSource).toContain("normalizeRunStatus");
+  expect(sidebarSource).toContain('const normalizedRunStatus = normalizeRunStatus(run.status);');
+  expect(sidebarSource).toContain("const runIsUnread = isRunUnread({");
+  expect(sidebarSource).toContain('const showCompletedAttentionIndicator = normalizedRunStatus === "done" && runIsUnread;');
+  expect(sidebarSource).toContain('const showAwaitingUserIndicator = normalizedRunStatus === "awaiting_user";');
+  expect(sidebarSource).toContain('conversation.sidebar.status.completedAttention');
+  expect(sidebarSource).toContain('conversation.sidebar.status.awaitingUser');
+  expect(sidebarSource).toContain("bg-sky-300");
+  expect(sidebarSource).toContain("text-amber-500");
+  expect(sidebarSource).toContain("{runIsUnread && !showCompletedAttentionIndicator ? (");
+  expect(sidebarSource).toContain('<TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />');
+  expect(localeSource).toContain('"conversation.sidebar.status.completedAttention": "Finished with unread messages"');
+  expect(localeSource).toContain('"conversation.sidebar.status.awaitingUser": "Waiting for your input"');
+});
+
 test("top bar exposes an auto commit action for the selected chat", () => {
   expect(pageSource).toContain("AUTO_COMMIT_CHAT_PROMPT");
   expect(pageSource).toContain("AUTO_COMMIT_CHAT_PUSH_PROMPT");

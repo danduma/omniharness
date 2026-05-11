@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { expect, test } from "vitest";
 import nextConfig from "@/../next.config";
+import { detectNextDevRouteEnoent } from "@/../scripts/dev-web-recovery";
 
 const packageJson = JSON.parse(
   fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"),
@@ -19,4 +20,20 @@ test("webpack config aliases optional encoding package away for local dev", () =
   const resolved = (result ?? config).resolve?.alias as Record<string, false | string> | undefined;
 
   expect(resolved?.encoding).toBe(false);
+});
+
+test("dev web recovery detects missing Next app route artifacts under this repo", () => {
+  const repoRoot = process.cwd();
+  const line = `[Error: ENOENT: no such file or directory, open '${path.join(repoRoot, ".next/server/app/api/settings/route.js")}']`;
+
+  expect(detectNextDevRouteEnoent(line, repoRoot)).toEqual({
+    artifactDir: path.join(repoRoot, ".next/server/app/api/settings"),
+    routeFile: path.join(repoRoot, ".next/server/app/api/settings/route.js"),
+  });
+});
+
+test("dev web recovery ignores missing route artifacts outside this repo", () => {
+  const line = "[Error: ENOENT: no such file or directory, open '/tmp/other/.next/server/app/api/settings/route.js']";
+
+  expect(detectNextDevRouteEnoent(line, process.cwd())).toBeNull();
 });

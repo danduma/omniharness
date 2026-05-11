@@ -123,6 +123,26 @@ I created these planning artifacts:
     expect(artifacts.planPath).toBe(planPath);
   });
 
+  it("infers a sibling design spec when only the plan artifact was mentioned", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "omni-planning-"));
+    const specPath = path.join(cwd, "docs/superpowers/specs/intermediate-scene-assets-design.md");
+    const planPath = path.join(cwd, "docs/superpowers/plans/intermediate-scene-assets.md");
+
+    fs.mkdirSync(path.dirname(specPath), { recursive: true });
+    fs.mkdirSync(path.dirname(planPath), { recursive: true });
+    fs.writeFileSync(specPath, "# Intermediate Scene Assets Design\n");
+    fs.writeFileSync(planPath, "## Phase 1\n- [ ] Build scene search\n");
+
+    const artifacts = await collectPlannerArtifacts({
+      cwd,
+      outputText: `I wrote docs/superpowers/plans/intermediate-scene-assets.md`,
+    });
+
+    expect(artifacts.planPath).toBe(planPath);
+    expect(artifacts.specPath).toBe(specPath);
+    expect(artifacts.candidates.some((candidate) => candidate.kind === "spec" && candidate.path === specPath)).toBe(true);
+  });
+
   it("ignores incidental markdown paths that were not presented as planner artifacts", async () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "omni-planning-"));
     const oldPlan = path.join(cwd, "docs/superpowers/plans/old-plan.md");

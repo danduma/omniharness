@@ -328,6 +328,89 @@ describe("GET /api/events", () => {
     ]);
   });
 
+  it("includes the parent planning transcript when viewing a promoted implementation run", async () => {
+    const planningPlanId = randomUUID();
+    const implementationPlanId = randomUUID();
+    const planningRunId = randomUUID();
+    const implementationRunId = randomUUID();
+    const now = new Date("2026-05-11T05:52:18.000Z");
+
+    await db.insert(plans).values([
+      {
+        id: planningPlanId,
+        path: "vibes/ad-hoc/planning-session.md",
+        status: "done",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: implementationPlanId,
+        path: "docs/superpowers/plans/intermediate-scene-assets.md",
+        status: "running",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+    await db.insert(runs).values([
+      {
+        id: planningRunId,
+        planId: planningPlanId,
+        mode: "planning",
+        status: "promoted",
+        title: "Intermediate Asset Scene Search",
+        createdAt: new Date(now.getTime() - 60_000),
+        updatedAt: now,
+      },
+      {
+        id: implementationRunId,
+        planId: implementationPlanId,
+        mode: "implementation",
+        status: "running",
+        title: "Intermediate Asset Scene Search",
+        parentRunId: planningRunId,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+    await db.insert(messages).values([
+      {
+        id: "planning-user-message",
+        runId: planningRunId,
+        role: "user",
+        kind: "checkpoint",
+        content: "Plan the intermediate scene assets section.",
+        createdAt: new Date(now.getTime() - 50_000),
+      },
+      {
+        id: "planning-worker-message",
+        runId: planningRunId,
+        role: "worker",
+        kind: "planning",
+        content: "Created the spec and implementation plan.",
+        createdAt: new Date(now.getTime() - 40_000),
+      },
+      {
+        id: "implementation-user-message",
+        runId: implementationRunId,
+        role: "user",
+        kind: "checkpoint",
+        content: "Plan the intermediate scene assets section.",
+        createdAt: now,
+      },
+    ]);
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${implementationRunId}`));
+    const payload = await response.json();
+
+    expect(payload.messages.map((message: { id: string }) => message.id)).toEqual([
+      "planning-user-message",
+      "planning-worker-message",
+      "implementation-user-message",
+    ]);
+  });
+
   it("streams a persisted sqlite update when runtime enrichment misses the grace window", async () => {
     vi.useFakeTimers();
     const planId = randomUUID();
