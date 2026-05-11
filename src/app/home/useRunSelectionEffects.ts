@@ -216,6 +216,10 @@ export function useRunSelectionEffects({
     selectedModel,
     selectedRun,
     selectedRunId,
+    setHydratedRunSelectionId,
+    setSelectedCliAgent,
+    setSelectedEffort,
+    setSelectedModel,
   ]);
 
   useEffect(() => {
@@ -242,7 +246,7 @@ export function useRunSelectionEffects({
       WORKER_ALLOWED_TYPES: JSON.stringify(nextAllowed),
       WORKER_DEFAULT_TYPE: normalizedDefault,
     }));
-  }, [apiKeys.WORKER_DEFAULT_TYPE, availableWorkerTypes, configuredAllowedWorkerTypes]);
+  }, [apiKeys.WORKER_DEFAULT_TYPE, availableWorkerTypes, configuredAllowedWorkerTypes, setApiKeys]);
 
   useEffect(() => {
     if (!selectedRunId) {
@@ -260,5 +264,5 @@ export function useRunSelectionEffects({
       }
       return { ...current, [selectedRunId]: latestForSelected };
     });
-  }, [selectedRunId, state.messages]);
+  }, [selectedRunId, state.messages, setReadMarkers]);
 }

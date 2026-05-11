@@ -1158,3 +1158,9 @@ export function buildConversationPath(selectedRunId: string | null, draftProject
   const query = params.toString();
   return query ? `/?${query}` : "/";
 }
+
+export function resolveRepoName(projectPath: string | null): string {
+  const normalized = projectPath?.trim().replace(/[/\\]+$/, "");
+  if (!normalized) return "omniharness";
+  return normalized.split(/[/\\]/).filter(Boolean).pop() || "omniharness";
+}

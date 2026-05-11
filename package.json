@@ -24,7 +24,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "measure:dev": "node ./scripts/measure-local-dev.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.14.1",

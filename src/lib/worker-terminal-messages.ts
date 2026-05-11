@@ -44,15 +44,6 @@ function hasLoadedOutputContext(createdAt: string, outputTimes: number[]) {
   ));
 }
 
-function isAfterLoadedOutput(createdAt: string, outputTimes: number[]) {
-  const promptTime = timestampMs(createdAt);
-  if (promptTime === null || outputTimes.length === 0) {
-    return false;
-  }
-
-  return promptTime >= outputTimes[outputTimes.length - 1];
-}
-
 function compareTerminalUserMessages(left: WorkerTerminalUserMessage, right: WorkerTerminalUserMessage) {
   const timeDelta = (timestampMs(left.createdAt) ?? 0) - (timestampMs(right.createdAt) ?? 0);
   return timeDelta !== 0 ? timeDelta : left.id.localeCompare(right.id);

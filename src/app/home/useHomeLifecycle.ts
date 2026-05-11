@@ -238,6 +238,7 @@ export function useHomeLifecycle({
     pairTokenFromUrl,
     redeemPairMutation,
     routeReady,
+    setPairRedeemAttempted,
   ]);
 
   useEffect(() => {
@@ -501,7 +502,7 @@ export function useHomeLifecycle({
     if (savedThemeMode === "day" || savedThemeMode === "night") {
       setThemeMode(savedThemeMode);
     }
-  }, []);
+  }, [setThemeMode]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -523,7 +524,7 @@ export function useHomeLifecycle({
       }]));
     }
     applyDocumentTheme(themeMode);
-  }, [themeMode]);
+  }, [themeMode, setRuntimeErrors]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
