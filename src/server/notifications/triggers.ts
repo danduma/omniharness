@@ -3,7 +3,7 @@ import { db } from "@/server/db";
 import { runs } from "@/server/db/schema";
 import { deliverNotificationToSubscriptions } from "@/server/notifications/deliver";
 import type { WebPushPayload } from "@/server/notifications/web-push";
-import { t } from "@/lib/i18n";
+import { t } from "@/lib/i18n-core";
 
 type RunLifecycleEvent = {
   runId: string;
@@ -42,6 +42,15 @@ function notificationForEvent(run: typeof runs.$inferSelect, event: RunLifecycle
     };
   }
 
+  if (event.eventType === "worker_permission_requested") {
+    return {
+      title: t("notifications.push.needsInput"),
+      body: t("notifications.push.permissionBody", { title: titleForRun(run) }),
+      tag: `omniharness-${run.id}-permission`,
+      url: runUrl(run.id),
+    };
+  }
+
   return null;
 }
 
@@ -57,4 +66,12 @@ export async function notifyRunLifecycleEvent(event: RunLifecycleEvent) {
   }
 
   return deliverNotificationToSubscriptions(payload);
+}
+
+export async function notifyRunLifecycleEventBestEffort(event: RunLifecycleEvent) {
+  try {
+    await notifyRunLifecycleEvent(event);
+  } catch (error) {
+    console.warn("Failed to deliver run notification", error);
+  }
 }

@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REAL_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+if [ -L "$REAL_SCRIPT" ]; then
+  REAL_SCRIPT="$(readlink "$REAL_SCRIPT")"
+fi
+ROOT_DIR="$(cd "$(dirname "$REAL_SCRIPT")" && pwd)"
 
 if ! command -v pnpm >/dev/null 2>&1; then
   echo "OmniHarness CLI requires pnpm. Install it with corepack or your package manager, then run omni again." >&2
