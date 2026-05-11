@@ -60,6 +60,15 @@ function resolveProjectFileReference(pathValue: string | null, projectRoot?: str
   return null;
 }
 
+function displayProjectPath(pathValue: string | null, projectRoot?: string | null) {
+  if (!pathValue) {
+    return t("planning.artifacts.notDetected");
+  }
+
+  const reference = resolveProjectFileReference(pathValue, projectRoot);
+  return reference ? reference.relativePath : pathValue;
+}
+
 function PlanningArtifactFileLink({
   label,
   pathValue,
@@ -72,10 +81,11 @@ function PlanningArtifactFileLink({
   onOpenProjectFile?: (file: ProjectFileReference) => void;
 }) {
   const reference = resolveProjectFileReference(pathValue, projectRoot);
+  const displayPath = displayProjectPath(pathValue, projectRoot);
   const content = (
     <>
       <span className="shrink-0 font-medium text-muted-foreground">{label}</span>
-      <span className="min-w-0 break-all font-mono text-[12px] text-foreground">{pathValue || t("planning.artifacts.notDetected")}</span>
+      <span className="min-w-0 break-all font-mono text-[12px] text-foreground">{displayPath}</span>
     </>
   );
 
@@ -92,7 +102,7 @@ function PlanningArtifactFileLink({
       type="button"
       className="inline-flex min-w-0 max-w-full items-baseline gap-2 text-left underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
       onClick={() => onOpenProjectFile(reference)}
-      title={t("planning.artifacts.openFileTitle", { path: pathValue ?? "" })}
+      title={t("planning.artifacts.openFileTitle", { path: displayPath })}
       aria-label={t("planning.artifacts.openFile", { label })}
     >
       {content}
@@ -142,9 +152,9 @@ export function PlanningArtifactsPanel({
   }
 
   return (
-    <div className="space-y-3 px-1 text-sm leading-relaxed" role="note" aria-label={t("planning.artifacts.ariaLabel")}>
+    <div className="space-y-3 px-1 text-sm leading-relaxed text-foreground" role="note" aria-label={t("planning.artifacts.ariaLabel")}>
       <div className="space-y-2">
-        <p className="text-muted-foreground">
+        <p>
           {ready
             ? t("planning.artifacts.readyPrompt")
             : readinessGap
@@ -175,7 +185,7 @@ export function PlanningArtifactsPanel({
                 onClick={() => planningArtifactsManager.setSelectedPlanPath(candidate.path)}
                 className="max-w-full truncate font-mono text-[11px] text-foreground/85 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
               >
-                {candidate.path}
+                {displayProjectPath(candidate.path, projectRoot)}
               </button>
             ))}
           </div>

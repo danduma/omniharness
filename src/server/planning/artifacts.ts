@@ -13,7 +13,7 @@ export interface PlannerHandoff {
 export interface PlannerArtifactCandidate {
   path: string;
   kind: "spec" | "plan" | "unknown";
-  source: "handoff" | "output_text";
+  source: "handoff" | "output_text" | "inferred";
   confidence: number;
   evidence: string;
   exists: boolean;
@@ -40,6 +40,29 @@ function inferKind(candidatePath: string) {
   if (lower.includes("/specs/") || lower.includes("-design.md")) return "spec";
   if (lower.includes("/plans/") || lower.includes("plan")) return "plan";
   return "unknown";
+}
+
+function inferSiblingSpecPaths(planPath: string) {
+  const normalizedPlanPath = path.normalize(planPath);
+  const segments = normalizedPlanPath.split(path.sep);
+  const plansIndex = segments.lastIndexOf("plans");
+  if (plansIndex < 0) {
+    return [];
+  }
+
+  const parsed = path.parse(normalizedPlanPath);
+  const specsSegments = [...segments.slice(0, -1)];
+  specsSegments[plansIndex] = "specs";
+  const specsDir = specsSegments.join(path.sep) || path.sep;
+  const baseNames = [
+    parsed.name.replace(/-implementation$/, "-design"),
+    parsed.name.replace(/-plan$/, "-design"),
+    `${parsed.name}-design`,
+    parsed.name,
+  ];
+
+  return Array.from(new Set(baseNames))
+    .map((baseName) => path.join(specsDir, `${baseName}${parsed.ext || ".md"}`));
 }
 
 function extractMarkdownPaths(outputText: string) {
@@ -100,7 +123,7 @@ export function extractPlannerHandoffBlock(outputText: string): PlannerHandoff |
 async function buildCandidate(args: {
   cwd: string;
   rawPath: string;
-  source: "handoff" | "output_text";
+  source: PlannerArtifactCandidate["source"];
   evidence: string;
   confidence: number;
 }) {
@@ -167,6 +190,32 @@ export async function collectPlannerArtifacts(args: {
 
     seenPaths.add(candidate.path);
     candidates.push(candidate);
+  }
+
+  const explicitSpecCandidates = candidates.filter((candidate) => candidate.kind === "spec" && candidate.exists);
+  if (explicitSpecCandidates.length === 0) {
+    const detectedPlanCandidates = candidates.filter((candidate) => candidate.kind === "plan" && candidate.exists);
+    for (const planCandidate of detectedPlanCandidates) {
+      for (const inferredSpecPath of inferSiblingSpecPaths(planCandidate.path)) {
+        if (seenPaths.has(inferredSpecPath) || !fs.existsSync(inferredSpecPath)) {
+          continue;
+        }
+
+        const candidate = await buildCandidate({
+          cwd: args.cwd,
+          rawPath: inferredSpecPath,
+          source: "inferred",
+          evidence: `inferred from plan artifact: ${planCandidate.path}`,
+          confidence: 0.75,
+        });
+        if (!candidate) {
+          continue;
+        }
+
+        seenPaths.add(candidate.path);
+        candidates.push(candidate);
+      }
+    }
   }
 
   const specCandidates = candidates.filter((candidate) => candidate.kind === "spec" && candidate.exists);
