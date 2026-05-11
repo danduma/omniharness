@@ -15,14 +15,27 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const lightThemeColor = "#ffffff";
+const darkThemeColor = "#0b0d10";
+
 const themeBootstrapScript = `
 (function() {
+  var lightThemeColor = "${lightThemeColor}";
+  var darkThemeColor = "${darkThemeColor}";
+  function applyThemeColor(themeMode) {
+    var themeColorMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeColorMeta) {
+      themeColorMeta.setAttribute("content", themeMode === "night" ? darkThemeColor : lightThemeColor);
+    }
+  }
   try {
     var themeMode = window.localStorage.getItem("omni-theme-mode");
     document.documentElement.classList.toggle("dark", themeMode === "night");
     document.documentElement.style.colorScheme = themeMode === "night" ? "dark" : "light";
+    applyThemeColor(themeMode);
   } catch (error) {
     document.documentElement.style.colorScheme = "light";
+    applyThemeColor("day");
   }
 })();
 `;
@@ -72,7 +85,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#2f6652",
+  themeColor: lightThemeColor,
   colorScheme: "light dark",
 };
 

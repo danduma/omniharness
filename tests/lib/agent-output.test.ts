@@ -2,6 +2,126 @@ import { describe, expect, it } from "vitest";
 import { buildAgentOutputActivity, extractLatestPlainTextTurn } from "@/lib/agent-output";
 
 describe("agent output normalization", () => {
+  it("groups consecutive tool activities between assistant messages", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        {
+          id: "msg-1",
+          type: "message",
+          text: "I will inspect this first.",
+          timestamp: "2026-05-10T00:00:00.000Z",
+        },
+        {
+          id: "read-1",
+          type: "tool_call",
+          text: "Read File",
+          timestamp: "2026-05-10T00:00:01.000Z",
+          toolCallId: "read-1",
+          toolKind: "read",
+          status: "completed",
+          raw: {
+            kind: "read",
+            rawInput: { path: "/workspace/src/Terminal.tsx" },
+          },
+        },
+        {
+          id: "search-1",
+          type: "tool_call",
+          text: "Search",
+          timestamp: "2026-05-10T00:00:02.000Z",
+          toolCallId: "search-1",
+          toolKind: "search",
+          status: "completed",
+          raw: {
+            kind: "search",
+            rawInput: { command: "rg Terminal src" },
+          },
+        },
+        {
+          id: "edit-1",
+          type: "tool_call",
+          text: "Edit /workspace/src/Terminal.tsx",
+          timestamp: "2026-05-10T00:00:03.000Z",
+          toolCallId: "edit-1",
+          toolKind: "edit",
+          status: "completed",
+          raw: {
+            kind: "edit",
+            rawInput: {
+              file_path: "/workspace/src/Terminal.tsx",
+              old_string: "old",
+              new_string: "new",
+            },
+          },
+        },
+        {
+          id: "msg-2",
+          type: "message",
+          text: "I found the renderer.",
+          timestamp: "2026-05-10T00:00:04.000Z",
+        },
+      ],
+    });
+
+    expect(activity).toHaveLength(3);
+    expect(activity[1]).toMatchObject({
+      kind: "tool_group",
+      id: "tool-group:read-1:edit-1",
+      status: "completed",
+      counts: {
+        editedFiles: 1,
+        readFiles: 1,
+        searches: 1,
+        total: 3,
+      },
+      tools: [
+        expect.objectContaining({ kind: "tool", label: "Read", targetPath: "/workspace/src/Terminal.tsx" }),
+        expect.objectContaining({ kind: "tool", label: "Search" }),
+        expect.objectContaining({ kind: "tool", label: "Edit", targetPath: "/workspace/src/Terminal.tsx" }),
+      ],
+    });
+  });
+
+  it("marks a grouped tool run as failed when any child tool fails", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        {
+          id: "read-1",
+          type: "tool_call",
+          text: "Read File",
+          timestamp: "2026-05-10T00:00:01.000Z",
+          toolCallId: "read-1",
+          toolKind: "read",
+          status: "completed",
+        },
+        {
+          id: "bash-1",
+          type: "tool_call",
+          text: "Terminal",
+          timestamp: "2026-05-10T00:00:02.000Z",
+          toolCallId: "bash-1",
+          toolKind: "execute",
+          status: "failed",
+          raw: {
+            kind: "execute",
+            rawInput: { command: "pnpm test" },
+          },
+        },
+      ],
+    });
+
+    expect(activity).toHaveLength(1);
+    expect(activity[0]).toMatchObject({
+      kind: "tool_group",
+      status: "failed",
+      counts: {
+        readFiles: 0,
+        commands: 1,
+        total: 2,
+      },
+    });
+  });
+
   it("conflates tool call updates into a single tool activity item", () => {
     const activity = buildAgentOutputActivity({
       outputEntries: [

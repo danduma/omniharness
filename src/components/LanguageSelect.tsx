@@ -11,8 +11,6 @@ export function LanguageSelect() {
     void i18nManager.setLocaleAsync(value as OmniLocale);
   }, []);
 
-  const currentLanguageLabel = t(`language.${locale}`);
-
   return (
     <div className="inline-grid max-w-full space-y-1.5">
       <label className="text-xs font-semibold text-muted-foreground" htmlFor="OMNI_LANGUAGE">
@@ -25,9 +23,6 @@ export function LanguageSelect() {
         options={supportedLocaleOptions()}
         onValueChange={handleLanguageChange}
       />
-      <p className="text-[11px] text-muted-foreground">
-        {t("settings.language.current", { language: currentLanguageLabel })}
-      </p>
     </div>
   );
 }

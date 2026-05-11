@@ -21,6 +21,7 @@ describe("prompt markdown loading", () => {
     expect(PLANNER_SYSTEM_PROMPT).toContain("Do not start implementation");
     expect(PLANNER_SYSTEM_PROMPT).toContain("relative to the current cwd");
     expect(PLANNER_SYSTEM_PROMPT).toContain("high-level objective");
-    expect(PLANNER_SYSTEM_PROMPT).toContain("as many clarification turns as needed");
+    expect(PLANNER_SYSTEM_PROMPT).toContain("before writing final artifacts whenever the request is underspecified");
+    expect(PLANNER_SYSTEM_PROMPT).toContain("Skip questions only when the request is already concrete enough");
   });
 });

@@ -3,8 +3,9 @@
 import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { planningArtifactsManager } from "@/components/component-state-managers";
-import { cn } from "@/lib/utils";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import type { ProjectFileReference } from "@/lib/project-file-links";
 
 type Candidate = {
   path: string;
@@ -36,19 +37,87 @@ function normalizeArtifacts(value: string | null | undefined): ArtifactsPayload 
   }
 }
 
+function normalizePath(value: string) {
+  return value.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/$/, "");
+}
+
+function resolveProjectFileReference(pathValue: string | null, projectRoot?: string | null): ProjectFileReference | null {
+  const normalizedRoot = normalizePath(projectRoot ?? "");
+  const normalizedPath = normalizePath(pathValue ?? "");
+  if (!normalizedRoot || !normalizedPath) {
+    return null;
+  }
+
+  if (normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`)) {
+    const relativePath = normalizedPath.slice(normalizedRoot.length).replace(/^\/+/, "");
+    return relativePath ? { root: normalizedRoot, relativePath } : null;
+  }
+
+  if (!normalizedPath.startsWith("/")) {
+    return { root: normalizedRoot, relativePath: normalizedPath };
+  }
+
+  return null;
+}
+
+function PlanningArtifactFileLink({
+  label,
+  pathValue,
+  projectRoot,
+  onOpenProjectFile,
+}: {
+  label: string;
+  pathValue: string | null;
+  projectRoot?: string | null;
+  onOpenProjectFile?: (file: ProjectFileReference) => void;
+}) {
+  const reference = resolveProjectFileReference(pathValue, projectRoot);
+  const content = (
+    <>
+      <span className="shrink-0 font-medium text-muted-foreground">{label}</span>
+      <span className="min-w-0 break-all font-mono text-[12px] text-foreground">{pathValue || t("planning.artifacts.notDetected")}</span>
+    </>
+  );
+
+  if (!reference || !onOpenProjectFile) {
+    return (
+      <span className="inline-flex min-w-0 max-w-full items-baseline gap-2">
+        {content}
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="inline-flex min-w-0 max-w-full items-baseline gap-2 text-left underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
+      onClick={() => onOpenProjectFile(reference)}
+      title={t("planning.artifacts.openFileTitle", { path: pathValue ?? "" })}
+      aria-label={t("planning.artifacts.openFile", { label })}
+    >
+      {content}
+    </button>
+  );
+}
+
 export function PlanningArtifactsPanel({
   specPath,
   planPath,
   plannerArtifactsJson,
   onPromote,
   isPromoting,
+  projectRoot,
+  onOpenProjectFile,
 }: {
   specPath?: string | null;
   planPath?: string | null;
   plannerArtifactsJson?: string | null;
   onPromote: (planPath: string | null) => void;
   isPromoting?: boolean;
+  projectRoot?: string | null;
+  onOpenProjectFile?: (file: ProjectFileReference) => void;
 }) {
+  useI18nSnapshot();
   const artifacts = useMemo(() => normalizeArtifacts(plannerArtifactsJson), [plannerArtifactsJson]);
   const allCandidates = artifacts.candidates ?? [];
   const allPlanCandidates = (artifacts.candidates ?? []).filter((candidate) => candidate.kind === "plan");
@@ -64,87 +133,73 @@ export function PlanningArtifactsPanel({
 
   const selectedCandidate = planCandidates.find((candidate) => candidate.path === selectedPlanPath) ?? null;
   const ready = Boolean(selectedCandidate?.readiness?.ready || (!selectedCandidate && selectedPlanPath));
+  const resolvedSpecPath = specPath || artifacts.specPath || null;
+  const readinessGap = selectedCandidate?.readiness?.gaps?.[0] ?? null;
+  const otherPlanCandidates = planCandidates.filter((candidate) => candidate.path !== selectedPlanPath);
 
   if (!hasArtifactSignal) {
     return null;
   }
 
   return (
-    <div className="rounded-2xl border border-border/60 bg-card/80 p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-semibold">Planning artifacts</h3>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            OmniHarness detects spec and plan files from the planning CLI handoff, then verifies the selected plan before implementation.
-          </p>
+    <div className="space-y-3 px-1 text-sm leading-relaxed" role="note" aria-label={t("planning.artifacts.ariaLabel")}>
+      <div className="space-y-2">
+        <p className="text-muted-foreground">
+          {ready
+            ? t("planning.artifacts.readyPrompt")
+            : readinessGap
+              ? t("planning.artifacts.needsReviewPrompt", { gap: readinessGap })
+              : t("planning.artifacts.detectedPrompt")}
+        </p>
+        <div className="space-y-1.5">
+          <PlanningArtifactFileLink
+            label={t("planning.artifacts.spec")}
+            pathValue={resolvedSpecPath}
+            projectRoot={projectRoot}
+            onOpenProjectFile={onOpenProjectFile}
+          />
+          <PlanningArtifactFileLink
+            label={t("planning.artifacts.plan")}
+            pathValue={selectedPlanPath}
+            projectRoot={projectRoot}
+            onOpenProjectFile={onOpenProjectFile}
+          />
         </div>
-        <div className={cn(
-          "rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]",
-          ready ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
-        )}>
-          {ready ? "Ready" : "Needs review"}
-        </div>
-      </div>
-
-      <div className="mt-4 space-y-3 text-xs">
-        <div className="rounded-xl border border-border/60 bg-background/80 p-3">
-          <div className="font-semibold">Spec</div>
-          <div className="mt-1 break-all text-muted-foreground">{specPath || artifacts.specPath || "Not detected yet"}</div>
-        </div>
-
-        <div className="rounded-xl border border-border/60 bg-background/80 p-3">
-          <div className="font-semibold">Plan</div>
-          <div className="mt-2 space-y-2">
-            {planCandidates.length > 0 ? planCandidates.map((candidate) => {
-              const candidateReady = Boolean(candidate.readiness?.ready);
-              return (
-                <button
-                  key={candidate.path}
-                  type="button"
-                  onClick={() => planningArtifactsManager.setSelectedPlanPath(candidate.path)}
-                  className={cn(
-                    "w-full rounded-lg border px-3 py-2 text-left transition-colors",
-                    selectedPlanPath === candidate.path
-                      ? "border-primary/40 bg-primary/5"
-                      : "border-border/60 bg-background hover:border-primary/30",
-                  )}
-                >
-                  <div className="break-all font-mono text-[11px]">{candidate.path}</div>
-                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
-                    <span>{candidate.source || "detected"}</span>
-                    <span>{candidate.exists ? "exists" : "missing"}</span>
-                    <span>{candidateReady ? "ready" : "not ready"}</span>
-                  </div>
-                  {candidate.readiness?.gaps?.length ? (
-                    <div className="mt-1 text-[10px] text-amber-700 dark:text-amber-300">
-                      {candidate.readiness.gaps[0]}
-                    </div>
-                  ) : null}
-                </button>
-              );
-            }) : (
-              <div className="text-muted-foreground">No candidate plan detected yet.</div>
-            )}
+        {otherPlanCandidates.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <span>{t("planning.artifacts.otherPlans")}</span>
+            {otherPlanCandidates.map((candidate) => (
+              <button
+                key={candidate.path}
+                type="button"
+                onClick={() => planningArtifactsManager.setSelectedPlanPath(candidate.path)}
+                className="max-w-full truncate font-mono text-[11px] text-foreground/85 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
+              >
+                {candidate.path}
+              </button>
+            ))}
           </div>
-        </div>
+        ) : null}
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
           size="sm"
+          variant="ghost"
+          onClick={() => document.querySelector<HTMLTextAreaElement>("[data-composer-input='true']")?.focus()}
+        >
+          {t("planning.artifacts.continueRevising")}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
           disabled={!selectedPlanPath || !ready || isPromoting}
           onClick={() => onPromote(selectedPlanPath)}
         >
-          Start implementation
+          {t("planning.artifacts.startImplementation")}
         </Button>
-        <div className="text-[11px] text-muted-foreground">
-          {selectedCandidate?.readiness?.gaps?.length
-            ? selectedCandidate.readiness.gaps[0]
-            : selectedPlanPath
-              ? "The selected plan will be promoted into a fresh supervisor-managed implementation run."
-              : "Select a verified plan file to promote this planning session."}
-        </div>
       </div>
     </div>
   );

@@ -23,6 +23,9 @@ import type { AutoCommitChatAction } from "./HomeUiStateManager";
 import type { ComposerWorkerOption, EventStreamState } from "./types";
 import { buildConversationPath, buildInlineError, parseCollapsedProjectPaths } from "./utils";
 
+const lightThemeColor = "#ffffff";
+const darkThemeColor = "#0b0d10";
+
 interface UseHomeLifecycleProps {
   appUnlocked: boolean;
   setHasReceivedInitialEventStreamPayload: React.Dispatch<React.SetStateAction<boolean>>;
@@ -66,6 +69,15 @@ interface UseHomeLifecycleProps {
   themeMode: "day" | "night";
   setThemeMode: React.Dispatch<React.SetStateAction<"day" | "night">>;
   filterEventStreamState?: (state: EventStreamState) => EventStreamState;
+}
+
+function applyDocumentTheme(themeMode: "day" | "night") {
+  document.documentElement.classList.toggle("dark", themeMode === "night");
+  document.documentElement.style.colorScheme = themeMode === "night" ? "dark" : "light";
+  document.querySelector('meta[name="theme-color"]')?.setAttribute(
+    "content",
+    themeMode === "night" ? darkThemeColor : lightThemeColor,
+  );
 }
 
 export function useHomeLifecycle({
@@ -522,8 +534,7 @@ export function useHomeLifecycle({
         action: "Persist theme preference",
       }]));
     }
-    document.documentElement.classList.toggle("dark", themeMode === "night");
-    document.documentElement.style.colorScheme = themeMode === "night" ? "dark" : "light";
+    applyDocumentTheme(themeMode);
   }, [themeMode]);
 
   useEffect(() => {

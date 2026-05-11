@@ -93,7 +93,8 @@ test("direct mode requires an explicit cli agent and tightens dropdown alignment
   expect(pageSource).toContain('const nextDirectWorker = selectedCliAgent === "auto" ? (autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex") : selectedCliAgent;');
   expect(pageSource).toContain('<ComposerSelect');
   expect(pageSource).toContain('<ComposerModelPicker');
-  expect(composerSelectSource).toContain('"h-7 max-w-[7.8rem] shrink border-0 bg-transparent px-1 text-xs shadow-none sm:h-8 sm:max-w-none sm:px-2 sm:text-sm [&>span]:text-right"');
+  expect(composerSelectSource).toContain('"h-7 w-max min-w-0 max-w-[8.5rem] shrink border-0 bg-transparent px-1.5 text-xs shadow-none sm:h-8 sm:px-2 sm:text-sm [&>span]:text-right"');
+  expect(composerModelPickerSource).toContain('"h-7 w-max min-w-0 max-w-[13rem] shrink truncate px-1.5 text-xs font-normal sm:h-8 sm:px-2 sm:text-sm"');
 });
 
 test("composer exposes native file input, paste ingestion, previews, and removal controls", () => {
@@ -118,14 +119,21 @@ test("composer mention picker can open a project file without inserting it", () 
   expect(pageSource).toContain("applyMention(filePath)");
 });
 
-test("composer control row stays on one compact mobile row", () => {
-  expect(pageSource).toContain('className="mt-0 flex items-center gap-1 pb-2 sm:gap-2"');
-  expect(pageSource).toContain('className="ml-auto flex min-w-0 items-center justify-end gap-1 sm:gap-2"');
-  expect(pageSource).toContain('"h-8 w-8 shrink-0 rounded-full transition-all"');
-  expect(pageSource).not.toContain('className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2"');
+test("composer controls use the available mobile width for readable labels", () => {
+  expect(pageSource).toContain('className="mt-0 flex flex-wrap items-center gap-x-1 gap-y-1 pb-2 sm:flex-nowrap sm:gap-2"');
+  expect(pageSource).toContain('className="order-3 flex min-w-0 basis-full items-center justify-end gap-1 sm:order-none sm:basis-auto sm:flex-1 sm:gap-2"');
+  expect(pageSource).toContain('"order-2 ml-auto h-8 w-8 shrink-0 rounded-full transition-all sm:order-none sm:ml-0"');
+  expect(pageSource).not.toContain('className="mt-0 flex items-center gap-1 pb-2 sm:gap-2"');
   expect(pageSource).not.toContain('className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1 sm:gap-2"');
-  expect(pageSource).not.toContain('className="ml-auto flex flex-wrap items-center gap-2"');
   expect(pageSource).not.toContain('className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2"');
+});
+
+test("composer draft state is isolated from the root home app subscription", () => {
+  expect(pageSource).toContain("selectHomeAppState, shallowEqualRecord");
+  expect(pageSource).toContain("selectComposerDraftState");
+  expect(pageSource).toContain("function ComposerContainer");
+  expect(pageSource).toContain("const { command, commandCursor, mentionIndex, attachments } = useManagerSelector(");
+  expect(pageSource).toContain('type HomeAppState = Omit<HomeUiState, "command" | "commandCursor" | "mentionIndex" | "attachments">;');
 });
 
 test("composer submit button sends text, stops live conversations, and disables when idle empty", () => {

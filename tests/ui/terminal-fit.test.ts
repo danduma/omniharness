@@ -16,6 +16,14 @@ const terminalPreferenceSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/app/home/AppearancePreferencesManager.ts"),
   "utf8"
 );
+const globalCssSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/app/globals.css"),
+  "utf8"
+);
+const homeAppSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/app/home/HomeApp.tsx"),
+  "utf8"
+);
 
 test("terminal can render in native conversation mode without window chrome", () => {
   expect(terminalSource).toContain('variant = "terminal"');
@@ -136,15 +144,15 @@ test("terminal uses the same measured expansion animation for thoughts", () => {
   expect(terminalSource).not.toContain("space-y-1 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1");
 });
 
-test("terminal exposes a text size icon menu with tiny through three notches larger", () => {
+test("terminal exposes a text size icon menu with tiny through huge", () => {
   expect(terminalSource).toContain("TERMINAL_TEXT_SIZE_LEVELS");
   expect(terminalPreferenceSource).toContain('value: "tiny"');
-  expect(terminalPreferenceSource).toContain('value: "largest"');
-  expect(terminalPreferenceSource).toContain("notch: 3");
-  expect(terminalSource).toContain('aria-label="Terminal text size"');
+  expect(terminalPreferenceSource).toContain('value: "huge"');
+  expect(terminalPreferenceSource).toContain('labelKey: "settings.textSize.huge"');
+  expect(terminalSource).toContain('aria-label={t("settings.appearance.terminalFontSize")}');
   expect(terminalSource).toContain("<ALargeSmall");
   expect(terminalSource).toContain("<DropdownMenuGroup>");
-  expect(terminalSource).toContain("<DropdownMenuLabel>Text size</DropdownMenuLabel>");
+  expect(terminalSource).toContain('<DropdownMenuLabel>{t("settings.appearance.terminalFontSize")}</DropdownMenuLabel>');
   expect(terminalSource).toContain("</DropdownMenuGroup>");
   expect(terminalSource).toContain("appearancePreferencesManager.setTerminalTextSize(level.value)");
   expect(terminalSource).toContain("--terminal-message-size");
@@ -152,12 +160,26 @@ test("terminal exposes a text size icon menu with tiny through three notches lar
   expect(terminalSource).not.toContain("text-[var(--terminal-message-size)]");
 });
 
-test("terminal can use direct-control text sizing separately from terminal output sizing", () => {
-  expect(terminalSource).toContain('textSizeScope?: "terminal" | "direct"');
+test("terminal can use conversation text sizing separately from terminal output sizing", () => {
+  expect(terminalSource).toContain('textSizeScope?: "terminal" | "conversation"');
   expect(terminalSource).toContain('textSizeScope = "terminal"');
-  expect(terminalSource).toContain('textSizeScope === "direct"');
-  expect(terminalSource).toContain("getDirectTerminalTextSizeStyle(directTextSize)");
+  expect(terminalSource).toContain('textSizeScope === "conversation"');
+  expect(terminalSource).toContain('textSizeScope === "conversation" && "omni-conversation-text-scale"');
+  expect(terminalSource).toContain("getConversationTerminalTextSizeStyle(conversationTextSize)");
   expect(terminalSource).toContain("getTerminalTextSizeStyle(terminalTextSize)");
+  expect(globalCssSource).toContain(".omni-app-text-scale .omni-conversation-text-scale .text-\\[12px\\]");
+  expect(globalCssSource).toContain(".omni-app-text-scale .omni-conversation-text-scale .text-\\[13px\\]");
+  expect(globalCssSource).toContain(".omni-app-text-scale .omni-conversation-text-scale .text-base");
+});
+
+test("UI text size also scales compact icon button tap targets", () => {
+  expect(globalCssSource).toContain("--omni-mobile-ui-control-boost: 2px");
+  expect(globalCssSource).toContain(".omni-app-text-scale .h-6.w-6");
+  expect(globalCssSource).toContain("width: var(--omni-ui-control-xs-size)");
+  expect(globalCssSource).toContain(".omni-app-text-scale .h-6.w-6 > svg");
+  expect(globalCssSource).toContain("width: var(--omni-ui-icon-sm-size)");
+  expect(homeAppSource).toContain('body.classList.add("omni-app-text-scale")');
+  expect(homeAppSource).toContain("body.style.setProperty(property, String(value))");
 });
 
 test("terminal aligns timeline markers with row text and connects the rail", () => {

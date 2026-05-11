@@ -30,7 +30,7 @@ export function ComposerSelect<TValue extends string>({
       options={options}
       onValueChange={(nextValue) => onChange(nextValue as TValue)}
       className={cn(
-        "h-7 max-w-[7.8rem] shrink border-0 bg-transparent px-1 text-xs shadow-none sm:h-8 sm:max-w-none sm:px-2 sm:text-sm [&>span]:text-right",
+        "h-7 w-max min-w-0 max-w-[8.5rem] shrink border-0 bg-transparent px-1.5 text-xs shadow-none sm:h-8 sm:px-2 sm:text-sm [&>span]:text-right",
         themeMode === "night"
           ? "text-muted-foreground hover:text-foreground"
           : "text-[#8f8f8f] hover:text-[#5e5e5e]",

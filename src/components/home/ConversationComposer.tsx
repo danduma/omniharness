@@ -2,7 +2,7 @@ import Image from "next/image";
 import { useRef } from "react";
 import type React from "react";
 import { useMediaQuery } from "@base-ui/react/unstable-use-media-query";
-import { ArrowUp, LoaderCircle, PanelRightOpen, Plus, Square, X } from "lucide-react";
+import { ArrowUp, FileText, LoaderCircle, Plus, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ComposerModelPicker } from "@/components/composer/ComposerModelPicker";
 import { ComposerSelect } from "@/components/composer/ComposerSelect";
@@ -124,6 +124,13 @@ export function ConversationComposer({
     : composerBehavior.submitAction === "send_steer"
       ? t("conversation.composer.sendButton.steerTitle", { shortcut: alternateSubmitShortcutLabel })
       : t(`${composerBehavior.ariaLabelKey}Title`);
+  const composerPlaceholder = selectedRunId
+    ? selectedConversationMode === "planning"
+      ? t("conversation.composer.placeholder.planning")
+      : selectedConversationMode === "direct"
+        ? t("conversation.composer.placeholder.direct")
+        : t("conversation.composer.placeholder.implementation")
+    : t("conversation.composer.placeholder.default");
 
   return (
   <div className={cn("relative z-20 w-full shrink-0 bg-background p-3 sm:p-4", className)}>
@@ -180,7 +187,7 @@ export function ConversationComposer({
                       aria-label={`Open ${filePath} in side window`}
                       title={`Open ${filePath} in side window`}
                     >
-                      <PanelRightOpen className="h-3.5 w-3.5" />
+                      <FileText className="h-3.5 w-3.5" />
                     </button>
                   ) : null}
                 </div>
@@ -210,6 +217,7 @@ export function ConversationComposer({
         )}
       >
         <textarea
+          data-composer-input="true"
           ref={commandInputRef}
           value={command}
           onChange={(e) => {
@@ -292,7 +300,7 @@ export function ConversationComposer({
               }
             }
           }}
-          placeholder="Ask Omni anything. @ to refer to files"
+          placeholder={composerPlaceholder}
           disabled={isComposerSubmitting}
           rows={1}
           className={cn(
@@ -348,7 +356,7 @@ export function ConversationComposer({
           </div>
         ) : null}
 
-        <div className="mt-0 flex items-center gap-1 pb-2 sm:gap-2">
+        <div className="mt-0 flex flex-wrap items-center gap-x-1 gap-y-1 pb-2 sm:flex-nowrap sm:gap-2">
           <input
             ref={fileInputRef}
             type="file"
@@ -380,10 +388,10 @@ export function ConversationComposer({
               <Plus className="h-[18px] w-[18px]" />
             </Button>
 
-          <div className="ml-auto flex min-w-0 items-center justify-end gap-1 sm:gap-2">
+          <div className="order-3 flex min-w-0 basis-full items-center justify-end gap-1 sm:order-none sm:basis-auto sm:flex-1 sm:gap-2">
             {shouldLockDirectWorker ? (
               <div className={cn(
-                "min-w-0 truncate rounded-full border px-2 py-1 text-xs font-semibold sm:px-3",
+                "w-max min-w-0 max-w-[8.5rem] shrink truncate rounded-full border px-2 py-1 text-xs font-semibold sm:px-3",
                 themeMode === "night"
                   ? "border-border/60 bg-background/50 text-muted-foreground"
                   : "border-[#d8d8d8] bg-white/90 text-[#6a6a6a]",
@@ -414,29 +422,29 @@ export function ConversationComposer({
               onChange={setSelectedEffort}
               themeMode={themeMode}
             />
-
-            <Button
-              type="submit"
-              size="icon"
-              disabled={isSubmitButtonDisabled}
-              aria-label={sendButtonAriaLabel}
-              title={sendButtonTitle}
-              className={cn(
-                "h-8 w-8 shrink-0 rounded-full transition-all",
-                themeMode === "night"
-                  ? "bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary/[0.45]"
-                  : "bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary/[0.45]",
-              )}
-            >
-              {isSendButtonBusy ? (
-                <LoaderCircle className="h-[17px] w-[17px] animate-spin" />
-              ) : isStopButtonVisible ? (
-                <Square className="h-[13.6px] w-[13.6px] fill-current" />
-              ) : (
-                <ArrowUp className="h-[17px] w-[17px]" />
-              )}
-            </Button>
           </div>
+
+          <Button
+            type="submit"
+            size="icon"
+            disabled={isSubmitButtonDisabled}
+            aria-label={sendButtonAriaLabel}
+            title={sendButtonTitle}
+            className={cn(
+              "order-2 ml-auto h-8 w-8 shrink-0 rounded-full transition-all sm:order-none sm:ml-0",
+              themeMode === "night"
+                ? "bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary/[0.45]"
+                : "bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary/[0.45]",
+            )}
+          >
+            {isSendButtonBusy ? (
+              <LoaderCircle className="h-[17px] w-[17px] animate-spin" />
+            ) : isStopButtonVisible ? (
+              <Square className="h-[13.6px] w-[13.6px] fill-current" />
+            ) : (
+              <ArrowUp className="h-[17px] w-[17px]" />
+            )}
+          </Button>
         </div>
       </div>
     </form>

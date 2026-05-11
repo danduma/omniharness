@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { AUTO_COMMIT_PROJECT_PROMPT, getConversationVisualKind } from "@/lib/conversation-visuals";
 
 describe("getConversationVisualKind", () => {
-  it("treats implementation and planning conversations as supervisor-driven", () => {
+  it("treats implementation conversations as supervisor-driven and planning as direct-like", () => {
     expect(getConversationVisualKind({ id: "run-1", mode: "implementation" })).toBe("supervisor");
-    expect(getConversationVisualKind({ id: "run-2", mode: "planning" })).toBe("supervisor");
+    expect(getConversationVisualKind({ id: "run-2", mode: "planning" })).toBe("direct");
   });
 
   it("treats normal direct conversations as direct control", () => {

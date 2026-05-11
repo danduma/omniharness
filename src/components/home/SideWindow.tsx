@@ -4,7 +4,7 @@ import { ArrowLeft, Cpu, FileText, PanelRightClose, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { sideWindowManager, type SideWindowFileTab } from "@/app/home/SideWindowManager";
 import type { AgentSnapshot, SupervisorInterventionRecord } from "@/app/home/types";
-import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
+import { buildWorkerLists, type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
@@ -43,7 +43,10 @@ export function SideWindow({
   closeButtonVariant?: "collapse" | "back";
 }) {
   const { tabs, activeTabId } = useManagerSnapshot(sideWindowManager);
-  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
+  const workerGroups = buildWorkerLists(workers);
+  const hasConversationWorkers = workerGroups.active.length > 0 || workerGroups.finished.length > 0;
+  const visibleTabs = hasConversationWorkers ? tabs : tabs.filter((tab) => tab.kind !== "workers");
+  const activeTab = visibleTabs.find((tab) => tab.id === activeTabId) ?? visibleTabs[0] ?? null;
   const closeButtonLabel = closeButtonVariant === "back" ? "Back" : "Collapse workspace side window";
   const CloseButtonIcon = closeButtonVariant === "back" ? ArrowLeft : PanelRightClose;
   const closeButton = onCloseWindow ? (
@@ -64,7 +67,7 @@ export function SideWindow({
       <div className="flex shrink-0 items-center gap-1 border-b border-border/70 bg-muted/25 px-2 pt-2">
         {closeButtonVariant === "back" ? closeButton : null}
         <div className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto [scrollbar-width:none]">
-          {tabs.map((tab) => (
+          {visibleTabs.map((tab) => (
             <div
               key={tab.id}
               className={cn(
@@ -110,7 +113,7 @@ export function SideWindow({
             relativePath={(activeTab as SideWindowFileTab).relativePath}
             line={(activeTab as SideWindowFileTab).line}
           />
-        ) : (
+        ) : activeTab?.kind === "workers" ? (
           <WorkersSidebar
             workers={workers}
             agents={agents}
@@ -125,7 +128,7 @@ export function SideWindow({
             stoppingTerminalProcess={stoppingTerminalProcess}
             showHeader={false}
           />
-        )}
+        ) : null}
       </div>
     </div>
   );

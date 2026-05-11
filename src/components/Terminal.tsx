@@ -5,28 +5,36 @@ import { useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from "
 import { ALargeSmall, Check, ChevronDown, LoaderCircle } from "lucide-react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { attachmentImagePreviewManager, terminalUiManager } from "@/components/component-state-managers";
+import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   appearancePreferencesManager,
-  getDirectTerminalTextSizeStyle,
+  getConversationTerminalTextSizeStyle,
   getTerminalTextSizeStyle,
   TERMINAL_TEXT_SIZE_LEVELS,
   type TerminalTextSizeLevel,
 } from "@/app/home/AppearancePreferencesManager";
-import { buildAgentOutputActivity, formatActivityStatus, type AgentActivityItem, type AgentOutputEntry } from "@/lib/agent-output";
+import { buildAgentOutputActivity, formatActivityStatus, type AgentActivityItem, type AgentOutputEntry, type AgentToolGroupCounts } from "@/lib/agent-output";
 import { formatBytes, type ChatAttachment } from "@/lib/chat-attachments";
 import { parseProjectFileReference, type ProjectFileReference } from "@/lib/project-file-links";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 
 interface TerminalProps {
   agent?: AgentTerminalPayload | null;
   userMessages?: TerminalUserMessage[];
   getUserMessageActions?: (message: TerminalUserMessage) => TerminalUserMessageAction[];
+  editingUserMessageId?: string | null;
+  editingUserMessageValue?: string;
+  isEditingUserMessageSaving?: boolean;
+  onEditingUserMessageValueChange?: (value: string) => void;
+  onCancelEditingUserMessage?: () => void;
+  onSaveEditedUserMessage?: (messageId: string) => void;
   hasMoreHistory?: boolean;
   onRequestMoreHistory?: () => void;
   variant?: "terminal" | "native";
-  textSizeScope?: "terminal" | "direct";
+  textSizeScope?: "terminal" | "conversation";
   className?: string;
   showTextSizeControl?: boolean;
   showPendingAssistantIndicator?: boolean;
@@ -59,6 +67,7 @@ export interface AgentTerminalPayload {
 type TerminalActivityItem = AgentActivityItem | {
   id: string;
   kind: "user_message";
+  messageId: string;
   text: string;
   timestamp: string;
   attachments: ChatAttachment[];
@@ -110,6 +119,8 @@ export function getTerminalActivityVersion(activity: TerminalActivityItem[]) {
         return `${item.id}:${item.kind}:${item.timestamp}:${item.inProgress}:${item.thoughts.join("\n").length}`;
       case "tool":
         return `${item.id}:${item.kind}:${item.timestamp}:${item.status}:${item.title.length}:${item.inputPane?.text.length ?? 0}:${item.outputPane?.text.length ?? 0}`;
+      case "tool_group":
+        return `${item.id}:${item.kind}:${item.timestamp}:${item.status}:${item.tools.length}:${item.tools.map((tool) => `${tool.id}:${tool.status}:${tool.title.length}:${tool.inputPane?.text.length ?? 0}:${tool.outputPane?.text.length ?? 0}`).join(",")}`;
       case "permission":
         return `${item.id}:${item.kind}:${item.timestamp}:${item.title.length}:${item.text.length}`;
       case "message":
@@ -130,6 +141,7 @@ export function shouldTerminalConnectorExtend(
 
 export function TerminalTextSizeControl({ className }: { className?: string }) {
   const { terminalTextSize } = useManagerSnapshot(appearancePreferencesManager);
+  useI18nSnapshot();
 
   return (
     <DropdownMenu>
@@ -138,14 +150,14 @@ export function TerminalTextSizeControl({ className }: { className?: string }) {
           "inline-flex h-7 w-7 items-center justify-center rounded-full border border-border/70 bg-background/95 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 dark:border-white/10 dark:bg-[#15181d]/95 dark:text-zinc-400 dark:hover:bg-[#1d2128] dark:hover:text-zinc-100 dark:focus-visible:ring-cyan-300/45",
           className,
         )}
-        aria-label="Terminal text size"
-        title="Terminal text size"
+        aria-label={t("settings.appearance.terminalFontSize")}
+        title={t("settings.appearance.terminalFontSize")}
       >
         <ALargeSmall className="h-4 w-4" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-36">
         <DropdownMenuGroup>
-          <DropdownMenuLabel>Text size</DropdownMenuLabel>
+          <DropdownMenuLabel>{t("settings.appearance.terminalFontSize")}</DropdownMenuLabel>
           {TERMINAL_TEXT_SIZE_LEVELS.map((level) => (
             <DropdownMenuItem
               key={level.value}
@@ -155,8 +167,7 @@ export function TerminalTextSizeControl({ className }: { className?: string }) {
               <span className="w-4">
                 {terminalTextSize === level.value ? <Check className="h-3.5 w-3.5" /> : null}
               </span>
-              <span>{level.label}</span>
-              {level.notch > 0 ? <span className="ml-auto text-muted-foreground">+{level.notch}</span> : null}
+              <span>{t(level.labelKey)}</span>
             </DropdownMenuItem>
           ))}
         </DropdownMenuGroup>
@@ -200,6 +211,7 @@ function activityKindOrder(activity: TerminalActivityItem) {
     case "thinking":
       return 2;
     case "tool":
+    case "tool_group":
       return 3;
     case "permission":
       return 4;
@@ -255,6 +267,28 @@ function isRunningActivityStatus(status: string) {
 
 function isErrorActivityStatus(status: string) {
   return ["failed", "error", "cancelled"].includes(status);
+}
+
+function formatCountSegment(count: number, singleKey: string, pluralKey: string) {
+  if (count <= 0) {
+    return null;
+  }
+  return t(count === 1 ? singleKey : pluralKey, { count });
+}
+
+function formatToolGroupSummary(counts: AgentToolGroupCounts) {
+  const segments = [
+    formatCountSegment(counts.editedFiles, "conversation.toolGroup.editedFile", "conversation.toolGroup.editedFiles"),
+    formatCountSegment(counts.readFiles, "conversation.toolGroup.readFile", "conversation.toolGroup.readFiles"),
+    formatCountSegment(counts.searches, "conversation.toolGroup.searchedTime", "conversation.toolGroup.searchedTimes"),
+    formatCountSegment(counts.commands, "conversation.toolGroup.ranCommand", "conversation.toolGroup.ranCommands"),
+    formatCountSegment(counts.agents, "conversation.toolGroup.usedAgent", "conversation.toolGroup.usedAgents"),
+    formatCountSegment(counts.tools, "conversation.toolGroup.usedTool", "conversation.toolGroup.usedTools"),
+  ].filter((segment): segment is string => Boolean(segment));
+
+  return segments.length > 0
+    ? segments.join(t("conversation.toolGroup.summarySeparator"))
+    : t(counts.total === 1 ? "conversation.toolGroup.usedTool" : "conversation.toolGroup.usedTools", { count: counts.total });
 }
 
 function statusBadgeClass(status: string, variant: "terminal" | "native") {
@@ -632,6 +666,46 @@ function UserMessageAttachments({ attachments }: { attachments: ChatAttachment[]
   );
 }
 
+function UserMessageEditForm({
+  messageId,
+  value,
+  isSaving,
+  onValueChange,
+  onCancel,
+  onSave,
+}: {
+  messageId: string;
+  value: string;
+  isSaving: boolean;
+  onValueChange: (value: string) => void;
+  onCancel: () => void;
+  onSave: (messageId: string) => void;
+}) {
+  useI18nSnapshot();
+
+  return (
+    <div className="w-full max-w-[min(72ch,calc(100%-1rem))] rounded-xl border border-primary/30 bg-background p-3 shadow-sm sm:max-w-[min(78ch,calc(100%-1.5rem))]">
+      <textarea
+        value={value}
+        aria-label={t("conversation.messageEdit.ariaLabel")}
+        onChange={(event) => onValueChange(event.target.value)}
+        className="min-h-28 w-full resize-y rounded-lg border border-border bg-background p-3 text-[length:var(--terminal-message-size)] leading-[1.55] outline-none focus:ring-1 focus:ring-primary/40"
+      />
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-muted-foreground">{t("conversation.messageEdit.notice")}</p>
+        <div className="flex gap-2">
+          <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+            {t("common.cancel")}
+          </Button>
+          <Button type="button" size="sm" disabled={isSaving || !value.trim()} onClick={() => onSave(messageId)}>
+            {t("conversation.messageEdit.saveAndRerun")}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const PROJECT_FILE_REFERENCE_TOKEN_PATTERN = /(https?:\/\/[^\s<>()]+|\/[A-Za-z0-9._~/%+-][^\s<>()]*:\d+(?::\d+)?)/g;
 
 function ProjectFileReferenceText({
@@ -811,6 +885,156 @@ function ToolActivity({
   );
 }
 
+function NestedToolActivityRow({
+  tool,
+  isFirst,
+  isLast,
+  variant,
+  projectRoot,
+  onOpenProjectFile,
+}: {
+  tool: Extract<AgentActivityItem, { kind: "tool" }>;
+  isFirst: boolean;
+  isLast: boolean;
+  variant: "terminal" | "native";
+  projectRoot?: string | null;
+  onOpenProjectFile?: (file: ProjectFileReference) => void;
+}) {
+  const running = isRunningActivityStatus(tool.status);
+  const markerTone = isErrorActivityStatus(tool.status) ? "error" : "tool";
+
+  return (
+    <div className="relative flex items-start gap-2.5">
+      {!isFirst ? (
+        <div className={cn(
+          "absolute left-1.5 top-0 h-[0.54rem] w-px",
+          variant === "native" ? "bg-border/70" : "bg-border/70 dark:bg-white/12",
+        )} />
+      ) : null}
+      {!isLast ? (
+        <div className={cn(
+          "absolute -bottom-2 left-1.5 top-[0.54rem] w-px",
+          variant === "native" ? "bg-border/70" : "bg-border/70 dark:bg-white/12",
+        )} />
+      ) : null}
+      <div className="relative z-10 flex w-3 shrink-0 justify-center">
+        <div
+          className={cn(
+            "mt-[0.34rem] h-1.5 w-1.5 rounded-full border",
+            running
+              ? markerTone === "error"
+                ? variant === "native" ? "border-destructive/80 bg-transparent" : "border-red-500/80 bg-transparent dark:border-red-400/80"
+                : variant === "native" ? "border-emerald-500/75 bg-transparent" : "border-emerald-500/75 bg-transparent dark:border-emerald-400/75"
+              : markerTone === "error"
+                ? variant === "native" ? "border-destructive/80 bg-destructive" : "border-red-500/80 bg-red-500 dark:border-red-400/80 dark:bg-red-400"
+                : variant === "native" ? "border-emerald-500/75 bg-emerald-500" : "border-emerald-500/75 bg-emerald-500 dark:border-emerald-400/75 dark:bg-emerald-400",
+          )}
+        />
+      </div>
+      <div className="min-w-0 flex-1 pb-0.5">
+        <ToolActivity
+          activity={tool}
+          variant={variant}
+          projectRoot={projectRoot}
+          onOpenProjectFile={onOpenProjectFile}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ToolGroupActivity({
+  activity,
+  variant,
+  projectRoot,
+  onOpenProjectFile,
+}: {
+  activity: Extract<AgentActivityItem, { kind: "tool_group" }>;
+  variant: "terminal" | "native";
+  projectRoot?: string | null;
+  onOpenProjectFile?: (file: ProjectFileReference) => void;
+}) {
+  useI18nSnapshot();
+  const { toolGroupOpenById } = useManagerSnapshot(terminalUiManager);
+  const open = toolGroupOpenById[activity.id] ?? false;
+  const summary = formatToolGroupSummary(activity.counts);
+
+  return (
+    <div className="space-y-1.5">
+      <button
+        type="button"
+        className="group/tool-group flex w-full flex-wrap items-center gap-1.5 text-left"
+        onClick={() => terminalUiManager.setToolGroupOpen(activity.id, !open)}
+        aria-expanded={open}
+        aria-label={t("conversation.toolGroup.toggleAriaLabel", { summary })}
+        title={open ? t("conversation.toolGroup.collapseTitle") : t("conversation.toolGroup.expandTitle")}
+      >
+        <span className={cn("text-[length:var(--terminal-tool-label-size)] font-semibold tracking-tight", variant === "native" ? "text-foreground" : "text-foreground dark:text-zinc-100")}>
+          {t("conversation.toolGroup.label")}
+        </span>
+        <span
+          className={cn(
+            "font-mono leading-[1.45] text-[length:var(--terminal-tool-title-size)]",
+            variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-300/95",
+          )}
+        >
+          {summary}
+        </span>
+        {shouldShowToolSpinner(activity.status) ? (
+          <LoaderCircle
+            className={cn(
+              "h-3 w-3 shrink-0 animate-spin",
+              variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-400",
+            )}
+            aria-label={formatActivityStatus(activity.status)}
+          />
+        ) : null}
+        {shouldShowToolStatusBadge(activity.status) ? (
+          <span
+            className={cn(
+              "rounded-full border px-1.5 py-0.5 font-mono text-[length:var(--terminal-badge-size)] font-semibold uppercase tracking-[0.1em]",
+              statusBadgeClass(activity.status, variant),
+            )}
+          >
+            {formatActivityStatus(activity.status)}
+          </span>
+        ) : null}
+        <ChevronDown
+          className={cn(
+            "h-3 w-3 shrink-0 transition-transform duration-200 ease-out",
+            open && "rotate-180",
+            variant === "native" ? "text-muted-foreground group-hover/tool-group:text-foreground" : "text-muted-foreground group-hover/tool-group:text-foreground dark:text-zinc-500 dark:group-hover/tool-group:text-zinc-200",
+          )}
+          aria-hidden="true"
+        />
+      </button>
+      <div
+        className={cn(
+          TERMINAL_REVEAL_CLASS,
+          open ? TERMINAL_REVEAL_OPEN_CLASS : TERMINAL_REVEAL_CLOSED_CLASS,
+        )}
+        aria-hidden={!open}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div className="space-y-2 pb-0.5 pt-0.5">
+            {activity.tools.map((tool, index) => (
+              <NestedToolActivityRow
+                key={tool.id}
+                tool={tool}
+                isFirst={index === 0}
+                isLast={index === activity.tools.length - 1}
+                variant={variant}
+                projectRoot={projectRoot}
+                onOpenProjectFile={onOpenProjectFile}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ThoughtActivity({
   activity,
   variant,
@@ -882,6 +1106,12 @@ function ActivityRow({
   connectorExtendsAfter = false,
   connectorExtendsBefore = false,
   variant,
+  editingUserMessageId = null,
+  editingUserMessageValue = "",
+  isEditingUserMessageSaving = false,
+  onEditingUserMessageValueChange,
+  onCancelEditingUserMessage,
+  onSaveEditedUserMessage,
   projectRoot,
   onOpenProjectFile,
 }: {
@@ -889,17 +1119,39 @@ function ActivityRow({
   connectorExtendsAfter?: boolean;
   connectorExtendsBefore?: boolean;
   variant: "terminal" | "native";
+  editingUserMessageId?: string | null;
+  editingUserMessageValue?: string;
+  isEditingUserMessageSaving?: boolean;
+  onEditingUserMessageValueChange?: (value: string) => void;
+  onCancelEditingUserMessage?: () => void;
+  onSaveEditedUserMessage?: (messageId: string) => void;
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
 }) {
   if (activity.kind === "user_message") {
+    const isEditing = activity.messageId === editingUserMessageId
+      && onEditingUserMessageValueChange
+      && onCancelEditingUserMessage
+      && onSaveEditedUserMessage;
+
     return (
       <div className="relative z-10 flex w-full flex-col items-end">
-        <div className="max-w-[min(72ch,calc(100%-1rem))] rounded-[1.55rem] bg-[#f3f3f3] px-5 py-3.5 text-[length:var(--terminal-message-size)] leading-[1.55] text-[#202124] dark:bg-[#3a3a3a] dark:text-[#d8d8d8] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:max-w-[min(78ch,calc(100%-1.5rem))]">
-          {activity.text ? <p className="max-w-none whitespace-pre-wrap">{activity.text}</p> : null}
-          {activity.attachments.length > 0 ? <UserMessageAttachments attachments={activity.attachments} /> : null}
-        </div>
-        {activity.actions.length > 0 ? (
+        {isEditing ? (
+          <UserMessageEditForm
+            messageId={activity.messageId}
+            value={editingUserMessageValue}
+            isSaving={isEditingUserMessageSaving}
+            onValueChange={onEditingUserMessageValueChange}
+            onCancel={onCancelEditingUserMessage}
+            onSave={onSaveEditedUserMessage}
+          />
+        ) : (
+          <div className="max-w-[min(72ch,calc(100%-1rem))] rounded-[1.55rem] bg-[#f3f3f3] px-5 py-3.5 text-[length:var(--terminal-message-size)] leading-[1.55] text-[#202124] dark:bg-[#3a3a3a] dark:text-[#d8d8d8] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:max-w-[min(78ch,calc(100%-1.5rem))]">
+            {activity.text ? <p className="max-w-none whitespace-pre-wrap">{activity.text}</p> : null}
+            {activity.attachments.length > 0 ? <UserMessageAttachments attachments={activity.attachments} /> : null}
+          </div>
+        )}
+        {!isEditing && activity.actions.length > 0 ? (
           <div className="mt-1 flex items-center justify-end gap-1 pr-1 text-muted-foreground/70">
             {activity.actions.map((action) => (
               <button
@@ -930,8 +1182,8 @@ function ActivityRow({
 
   const running = activity.kind === "thinking"
     ? activity.inProgress
-    : activity.kind === "tool" && isRunningActivityStatus(activity.status);
-  const markerTone = activity.kind === "tool"
+    : (activity.kind === "tool" || activity.kind === "tool_group") && isRunningActivityStatus(activity.status);
+  const markerTone = activity.kind === "tool" || activity.kind === "tool_group"
     ? isErrorActivityStatus(activity.status) ? "error" : "tool"
     : "thought";
 
@@ -980,6 +1232,14 @@ function ActivityRow({
             onOpenProjectFile={onOpenProjectFile}
           />
         ) : null}
+        {activity.kind === "tool_group" ? (
+          <ToolGroupActivity
+            activity={activity}
+            variant={variant}
+            projectRoot={projectRoot}
+            onOpenProjectFile={onOpenProjectFile}
+          />
+        ) : null}
         {activity.kind === "permission" ? (
           <div className={cn(
             "rounded-[0.85rem] border px-2.5 py-2",
@@ -1000,6 +1260,12 @@ export function Terminal({
   agent,
   userMessages = [],
   getUserMessageActions,
+  editingUserMessageId = null,
+  editingUserMessageValue = "",
+  isEditingUserMessageSaving = false,
+  onEditingUserMessageValueChange,
+  onCancelEditingUserMessage,
+  onSaveEditedUserMessage,
   hasMoreHistory = false,
   onRequestMoreHistory,
   variant = "terminal",
@@ -1015,7 +1281,7 @@ export function Terminal({
   const shouldFollowLatestRef = useRef(true);
   const previousScrollTopRef = useRef(0);
   const previousActivityVersionRef = useRef<string | null>(null);
-  const { directTextSize, terminalTextSize } = useManagerSnapshot(appearancePreferencesManager);
+  const { conversationTextSize, terminalTextSize } = useManagerSnapshot(appearancePreferencesManager);
 
   const activity = useMemo(() => {
     const agentActivity = buildAgentOutputActivity({
@@ -1027,6 +1293,7 @@ export function Terminal({
     const userActivity: TerminalActivityItem[] = userMessages.map((message) => ({
       id: `user:${message.id}`,
       kind: "user_message",
+      messageId: message.id,
       text: message.content,
       timestamp: message.createdAt,
       attachments: message.attachments ?? [],
@@ -1052,10 +1319,10 @@ export function Terminal({
     });
   }, [agent, getUserMessageActions, showPendingAssistantIndicator, userMessages]);
   const terminalZoomStyle = useMemo(() => (
-    textSizeScope === "direct"
-      ? getDirectTerminalTextSizeStyle(directTextSize)
+    textSizeScope === "conversation"
+      ? getConversationTerminalTextSizeStyle(conversationTextSize)
       : getTerminalTextSizeStyle(terminalTextSize)
-  ), [directTextSize, terminalTextSize, textSizeScope]);
+  ), [conversationTextSize, terminalTextSize, textSizeScope]);
   const handleProjectFileReferenceClick = useMemo(() => (
     projectRoot && onOpenProjectFile
       ? (file: ProjectFileReference) => onOpenProjectFile(file)
@@ -1102,6 +1369,7 @@ export function Terminal({
   return (
     <div className={cn(
       "relative w-full",
+      textSizeScope === "conversation" && "omni-conversation-text-scale",
       variant === "native"
         ? "bg-transparent text-foreground"
         : "h-full overflow-hidden rounded-[1.05rem] border border-border/70 bg-card text-foreground shadow-sm dark:border-transparent dark:bg-[#0b0d10] dark:text-zinc-100 dark:shadow-none",
@@ -1142,6 +1410,12 @@ export function Terminal({
                   connectorExtendsBefore={shouldTerminalConnectorExtend(entry.kind, previousEntry?.kind)}
                   connectorExtendsAfter={shouldTerminalConnectorExtend(entry.kind, nextEntry?.kind)}
                   variant={variant}
+                  editingUserMessageId={editingUserMessageId}
+                  editingUserMessageValue={editingUserMessageValue}
+                  isEditingUserMessageSaving={isEditingUserMessageSaving}
+                  onEditingUserMessageValueChange={onEditingUserMessageValueChange}
+                  onCancelEditingUserMessage={onCancelEditingUserMessage}
+                  onSaveEditedUserMessage={onSaveEditedUserMessage}
                   projectRoot={projectRoot}
                   onOpenProjectFile={handleProjectFileReferenceClick}
                 />

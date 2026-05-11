@@ -77,6 +77,8 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('transition-[width,opacity] duration-150 ease-out');
   expect(pageSource).toContain('relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#f1f1f0] dark:bg-muted/30');
   expect(pageSource).toContain('space-y-1 px-3 pb-3 pt-2 lg:px-3 lg:pb-3 lg:pt-2');
+  expect(pageSource).toContain('space-y-3 py-4');
+  expect(pageSource).not.toContain('space-y-4 py-4');
   expect(pageSource).toContain('hidden min-w-0 flex-1 items-center gap-2 lg:flex');
   expect(pageSource).toContain('h-9 w-full shrink-0 justify-start px-2 text-sm text-[#333333]');
   expect(pageSource).toContain('min-h-0 flex-1 overflow-hidden');
@@ -230,6 +232,18 @@ test("workspace side window owns workers and file tabs", () => {
   expect(sideWindowSource).toContain("sideWindowManager.closeTab(tab.id)");
   expect(sideWindowSource).toContain("sideWindowManager.selectTab(tab.id)");
   expect(sideWindowSource).toContain("tab.kind === \"file\"");
+  expect(sideWindowSource).toContain("const hasConversationWorkers = workerGroups.active.length > 0 || workerGroups.finished.length > 0;");
+  expect(sideWindowSource).toContain('const visibleTabs = hasConversationWorkers ? tabs : tabs.filter((tab) => tab.kind !== "workers");');
+  expect(sideWindowSource).toContain("const activeTab = visibleTabs.find((tab) => tab.id === activeTabId) ?? visibleTabs[0] ?? null;");
+  expect(sideWindowSource).toContain("{visibleTabs.map((tab) => (");
+  expect(sideWindowSource).toContain(') : activeTab?.kind === "workers" ? (');
+  expect(pageSource).toContain("DropdownMenuCheckboxItem");
+  expect(pageSource).toContain("fileViewerPanelManager.toggleWordWrap()");
+  expect(pageSource).toContain("void fileQuery.refetch()");
+  expect(pageSource).toContain('className="omni-conversation-text-scale min-h-0 flex-1 overflow-auto bg-muted/15 [scrollbar-width:thin]"');
+  expect(pageSource).toContain('"syntax-highlight py-3 font-mono text-[length:var(--omni-conversation-font-size)] leading-[var(--omni-conversation-line-height)]"');
+  expect(pageSource).toContain('t("fileViewer.menu.wordWrap")');
+  expect(pageSource).toContain('t("fileViewer.menu.refresh")');
   expect(sideWindowSource.indexOf('aria-label={`Close ${tab.relativePath}`}')).toBeLessThan(
     sideWindowSource.indexOf('<span className="truncate">{tab.title}</span>'),
   );
@@ -401,9 +415,11 @@ test("conversation has a floating latest-output indicator above the composer", (
   expect(conversationMainSource).toContain("bg-primary text-primary-foreground");
 });
 
-test("main conversation does not duplicate worker panes from the sidebar", () => {
-  expect(pageSource).toContain('<AgentSurface');
-  expect(pageSource).toContain('title="Planning agent"');
+test("main conversation does not duplicate worker panes from the sidebar or planning transcript", () => {
+  expect(pageSource).not.toContain('<AgentSurface');
+  expect(pageSource).not.toContain('title="Planning agent"');
+  expect(pageSource).toContain('function PlannerOutputMessage');
+  expect(pageSource).toContain('isPlanningConversation && msg.role === "worker" ? (');
   expect(pageSource).not.toContain("<Cpu className=\"h-4 w-4\" /> CLI Agents");
   expect(pageSource).not.toContain('{isImplementationConversation && conversationWorkerGroups.active.length > 0 && (');
   expect(pageSource).not.toContain('{conversationWorkerGroups.active.map((worker) => {');
@@ -477,12 +493,11 @@ test("direct conversations render the user transcript next to the worker surface
   expect(pageSource).toContain("expandedDirectMessageIds: new Set()");
   expect(pageSource).toContain("function toggleDirectMessageExpansion(messageId: string)");
   expect(pageSource).toContain("const primaryConversationAgent = useMemo(() => {");
-  expect(pageSource).toContain("if (!isDirectConversation) {");
-  expect(pageSource).toContain('conversationAgents.find((agent) => agent.state === "working" || Boolean(agent.currentText?.trim()))');
-  expect(pageSource).toContain('?? conversationAgents.find((agent) => agent.state !== "cancelled")');
+  expect(pageSource).toContain("selectPrimaryConversationAgent(conversationAgents, isDirectConversation)");
+  expect(pageSource).toContain("selectPrimaryConversationAgent, type ConversationWorkerRecord");
   expect(pageSource).toContain('userMessages={directConversationMessages}');
   expect(pageSource).toContain('variant="native"');
-  expect(pageSource).toContain('textSizeScope="direct"');
+  expect(pageSource).toContain('textSizeScope="conversation"');
   expect(pageSource).toContain('.filter((message) => message.role === "user")');
   expect(pageSource).not.toContain('message.role === "user" || (message.role === "worker" && message.content.trim())');
   expect(pageSource).toContain('const isExpanded = expandedDirectMessageIds.has(msg.id);');
@@ -540,9 +555,10 @@ test("header includes a persistent day night mode toggle beside the workers side
   expect(pageSource).not.toContain(">Night<");
 });
 
-test("sidebar phone pairing entry point lives in the settings menu", () => {
-  expect(pageSource).toContain('<DropdownMenuItem className="cursor-pointer whitespace-nowrap max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5" onClick={openPairDeviceDialog}>');
+test("sidebar phone pairing entry point is hidden from the mobile settings menu", () => {
+  expect(pageSource).toContain('<DropdownMenuItem className="hidden cursor-pointer whitespace-nowrap lg:flex" onClick={openPairDeviceDialog}>');
   expect(pageSource).toContain('<Smartphone className="mr-2 h-4 w-4" /> Connect Phone');
+  expect(pageSource).not.toContain('max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5" onClick={openPairDeviceDialog}');
   expect(pageSource).not.toContain('className="mb-1 hidden h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground lg:flex"');
 });
 
@@ -563,8 +579,13 @@ test("header syncs the active conversation path but only shows the cwd", () => {
   expect(pageSource).not.toContain("No working directory");
 });
 
-test("command input uses a fixed helper placeholder instead of echoing the selected directory", () => {
-  expect(pageSource).toContain('placeholder="Ask Omni anything. @ to refer to files"');
+test("command input uses mode-aware helper placeholders instead of echoing the selected directory", () => {
+  expect(pageSource).toContain("const composerPlaceholder = selectedRunId");
+  expect(pageSource).toContain('t("conversation.composer.placeholder.planning")');
+  expect(pageSource).toContain('t("conversation.composer.placeholder.direct")');
+  expect(pageSource).toContain('t("conversation.composer.placeholder.implementation")');
+  expect(pageSource).toContain('t("conversation.composer.placeholder.default")');
+  expect(pageSource).toContain("placeholder={composerPlaceholder}");
   expect(pageSource).not.toContain('placeholder={draftProjectPath ? `${draftProjectPath}/...` : "e.g. vibes/test-plan.md or fix the login flow"}');
 });
 
@@ -656,6 +677,7 @@ test("running conversations render an in-thread execution indicator and timeline
 
 test("new conversations expose a mode picker and only existing direct runs lock the worker type", () => {
   expect(pageSource).toContain('import { ConversationModePicker, type ConversationModeOption } from "@/components/ConversationModePicker"');
+  expect(pageSource).toContain('selectedConversationMode={activeComposerMode}');
   expect(pageSource).toContain('value={selectedConversationMode}');
   expect(conversationModePickerSource).toContain("Create plan");
   expect(conversationModePickerSource).toContain("Implement plan");
@@ -669,7 +691,7 @@ test("new conversations expose a mode picker and only existing direct runs lock 
 
 test("starting a project-scoped conversation keeps the composer empty", () => {
   expect(pageSource).toContain('setDraftProjectPath(projectPath)');
-  expect(pageSource).toContain('placeholder="Ask Omni anything. @ to refer to files"');
+  expect(pageSource).toContain('t("conversation.composer.placeholder.default")');
   expect(pageSource).not.toContain('setCommand(`${projectPath}/`)');
 });
 

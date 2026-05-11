@@ -96,6 +96,18 @@ export const planningArtifactsManager = new class extends StateManager<{ selecte
   setSelectedPlanPath = (selectedPlanPath: string | null) => this.setKey("selectedPlanPath", selectedPlanPath);
 }();
 
+export class FileViewerPanelManager extends StateManager<{ wordWrap: boolean }> {
+  constructor() {
+    super({ wordWrap: true });
+  }
+
+  setWordWrap = (wordWrap: boolean) => this.setKey("wordWrap", wordWrap);
+
+  toggleWordWrap = () => this.setKey("wordWrap", (current) => !current);
+}
+
+export const fileViewerPanelManager = new FileViewerPanelManager();
+
 export const composerModelPickerManager = new class extends StateManager<{ open: boolean; query: string }> {
   constructor() {
     super({ open: false, query: "" });
@@ -179,18 +191,25 @@ export const workerCardManager = new class extends StateManager<{
 
 export const terminalUiManager = new class extends StateManager<{
   toolDetailsOpenById: Record<string, boolean>;
+  toolGroupOpenById: Record<string, boolean>;
   toolOutputExpandedById: Record<string, boolean>;
   thoughtOpenById: Record<string, boolean>;
 }> {
   constructor() {
     super({
       toolDetailsOpenById: {},
+      toolGroupOpenById: {},
       toolOutputExpandedById: {},
       thoughtOpenById: {},
     });
   }
 
   setToolDetailsOpen = (id: string, open: boolean) => this.setKey("toolDetailsOpenById", (current) => ({
+    ...current,
+    [id]: open,
+  }));
+
+  setToolGroupOpen = (id: string, open: boolean) => this.setKey("toolGroupOpenById", (current) => ({
     ...current,
     [id]: open,
   }));

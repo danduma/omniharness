@@ -42,11 +42,19 @@ export class StateManager<TState> {
   }
 
   setKey<TKey extends keyof TState>(key: TKey, value: StateUpdate<TState[TKey]>) {
-    return this.update((current) => ({
-      ...current,
-      [key]: typeof value === "function"
+    return this.update((current) => {
+      const nextValue = typeof value === "function"
         ? (value as (currentValue: TState[TKey]) => TState[TKey])(current[key])
-        : value,
-    }));
+        : value;
+
+      if (Object.is(nextValue, current[key])) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [key]: nextValue,
+      };
+    });
   }
 }

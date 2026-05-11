@@ -3,13 +3,15 @@ import { NextRequest } from "next/server";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
 
-const { mockGetCatalogSnapshot, mockGetWorkerInstallationInfo, mockIsSpawnableWorkerType } = vi.hoisted(() => ({
+const { mockGetCatalogSnapshot, mockGetWorkerAuthenticationInfo, mockGetWorkerInstallationInfo, mockIsSpawnableWorkerType } = vi.hoisted(() => ({
   mockGetCatalogSnapshot: vi.fn(),
+  mockGetWorkerAuthenticationInfo: vi.fn(),
   mockGetWorkerInstallationInfo: vi.fn(),
   mockIsSpawnableWorkerType: vi.fn(),
 }));
 
 vi.mock("@/server/supervisor/worker-availability", () => ({
+  getWorkerAuthenticationInfo: mockGetWorkerAuthenticationInfo,
   getWorkerInstallationInfo: mockGetWorkerInstallationInfo,
   isSpawnableWorkerType: mockIsSpawnableWorkerType,
 }));
@@ -44,6 +46,13 @@ describe("GET /api/agents/catalog", () => {
       refreshing: true,
     });
     mockIsSpawnableWorkerType.mockReset();
+    mockGetWorkerAuthenticationInfo.mockReset();
+    mockGetWorkerAuthenticationInfo.mockImplementation((type: string) => ({
+      status: "authenticated",
+      method: "session_file",
+      message: `${type} signed in.`,
+      setupCommand: `${type} login`,
+    }));
     mockGetWorkerInstallationInfo.mockReset();
     mockGetWorkerInstallationInfo.mockImplementation((type: string) => ({
       command: type === "codex" ? "codex-acp" : type,
@@ -91,6 +100,10 @@ describe("GET /api/agents/catalog", () => {
     expect(payload.diagnostics).toEqual([]);
     expect(codex?.availability.status).toBe("ok");
     expect(codex?.availability.message).toBe("Ready to spawn.");
+    expect(codex?.authentication).toMatchObject({
+      status: "authenticated",
+      setupCommand: "codex login",
+    });
     expect(codex?.installation).toEqual({
       command: "codex-acp",
       path: "/opt/omni/bin/codex",
@@ -103,5 +116,49 @@ describe("GET /api/agents/catalog", () => {
     expect(payload.workerModels.claude).toEqual(expect.arrayContaining([
       { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
     ]));
+  });
+
+  it("downgrades an installed worker when CLI authentication is missing", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({ results: [] }),
+    }));
+
+    mockIsSpawnableWorkerType.mockImplementation((type: string) => (
+      type === "codex"
+        ? { ok: true, type: "codex" }
+        : { ok: false, type, reason: `${type} unavailable` }
+    ));
+    mockGetWorkerAuthenticationInfo.mockImplementation((type: string) => (
+      type === "codex"
+        ? {
+          status: "not_authenticated",
+          method: "missing",
+          message: "Codex CLI is not logged in. Run `codex login`.",
+          setupCommand: "codex login",
+        }
+        : {
+          status: "unknown",
+          method: "unknown",
+          message: "Authentication could not be verified.",
+          setupCommand: `${type} auth login`,
+        }
+    ));
+
+    const response = await GET(new NextRequest("http://localhost/api/agents/catalog"));
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    const codex = payload.workers.find((worker: { type: string }) => worker.type === "codex");
+
+    expect(codex?.availability.status).toBe("warning");
+    expect(codex?.availability.binary).toBe(true);
+    expect(codex?.availability.message).toContain("codex login");
+    expect(codex?.authentication).toMatchObject({
+      status: "not_authenticated",
+      setupCommand: "codex login",
+    });
   });
 });

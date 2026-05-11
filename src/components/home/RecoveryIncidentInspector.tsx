@@ -4,9 +4,10 @@ import type { RecoveryIncidentRecord } from "@/app/home/types";
 import { conversationMainManager } from "@/components/component-state-managers";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { cn } from "@/lib/utils";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 
 function formatTime(value: string | null | undefined) {
-  if (!value) return "not resolved";
+  if (!value) return t("recovery.inspector.notResolved");
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toLocaleString() : value;
 }
@@ -27,6 +28,7 @@ export function RecoveryIncidentInspector({
   runId: string | null;
   incidents: RecoveryIncidentRecord[];
 }) {
+  useI18nSnapshot();
   const { runLogOpenByRunId } = useManagerSnapshot(conversationMainManager);
   if (!runId || incidents.length === 0) {
     return null;
@@ -37,11 +39,11 @@ export function RecoveryIncidentInspector({
 
   return (
     <Collapsible open={open} onOpenChange={(nextOpen) => conversationMainManager.setRunLogOpen(key, nextOpen)}>
-      <div className="rounded-lg border border-border/70 bg-muted/20 text-sm" aria-label="Recovery incidents">
+      <div className="rounded-lg border border-border/70 bg-muted/20 text-sm" aria-label={t("recovery.inspector.ariaLabel")}>
         <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left">
           <span className="flex min-w-0 items-center gap-2 text-xs font-semibold text-muted-foreground">
             <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
-            Recovery
+            {t("recovery.inspector.title")}
             <span className="rounded-full bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
               {incidents.length}
             </span>
@@ -58,20 +60,28 @@ export function RecoveryIncidentInspector({
                     <div>
                       <p className="text-xs font-semibold text-foreground">{incident.kind} · {incident.status}</p>
                       <p className="mt-0.5 text-[11px] text-muted-foreground">
-                        Detected {formatTime(incident.detectedAt)} · Updated {formatTime(incident.updatedAt)}
+                        {t("recovery.inspector.detectedUpdated", {
+                          detectedAt: formatTime(incident.detectedAt),
+                          updatedAt: formatTime(incident.updatedAt),
+                        })}
                       </p>
                     </div>
                     <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                      Attempts {incident.autoAttemptCount}
+                      {t("recovery.inspector.attempts", { count: incident.autoAttemptCount })}
                     </span>
                   </div>
                   <dl className="mt-2 grid gap-1 text-[11px] text-muted-foreground">
-                    {incident.workerId ? <div><dt className="inline font-medium">Worker:</dt> <dd className="inline font-mono">{incident.workerId}</dd></div> : null}
-                    {incident.queuedMessageId ? <div><dt className="inline font-medium">Queued message:</dt> <dd className="inline font-mono">{incident.queuedMessageId}</dd></div> : null}
-                    {incident.lastError ? <div><dt className="inline font-medium">Error:</dt> <dd className="inline break-words">{incident.lastError}</dd></div> : null}
-                    {details?.decision ? <div><dt className="inline font-medium">Policy:</dt> <dd className="inline">{String(details.decision)}</dd></div> : null}
-                    {details?.summary ? <div><dt className="inline font-medium">Summary:</dt> <dd className="inline">{String(details.summary)}</dd></div> : null}
-                    {incident.resolvedAt ? <div><dt className="inline font-medium">Resolved:</dt> <dd className="inline">{formatTime(incident.resolvedAt)}</dd></div> : null}
+                    {incident.workerId ? <div><dt className="inline font-medium">{t("recovery.inspector.worker")}</dt> <dd className="inline font-mono">{incident.workerId}</dd></div> : null}
+                    {incident.queuedMessageId ? <div><dt className="inline font-medium">{t("recovery.inspector.queuedMessage")}</dt> <dd className="inline font-mono">{incident.queuedMessageId}</dd></div> : null}
+                    {incident.lastError ? <div><dt className="inline font-medium">{t("recovery.inspector.error")}</dt> <dd className="inline break-words">{incident.lastError}</dd></div> : null}
+                    {details?.decision ? <div><dt className="inline font-medium">{t("recovery.inspector.policy")}</dt> <dd className="inline">{String(details.decision)}</dd></div> : null}
+                    {details?.summary ? <div><dt className="inline font-medium">{t("recovery.inspector.summary")}</dt> <dd className="inline">{String(details.summary)}</dd></div> : null}
+                    {details?.resumeAt ? <div><dt className="inline font-medium">{t("recovery.inspector.resumeAt")}</dt> <dd className="inline">{formatTime(String(details.resumeAt))}</dd></div> : null}
+                    {details?.quotaResetSource ? <div><dt className="inline font-medium">{t("recovery.inspector.source")}</dt> <dd className="inline">{String(details.quotaResetSource)}</dd></div> : null}
+                    {details?.quotaResetConfidence ? <div><dt className="inline font-medium">{t("recovery.inspector.confidence")}</dt> <dd className="inline">{String(details.quotaResetConfidence)}</dd></div> : null}
+                    {details?.scheduledWakeAt ? <div><dt className="inline font-medium">{t("recovery.inspector.scheduledWake")}</dt> <dd className="inline">{formatTime(String(details.scheduledWakeAt))}</dd></div> : null}
+                    {details?.rawText ? <div><dt className="inline font-medium">{t("recovery.inspector.providerMessage")}</dt> <dd className="inline break-words">{String(details.rawText)}</dd></div> : null}
+                    {incident.resolvedAt ? <div><dt className="inline font-medium">{t("recovery.inspector.resolved")}</dt> <dd className="inline">{formatTime(incident.resolvedAt)}</dd></div> : null}
                   </dl>
                 </div>
               );

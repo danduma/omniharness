@@ -16,7 +16,33 @@ export interface AgentOutputPane {
 }
 
 const TERMINAL_TOOL_STATUSES = new Set(["completed", "failed", "cancelled", "canceled", "done", "error"]);
+const RUNNING_TOOL_STATUSES = new Set(["pending", "in_progress", "working"]);
 const FALLBACK_TOOL_TITLE_PATTERN = /^Tool call(?:\s+\S+)?\s+(?:updated|completed|failed|cancelled|canceled|done|error|pending|in_progress|working)(?::.*)?$/i;
+
+export type AgentToolActivityKind = "read" | "bash" | "agent" | "edit" | "search" | "tool";
+
+export type AgentToolActivity = {
+  id: string;
+  kind: "tool";
+  actionKind: AgentToolActivityKind;
+  label: string;
+  title: string;
+  status: string;
+  timestamp: string;
+  targetPath?: string | null;
+  inputPane?: AgentOutputPane;
+  outputPane?: AgentOutputPane;
+};
+
+export type AgentToolGroupCounts = {
+  editedFiles: number;
+  readFiles: number;
+  searches: number;
+  commands: number;
+  agents: number;
+  tools: number;
+  total: number;
+};
 
 export type AgentActivityItem =
   | {
@@ -34,15 +60,14 @@ export type AgentActivityItem =
       inProgress: boolean;
       durationMs?: number;
     }
+  | AgentToolActivity
   | {
       id: string;
-      kind: "tool";
-      label: string;
-      title: string;
+      kind: "tool_group";
       status: string;
       timestamp: string;
-      inputPane?: AgentOutputPane;
-      outputPane?: AgentOutputPane;
+      counts: AgentToolGroupCounts;
+      tools: AgentToolActivity[];
     }
   | {
       id: string;
@@ -250,6 +275,14 @@ function pathFromToolTitle(value: string): string | null {
   return path && /[/\\]/.test(path) ? path : null;
 }
 
+function extractToolTargetPath(raw: Record<string, unknown> | null, kind: AgentToolActivityKind, baseTitle: string): string | null {
+  if (kind !== "read" && kind !== "edit") {
+    return null;
+  }
+
+  return extractPrimaryPath(raw) || pathFromToolTitle(baseTitle);
+}
+
 function truncateInline(value: string, maxLength = 88): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) {
@@ -427,13 +460,10 @@ function extractToolDiff(raw: Record<string, unknown> | null, contentText?: stri
   return diffs.length > 0 ? diffs.join("\n\n") : null;
 }
 
-function normalizeToolKind(toolKind: string | null | undefined, title: string): "read" | "bash" | "agent" | "edit" | "search" | "tool" {
+function normalizeToolKind(toolKind: string | null | undefined, title: string): AgentToolActivityKind {
   const haystack = `${toolKind ?? ""} ${title}`.toLowerCase();
   if (/\b(read|open|view)\b/.test(haystack)) {
     return "read";
-  }
-  if (/\b(execute|terminal|shell|bash|command|run)\b/.test(haystack)) {
-    return "bash";
   }
   if (/\b(agent|delegate|dispatch|spawn|worker)\b/.test(haystack)) {
     return "agent";
@@ -441,13 +471,16 @@ function normalizeToolKind(toolKind: string | null | undefined, title: string): 
   if (/\b(edit|write|replace|patch|create)\b/.test(haystack)) {
     return "edit";
   }
+  if (/\b(execute|terminal|shell|bash|command|run)\b/.test(haystack)) {
+    return "bash";
+  }
   if (/\b(search|find|grep|glob)\b/.test(haystack)) {
     return "search";
   }
   return "tool";
 }
 
-function toolLabel(kind: ReturnType<typeof normalizeToolKind>): string {
+function toolLabel(kind: AgentToolActivityKind): string {
   switch (kind) {
     case "read":
       return "Read";
@@ -581,10 +614,12 @@ function createToolActivity(entry: AgentOutputEntry): MutableToolActivity {
   return {
     id: entry.toolCallId || entry.id,
     kind: "tool",
+    actionKind: kind,
     label: toolLabel(kind),
     title: deriveToolTitle(entry),
     status: normalizeStatus(entry.status),
     timestamp: entry.timestamp,
+    targetPath: extractToolTargetPath(raw, kind, baseTitle),
     inputPane: deriveToolInputPane(entry),
     outputPane: deriveToolOutputPane(entry),
   };
@@ -598,6 +633,9 @@ function applyToolUpdate(target: MutableToolActivity, entry: AgentOutputEntry): 
   const incomingLabel = toolLabel(incomingKind);
   if (target.label === "Tool" && incomingLabel !== "Tool") {
     target.label = incomingLabel;
+  }
+  if (target.actionKind === "tool" && incomingKind !== "tool") {
+    target.actionKind = incomingKind;
   }
 
   const updatedTitle = deriveToolTitle(entry);
@@ -614,10 +652,122 @@ function applyToolUpdate(target: MutableToolActivity, entry: AgentOutputEntry): 
     target.inputPane = inputPane;
   }
 
+  const targetPath = extractToolTargetPath(raw, incomingKind, baseTitle);
+  if (targetPath && !target.targetPath) {
+    target.targetPath = targetPath;
+  }
+
   const outputPane = deriveToolOutputPane(entry);
   if (outputPane) {
     target.outputPane = outputPane;
   }
+}
+
+function countToolGroup(tools: AgentToolActivity[]): AgentToolGroupCounts {
+  const editedFiles = new Set<string>();
+  const readFiles = new Set<string>();
+  let searches = 0;
+  let commands = 0;
+  let agents = 0;
+  let genericTools = 0;
+
+  for (const tool of tools) {
+    if (tool.actionKind === "edit") {
+      if (tool.targetPath) {
+        editedFiles.add(tool.targetPath);
+      }
+      continue;
+    }
+    if (tool.actionKind === "read") {
+      if (tool.targetPath) {
+        readFiles.add(tool.targetPath);
+      }
+      continue;
+    }
+    if (tool.actionKind === "search") {
+      searches += 1;
+      continue;
+    }
+    if (tool.actionKind === "bash") {
+      commands += 1;
+      continue;
+    }
+    if (tool.actionKind === "agent") {
+      agents += 1;
+      continue;
+    }
+    genericTools += 1;
+  }
+
+  return {
+    editedFiles: editedFiles.size,
+    readFiles: readFiles.size,
+    searches,
+    commands,
+    agents,
+    tools: genericTools,
+    total: tools.length,
+  };
+}
+
+function deriveToolGroupStatus(tools: AgentToolActivity[]): string {
+  if (tools.some((tool) => ["failed", "error"].includes(tool.status))) {
+    return "failed";
+  }
+  if (tools.some((tool) => ["cancelled", "canceled"].includes(tool.status))) {
+    return "cancelled";
+  }
+  if (tools.some((tool) => RUNNING_TOOL_STATUSES.has(tool.status))) {
+    return "in_progress";
+  }
+  if (tools.every((tool) => ["completed", "done"].includes(tool.status))) {
+    return "completed";
+  }
+  return tools[tools.length - 1]?.status ?? "pending";
+}
+
+function createToolGroup(tools: AgentToolActivity[]): AgentActivityItem {
+  const firstTool = tools[0];
+  const lastTool = tools[tools.length - 1];
+
+  return {
+    id: `tool-group:${firstTool.id}:${lastTool.id}`,
+    kind: "tool_group",
+    status: deriveToolGroupStatus(tools),
+    timestamp: firstTool.timestamp,
+    counts: countToolGroup(tools),
+    tools,
+  };
+}
+
+function groupConsecutiveTools(items: AgentActivityItem[]): AgentActivityItem[] {
+  const grouped: AgentActivityItem[] = [];
+  let pendingTools: AgentToolActivity[] = [];
+
+  const flushTools = () => {
+    if (pendingTools.length === 0) {
+      return;
+    }
+    if (pendingTools.length === 1) {
+      grouped.push(pendingTools[0]);
+    } else {
+      grouped.push(createToolGroup(pendingTools));
+    }
+    pendingTools = [];
+  };
+
+  for (const item of items) {
+    if (item.kind === "tool") {
+      pendingTools.push(item);
+      continue;
+    }
+
+    flushTools();
+    grouped.push(item);
+  }
+
+  flushTools();
+  return grouped;
 }
 
 function timestampDeltaMs(startTimestamp: string, endTimestamp: string): number | undefined {
@@ -764,5 +914,5 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
     }
   }
 
-  return items;
+  return groupConsecutiveTools(items);
 }

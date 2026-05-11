@@ -17,6 +17,12 @@ describe("PWA installability", () => {
     expect(layoutSource).toContain('"apple-mobile-web-app-capable": "yes"');
     expect(layoutSource).toContain("/icons/apple-touch-icon-v2.png");
     expect(layoutSource).toContain("export const viewport");
+    expect(layoutSource).toContain('const lightThemeColor = "#ffffff"');
+    expect(layoutSource).toContain('const darkThemeColor = "#0b0d10"');
+    expect(layoutSource).toContain("themeColor: lightThemeColor");
+    expect(layoutSource).toContain("document.querySelector('meta[name=\"theme-color\"]')");
+    expect(layoutSource).not.toContain("#2f6652");
+    expect(layoutSource).not.toContain("#e86b20");
     expect(layoutSource).toContain("<PwaBootstrap");
   });
 
@@ -28,6 +34,8 @@ describe("PWA installability", () => {
     expect(manifest.start_url).toBe("/");
     expect(manifest.scope).toBe("/");
     expect(manifest.display).toBe("standalone");
+    expect(manifest.background_color).toBe("#ffffff");
+    expect(manifest.theme_color).toBe("#ffffff");
     expect(manifest).not.toHaveProperty("orientation");
     expect(manifest.prefer_related_applications).toBe(false);
     expect(manifest.icons).toEqual(
@@ -61,6 +69,7 @@ describe("PWA installability", () => {
 
   test("service worker keeps dynamic app data network-first and provides an offline fallback", () => {
     const serviceWorkerSource = readText("public/sw.js");
+    const offlineSource = readText("public/offline.html");
 
     expect(serviceWorkerSource).toContain('self.addEventListener("install"');
     expect(serviceWorkerSource).toContain('self.addEventListener("activate"');
@@ -68,6 +77,7 @@ describe("PWA installability", () => {
     expect(serviceWorkerSource).toContain('request.mode === "navigate"');
     expect(serviceWorkerSource).toContain("/offline.html");
     expect(serviceWorkerSource).toContain('pathname.startsWith("/api/")');
+    expect(offlineSource).toContain('<meta name="theme-color" content="#ffffff" />');
   });
 
   test("service worker notification clicks reopen the relevant conversation", () => {

@@ -95,6 +95,9 @@ export type RunRecoveryState = {
   lastError?: string | null;
   attemptCount?: number | null;
   nextAttemptAt?: string | null;
+  resumeAt?: string | null;
+  quotaResetSource?: string | null;
+  quotaResetConfidence?: string | null;
   policyDecision?: string | null;
 };
 export type AgentSnapshot = {
@@ -145,6 +148,12 @@ export type ProjectFilesResponse = { root: string; files: string[] };
 export type ProjectFileContentResponse = { root: string; path: string; content: string; size: number; truncated: boolean };
 export type WorkerType = "codex" | "claude" | "gemini" | "opencode";
 export type ComposerWorkerOption = WorkerType | "auto";
+export type WorkerAuthentication = {
+  status: "authenticated" | "not_authenticated" | "unknown" | "not_applicable";
+  method: "api_key" | "session_file" | "status_command" | "missing" | "unknown" | "not_applicable";
+  message: string;
+  setupCommand: string | null;
+};
 export type WorkerAvailability = {
   type: WorkerType;
   label: string;
@@ -160,6 +169,7 @@ export type WorkerAvailability = {
     endpoint: boolean | null;
     message?: string;
   };
+  authentication?: WorkerAuthentication;
 };
 export type WorkerModelOption = { value: string; label: string };
 export type WorkerModelCatalog = Record<WorkerType, WorkerModelOption[]>;

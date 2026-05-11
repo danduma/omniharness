@@ -8,24 +8,26 @@ export function recoveryTone(state: RunRecoveryState | null | undefined) {
   return "warning" as const;
 }
 
-export function recoveryTitle(state: RunRecoveryState | null | undefined) {
-  if (!state) return "Recovery";
-  if (state.status === "recovering") return "Recovering worker";
-  if (state.status === "failed") return "Recovery failed";
-  if (state.kind === "queue_blocked") return "Queued message blocked";
-  if (state.kind === "lost_worker_resumable") return "Worker disconnected";
-  if (state.kind === "lost_worker_rerunnable") return "Worker disconnected";
-  return "Needs recovery";
+export function recoveryTitleKey(state: RunRecoveryState | null | undefined) {
+  if (!state) return "recovery.notice.title.default";
+  if (state.kind === "quota_waiting") return "recovery.notice.title.quotaWaiting";
+  if (state.status === "recovering") return "recovery.notice.title.recovering";
+  if (state.status === "failed") return "recovery.notice.title.failed";
+  if (state.kind === "queue_blocked") return "recovery.notice.title.queueBlocked";
+  if (state.kind === "lost_worker_resumable") return "recovery.notice.title.workerDisconnected";
+  if (state.kind === "lost_worker_rerunnable") return "recovery.notice.title.workerDisconnected";
+  return "recovery.notice.title.needsRecovery";
 }
 
-export function recoveryDescription(state: RunRecoveryState | null | undefined) {
-  if (!state) return "";
+export function recoveryDescriptionKey(state: RunRecoveryState | null | undefined) {
+  if (!state) return "recovery.notice.description.empty";
+  if (state.kind === "quota_waiting") return "recovery.notice.description.quotaWaiting";
   if (state.message?.trim()) return state.message.trim();
   if (state.lastError?.trim()) return state.lastError.trim();
-  if (state.status === "recovering") return "OmniHarness is restoring the worker session or restarting from the latest checkpoint.";
-  if (state.kind === "lost_worker_resumable") return "The worker is missing from the runtime, but a saved session can be resumed.";
-  if (state.kind === "lost_worker_rerunnable") return "The worker is missing from the runtime. The run can restart from the latest user checkpoint.";
-  return "This run needs a recovery action before it can continue.";
+  if (state.status === "recovering") return "recovery.notice.description.recovering";
+  if (state.kind === "lost_worker_resumable") return "recovery.notice.description.lostWorkerResumable";
+  if (state.kind === "lost_worker_rerunnable") return "recovery.notice.description.lostWorkerRerunnable";
+  return "recovery.notice.description.needsRecovery";
 }
 
 export function latestRelevantRecoveryIncident(incidents: RecoveryIncidentRecord[]) {

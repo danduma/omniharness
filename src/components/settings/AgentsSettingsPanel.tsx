@@ -7,6 +7,7 @@ import { ErrorNotice } from "@/components/home/ErrorNotice";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { t, useI18nSnapshot } from "@/lib/i18n";
+import { getWorkerAvailabilityMessage } from "./worker-availability-copy";
 
 interface AgentsSettingsPanelProps {
   settings: Record<string, string>;
@@ -85,9 +86,7 @@ export function AgentsSettingsPanel({
           const isAvailable = worker.availability.status === "ok";
           const isChecked = configuredAllowedWorkerSet.has(worker.type);
           const modelOptions = workerModels?.[worker.type] ?? [];
-          const availabilityMessage = isAvailable
-            ? null
-            : worker.availability.message || t("settings.agents.unavailableNow");
+          const availabilityMessage = isAvailable ? null : getWorkerAvailabilityMessage(worker);
           const availabilityTone =
             worker.availability.status === "ok"
               ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"

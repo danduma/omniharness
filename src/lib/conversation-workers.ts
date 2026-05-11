@@ -155,3 +155,25 @@ export function buildWorkerPreview(agent: ConversationWorkerAgent) {
 
   return summarizePreview(previewSource);
 }
+
+function isCancelledAgent(agent: ConversationWorkerAgent) {
+  const state = normalizeWorkerStatus(agent.state);
+  return state === "cancelled" || state === "canceled";
+}
+
+function hasActiveAgentOutput(agent: ConversationWorkerAgent) {
+  return isWorkerActiveStatus(agent.state) || Boolean(agent.currentText?.trim());
+}
+
+export function selectPrimaryConversationAgent<T extends ConversationWorkerAgent>(agents: T[], directConversation: boolean) {
+  if (!directConversation) {
+    return agents[0] ?? null;
+  }
+
+  return (
+    agents.find((agent) => !isCancelledAgent(agent) && hasActiveAgentOutput(agent))
+    ?? agents.find((agent) => !isCancelledAgent(agent))
+    ?? agents[0]
+    ?? null
+  );
+}

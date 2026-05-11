@@ -52,6 +52,9 @@ describe("selectSpawnableWorkerType", () => {
       if (args[0] === "codex-acp") {
         return Buffer.from("/usr/local/bin/codex-acp\n");
       }
+      if (command === "codex" && args[0] === "login" && args[1] === "status") {
+        return Buffer.from("Logged in using ChatGPT\n");
+      }
       throw new Error("not found");
     });
 
@@ -85,6 +88,9 @@ describe("selectSpawnableWorkerType", () => {
     mockExecFileSync.mockImplementation((command: string, args: string[]) => {
       if (args[0] === "claude-agent-acp") {
         return Buffer.from("/usr/local/bin/claude-agent-acp\n");
+      }
+      if (command === "claude" && args[0] === "auth" && args[1] === "status") {
+        return Buffer.from(JSON.stringify({ loggedIn: true, authMethod: "claude.ai" }));
       }
       throw new Error("not found");
     });
@@ -123,5 +129,37 @@ describe("selectSpawnableWorkerType", () => {
     const { selectSpawnableWorkerType } = await import("@/server/supervisor/worker-availability");
 
     expect(() => selectSpawnableWorkerType("claude-code", {})).toThrow(/No spawnable worker is available/i);
+  });
+
+  it("reports codex as not authenticated when login status fails", async () => {
+    mockExecFileSync.mockImplementation((command: string, args: string[]) => {
+      if (args[0] === "codex-acp") {
+        return Buffer.from("/usr/local/bin/codex-acp\n");
+      }
+      if (command === "codex" && args[0] === "login" && args[1] === "status") {
+        throw new Error("not logged in");
+      }
+      throw new Error("not found");
+    });
+
+    const { getWorkerAuthenticationInfo } = await import("@/server/supervisor/worker-availability");
+
+    expect(getWorkerAuthenticationInfo("codex", { fileExists: () => false })).toMatchObject({
+      status: "not_authenticated",
+      setupCommand: "codex login",
+    });
+  });
+
+  it("detects gemini login from local oauth state without reading credentials", async () => {
+    const { getWorkerAuthenticationInfo } = await import("@/server/supervisor/worker-availability");
+
+    expect(getWorkerAuthenticationInfo("gemini", {
+      env: {},
+      homeDir: "/Users/tester",
+      fileExists: (filePath) => filePath === "/Users/tester/.gemini/oauth_creds.json",
+    })).toMatchObject({
+      status: "authenticated",
+      method: "session_file",
+    });
   });
 });

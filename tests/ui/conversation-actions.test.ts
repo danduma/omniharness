@@ -212,6 +212,17 @@ test("saving an edited message closes the inline editor before the rerun request
   expect(restoreDraftIndex).toBeGreaterThan(restoreEditorIndex);
 });
 
+test("direct-control terminal user messages can render the inline edit form", () => {
+  expect(pageSource).toContain("editingUserMessageId={editingMessageId}");
+  expect(pageSource).toContain("editingUserMessageValue={editingMessageValue}");
+  expect(pageSource).toContain("onEditingUserMessageValueChange={setEditingMessageValue}");
+  expect(pageSource).toContain("onCancelEditingUserMessage={handleCancelEditingMessage}");
+  expect(pageSource).toContain("onSaveEditedUserMessage={handleSaveEditedMessage}");
+  expect(terminalSource).toContain("editingUserMessageId?: string | null;");
+  expect(terminalSource).toContain("activity.messageId === editingUserMessageId");
+  expect(terminalSource).toContain("function UserMessageEditForm");
+});
+
 test("failed runs render a single persisted error in the conversation view", () => {
   expect(pageSource).not.toContain("Execution failed");
   expect(pageSource).toContain("function extractWorkerFailureDetail(messages: MessageRecord[])");
@@ -274,7 +285,8 @@ test("direct control conversations show a tiny animated working indicator while 
   expect(terminalSource).toContain("text-[calc(var(--terminal-message-size)+1px)]");
   expect(pageSource).toContain("showDirectControlWorkingIndicator={showDirectControlWorkingIndicator}");
   expect(pageSource).toContain("showPendingAssistantIndicator={showDirectControlWorkingIndicator}");
-  expect(pageSource).toContain('const showDirectControlWorkingIndicator = isDirectConversation && composerBehavior.buttonKind === "stop";');
+  expect(pageSource).toContain("const hasBusyConversation = isSupervisorRunning || Boolean(stoppableConversationWorkerId);");
+  expect(pageSource).toContain("const showDirectControlWorkingIndicator = isDirectConversation && hasBusyConversation;");
   expect(terminalSource).toContain("showPendingAssistantIndicator = false");
   expect(terminalSource).toContain("pendingAssistantActivity");
   expect(terminalSource).toContain("const TERMINAL_BOTTOM_THRESHOLD_PX = 1");

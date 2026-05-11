@@ -15,7 +15,7 @@ import { SideWindow } from "@/components/home/SideWindow";
 import { type AppErrorDescriptor, mergeAppErrors, requestJson } from "@/lib/app-errors";
 import type { ChatAttachment, PendingChatAttachment } from "@/lib/chat-attachments";
 import { buildConversationGroups } from "@/lib/conversations";
-import { buildWorkerLists, isWorkerActiveStatus, mergeWorkerLiveStatus, normalizeWorkerStatus, type ConversationWorkerRecord } from "@/lib/conversation-workers";
+import { buildWorkerLists, isWorkerActiveStatus, mergeWorkerLiveStatus, normalizeWorkerStatus, selectPrimaryConversationAgent, type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { resolveProjectScope } from "@/lib/project-scope";
@@ -27,16 +27,16 @@ import { busyMessageQueueManager } from "./BusyMessageQueueManager";
 import { conversationNotificationManager } from "./ConversationNotificationManager";
 import { sideWindowManager } from "./SideWindowManager";
 import { parseBusyMessageAction, resolveBusyComposerBehavior, resolveBusyMessageActionForSubmitAction, type BusyMessageAction } from "./busy-message-behavior";
-import type { AgentSnapshot, AuthSessionResponse, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, QueuedConversationMessageRecord, RunRecord, SettingsResponse, SidebarGroup, SidebarRun, SupervisorInterventionRecord, WorkerCatalogResponse, WorkerType } from "./types";
+import type { AgentSnapshot, AuthSessionResponse, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, ProjectFilesResponse, QueuedConversationMessageRecord, RunRecord, SettingsResponse, SidebarGroup, SidebarRun, SupervisorInterventionRecord, WorkerCatalogResponse, WorkerModelOption, WorkerType } from "./types";
 import { EventStreamStateManager } from "./EventStreamStateManager";
-import { homeUiSetters, homeUiStateManager, INITIAL_EVENT_STREAM_STATE, type AutoCommitChatAction } from "./HomeUiStateManager";
-import { appearancePreferencesManager } from "./AppearancePreferencesManager";
+import { homeUiSetters, homeUiStateManager, INITIAL_EVENT_STREAM_STATE, type AutoCommitChatAction, type HomeUiState } from "./HomeUiStateManager";
+import { appearancePreferencesManager, getAppearanceTextSizeStyle } from "./AppearancePreferencesManager";
 import { settingsDraftManager } from "./SettingsDraftManager";
 import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildInlineError, extractWorkerFailureDetail, filterOptimisticallyDeletedRuns, getLatestUnresolvedWorkerStuckEvent, getWorkerModelOptions, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseProjectList, parseWorkerType, parseWorkerTypes, removeRunFromHomeState, resolveSelectedWorkerModel, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought, type CreatedConversationSnapshot } from "./utils";
 import { useAppErrors } from "./useAppErrors";
 import { useConversationExecutionStatus } from "./useConversationExecutionStatus";
 import { useHomeLifecycle } from "./useHomeLifecycle";
-import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import { shallowEqualRecord, useManagerSelector, useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { useRunRecoveryState } from "./useRunRecoveryState";
 import { useRunSelectionEffects } from "./useRunSelectionEffects";
 import { shouldOpenMobileSideWindow } from "./side-window-viewport";
@@ -97,9 +97,224 @@ function getAutoCommitChatPrompt(action: AutoCommitChatAction) {
   return action === "commit-push" ? AUTO_COMMIT_CHAT_PUSH_PROMPT : AUTO_COMMIT_CHAT_PROMPT;
 }
 
+type HomeAppState = Omit<HomeUiState, "command" | "commandCursor" | "mentionIndex" | "attachments">;
+type ComposerDraftState = Pick<HomeUiState, "command" | "commandCursor" | "mentionIndex" | "attachments">;
+
+function selectHomeAppState(state: HomeUiState): HomeAppState {
+  const homeAppState: Partial<HomeUiState> = { ...state };
+  delete homeAppState.command;
+  delete homeAppState.commandCursor;
+  delete homeAppState.mentionIndex;
+  delete homeAppState.attachments;
+  return homeAppState as HomeAppState;
+}
+
+function selectComposerDraftState(state: HomeUiState): ComposerDraftState {
+  return {
+    command: state.command,
+    commandCursor: state.commandCursor,
+    mentionIndex: state.mentionIndex,
+    attachments: state.attachments,
+  };
+}
+
+interface ComposerContainerProps {
+  className: string;
+  commandInputRef: React.RefObject<HTMLTextAreaElement | null>;
+  selectedRunId: string | null;
+  selectedConversationMode: ConversationModeOption;
+  setSelectedConversationMode: (value: ConversationModeOption) => void;
+  currentProjectScope: string | null;
+  projectFiles: string[];
+  projectFilesIsFetched: boolean;
+  onOpenProjectFile: (filePath: string) => void;
+  themeMode: "day" | "night";
+  shouldLockDirectWorker: boolean;
+  lockedDirectWorkerLabel: string;
+  selectedCliAgent: ComposerWorkerOption;
+  setSelectedCliAgent: (value: ComposerWorkerOption) => void;
+  composerWorkerOptions: Array<{ value: ComposerWorkerOption; label: string }>;
+  selectedModel: string;
+  setSelectedModel: (value: string) => void;
+  activeWorkerModelOptions: WorkerModelOption[];
+  selectedEffort: string;
+  setSelectedEffort: (value: string) => void;
+  isComposerSubmitting: boolean;
+  isConversationStoppable: boolean;
+  hasBusyConversation: boolean;
+  busyMessageAction: BusyMessageAction;
+  queuedMessages: QueuedConversationMessageRecord[];
+  cancellingQueuedMessageIds: Set<string>;
+  onEditQueuedMessage: (message: QueuedConversationMessageRecord) => void;
+  onSendQueuedMessageNow: (messageId: string) => void;
+  onCancelQueuedMessage: (messageId: string) => void;
+  onSendConversationMessage: (content: string, attachments: PendingChatAttachment[], busyAction?: BusyMessageAction) => void;
+  onRunCommand: (content: string, attachments: PendingChatAttachment[]) => void;
+  onStopConversation: () => void;
+}
+
+function ComposerContainer({
+  className,
+  commandInputRef,
+  selectedRunId,
+  selectedConversationMode,
+  setSelectedConversationMode,
+  currentProjectScope,
+  projectFiles,
+  projectFilesIsFetched,
+  onOpenProjectFile,
+  themeMode,
+  shouldLockDirectWorker,
+  lockedDirectWorkerLabel,
+  selectedCliAgent,
+  setSelectedCliAgent,
+  composerWorkerOptions,
+  selectedModel,
+  setSelectedModel,
+  activeWorkerModelOptions,
+  selectedEffort,
+  setSelectedEffort,
+  isComposerSubmitting,
+  isConversationStoppable,
+  hasBusyConversation,
+  busyMessageAction,
+  queuedMessages,
+  cancellingQueuedMessageIds,
+  onEditQueuedMessage,
+  onSendQueuedMessageNow,
+  onCancelQueuedMessage,
+  onSendConversationMessage,
+  onRunCommand,
+  onStopConversation,
+}: ComposerContainerProps) {
+  const {
+    setCommand,
+    setCommandCursor,
+    setMentionIndex,
+    addAttachmentFiles,
+    addPastedImages,
+    removeAttachment,
+  } = homeUiSetters;
+  const { command, commandCursor, mentionIndex, attachments } = useManagerSelector(
+    homeUiStateManager,
+    selectComposerDraftState,
+    shallowEqualRecord,
+  );
+  const activeMention = getActiveMentionQuery(command, commandCursor);
+  const filteredProjectFiles = useMemo(() => {
+    if (!activeMention) {
+      return [];
+    }
+
+    const needle = activeMention.query.toLowerCase();
+    return projectFiles
+      .filter((filePath) => needle.length === 0 || filePath.toLowerCase().includes(needle))
+      .slice(0, 12);
+  }, [activeMention, projectFiles]);
+  const showMentionPicker = Boolean(
+    activeMention && currentProjectScope && (filteredProjectFiles.length > 0 || projectFilesIsFetched)
+  );
+  const composerBehavior = resolveBusyComposerBehavior({
+    hasBusyConversation,
+    isConversationStoppable,
+    hasContent: Boolean(command.trim() || attachments.length > 0),
+    busyMessageAction,
+  });
+
+  useEffect(() => {
+    setMentionIndex(0);
+  }, [activeMention?.query, currentProjectScope, setMentionIndex]);
+
+  const applyMention = (filePath: string) => {
+    if (!activeMention) {
+      return;
+    }
+
+    const nextValue = replaceActiveMention(command, activeMention, filePath);
+    const nextCursor = activeMention.start + filePath.length + 2;
+    setCommand(nextValue);
+    setCommandCursor(nextCursor);
+    requestAnimationFrame(() => {
+      commandInputRef.current?.focus();
+      commandInputRef.current?.setSelectionRange(nextCursor, nextCursor);
+    });
+  };
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (composerBehavior.submitAction === "stop") {
+      onStopConversation();
+      return;
+    }
+
+    if (!command.trim() && attachments.length === 0) {
+      return;
+    }
+
+    if (selectedRunId) {
+      onSendConversationMessage(
+        command,
+        attachments,
+        resolveBusyMessageActionForSubmitAction(composerBehavior.submitAction),
+      );
+      return;
+    }
+
+    onRunCommand(command, attachments);
+  };
+
+  return (
+    <ConversationComposer
+      className={className}
+      command={command}
+      setCommand={setCommand}
+      setCommandCursor={setCommandCursor}
+      commandInputRef={commandInputRef}
+      handleSubmit={handleSubmit}
+      selectedRunId={selectedRunId}
+      selectedConversationMode={selectedConversationMode}
+      setSelectedConversationMode={setSelectedConversationMode}
+      showMentionPicker={showMentionPicker}
+      currentProjectScope={currentProjectScope}
+      filteredProjectFiles={filteredProjectFiles}
+      mentionIndex={mentionIndex}
+      setMentionIndex={setMentionIndex}
+      applyMention={applyMention}
+      onOpenProjectFile={onOpenProjectFile}
+      themeMode={themeMode}
+      attachments={attachments}
+      handleRemoveAttachment={removeAttachment}
+      onAddAttachmentFiles={addAttachmentFiles}
+      onAddPastedImages={addPastedImages}
+      shouldLockDirectWorker={shouldLockDirectWorker}
+      lockedDirectWorkerLabel={lockedDirectWorkerLabel}
+      selectedCliAgent={selectedCliAgent}
+      setSelectedCliAgent={setSelectedCliAgent}
+      composerWorkerOptions={composerWorkerOptions}
+      selectedModel={selectedModel}
+      setSelectedModel={setSelectedModel}
+      activeWorkerModelOptions={activeWorkerModelOptions}
+      selectedEffort={selectedEffort}
+      setSelectedEffort={setSelectedEffort}
+      isComposerSubmitting={isComposerSubmitting}
+      isConversationStoppable={isConversationStoppable}
+      composerBehavior={composerBehavior}
+      queuedMessages={queuedMessages}
+      cancellingQueuedMessageIds={cancellingQueuedMessageIds}
+      onEditQueuedMessage={onEditQueuedMessage}
+      onSendQueuedMessageNow={onSendQueuedMessageNow}
+      onCancelQueuedMessage={onCancelQueuedMessage}
+      onSendConversationMessage={(content, busyAction) => {
+        onSendConversationMessage(content, attachments, busyAction);
+      }}
+      onRunCommand={(content) => onRunCommand(content, attachments)}
+      onStopConversation={onStopConversation}
+    />
+  );
+}
+
 export function HomeApp() {
   const {
-    command,
     themeMode,
     showSettings,
     showPairDeviceDialog,
@@ -118,8 +333,6 @@ export function HomeApp() {
     mobileWorkersOpen,
     searchQuery,
     draftProjectPath,
-    commandCursor,
-    mentionIndex,
     readMarkers,
     collapsedProjectPaths,
     renamingRunId,
@@ -136,14 +349,13 @@ export function HomeApp() {
     selectedEffort,
     autoCommitChatAction,
     hydratedRunSelectionId,
-    attachments,
     pairTokenFromUrl,
     authError,
     pairRedeemError,
     pairRedeemAttempted,
     runtimeErrors,
     settingsDiagnostics,
-  } = useManagerSnapshot(homeUiStateManager);
+  } = useManagerSelector(homeUiStateManager, selectHomeAppState, shallowEqualRecord);
   const {
     setCommand,
     setThemeMode,
@@ -165,7 +377,6 @@ export function HomeApp() {
     setSearchQuery,
     setDraftProjectPath,
     setCommandCursor,
-    setMentionIndex,
     setReadMarkers,
     setCollapsedProjectPaths,
     setRenamingRunId,
@@ -182,9 +393,6 @@ export function HomeApp() {
     setSelectedEffort,
     setAutoCommitChatAction,
     setHydratedRunSelectionId,
-    addAttachmentFiles,
-    addPastedImages,
-    removeAttachment,
     clearAttachments,
     setPairTokenFromUrl,
     setAuthError,
@@ -203,6 +411,28 @@ export function HomeApp() {
     () => INITIAL_EVENT_STREAM_STATE,
   );
   const notificationState = useManagerSnapshot(conversationNotificationManager);
+  const appearancePreferences = useManagerSnapshot(appearancePreferencesManager);
+  const appearanceTextSizeStyle = useMemo(() => (
+    getAppearanceTextSizeStyle(appearancePreferences.uiTextSize, appearancePreferences.conversationTextSize)
+  ), [appearancePreferences.conversationTextSize, appearancePreferences.uiTextSize]);
+  useEffect(() => {
+    const body = document.body;
+    const textSizeStyles = appearanceTextSizeStyle as Record<string, string | number | undefined>;
+
+    body.classList.add("omni-app-text-scale");
+    for (const [property, value] of Object.entries(textSizeStyles)) {
+      if (typeof value === "string" || typeof value === "number") {
+        body.style.setProperty(property, String(value));
+      }
+    }
+
+    return () => {
+      for (const property of Object.keys(textSizeStyles)) {
+        body.style.removeProperty(property);
+      }
+      body.classList.remove("omni-app-text-scale");
+    };
+  }, [appearanceTextSizeStyle]);
   const setState = useCallback<React.Dispatch<React.SetStateAction<EventStreamState>>>(
     (action) => {
       stateManager.setSnapshotCacheScope(selectedRunId);
@@ -847,40 +1077,6 @@ export function HomeApp() {
     },
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const hasAttachments = attachments.length > 0;
-    if (composerBehavior.submitAction === "stop") {
-      if (!selectedRunId) {
-        return;
-      }
-
-      if (isSupervisorRunning) {
-        stopSupervisor.mutate({ runId: selectedRunId });
-        return;
-      }
-
-      if (stoppableConversationWorkerId) {
-        stopWorker.mutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId });
-      }
-      return;
-    }
-
-    if (command.trim() || hasAttachments) {
-      if (selectedRunId) {
-        sendConversationMessage.mutate({
-          runId: selectedRunId,
-          content: command,
-          attachments,
-          busyAction: resolveBusyMessageActionForSubmitAction(composerBehavior.submitAction),
-        });
-        return;
-      }
-
-      runCommand.mutate({ content: command, attachments });
-    }
-  };
-
   const handleStartNewPlan = () => {
     setSelectedRunId(null);
     setDraftProjectPath(null);
@@ -1131,16 +1327,7 @@ export function HomeApp() {
     }
   }, [isImplementationConversation, selectedRunId, selectedRunWorkersForDisplay.length, setRightSidebarOpen]);
   const primaryConversationAgent = useMemo(() => {
-    if (!isDirectConversation) {
-      return conversationAgents[0] ?? null;
-    }
-
-    return (
-      conversationAgents.find((agent) => agent.state === "working" || Boolean(agent.currentText?.trim()))
-      ?? conversationAgents.find((agent) => agent.state !== "cancelled")
-      ?? conversationAgents[0]
-      ?? null
-    );
+    return selectPrimaryConversationAgent(conversationAgents, isDirectConversation);
   }, [conversationAgents, isDirectConversation]);
   const conversationWorkerGroups = useMemo(
     () => buildWorkerLists(selectedRunWorkersForDisplay),
@@ -1403,40 +1590,6 @@ export function HomeApp() {
   const appErrors = useAppErrors({ state, runtimeErrors, projectFilesError: projectFilesQuery.error, settingsError: settingsQuery.error, runCommandError: runCommand.error, sendConversationMessageError: sendConversationMessage.error, cancelQueuedMessageError: cancelQueuedMessage.error, autoCommitChatError: autoCommitChat.error, autoCommitProjectError: autoCommitProject.error, recoverRunError: recoverRun.error, renameRunError: renameRun.error, archiveRunError: archiveRun.error, deleteRunError: deleteRun.error, stopSupervisorError: stopSupervisor.error, stopWorkerError: stopWorker.error ?? stopWorkerTerminalProcess.error });
 
   useRunSelectionEffects({ scrollRef, state, selectedRunId, selectedRun, activeComposerMode, selectedCliAgent, setSelectedCliAgent, autoSelectedWorkerType, activeAllowedWorkerTypes, hydratedRunSelectionId, setHydratedRunSelectionId, selectedModel, setSelectedModel, selectedEffort, setSelectedEffort, availableWorkerTypes, configuredAllowedWorkerTypes, apiKeys, setApiKeys, setReadMarkers });
-  const activeMention = getActiveMentionQuery(command, commandCursor);
-  const filteredProjectFiles = useMemo(() => {
-    if (!activeMention) {
-      return [];
-    }
-
-    const files = projectFilesQuery.data?.files ?? [];
-    const needle = activeMention.query.toLowerCase();
-    return files
-      .filter((filePath) => needle.length === 0 || filePath.toLowerCase().includes(needle))
-      .slice(0, 12);
-  }, [activeMention, projectFilesQuery.data?.files]);
-  const showMentionPicker = Boolean(
-    activeMention && currentProjectScope && (filteredProjectFiles.length > 0 || projectFilesQuery.isFetched)
-  );
-
-  useEffect(() => {
-    setMentionIndex(0);
-  }, [activeMention?.query, currentProjectScope, setMentionIndex]);
-
-  const applyMention = (filePath: string) => {
-    if (!activeMention) {
-      return;
-    }
-
-    const nextValue = replaceActiveMention(command, activeMention, filePath);
-    const nextCursor = activeMention.start + filePath.length + 2;
-    setCommand(nextValue);
-    setCommandCursor(nextCursor);
-    requestAnimationFrame(() => {
-      commandInputRef.current?.focus();
-      commandInputRef.current?.setSelectionRange(nextCursor, nextCursor);
-    });
-  };
 
   const handleOpenProjectFile = useCallback((filePathOrReference: string | ProjectFileReference) => {
     const file = typeof filePathOrReference === "string"
@@ -1458,18 +1611,6 @@ export function HomeApp() {
     setRightSidebarOpen(true);
   }, [currentProjectScope, setMobileWorkersOpen, setRightSidebarOpen]);
 
-  const handleAddAttachmentFiles = (files: File[]) => {
-    addAttachmentFiles(files);
-  };
-
-  const handleAddPastedImages = (files: File[]) => {
-    addPastedImages(files);
-  };
-
-  const handleRemoveAttachment = (attachmentId: string) => {
-    removeAttachment(attachmentId);
-  };
-
   const handleEditQueuedMessage = (message: QueuedConversationMessageRecord) => {
     const nextCommand = message.content;
     setCommand(nextCommand);
@@ -1484,17 +1625,12 @@ export function HomeApp() {
 
   const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || sendQueuedMessageNow.isPending || promotePlanningConversation.isPending;
   const busyMessageAction = parseBusyMessageAction(apiKeys.BUSY_MESSAGE_ACTION);
-  const composerBehavior = resolveBusyComposerBehavior({
-    hasBusyConversation: isSupervisorRunning || Boolean(stoppableConversationWorkerId),
-    isConversationStoppable,
-    hasContent: Boolean(command.trim() || attachments.length > 0),
-    busyMessageAction,
-  });
+  const hasBusyConversation = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
   const lockedDirectWorkerLabel = WORKER_OPTIONS.find((option) => option.value === (selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent))?.label
     || WORKER_OPTIONS.find((option) => option.value === autoSelectedWorkerType)?.label
     || "Direct worker";
   const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct";
-  const showDirectControlWorkingIndicator = isDirectConversation && composerBehavior.buttonKind === "stop";
+  const showDirectControlWorkingIndicator = isDirectConversation && hasBusyConversation;
 
   const handleRetryMessage = (messageId: string) => {
     if (!selectedRunId) return;
@@ -1614,28 +1750,17 @@ export function HomeApp() {
 
 
   const renderComposer = (className: string) => (
-<ConversationComposer
+<ComposerContainer
           className={className}
-          command={command}
-          setCommand={setCommand}
-          setCommandCursor={setCommandCursor}
           commandInputRef={commandInputRef}
-          handleSubmit={handleSubmit}
           selectedRunId={selectedRunId}
-          selectedConversationMode={selectedConversationMode}
+          selectedConversationMode={activeComposerMode}
           setSelectedConversationMode={setSelectedConversationMode}
-          showMentionPicker={showMentionPicker}
           currentProjectScope={currentProjectScope}
-          filteredProjectFiles={filteredProjectFiles}
-          mentionIndex={mentionIndex}
-          setMentionIndex={setMentionIndex}
-          applyMention={applyMention}
+          projectFiles={projectFilesQuery.data?.files ?? []}
+          projectFilesIsFetched={projectFilesQuery.isFetched}
           onOpenProjectFile={handleOpenProjectFile}
           themeMode={themeMode}
-          attachments={attachments}
-          handleRemoveAttachment={handleRemoveAttachment}
-          onAddAttachmentFiles={handleAddAttachmentFiles}
-          onAddPastedImages={handleAddPastedImages}
           shouldLockDirectWorker={shouldLockDirectWorker}
           lockedDirectWorkerLabel={lockedDirectWorkerLabel}
           selectedCliAgent={selectedCliAgent}
@@ -1648,7 +1773,8 @@ export function HomeApp() {
           setSelectedEffort={setSelectedEffort}
           isComposerSubmitting={isComposerSubmitting}
           isConversationStoppable={isConversationStoppable}
-          composerBehavior={composerBehavior}
+          hasBusyConversation={hasBusyConversation}
+          busyMessageAction={busyMessageAction}
           queuedMessages={busyMessageQueueState.queuedMessages}
           cancellingQueuedMessageIds={busyMessageQueueState.cancellingMessageIds}
           onEditQueuedMessage={handleEditQueuedMessage}
@@ -1662,12 +1788,12 @@ export function HomeApp() {
               cancelQueuedMessage.mutate({ runId: selectedRunId, messageId });
             }
           }}
-          onSendConversationMessage={(content, busyAction) => {
+          onSendConversationMessage={(content, attachments, busyAction) => {
             if (selectedRunId) {
               sendConversationMessage.mutate({ runId: selectedRunId, content, attachments, busyAction });
             }
           }}
-          onRunCommand={(content) => runCommand.mutate({ content, attachments })}
+          onRunCommand={(content, attachments) => runCommand.mutate({ content, attachments })}
           onStopConversation={() => {
             if (!selectedRunId) {
               return;
@@ -1738,7 +1864,7 @@ export function HomeApp() {
   };
 
   return (
-    <div className="flex h-dvh w-full overflow-hidden bg-background text-foreground lg:h-screen">
+    <div className="omni-app-text-scale flex h-dvh w-full overflow-hidden bg-background text-foreground lg:h-screen" style={appearanceTextSizeStyle}>
       <div
         className={`relative z-30 hidden h-full shrink-0 overflow-hidden border-r bg-background transition-[width,opacity] duration-150 ease-out lg:flex motion-reduce:transition-none ${leftSidebarOpen ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}
         style={{ width: leftSidebarOpen ? leftSidebarWidth : 0 }}
@@ -1840,6 +1966,11 @@ export function HomeApp() {
           liveExecutionStatus={liveExecutionStatus}
           liveThoughts={liveThoughts}
           executionEvents={selectedRunExecutionEvents}
+          cliSetupWorkers={catalogWorkers}
+          onOpenAgentSettings={() => {
+            setActiveSettingsTab("agents");
+            setShowSettings(true);
+          }}
           emptyComposer={renderComposer("mt-2 w-full pt-0 sm:pt-0")}
           projectRoot={currentProjectScope}
           onOpenProjectFile={handleOpenProjectFile}

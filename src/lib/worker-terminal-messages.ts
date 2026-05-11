@@ -100,19 +100,12 @@ export function buildWorkerTerminalUserMessages({
 
 export function buildDirectTerminalUserMessages({
   messages,
-  agent,
 }: {
   messages: MessageRecord[];
   agent?: AgentSnapshot | null;
 }): WorkerTerminalUserMessage[] {
-  const outputTimes = loadedWorkerOutputTimes(agent);
   const userMessages = messages
     .filter((message) => message.role === "user")
-    .filter((message) => (
-      outputTimes.length === 0
-      || hasLoadedOutputContext(message.createdAt, outputTimes)
-      || isAfterLoadedOutput(message.createdAt, outputTimes)
-    ))
     .map((message) => ({
       id: message.id,
       content: message.content,

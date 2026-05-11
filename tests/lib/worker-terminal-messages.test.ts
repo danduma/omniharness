@@ -109,7 +109,7 @@ describe("buildWorkerTerminalUserMessages", () => {
 });
 
 describe("buildDirectTerminalUserMessages", () => {
-  it("drops stale direct prompts when compacted output no longer includes their surrounding worker activity", () => {
+  it("keeps direct prompts even when a rerun worker output is far newer than the original prompt", () => {
     const messages = buildDirectTerminalUserMessages({
       messages: [
         {
@@ -130,12 +130,12 @@ describe("buildDirectTerminalUserMessages", () => {
         },
       ],
       agent: buildAgent([
-        "2026-05-09T10:30:05.563Z",
-        "2026-05-09T10:30:18.423Z",
+        "2026-05-09T12:30:05.563Z",
+        "2026-05-09T12:30:18.423Z",
       ]),
     });
 
-    expect(messages.map((message) => message.id)).toEqual(["follow-up"]);
+    expect(messages.map((message) => message.id)).toEqual(["initial-prompt", "follow-up"]);
   });
 
   it("keeps direct prompts while no worker output has loaded yet", () => {

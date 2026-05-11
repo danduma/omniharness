@@ -44,5 +44,5 @@ export function getConversationVisualKind(run: ConversationVisualRun, messages: 
     return "commit";
   }
 
-  return run.mode === "direct" ? "direct" : "supervisor";
+  return run.mode === "direct" || run.mode === "planning" ? "direct" : "supervisor";
 }

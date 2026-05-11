@@ -236,3 +236,109 @@
     color: oklch(0.78 0.15 25);
   }
 }
+
+@layer utilities {
+  .omni-app-text-scale {
+    --omni-mobile-ui-font-boost: 0px;
+    --omni-mobile-ui-control-boost: 0px;
+    --omni-mobile-ui-icon-boost: 0px;
+    --omni-mobile-conversation-font-boost: 0px;
+    --omni-mobile-conversation-line-boost: 0px;
+    font-size: var(--omni-ui-font-size);
+  }
+
+  @media (max-width: 640px) {
+    .omni-app-text-scale {
+      --omni-mobile-ui-font-boost: 1px;
+      --omni-mobile-ui-control-boost: 2px;
+      --omni-mobile-ui-icon-boost: 1px;
+      --omni-mobile-conversation-font-boost: 1px;
+      --omni-mobile-conversation-line-boost: 1px;
+    }
+  }
+
+  .omni-app-text-scale .text-\[10px\],
+  .omni-app-text-scale .text-\[11px\] {
+    font-size: var(--omni-ui-xxs-size);
+  }
+
+  .omni-app-text-scale .text-xs,
+  .omni-app-text-scale .text-\[12px\] {
+    font-size: var(--omni-ui-xs-size);
+  }
+
+  .omni-app-text-scale .text-sm,
+  .omni-app-text-scale .text-\[13px\] {
+    font-size: var(--omni-ui-sm-size);
+  }
+
+  .omni-app-text-scale .text-base {
+    font-size: var(--omni-ui-base-size);
+  }
+
+  .omni-app-text-scale .h-6.w-6,
+  .omni-app-text-scale .size-6 {
+    width: var(--omni-ui-control-xs-size);
+    height: var(--omni-ui-control-xs-size);
+  }
+
+  .omni-app-text-scale .h-7.w-7,
+  .omni-app-text-scale .size-7 {
+    width: var(--omni-ui-control-sm-size);
+    height: var(--omni-ui-control-sm-size);
+  }
+
+  .omni-app-text-scale .h-8.w-8,
+  .omni-app-text-scale .size-8 {
+    width: var(--omni-ui-control-md-size);
+    height: var(--omni-ui-control-md-size);
+  }
+
+  .omni-app-text-scale .h-9.w-9,
+  .omni-app-text-scale .size-9 {
+    width: var(--omni-ui-control-lg-size);
+    height: var(--omni-ui-control-lg-size);
+  }
+
+  .omni-app-text-scale .h-6.w-6 > svg,
+  .omni-app-text-scale .size-6 > svg,
+  .omni-app-text-scale .h-7.w-7 > svg,
+  .omni-app-text-scale .size-7 > svg {
+    width: var(--omni-ui-icon-sm-size);
+    height: var(--omni-ui-icon-sm-size);
+  }
+
+  .omni-app-text-scale .h-8.w-8 > svg,
+  .omni-app-text-scale .size-8 > svg,
+  .omni-app-text-scale .h-9.w-9 > svg,
+  .omni-app-text-scale .size-9 > svg {
+    width: var(--omni-ui-icon-md-size);
+    height: var(--omni-ui-icon-md-size);
+  }
+
+  .omni-app-text-scale .omni-conversation-text-scale {
+    font-size: var(--omni-conversation-font-size);
+  }
+
+  .omni-app-text-scale .omni-conversation-text-scale .text-\[10px\],
+  .omni-app-text-scale .omni-conversation-text-scale .text-\[11px\],
+  .omni-app-text-scale .omni-conversation-text-scale .text-\[12px\],
+  .omni-app-text-scale .omni-conversation-text-scale .text-xs {
+    font-size: var(--omni-conversation-xs-size);
+  }
+
+  .omni-app-text-scale .omni-conversation-text-scale .text-sm,
+  .omni-app-text-scale .omni-conversation-text-scale .text-\[13px\] {
+    font-size: var(--omni-conversation-sm-size);
+  }
+
+  .omni-app-text-scale .omni-conversation-text-scale .text-base {
+    font-size: var(--omni-conversation-font-size);
+  }
+
+  .omni-app-text-scale .omni-conversation-text-scale .leading-5,
+  .omni-app-text-scale .omni-conversation-text-scale .leading-6,
+  .omni-app-text-scale .omni-conversation-text-scale .leading-relaxed {
+    line-height: var(--omni-conversation-line-height);
+  }
+}

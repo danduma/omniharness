@@ -140,7 +140,7 @@ export function ConversationSidebar({
 
       <div className="min-h-0 flex-1 overflow-hidden">
         <ScrollArea className="h-full px-3">
-          <div className="space-y-4 py-4">
+          <div className="space-y-3 py-4">
           <div className="ml-2 mr-1 flex items-center justify-between">
             <h3 className="text-xs font-semibold text-muted-foreground">PROJECTS</h3>
             <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={openFolderPicker}>
@@ -359,15 +359,15 @@ export function ConversationSidebar({
             <Settings className="mr-2 h-4 w-4" /> Settings
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            align="start"
+            align="end"
             side="top"
-            className="w-56 max-lg:w-[min(20rem,calc(100vw-2rem))] max-lg:rounded-xl max-lg:p-2 max-lg:shadow-2xl"
+            className="w-fit min-w-fit max-lg:w-[min(20rem,calc(100vw-2rem))] max-lg:min-w-0 max-lg:rounded-xl max-lg:p-2 max-lg:shadow-2xl"
             positionerClassName="max-lg:!fixed max-lg:!inset-0 max-lg:!flex max-lg:!items-center max-lg:!justify-center max-lg:!p-4 max-lg:!transform-none max-lg:bg-background/55 max-lg:backdrop-blur-sm"
           >
             <DropdownMenuItem className="cursor-pointer whitespace-nowrap max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5" onClick={() => setShowSettings(true)}>
               <Settings className="mr-2 h-4 w-4" /> Settings
             </DropdownMenuItem>
-            <DropdownMenuItem className="cursor-pointer whitespace-nowrap max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5" onClick={openPairDeviceDialog}>
+            <DropdownMenuItem className="hidden cursor-pointer whitespace-nowrap lg:flex" onClick={openPairDeviceDialog}>
               <Smartphone className="mr-2 h-4 w-4" /> Connect Phone
             </DropdownMenuItem>
             {authEnabled ? (

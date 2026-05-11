@@ -19,7 +19,7 @@ import zhCN from "../../shared/locales/zh-CN.json";
 describe("OmniHarness i18n adapter", () => {
   it("loads application strings through the shared i18n dependency", () => {
     expect(t("product.name")).toBe("OmniHarness");
-    expect(t("settings.language.current", { language: "English" })).toBe("Current language: English");
+    expect(t("settings.appearance.uiFontSizeDescription")).toBe("Navigation, sidebars, buttons, and settings.");
   });
 
   it("exposes the OmniHarness locale persistence key and supported locale options", () => {
@@ -51,7 +51,7 @@ describe("OmniHarness i18n adapter", () => {
 
     expect(i18nManager.getSnapshot().locale).toBe("es");
     expect(i18nManager.getSnapshot().loadedLocales).toContain("es");
-    expect(t("settings.language.current", { language: "Español" })).toBe("Idioma actual: Español");
+    expect(t("settings.appearance.uiFontSize")).toBe("Interfaz");
     expect(Object.keys(localeLoaders)).toEqual(["es", "fr", "de", "it", "pt", "zh-CN", "ja", "ko"]);
   });
 

@@ -6,6 +6,7 @@ import {
   getWorkerRuntimeLabel,
   isWorkerActiveStatus,
   mergeWorkerLiveStatus,
+  selectPrimaryConversationAgent,
   type ConversationWorkerAgent,
   type ConversationWorkerRecord,
 } from "@/lib/conversation-workers";
@@ -125,6 +126,33 @@ describe("conversation worker helpers", () => {
     expect(buildWorkerPreview(activeAgent)).toContain("Investigating the retry bug");
     expect(buildWorkerPreview(persistedAgent)).toContain("Completed a clean terminal snapshot");
     expect(buildWorkerPreview(failedAgent)).toBe("Bridge request failed");
+  });
+
+  it("does not select a cancelled direct agent just because it has stale current text", () => {
+    const agents: ConversationWorkerAgent[] = [
+      {
+        name: "worker-cancelled",
+        state: "cancelled",
+        currentText: "Stale output from before cancellation.",
+      },
+      {
+        name: "worker-latest",
+        state: "idle",
+        currentText: "",
+        lastText: "Latest reply.",
+      },
+    ];
+
+    expect(selectPrimaryConversationAgent(agents, true)?.name).toBe("worker-latest");
+  });
+
+  it("keeps non-direct conversations on the first agent snapshot", () => {
+    const agents: ConversationWorkerAgent[] = [
+      { name: "worker-1", state: "cancelled", currentText: "Older output." },
+      { name: "worker-2", state: "idle", lastText: "Newer output." },
+    ];
+
+    expect(selectPrimaryConversationAgent(agents, false)?.name).toBe("worker-1");
   });
 
   it("formats worker runtime from start and finish timestamps", () => {

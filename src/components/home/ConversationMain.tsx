@@ -1,16 +1,15 @@
 import type React from "react";
-import { ArrowDown, Blocks, ChevronDown, CirclePlay, CircleStop, GitBranch, ListTree, Pencil, RotateCcw, Route } from "lucide-react";
+import { ArrowDown, Blocks, CheckCircle2, ChevronDown, CircleAlert, CirclePlay, CircleStop, GitBranch, ListTree, Pencil, RotateCcw, Route, Settings, Terminal as TerminalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { AgentSurface } from "@/components/AgentSurface";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { Terminal, type TerminalUserMessage } from "@/components/Terminal";
 import { PlanningArtifactsPanel } from "@/components/PlanningArtifactsPanel";
 import { conversationMainManager } from "@/components/component-state-managers";
 import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
 import { extractLatestPlainTextTurn } from "@/lib/agent-output";
-import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, NoticeDescriptor, RunRecord } from "@/app/home/types";
+import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, NoticeDescriptor, RunRecord, WorkerAvailability } from "@/app/home/types";
 import type { RecoveryIncidentRecord, RunRecoveryState } from "@/app/home/types";
 import { formatExecutionTimestamp, getExecutionEventDetailRows, summarizeExecutionEvent, type ConversationTimelineItem } from "@/app/home/utils";
 import { cn } from "@/lib/utils";
@@ -20,6 +19,8 @@ import { ErrorNotice } from "./ErrorNotice";
 import { RecoveryIncidentInspector } from "./RecoveryIncidentInspector";
 import { RunRecoveryNotice } from "./RunRecoveryNotice";
 import { UserInputMessage, type UserInputMessageAction } from "./UserInputMessage";
+import { t, useI18nSnapshot } from "@/lib/i18n";
+import { getWorkerAvailabilityMessage, getWorkerSetupCommand } from "@/components/settings/worker-availability-copy";
 
 interface ConversationExecutionStatusProps {
   liveExecutionStatus: { label: string; detail: string; tone: "error" | "warning" | "muted" | "active" };
@@ -284,6 +285,33 @@ function WorkerOutputMessage({
   );
 }
 
+function PlannerOutputMessage({
+  message,
+  agent,
+  projectRoot,
+  onOpenProjectFile,
+}: {
+  message: MessageRecord;
+  agent: AgentSnapshot | null;
+  projectRoot?: string | null;
+  onOpenProjectFile?: (file: ProjectFileReference) => void;
+}) {
+  const summaryText = extractLatestPlainTextTurn({
+    outputEntries: agent?.outputEntries,
+    currentText: agent?.currentText,
+    lastText: agent?.lastText || message.content,
+  }) || message.content.trim();
+
+  return (
+    <MarkdownContent
+      content={summaryText}
+      className="px-1 text-foreground"
+      projectRoot={projectRoot}
+      onOpenProjectFile={onOpenProjectFile}
+    />
+  );
+}
+
 interface ConversationMainProps {
   scrollRef: React.RefObject<HTMLDivElement | null>;
   selectedRunId: string | null;
@@ -325,9 +353,117 @@ interface ConversationMainProps {
   liveExecutionStatus: ConversationExecutionStatusProps["liveExecutionStatus"];
   liveThoughts: ConversationExecutionStatusProps["liveThoughts"];
   executionEvents: ExecutionEventRecord[];
+  cliSetupWorkers: WorkerAvailability[];
+  onOpenAgentSettings: () => void;
   emptyComposer: React.ReactNode;
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
+}
+
+function getCliSetupTone(worker: WorkerAvailability) {
+  if (worker.availability.status === "ok" && worker.authentication?.status !== "not_authenticated") {
+    return "ready";
+  }
+  if (!worker.availability.binary) {
+    return "missing";
+  }
+  if (worker.authentication?.status === "not_authenticated") {
+    return "auth";
+  }
+  return "check";
+}
+
+function getCliSetupLabelKey(worker: WorkerAvailability) {
+  const tone = getCliSetupTone(worker);
+  if (tone === "ready") {
+    return "settings.agents.onboarding.ready";
+  }
+  if (tone === "missing") {
+    return "settings.agents.onboarding.install";
+  }
+  if (tone === "auth") {
+    return "settings.agents.onboarding.signIn";
+  }
+  return "settings.agents.onboarding.check";
+}
+
+function CliSetupOnboarding({
+  workers,
+  onOpenAgentSettings,
+}: {
+  workers: WorkerAvailability[];
+  onOpenAgentSettings: () => void;
+}) {
+  const visibleWorkers = workers.filter((worker) => (
+    worker.availability.status !== "ok"
+    || worker.authentication?.status === "not_authenticated"
+    || worker.authentication?.status === "unknown"
+  ));
+
+  if (visibleWorkers.length === 0) {
+    return null;
+  }
+
+  return (
+    <section
+      className="mb-6 w-full rounded-lg border border-border/70 bg-muted/20 p-3 text-left shadow-sm"
+      aria-label={t("settings.agents.onboarding.ariaLabel")}
+    >
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-foreground">{t("settings.agents.onboarding.title")}</h2>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{t("settings.agents.onboarding.description")}</p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 shrink-0 gap-1.5 px-2 text-xs"
+          onClick={onOpenAgentSettings}
+        >
+          <Settings className="h-3.5 w-3.5" />
+          {t("settings.agents.onboarding.openSettings")}
+        </Button>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {visibleWorkers.map((worker) => {
+          const tone = getCliSetupTone(worker);
+          const isReady = tone === "ready";
+          const command = getWorkerSetupCommand(worker);
+          const detail = getWorkerAvailabilityMessage(worker) || t("settings.agents.onboarding.statusUnknown");
+
+          return (
+            <div key={worker.type} className="min-w-0 rounded-md border border-border/60 bg-background/75 p-3">
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  {isReady ? (
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                  ) : (
+                    <CircleAlert className="h-4 w-4 shrink-0 text-amber-600" />
+                  )}
+                  <span className="min-w-0 truncate text-sm font-medium text-foreground">{worker.label}</span>
+                </div>
+                <span className={cn(
+                  "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase",
+                  isReady ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                )}>
+                  {t(getCliSetupLabelKey(worker))}
+                </span>
+              </div>
+              <p className="mt-2 min-h-8 text-xs leading-4 text-muted-foreground">{detail}</p>
+              {!isReady ? (
+                <div className="mt-3 flex items-center gap-2 rounded-md bg-muted/60 px-2 py-1.5 font-mono text-[11px] text-foreground">
+                  <TerminalIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="shrink-0 text-muted-foreground">{t("settings.agents.onboarding.command")}</span>
+                  <code className="min-w-0 truncate">{command}</code>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
 
 function LatestRecoveryAction({
@@ -408,10 +544,13 @@ export function ConversationMain({
   liveExecutionStatus,
   liveThoughts,
   executionEvents,
+  cliSetupWorkers,
+  onOpenAgentSettings,
   emptyComposer,
   projectRoot,
   onOpenProjectFile,
 }: ConversationMainProps) {
+  useI18nSnapshot();
   const { hasOutputBelow } = useManagerSnapshot(conversationMainManager);
   const handleCopyDirectMessage = async (content: string) => {
     try {
@@ -496,8 +635,14 @@ export function ConversationMain({
               agent={primaryConversationAgent}
               userMessages={directConversationMessages}
               getUserMessageActions={getUserMessageActions}
+              editingUserMessageId={editingMessageId}
+              editingUserMessageValue={editingMessageValue}
+              isEditingUserMessageSaving={recoverRun.isPending}
+              onEditingUserMessageValueChange={setEditingMessageValue}
+              onCancelEditingUserMessage={handleCancelEditingMessage}
+              onSaveEditedUserMessage={handleSaveEditedMessage}
               variant="native"
-              textSizeScope="direct"
+              textSizeScope="conversation"
               className="min-h-[32rem]"
               showPendingAssistantIndicator={showDirectControlWorkingIndicator}
               projectRoot={projectRoot}
@@ -506,23 +651,7 @@ export function ConversationMain({
           </DirectControlTerminalColumn>
         </div>
       ) : (
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 pb-24 sm:gap-6 sm:p-6 sm:pb-20">
-          {isPlanningConversation ? (
-            <PlanningArtifactsPanel
-              specPath={selectedRun?.specPath}
-              planPath={selectedRun?.artifactPlanPath}
-              plannerArtifactsJson={selectedRun?.plannerArtifactsJson}
-              isPromoting={promotePlanningConversation.isPending}
-              onPromote={(planPath) => {
-                if (!selectedRunId) {
-                  return;
-                }
-
-                promotePlanningConversation.mutate({ runId: selectedRunId, planPath });
-              }}
-            />
-          ) : null}
-
+        <div className="omni-conversation-text-scale mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 pb-24 sm:gap-6 sm:p-6 sm:pb-20">
           {isImplementationConversation ? (
             <RunRecoveryNotice
               recoveryState={recoveryState}
@@ -541,6 +670,9 @@ export function ConversationMain({
               const isUserMessage = msg.role === "user";
               const isExpanded = expandedDirectMessageIds.has(msg.id);
               const userMessageActions: UserInputMessageAction[] = getUserMessageActions(msg);
+              const speakerLabel = isPlanningConversation && msg.role === "worker"
+                ? t("planning.agent.label")
+                : msg.role;
 
               return (
               <div key={msg.id} className="group flex w-full flex-col text-sm">
@@ -548,7 +680,7 @@ export function ConversationMain({
                   <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
                     <div className="flex items-center gap-2">
                     <span className="text-xs font-semibold capitalize tracking-wider text-emerald-600">
-                      {msg.role}
+                      {speakerLabel}
                     </span>
                     {msg.kind === "error" ? (
                       <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-destructive">
@@ -590,6 +722,13 @@ export function ConversationMain({
                     onCopy={handleCopyDirectMessage}
                     actions={userMessageActions}
                   />
+                ) : isPlanningConversation && msg.role === "worker" ? (
+                  <PlannerOutputMessage
+                    message={msg}
+                    agent={conversationAgents.find((agent) => agent.name === inferWorkerIdFromMessage(msg)) ?? null}
+                    projectRoot={projectRoot}
+                    onOpenProjectFile={onOpenProjectFile}
+                  />
                 ) : msg.role === "worker" ? (
                   <WorkerOutputMessage
                     message={msg}
@@ -626,6 +765,24 @@ export function ConversationMain({
               <p>No output recorded yet for this run.</p>
             </div>
           )}
+
+          {isPlanningConversation ? (
+            <PlanningArtifactsPanel
+              specPath={selectedRun?.specPath}
+              planPath={selectedRun?.artifactPlanPath}
+              plannerArtifactsJson={selectedRun?.plannerArtifactsJson}
+              isPromoting={promotePlanningConversation.isPending}
+              projectRoot={projectRoot}
+              onOpenProjectFile={onOpenProjectFile}
+              onPromote={(planPath) => {
+                if (!selectedRunId) {
+                  return;
+                }
+
+                promotePlanningConversation.mutate({ runId: selectedRunId, planPath });
+              }}
+            />
+          ) : null}
 
           {isImplementationConversation && showConversationExecution ? (
           <ConversationExecutionStatus
@@ -683,21 +840,10 @@ export function ConversationMain({
             </div>
           ) : null}
 
-          {isPlanningConversation ? (
-            <AgentSurface
-              title="Planning agent"
-              subtitle={selectedRun?.projectPath || "Using the current project root as cwd"}
-              agent={primaryConversationAgent}
-              projectRoot={projectRoot}
-              onOpenProjectFile={onOpenProjectFile}
-              className="min-h-[22rem]"
-            />
-          ) : null}
-
         </div>
       )
     ) : (
-      <div className="mx-auto flex h-full w-full max-w-3xl flex-col items-center justify-center px-6 text-center">
+      <div className="omni-conversation-text-scale mx-auto flex h-full w-full max-w-3xl flex-col items-center justify-center px-6 text-center">
         {appErrors.length > 0 ? (
           <div className="mb-6 w-full space-y-3 text-left">
             {appErrors.map((error) => (
@@ -705,6 +851,7 @@ export function ConversationMain({
             ))}
           </div>
         ) : null}
+        <CliSetupOnboarding workers={cliSetupWorkers} onOpenAgentSettings={onOpenAgentSettings} />
         <h1 className="mb-4 text-[1.7rem] font-semibold leading-tight">What shall we build in {welcomeRepoName}?</h1>
         {emptyComposer}
       </div>

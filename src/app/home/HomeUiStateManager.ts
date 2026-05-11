@@ -26,7 +26,7 @@ export const INITIAL_EVENT_STREAM_STATE: EventStreamState = {
   frontendErrors: [],
 };
 
-type HomeUiState = {
+export type HomeUiState = {
   command: string;
   themeMode: ThemeMode;
   showSettings: boolean;

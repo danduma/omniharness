@@ -4,7 +4,7 @@ import { BRIDGE_URL } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
 import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
-import { getWorkerInstallationInfo, isSpawnableWorkerType } from "@/server/supervisor/worker-availability";
+import { getWorkerAuthenticationInfo, getWorkerInstallationInfo, isSpawnableWorkerType } from "@/server/supervisor/worker-availability";
 import { SUPPORTED_WORKER_TYPES, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
 import { buildAppError, errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
@@ -92,35 +92,51 @@ export async function GET(req: NextRequest) {
       )),
       workerModels: workerModelSnapshot.catalog,
       workerModelsRefreshing: workerModelSnapshot.refreshing,
-      workers: SUPPORTED_WORKER_TYPES.map((type) => ({
-        type,
-        label: WORKER_TYPE_LABELS[type],
-        installation: getWorkerInstallationInfo(type),
-        availability: (() => {
-          const doctorAvailability = byType.get(type);
-          const localAvailability = isSpawnableWorkerType(type);
+      workers: SUPPORTED_WORKER_TYPES.map((type) => {
+        const installation = getWorkerInstallationInfo(type);
+        const authentication = getWorkerAuthenticationInfo(type);
+        return {
+          type,
+          label: WORKER_TYPE_LABELS[type],
+          installation,
+          authentication,
+          availability: (() => {
+            const doctorAvailability = byType.get(type);
+            const localAvailability = isSpawnableWorkerType(type);
 
-          if (localAvailability.ok) {
-            return {
+            if (localAvailability.ok) {
+              if (authentication.status === "not_authenticated") {
+                return {
+                  type,
+                  status: "warning" as const,
+                  binary: true,
+                  apiKey: false,
+                  endpoint: doctorAvailability?.endpoint ?? null,
+                  message: authentication.message,
+                };
+              }
+
+              return {
+                type,
+                status: "ok" as const,
+                binary: true,
+                apiKey: authentication.status === "authenticated" ? true : null,
+                endpoint: doctorAvailability?.endpoint ?? null,
+                message: "Ready to spawn.",
+              };
+            }
+
+            return doctorAvailability ?? {
               type,
-              status: "ok" as const,
-              binary: true,
-              apiKey: true,
-              endpoint: doctorAvailability?.endpoint ?? null,
-              message: "Ready to spawn.",
+              status: "warning",
+              binary: Boolean(installation.path),
+              apiKey: null,
+              endpoint: null,
+              message: localAvailability.reason || "Agent runtime doctor did not report this worker type.",
             };
-          }
-
-          return doctorAvailability ?? {
-            type,
-            status: "warning",
-            binary: false,
-            apiKey: null,
-            endpoint: null,
-            message: localAvailability.reason || "Agent runtime doctor did not report this worker type.",
-          };
-        })(),
-      })),
+          })(),
+        };
+      }),
     });
   } catch (error: unknown) {
     return errorResponse(error, {

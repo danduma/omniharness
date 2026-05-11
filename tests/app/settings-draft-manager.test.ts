@@ -72,7 +72,8 @@ describe("SettingsDraftManager", () => {
       SUPERVISOR_LLM_MODEL: "gemini-next",
     });
     expect(manager.getSavePayload()).not.toHaveProperty("OMNI_LANGUAGE");
-    expect(manager.getSavePayload()).not.toHaveProperty("DIRECT_TEXT_SIZE_STORAGE_KEY");
+    expect(manager.getSavePayload()).not.toHaveProperty("UI_TEXT_SIZE_STORAGE_KEY");
+    expect(manager.getSavePayload()).not.toHaveProperty("CONVERSATION_TEXT_SIZE_STORAGE_KEY");
     expect(manager.getSavePayload()).not.toHaveProperty("TERMINAL_TEXT_SIZE_STORAGE_KEY");
   });
 });
