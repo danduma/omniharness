@@ -48,9 +48,15 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}) {
   const allRuns = await db.select().from(runs).where(isNull(runs.archivedAt)).orderBy(desc(runs.createdAt));
   const selectedRun = selectedRunId ? allRuns.find((run) => run.id === selectedRunId) ?? null : null;
   const selectedPlanId = selectedRun?.planId ?? null;
+  const transcriptRunIds = selectedRunId
+    ? [
+        ...(selectedRun?.mode === "implementation" && selectedRun.parentRunId ? [selectedRun.parentRunId] : []),
+        selectedRunId,
+      ]
+    : [];
 
   const msgs = selectedRunId
-    ? await db.select().from(messages).where(eq(messages.runId, selectedRunId)).orderBy(asc(messages.createdAt))
+    ? await db.select().from(messages).where(inArray(messages.runId, transcriptRunIds)).orderBy(asc(messages.createdAt))
     : [];
   const allAccounts = await db.select().from(accounts);
   const allWorkers = await db.select().from(workers);
@@ -513,7 +519,7 @@ function buildEventPayload(
   const planIds = selectedPlanIds(records, runIds);
 
   return {
-    messages: filterSelectedRunScopedRecords(records.msgs, runIds).map(serializeMessageRecord),
+    messages: records.msgs.map(serializeMessageRecord),
     plans: records.allPlans,
     runs: records.allRuns,
     accounts: records.allAccounts,

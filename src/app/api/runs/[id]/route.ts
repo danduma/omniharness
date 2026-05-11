@@ -43,6 +43,10 @@ function isActiveWorkerStatus(status: string | null | undefined) {
   return ["starting", "working", "idle", "stuck"].includes(normalizeWorkerStatus(status));
 }
 
+function isSupervisorStopAlreadySettled(status: string | null | undefined) {
+  return normalizeWorkerStatus(status) !== "running";
+}
+
 function actionLabelForPostAction(action: unknown) {
   switch (action) {
     case "stop_supervisor":
@@ -222,6 +226,15 @@ export async function POST(
           status: 404,
           source: "Runs",
           action: "Stop supervisor",
+        });
+      }
+
+      if (isSupervisorStopAlreadySettled(run.status)) {
+        return NextResponse.json({
+          ok: true,
+          runId,
+          alreadyStopped: true,
+          status: run.status,
         });
       }
 

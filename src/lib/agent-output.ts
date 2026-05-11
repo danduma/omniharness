@@ -17,6 +17,7 @@ export interface AgentOutputPane {
 
 const TERMINAL_TOOL_STATUSES = new Set(["completed", "failed", "cancelled", "canceled", "done", "error"]);
 const RUNNING_TOOL_STATUSES = new Set(["pending", "in_progress", "working"]);
+const ACTIVE_THINKING_AGENT_STATES = new Set(["starting", "working", "recovering"]);
 const FALLBACK_TOOL_TITLE_PATTERN = /^Tool call(?:\s+\S+)?\s+(?:updated|completed|failed|cancelled|canceled|done|error|pending|in_progress|working)(?::.*)?$/i;
 
 export type AgentToolActivityKind = "read" | "bash" | "agent" | "edit" | "search" | "tool";
@@ -80,6 +81,7 @@ export type AgentActivityItem =
 
 type AgentOutputSnapshot = {
   outputEntries?: AgentOutputEntry[] | null;
+  state?: string | null;
   currentText?: string | null;
   lastText?: string | null;
   displayText?: string | null;
@@ -102,6 +104,19 @@ function isOmittedOutputEntriesMarker(entry: AgentOutputEntry) {
 
 function normalizeMultilineText(value: string): string {
   return value.replace(/\r\n?/g, "\n");
+}
+
+function shouldKeepTrailingThinkingOpen(snapshot: AgentOutputSnapshot) {
+  const state = snapshot.state?.trim().toLowerCase();
+  if (!state) {
+    return true;
+  }
+
+  if (cleanPaneText(snapshot.currentText || null)) {
+    return true;
+  }
+
+  return ACTIVE_THINKING_AGENT_STATES.has(state);
 }
 
 function unwrapCodeFence(value: string): { text: string; language?: string } {
@@ -899,6 +914,11 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
       toolIndexById.set(key, items.length);
       items.push(toolActivity);
     }
+  }
+
+  if (openThinking && !shouldKeepTrailingThinkingOpen(snapshot)) {
+    const latestEntryTimestamp = outputEntries.at(-1)?.timestamp || openThinking.timestamp;
+    finishOpenThinking(latestEntryTimestamp);
   }
 
   if (items.length === 0) {

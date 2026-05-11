@@ -1,6 +1,12 @@
+import { MANUAL_COMMIT_PROJECT_PROMPT, MANUAL_COMMIT_PROJECT_PUSH_PROMPT } from "@/lib/commit-workflow";
+
 export type ConversationVisualKind = "supervisor" | "direct" | "commit";
 
-export const AUTO_COMMIT_PROJECT_PROMPT = "Group all currently modified files into logical git commits. Do not run tests. Do not modify files or do anything else. Only inspect the modified files as needed, create commits, and stop.";
+export const AUTO_COMMIT_PROJECT_PROMPT = MANUAL_COMMIT_PROJECT_PROMPT;
+export const MANUAL_COMMIT_PROJECT_PROMPTS = new Set([
+  MANUAL_COMMIT_PROJECT_PROMPT,
+  MANUAL_COMMIT_PROJECT_PUSH_PROMPT,
+]);
 
 type ConversationVisualRun = {
   id: string;
@@ -32,7 +38,7 @@ export function isCommitConversation(run: ConversationVisualRun, messages: Conve
   }
 
   const initialMessage = getInitialUserMessage(run.id, messages);
-  if (initialMessage?.content?.trim() === AUTO_COMMIT_PROJECT_PROMPT) {
+  if (MANUAL_COMMIT_PROJECT_PROMPTS.has(initialMessage?.content?.trim() ?? "")) {
     return true;
   }
 
