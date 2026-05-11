@@ -144,6 +144,22 @@ test("deleting a conversation removes it optimistically before the request resol
   expect(rollbackIndex).toBeGreaterThan(optimisticUpdateIndex);
 });
 
+test("stopping a conversation updates local worker state before the request resolves", () => {
+  const stopWorkerMutationIndex = pageSource.indexOf("const stopWorker = useMutation({");
+  const stopWorkerOnMutateIndex = pageSource.indexOf("onMutate:", stopWorkerMutationIndex);
+  const stopWorkerRequestIndex = pageSource.indexOf('body: JSON.stringify({ action: "stop_worker", workerId })', stopWorkerMutationIndex);
+  const stopWorkerOptimisticIndex = pageSource.indexOf("applyStopWorkerOptimisticUpdate(current, runId, workerId)", stopWorkerOnMutateIndex);
+  const stopSupervisorMutationIndex = pageSource.indexOf("const stopSupervisor = useMutation({");
+  const stopSupervisorOptimisticIndex = pageSource.indexOf("applyStopSupervisorOptimisticUpdate(current, runId)", stopSupervisorMutationIndex);
+
+  expect(stopWorkerMutationIndex).toBeGreaterThanOrEqual(0);
+  expect(stopWorkerOnMutateIndex).toBeGreaterThan(stopWorkerMutationIndex);
+  expect(stopWorkerOnMutateIndex).toBeLessThan(stopWorkerRequestIndex);
+  expect(stopWorkerOptimisticIndex).toBeGreaterThan(stopWorkerOnMutateIndex);
+  expect(stopSupervisorOptimisticIndex).toBeGreaterThan(stopSupervisorMutationIndex);
+  expect(pageSource).toContain('status: "cancelled"');
+});
+
 test("direct control user messages expose retry, edit, and fork recovery controls", () => {
   expect(pageSource).toContain("Retry from here");
   expect(pageSource).toContain("Edit in place");

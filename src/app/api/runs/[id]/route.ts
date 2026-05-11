@@ -291,9 +291,18 @@ export async function POST(
       }
 
       await cancelWorker(worker);
+      const updatedRunWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+      const hasActiveWorker = updatedRunWorkers.some((candidate) => isActiveWorkerStatus(candidate.status));
+      if (!hasActiveWorker) {
+        await db.update(runs).set({
+          status: "cancelled",
+          updatedAt: new Date(),
+        }).where(eq(runs.id, runId));
+      }
       await insertExecutionEvent(runId, "worker_cancelled", {
         summary: `Stopped ${workerId}`,
         reason: "User stopped this worker.",
+        runCancelled: !hasActiveWorker,
       }, workerId);
       notifyEventStreamSubscribers();
 

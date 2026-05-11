@@ -488,12 +488,15 @@ describe("POST /api/runs/[id]", () => {
     }
     expect(response.status).toBe(200);
 
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const updatedWorker = await db.select().from(workers).where(eq(workers.id, targetWorkerId)).get();
     const stopEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
 
     expect(mockCancelAgent).toHaveBeenCalledWith(targetWorkerId);
+    expect(updatedRun?.status).toBe("cancelled");
     expect(updatedWorker?.status).toBe("cancelled");
     expect(stopEvent?.eventType).toBe("worker_cancelled");
+    expect(JSON.parse(stopEvent?.details || "{}")).toMatchObject({ runCancelled: true });
   });
 
   it("pauses implementation work and asks for user direction when a worker is stopped", async () => {

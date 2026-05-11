@@ -26,6 +26,7 @@ import type {
   ComposerWorkerOption,
   ConversationModeOption,
   EventStreamState,
+  ExecutionEventRecord,
   MessageRecord,
   RunRecord,
 } from "./types";
@@ -46,6 +47,130 @@ async function uploadPendingChatAttachments(attachments: PendingChatAttachment[]
   });
 
   return response.attachments;
+}
+
+function isOptimisticallyStoppableWorkerStatus(status: string | null | undefined) {
+  const normalized = (status ?? "").trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  return normalized === "starting" || normalized === "working" || normalized === "idle" || normalized === "stuck" || normalized === "recovering";
+}
+
+function createOptimisticExecutionEvent(args: {
+  runId: string;
+  workerId?: string | null;
+  eventType: string;
+  details: Record<string, unknown>;
+}) {
+  const now = new Date().toISOString();
+  return {
+    id: typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `optimistic-${now}-${Math.random().toString(16).slice(2)}`,
+    runId: args.runId,
+    workerId: args.workerId ?? null,
+    planItemId: null,
+    eventType: args.eventType,
+    details: JSON.stringify(args.details),
+    createdAt: now,
+  } satisfies ExecutionEventRecord;
+}
+
+function applyStopWorkerOptimisticUpdate(current: EventStreamState, runId: string, workerId: string) {
+  const now = new Date().toISOString();
+  const run = current.runs.find((candidate) => candidate.id === runId) ?? null;
+  const isImplementationRun = run?.mode === "implementation";
+  const stoppedWorkerIds = new Set<string>();
+
+  const workers = (current.workers || []).map((worker) => {
+    if (worker.runId !== runId) {
+      return worker;
+    }
+    if (worker.id === workerId || (isImplementationRun && isOptimisticallyStoppableWorkerStatus(worker.status))) {
+      stoppedWorkerIds.add(worker.id);
+      return { ...worker, status: "cancelled", updatedAt: now };
+    }
+    return worker;
+  });
+
+  const hasActiveWorker = workers.some((worker) =>
+    worker.runId === runId && isOptimisticallyStoppableWorkerStatus(worker.status),
+  );
+  const nextRunStatus = isImplementationRun
+    ? "awaiting_user"
+    : hasActiveWorker
+      ? run?.status
+      : "cancelled";
+
+  return {
+    ...current,
+    runs: (current.runs || []).map((candidate) =>
+      candidate.id === runId && nextRunStatus
+        ? { ...candidate, status: nextRunStatus, updatedAt: now, failedAt: null, lastError: null }
+        : candidate,
+    ),
+    workers,
+    agents: (current.agents || []).map((agent) =>
+      stoppedWorkerIds.has(agent.name)
+        ? { ...agent, state: "cancelled", currentText: "", updatedAt: now }
+        : agent,
+    ),
+    executionEvents: [
+      createOptimisticExecutionEvent({
+        runId,
+        workerId,
+        eventType: isImplementationRun ? "worker_stop_requested" : "worker_cancelled",
+        details: {
+          summary: isImplementationRun
+            ? `Paused work because ${workerId} was stopped by the user.`
+            : `Stopped ${workerId}`,
+          reason: isImplementationRun ? "User stopped a worker." : "User stopped this worker.",
+          userInitiated: true,
+          stoppedWorkerId: workerId,
+          optimistic: true,
+        },
+      }),
+      ...(current.executionEvents || []),
+    ],
+  };
+}
+
+function applyStopSupervisorOptimisticUpdate(current: EventStreamState, runId: string) {
+  const now = new Date().toISOString();
+  const stoppedWorkerIds = new Set<string>();
+  const workers = (current.workers || []).map((worker) => {
+    if (worker.runId !== runId || !isOptimisticallyStoppableWorkerStatus(worker.status)) {
+      return worker;
+    }
+    stoppedWorkerIds.add(worker.id);
+    return { ...worker, status: "cancelled", updatedAt: now };
+  });
+
+  return {
+    ...current,
+    runs: (current.runs || []).map((run) =>
+      run.id === runId
+        ? { ...run, status: "cancelled", updatedAt: now, failedAt: null, lastError: null }
+        : run,
+    ),
+    workers,
+    agents: (current.agents || []).map((agent) =>
+      stoppedWorkerIds.has(agent.name)
+        ? { ...agent, state: "cancelled", currentText: "", updatedAt: now }
+        : agent,
+    ),
+    executionEvents: [
+      createOptimisticExecutionEvent({
+        runId,
+        eventType: "supervisor_stopped",
+        details: {
+          summary: "Stopped supervisor and cancelled active workers.",
+          reason: "User stopped the supervisor.",
+          userInitiated: true,
+          optimistic: true,
+        },
+      }),
+      ...(current.executionEvents || []),
+    ],
+  };
 }
 
 export interface UseHomeMutationsParams {
@@ -573,6 +698,11 @@ export function useHomeMutations({
   });
 
   const stopSupervisor = useMutation({
+    onMutate: ({ runId }: { runId: string }) => {
+      const previousState = state;
+      setState((current) => applyStopSupervisorOptimisticUpdate(current, runId));
+      return { previousState };
+    },
     mutationFn: async ({ runId }: { runId: string }) => requestJson<{ ok: true }>(`/api/runs/${runId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -581,9 +711,17 @@ export function useHomeMutations({
       source: "Runs",
       action: "Stop supervisor",
     }),
+    onError: (_error, _variables, context) => {
+      if (context?.previousState) setState(context.previousState);
+    },
   });
 
   const stopWorker = useMutation({
+    onMutate: ({ runId, workerId }: { runId: string; workerId: string }) => {
+      const previousState = state;
+      setState((current) => applyStopWorkerOptimisticUpdate(current, runId, workerId));
+      return { previousState };
+    },
     mutationFn: async ({ runId, workerId }: { runId: string; workerId: string }) => requestJson<{ ok: true }>(`/api/runs/${runId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -592,6 +730,9 @@ export function useHomeMutations({
       source: "Runs",
       action: "Stop worker",
     }),
+    onError: (_error, _variables, context) => {
+      if (context?.previousState) setState(context.previousState);
+    },
   });
 
   const stopWorkerTerminalProcess = useMutation({
