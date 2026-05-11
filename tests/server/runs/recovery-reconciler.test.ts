@@ -129,7 +129,6 @@ describe("reconcileRunRecovery", () => {
     const { runId, workerId } = await createImplementationRun();
     await db.update(workers).set({
       bridgeSessionId: "session-1",
-      bridgeSessionMode: "full-access",
     }).where(eq(workers.id, workerId));
     mockSpawnAgent.mockResolvedValue({
       name: workerId,
@@ -149,6 +148,7 @@ describe("reconcileRunRecovery", () => {
     expect(result.action).toBe("resume_session");
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
       name: workerId,
+      mode: "full-access",
       resumeSessionId: "session-1",
     }));
     const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();

@@ -575,7 +575,7 @@ async function readWorkerHistory(workerId: string, requestedLines: number) {
 
   let liveText = "";
   try {
-    const snapshot = await bridge.getAgent(workerId);
+    const snapshot = await bridge.getAgent(workerId, { retryIndefinitely: false });
     await persistWorkerSnapshot(workerId, snapshot);
     liveText = [
       snapshot.currentText,
@@ -694,7 +694,7 @@ async function cancelRunWorkers(runId: string) {
   const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
   for (const worker of runWorkers) {
     try {
-      const snapshot = await bridge.getAgent(worker.id);
+      const snapshot = await bridge.getAgent(worker.id, { retryIndefinitely: false });
       await persistWorkerSnapshot(worker.id, snapshot);
     } catch {
       // best effort snapshot capture before shutdown

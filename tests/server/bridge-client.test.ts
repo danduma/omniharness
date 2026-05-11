@@ -39,6 +39,21 @@ describe("bridge client", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("fails fast on getAgent when retries are explicitly disabled", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(
+      new TypeError(
+        "fetch failed",
+        { cause: Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }) },
+      ),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { getAgent } = await import("@/server/bridge-client");
+
+    await expect(getAgent("worker-1", { retryIndefinitely: false })).rejects.toThrow(/Get agent failed:/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("surfaces a clear runtime message when the local runtime is down", async () => {
     vi.useFakeTimers();
     const refused = new TypeError(

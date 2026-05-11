@@ -10,6 +10,7 @@ import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
+import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import { createQueuedConversationMessage, type BusyMessageAction } from "./queued-messages";
 import { serializeMessageRecord } from "./message-records";
@@ -72,13 +73,15 @@ async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRecord) {
   }
 
   const sessionMode = worker.bridgeSessionMode?.trim();
+  const yoloModeEnabled = await readWorkerYoloModeEnabled();
+  const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
   let resumedWorker;
   try {
     resumedWorker = await spawnAgent({
       type: worker.type,
       cwd: worker.cwd,
       name: worker.id,
-      ...(sessionMode ? { mode: sessionMode } : {}),
+      ...(workerMode ? { mode: workerMode } : {}),
       ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
       ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
       resumeSessionId: sessionId,

@@ -1382,6 +1382,81 @@ describe("deriveWorkerEvents", () => {
     expect(workerEvents.some((event) => event.eventType === "worker_permission_auto_approved")).toBe(true);
   });
 
+  it("auto-approves routine edit permissions even when the request text only exposes the path context", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "opencode",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    mockGetAgent.mockResolvedValue({
+      state: "idle",
+      currentText: "waiting for approval",
+      lastText: "waiting for approval",
+      pendingPermissions: [
+        {
+          requestId: 7,
+          requestedAt: new Date(0).toISOString(),
+          options: [
+            { optionId: "allow_always", kind: "allow_always", name: "Always Allow" },
+            { optionId: "allow", kind: "allow", name: "Allow" },
+            { optionId: "reject", kind: "reject", name: "Reject" },
+          ],
+        },
+      ],
+      outputEntries: [
+        {
+          id: "permission-7",
+          type: "permission",
+          text: "Permission requested: allow_always Always Allow, allow Allow, reject Reject",
+          timestamp: new Date(0).toISOString(),
+          raw: {
+            requestId: 7,
+            toolCall: {
+              kind: "edit",
+              locations: [{ path: "/Users/masterman/NLP/omniharness/src/components/home/ConversationMain.tsx" }],
+              rawInput: {
+                file_path: "/Users/masterman/NLP/omniharness/src/components/home/ConversationMain.tsx",
+              },
+            },
+          },
+        },
+      ],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    await pollRunWorkers(runId, wakeSupervisor);
+
+    expect(mockApprovePermission).toHaveBeenCalledWith(workerId, "allow_always");
+  });
+
   it("respawns a missing worker from its saved session instead of failing the run", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

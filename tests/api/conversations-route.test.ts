@@ -604,6 +604,10 @@ describe("POST /api/conversations", () => {
     );
 
     try {
+      expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+        name: createdWorker?.id,
+        mode: "full-access",
+      }));
       expect(createdWorker?.bridgeSessionId).toBe("session-before-ask");
       expect(createdWorker?.bridgeSessionMode).toBe("full-access");
     } finally {

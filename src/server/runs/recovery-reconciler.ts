@@ -4,6 +4,7 @@ import { spawnAgent, type AgentRecord } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { executionEvents, messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import {
   markRecoveryIncidentFailed,
   markRecoveryIncidentNeedsUser,
@@ -99,6 +100,8 @@ async function resumeSavedWorkerSession(args: {
   if (!sessionId) {
     throw new Error("No saved worker session is available");
   }
+  const yoloModeEnabled = await readWorkerYoloModeEnabled();
+  const workerMode = resolveWorkerLaunchMode(args.worker.bridgeSessionMode, yoloModeEnabled);
 
   await markRecoveryIncidentRecovering({
     incidentId: args.incidentId,
@@ -121,7 +124,7 @@ async function resumeSavedWorkerSession(args: {
     type: args.worker.type,
     cwd: args.worker.cwd,
     name: args.worker.id,
-    ...(args.worker.bridgeSessionMode ? { mode: args.worker.bridgeSessionMode } : {}),
+    ...(workerMode ? { mode: workerMode } : {}),
     ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
     ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
     resumeSessionId: sessionId,

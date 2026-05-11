@@ -25,6 +25,7 @@ import {
 } from "@/lib/commit-workflow";
 import { captureGitBaseline } from "@/server/git/auto-commit";
 import { serializeMessageRecord } from "./message-records";
+import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 
 
 function buildInitialWorkerPrompt(mode: ConversationMode, command: string) {
@@ -248,6 +249,7 @@ async function startDirectWorkerConversation(args: {
   workerId: string;
   workerType: string;
   cwd: string;
+  mode?: string;
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
   command: string;
@@ -257,6 +259,7 @@ async function startDirectWorkerConversation(args: {
       type: args.workerType,
       cwd: args.cwd,
       name: args.workerId,
+      ...(args.mode ? { mode: args.mode } : {}),
       model: args.preferredWorkerModel?.trim() || undefined,
       effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
     });
@@ -370,6 +373,8 @@ export async function createConversation(args: {
     const { workerId, workerNumber } = await allocateWorkerIdentity(runId);
     const cwd = projectPath || process.cwd();
     const workerType = preferredWorkerType || allowedWorkerTypes[0] || "codex";
+    const yoloModeEnabled = await readWorkerYoloModeEnabled();
+    const workerMode = resolveWorkerLaunchMode(undefined, yoloModeEnabled);
 
     await db.insert(workers).values({
       id: workerId,
@@ -394,6 +399,7 @@ export async function createConversation(args: {
         workerId,
         workerType,
         cwd,
+        mode: workerMode,
         preferredWorkerModel: args.preferredWorkerModel,
         preferredWorkerEffort: args.preferredWorkerEffort,
         command: workerPrompt,
@@ -405,6 +411,7 @@ export async function createConversation(args: {
         type: workerType,
         cwd,
         name: workerId,
+        ...(workerMode ? { mode: workerMode } : {}),
         model: args.preferredWorkerModel?.trim() || undefined,
         effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
       });

@@ -246,7 +246,7 @@ export function normalizeAgentRecord(value: unknown): AgentRecord {
   };
 }
 
-async function requestBridge<T>(path: string, init: RequestInit, action: string) {
+async function requestBridge<T>(path: string, init: RequestInit, action: string, options: { retryIndefinitely?: boolean } = {}) {
   try {
     return await retrySupervisorRequest(async () => {
       const res = await fetch(`${BRIDGE_URL}${path}`, init);
@@ -279,9 +279,12 @@ async function requestBridge<T>(path: string, init: RequestInit, action: string)
       }
       return res.json() as Promise<T>;
     }, {
+      attempts: options.retryIndefinitely === false ? 1 : 3,
       maxDelayMs: BRIDGE_CONNECTION_RESET_MAX_BACKOFF_MS,
       operationLabel: `${action} ${path}`,
-      retryIndefinitelyWhen: (error) => isRecoverableConnectionSupervisorError(error) && !isBridgeConnectionRefused(error),
+      retryIndefinitelyWhen: options.retryIndefinitely === false
+        ? undefined
+        : (error) => isRecoverableConnectionSupervisorError(error) && !isBridgeConnectionRefused(error),
     });
   } catch (error) {
     if (isBridgeConnectionRefused(error)) {
@@ -469,8 +472,8 @@ export async function askAgent(name: string, prompt: string) {
   }
 }
 
-export async function getAgent(name: string) {
-  const agent = await requestBridge<unknown>(`/agents/${name}`, {}, "Get agent");
+export async function getAgent(name: string, options: { retryIndefinitely?: boolean } = {}) {
+  const agent = await requestBridge<unknown>(`/agents/${name}`, {}, "Get agent", options);
   return normalizeAgentRecord(agent);
 }
 

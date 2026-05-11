@@ -27,6 +27,7 @@ import { PLANNER_SYSTEM_PROMPT } from "@/server/prompts";
 import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/supervisor/worker-types";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
+import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { isRecoverableAgentMissingError } from "./recovery-state";
 
 export type RecoveryAction = "retry" | "edit" | "fork";
@@ -111,6 +112,8 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string) 
     ? normalizeWorkerType(run.preferredWorkerType)
     : allowedWorkerTypes[0] || "codex";
   const now = new Date();
+  const yoloModeEnabled = await readWorkerYoloModeEnabled();
+  const workerMode = resolveWorkerLaunchMode(undefined, yoloModeEnabled);
 
   await db.insert(workers).values({
     id: workerId,
@@ -131,6 +134,7 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string) 
     type: workerType,
     cwd,
     name: workerId,
+    ...(workerMode ? { mode: workerMode } : {}),
     model: run.preferredWorkerModel?.trim() || undefined,
     effort: run.preferredWorkerEffort?.trim().toLowerCase() || undefined,
   });
@@ -212,13 +216,15 @@ async function resumeDirectRunFromSavedSession(
   }
 
   const sessionMode = worker.bridgeSessionMode?.trim();
+  const yoloModeEnabled = await readWorkerYoloModeEnabled();
+  const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
   let resumedWorker: AgentRecord;
   try {
     resumedWorker = await spawnAgent({
       type: worker.type,
       cwd: worker.cwd,
       name: worker.id,
-      ...(sessionMode ? { mode: sessionMode } : {}),
+      ...(workerMode ? { mode: workerMode } : {}),
       ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
       ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
       resumeSessionId: sessionId,

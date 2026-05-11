@@ -12,6 +12,7 @@ import { extractQuotaResetInfo, parseQuotaResetText } from "@/server/quota/reset
 import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import { isLongWorkerCompletionText, normalizeWorkerStatus } from "@/server/supervisor/worker-completion";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
+import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { notifyRunLifecycleEventBestEffort } from "@/server/notifications/triggers";
 import { deriveWorkerTerminalProcesses } from "@/lib/worker-terminal-processes";
@@ -286,11 +287,22 @@ function collectPermissionContextParts(
   const raw = asRecord(matchingEntry.raw);
   const toolCall = asRecord(raw?.toolCall);
   const rawInput = asRecord(toolCall?.rawInput);
+  const toolCallKind = typeof toolCall?.kind === "string" ? toolCall.kind : "";
+  const locationPaths = Array.isArray(toolCall?.locations)
+    ? toolCall.locations
+        .map((location) => (asRecord(location)?.path))
+        .filter((path): path is string => typeof path === "string" && path.trim().length > 0)
+    : [];
+  const rawInputPath = [
+    typeof rawInput?.file_path === "string" ? rawInput.file_path : "",
+    typeof rawInput?.path === "string" ? rawInput.path : "",
+  ].filter((path) => path.trim().length > 0);
   return [
     matchingEntry.text,
     typeof toolCall?.title === "string" ? toolCall.title : "",
     typeof rawInput?.description === "string" ? rawInput.description : "",
     typeof rawInput?.command === "string" ? rawInput.command : "",
+    [toolCallKind, ...locationPaths, ...rawInputPath].filter(Boolean).join(" "),
   ]
     .map((part) => part.trim())
     .filter(Boolean);
@@ -604,6 +616,8 @@ async function reviveWorkerFromSavedSession(args: {
     return null;
   }
   const sessionMode = args.sessionMode ?? args.worker.bridgeSessionMode;
+  const yoloModeEnabled = await readWorkerYoloModeEnabled();
+  const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
 
   let resumedWorker: bridge.AgentRecord;
   try {
@@ -611,7 +625,7 @@ async function reviveWorkerFromSavedSession(args: {
       type: args.worker.type,
       cwd: args.worker.cwd,
       name: args.worker.id,
-      ...(sessionMode ? { mode: sessionMode } : {}),
+      ...(workerMode ? { mode: workerMode } : {}),
       ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
       ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
       resumeSessionId: sessionId,
@@ -620,7 +634,7 @@ async function reviveWorkerFromSavedSession(args: {
     if (!isAgentAlreadyExistsError(error, args.worker.id)) {
       throw error;
     }
-    resumedWorker = await bridge.getAgent(args.worker.id);
+    resumedWorker = await bridge.getAgent(args.worker.id, { retryIndefinitely: false });
   }
 
   await insertExecutionEvent(args.run.id, args.worker.id, "worker_session_resumed", {
@@ -717,7 +731,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
 
     let snapshot: WorkerBridgeSnapshot;
     try {
-      const rawSnapshot = await bridge.getAgent(worker.id);
+      const rawSnapshot = await bridge.getAgent(worker.id, { retryIndefinitely: false });
       const normalized = normalizeSnapshot(rawSnapshot);
       snapshot = normalized.snapshot;
 

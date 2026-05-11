@@ -73,7 +73,6 @@ describe("syncConversationSessions", () => {
       status: "working",
       cwd: process.cwd(),
       bridgeSessionId: "session-direct",
-      bridgeSessionMode: "full-access",
       outputLog: "",
       outputEntriesJson: "[]",
       currentText: "",
@@ -111,6 +110,7 @@ describe("syncConversationSessions", () => {
     });
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
       name: workerId,
+      mode: "full-access",
       resumeSessionId: "session-direct",
     }));
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
