@@ -1120,7 +1120,7 @@ describe("POST /api/runs/[id]", () => {
       name: workerId,
       type: "claude",
       cwd: "/workspace/app",
-      mode: "direct",
+      mode: "full-access",
       model: "claude-sonnet-4",
       effort: "high",
       resumeSessionId: "saved-session",
