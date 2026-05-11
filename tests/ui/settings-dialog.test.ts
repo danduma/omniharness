@@ -18,6 +18,7 @@ const settingsSource = [
   "src/app/home/AppearancePreferencesManager.ts",
   "src/app/home/constants.ts",
   "src/app/home/HomeApp.tsx",
+  "src/app/home/useHomeMutations.ts",
   "src/app/home/HomeUiStateManager.ts",
   "src/app/home/types.ts",
 ].map(readSource).join("\n");

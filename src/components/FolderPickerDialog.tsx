@@ -10,6 +10,7 @@ import { Folder, ArrowUpCircle } from "lucide-react";
 import { normalizeAppError, requestJson } from "@/lib/app-errors";
 import { folderPickerManager } from "@/components/component-state-managers";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 
 export function FolderPickerDialog({ 
   open, 
@@ -20,6 +21,7 @@ export function FolderPickerDialog({
   onOpenChange: (o: boolean) => void; 
   onSelect: (path: string) => void; 
 }) {
+  useI18nSnapshot();
   const { currentPath, search } = useManagerSnapshot(folderPickerManager);
 
   const { data, error, refetch } = useQuery({
@@ -60,9 +62,9 @@ export function FolderPickerDialog({
         <DialogHeader className="shrink-0 gap-3 border-b bg-muted/20 p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <DialogTitle>Select Project Folder</DialogTitle>
-              <div className="mt-1 truncate text-xs text-muted-foreground" title={data?.current || "Loading..."}>
-                {data?.current || "Loading..."}
+              <DialogTitle>{t("folder.picker.title")}</DialogTitle>
+              <div className="mt-1 truncate text-xs text-muted-foreground" title={data?.current || t("folder.picker.loading")}>
+                {data?.current || t("folder.picker.loading")}
               </div>
             </div>
             <Button
@@ -83,7 +85,7 @@ export function FolderPickerDialog({
           <Input
             value={search}
             onChange={(event) => folderPickerManager.setSearch(event.target.value)}
-            placeholder="Search folders..."
+            placeholder={t("folder.picker.searchPlaceholder")}
             className="h-9"
           />
           <div className="text-[11px] text-muted-foreground">
@@ -125,12 +127,12 @@ export function FolderPickerDialog({
         </ScrollArea>
         
         <div className="p-4 border-t bg-muted/20 shrink-0 flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>{t("folder.picker.cancel")}</Button>
           <Button size="sm" onClick={() => {
             if (data?.current) onSelect(data.current);
             onOpenChange(false);
           }}>
-            Select Current Folder
+            {t("folder.picker.select")}
           </Button>
         </div>
       </DialogContent>

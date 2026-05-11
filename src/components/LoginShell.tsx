@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { loginShellManager } from "@/components/component-state-managers";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 
 interface LoginShellProps {
   error?: string | null;
@@ -24,6 +25,7 @@ export function LoginShell({
   pairError,
   onSubmit,
 }: LoginShellProps) {
+  useI18nSnapshot();
   const { password } = useManagerSnapshot(loginShellManager);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -39,11 +41,11 @@ export function LoginShell({
             {isRedeemingPair ? <Smartphone className="h-5 w-5" /> : <Lock className="h-5 w-5" />}
           </div>
           <div className="space-y-1">
-            <h1 className="text-xl font-semibold tracking-tight text-foreground">OmniHarness</h1>
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">{t("product.name")}</h1>
             <p className="text-sm leading-relaxed text-muted-foreground">
               {isRedeemingPair
-                ? "Connecting this phone to your running OmniHarness session."
-                : "Enter the password for this OmniHarness instance to continue."}
+                ? t("login.pair.description")
+                : t("login.password.description")}
             </p>
           </div>
         </div>
@@ -52,7 +54,7 @@ export function LoginShell({
           <div className="mt-6 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm text-foreground">
             <div className="flex items-center gap-3">
               <LoaderCircle className="h-4 w-4 animate-spin text-emerald-700" />
-              <span>Redeeming pairing code...</span>
+              <span>{t("login.pair.redeemingCode")}</span>
             </div>
             {pairError ? (
               <div className="mt-3 rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive">
@@ -62,7 +64,7 @@ export function LoginShell({
           </div>
         ) : configurationError ? (
           <div className="mt-6 rounded-2xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-foreground">
-            <div className="font-semibold text-destructive">Authentication setup required</div>
+            <div className="font-semibold text-destructive">{t("login.configError.title")}</div>
             <div className="mt-2 leading-relaxed text-muted-foreground">
               {configurationError}
             </div>
@@ -71,7 +73,7 @@ export function LoginShell({
           <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
             <div className="space-y-2">
               <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground" htmlFor="omni-password">
-                Password
+                {t("login.password.label")}
               </label>
               <Input
                 id="omni-password"
@@ -79,7 +81,7 @@ export function LoginShell({
                 autoComplete="current-password"
                 value={password}
                 onChange={(event) => loginShellManager.setPassword(event.target.value)}
-                placeholder="Enter instance password"
+                placeholder={t("login.password.placeholder")}
                 className="h-11 rounded-xl"
               />
             </div>
@@ -92,7 +94,7 @@ export function LoginShell({
 
             <Button type="submit" className="h-11 w-full rounded-xl" disabled={Boolean(configurationError) || isSubmitting || password.trim().length === 0}>
               {isSubmitting ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Unlock OmniHarness
+              {t("login.submit")}
             </Button>
           </form>
         )}

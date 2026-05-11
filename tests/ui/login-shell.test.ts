@@ -8,9 +8,9 @@ const source = fs.readFileSync(
 );
 
 test("login shell exposes the unlock flow and pair redemption state", () => {
-  expect(source).toContain("Unlock OmniHarness");
-  expect(source).toContain("Redeeming pairing code...");
-  expect(source).toContain("Enter instance password");
-  expect(source).toContain("Connecting this phone");
-  expect(source).toContain("Authentication setup required");
+  expect(source).toContain("login.submit");
+  expect(source).toContain("login.pair.redeemingCode");
+  expect(source).toContain("login.password.placeholder");
+  expect(source).toContain("login.pair.description");
+  expect(source).toContain("login.configError.title");
 });

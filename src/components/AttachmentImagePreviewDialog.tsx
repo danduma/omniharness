@@ -6,6 +6,7 @@ import { attachmentImagePreviewManager } from "@/components/component-state-mana
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { formatBytes } from "@/lib/chat-attachments";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import { t } from "@/lib/i18n";
 
 export function AttachmentImagePreviewDialog() {
   const { preview } = useManagerSnapshot(attachmentImagePreviewManager);
@@ -38,7 +39,7 @@ export function AttachmentImagePreviewDialog() {
               </a>
               <button
                 type="button"
-                aria-label="Close image preview"
+                aria-label={t("attachment.preview.closeAria")}
                 title="Close"
                 onClick={attachmentImagePreviewManager.close}
                 className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-white/15 text-white shadow-lg shadow-black/25 backdrop-blur-md transition-colors hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"

@@ -4,6 +4,7 @@ import { Copy } from "lucide-react";
 import { attachmentImagePreviewManager } from "@/components/component-state-managers";
 import { formatBytes, type ChatAttachment } from "@/lib/chat-attachments";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
 export type UserInputMessageAction = {
   label: string;
@@ -125,7 +126,7 @@ export function UserInputMessage({
             {onCopy ? (
               <button
                 type="button"
-                aria-label="Copy message"
+                aria-label={t("conversation.message.copyAria")}
                 title="Copy message"
                 onClick={() => void onCopy(content)}
                 className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

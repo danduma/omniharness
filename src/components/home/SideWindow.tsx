@@ -10,8 +10,7 @@ import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { FileViewerPanel } from "./FileViewerPanel";
 import { WorkersSidebar } from "./WorkersSidebar";
-
-const WORKERS_TAB_LABEL = "Conversation Workers";
+import { t } from "@/lib/i18n";
 
 export function SideWindow({
   projectRoot,
@@ -47,7 +46,7 @@ export function SideWindow({
   const hasConversationWorkers = workerGroups.active.length > 0 || workerGroups.finished.length > 0;
   const visibleTabs = hasConversationWorkers ? tabs : tabs.filter((tab) => tab.kind !== "workers");
   const activeTab = visibleTabs.find((tab) => tab.id === activeTabId) ?? visibleTabs[0] ?? null;
-  const closeButtonLabel = closeButtonVariant === "back" ? "Back" : "Collapse workspace side window";
+  const closeButtonLabel = closeButtonVariant === "back" ? t("common.back") : t("side.window.collapseAria");
   const CloseButtonIcon = closeButtonVariant === "back" ? ArrowLeft : PanelRightClose;
   const closeButton = onCloseWindow ? (
     <Button
@@ -95,7 +94,7 @@ export function SideWindow({
               <button
                 type="button"
                 onClick={() => sideWindowManager.selectTab(tab.id)}
-                aria-label={tab.kind === "workers" ? WORKERS_TAB_LABEL : `Open ${tab.relativePath}`}
+                aria-label={tab.kind === "workers" ? t("side.window.workersTabAria") : `Open ${tab.relativePath}`}
                 className="inline-flex min-w-0 flex-1 items-center gap-1.5 px-2"
               >
                 {tab.kind === "file" ? <FileText className="h-3.5 w-3.5 shrink-0" /> : <Cpu className="h-3.5 w-3.5 shrink-0" />}

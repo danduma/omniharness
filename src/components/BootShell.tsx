@@ -1,8 +1,10 @@
 "use client";
 
 import { LoaderCircle } from "lucide-react";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 
 export function BootShell() {
+  useI18nSnapshot();
   return (
     <main
       aria-busy="true"
@@ -11,7 +13,7 @@ export function BootShell() {
       <section
         role="status"
         aria-live="polite"
-        aria-label="OmniHarness is loading"
+        aria-label={t("boot.loading.aria")}
         className="flex flex-col items-center gap-4 text-center"
       >
         <LoaderCircle
@@ -20,8 +22,8 @@ export function BootShell() {
           strokeWidth={1.75}
         />
         <div className="space-y-1">
-          <h1 className="text-sm font-medium tracking-normal text-foreground">OmniHarness</h1>
-          <p className="text-sm text-muted-foreground">Loading workspace...</p>
+          <h1 className="text-sm font-medium tracking-normal text-foreground">{t("product.name")}</h1>
+          <p className="text-sm text-muted-foreground">{t("boot.loading.message")}</p>
         </div>
       </section>
     </main>

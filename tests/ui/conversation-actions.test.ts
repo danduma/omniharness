@@ -9,15 +9,24 @@ const pageSource = [
   "src/app/home/useAppErrors.ts",
   "src/app/home/useConversationExecutionStatus.ts",
   "src/app/home/useHomeLifecycle.ts",
+  "src/app/home/useHomeMutations.ts",
+  "src/app/home/useConversationActions.ts",
+  "src/app/home/useHomeViewModel.ts",
   "src/app/home/LiveEventConnectionManager.ts",
   "src/app/home/utils.ts",
   "src/lib/conversation-visuals.ts",
+  "src/lib/commit-workflow.ts",
   "src/components/home/ConversationMain.tsx",
   "src/components/home/ConversationSidebar.tsx",
   "src/components/home/HomeHeader.tsx",
   "src/components/home/SettingsDialog.tsx",
 ].map(readSource).join("\n");
-const homeAppSource = readSource("src/app/home/HomeApp.tsx");
+const homeAppSource = [
+  "src/app/home/HomeApp.tsx",
+  "src/app/home/useHomeMutations.ts",
+  "src/app/home/useConversationActions.ts",
+  "src/app/home/useHomeViewModel.ts",
+].map(readSource).join("\n");
 const markdownContentSource = readSource("src/components/MarkdownContent.tsx");
 const terminalSource = readSource("src/components/Terminal.tsx");
 
@@ -43,7 +52,7 @@ test("conversation rows expose archive in the overflow menu and commit rows expo
   expect(homeAppSource).toContain("const archiveRun = useMutation({");
   expect(homeAppSource).toContain('body: JSON.stringify({ action: "archive" })');
   expect(homeAppSource).toContain('action: "Archive"');
-  expect(homeAppSource).toContain("archiveRun: handleArchiveRun");
+  expect(homeAppSource).toContain("archiveRun: actions.handleArchiveRun");
 });
 
 test("conversation rows show left-side status attention indicators", () => {
@@ -67,18 +76,18 @@ test("conversation rows show left-side status attention indicators", () => {
 });
 
 test("top bar exposes an auto commit action for the selected chat", () => {
-  expect(pageSource).toContain("AUTO_COMMIT_CHAT_PROMPT");
-  expect(pageSource).toContain("AUTO_COMMIT_CHAT_PUSH_PROMPT");
+  expect(pageSource).toContain("MANUAL_COMMIT_CHAT_PROMPT");
+  expect(pageSource).toContain("MANUAL_COMMIT_CHAT_PUSH_PROMPT");
   expect(pageSource).toContain('"Group the modified files from this conversation into logical git commits. Do not run tests. Do not modify files or do anything else. Only inspect the modified files as needed, create commits, and stop."');
   expect(pageSource).toContain('"Group the modified files from this conversation into logical git commits, then push the current branch. Do not run tests. Do not modify files or do anything else. Only inspect the modified files as needed, create commits, push, and stop."');
-  expect(pageSource).toContain("autoCommitChat.mutate({ runId: selectedRunId, action })");
+  expect(pageSource).toContain("mutations.autoCommitChat.mutate({ runId: selectedRunId, action })");
   expect(pageSource).toContain("ButtonGroup");
   expect(pageSource).toContain("DropdownMenu");
-  expect(pageSource).toContain("Auto Commit Chat actions");
-  expect(pageSource).toContain("Auto commit &amp; push");
-  expect(pageSource).toContain("AUTO_COMMIT_CHAT_ACTION_STORAGE_KEY");
-  expect(pageSource).toContain('window.localStorage.getItem(AUTO_COMMIT_CHAT_ACTION_STORAGE_KEY)');
-  expect(pageSource).toContain('window.localStorage.setItem(AUTO_COMMIT_CHAT_ACTION_STORAGE_KEY, autoCommitChatAction)');
+  expect(pageSource).toContain("commit.menu.label");
+  expect(pageSource).toContain("commit.menu.commitAndPushNow");
+  expect(pageSource).toContain("onAutoCommitMilestonesChange");
+  expect(pageSource).toContain("onPushOnCommitChange");
+  expect(pageSource).toContain("autoCommitMilestonesEnabled");
 });
 
 test("top bar conversation title is plain text until explicitly edited", () => {
@@ -116,8 +125,8 @@ test("project menus expose an auto commit action that starts a direct worker con
   expect(pageSource).toContain("AUTO_COMMIT_PROJECT_PROMPT");
   expect(pageSource).toContain("mode: \"direct\"");
   expect(pageSource).toContain("projectPath: payload.projectPath");
-  expect(pageSource).toContain("autoCommitProject.mutate({ projectPath })");
-  expect(pageSource).toContain("Auto Commit Project");
+  expect(pageSource).toContain("autoCommitProject(group.path)");
+  expect(pageSource).toContain("commit.menu.commitProjectNow");
 });
 
 test("deleting a conversation removes it optimistically before the request resolves", () => {
@@ -175,7 +184,7 @@ test("user input messages share the direct-control bubble renderer", () => {
   expect(userInputSource).toContain('mt-1.5 flex w-full items-center justify-end gap-2 pr-4');
   expect(userInputSource).toContain('maxHeight: isExpanded ? undefined : "calc(1.5rem * 6)"');
   expect(userInputSource).toContain('aria-label={isExpanded ? "Show less message text" : "Show more message text"}');
-  expect(userInputSource).toContain('aria-label="Copy message"');
+  expect(userInputSource).toContain('conversation.message.copyAria');
   expect(conversationMainSource).toContain('from "./UserInputMessage";');
   expect(conversationMainSource).toContain('<UserInputMessage');
   expect(conversationMainSource).toContain('createdAt={msg.createdAt}');
@@ -212,12 +221,12 @@ test("attachment image previews use a global full-screen dialog", () => {
   expect(managerSource).toContain("attachmentImagePreviewManager");
   expect(dialogSource).toContain("h-dvh w-screen max-w-none");
   expect(dialogSource).toContain("download={preview.name}");
-  expect(dialogSource).toContain("aria-label=\"Close image preview\"");
+  expect(dialogSource).toContain("attachment.preview.closeAria");
   expect(dialogSource).toContain("right-4 top-4");
 });
 
 test("saving an edited message closes the inline editor before the rerun request resolves", () => {
-  const handleSaveStart = pageSource.indexOf("const handleSaveEditedMessage = (messageId: string) => {");
+  const handleSaveStart = pageSource.indexOf("const handleSaveEditedMessage = (messageId: string");
   const clearEditorIndex = pageSource.indexOf("setEditingMessageId(null);", handleSaveStart);
   const clearDraftIndex = pageSource.indexOf('setEditingMessageValue("");', handleSaveStart);
   const mutateIndex = pageSource.indexOf("recoverRun.mutate(", handleSaveStart);

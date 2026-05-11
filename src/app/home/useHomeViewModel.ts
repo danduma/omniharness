@@ -14,7 +14,7 @@ import { buildDirectTerminalUserMessages } from "@/lib/worker-terminal-messages"
 import { resolveProjectScope } from "@/lib/project-scope";
 import { buildConversationTimelineItems, filterPromotedPlanningTranscriptMessages, extractWorkerFailureDetail, getConversationTranscriptRunIds, getLatestUnresolvedWorkerStuckEvent, getWorkerModelOptions, parseProjectList, parseWorkerType, parseWorkerTypes, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought } from "./utils";
 import { COMPOSER_WORKER_OPTIONS, WORKER_OPTIONS } from "./constants";
-import type { AgentSnapshot, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, RunRecord, SupervisorInterventionRecord, WorkerModelOption } from "./types";
+import type { AgentSnapshot, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, RunRecord, SupervisorInterventionRecord } from "./types";
 import type { WorkerCatalogResponse } from "./types";
 
 export interface UseHomeViewModelParams {
@@ -35,8 +35,8 @@ export function useHomeViewModel({
   selectedRunId,
   selectedConversationMode,
   selectedCliAgent,
-  selectedModel,
-  selectedEffort,
+  selectedModel: _selectedModel,
+  selectedEffort: _selectedEffort,
   draftProjectPath,
   searchQuery,
   apiKeys,
@@ -111,7 +111,7 @@ export function useHomeViewModel({
     ? autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex"
     : selectedCliAgent;
 
-  const activeWorkerModelOptions: WorkerModelOption[] = useMemo(
+  const activeWorkerModelOptions = useMemo(
     () => getWorkerModelOptions(workerCatalogData?.workerModels, activeWorkerModelType),
     [activeWorkerModelType, workerCatalogData?.workerModels],
   );

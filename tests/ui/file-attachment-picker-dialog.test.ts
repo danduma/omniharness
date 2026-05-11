@@ -10,10 +10,10 @@ const composerSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/home/ConversationComposer.tsx"),
   "utf8"
 );
-const homeSource = fs.readFileSync(
-  path.resolve(process.cwd(), "src/app/home/HomeApp.tsx"),
-  "utf8"
-);
+const homeSource = [
+  "src/app/home/HomeApp.tsx",
+  "src/app/home/useHomeMutations.ts",
+].map((p) => fs.readFileSync(path.resolve(process.cwd(), p), "utf8")).join("\n");
 
 test("native chat attachment flow is managed by HomeUiStateManager", () => {
   expect(managerSource).toContain("addAttachmentFiles(files: File[])");

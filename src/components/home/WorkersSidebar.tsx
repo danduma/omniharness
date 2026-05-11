@@ -11,6 +11,7 @@ import { buildWorkerTerminalUserMessages } from "@/lib/worker-terminal-messages"
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 
 export interface WorkersSidebarProps {
   workers: ConversationWorkerRecord[];
@@ -150,6 +151,7 @@ export function ConversationWorkerCard({
 }
 
 export function WorkersSidebar({ workers, agents, supervisorInterventions, preferredModel, preferredEffort, projectRoot, onStopWorker, onStopTerminalProcess, onLoadWorkerHistory, stoppingWorkerId, stoppingTerminalProcess, onClose, showHeader = true }: WorkersSidebarProps) {
+  useI18nSnapshot();
   const { activeTab: requestedActiveTab, focusedWorkerId } = useManagerSnapshot(workersSidebarManager);
   const workerGroups = buildWorkerLists(workers);
   const agentsById = useMemo(
@@ -224,8 +226,8 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
             variant="ghost"
             size="icon"
             className="h-7 w-7 text-muted-foreground transition-all duration-150 ease-out hover:text-foreground motion-reduce:transition-none"
-            aria-label="Collapse workers sidebar"
-            title="Collapse workers sidebar"
+            aria-label={t("workers.sidebar.collapseAria")}
+            title={t("workers.sidebar.collapseAria")}
             onClick={onClose}
           >
             <PanelRightClose className="h-4 w-4 transition-transform duration-150 ease-out group-hover/button:translate-x-0.5 motion-reduce:transition-none" />

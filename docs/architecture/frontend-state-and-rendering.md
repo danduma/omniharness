@@ -50,11 +50,20 @@ For local development (Apple Silicon, Node 22, default `pnpm dev`):
 | --- | --- | --- |
 | Cold `/` compile + TTFB | ~12 s | ≤ 15 s |
 | Cold `/api/auth/session` | ~12 s | ≤ 15 s |
-| Warm `/` TTFB | ~1.39 s | ≤ 1.6 s |
-| Warm `/api/auth/session` TTFB | ~0.86 s | ≤ 1.0 s |
+| Warm `/` TTFB | ~1.39 s (pre-refactor) → 36 ms (post-refactor, server already warm) | ≤ 1.6 s |
+| Warm `/api/auth/session` TTFB | ~0.86 s (pre-refactor) → 10 ms (post-refactor) | ≤ 1.0 s |
 | `pnpm build` total | ~90 s | ≤ 110 s |
-| `/` route size (build report) | 157 kB | ≤ 165 kB |
-| `/` first-load JS | 319 kB | ≤ 330 kB |
+| `/` route size (build report) | 157 kB (pre-refactor) → 160 kB (post-refactor) | ≤ 165 kB |
+| `/` first-load JS | 319 kB (pre-refactor) → 323 kB (post-refactor) | ≤ 330 kB |
+
+Post-refactor measurement taken 2026-05-11 (node v22.22.0, darwin arm64, dev server already warm):
+
+```
+cold /                    200   964 ms
+cold /api/auth/session    200  3785 ms
+warm /                    200    36 ms
+warm /api/auth/session    200    10 ms
+```
 
 Run `pnpm exec node scripts/measure-local-dev.mjs` (see "Measurement" below) to capture comparable numbers.
 

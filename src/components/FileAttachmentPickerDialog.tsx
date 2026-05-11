@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { normalizeAppError, requestJson } from "@/lib/app-errors";
 import { fileAttachmentPickerManager } from "@/components/component-state-managers";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 
 export interface AttachmentItem {
   kind: "file";
@@ -38,6 +39,7 @@ export function FileAttachmentPickerDialog({
   rootPath?: string | null;
   onSelect: (attachments: AttachmentItem[]) => void;
 }) {
+  useI18nSnapshot();
   const { search, selectedFiles } = useManagerSnapshot(fileAttachmentPickerManager);
 
   const { data, error } = useQuery<ProjectFilesResponse>({
@@ -86,7 +88,7 @@ export function FileAttachmentPickerDialog({
           <Input
             value={search}
             onChange={(event) => fileAttachmentPickerManager.setSearch(event.target.value)}
-            placeholder="Search files..."
+            placeholder={t("file.picker.searchPlaceholder")}
             className="h-10"
           />
           <div className="text-[11px] text-muted-foreground">

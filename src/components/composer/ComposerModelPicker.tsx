@@ -11,6 +11,7 @@ import { composerModelPickerManager } from "@/components/component-state-manager
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { WorkerModelOption } from "@/app/home/types";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 
 type ComposerModelPickerProps = {
   value: string;
@@ -25,6 +26,7 @@ export function ComposerModelPicker({
   onChange,
   themeMode,
 }: ComposerModelPickerProps) {
+  useI18nSnapshot();
   const { open, query } = useManagerSnapshot(composerModelPickerManager);
   const isDesktop = useMediaQuery("(min-width: 640px)", {
     defaultMatches: false,
@@ -140,7 +142,7 @@ function ModelPickerPanel({
         <Input
           value={query}
           onChange={(event) => composerModelPickerManager.setQuery(event.target.value)}
-          placeholder="Search models"
+          placeholder={t("models.picker.searchPlaceholder")}
           className="h-10 pl-9"
         />
       </div>

@@ -60,10 +60,10 @@ export interface UseHomeMutationsParams {
   activeAllowedWorkerTypes: string[];
   currentProjectScope: string | null;
   renamingRunId: string | null;
-  pendingDeletedRunIdsRef: React.MutableRefObject<Set<string>>;
-  pendingCreatedConversationSnapshotsRef: React.MutableRefObject<Map<string, CreatedConversationSnapshot>>;
-  pendingSentConversationMessagesRef: React.MutableRefObject<Map<string, MessageRecord>>;
-  loadingWorkerHistoryIdsRef: React.MutableRefObject<Set<string>>;
+  pendingDeletedRunIdsRef: React.RefObject<Set<string>>;
+  pendingCreatedConversationSnapshotsRef: React.RefObject<Map<string, CreatedConversationSnapshot>>;
+  pendingSentConversationMessagesRef: React.RefObject<Map<string, MessageRecord>>;
+  loadingWorkerHistoryIdsRef: React.RefObject<Set<string>>;
   scrollConversationToBottom: () => void;
   sessionQueryRefetch: () => Promise<unknown>;
 }

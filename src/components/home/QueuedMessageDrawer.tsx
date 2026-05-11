@@ -2,6 +2,7 @@ import { ArrowUp, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { QueuedConversationMessageRecord } from "@/app/home/types";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 
 export function QueuedMessageDrawer({
   messages,
@@ -18,6 +19,7 @@ export function QueuedMessageDrawer({
   onSendNow: (messageId: string) => void;
   onCancel: (messageId: string) => void;
 }) {
+  useI18nSnapshot();
   const visibleMessages = messages.filter((message) => message.status === "pending" || message.status === "delivering");
   if (visibleMessages.length === 0) {
     return null;
@@ -61,8 +63,8 @@ export function QueuedMessageDrawer({
                   disabled={isCancelling || message.status === "delivering"}
                   onClick={() => onEdit(message)}
                   className="h-6 w-6 rounded-full text-muted-foreground hover:text-foreground"
-                  aria-label="Edit queued message"
-                  title="Edit queued message"
+                  aria-label={t("queued.message.editAria")}
+                  title={t("queued.message.editAria")}
                 >
                   <Pencil className="h-3 w-3" />
                 </Button>
@@ -73,8 +75,8 @@ export function QueuedMessageDrawer({
                   disabled={isCancelling || message.status === "delivering"}
                   onClick={() => onSendNow(message.id)}
                   className="h-6 w-6 rounded-full text-muted-foreground hover:text-foreground"
-                  aria-label="Send queued message now"
-                  title="Send queued message now"
+                  aria-label={t("queued.message.sendNowAria")}
+                  title={t("queued.message.sendNowAria")}
                 >
                   <ArrowUp className="h-[17px] w-[17px]" />
                 </Button>
@@ -85,8 +87,8 @@ export function QueuedMessageDrawer({
                   disabled={isCancelling || message.status === "delivering"}
                   onClick={() => onCancel(message.id)}
                   className="h-6 w-6 rounded-full text-muted-foreground hover:text-foreground"
-                  aria-label="Cancel queued message"
-                  title="Cancel queued message"
+                  aria-label={t("queued.message.cancelAria")}
+                  title={t("queued.message.cancelAria")}
                 >
                   <X className="h-3 w-3" />
                 </Button>

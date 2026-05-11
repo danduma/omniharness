@@ -30,7 +30,7 @@ test("loading shell stays minimal while preserving theme bootstrap safety", () =
   expect(bootShellSource).toContain("LoaderCircle");
   expect(bootShellSource).toContain("animate-spin");
   expect(bootShellSource).toContain("motion-reduce:animate-none");
-  expect(bootShellSource).toContain("Loading workspace...");
+  expect(bootShellSource).toContain("boot.loading.message");
   expect(bootShellSource).not.toContain("Preparing workspace handoff");
   expect(bootShellSource).not.toContain("Local control plane");
 });

@@ -20,6 +20,10 @@ const pageSource = [
   "src/app/home/useConversationExecutionStatus.ts",
   "src/app/home/useHomeLifecycle.ts",
   "src/app/home/useRunSelectionEffects.ts",
+  "src/app/home/useHomeMutations.ts",
+  "src/app/home/useConversationActions.ts",
+  "src/app/home/useHomeViewModel.ts",
+  "src/app/home/ComposerContainer.tsx",
   "src/app/home/utils.ts",
   "src/components/home/ConversationComposer.tsx",
   "src/components/home/ConversationMain.tsx",
@@ -74,8 +78,8 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('style={{ width: leftSidebarOpen ? leftSidebarWidth : 0 }}');
   expect(pageSource).toContain('aria-hidden={!leftSidebarOpen}');
   expect(pageSource).toContain('inert={!leftSidebarOpen ? true : undefined}');
-  expect(pageSource).toContain('aria-label="Resize conversations sidebar"');
-  expect(pageSource).toContain('onPointerDown={handleLeftSidebarResizeStart}');
+  expect(pageSource).toContain("sidebar.resize.conversations");
+  expect(pageSource).toContain('onPointerDown={layout.handleLeftSidebarResizeStart}');
   expect(pageSource).toContain('leftSidebarOpen ? "translate-x-0" : "-translate-x-3"');
   expect(pageSource).toContain('onCollapse={() => setLeftSidebarOpen(false)}');
   expect(pageSource).toContain('title="Collapse conversations sidebar"');
@@ -149,7 +153,7 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain("{workspaceSideWindowAvailable && !rightSidebarOpen ? (");
   expect(pageSource).toContain('title="Toggle workspace side window"');
   expect(pageSource).toContain('title={closeButtonLabel}');
-  expect(pageSource).toContain('const closeButtonLabel = closeButtonVariant === "back" ? "Back" : "Collapse workspace side window";');
+  expect(pageSource).toContain('const closeButtonLabel = closeButtonVariant === "back" ? t("common.back") : t("side.window.collapseAria")');
   expect(pageSource).toContain('const CloseButtonIcon = closeButtonVariant === "back" ? ArrowLeft : PanelRightClose;');
   expect(pageSource).toContain('<PanelRightClose');
   expect(pageSource).toContain('<SideWindow');
@@ -172,8 +176,8 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('aria-hidden={!rightSidebarOpen}');
   expect(pageSource).toContain('inert={!rightSidebarOpen ? true : undefined}');
   expect(pageSource).toContain('rightSidebarOpen ? "translate-x-0" : "translate-x-3"');
-  expect(pageSource).toContain('aria-label="Resize workspace side window"');
-  expect(pageSource).toContain('onPointerDown={handleRightSidebarResizeStart}');
+  expect(pageSource).toContain("sidebar.resize.workspace");
+  expect(pageSource).toContain('onPointerDown={layout.handleRightSidebarResizeStart}');
   expect(pageSource).not.toContain('h-14 w-1 rounded-full bg-border/80 transition-colors hover:bg-foreground/30');
   expect(pageSource).toContain('export const PRODUCT_NAME = "OmniHarness";');
   expect(pageSource).toContain('<SheetTitle className="flex items-center gap-2 text-left">');
@@ -228,14 +232,14 @@ test("workspace side window owns workers and file tabs", () => {
   expect(pageSource).toContain("shouldOpenMobileSideWindow()");
   expect(pageSource).toContain("<SideWindow");
   expect(pageSource).toContain('projectRoot={currentProjectScope}');
-  expect(pageSource).toContain("onOpenProjectFile={handleOpenProjectFile}");
+  expect(pageSource).toContain("onOpenProjectFile={actions.handleOpenProjectFile}");
   expect(pageSource).toContain("Boolean(selectedRunId || draftProjectPath) && Boolean(currentProjectScope)");
   expect(pageSource).toContain('title="Toggle workspace side window"');
-  expect(pageSource).toContain('aria-label="Resize workspace side window"');
+  expect(pageSource).toContain("sidebar.resize.workspace");
   expect(pageSource).toContain('onCloseWindow={() => setRightSidebarOpen(false)}');
   expect(pageSource).toContain('onCloseWindow={() => setMobileWorkersOpen(false)}');
   expect(pageSource).toContain("sideWindowManager.resetFileTabs()");
-  expect(sideWindowSource).toContain('Conversation Workers');
+  expect(sideWindowSource).toContain('side.window.workersTabAria');
   expect(sideWindowSource).toContain("FileViewerPanel");
   expect(sideWindowSource).toContain("sideWindowManager.closeTab(tab.id)");
   expect(sideWindowSource).toContain("sideWindowManager.selectTab(tab.id)");
@@ -522,10 +526,10 @@ test("implementation worker messages show a compact latest turn with expandable 
 test("direct conversations render the user transcript next to the worker surface", () => {
   expect(pageSource).toContain("const directConversationMessages = useMemo(() => {");
   expect(pageSource).toContain("expandedDirectMessageIds: new Set()");
-  expect(pageSource).toContain("function toggleDirectMessageExpansion(messageId: string)");
-  expect(pageSource).toContain("const primaryConversationAgent = useMemo(() => {");
+  expect(pageSource).toContain("const toggleDirectMessageExpansion = (messageId: string)");
+  expect(pageSource).toContain("const primaryConversationAgent = useMemo(");
   expect(pageSource).toContain("selectPrimaryConversationAgent(conversationAgents, isDirectConversation)");
-  expect(pageSource).toContain("selectPrimaryConversationAgent, type ConversationWorkerRecord");
+  expect(pageSource).toContain("selectPrimaryConversationAgent");
   expect(pageSource).toContain('userMessages={directConversationMessages}');
   expect(pageSource).toContain('variant="native"');
   expect(pageSource).toContain('textSizeScope="conversation"');
@@ -545,7 +549,7 @@ test("direct conversations render the user transcript next to the worker surface
   expect(pageSource).toContain('{isExpanded ? "less" : "...more"}');
   expect(pageSource).toContain('text-[#202124]');
   expect(pageSource).toContain('dark:text-[#d8d8d8]');
-  expect(pageSource).toContain('aria-label="Copy message"');
+  expect(pageSource).toContain("conversation.message.copyAria");
   expect(pageSource).toContain('label: isImplementationConversation ? "Resume from here" : "Retry from here"');
   expect(pageSource).toContain('aria-label={action.label}');
   expect(pageSource).toContain('onClick: () => handleRetryMessage(message.id)');
@@ -566,7 +570,7 @@ test("direct conversations render the user transcript next to the worker surface
 test("settings entry opens the reorganized settings dialog", () => {
   expect(pageSource).toContain('activeSettingsTab: "general"');
   expect(pageSource).toContain('export type SettingsTab = "general" | "models" | "agents" | "runtime"');
-  expect(pageSource).toContain('() => import("@/components/home/SettingsDialog").then((module) => module.SettingsDialog)');
+  expect(pageSource).toContain('import("@/components/home/SettingsDialog")');
   expect(pageSource).toContain("settingsDraftManager");
 });
 
@@ -644,7 +648,7 @@ test("project group collapsed state survives page reloads", () => {
   expect(pageSource).toContain('window.localStorage.getItem("omni-collapsed-projects")');
   expect(pageSource).toContain('window.localStorage.setItem("omni-collapsed-projects", JSON.stringify(Array.from(collapsedProjectPaths)))');
   expect(pageSource).toContain("collapsedProjectPaths={collapsedProjectPaths}");
-  expect(pageSource).toContain("onProjectOpenChange: handleProjectOpenChange,");
+  expect(pageSource).toContain("onProjectOpenChange: actions.handleProjectOpenChange,");
   expect(pageSource).toContain("const projectOpen = !collapsedProjectPaths.has(group.path);");
   expect(pageSource).toContain("open={projectOpen}");
   expect(pageSource).toContain("COLLAPSIBLE_PANEL_TRANSITION_CLASS");

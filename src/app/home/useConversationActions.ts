@@ -13,7 +13,6 @@ import {
 import { homeUiSetters } from "./HomeUiStateManager";
 import { sideWindowManager } from "./SideWindowManager";
 import { shouldOpenMobileSideWindow } from "./side-window-viewport";
-import type { UseHomeMutationsParams } from "./useHomeMutations";
 import type { MessageRecord, RunRecord, SidebarRun } from "./types";
 
 type MutationsRef = {
@@ -37,7 +36,7 @@ export interface UseConversationActionsParams {
   currentProjectScope: string | null;
   explicitProjects: string[];
   runs: RunRecord[];
-  renamingRunId: string | null;
+  renamingRunId?: string | null;
   apiKeys: Record<string, string>;
   commandInputRef: React.RefObject<HTMLTextAreaElement | null>;
 }
@@ -48,7 +47,6 @@ export function useConversationActions({
   currentProjectScope,
   explicitProjects,
   runs: _runs,
-  renamingRunId,
   apiKeys,
   commandInputRef,
 }: UseConversationActionsParams) {

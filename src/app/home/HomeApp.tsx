@@ -546,7 +546,7 @@ export function HomeApp() {
     ? selectedRunWorkersForDisplay[0]?.id ?? null
     : null;
   const stoppableConversationWorkerId = busyConversationWorkerId ?? pendingConversationWorkerId;
-  const effectiveIsConversationStoppable = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
+  const isConversationStoppable = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
   const isStopConversationPending = stopSupervisor.isPending || stopWorker.isPending;
   const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || sendQueuedMessageNow.isPending || promotePlanningConversation.isPending || isStopConversationPending;
   const busyMessageAction = parseBusyMessageAction(apiKeys.BUSY_MESSAGE_ACTION);
@@ -591,7 +591,7 @@ export function HomeApp() {
       setSelectedEffort={setSelectedEffort}
       isComposerSubmitting={isComposerSubmitting}
       isStopConversationPending={isStopConversationPending}
-      isConversationStoppable={effectiveIsConversationStoppable}
+      isConversationStoppable={isConversationStoppable}
       hasBusyConversation={hasBusyConversation}
       busyMessageAction={busyMessageAction}
       queuedMessages={busyMessageQueueState.queuedMessages}

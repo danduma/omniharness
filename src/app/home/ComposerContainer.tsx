@@ -20,6 +20,17 @@ import type {
   WorkerModelOption,
 } from "./types";
 
+type ComposerDraftState = Pick<HomeUiState, "command" | "commandCursor" | "mentionIndex" | "attachments">;
+
+function selectComposerDraftState(s: HomeUiState): ComposerDraftState {
+  return {
+    command: s.command,
+    commandCursor: s.commandCursor,
+    mentionIndex: s.mentionIndex,
+    attachments: s.attachments,
+  };
+}
+
 export interface ComposerContainerProps {
   className: string;
   commandInputRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -96,12 +107,7 @@ export function ComposerContainer({
 
   const { command, commandCursor, mentionIndex, attachments } = useManagerSelector(
     homeUiStateManager,
-    (s: HomeUiState) => ({
-      command: s.command,
-      commandCursor: s.commandCursor,
-      mentionIndex: s.mentionIndex,
-      attachments: s.attachments,
-    }),
+    selectComposerDraftState,
     shallowEqualRecord,
   );
 

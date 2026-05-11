@@ -5,11 +5,15 @@ import { test, expect } from "vitest";
 const pageSource = [
   "src/app/page.tsx",
   "src/app/home/HomeApp.tsx",
+  "src/app/home/ComposerContainer.tsx",
   "src/app/home/HomeUiStateManager.ts",
   "src/app/home/constants.ts",
   "src/app/home/types.ts",
   "src/app/home/useHomeLifecycle.ts",
   "src/app/home/useRunSelectionEffects.ts",
+  "src/app/home/useHomeMutations.ts",
+  "src/app/home/useHomeViewModel.ts",
+  "src/app/home/useConversationActions.ts",
   "src/components/home/ConversationComposer.tsx",
   "src/components/home/QueuedMessageDrawer.tsx",
   "src/components/home/WorkersSidebar.tsx",
@@ -46,7 +50,7 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(composerModelPickerSource).toContain("<PopoverPrimitive.Root");
   expect(composerModelPickerSource).toContain('side="top"');
   expect(composerModelPickerSource).toContain('side="bottom"');
-  expect(composerModelPickerSource).toContain("Search models");
+  expect(composerModelPickerSource).toContain("models.picker.searchPlaceholder");
   expect(pageSource).toContain("const WORKER_OPTIONS: Array<{ value: WorkerType; label: string }> = [");
   expect(pageSource).toContain('const COMPOSER_WORKER_OPTIONS: Array<{ value: ComposerWorkerOption; label: string }> = [');
   expect(pageSource).toContain('{ value: "auto", label: "Auto" }');
@@ -179,9 +183,9 @@ test("queued message drawer can send a pending item immediately as steering", ()
     path.resolve(process.cwd(), "src/components/home/QueuedMessageDrawer.tsx"),
     "utf8"
   );
-  const editIndex = drawerSource.indexOf('aria-label="Edit queued message"');
-  const sendNowIndex = drawerSource.indexOf('aria-label="Send queued message now"');
-  const cancelIndex = drawerSource.indexOf('aria-label="Cancel queued message"');
+  const editIndex = drawerSource.indexOf('queued.message.editAria');
+  const sendNowIndex = drawerSource.indexOf('queued.message.sendNowAria');
+  const cancelIndex = drawerSource.indexOf('queued.message.cancelAria');
 
   expect(pageSource).toContain("onSendQueuedMessageNow");
   expect(pageSource).toContain("sendQueuedMessageNow.mutate({ runId: selectedRunId, messageId })");
