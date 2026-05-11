@@ -20,12 +20,12 @@ export function canRegisterServiceWorker() {
   );
 }
 
-export async function registerServiceWorker() {
+export async function registerServiceWorker(options: { allowDevelopment?: boolean } = {}) {
   if (!canRegisterServiceWorker()) {
     return null;
   }
 
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== "production" && !options.allowDevelopment) {
     await unregisterDevelopmentServiceWorkers();
     return null;
   }
