@@ -5,6 +5,7 @@ import process from "process";
 import { acquireBridgeLock, isBridgeStarterProcessAlive, releaseBridgeLock, resolveBridgeLockPath } from "../src/server/dev/bridge-lock";
 import { describeBridgeToolingProblem } from "../src/server/dev/bridge-health";
 import { bridgeNeedsBuild, resolveBridgeDir, resolveBridgeUrl, shouldAutoStartBridge } from "../src/server/dev/managed-bridge";
+import { detectNextDevRouteEnoent, type NextDevRouteEnoentRecovery } from "./dev-web-recovery";
 
 const repoRoot = process.cwd();
 const serverMode = process.env.OMNIHARNESS_SERVER_MODE === "production" ? "production" : "development";
@@ -34,6 +35,8 @@ let webChild: ChildProcess | null = null;
 let proxyChild: ChildProcess | null = null;
 let shuttingDown = false;
 let ownsBridgeLock = false;
+let webRecoveryTimer: NodeJS.Timeout | null = null;
+let webRecoveryChild: ChildProcess | null = null;
 
 function bridgePort() {
   try {
@@ -43,7 +46,7 @@ function bridgePort() {
   }
 }
 
-function prefixStream(stream: NodeJS.ReadableStream | null, prefix: string) {
+function prefixStream(stream: NodeJS.ReadableStream | null, prefix: string, onLine?: (line: string) => void) {
   if (!stream) {
     return;
   }
@@ -55,20 +58,21 @@ function prefixStream(stream: NodeJS.ReadableStream | null, prefix: string) {
       if (line.length === 0 && index === lines.length - 1) {
         return;
       }
+      onLine?.(line);
       process.stdout.write(`[${prefix}] ${line}\n`);
     });
   });
 }
 
-function spawnManaged(command: string, args: string[], cwd: string, prefix: string) {
+function spawnManaged(command: string, args: string[], cwd: string, prefix: string, onLine?: (line: string) => void) {
   const child = spawn(command, args, {
     cwd,
     env: process.env,
     stdio: ["inherit", "pipe", "pipe"],
   });
 
-  prefixStream(child.stdout, prefix);
-  prefixStream(child.stderr, prefix);
+  prefixStream(child.stdout, prefix, onLine);
+  prefixStream(child.stderr, prefix, onLine);
   return child;
 }
 
@@ -289,11 +293,72 @@ async function ensureManagedBridge() {
   }
 }
 
+function removeStaleRouteArtifact(recovery: NextDevRouteEnoentRecovery) {
+  try {
+    fs.rmSync(recovery.artifactDir, { recursive: true, force: true });
+  } catch (error) {
+    console.error(
+      `[${logLabel}] Failed to remove stale Next route artifact ${recovery.artifactDir}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function relaunchWebAfterRecovery(previousWebChild: ChildProcess | null) {
+  webRecoveryTimer = null;
+
+  if (shuttingDown) {
+    return;
+  }
+
+  if (!previousWebChild || previousWebChild.exitCode !== null || previousWebChild.signalCode !== null || previousWebChild.killed) {
+    if (webChild === previousWebChild) {
+      webChild = null;
+    }
+    launchWeb();
+    return;
+  }
+
+  webRecoveryChild = previousWebChild;
+  previousWebChild.once("exit", () => {
+    if (shuttingDown) {
+      return;
+    }
+    if (webChild === previousWebChild) {
+      webChild = null;
+    }
+    webRecoveryChild = null;
+    launchWeb();
+  });
+  previousWebChild.kill("SIGTERM");
+}
+
+function scheduleWebRecovery(recovery: NextDevRouteEnoentRecovery) {
+  if (serverMode !== "development" || shuttingDown || webRecoveryTimer) {
+    return;
+  }
+
+  const relativeRouteFile = path.relative(repoRoot, recovery.routeFile);
+  console.error(`[${logLabel}] Next dev lost ${relativeRouteFile}; restarting only the web UI to recover HMR.`);
+  removeStaleRouteArtifact(recovery);
+  webRecoveryTimer = setTimeout(() => relaunchWebAfterRecovery(webChild), 100);
+}
+
+function handleWebOutputLine(line: string) {
+  const recovery = detectNextDevRouteEnoent(line, repoRoot);
+  if (recovery) {
+    scheduleWebRecovery(recovery);
+  }
+}
+
 function launchWeb() {
   console.log(`[${logLabel}] Starting OmniHarness web UI in ${serverMode} mode on ${webHost}:${webPort}`);
-  webChild = spawnManaged(webCommand[0], [...webCommand[1]], repoRoot, "web");
+  const child = spawnManaged(webCommand[0], [...webCommand[1]], repoRoot, "web", handleWebOutputLine);
+  webChild = child;
 
-  webChild.once("exit", (code, signal) => {
+  child.once("exit", (code, signal) => {
+    if (webRecoveryChild === child) {
+      return;
+    }
     if (!shuttingDown) {
       console.error(`[${logLabel}] Web UI exited unexpectedly with ${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}.`);
       shutdown(code ?? 1);
