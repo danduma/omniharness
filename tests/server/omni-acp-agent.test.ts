@@ -39,10 +39,21 @@ describe("OmniHarnessAcpAgent", () => {
     return runId;
   }
 
+  function createConnection(
+    sessionUpdate: Pick<acp.AgentSideConnection, "sessionUpdate">["sessionUpdate"] = vi.fn(async () => {}),
+  ) {
+    return { sessionUpdate } satisfies Pick<acp.AgentSideConnection, "sessionUpdate">;
+  }
+
+  function textPrompt(sessionId: string, text: string): acp.PromptRequest {
+    return {
+      sessionId,
+      prompt: [{ type: "text", text }],
+    };
+  }
+
   it("advertises OmniHarness modes as ACP session modes", async () => {
-    const agent = new OmniHarnessAcpAgent({
-      sessionUpdate: vi.fn(),
-    } as any);
+    const agent = new OmniHarnessAcpAgent(createConnection());
 
     const initialized = await agent.initialize({
       protocolVersion: acp.PROTOCOL_VERSION,
@@ -78,7 +89,7 @@ describe("OmniHarnessAcpAgent", () => {
       return { stopReason: "end_turn" as const };
     });
     const sessionUpdate = vi.fn();
-    const agent = new OmniHarnessAcpAgent({ sessionUpdate } as any, {
+    const agent = new OmniHarnessAcpAgent(createConnection(sessionUpdate), {
       createConversation,
       sendConversationMessage: vi.fn(),
       waitForTurn,
@@ -86,10 +97,7 @@ describe("OmniHarnessAcpAgent", () => {
     const session = await agent.newSession({ cwd: "/workspace/app", mcpServers: [] });
     await agent.setSessionMode({ sessionId: session.sessionId, modeId: "planning" });
 
-    const response = await agent.prompt({
-      sessionId: session.sessionId,
-      prompt: [{ type: "text", text: "make a plan for ACP control" }],
-    } as any);
+    const response = await agent.prompt(textPrompt(session.sessionId, "make a plan for ACP control"));
 
     expect(response.stopReason).toBe("end_turn");
     expect(createConversation).toHaveBeenCalledWith(expect.objectContaining({
@@ -117,7 +125,7 @@ describe("OmniHarnessAcpAgent", () => {
       mode: "direct",
     });
     const sendConversationMessage = vi.fn().mockResolvedValue({ ok: true });
-    const agent = new OmniHarnessAcpAgent({ sessionUpdate: vi.fn() } as any, {
+    const agent = new OmniHarnessAcpAgent(createConnection(), {
       createConversation,
       sendConversationMessage,
       waitForTurn: vi.fn().mockResolvedValue({ stopReason: "end_turn" }),
@@ -125,14 +133,8 @@ describe("OmniHarnessAcpAgent", () => {
     const session = await agent.newSession({ cwd: "/workspace/app", mcpServers: [] });
     await agent.setSessionMode({ sessionId: session.sessionId, modeId: "direct" });
 
-    await agent.prompt({
-      sessionId: session.sessionId,
-      prompt: [{ type: "text", text: "open a direct worker" }],
-    } as any);
-    await agent.prompt({
-      sessionId: session.sessionId,
-      prompt: [{ type: "text", text: "now inspect package.json" }],
-    } as any);
+    await agent.prompt(textPrompt(session.sessionId, "open a direct worker"));
+    await agent.prompt(textPrompt(session.sessionId, "now inspect package.json"));
 
     expect(createConversation).toHaveBeenCalledTimes(1);
     expect(sendConversationMessage).toHaveBeenCalledWith({
@@ -148,7 +150,7 @@ describe("OmniHarnessAcpAgent", () => {
       projectPath: "/other/project",
       title: "Hidden by cwd filter",
     });
-    const agent = new OmniHarnessAcpAgent({ sessionUpdate: vi.fn() } as any);
+    const agent = new OmniHarnessAcpAgent(createConnection());
 
     const response = await agent.unstable_listSessions?.({ cwd: "/workspace/app" });
 
@@ -182,7 +184,7 @@ describe("OmniHarnessAcpAgent", () => {
       },
     ]);
     const sessionUpdate = vi.fn();
-    const agent = new OmniHarnessAcpAgent({ sessionUpdate } as any);
+    const agent = new OmniHarnessAcpAgent(createConnection(sessionUpdate));
 
     const response = await agent.loadSession?.({
       sessionId: runId,
@@ -210,7 +212,7 @@ describe("OmniHarnessAcpAgent", () => {
   it("resumes a persisted Omni run and sends later prompts into it", async () => {
     const runId = await insertRun({ mode: "direct" });
     const sendConversationMessage = vi.fn().mockResolvedValue({ ok: true });
-    const agent = new OmniHarnessAcpAgent({ sessionUpdate: vi.fn() } as any, {
+    const agent = new OmniHarnessAcpAgent(createConnection(), {
       sendConversationMessage,
       waitForTurn: vi.fn().mockResolvedValue({ stopReason: "end_turn" }),
     });
@@ -220,10 +222,7 @@ describe("OmniHarnessAcpAgent", () => {
       cwd: "/workspace/app",
       mcpServers: [],
     });
-    await agent.prompt({
-      sessionId: runId,
-      prompt: [{ type: "text", text: "continue this run" }],
-    } as any);
+    await agent.prompt(textPrompt(runId, "continue this run"));
 
     expect(response?.modes?.currentModeId).toBe("direct");
     expect(sendConversationMessage).toHaveBeenCalledWith({
@@ -239,7 +238,7 @@ describe("OmniHarnessAcpAgent", () => {
       runId: "fork-run",
       mode: "planning",
     });
-    const agent = new OmniHarnessAcpAgent({ sessionUpdate: vi.fn() } as any, {
+    const agent = new OmniHarnessAcpAgent(createConnection(), {
       createConversation,
       waitForTurn: vi.fn().mockResolvedValue({ stopReason: "end_turn" }),
     });
@@ -249,10 +248,7 @@ describe("OmniHarnessAcpAgent", () => {
       cwd: "/workspace/app",
       mcpServers: [],
     });
-    await agent.prompt({
-      sessionId: fork!.sessionId,
-      prompt: [{ type: "text", text: "forked prompt" }],
-    } as any);
+    await agent.prompt(textPrompt(fork!.sessionId, "forked prompt"));
 
     expect(fork?.sessionId).not.toBe(runId);
     expect(fork?.sessionId).toMatch(/^[0-9a-f]{12}$/);

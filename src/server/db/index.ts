@@ -116,6 +116,19 @@ CREATE TABLE IF NOT EXISTS recovery_incidents (
   FOREIGN KEY (queued_message_id) REFERENCES queued_conversation_messages(id) ON UPDATE no action ON DELETE no action
 );
 
+CREATE TABLE IF NOT EXISTS supervisor_scheduled_wakes (
+  run_id text PRIMARY KEY NOT NULL,
+  wake_at integer NOT NULL,
+  reason text NOT NULL,
+  source text,
+  incident_id text,
+  details text,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action,
+  FOREIGN KEY (incident_id) REFERENCES recovery_incidents(id) ON UPDATE no action ON DELETE no action
+);
+
 CREATE TABLE IF NOT EXISTS accounts (
   id text PRIMARY KEY NOT NULL,
   provider text NOT NULL,
@@ -253,6 +266,7 @@ CREATE INDEX IF NOT EXISTS execution_events_run_created_idx ON execution_events(
 CREATE INDEX IF NOT EXISTS supervisor_interventions_run_created_idx ON supervisor_interventions(run_id, created_at);
 CREATE INDEX IF NOT EXISTS queued_conversation_messages_run_status_created_idx ON queued_conversation_messages(run_id, status, created_at);
 CREATE INDEX IF NOT EXISTS recovery_incidents_run_status_updated_idx ON recovery_incidents(run_id, status, updated_at);
+CREATE INDEX IF NOT EXISTS supervisor_scheduled_wakes_wake_at_idx ON supervisor_scheduled_wakes(wake_at);
 CREATE INDEX IF NOT EXISTS runs_created_idx ON runs(created_at);
 CREATE INDEX IF NOT EXISTS plans_created_idx ON plans(created_at);
 `);

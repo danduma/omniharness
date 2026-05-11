@@ -98,6 +98,17 @@ export const recoveryIncidents = sqliteTable('recovery_incidents', {
   resolvedAt: integer('resolved_at', { mode: 'timestamp' }),
 });
 
+export const supervisorScheduledWakes = sqliteTable('supervisor_scheduled_wakes', {
+  runId: text('run_id').primaryKey().references(() => runs.id),
+  wakeAt: integer('wake_at', { mode: 'timestamp' }).notNull(),
+  reason: text('reason').notNull(),
+  source: text('source'),
+  incidentId: text('incident_id').references(() => recoveryIncidents.id),
+  details: text('details'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
 export const accounts = sqliteTable('accounts', {
   id: text('id').primaryKey(),
   provider: text('provider').notNull(),

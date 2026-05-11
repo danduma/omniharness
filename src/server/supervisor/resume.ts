@@ -5,8 +5,10 @@ import { startSupervisorRun } from "./start";
 import { clearSupervisorWakeLease } from "./lease";
 import { getAgent } from "@/server/bridge-client";
 import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
+import { cancelDurableSupervisorWake } from "./wake-schedule";
 
 export async function resumeSupervisorRun(runId: string) {
+  await cancelDurableSupervisorWake(runId, "quota_wait");
   const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
   const liveAgents = (await Promise.all(runWorkers.map(async (worker) => {
     try {
@@ -22,7 +24,11 @@ export async function resumeSupervisorRun(runId: string) {
     force: true,
     source: "manual-resume",
   });
-  if (recoveryResult.action !== "none" && recoveryResult.action !== "wait_for_backoff") {
+  if (
+    recoveryResult.action !== "none"
+    && recoveryResult.action !== "wait_for_backoff"
+    && recoveryResult.action !== "wait_for_quota_reset"
+  ) {
     return recoveryResult;
   }
 

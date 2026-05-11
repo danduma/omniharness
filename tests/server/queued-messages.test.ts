@@ -20,7 +20,12 @@ import {
   createQueuedConversationMessage,
   drainQueuedImplementationMessages,
   drainQueuedWorkerMessages,
+  sendQueuedConversationMessageNow,
 } from "@/server/conversations/queued-messages";
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function createRun(mode: "implementation" | "planning" | "direct" = "implementation") {
   const planId = randomUUID();
@@ -114,5 +119,46 @@ describe("queued conversation messages", () => {
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
     expect(storedMessages.map((message) => message.role)).toEqual(["user", "worker"]);
     expect(storedMessages[1]?.content).toBe("Worker received the queued note.");
+  });
+
+  it("keeps send-now worker queue entries pending when the worker is still busy", async () => {
+    const runId = await createRun("direct");
+    const workerId = randomUUID();
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "Still working",
+      lastText: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const queued = await createQueuedConversationMessage({
+      runId,
+      targetWorkerId: workerId,
+      action: "queue",
+      content: "Please handle this once free.",
+      attachments: [],
+    });
+    mockAskAgent.mockRejectedValueOnce(new Error(`Ask failed: Agent is busy: ${workerId}`));
+
+    await sendQueuedConversationMessageNow({ runId, messageId: queued.id });
+    await delay(20);
+
+    const stored = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queued.id)).get();
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+
+    expect(stored).toMatchObject({
+      status: "pending",
+      lastError: `Ask failed: Agent is busy: ${workerId}`,
+    });
+    expect(stored?.deliveredAt).toBeNull();
+    expect(storedMessages).toHaveLength(0);
+    expect(events.some((event) => event.eventType === "queued_message_deferred")).toBe(true);
   });
 });

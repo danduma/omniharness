@@ -113,6 +113,37 @@ function isRecoverableMissingDirectWorkerStatus(status: string) {
   return ["starting", "working", "stuck", "recovering"].includes(normalized);
 }
 
+function isCancelledWorkerStatus(status: string | null | undefined) {
+  const normalized = status?.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  return normalized === "cancelled" || normalized === "canceled";
+}
+
+function workerCreatedAtMs(worker: typeof workers.$inferSelect) {
+  const time = worker.createdAt.getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function compareWorkersForFollowUp(a: typeof workers.$inferSelect, b: typeof workers.$inferSelect) {
+  const workerNumberDiff = (b.workerNumber ?? 0) - (a.workerNumber ?? 0);
+  if (workerNumberDiff !== 0) {
+    return workerNumberDiff;
+  }
+
+  const createdAtDiff = workerCreatedAtMs(b) - workerCreatedAtMs(a);
+  if (createdAtDiff !== 0) {
+    return createdAtDiff;
+  }
+
+  return b.id.localeCompare(a.id);
+}
+
+function selectConversationWorker(runId: string, allWorkers: Array<typeof workers.$inferSelect>) {
+  const sortedWorkers = allWorkers
+    .filter((candidate) => candidate.runId === runId)
+    .sort(compareWorkersForFollowUp);
+  return sortedWorkers.find((worker) => !isCancelledWorkerStatus(worker.status)) ?? sortedWorkers[0] ?? null;
+}
+
 async function clearMatchingRunFailureMessage(run: typeof runs.$inferSelect) {
   if (!run.lastError) {
     return;
@@ -231,7 +262,7 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       continue;
     }
 
-    const worker = allWorkers.find((candidate) => candidate.runId === run.id);
+    const worker = selectConversationWorker(run.id, allWorkers);
     if (!worker) {
       continue;
     }
@@ -288,7 +319,7 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       continue;
     }
 
-    const worker = allWorkers.find((candidate) => candidate.runId === run.id);
+    const worker = selectConversationWorker(run.id, allWorkers);
     if (!worker || agents.some((agent) => agent.name === worker.id)) {
       continue;
     }

@@ -7,6 +7,11 @@ import { Supervisor } from "@/server/supervisor";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { stopRunObserver } from "./observer";
 import { acquireSupervisorWakeLease, releaseSupervisorWakeLease } from "./lease";
+import {
+  cancelDurableSupervisorWake,
+  claimDueDurableSupervisorWake,
+  hasFutureDurableSupervisorWake,
+} from "./wake-schedule";
 
 const wakeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const wakeDeadlines = new Map<string, number>();
@@ -34,11 +39,28 @@ export async function executeSupervisorWake(runId: string) {
     return;
   }
 
+  const dueDurableWake = await claimDueDurableSupervisorWake(runId);
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
-  if (!isActiveImplementationRun(run)) {
+  if (run?.status === "quota_waiting" && !dueDurableWake) {
+    if (await hasFutureDurableSupervisorWake(runId)) {
+      await releaseSupervisorWakeLease(runId, leaseId);
+      return;
+    }
+  }
+
+  if (!run || !isActiveImplementationRun(run)) {
     stopRunObserver(runId);
     await releaseSupervisorWakeLease(runId, leaseId);
     return;
+  }
+
+  if (run.status === "quota_waiting" && dueDurableWake) {
+    await db.update(runs).set({
+      status: "running",
+      failedAt: null,
+      lastError: null,
+      updatedAt: new Date(),
+    }).where(eq(runs.id, runId));
   }
 
   inFlight.add(runId);
@@ -48,11 +70,18 @@ export async function executeSupervisorWake(runId: string) {
     const latestRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     if (!isActiveImplementationRun(latestRun)) {
       clearWake(runId);
+      void cancelDurableSupervisorWake(runId);
       stopRunObserver(runId);
     } else if (result.state === "wait") {
       scheduleSupervisorWake(runId, result.delayMs);
+    } else if (result.state === "quota_wait") {
+      clearWake(runId);
+      stopRunObserver(runId);
     } else if (result.state === "completed" || result.state === "failed" || result.state === "paused") {
       clearWake(runId);
+      if (result.state === "completed" || result.state === "failed") {
+        void cancelDurableSupervisorWake(runId);
+      }
       if (result.state === "completed" || result.state === "failed") {
         stopRunObserver(runId);
       }
@@ -87,4 +116,5 @@ export function scheduleSupervisorWake(runId: string, delayMs = 0) {
 export function cancelSupervisorWake(runId: string) {
   clearWake(runId);
   inFlight.delete(runId);
+  void cancelDurableSupervisorWake(runId);
 }

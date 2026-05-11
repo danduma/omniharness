@@ -52,6 +52,9 @@ function deleteConversationRows() {
     if (tables.has("supervisor_interventions")) {
       db.prepare("delete from supervisor_interventions where run_id in (select id from runs)").run();
     }
+    if (tables.has("supervisor_scheduled_wakes")) {
+      db.prepare("delete from supervisor_scheduled_wakes where run_id in (select id from runs)").run();
+    }
     if (tables.has("recovery_incidents")) {
       db.prepare("delete from recovery_incidents where run_id in (select id from runs)").run();
     }

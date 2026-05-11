@@ -419,12 +419,12 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(payload.queuedMessage).toMatchObject({
       id: queuedMessageId,
       action: "steer",
-      status: "delivered",
+      status: "delivering",
     });
 
     const storedQueued = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queuedMessageId)).get();
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
-    expect(storedQueued?.status).toBe("delivered");
+    expect(storedQueued?.status).toBe("delivering");
     expect(storedMessages.map((message) => message.content)).toEqual(["Use this worker note now."]);
   });
 
@@ -646,6 +646,77 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(storedMessages.map((message) => message.role)).toEqual(["user", "worker"]);
     expect(storedMessages[1]?.content).toBe("Continuing from the restored session.");
     expect(resumeEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
+  });
+
+  it("routes direct follow-ups to the latest non-cancelled worker", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const cancelledWorkerId = `${runId}-worker-1`;
+    const activeWorkerId = `${runId}-worker-2`;
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-latest-worker.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "done",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values([
+      {
+        id: cancelledWorkerId,
+        runId,
+        type: "claude",
+        status: "cancelled",
+        cwd: "/workspace/app",
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        workerNumber: 1,
+        createdAt: new Date(now.getTime()),
+        updatedAt: new Date(now.getTime()),
+      },
+      {
+        id: activeWorkerId,
+        runId,
+        type: "claude",
+        status: "idle",
+        cwd: "/workspace/app",
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        workerNumber: 2,
+        createdAt: new Date(now.getTime() + 1),
+        updatedAt: new Date(now.getTime() + 1),
+      },
+    ]);
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "you did it?" }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    await delay(20);
+
+    expect(mockAskAgent).toHaveBeenCalledWith(activeWorkerId, "you did it?");
+    expect(mockAskAgent).not.toHaveBeenCalledWith(cancelledWorkerId, "you did it?");
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
+    expect(storedMessages.map((message) => message.role)).toEqual(["user", "worker"]);
   });
 
   it("keeps a direct worker cancelled when a late response arrives after stop", async () => {

@@ -198,7 +198,24 @@ function compactExecutionEventDetails(details: string | null) {
     const parsed = JSON.parse(details) as Record<string, unknown>;
     const compacted: Record<string, unknown> = {};
 
-    for (const key of ["summary", "reason", "error", "mode", "seconds"]) {
+    for (const key of [
+      "summary",
+      "reason",
+      "error",
+      "mode",
+      "seconds",
+      "recoveryState",
+      "recommendedAction",
+      "resetAt",
+      "resumeAt",
+      "scheduledWakeAt",
+      "quotaResetSource",
+      "quotaResetConfidence",
+      "retryAfterMs",
+      "provider",
+      "sourceType",
+      "rawText",
+    ]) {
       const value = parsed[key];
       if (typeof value === "string") {
         compacted[key] = truncateText(value, EXECUTION_EVENT_DETAIL_LIMIT);
@@ -270,6 +287,9 @@ function deriveRecoveryState(incidents: PersistedEventRecords["allRecoveryIncide
     lastError: active.lastError,
     attemptCount: active.autoAttemptCount,
     nextAttemptAt: typeof parsedDetails.nextAttemptAt === "string" ? parsedDetails.nextAttemptAt : null,
+    resumeAt: typeof parsedDetails.resumeAt === "string" ? parsedDetails.resumeAt : null,
+    quotaResetSource: typeof parsedDetails.quotaResetSource === "string" ? parsedDetails.quotaResetSource : null,
+    quotaResetConfidence: typeof parsedDetails.quotaResetConfidence === "string" ? parsedDetails.quotaResetConfidence : null,
     policyDecision: typeof parsedDetails.decision === "string" ? parsedDetails.decision : null,
   };
 }

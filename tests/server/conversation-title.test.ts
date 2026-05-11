@@ -18,6 +18,18 @@ vi.mock("@mastra/core/agent", () => ({
   },
 }));
 
+vi.mock("@/server/supervisor/runtime-settings", () => ({
+  hydrateRuntimeEnvFromSettings: () => ({
+    env: {
+      SUPERVISOR_LLM_PROVIDER: "gemini",
+      SUPERVISOR_LLM_MODEL: "gemini-3.1-pro-preview",
+      SUPERVISOR_LLM_API_KEY: "gemini-key",
+      GEMINI_API_KEY: "gemini-key",
+    },
+    decryptionFailures: [],
+  }),
+}));
+
 describe("conversation title generation", () => {
   beforeEach(async () => {
     vi.unstubAllEnvs();

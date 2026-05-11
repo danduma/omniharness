@@ -10,6 +10,7 @@ describe("db schema", () => {
     expect(schema).toHaveProperty("supervisorInterventions");
     expect(schema).toHaveProperty("queuedConversationMessages");
     expect(schema).toHaveProperty("recoveryIncidents");
+    expect(schema).toHaveProperty("supervisorScheduledWakes");
   });
 
   it("persists durable worker terminal snapshots", () => {

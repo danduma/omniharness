@@ -1,3 +1,5 @@
+import { parseQuotaResetText } from "@/server/quota/reset-parser";
+
 export type WorkerHealth = "healthy" | "stuck" | "cred-exhausted";
 
 export interface WorkerHealthInput {
@@ -8,9 +10,9 @@ export interface WorkerHealthInput {
 }
 
 export function classifyWorkerHealth(input: WorkerHealthInput): WorkerHealth {
-  const stderr = (input.stderr || "").toLowerCase();
+  const stderr = input.stderr || "";
 
-  if (stderr.includes("429") || stderr.includes("quota") || stderr.includes("rate limit")) {
+  if (parseQuotaResetText(stderr).isQuotaError) {
     return "cred-exhausted";
   }
 

@@ -72,7 +72,7 @@ describe("POST /api/supervisor", () => {
 
     expect(insertedPlan?.path).toMatch(/^vibes\/ad-hoc\/.+\.md$/);
     expect(insertedRun?.planId).toBe(payload.planId);
-    expect(insertedRun?.title).toBe("New conversation");
+    expect(insertedRun?.title).toBe(command);
     expect(insertedRun?.projectPath).toBe(getAppRoot());
     expect(insertedMessage?.content).toBe(command);
     expect(mockSyncAccounts).toHaveBeenCalledOnce();
@@ -141,7 +141,7 @@ describe("POST /api/supervisor", () => {
     const insertedRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
 
     expect(insertedRun?.projectPath).toBe(projectPath);
-    expect(insertedRun?.title).toBe("New conversation");
+    expect(insertedRun?.title).toBe(command);
     expect(mockQueueConversationTitleGeneration).toHaveBeenCalledWith({ runId: payload.runId, command });
   });
 

@@ -3,7 +3,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
 import { executionEvents, recoveryIncidents } from "@/server/db/schema";
 
-export type RecoveryIncidentKind = "worker_lost" | "session_missing" | "queue_blocked" | "stale_running";
+export type RecoveryIncidentKind = "worker_lost" | "session_missing" | "queue_blocked" | "stale_running" | "quota_exhausted";
 export type RecoveryIncidentStatus = "open" | "recovering" | "resolved" | "needs_user" | "failed";
 
 const OPEN_INCIDENT_STATUSES: RecoveryIncidentStatus[] = ["open", "recovering", "needs_user"];

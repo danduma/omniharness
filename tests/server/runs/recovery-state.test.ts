@@ -52,6 +52,32 @@ describe("classifyRunRecoveryState", () => {
     });
   });
 
+  it("classifies quota-waiting runs as intentionally paused for quota reset", () => {
+    const resumeAt = "2026-05-10T18:00:01.000Z";
+    const state = classifyRunRecoveryState({
+      run: {
+        ...run,
+        status: "quota_waiting",
+        quotaResumeAt: resumeAt,
+        quotaResetSource: "relative-duration",
+        quotaResetConfidence: "high",
+      },
+      workers: [],
+      liveAgents: [],
+      messages: [userMessage],
+      nowMs: 60_000,
+    });
+
+    expect(state).toMatchObject({
+      kind: "quota_waiting",
+      status: "open",
+      recommendedAction: "wait_for_quota_reset",
+      resumeAt,
+      quotaResetSource: "relative-duration",
+      quotaResetConfidence: "high",
+    });
+  });
+
   it("classifies missing implementation workers without sessions as rerunnable", () => {
     const state = classifyRunRecoveryState({
       run,
@@ -100,6 +126,37 @@ describe("classifyRunRecoveryState", () => {
       kind: "queue_blocked",
       queuedMessageId: "queue-1",
       recommendedAction: "manual_resume",
+    });
+  });
+
+  it("prefers direct worker session recovery over a blocked queued message", () => {
+    const state = classifyRunRecoveryState({
+      run: { ...run, mode: "direct" },
+      workers: [{
+        id: "worker-1",
+        runId: run.id,
+        status: "working",
+        bridgeSessionId: "session-1",
+        updatedAt: new Date(0),
+      }],
+      liveAgents: [],
+      messages: [userMessage],
+      queuedMessages: [{
+        id: "queue-1",
+        runId: run.id,
+        targetWorkerId: "worker-1",
+        status: "failed",
+        lastError: "Ask failed: Agent not found: worker-1",
+      }],
+      nowMs: 60_000,
+    });
+
+    expect(state).toMatchObject({
+      kind: "lost_worker_resumable",
+      workerId: "worker-1",
+      queuedMessageId: "queue-1",
+      sessionId: "session-1",
+      recommendedAction: "resume_session",
     });
   });
 });

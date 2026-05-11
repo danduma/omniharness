@@ -64,6 +64,53 @@ async function createImplementationRun() {
   return { runId, workerId };
 }
 
+async function createDirectRun() {
+  const planId = randomUUID();
+  const runId = randomUUID();
+  const workerId = `${runId}-worker-1`;
+  const now = new Date(0);
+  await db.insert(plans).values({
+    id: planId,
+    path: "vibes/ad-hoc/direct-recovery.md",
+    status: "running",
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.insert(runs).values({
+    id: runId,
+    planId,
+    mode: "direct",
+    status: "running",
+    title: "Direct recovery test",
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.insert(messages).values({
+    id: randomUUID(),
+    runId,
+    role: "user",
+    kind: "checkpoint",
+    content: "Build the walkthrough",
+    createdAt: now,
+  });
+  await db.insert(workers).values({
+    id: workerId,
+    runId,
+    type: "claude",
+    status: "working",
+    cwd: process.cwd(),
+    outputLog: "",
+    outputEntriesJson: "[]",
+    currentText: "",
+    lastText: "",
+    bridgeSessionId: "session-direct-1",
+    bridgeSessionMode: "full-access",
+    createdAt: now,
+    updatedAt: now,
+  });
+  return { runId, workerId };
+}
+
 describe("reconcileRunRecovery", () => {
   beforeEach(async () => {
     mockSpawnAgent.mockReset();
@@ -109,6 +156,54 @@ describe("reconcileRunRecovery", () => {
     expect(worker?.status).toBe("working");
     expect(worker?.bridgeSessionId).toBe("session-2");
     expect(incident?.status).toBe("resolved");
+  });
+
+  it("auto-resumes a missing direct worker with a saved session even after a queued steer failed", async () => {
+    const { runId, workerId } = await createDirectRun();
+    await db.insert(queuedConversationMessages).values({
+      id: "queue-direct-1",
+      runId,
+      targetWorkerId: workerId,
+      action: "steer",
+      content: "Are you stuck",
+      status: "failed",
+      lastError: `Ask failed: Agent not found: ${workerId}`,
+      createdAt: new Date(1),
+      updatedAt: new Date(1),
+      deliveredAt: null,
+    });
+    mockSpawnAgent.mockResolvedValue({
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "session-direct-2",
+      sessionMode: "full-access",
+      lastText: "",
+      currentText: "",
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    const result = await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+
+    expect(result.action).toBe("resume_session");
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      name: workerId,
+      resumeSessionId: "session-direct-1",
+    }));
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
+    expect(run?.status).toBe("running");
+    expect(run?.lastError).toBeNull();
+    expect(worker?.status).toBe("idle");
+    expect(worker?.bridgeSessionId).toBe("session-direct-2");
+    expect(incident).toMatchObject({
+      kind: "session_missing",
+      status: "resolved",
+      queuedMessageId: "queue-direct-1",
+    });
   });
 
   it("restarts implementation runs from the latest checkpoint when no saved session exists", async () => {

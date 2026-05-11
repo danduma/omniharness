@@ -8,6 +8,8 @@ import { shouldAutoApprove } from "@/server/permissions";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { isActiveImplementationRun } from "@/server/runs/status";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
+import { extractQuotaResetInfo, parseQuotaResetText } from "@/server/quota/reset-parser";
+import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import { isLongWorkerCompletionText, normalizeWorkerStatus } from "@/server/supervisor/worker-completion";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
@@ -226,6 +228,27 @@ function getFatalBridgeStderr(stderrBuffer: string[]) {
     .find((line) => FATAL_STDERR_PATTERNS.some((pattern) => pattern.test(line)));
 
   return fatalLine?.trim() || null;
+}
+
+function getSnapshotQuotaText(snapshot: WorkerBridgeSnapshot) {
+  const diagnosticText = [
+    ...snapshot.stderrBuffer.slice(-20),
+    snapshot.stopReason ?? "",
+  ].filter(Boolean).join("\n");
+  const diagnosticQuota = parseQuotaResetText(diagnosticText);
+  if (diagnosticQuota.isQuotaError) {
+    return diagnosticQuota.rawText;
+  }
+
+  if (normalizeWorkerStatus(snapshot.state) === "error" || normalizeWorkerStatus(snapshot.state) === "stopped") {
+    const visibleText = [snapshot.currentText, snapshot.lastText].filter(Boolean).join("\n");
+    const visibleQuota = parseQuotaResetText(visibleText);
+    if (visibleQuota.isQuotaError) {
+      return visibleQuota.rawText;
+    }
+  }
+
+  return null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -730,6 +753,21 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
         return;
       }
 
+      const quotaInfo = extractQuotaResetInfo(error);
+      if (quotaInfo.isQuotaError) {
+        const quotaResult = await handleWorkerQuotaExhaustion({
+          runId,
+          workerId: worker.id,
+          text: quotaInfo.rawText,
+          now: new Date(now),
+        });
+        stopRunObserver(runId);
+        if (quotaResult.state === "needs_recovery") {
+          wakeSupervisor(runId, 0);
+        }
+        return;
+      }
+
       if (run && isMissingAgentError(error)) {
         try {
           const revivedSnapshot = await reviveWorkerFromSavedSession({
@@ -809,6 +847,21 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
       await persistWorkerSnapshot(worker.id, snapshot);
 
       const fatalBridgeError = getFatalBridgeStderr(snapshot.stderrBuffer);
+      const quotaText = getSnapshotQuotaText(snapshot);
+      if (quotaText) {
+        const quotaResult = await handleWorkerQuotaExhaustion({
+          runId,
+          workerId: worker.id,
+          text: quotaText,
+          now: new Date(now),
+        });
+        stopRunObserver(runId);
+        if (quotaResult.state === "needs_recovery") {
+          wakeSupervisor(runId, 0);
+        }
+        return;
+      }
+
       if (fatalBridgeError) {
         stopRunObserver(runId);
         await persistRunFailure(runId, new Error(fatalBridgeError));

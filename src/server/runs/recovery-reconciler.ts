@@ -22,6 +22,9 @@ import {
 import { restartImplementationRunFromLatestCheckpoint, setRunNeedsRecovery } from "./recovery-actions";
 
 function incidentKindForState(state: RecoveryState): RecoveryIncidentKind {
+  if (state.kind === "quota_waiting") {
+    return "quota_exhausted";
+  }
   if (state.kind === "queue_blocked") {
     return "queue_blocked";
   }
@@ -241,6 +244,15 @@ export async function reconcileRunRecovery(args: {
     });
     notifyEventStreamSubscribers();
     return { action: "needs_user" as const, runId: run.id, recoveryState: state };
+  }
+
+  if (decision.action === "wait_for_quota_reset") {
+    return {
+      action: "wait_for_quota_reset" as const,
+      runId: run.id,
+      recoveryState: state,
+      resumeAt: decision.resumeAt,
+    };
   }
 
   const nextAttemptAt = incident.autoAttemptCount > 0 && !args.force

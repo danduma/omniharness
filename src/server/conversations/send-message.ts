@@ -30,8 +30,39 @@ function isAgentAlreadyExistsError(error: unknown, workerId: string) {
   return message.includes("agent already exists") && message.includes(workerId.toLowerCase());
 }
 
+function normalizeWorkerStatus(status: string | null | undefined) {
+  return status?.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+}
+
 function isWorkerCancelled(worker: WorkerRecord | null | undefined) {
-  return worker?.status.trim().toLowerCase().split(":")[0]?.trim() === "cancelled";
+  const status = normalizeWorkerStatus(worker?.status);
+  return status === "cancelled" || status === "canceled";
+}
+
+function workerCreatedAtMs(worker: WorkerRecord) {
+  const createdAt = worker.createdAt;
+  const value = createdAt instanceof Date ? createdAt.getTime() : new Date(createdAt).getTime();
+  return Number.isFinite(value) ? value : 0;
+}
+
+function compareWorkersForFollowUp(a: WorkerRecord, b: WorkerRecord) {
+  const workerNumberDiff = (b.workerNumber ?? 0) - (a.workerNumber ?? 0);
+  if (workerNumberDiff !== 0) {
+    return workerNumberDiff;
+  }
+
+  const createdAtDiff = workerCreatedAtMs(b) - workerCreatedAtMs(a);
+  if (createdAtDiff !== 0) {
+    return createdAtDiff;
+  }
+
+  return b.id.localeCompare(a.id);
+}
+
+async function selectConversationWorker(runId: string) {
+  const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+  const sortedWorkers = [...runWorkers].sort(compareWorkersForFollowUp);
+  return sortedWorkers.find((worker) => !isWorkerCancelled(worker)) ?? sortedWorkers[0] ?? null;
 }
 
 async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRecord) {
@@ -242,7 +273,7 @@ export async function sendConversationMessage({
   }
 
   if (busyAction === "queue") {
-    const worker = await db.select().from(workers).where(eq(workers.runId, runId)).get();
+    const worker = await selectConversationWorker(runId);
     if (!worker) {
       throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
     }
@@ -302,7 +333,7 @@ export async function sendConversationMessage({
     };
   }
 
-  const worker = await db.select().from(workers).where(eq(workers.runId, runId)).get();
+  const worker = await selectConversationWorker(runId);
   if (!worker) {
     throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
   }

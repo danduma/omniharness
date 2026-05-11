@@ -20,6 +20,26 @@ describe("recovery policy", () => {
     await expect(getRecoveryPolicy()).resolves.toEqual(DEFAULT_RECOVERY_POLICY);
   });
 
+  it("normalizes legacy policies with quota defaults", async () => {
+    const saved = await saveRecoveryPolicy({
+      autoRecoverImplementationRuns: true,
+      autoRecoverDirectRuns: false,
+      maxAutoAttemptsPerIncident: 3,
+      baseBackoffMs: 5_000,
+      maxBackoffMs: 60_000,
+      sessionResumeFirst: true,
+      restartFromCheckpointWhenSessionMissing: true,
+      preserveQueuedMessages: true,
+    });
+
+    expect(saved).toMatchObject({
+      autoResumeAfterQuotaReset: true,
+      quotaResetGraceMs: 1_000,
+      maxQuotaWaitMs: 86_400_000,
+      allowQuotaWaitWithoutParsedReset: false,
+    });
+  });
+
   it("persists normalized policy settings", async () => {
     const saved = await saveRecoveryPolicy({
       ...DEFAULT_RECOVERY_POLICY,
@@ -50,6 +70,24 @@ describe("recovery policy", () => {
     expect(decision.action).toBe("restart_from_checkpoint");
   });
 
+  it("resumes saved direct worker sessions even when direct reruns need manual recovery", () => {
+    const decision = decideRecoveryAction({
+      runMode: "direct",
+      policy: { ...DEFAULT_RECOVERY_POLICY, autoRecoverDirectRuns: false },
+      autoAttemptCount: 0,
+      recoveryState: {
+        kind: "lost_worker_resumable",
+        status: "open",
+        message: "missing",
+        recommendedAction: "resume_session",
+        workerId: "worker-1",
+        sessionId: "session-1",
+      },
+    });
+
+    expect(decision.action).toBe("resume_session");
+  });
+
   it("stops automation when attempt budget is exhausted", () => {
     const decision = decideRecoveryAction({
       runMode: "implementation",
@@ -76,5 +114,25 @@ describe("recovery policy", () => {
     });
 
     expect(next.getTime()).toBe(13_000);
+  });
+
+  it("waits for quota reset without consuming normal recovery attempt budget", () => {
+    const decision = decideRecoveryAction({
+      runMode: "implementation",
+      policy: { ...DEFAULT_RECOVERY_POLICY, maxAutoAttemptsPerIncident: 1 },
+      autoAttemptCount: 99,
+      recoveryState: {
+        kind: "quota_waiting",
+        status: "open",
+        message: "Waiting for quota reset.",
+        recommendedAction: "wait_for_quota_reset",
+        resumeAt: "2026-05-10T18:00:01.000Z",
+      },
+    });
+
+    expect(decision).toMatchObject({
+      action: "wait_for_quota_reset",
+      resumeAt: new Date("2026-05-10T18:00:01.000Z"),
+    });
   });
 });

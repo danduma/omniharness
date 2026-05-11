@@ -5,6 +5,7 @@ import { db } from '../db';
 import { accounts, creditEvents } from '../db/schema';
 import { randomUUID } from 'crypto';
 import { eq } from 'drizzle-orm';
+import { normalizeQuotaResumeAt, parseQuotaResetText } from '@/server/quota/reset-parser';
 
 export interface AccountConfig {
   id: string;
@@ -92,6 +93,23 @@ export class CreditManager {
     }
 
     await this.syncAccounts();
+    if (strategy === 'wait_for_reset') {
+      const quotaInfo = parseQuotaResetText(target.reset_schedule || 'quota reset schedule unavailable');
+      const resumeAt = normalizeQuotaResumeAt(quotaInfo);
+      await this.recordEvent(target.id, workerId, 'wait', JSON.stringify({
+        strategy,
+        accountId: target.id,
+        provider: target.provider,
+        resetSchedule: target.reset_schedule ?? null,
+        resumeAt: resumeAt?.toISOString() ?? null,
+        quotaResetSource: quotaInfo.source,
+        quotaResetConfidence: quotaInfo.confidence,
+      }));
+      return resumeAt
+        ? `Worker ${workerId} will wait for ${target.id} until ${resumeAt.toISOString()} via strategy ${strategy}.`
+        : `Worker ${workerId} will wait via strategy ${strategy}, but no schedulable reset time was available for ${target.id}.`;
+    }
+
     await this.recordEvent(target.id, workerId, 'switched', `Strategy ${strategy} selected ${target.id}`);
     return `Worker ${workerId} switched to ${target.id} via strategy ${strategy}.`;
   }

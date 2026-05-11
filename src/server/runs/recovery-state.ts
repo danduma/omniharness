@@ -3,6 +3,7 @@ export type RecoveryStateKind =
   | "recovering"
   | "lost_worker_resumable"
   | "lost_worker_rerunnable"
+  | "quota_waiting"
   | "needs_recovery"
   | "queue_blocked"
   | "unrecoverable";
@@ -11,6 +12,7 @@ export type RecoveryRecommendedAction =
   | "none"
   | "resume_session"
   | "restart_from_checkpoint"
+  | "wait_for_quota_reset"
   | "manual_resume"
   | "inspect_error";
 
@@ -23,12 +25,18 @@ export type RecoveryState = {
   queuedMessageId?: string | null;
   sessionId?: string | null;
   reason?: string | null;
+  resumeAt?: string | null;
+  quotaResetSource?: string | null;
+  quotaResetConfidence?: string | null;
 };
 
 export type RecoveryRunLike = {
   id: string;
   mode?: string | null;
   status: string;
+  quotaResumeAt?: Date | string | null;
+  quotaResetSource?: string | null;
+  quotaResetConfidence?: string | null;
   createdAt?: Date | string | null;
   updatedAt?: Date | string | null;
 };
@@ -158,6 +166,21 @@ export function classifyRunRecoveryState({
     };
   }
 
+  if (runStatus === "quota_waiting") {
+    const resumeAt = run.quotaResumeAt instanceof Date
+      ? run.quotaResumeAt.toISOString()
+      : run.quotaResumeAt ?? null;
+    return {
+      kind: "quota_waiting",
+      status: "open",
+      message: "Waiting for quota reset before resuming.",
+      recommendedAction: "wait_for_quota_reset",
+      resumeAt,
+      quotaResetSource: run.quotaResetSource ?? null,
+      quotaResetConfidence: run.quotaResetConfidence ?? null,
+    };
+  }
+
   if (TERMINAL_RUN_STATUSES.has(runStatus)) {
     return {
       kind: "healthy",
@@ -170,17 +193,6 @@ export function classifyRunRecoveryState({
   const liveAgentNames = new Set(liveAgents.map((agent) => agent.name));
   const runWorkers = workers.filter((worker) => worker.runId === run.id);
   const blockedMessage = findQueueBlockedMessage(queuedMessages);
-  if (blockedMessage && run.mode !== "implementation") {
-    return {
-      kind: "queue_blocked",
-      status: "needs_user",
-      message: "A queued message could not be delivered because its worker is missing.",
-      recommendedAction: "manual_resume",
-      workerId: blockedMessage.targetWorkerId,
-      queuedMessageId: blockedMessage.id,
-      reason: blockedMessage.lastError,
-    };
-  }
 
   for (const worker of runWorkers) {
     if (!isActivePersistedWorker(worker, nowMs) || liveAgentNames.has(worker.id)) {
@@ -221,6 +233,18 @@ export function classifyRunRecoveryState({
       workerId: worker.id,
       queuedMessageId: workerBlockedMessage?.id ?? null,
       reason: workerBlockedMessage?.lastError ?? "Worker was marked active but is not present in the bridge runtime.",
+    };
+  }
+
+  if (blockedMessage && run.mode !== "implementation") {
+    return {
+      kind: "queue_blocked",
+      status: "needs_user",
+      message: "A queued message could not be delivered because its worker is missing.",
+      recommendedAction: "manual_resume",
+      workerId: blockedMessage.targetWorkerId,
+      queuedMessageId: blockedMessage.id,
+      reason: blockedMessage.lastError,
     };
   }
 

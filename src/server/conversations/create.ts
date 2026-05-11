@@ -64,7 +64,29 @@ function getDefaultConversationTitle(mode: ConversationMode, command: string) {
     return "Commit";
   }
 
-  return "New conversation";
+  return buildInitialConversationTitle(command);
+}
+
+function shouldGenerateConversationTitle(mode: ConversationMode, command: string) {
+  return !(mode === "direct" && command === AUTO_COMMIT_PROJECT_PROMPT) && Boolean(command.trim());
+}
+
+function buildInitialConversationTitle(command: string) {
+  const firstLine = command
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .find(Boolean);
+
+  if (!firstLine) {
+    return "New conversation";
+  }
+
+  const maxLength = 80;
+  if (firstLine.length <= maxLength) {
+    return firstLine;
+  }
+
+  return `${firstLine.slice(0, maxLength - 3).trimEnd()}...`;
 }
 
 async function buildCreatedConversationResponse(args: {
@@ -270,6 +292,7 @@ export async function createConversation(args: {
     ? normalizeWorkerType(args.preferredWorkerType)
     : null;
   const defaultTitle = getDefaultConversationTitle(mode, command);
+  const generateTitle = shouldGenerateConversationTitle(mode, command);
   const allowedWorkerTypes = parseAllowedWorkerTypes(
     Array.isArray(args.allowedWorkerTypes)
       ? JSON.stringify(args.allowedWorkerTypes)
@@ -378,7 +401,7 @@ export async function createConversation(args: {
       });
     }
 
-    if (defaultTitle === "New conversation") {
+    if (generateTitle) {
       queueConversationTitleGeneration({ runId, command }).catch((error) => {
         console.error("Conversation title generation failed:", error);
       });
@@ -386,7 +409,7 @@ export async function createConversation(args: {
     return response;
   }
 
-  if (defaultTitle === "New conversation") {
+  if (generateTitle) {
     queueConversationTitleGeneration({ runId, command }).catch((error) => {
       console.error("Conversation title generation failed:", error);
     });

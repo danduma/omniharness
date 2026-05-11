@@ -143,7 +143,7 @@ describe("POST /api/conversations", () => {
       id: payload.runId,
       planId: payload.planId,
       mode: "implementation",
-      title: "New conversation",
+      title: "Implement docs/superpowers/plans/foo.md",
     }));
     expect(payload.message).toEqual(expect.objectContaining({
       runId: payload.runId,
@@ -154,6 +154,34 @@ describe("POST /api/conversations", () => {
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
     expect(mockSpawnAgent).not.toHaveBeenCalled();
     expect(mockNotifyEventStreamSubscribers).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the first prompt line as the temporary conversation title", async () => {
+    const command = [
+      "Fix the composer send button when attachments are present",
+      "",
+      "The generated title can replace this later.",
+    ].join("\n");
+    const request = new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "implementation",
+        command,
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+        allowedWorkerTypes: ["codex"],
+      }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    const run = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+
+    expect(payload.run.title).toBe("Fix the composer send button when attachments are present");
+    expect(run?.title).toBe("Fix the composer send button when attachments are present");
+    expect(mockQueueConversationTitleGeneration).toHaveBeenCalledWith({ runId: payload.runId, command });
   });
 
   it("stores the app root as the project path when no project is selected", async () => {

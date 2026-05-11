@@ -14,12 +14,17 @@ export type RecoveryPolicy = {
   sessionResumeFirst: boolean;
   restartFromCheckpointWhenSessionMissing: boolean;
   preserveQueuedMessages: boolean;
+  autoResumeAfterQuotaReset: boolean;
+  quotaResetGraceMs: number;
+  maxQuotaWaitMs: number;
+  allowQuotaWaitWithoutParsedReset: boolean;
 };
 
 export type RecoveryPolicyDecision =
   | { action: "none"; reason: string }
   | { action: "resume_session"; reason: string }
   | { action: "restart_from_checkpoint"; reason: string }
+  | { action: "wait_for_quota_reset"; reason: string; resumeAt: Date | null }
   | { action: "wait_for_backoff"; reason: string; nextAttemptAt: Date }
   | { action: "needs_user"; reason: string }
   | { action: "mark_failed"; reason: string };
@@ -33,6 +38,10 @@ export const DEFAULT_RECOVERY_POLICY: RecoveryPolicy = {
   sessionResumeFirst: true,
   restartFromCheckpointWhenSessionMissing: true,
   preserveQueuedMessages: true,
+  autoResumeAfterQuotaReset: true,
+  quotaResetGraceMs: 1_000,
+  maxQuotaWaitMs: 24 * 60 * 60_000,
+  allowQuotaWaitWithoutParsedReset: false,
 };
 
 function asBoolean(value: unknown, fallback: boolean) {
@@ -57,6 +66,10 @@ export function normalizeRecoveryPolicy(value: unknown): RecoveryPolicy {
     sessionResumeFirst: asBoolean(record.sessionResumeFirst, DEFAULT_RECOVERY_POLICY.sessionResumeFirst),
     restartFromCheckpointWhenSessionMissing: asBoolean(record.restartFromCheckpointWhenSessionMissing, DEFAULT_RECOVERY_POLICY.restartFromCheckpointWhenSessionMissing),
     preserveQueuedMessages: asBoolean(record.preserveQueuedMessages, DEFAULT_RECOVERY_POLICY.preserveQueuedMessages),
+    autoResumeAfterQuotaReset: asBoolean(record.autoResumeAfterQuotaReset, DEFAULT_RECOVERY_POLICY.autoResumeAfterQuotaReset),
+    quotaResetGraceMs: asPositiveInteger(record.quotaResetGraceMs, DEFAULT_RECOVERY_POLICY.quotaResetGraceMs),
+    maxQuotaWaitMs: asPositiveInteger(record.maxQuotaWaitMs, DEFAULT_RECOVERY_POLICY.maxQuotaWaitMs),
+    allowQuotaWaitWithoutParsedReset: asBoolean(record.allowQuotaWaitWithoutParsedReset, DEFAULT_RECOVERY_POLICY.allowQuotaWaitWithoutParsedReset),
   };
 }
 
@@ -113,11 +126,29 @@ export function decideRecoveryAction(args: {
     return { action: "none", reason: recoveryState.message };
   }
 
+  if (recoveryState.kind === "quota_waiting") {
+    if (args.force) {
+      return { action: "none", reason: "Manual quota resume requested." };
+    }
+    if (!policy.autoResumeAfterQuotaReset && !args.force) {
+      return { action: "needs_user", reason: "Automatic quota reset resume is disabled." };
+    }
+    return {
+      action: "wait_for_quota_reset",
+      reason: recoveryState.message,
+      resumeAt: recoveryState.resumeAt ? new Date(recoveryState.resumeAt) : null,
+    };
+  }
+
   if (args.autoAttemptCount >= policy.maxAutoAttemptsPerIncident && !args.force) {
     return {
       action: "needs_user",
       reason: `Automatic recovery reached the ${policy.maxAutoAttemptsPerIncident} attempt limit.`,
     };
+  }
+
+  if (recoveryState.kind === "lost_worker_resumable" && policy.sessionResumeFirst) {
+    return { action: "resume_session", reason: "A saved worker session is available." };
   }
 
   const implementationRun = args.runMode === "implementation";
@@ -128,10 +159,6 @@ export function decideRecoveryAction(args: {
     if (!implementationRun && !policy.autoRecoverDirectRuns) {
       return { action: "needs_user", reason: "Automatic recovery is disabled for this conversation mode." };
     }
-  }
-
-  if (recoveryState.kind === "lost_worker_resumable" && policy.sessionResumeFirst) {
-    return { action: "resume_session", reason: "A saved worker session is available." };
   }
 
   if (recoveryState.kind === "lost_worker_rerunnable" && implementationRun && policy.restartFromCheckpointWhenSessionMissing) {

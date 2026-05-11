@@ -4,6 +4,7 @@ import { messages, plans, runs } from "@/server/db/schema";
 import { startSupervisorRun } from "./start";
 import { clearSupervisorWakeLease } from "./lease";
 import { isTransientSupervisorError } from "./retry";
+import { cancelDurableSupervisorWakesForTerminalRuns, rehydrateDurableSupervisorWakes } from "./wake-schedule";
 
 const WATCHDOG_INTERVAL_MS = 15_000;
 
@@ -48,11 +49,17 @@ async function resumeRecoverableFailedImplementationRun(run: typeof runs.$inferS
 }
 
 export async function syncRunningSupervision() {
+  await cancelDurableSupervisorWakesForTerminalRuns();
+  await rehydrateDurableSupervisorWakes();
   const activeRuns = await db.select().from(runs).where(and(
-    inArray(runs.status, ["running", "failed"]),
+    inArray(runs.status, ["running", "failed", "quota_waiting"]),
     eq(runs.mode, "implementation"),
   ));
   for (const run of activeRuns) {
+    if (run.status === "quota_waiting") {
+      continue;
+    }
+
     if (run.status === "failed") {
       if (!isRecoverableFailedImplementationRun(run)) {
         continue;

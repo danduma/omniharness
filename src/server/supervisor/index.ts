@@ -15,6 +15,8 @@ import { buildSupervisorTurnContext } from "@/server/supervisor/context";
 import { buildSupervisorModelMessages } from "@/server/supervisor/context-window";
 import { parseSupervisorToolCallFromMastra, SupervisorProtocolError } from "@/server/supervisor/protocol";
 import { retrySupervisorRequest } from "@/server/supervisor/retry";
+import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
+import { handleSupervisorQuotaExhaustion, handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import { selectSpawnableWorkerType } from "@/server/supervisor/worker-availability";
 import { parseAllowedWorkerTypes, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
 import { persistRunFailure } from "@/server/runs/failures";
@@ -37,6 +39,7 @@ export interface SupervisorOptions {
 export type SupervisorRunResult =
   | { state: "wait"; delayMs: number }
   | { state: "paused" }
+  | { state: "quota_wait"; resumeAt: Date }
   | { state: "completed" }
   | { state: "failed" };
 
@@ -336,13 +339,6 @@ async function pauseForPreflightConfirmation(args: {
 
 function isAgentBusyError(error: unknown) {
   return /\bagent is busy\b/i.test(formatSupervisorError(error));
-}
-
-function isCreditExhaustionError(error: unknown) {
-  const status = typeof (error as { status?: unknown })?.status === "number"
-    ? (error as { status: number }).status
-    : null;
-  return status === 429 || /\b(quota|credit|rate limit|resource exhausted)\b/i.test(formatSupervisorError(error));
 }
 
 function resolveSupervisorReadPath(requestedPath: string, projectPath: string | null | undefined) {
@@ -813,19 +809,46 @@ export class Supervisor {
       try {
         toolCalls = await this.requestToolCalls(llmConfig, turnStep);
       } catch (error) {
-        if (creditStrategy !== "fallback_api" || !isCreditExhaustionError(error)) {
+        const quotaInfo = extractQuotaResetInfo(error, { provider: llmConfig.provider });
+        if (!quotaInfo.isQuotaError) {
           throw error;
         }
 
-        validateSupervisorModelConfig(fallbackLlmConfig, []);
-        await insertExecutionEvent(this.runId, "supervisor_credit_strategy_applied", {
-          summary: "Retried supervisor model request with the fallback API profile.",
-          strategy: creditStrategy,
-          primaryProvider: llmConfig.provider,
-          fallbackProvider: fallbackLlmConfig.provider,
-          error: formatSupervisorError(error),
-        });
-        toolCalls = await this.requestToolCalls(fallbackLlmConfig, turnStep);
+        if (creditStrategy === "fallback_api") {
+          try {
+            validateSupervisorModelConfig(fallbackLlmConfig, []);
+            await insertExecutionEvent(this.runId, "supervisor_credit_strategy_applied", {
+              summary: "Retried supervisor model request with the fallback API profile.",
+              strategy: creditStrategy,
+              primaryProvider: llmConfig.provider,
+              fallbackProvider: fallbackLlmConfig.provider,
+              error: formatSupervisorError(error),
+            });
+            toolCalls = await this.requestToolCalls(fallbackLlmConfig, turnStep);
+          } catch (fallbackError) {
+            const fallbackQuotaInfo = extractQuotaResetInfo(fallbackError, { provider: fallbackLlmConfig.provider });
+            if (!fallbackQuotaInfo.isQuotaError) {
+              throw fallbackError;
+            }
+            const quotaResult = await handleSupervisorQuotaExhaustion({
+              runId: this.runId,
+              error: fallbackError,
+              provider: fallbackLlmConfig.provider,
+            });
+            return quotaResult.state === "quota_wait"
+              ? { state: "quota_wait", resumeAt: quotaResult.resumeAt }
+              : { state: "paused" };
+          }
+        } else {
+          const quotaResult = await handleSupervisorQuotaExhaustion({
+            runId: this.runId,
+            error,
+            provider: llmConfig.provider,
+          });
+          return quotaResult.state === "quota_wait"
+            ? { state: "quota_wait", resumeAt: quotaResult.resumeAt }
+            : { state: "paused" };
+        }
       }
       if (!await this.loadActiveRun()) {
         return { state: "completed" };
@@ -904,6 +927,18 @@ export class Supervisor {
               ...(mcpServers?.length ? { mcpServers } : {}),
             });
           } catch (error) {
+            const quotaInfo = extractQuotaResetInfo(error, { provider: workerType.type });
+            if (quotaInfo.isQuotaError) {
+              const quotaResult = await handleWorkerQuotaExhaustion({
+                runId: this.runId,
+                workerId,
+                text: quotaInfo.rawText,
+                provider: workerType.type,
+              });
+              return quotaResult.state === "quota_wait"
+                ? { state: "quota_wait", resumeAt: quotaResult.resumeAt }
+                : { state: "paused" };
+            }
             await db.update(workers).set({
               status: "error",
               updatedAt: new Date(),
@@ -966,6 +1001,19 @@ export class Supervisor {
               return deferBusyWorkerPrompt(this.runId, workerId, prompt, error);
             }
 
+            const quotaInfo = extractQuotaResetInfo(error, { provider: workerType.type });
+            if (quotaInfo.isQuotaError) {
+              const quotaResult = await handleWorkerQuotaExhaustion({
+                runId: this.runId,
+                workerId,
+                text: quotaInfo.rawText,
+                provider: workerType.type,
+              });
+              return quotaResult.state === "quota_wait"
+                ? { state: "quota_wait", resumeAt: quotaResult.resumeAt }
+                : { state: "paused" };
+            }
+
             const errorMessage = error instanceof Error ? error.message : String(error);
             await db.update(workers).set({
               status: "error",
@@ -1009,6 +1057,18 @@ export class Supervisor {
               }).where(eq(supervisorInterventions.id, intervention.id));
               notifyEventStreamSubscribers();
               return deferBusyWorkerPrompt(this.runId, workerId, prompt, error);
+            }
+
+            const quotaInfo = extractQuotaResetInfo(error);
+            if (quotaInfo.isQuotaError) {
+              const quotaResult = await handleWorkerQuotaExhaustion({
+                runId: this.runId,
+                workerId,
+                text: quotaInfo.rawText,
+              });
+              return quotaResult.state === "quota_wait"
+                ? { state: "quota_wait", resumeAt: quotaResult.resumeAt }
+                : { state: "paused" };
             }
 
             throw error;
