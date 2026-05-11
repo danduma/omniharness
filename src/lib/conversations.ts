@@ -10,6 +10,7 @@ type RunRecord = {
   createdAt: string;
   projectPath?: string | null;
   title?: string | null;
+  preferredWorkerType?: string | null;
 };
 
 export type ConversationGroup = {
@@ -22,6 +23,7 @@ export type ConversationGroup = {
     mode?: string | null;
     status: string;
     createdAt: string;
+    preferredWorkerType?: string | null;
   }>;
 };
 
@@ -60,6 +62,7 @@ export function buildConversationGroups(args: {
         mode: run.mode,
         status: run.status,
         createdAt: run.createdAt,
+        preferredWorkerType: run.preferredWorkerType,
       };
     })
     .filter((run): run is NonNullable<typeof run> => Boolean(run));
@@ -106,6 +109,7 @@ export function buildConversationGroups(args: {
         mode: run.mode,
         status: run.status,
         createdAt: run.createdAt,
+        preferredWorkerType: run.preferredWorkerType,
       })),
   }));
 
@@ -118,6 +122,7 @@ export function buildConversationGroups(args: {
       mode: run.mode,
       status: run.status,
       createdAt: run.createdAt,
+      preferredWorkerType: run.preferredWorkerType,
     }));
 
   if (otherRuns.length > 0 && !groups.has("other")) {

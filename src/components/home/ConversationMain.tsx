@@ -50,22 +50,24 @@ function ConversationExecutionStatus({
       >
         {liveExecutionStatus.label}
       </span>
-      <div className="flex shrink-0 items-center gap-1" aria-hidden={liveExecutionStatus.tone !== "active"}>
-        {[0, 1, 2].map((index) => (
-          <span
-            key={index}
-            className={cn(
-              "h-1.5 w-1.5 rounded-full",
-              liveExecutionStatus.tone === "error"
-                ? "bg-destructive/70"
-                : liveExecutionStatus.tone === "warning"
-                  ? "bg-amber-500/80"
-                  : "bg-amber-500/80 animate-pulse",
-            )}
-            style={{ animationDelay: `${index * 180}ms` }}
-          />
-        ))}
-      </div>
+      {liveExecutionStatus.tone !== "muted" ? (
+        <div className="flex shrink-0 items-center gap-1" aria-hidden={liveExecutionStatus.tone !== "active"}>
+          {[0, 1, 2].map((index) => (
+            <span
+              key={index}
+              className={cn(
+                "h-1.5 w-1.5 rounded-full",
+                liveExecutionStatus.tone === "error"
+                  ? "bg-destructive/70"
+                  : liveExecutionStatus.tone === "warning"
+                    ? "bg-amber-500/80"
+                    : "bg-amber-500/80 animate-pulse",
+              )}
+              style={{ animationDelay: `${index * 180}ms` }}
+            />
+          ))}
+        </div>
+      ) : null}
     {statusText ? (
       <span className="min-w-0 truncate text-xs leading-5 text-muted-foreground">{statusText}</span>
     ) : null}

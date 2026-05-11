@@ -227,7 +227,15 @@ export type EventStreamState = {
 };
 export type SettingsTab = "general" | "models" | "agents" | "runtime" | "memory";
 
-export type SidebarRun = { id: string; title: string; path: string; mode?: ConversationModeOption | null; status: string; createdAt: string };
+export type SidebarRun = {
+  id: string;
+  title: string;
+  path: string;
+  mode?: ConversationModeOption | null;
+  status: string;
+  createdAt: string;
+  preferredWorkerType?: WorkerType | null;
+};
 export type SidebarGroup = { path: string; name: string; runs: SidebarRun[] };
 
 export type NoticeTone = "error" | "warning" | "success";

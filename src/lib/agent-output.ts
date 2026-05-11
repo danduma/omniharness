@@ -112,11 +112,11 @@ function shouldKeepTrailingThinkingOpen(snapshot: AgentOutputSnapshot) {
     return true;
   }
 
-  if (cleanPaneText(snapshot.currentText || null)) {
-    return true;
+  if (!ACTIVE_THINKING_AGENT_STATES.has(state)) {
+    return false;
   }
 
-  return ACTIVE_THINKING_AGENT_STATES.has(state);
+  return true;
 }
 
 function unwrapCodeFence(value: string): { text: string; language?: string } {

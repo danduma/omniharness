@@ -1,11 +1,12 @@
 import type React from "react";
-import { Archive, Bolt, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Trash2, TriangleAlert, Wand2 } from "lucide-react";
+import { Archive, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Trash2, TriangleAlert, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { OmniHarnessMark } from "@/components/OmniHarnessMark";
+import { CliBrandIcon } from "@/components/cli-brand-icons";
 import { PRODUCT_NAME } from "@/app/home/constants";
 import { getRunLatestMessageTimestamp, isRunUnread } from "@/lib/conversation-state";
 import { getConversationVisualKind, type ConversationVisualKind } from "@/lib/conversation-visuals";
@@ -15,14 +16,18 @@ import { isArchivableRunStatus, normalizeRunStatus } from "@/lib/run-status";
 import { cn } from "@/lib/utils";
 import type { SidebarGroup, SidebarRun } from "@/app/home/types";
 
+type ConversationVisualIconProps = {
+  className?: string;
+} & React.SVGProps<SVGSVGElement>;
+
 const CONVERSATION_VISUAL_CONFIG: Record<ConversationVisualKind, {
   label: string;
-  Icon: typeof Bolt;
+  Icon: React.ComponentType<ConversationVisualIconProps>;
   className: string;
 }> = {
   supervisor: {
     label: "Supervisor",
-    Icon: Bolt,
+    Icon: OmniHarnessLogoGlyph,
     className: "border-[#858a68]/25 bg-[#858a68]/10 text-[#5f6548] dark:border-[#c5ca9a]/25 dark:bg-[#c5ca9a]/10 dark:text-[#c5ca9a]",
   },
   direct: {
@@ -36,6 +41,27 @@ const CONVERSATION_VISUAL_CONFIG: Record<ConversationVisualKind, {
     className: "border-[#ad8247]/30 bg-[#ad8247]/10 text-[#846233] dark:border-[#e2b36b]/25 dark:bg-[#e2b36b]/10 dark:text-[#e2b36b]",
   },
 };
+
+function OmniHarnessLogoGlyph({ className, ...props }: ConversationVisualIconProps) {
+  return (
+    <svg
+      viewBox="0 0 64 64"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+      className={className}
+      {...props}
+    >
+      <g fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="butt" strokeLinejoin="miter">
+        <path d="M6.5 28A25.8 25.8 0 0 1 57.5 28" />
+        <path d="M57.5 36A25.8 25.8 0 0 1 6.5 36" />
+        <path d="M23 24v16" />
+        <path d="M41 24v16" />
+        <path d="M26.417 32L37.466 32" />
+      </g>
+    </svg>
+  );
+}
 
 export interface ConversationSidebarProps {
   filteredProjects: SidebarGroup[];
@@ -281,7 +307,11 @@ export function ConversationSidebar({
                                 title={`${visualConfig.label} conversation`}
                                 aria-label={`${visualConfig.label} conversation`}
                               >
-                                <ConversationIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                                {visualKind === "direct" ? (
+                                  <CliBrandIcon workerType={run.preferredWorkerType ?? null} className="h-3.5 w-3.5" />
+                                ) : (
+                                  <ConversationIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                                )}
                               </span>
                               {renamingRunId === run.id && renameSource !== "topbar" ? (
                                 <Input

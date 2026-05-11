@@ -1343,6 +1343,11 @@ export function Terminal({
     () => activityFilter ? activity.filter(activityFilter) : activity,
     [activity, activityFilter],
   );
+  const effectiveToolGroupsDefaultOpen = useMemo(() => {
+    if (toolGroupsDefaultOpen) return true;
+    const lastMeaningful = filteredActivity.filter((a) => a.kind !== "pending_assistant").at(-1);
+    return lastMeaningful?.kind === "tool_group" && isRunningActivityStatus(lastMeaningful.status);
+  }, [filteredActivity, toolGroupsDefaultOpen]);
   const terminalZoomStyle = useMemo(() => (
     textSizeScope === "conversation"
       ? getConversationTerminalTextSizeStyle(conversationTextSize)
@@ -1442,7 +1447,7 @@ export function Terminal({
                   onCancelEditingUserMessage={onCancelEditingUserMessage}
                   onSaveEditedUserMessage={onSaveEditedUserMessage}
                   thoughtsDefaultOpen={thoughtsDefaultOpen}
-                  toolGroupsDefaultOpen={toolGroupsDefaultOpen}
+                  toolGroupsDefaultOpen={effectiveToolGroupsDefaultOpen}
                   projectRoot={projectRoot}
                   onOpenProjectFile={handleProjectFileReferenceClick}
                 />

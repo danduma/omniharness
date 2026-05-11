@@ -15,6 +15,7 @@ describe("buildConversationGroups", () => {
           createdAt: "2026-04-20T14:34:11.000Z",
           projectPath: "/workspace/app",
           title: "Fix Search Layout",
+          preferredWorkerType: "codex",
         },
       ],
     });
@@ -28,6 +29,7 @@ describe("buildConversationGroups", () => {
       title: "Fix Search Layout",
       path: "vibes/ad-hoc/2026-04-20T14-34-11.md",
       mode: "implementation",
+      preferredWorkerType: "codex",
     });
   });
 

@@ -52,6 +52,10 @@ const terminalSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/Terminal.tsx"),
   "utf8"
 );
+const cliBrandIconsSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/components/cli-brand-icons.tsx"),
+  "utf8"
+);
 const workersSidebarSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/home/WorkersSidebar.tsx"),
   "utf8"
@@ -107,7 +111,12 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(workerCardSource).toContain("Permissions waiting");
   expect(workerCardSource).toContain("Context usage not reported");
   expect(workerCardSource).toContain("Context usage ");
+  expect(cliBrandIconsSource).toContain("siClaude");
+  expect(cliBrandIconsSource).toContain("siGooglegemini");
+  expect(cliBrandIconsSource).toContain("Codex");
+  expect(cliBrandIconsSource).toContain("OPENCODE_ICON_SRC");
   expect(pageSource).toContain("Claude Code");
+  expect(pageSource).toContain('stroke="currentColor"');
   expect(workerCardSource).toContain('promptPreview?: string | null;');
   expect(workerCardSource).toContain('userMessages?: TerminalUserMessage[];');
   expect(workersSidebarSource).toContain('promptPreview={worker.initialPrompt}');
