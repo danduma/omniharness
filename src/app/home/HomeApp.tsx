@@ -502,10 +502,15 @@ export function HomeApp() {
     setSelectedModel(activeWorkerModelOptions[0].value);
   }, [activeWorkerModelOptions, vm.activeWorkerModelType, selectedModel, setSelectedModel]);
 
-  // Auto-open right sidebar for implementation conversations
+  // Auto-sync the desktop side window with implementation conversations that have workers.
   useEffect(() => {
     if (selectedRunId && isImplementationConversation && selectedRunWorkersForDisplay.length > 0) {
       setRightSidebarOpen(true);
+      return;
+    }
+
+    if (selectedRunId) {
+      setRightSidebarOpen(false);
     }
   }, [isImplementationConversation, selectedRunId, selectedRunWorkersForDisplay.length, setRightSidebarOpen]);
 

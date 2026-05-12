@@ -180,6 +180,7 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('onCloseWindow={() => setRightSidebarOpen(false)}');
   expect(pageSource).toContain('if (selectedRunId && isImplementationConversation && selectedRunWorkersForDisplay.length > 0) {');
   expect(pageSource).toContain('setRightSidebarOpen(true);');
+  expect(pageSource).toContain('if (selectedRunId) {\n      setRightSidebarOpen(false);');
   expect(pageSource).toContain('transition-[width,opacity] duration-150 ease-out');
   expect(pageSource).toContain('style={{ width: rightSidebarOpen ? rightSidebarWidth : 0 }}');
   expect(pageSource).toContain('aria-hidden={!rightSidebarOpen}');
