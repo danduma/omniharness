@@ -1302,6 +1302,80 @@ describe("deriveWorkerEvents", () => {
     vi.useRealTimers();
   });
 
+  it("allows a run observer to restart after being stopped while a poll is in flight", async () => {
+    vi.useFakeTimers();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+    const snapshot = {
+      state: "working",
+      currentText: "still running",
+      lastText: "still running",
+      pendingPermissions: [],
+      stderrBuffer: [],
+      stopReason: null,
+    };
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "opencode",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    let releaseFirstSnapshot!: () => void;
+    let releaseSecondSnapshot!: () => void;
+    const firstSnapshotGate = new Promise<void>((resolve) => {
+      releaseFirstSnapshot = resolve;
+    });
+    const secondSnapshotGate = new Promise<void>((resolve) => {
+      releaseSecondSnapshot = resolve;
+    });
+    mockGetAgent
+      .mockImplementationOnce(async () => {
+        await firstSnapshotGate;
+        return snapshot;
+      })
+      .mockImplementationOnce(async () => {
+        await secondSnapshotGate;
+        return snapshot;
+      });
+
+    startRunObserver(runId, wakeSupervisor);
+    await vi.waitFor(() => expect(mockGetAgent).toHaveBeenCalledTimes(1));
+
+    stopRunObserver(runId);
+    startRunObserver(runId, wakeSupervisor);
+    await vi.waitFor(() => expect(mockGetAgent).toHaveBeenCalledTimes(2));
+
+    stopRunObserver(runId);
+    releaseFirstSnapshot();
+    releaseSecondSnapshot();
+    await Promise.resolve();
+    vi.useRealTimers();
+  });
+
   it("auto-approves safe pending permission requests using the strongest allow option", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

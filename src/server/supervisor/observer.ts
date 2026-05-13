@@ -67,7 +67,8 @@ export interface DerivedWorkerEvent {
 }
 
 const observerIntervals = new Map<string, ReturnType<typeof setInterval>>();
-const observerPollsInFlight = new Set<string>();
+const observerPollsInFlight = new Map<string, number>();
+const observerGenerations = new Map<string, number>();
 const observerState = new Map<string, WorkerObserverState>();
 const recentWorkerEventKeys = new Map<string, number>();
 const TYPE_DEDUPED_WORKER_EVENT_TYPES = new Set([
@@ -972,19 +973,22 @@ export function startRunObserver(runId: string, wakeSupervisor: (runId: string, 
   if (observerIntervals.has(runId)) {
     return;
   }
+  const generation = observerGenerations.get(runId) ?? 0;
 
   const runPoll = () => {
     if (observerPollsInFlight.has(runId)) {
       return;
     }
 
-    observerPollsInFlight.add(runId);
+    observerPollsInFlight.set(runId, generation);
     void pollRunWorkers(runId, wakeSupervisor)
       .catch((error) => {
         console.error(`Run observer poll failed for ${runId}`, error);
       })
       .finally(() => {
-        observerPollsInFlight.delete(runId);
+        if (observerPollsInFlight.get(runId) === generation) {
+          observerPollsInFlight.delete(runId);
+        }
       });
   };
 
@@ -997,6 +1001,9 @@ export function startRunObserver(runId: string, wakeSupervisor: (runId: string, 
 }
 
 export function stopRunObserver(runId: string) {
+  observerGenerations.set(runId, (observerGenerations.get(runId) ?? 0) + 1);
+  observerPollsInFlight.delete(runId);
+
   const interval = observerIntervals.get(runId);
   if (interval) {
     clearInterval(interval);

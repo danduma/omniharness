@@ -1,22 +1,42 @@
-import { eq } from "drizzle-orm";
+import { randomUUID } from "crypto";
+import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
-import { runs } from "@/server/db/schema";
+import { executionEvents, runs, workers } from "@/server/db/schema";
 import { persistRunFailure } from "@/server/runs/failures";
 import { isActiveImplementationRun } from "@/server/runs/status";
 import { Supervisor } from "@/server/supervisor";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
+import { resumeQuotaExhaustedWorkers } from "@/server/quota/worker-resume";
 import { stopRunObserver } from "./observer";
-import { acquireSupervisorWakeLease, releaseSupervisorWakeLease } from "./lease";
+import { acquireSupervisorWakeLease, clearSupervisorWakeLease, releaseSupervisorWakeLease } from "./lease";
 import {
   cancelDurableSupervisorWake,
   claimDueDurableSupervisorWake,
   hasFutureDurableSupervisorWake,
+  scheduleDurableSupervisorWakeAt,
 } from "./wake-schedule";
 
 const wakeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const wakeDeadlines = new Map<string, number>();
 const inFlight = new Set<string>();
 const LEASE_BLOCKED_RETRY_MS = 1_000;
+const COMPLETION_EVENT_TYPES = new Set(["worker_turn_completed"]);
+const COMPLETION_RESET_EVENT_TYPES = new Set(["worker_prompted", "worker_spawned", "worker_session_resumed"]);
+const ACTIVE_WORKER_STATUS_PATTERN = /\b(working|stuck|starting|pending|busy|running)\b/i;
+
+function scheduleDurableWakeBackup(runId: string, nextDeadline: number, delayMs: number) {
+  if (delayMs <= 0) {
+    return;
+  }
+
+  void scheduleDurableSupervisorWakeAt({
+    runId,
+    wakeAt: new Date(nextDeadline),
+    reason: "supervisor_wait",
+    source: "volatile-wake-backup",
+    details: { delayMs },
+  });
+}
 
 function clearWake(runId: string) {
   const existing = wakeTimers.get(runId);
@@ -27,6 +47,43 @@ function clearWake(runId: string) {
   wakeDeadlines.delete(runId);
 }
 
+async function recoverCompletionBlockedByOrphanedLease(runId: string) {
+  const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+  if (runWorkers.length === 0) {
+    return false;
+  }
+
+  if (runWorkers.some((worker) => ACTIVE_WORKER_STATUS_PATTERN.test(worker.status))) {
+    return false;
+  }
+
+  const latestWorkerEvent = await db.select().from(executionEvents).where(
+    inArray(executionEvents.workerId, runWorkers.map((worker) => worker.id)),
+  ).orderBy(desc(executionEvents.createdAt)).limit(1).get();
+
+  if (!latestWorkerEvent || COMPLETION_RESET_EVENT_TYPES.has(latestWorkerEvent.eventType)) {
+    return false;
+  }
+
+  if (!COMPLETION_EVENT_TYPES.has(latestWorkerEvent.eventType)) {
+    return false;
+  }
+
+  await clearSupervisorWakeLease(runId);
+  await db.insert(executionEvents).values({
+    id: randomUUID(),
+    runId,
+    eventType: "supervisor_wake_lease_recovered",
+    details: JSON.stringify({
+      summary: "Cleared an orphaned supervisor wake lease after all workers were idle with completion evidence.",
+      latestWorkerEventType: latestWorkerEvent.eventType,
+      latestWorkerEventId: latestWorkerEvent.id,
+    }),
+    createdAt: new Date(),
+  });
+  return true;
+}
+
 export async function executeSupervisorWake(runId: string) {
   clearWake(runId);
   if (inFlight.has(runId)) {
@@ -35,6 +92,10 @@ export async function executeSupervisorWake(runId: string) {
 
   const leaseId = await acquireSupervisorWakeLease(runId);
   if (!leaseId) {
+    if (await recoverCompletionBlockedByOrphanedLease(runId)) {
+      scheduleSupervisorWake(runId, 0);
+      return;
+    }
     scheduleSupervisorWake(runId, LEASE_BLOCKED_RETRY_MS);
     return;
   }
@@ -61,6 +122,13 @@ export async function executeSupervisorWake(runId: string) {
       lastError: null,
       updatedAt: new Date(),
     }).where(eq(runs.id, runId));
+    if (dueDurableWake.reason === "quota_wait") {
+      const quotaResumeResult = await resumeQuotaExhaustedWorkers({ run });
+      if (quotaResumeResult.state === "quota_wait" || quotaResumeResult.state === "needs_recovery") {
+        await releaseSupervisorWakeLease(runId, leaseId);
+        return;
+      }
+    }
   }
 
   inFlight.add(runId);
@@ -103,8 +171,11 @@ export function scheduleSupervisorWake(runId: string, delayMs = 0) {
   const nextDeadline = Date.now() + Math.max(0, delayMs);
   const currentDeadline = wakeDeadlines.get(runId);
   if (currentDeadline !== undefined && currentDeadline <= nextDeadline) {
+    scheduleDurableWakeBackup(runId, currentDeadline, Math.max(0, currentDeadline - Date.now()));
     return;
   }
+
+  scheduleDurableWakeBackup(runId, nextDeadline, delayMs);
 
   clearWake(runId);
   wakeDeadlines.set(runId, nextDeadline);

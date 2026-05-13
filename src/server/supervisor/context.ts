@@ -256,7 +256,7 @@ export async function buildSupervisorTurnContext(
   const now = Date.now();
 
   for (const worker of runWorkers) {
-    const agent = await bridge.getAgent(worker.id).catch(() => null);
+    const agent = await bridge.getAgent(worker.id, { retryIndefinitely: false }).catch(() => null);
     if (!agent) {
       continue;
     }

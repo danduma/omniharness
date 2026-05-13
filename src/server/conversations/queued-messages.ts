@@ -2,9 +2,10 @@ import { randomUUID } from "crypto";
 import { asc, desc, eq } from "drizzle-orm";
 import { askAgent } from "@/server/bridge-client";
 import { db } from "@/server/db";
-import { executionEvents, messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
+import { executionEvents, messages, queuedConversationMessages, runs, supervisorInterventions, workers } from "@/server/db/schema";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { startSupervisorRun } from "@/server/supervisor/start";
+import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
 import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
 import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import { serializeMessageRecord } from "./message-records";
@@ -39,6 +40,20 @@ async function getLatestRunWorker(runId: string, excludedWorkerId?: string | nul
     .orderBy(desc(workers.createdAt));
 
   return records.find((worker) => worker.id !== excludedWorkerId) ?? null;
+}
+
+function isCancelledWorkerStatus(status: string | null | undefined) {
+  const normalized = status?.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  return normalized === "cancelled" || normalized === "canceled";
+}
+
+function formatWorkerLabel(worker: typeof workers.$inferSelect) {
+  if (typeof worker.workerNumber === "number" && Number.isFinite(worker.workerNumber)) {
+    return `worker ${worker.workerNumber}`;
+  }
+
+  const match = worker.id.match(/-worker-(\d+)$/);
+  return match ? `worker ${match[1]}` : "the active worker";
 }
 
 async function insertQueueExecutionEvent(
@@ -298,34 +313,21 @@ export async function sendQueuedConversationMessageNow({
   }).where(eq(queuedConversationMessages.id, messageId));
 
   if (run.mode === "implementation") {
-    const message = {
-      id: randomUUID(),
-      runId,
-      role: "user",
-      kind: "checkpoint",
-      content: record.content,
-      attachmentsJson: record.attachmentsJson,
-      createdAt: startedAt,
-    };
-
-    await db.insert(messages).values(message);
     await db.update(runs).set({
       status: "running",
       failedAt: null,
       lastError: null,
       updatedAt: startedAt,
     }).where(eq(runs.id, runId));
-
-    const deliveredAt = new Date();
     await db.update(queuedConversationMessages).set({
       action: "steer",
-      status: "delivered",
+      status: "pending",
       lastError: null,
-      updatedAt: deliveredAt,
-      deliveredAt,
+      updatedAt: startedAt,
+      deliveredAt: null,
     }).where(eq(queuedConversationMessages.id, messageId));
     await insertQueueExecutionEvent(runId, "queued_message_sent_now", {
-      summary: "Sent queued message immediately as steering.",
+      summary: "Accepted queued message for implementation worker steering.",
       queuedMessageId: messageId,
       action: "steer",
     });
@@ -334,14 +336,13 @@ export async function sendQueuedConversationMessageNow({
 
     return {
       ok: true,
-      message: serializeMessageRecord(message),
       queuedMessage: serializeQueuedConversationMessage({
         ...record,
         action: "steer",
-        status: "delivered",
+        status: "pending",
         lastError: null,
-        updatedAt: deliveredAt,
-        deliveredAt,
+        updatedAt: startedAt,
+        deliveredAt: null,
       }),
     };
   }
@@ -444,6 +445,116 @@ export async function drainQueuedImplementationMessages(runId: string) {
       status: "delivering",
       updatedAt: now,
     }).where(eq(queuedConversationMessages.id, record.id));
+
+    if (record.action === "steer") {
+      const targetWorker = record.targetWorkerId
+        ? await db.select().from(workers).where(eq(workers.id, record.targetWorkerId)).get()
+        : null;
+      const worker = targetWorker && targetWorker.runId === runId && !isCancelledWorkerStatus(targetWorker.status)
+        ? targetWorker
+        : await getLatestRunWorker(runId, record.targetWorkerId);
+
+      if (!worker || worker.runId !== runId || isCancelledWorkerStatus(worker.status)) {
+        await db.update(queuedConversationMessages).set({
+          status: "pending",
+          lastError: "Conversation worker not found",
+          updatedAt: new Date(),
+        }).where(eq(queuedConversationMessages.id, record.id));
+        await insertQueueExecutionEvent(runId, "queued_message_deferred", {
+          summary: "No active implementation worker is available; queued steering will be retried.",
+          queuedMessageId: record.id,
+          action: "steer",
+          error: "Conversation worker not found",
+        });
+        continue;
+      }
+
+      const normalizedAttachments = normalizeChatAttachments(record.attachmentsJson ? JSON.parse(record.attachmentsJson) : []);
+      const workerContent = appendAttachmentContext(record.content, normalizedAttachments);
+      let intervention: Awaited<ReturnType<typeof recordSupervisorIntervention>> | null = null;
+
+      try {
+        await db.update(workers).set({
+          status: "working",
+          updatedAt: now,
+        }).where(eq(workers.id, worker.id));
+        intervention = await recordSupervisorIntervention({
+          runId,
+          workerId: worker.id,
+          prompt: workerContent,
+          summary: `Sent user steering to ${worker.id}`,
+          interventionType: "continue",
+        });
+        const response = await askAgent(worker.id, workerContent);
+        const deliveredAt = new Date();
+        await db.insert(messages).values({
+          id: randomUUID(),
+          runId,
+          role: "user",
+          kind: "checkpoint",
+          content: record.content,
+          attachmentsJson: record.attachmentsJson,
+          createdAt: now,
+        });
+        await db.insert(messages).values({
+          id: randomUUID(),
+          runId,
+          role: "supervisor",
+          kind: "update",
+          content: `Got it. I sent that to ${formatWorkerLabel(worker)} and will keep watching the run.`,
+          attachmentsJson: null,
+          createdAt: deliveredAt,
+        });
+        await db.update(workers).set({
+          status: response.state,
+          updatedAt: deliveredAt,
+        }).where(eq(workers.id, worker.id));
+        await db.insert(messages).values({
+          id: randomUUID(),
+          runId,
+          role: "worker",
+          kind: "implementation",
+          content: response.response,
+          workerId: worker.id,
+          createdAt: deliveredAt,
+        });
+        await db.update(queuedConversationMessages).set({
+          targetWorkerId: worker.id,
+          status: "delivered",
+          updatedAt: deliveredAt,
+          deliveredAt,
+          lastError: null,
+        }).where(eq(queuedConversationMessages.id, record.id));
+        await insertQueueExecutionEvent(runId, "queued_message_delivered", {
+          summary: `Delivered queued steering to ${worker.id}.`,
+          queuedMessageId: record.id,
+          action: "steer",
+        }, worker.id);
+        deliveredCount += 1;
+      } catch (error) {
+        const failedAt = new Date();
+        await db.update(queuedConversationMessages).set({
+          targetWorkerId: worker.id,
+          status: isAgentBusyError(error) ? "pending" : "failed",
+          lastError: errorMessage(error),
+          updatedAt: failedAt,
+        }).where(eq(queuedConversationMessages.id, record.id));
+        if (isAgentBusyError(error) && intervention) {
+          await db.update(supervisorInterventions).set({
+            summary: `Deferred user steering to ${worker.id}; worker is busy.`,
+          }).where(eq(supervisorInterventions.id, intervention.id));
+        }
+        await insertQueueExecutionEvent(runId, isAgentBusyError(error) ? "queued_message_deferred" : "queued_message_failed", {
+          summary: isAgentBusyError(error)
+            ? `Worker ${worker.id} is still busy; queued steering will be retried.`
+            : `Queued steering delivery failed for ${worker.id}.`,
+          queuedMessageId: record.id,
+          action: "steer",
+          error: errorMessage(error),
+        }, worker.id);
+      }
+      continue;
+    }
 
     await db.insert(messages).values({
       id: randomUUID(),

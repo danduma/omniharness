@@ -29,6 +29,8 @@ import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { isRecoverableAgentMissingError } from "./recovery-state";
+import { createBranchWorktree } from "@/server/git/workspaces";
+import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
 
 export type RecoveryAction = "retry" | "edit" | "fork";
 
@@ -37,6 +39,38 @@ interface RecoverRunArgs {
   action: RecoveryAction;
   targetMessageId: string;
   content?: string;
+  gitWorkspaceLaunch?: GitWorkspaceLaunchRequest | null;
+}
+
+interface GitWorkspaceLaunchRequest {
+  mode: "new_worktree";
+  projectPath: string;
+  newBranchName: string;
+  checkoutPath: string;
+  startPoint?: string;
+  worktreeParent?: string;
+  expectedHeadSha: string | null;
+  expectedStatusFingerprint: string;
+}
+
+function buildRunWorkspaceSnapshot(args: {
+  target: GitWorkspaceTarget;
+  snapshot: GitWorkspaceSnapshot;
+  warnings?: GitWorkspaceWarning[];
+}): GitWorkspaceRunSnapshot {
+  const matchingWorktree = args.snapshot.worktrees.find((worktree) => worktree.checkoutPath === args.target.checkoutPath);
+  return {
+    target: args.target,
+    headSha: matchingWorktree?.headSha ?? args.snapshot.headSha,
+    branchName: matchingWorktree?.branchName ?? args.target.branchName ?? args.snapshot.branchName,
+    detachedLabel: matchingWorktree?.detachedLabel ?? args.snapshot.detachedLabel,
+    dirtyFileCount: matchingWorktree?.dirtyFileCount ?? args.snapshot.dirtyFileCount,
+    conflictedFileCount: matchingWorktree?.conflictedFileCount ?? args.snapshot.conflictedFileCount,
+    aheadCount: args.snapshot.aheadCount,
+    behindCount: args.snapshot.behindCount,
+    warnings: args.warnings ?? args.snapshot.warnings,
+    selectedAt: new Date().toISOString(),
+  };
 }
 
 async function cancelRunWorkers(runId: string) {
@@ -424,6 +458,23 @@ export async function recoverRun(args: RecoverRunArgs) {
     const newRunId = createRunId();
     const planPath = createAdHocPlan(nextContent);
     const now = new Date();
+    const workspaceResult = args.gitWorkspaceLaunch
+      ? await createBranchWorktree({
+        projectPath: args.gitWorkspaceLaunch.projectPath,
+        newBranchName: args.gitWorkspaceLaunch.newBranchName,
+        checkoutPath: args.gitWorkspaceLaunch.checkoutPath,
+        startPoint: args.gitWorkspaceLaunch.startPoint,
+        worktreeParent: args.gitWorkspaceLaunch.worktreeParent,
+        expectedHeadSha: args.gitWorkspaceLaunch.expectedHeadSha,
+        expectedStatusFingerprint: args.gitWorkspaceLaunch.expectedStatusFingerprint,
+      })
+      : null;
+    const runWorkspaceSnapshot = workspaceResult
+      ? buildRunWorkspaceSnapshot({
+        target: workspaceResult.target,
+        snapshot: workspaceResult.snapshot,
+      })
+      : null;
 
     await db.insert(plans).values({
       id: newPlanId,
@@ -438,11 +489,12 @@ export async function recoverRun(args: RecoverRunArgs) {
       planId: newPlanId,
       mode: run.mode,
       title: run.title,
-      projectPath: run.projectPath,
+      projectPath: workspaceResult?.target.checkoutPath ?? run.projectPath,
       preferredWorkerType: run.preferredWorkerType,
       preferredWorkerModel: run.preferredWorkerModel,
       preferredWorkerEffort: run.preferredWorkerEffort,
       allowedWorkerTypes: run.allowedWorkerTypes,
+      gitWorkspaceJson: runWorkspaceSnapshot ? JSON.stringify(runWorkspaceSnapshot) : null,
       parentRunId: args.runId,
       forkedFromMessageId: args.targetMessageId,
       status: "running",
@@ -461,6 +513,26 @@ export async function recoverRun(args: RecoverRunArgs) {
         role: message.role,
         kind: message.id === args.targetMessageId ? "checkpoint" : message.kind,
         content: message.id === args.targetMessageId ? nextContent : message.content,
+        createdAt: now,
+      });
+    }
+
+    if (runWorkspaceSnapshot) {
+      await db.insert(executionEvents).values({
+        id: randomUUID(),
+        runId: newRunId,
+        eventType: "git_workspace_forked",
+        details: JSON.stringify({
+          parentRunId: args.runId,
+          forkedFromMessageId: args.targetMessageId,
+          target: runWorkspaceSnapshot.target,
+          headSha: runWorkspaceSnapshot.headSha,
+          branchName: runWorkspaceSnapshot.branchName,
+          detachedLabel: runWorkspaceSnapshot.detachedLabel,
+          dirtyFileCount: runWorkspaceSnapshot.dirtyFileCount,
+          conflictedFileCount: runWorkspaceSnapshot.conflictedFileCount,
+          warnings: runWorkspaceSnapshot.warnings,
+        }),
         createdAt: now,
       });
     }

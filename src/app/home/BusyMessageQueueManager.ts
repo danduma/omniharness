@@ -18,8 +18,8 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
     super(initialBusyMessageQueueState);
   }
 
-  setQueuedMessages(messages: QueuedConversationMessageRecord[]) {
-    this.setKey("queuedMessages", messages);
+  setQueuedMessages(messages: QueuedConversationMessageRecord[], notify = true) {
+    this.setKey("queuedMessages", messages, notify);
   }
 
   upsertQueuedMessage(message: QueuedConversationMessageRecord) {

@@ -44,6 +44,21 @@ describe("busy message behavior", () => {
     });
   });
 
+  it("forces supervisor conversations to steer instead of queue", () => {
+    expect(resolveBusyComposerBehavior({
+      hasBusyConversation: true,
+      isConversationStoppable: true,
+      hasContent: true,
+      busyMessageAction: "queue",
+      forceSteer: true,
+    })).toMatchObject({
+      buttonKind: "send",
+      submitAction: "send_steer",
+      ariaLabelKey: "conversation.composer.sendButton.steer",
+      allowAlternateBusyAction: false,
+    });
+  });
+
   it("uses the normal send action when the selected conversation is not busy", () => {
     expect(resolveBusyComposerBehavior({
       hasBusyConversation: false,

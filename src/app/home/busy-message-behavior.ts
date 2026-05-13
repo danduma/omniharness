@@ -6,6 +6,7 @@ export type BusyComposerBehavior = {
   buttonKind: BusyComposerButtonKind;
   submitAction: BusyComposerSubmitAction;
   ariaLabelKey: string;
+  allowAlternateBusyAction: boolean;
 };
 
 export function parseBusyMessageAction(value: string | null | undefined): BusyMessageAction {
@@ -17,31 +18,36 @@ export function resolveBusyComposerBehavior({
   isConversationStoppable,
   hasContent,
   busyMessageAction,
+  forceSteer,
 }: {
   hasBusyConversation: boolean;
   isConversationStoppable: boolean;
   hasContent: boolean;
   busyMessageAction: BusyMessageAction;
+  forceSteer?: boolean;
 }): BusyComposerBehavior {
   if (isConversationStoppable && !hasContent) {
     return {
       buttonKind: "stop",
       submitAction: "stop",
       ariaLabelKey: "conversation.composer.sendButton.stop",
+      allowAlternateBusyAction: false,
     };
   }
 
   if (hasBusyConversation && hasContent) {
-    return busyMessageAction === "steer"
+    return busyMessageAction === "steer" || forceSteer
       ? {
           buttonKind: "send",
           submitAction: "send_steer",
           ariaLabelKey: "conversation.composer.sendButton.steer",
+          allowAlternateBusyAction: !forceSteer,
         }
       : {
           buttonKind: "send",
           submitAction: "send_queue",
           ariaLabelKey: "conversation.composer.sendButton.queue",
+          allowAlternateBusyAction: true,
         };
   }
 
@@ -49,6 +55,7 @@ export function resolveBusyComposerBehavior({
     buttonKind: "send",
     submitAction: "send_normal",
     ariaLabelKey: "conversation.composer.sendButton.send",
+    allowAlternateBusyAction: false,
   };
 }
 

@@ -15,7 +15,7 @@ interface UseConversationExecutionStatusProps {
   completionEvent: ExecutionEventRecord | null;
   queuedMessageCount: number;
   activeConversationAgents: AgentSnapshot[];
-  liveThoughts: Array<{ agentName: string; snippet: string; isLive: boolean }>;
+  liveThoughts: Array<{ agentName: string; text: string; snippet: string; isLive: boolean }>;
 }
 
 export function useConversationExecutionStatus({
@@ -107,6 +107,19 @@ export function useConversationExecutionStatus({
       };
     }
 
+    if (selectedRun?.status === "done") {
+      const completionSummary = completionEvent
+        ? summarizeExecutionEvent(completionEvent).replace(/^Completed:?\s*/i, "").trim()
+        : "";
+      return {
+        label: "Completed",
+        detail: durationLabel
+          ? `${durationLabel}${completionSummary ? `: ${completionSummary}` : "."}`
+          : latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The run finished.",
+        tone: "muted" as const,
+      };
+    }
+
     if (latestPromptDeferredEvent) {
       return {
         label: "Retry queued",
@@ -127,27 +140,14 @@ export function useConversationExecutionStatus({
 
     if (activeConversationAgents.some((agent) => agent.state === "working" || Boolean(agent.currentText?.trim()))) {
       return {
-        label: "Thinking",
-        detail: [durationLabel, liveThoughts[0]?.snippet || "The worker is actively reasoning."].filter(Boolean).join(". "),
+        label: "Working",
+        detail: [durationLabel, liveThoughts[0]?.snippet || "The worker is active."].filter(Boolean).join(". "),
         tone: "active" as const,
       };
     }
 
-    if (selectedRun?.status === "done") {
-      const completionSummary = completionEvent
-        ? summarizeExecutionEvent(completionEvent).replace(/^Completed:?\s*/i, "").trim()
-        : "";
-      return {
-        label: "Completed",
-        detail: durationLabel
-          ? `${durationLabel}${completionSummary ? `: ${completionSummary}` : "."}`
-          : latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The run finished.",
-        tone: "muted" as const,
-      };
-    }
-
     return {
-      label: "Thinking",
+      label: "Working",
       detail: [durationLabel, latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The supervisor is still checking the run."].filter(Boolean).join(". "),
       tone: "active" as const,
     };

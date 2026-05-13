@@ -1664,6 +1664,90 @@ describe("Supervisor worker spawn flow", () => {
     });
   });
 
+  it("resumes a saved worker session before retrying a follow-up to a missing worker", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      preferredWorkerModel: "openai/gpt-5.4",
+      preferredWorkerEffort: "high",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: "worker-needs-resume",
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/tmp/project",
+      title: "Main implementation",
+      initialPrompt: "implement the plan",
+      outputLog: "",
+      bridgeSessionId: "saved-session-1",
+      bridgeSessionMode: "full-access",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-continue",
+      name: "worker_continue",
+      args: {
+        workerId: "worker-needs-resume",
+        prompt: "Continue now that the subscription quota reset.",
+      },
+    });
+    mockAskAgent
+      .mockRejectedValueOnce(new Error("Ask failed: Agent not found: worker-needs-resume"))
+      .mockResolvedValueOnce({ response: "Continuing after resume", state: "working" });
+    mockSpawnAgent.mockResolvedValue({
+      name: "worker-needs-resume",
+      type: "codex",
+      cwd: "/tmp/project",
+      state: "idle",
+      sessionId: "saved-session-1",
+      sessionMode: "full-access",
+      currentText: "",
+      lastText: "",
+      pendingPermissions: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    expect(mockSpawnAgent).toHaveBeenCalledWith({
+      type: "codex",
+      cwd: "/tmp/project",
+      name: "worker-needs-resume",
+      mode: "full-access",
+      model: "openai/gpt-5.4",
+      effort: "high",
+      resumeSessionId: "saved-session-1",
+    });
+    expect(mockAskAgent).toHaveBeenCalledTimes(2);
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, "worker-needs-resume")).get();
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, "worker-needs-resume"));
+    expect(persistedWorker?.status).toBe("working");
+    expect(workerEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
+    expect(workerEvents.some((event) => event.eventType === "worker_prompted")).toBe(true);
+  });
+
   it("lists recorded supervisor interventions when completing the run", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

@@ -33,6 +33,30 @@ function buildExecutionEvent(overrides: Partial<ExecutionEventRecord>): Executio
 }
 
 describe("useConversationExecutionStatus", () => {
+  it("shows running supervisor work before any worker is active", () => {
+    const { liveExecutionStatus } = useConversationExecutionStatus({
+      selectedRun: buildRun({ status: "running" }),
+      latestExecutionEvent: null,
+      erroredAgent: null,
+      pendingPermissionAgent: null,
+      hasStuckWorker: false,
+      latestStuckEvent: null,
+      showRecoverableRunningState: false,
+      latestWaitEvent: null,
+      latestPromptDeferredEvent: null,
+      completionEvent: null,
+      queuedMessageCount: 0,
+      activeConversationAgents: [],
+      liveThoughts: [],
+    });
+
+    expect(liveExecutionStatus).toMatchObject({
+      label: "Working",
+      tone: "active",
+    });
+    expect(liveExecutionStatus.detail).toContain("The supervisor is still checking the run.");
+  });
+
   it("shows cancelled implementation runs as user-stopped instead of thinking", () => {
     const { liveExecutionStatus } = useConversationExecutionStatus({
       selectedRun: buildRun({ status: "cancelled" }),
@@ -55,5 +79,50 @@ describe("useConversationExecutionStatus", () => {
       tone: "muted",
     });
     expect(liveExecutionStatus.detail).toContain("Stopped supervisor and cancelled active workers.");
+  });
+
+  it("shows completed runs even if a stale worker snapshot still looks active", () => {
+    const { liveExecutionStatus } = useConversationExecutionStatus({
+      selectedRun: buildRun({
+        status: "done",
+        updatedAt: "2026-05-08T00:02:00.000Z",
+      }),
+      latestExecutionEvent: buildExecutionEvent({
+        eventType: "run_completed",
+        details: JSON.stringify({ summary: "Final summary is ready." }),
+        createdAt: "2026-05-08T00:02:00.000Z",
+      }),
+      erroredAgent: null,
+      pendingPermissionAgent: null,
+      hasStuckWorker: false,
+      latestStuckEvent: null,
+      showRecoverableRunningState: false,
+      latestWaitEvent: null,
+      latestPromptDeferredEvent: null,
+      completionEvent: buildExecutionEvent({
+        eventType: "run_completed",
+        details: JSON.stringify({ summary: "Final summary is ready." }),
+        createdAt: "2026-05-08T00:02:00.000Z",
+      }),
+      queuedMessageCount: 0,
+      activeConversationAgents: [{
+        name: "run-1-worker-1",
+        type: "codex",
+        state: "working",
+        currentText: "Old live output",
+      }],
+      liveThoughts: [{
+        agentName: "run-1-worker-1",
+        text: "Old live output",
+        snippet: "Old live output",
+        isLive: true,
+      }],
+    });
+
+    expect(liveExecutionStatus).toMatchObject({
+      label: "Completed",
+      tone: "muted",
+    });
+    expect(liveExecutionStatus.detail).toContain("Final summary is ready.");
   });
 });

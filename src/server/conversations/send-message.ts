@@ -268,10 +268,11 @@ export async function sendConversationMessage({
   if (run.mode === "implementation" && (busyAction === "queue" || busyAction === "steer")) {
     const queuedMessage = await createQueuedConversationMessage({
       runId,
-      action: busyAction,
+      action: "steer",
       content: trimmedContent,
       attachments: normalizedAttachments,
     });
+    startSupervisorRun(runId);
     return { ok: true, queuedMessage };
   }
 

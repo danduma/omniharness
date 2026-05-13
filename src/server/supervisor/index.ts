@@ -690,6 +690,54 @@ async function deferBusyWorkerPrompt(runId: string, workerId: string, prompt: st
   return { state: "wait", delayMs: WORKER_BUSY_RETRY_DELAY_MS };
 }
 
+function isAgentAlreadyExistsError(error: unknown, workerId: string) {
+  const message = formatSupervisorError(error).toLowerCase();
+  return message.includes("agent already exists") && message.includes(workerId.toLowerCase());
+}
+
+async function resumeWorkerFromSavedSessionForSupervisor(runId: string, workerId: string) {
+  const [run, worker] = await Promise.all([
+    db.select().from(runs).where(eq(runs.id, runId)).get(),
+    db.select().from(workers).where(eq(workers.id, workerId)).get(),
+  ]);
+  const sessionId = worker?.bridgeSessionId?.trim();
+  if (!run || !worker || !sessionId) {
+    return false;
+  }
+
+  const mode = normalizeBridgeWorkerMode(worker.bridgeSessionMode);
+  let resumedWorker: bridge.AgentRecord;
+  try {
+    resumedWorker = await bridge.spawnAgent({
+      type: worker.type,
+      cwd: worker.cwd,
+      name: worker.id,
+      ...(mode ? { mode } : {}),
+      ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+      ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+      resumeSessionId: sessionId,
+    });
+  } catch (error) {
+    if (!isAgentAlreadyExistsError(error, worker.id)) {
+      throw error;
+    }
+    resumedWorker = await bridge.getAgent(worker.id, { retryIndefinitely: false });
+  }
+
+  await db.update(workers).set({
+    status: resumedWorker.state,
+    bridgeSessionId: resumedWorker.sessionId ?? sessionId,
+    bridgeSessionMode: resumedWorker.sessionMode ?? worker.bridgeSessionMode ?? null,
+    updatedAt: new Date(),
+  }).where(eq(workers.id, worker.id));
+  await insertExecutionEvent(runId, "worker_session_resumed", {
+    summary: `Resumed ${worker.id} from saved session before supervisor follow-up.`,
+    sessionId,
+    reason: "supervisor_continue_missing_agent",
+  }, worker.id);
+  return true;
+}
+
 async function cancelRunWorkers(runId: string) {
   const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
   for (const worker of runWorkers) {
@@ -1107,7 +1155,7 @@ export class Supervisor {
             summary: `Sent follow-up to ${workerId}`,
             interventionType,
           });
-          let response: Awaited<ReturnType<typeof bridge.askAgent>>;
+          let response: Awaited<ReturnType<typeof bridge.askAgent>> | null = null;
           try {
             response = await bridge.askAgent(workerId, prompt);
           } catch (error) {
@@ -1131,7 +1179,13 @@ export class Supervisor {
                 : { state: "paused" };
             }
 
-            throw error;
+            if (isMissingAgentError(error) && await resumeWorkerFromSavedSessionForSupervisor(this.runId, workerId)) {
+              response = await bridge.askAgent(workerId, prompt);
+            }
+
+            if (!response) {
+              throw error;
+            }
           }
           if (!await this.loadActiveRun()) {
             await this.cleanupWorkerAfterInactiveRun(workerId);

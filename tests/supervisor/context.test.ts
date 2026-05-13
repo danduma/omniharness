@@ -3,9 +3,10 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/server/db";
-import { executionEvents, messages, plans, runs, workerCounters } from "@/server/db/schema";
+import { executionEvents, messages, plans, runs, workerCounters, workers } from "@/server/db/schema";
 import { getAppDataPath } from "@/server/app-root";
 import { buildSupervisorTurnContext } from "@/server/supervisor/context";
+import { getAgent } from "@/server/bridge-client";
 
 vi.mock("@/server/bridge-client", () => ({
   getAgent: vi.fn(),
@@ -13,9 +14,11 @@ vi.mock("@/server/bridge-client", () => ({
 
 describe("buildSupervisorTurnContext", () => {
   beforeEach(async () => {
+    vi.mocked(getAgent).mockReset();
     await db.delete(messages);
     await db.delete(executionEvents);
     await db.delete(workerCounters);
+    await db.delete(workers);
     await db.delete(runs);
     await db.delete(plans);
   });
@@ -213,5 +216,45 @@ describe("buildSupervisorTurnContext", () => {
         output: "# Spec\n\nAcceptance criteria are here.",
       },
     ]);
+  });
+
+  it("does not indefinitely retry worker snapshot reads while building context", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/objective-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      projectPath: "/workspace/app",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+    vi.mocked(getAgent).mockRejectedValue(new Error("Get agent failed: fetch failed"));
+
+    const context = await buildSupervisorTurnContext(runId);
+
+    expect(context.activeWorkers).toEqual([]);
+    expect(getAgent).toHaveBeenCalledWith(workerId, { retryIndefinitely: false });
   });
 });

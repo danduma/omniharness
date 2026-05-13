@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { executionEvents, messages, plans, queuedConversationMessages, runs, workers } from "@/server/db/schema";
+import { executionEvents, messages, plans, queuedConversationMessages, runs, supervisorInterventions, workers } from "@/server/db/schema";
 
 const { mockAskAgent } = vi.hoisted(() => ({
   mockAskAgent: vi.fn().mockResolvedValue({
@@ -52,6 +52,7 @@ describe("queued conversation messages", () => {
   beforeEach(async () => {
     mockAskAgent.mockClear();
     await db.delete(executionEvents);
+    await db.delete(supervisorInterventions);
     await db.delete(queuedConversationMessages);
     await db.delete(messages);
     await db.delete(workers);
@@ -92,6 +93,88 @@ describe("queued conversation messages", () => {
 
     const remainingPending = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.status, "pending"));
     expect(remainingPending).toHaveLength(0);
+  });
+
+  it("drains implementation steering to the active worker instead of only the supervisor transcript", async () => {
+    const runId = await createRun("implementation");
+    const workerId = `${runId}-worker-1`;
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await createQueuedConversationMessage({
+      runId,
+      action: "steer",
+      content: "Spawn sub-agents when the work can be split safely.",
+      attachments: [],
+    });
+
+    const drained = await drainQueuedImplementationMessages(runId);
+
+    expect(drained).toBe(1);
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "Spawn sub-agents when the work can be split safely.");
+    const storedQueued = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId)).get();
+    expect(storedQueued).toMatchObject({
+      status: "delivered",
+      action: "steer",
+    });
+    const interventions = await db.select().from(supervisorInterventions).where(eq(supervisorInterventions.runId, runId));
+    expect(interventions).toHaveLength(1);
+    expect(interventions[0]).toMatchObject({
+      workerId,
+      prompt: "Spawn sub-agents when the work can be split safely.",
+    });
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
+    expect(storedMessages.map((message) => message.role)).toEqual(["user", "supervisor", "worker"]);
+    expect(storedMessages[1]?.content).toContain("sent that to worker 1");
+  });
+
+  it("keeps implementation steering pending when the active worker is still busy", async () => {
+    const runId = await createRun("implementation");
+    const workerId = `${runId}-worker-1`;
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "Still working",
+      lastText: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await createQueuedConversationMessage({
+      runId,
+      action: "steer",
+      content: "Use parallel agents once the schema work is split.",
+      attachments: [],
+    });
+    mockAskAgent.mockRejectedValueOnce(new Error(`Ask failed: Agent is busy: ${workerId}`));
+
+    const drained = await drainQueuedImplementationMessages(runId);
+
+    expect(drained).toBe(0);
+    const storedQueued = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId)).get();
+    expect(storedQueued).toMatchObject({
+      status: "pending",
+      lastError: `Ask failed: Agent is busy: ${workerId}`,
+    });
+    expect(storedQueued?.deliveredAt).toBeNull();
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    expect(storedMessages).toHaveLength(0);
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(events.some((event) => event.eventType === "queued_message_deferred")).toBe(true);
   });
 
   it("drains worker queue entries through askAgent and records delivery output", async () => {

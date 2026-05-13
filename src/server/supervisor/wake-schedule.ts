@@ -24,6 +24,10 @@ let durableWakeExecutor: DurableWakeExecutor = async (runId) => {
 
 const durableTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+function durableWakePriority(reason: string) {
+  return reason === "quota_wait" ? 2 : 1;
+}
+
 function serializeDetails(details: Record<string, unknown> | null | undefined) {
   return details ? JSON.stringify(details) : null;
 }
@@ -64,9 +68,16 @@ export async function scheduleDurableSupervisorWakeAt(args: DurableSupervisorWak
     .where(eq(supervisorScheduledWakes.runId, args.runId))
     .get();
 
-  if (existing && existing.wakeAt.getTime() <= args.wakeAt.getTime() && !args.force) {
-    armDurableTimer(args.runId, existing.wakeAt);
-    return existing;
+  if (existing && !args.force) {
+    const existingPriority = durableWakePriority(existing.reason);
+    const nextPriority = durableWakePriority(args.reason);
+    if (
+      existingPriority > nextPriority ||
+      (existingPriority === nextPriority && existing.wakeAt.getTime() <= args.wakeAt.getTime())
+    ) {
+      armDurableTimer(args.runId, existing.wakeAt);
+      return existing;
+    }
   }
 
   const now = new Date();

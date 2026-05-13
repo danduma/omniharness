@@ -85,6 +85,36 @@ describe("durable supervisor wake schedule", () => {
     expect(row?.wakeAt.getTime()).toBe(earlier.getTime());
   });
 
+  it("preserves quota resume wakes over earlier supervisor heartbeat backups", async () => {
+    const runId = await insertRun();
+    const quotaReset = new Date(baseNow.getTime() + 120_000);
+    const heartbeat = new Date(baseNow.getTime() + 60_000);
+
+    await scheduleDurableSupervisorWakeAt({ runId, wakeAt: quotaReset, reason: "quota_wait" });
+    await scheduleDurableSupervisorWakeAt({ runId, wakeAt: heartbeat, reason: "supervisor_wait" });
+
+    const row = await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get();
+    expect(row).toMatchObject({
+      reason: "quota_wait",
+    });
+    expect(row?.wakeAt.getTime()).toBe(quotaReset.getTime());
+  });
+
+  it("replaces supervisor heartbeat backups with quota resume wakes", async () => {
+    const runId = await insertRun();
+    const heartbeat = new Date(baseNow.getTime() + 60_000);
+    const quotaReset = new Date(baseNow.getTime() + 120_000);
+
+    await scheduleDurableSupervisorWakeAt({ runId, wakeAt: heartbeat, reason: "supervisor_wait" });
+    await scheduleDurableSupervisorWakeAt({ runId, wakeAt: quotaReset, reason: "quota_wait" });
+
+    const row = await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get();
+    expect(row).toMatchObject({
+      reason: "quota_wait",
+    });
+    expect(row?.wakeAt.getTime()).toBe(quotaReset.getTime());
+  });
+
   it("claims and removes only due durable wakes", async () => {
     const runId = await insertRun();
     await scheduleDurableSupervisorWakeAt({
