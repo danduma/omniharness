@@ -30,6 +30,7 @@ const {
   mockStopRunObserver,
   mockCancelSupervisorWake,
   mockQueueConversationTitleGeneration,
+  mockCreateBranchWorktree,
 } = vi.hoisted(() => ({
   mockAskAgent: vi.fn().mockResolvedValue({
     response: "Rerun complete.",
@@ -74,6 +75,7 @@ const {
   mockStopRunObserver: vi.fn(),
   mockCancelSupervisorWake: vi.fn(),
   mockQueueConversationTitleGeneration: vi.fn().mockResolvedValue(undefined),
+  mockCreateBranchWorktree: vi.fn(),
 }));
 
 vi.mock("@/server/bridge-client", () => ({
@@ -98,6 +100,10 @@ vi.mock("@/server/supervisor/wake", () => ({
 
 vi.mock("@/server/conversation-title", () => ({
   queueConversationTitleGeneration: mockQueueConversationTitleGeneration,
+}));
+
+vi.mock("@/server/git/workspaces", () => ({
+  createBranchWorktree: mockCreateBranchWorktree,
 }));
 
 describe("PATCH /api/runs/[id]", () => {
@@ -1288,6 +1294,137 @@ describe("POST /api/runs/[id]", () => {
       effort: "medium",
     }));
     expect(mockAskAgent).toHaveBeenCalledWith(expect.any(String), "forked prompt");
+  });
+
+  it("forks a direct conversation into a new branch-backed worktree", async () => {
+    mockAskAgent.mockClear();
+    mockCancelAgent.mockClear();
+    mockGetAgent.mockClear();
+    mockSpawnAgent.mockClear();
+    mockCreateBranchWorktree.mockReset();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const userMessageId = randomUUID();
+    const worktreePath = "/workspace/app-forked-worktree";
+    const adHocRelativePath = path.join("vibes", "ad-hoc", `${randomUUID()}.md`);
+    const adHocAbsolutePath = getAppDataPath(adHocRelativePath);
+    const target = {
+      kind: "worktree" as const,
+      repoRoot: "/workspace/app",
+      gitCommonDir: "/workspace/app/.git",
+      checkoutPath: worktreePath,
+      branchName: "feature/forked-worktree",
+      worktreeId: worktreePath,
+    };
+
+    fs.mkdirSync(path.dirname(adHocAbsolutePath), { recursive: true });
+    fs.writeFileSync(adHocAbsolutePath, "# temp\nsource prompt");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: adHocRelativePath,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Source run",
+      projectPath: "/workspace/app",
+      preferredWorkerType: "codex",
+      preferredWorkerModel: "gpt-5.4",
+      preferredWorkerEffort: "medium",
+      allowedWorkerTypes: JSON.stringify(["codex"]),
+      status: "done",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(messages).values({
+      id: userMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "source prompt",
+      createdAt: new Date("2026-04-21T10:00:00Z"),
+    });
+
+    mockCreateBranchWorktree.mockResolvedValueOnce({
+      target,
+      snapshot: {
+        repoRoot: "/workspace/app",
+        gitCommonDir: "/workspace/app/.git",
+        checkoutPath: "/workspace/app",
+        headSha: "abc123",
+        branchName: "main",
+        detachedLabel: null,
+        isDetached: false,
+        isBare: false,
+        dirtyFileCount: 0,
+        conflictedFileCount: 0,
+        aheadCount: 0,
+        behindCount: 0,
+        statusFingerprint: "fingerprint",
+        warnings: [{ code: "git_lfs", message: "Git LFS filters are configured." }],
+        refreshedAt: new Date(0).toISOString(),
+        branches: [],
+        worktrees: [{
+          checkoutPath: worktreePath,
+          headSha: "abc123",
+          branchName: "feature/forked-worktree",
+          detachedLabel: null,
+          isCurrent: false,
+          isDetached: false,
+          isBare: false,
+          isPrunable: false,
+          dirtyFileCount: 0,
+          conflictedFileCount: 0,
+        }],
+      },
+    });
+
+    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({
+        action: "fork",
+        targetMessageId: userMessageId,
+        content: "forked prompt",
+        gitWorkspaceLaunch: {
+          mode: "new_worktree",
+          projectPath: "/workspace/app",
+          newBranchName: "feature/forked-worktree",
+          checkoutPath: worktreePath,
+          expectedHeadSha: "abc123",
+          expectedStatusFingerprint: "fingerprint",
+        },
+      }),
+    }), { params: Promise.resolve({ id: runId }) });
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    const forkedRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, payload.runId));
+    const workspaceSnapshot = JSON.parse(forkedRun?.gitWorkspaceJson ?? "{}");
+
+    expect(forkedRun?.parentRunId).toBe(runId);
+    expect(forkedRun?.forkedFromMessageId).toBe(userMessageId);
+    expect(forkedRun?.projectPath).toBe(worktreePath);
+    expect(workspaceSnapshot.target).toEqual(target);
+    expect(workspaceSnapshot.worktrees).toBeUndefined();
+    expect(workspaceSnapshot.branches).toBeUndefined();
+    expect(workspaceSnapshot.warnings).toEqual([{ code: "git_lfs", message: "Git LFS filters are configured." }]);
+    expect(events.some((event) => event.eventType === "git_workspace_forked")).toBe(true);
+    expect(mockCreateBranchWorktree).toHaveBeenCalledWith(expect.objectContaining({
+      projectPath: "/workspace/app",
+      newBranchName: "feature/forked-worktree",
+      checkoutPath: worktreePath,
+    }));
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: worktreePath,
+    }));
   });
 });
 

@@ -1,7 +1,7 @@
 import { type AppErrorDescriptor, normalizeAppError, requestJson as defaultRequestJson } from "@/lib/app-errors";
 import type { EventStreamState } from "./types";
 
-const SNAPSHOT_FALLBACK_INTERVAL_MS = 5_000;
+const SNAPSHOT_FALLBACK_INTERVAL_MS = 15_000;
 const SNAPSHOT_FALLBACK_COOLDOWN_MS = 1_000;
 
 type JsonRequester = typeof defaultRequestJson;
@@ -101,6 +101,9 @@ export class LiveEventConnectionManager {
     this.eventSource.addEventListener("update_error", (event) => {
       this.handleUpdateErrorEvent(event);
     });
+    this.eventSource.onopen = () => {
+      this.stopFallbackPolling();
+    };
     this.eventSource.onerror = () => {
       // Browsers emit this during sleep/offline transitions while EventSource keeps retrying.
       this.startFallbackPolling();

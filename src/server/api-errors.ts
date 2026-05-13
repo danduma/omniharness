@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { formatErrorMessage } from "@/server/runs/failures";
+import { formatErrorMessage } from "@/server/error-format";
 
 export interface AppErrorPayload {
   message: string;

@@ -1,6 +1,7 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { requestJson } from "@/lib/app-errors";
 import { homeUiSetters } from "./HomeUiStateManager";
@@ -9,15 +10,38 @@ import type { AuthSessionResponse, ProjectFilesResponse, SettingsResponse, Worke
 
 export interface UseHomeQueriesParams {
   currentProjectScope: string | null;
+  bootstrapId?: string | null;
+  initialQueries?: {
+    session?: AuthSessionResponse | null;
+    settings?: SettingsResponse | null;
+  };
 }
 
-export function useHomeQueries({ currentProjectScope }: UseHomeQueriesParams) {
+export function useHomeQueries({ currentProjectScope, bootstrapId, initialQueries }: UseHomeQueriesParams) {
   const { setApiKeys, setSettingsDiagnostics } = homeUiSetters;
+  const queryClient = useQueryClient();
+  const primedBootstrapIdRef = useRef<string | null>(null);
+
+  if (
+    typeof window !== "undefined"
+    && bootstrapId
+    && primedBootstrapIdRef.current !== bootstrapId
+  ) {
+    if (initialQueries?.session) {
+      queryClient.setQueryData(["auth-session"], initialQueries.session);
+    }
+    if (initialQueries?.settings) {
+      queryClient.setQueryData(["settings"], initialQueries.settings);
+    }
+    primedBootstrapIdRef.current = bootstrapId;
+  }
 
   const sessionQuery = useQuery<AuthSessionResponse>({
     queryKey: ["auth-session"],
     retry: false,
     refetchOnWindowFocus: true,
+    initialData: initialQueries?.session ?? undefined,
+    staleTime: initialQueries?.session ? 5_000 : 0,
     queryFn: async () => requestJson<AuthSessionResponse>("/api/auth/session", undefined, {
       source: "Auth",
       action: "Load session state",
@@ -33,6 +57,8 @@ export function useHomeQueries({ currentProjectScope }: UseHomeQueriesParams) {
   const settingsQuery = useQuery({
     queryKey: ["settings"],
     enabled: appUnlocked,
+    initialData: initialQueries?.settings ?? undefined,
+    staleTime: initialQueries?.settings ? 5_000 : 0,
     queryFn: async () => {
       const data = await requestJson<SettingsResponse>("/api/settings", undefined, {
         source: "Settings",

@@ -199,7 +199,13 @@ function mergeAgentSnapshots(
   });
 
   for (const currentAgent of current.agents || []) {
-    if (incomingAgentNames.has(currentAgent.name) || !incomingWorkersById.has(currentAgent.name) || !hasRenderableAgentOutput(currentAgent)) {
+    const incomingWorker = incomingWorkersById.get(currentAgent.name);
+    if (
+      incomingAgentNames.has(currentAgent.name)
+      || !incomingWorker
+      || !isWorkerActiveStatus(incomingWorker.status)
+      || !hasRenderableAgentOutput(currentAgent)
+    ) {
       continue;
     }
 
@@ -220,6 +226,37 @@ function sortMessages(messages: MessageRecord[]) {
     const timeDelta = messageTimestampMs(a) - messageTimestampMs(b);
     return timeDelta !== 0 ? timeDelta : a.id.localeCompare(b.id);
   });
+}
+
+type RunRecord = EventStreamState["runs"][number];
+
+function runUpdatedTimestampMs(run: RunRecord) {
+  const value = new Date(run.updatedAt || run.createdAt).getTime();
+  return Number.isFinite(value) ? value : 0;
+}
+
+function mergeScopedRuns(current: EventStreamState, incoming: EventStreamState) {
+  const incomingRuns = incoming.runs ?? [];
+  if (incomingRuns.length === 0 || !current.runs?.length) {
+    return incoming;
+  }
+
+  const currentRunsById = new Map(current.runs.map((run) => [run.id, run]));
+  let changed = false;
+  const mergedRuns = incomingRuns.map((incomingRun) => {
+    const currentRun = currentRunsById.get(incomingRun.id);
+    if (!currentRun || runUpdatedTimestampMs(currentRun) <= runUpdatedTimestampMs(incomingRun)) {
+      return incomingRun;
+    }
+
+    changed = true;
+    return {
+      ...incomingRun,
+      ...currentRun,
+    };
+  });
+
+  return changed ? { ...incoming, runs: mergedRuns } : incoming;
 }
 
 function mergeScopedMessages(current: EventStreamState, incoming: EventStreamState) {
@@ -290,7 +327,8 @@ export class EventStreamStateManager {
   update(action: EventStreamStateAction) {
     const incoming = typeof action === "function" ? action(this.state) : action;
     this.rememberOutputEntries(incoming);
-    const incomingWithMessages = mergeScopedMessages(this.state, incoming);
+    const incomingWithRuns = mergeScopedRuns(this.state, incoming);
+    const incomingWithMessages = mergeScopedMessages(this.state, incomingWithRuns);
     const mergedState = mergeAgentSnapshots(this.state, incomingWithMessages, this.outputEntriesByAgentName);
     const nextState = this.outputLineCache.hydrateState(mergedState);
 

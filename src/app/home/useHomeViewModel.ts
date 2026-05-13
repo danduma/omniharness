@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { buildConversationGroups } from "@/lib/conversations";
+import { isTerminalRunStatus } from "@/lib/run-status";
 import {
   buildWorkerLists,
   isWorkerActiveStatus,
@@ -48,6 +49,7 @@ export function useHomeViewModel({
   const explicitProjects = useMemo(() => parseProjectList(apiKeys.PROJECTS), [apiKeys.PROJECTS]);
 
   const selectedRun = selectedRunId ? runs.find((run) => run.id === selectedRunId) ?? null : null;
+  const selectedRunIsTerminal = isTerminalRunStatus(selectedRun?.status);
 
   const isSupervisorRunning = Boolean(selectedRun && selectedRun.mode === "implementation" && selectedRun.status === "running");
   const selectedRunMode: ConversationModeOption = selectedRun?.mode || "implementation";
@@ -186,7 +188,10 @@ export function useHomeViewModel({
     );
 
     return selectedRunWorkers.map((worker) => {
-      const liveAgent = liveAgentsById.get(worker.id);
+      const candidateAgent = liveAgentsById.get(worker.id);
+      const liveAgent = selectedRunIsTerminal && candidateAgent && isWorkerActiveStatus(candidateAgent.state)
+        ? null
+        : candidateAgent;
       return liveAgent ?? {
         name: worker.id,
         type: worker.type,
@@ -195,7 +200,7 @@ export function useHomeViewModel({
         lastText: "",
       };
     });
-  }, [selectedRunWorkers, state.agents]);
+  }, [selectedRunIsTerminal, selectedRunWorkers, state.agents]);
 
   const selectedRunWorkersForDisplay = useMemo(
     () => mergeWorkerLiveStatus(selectedRunWorkers, conversationAgents),
@@ -208,8 +213,10 @@ export function useHomeViewModel({
   );
 
   const conversationWorkerGroups = useMemo(
-    () => buildWorkerLists(selectedRunWorkersForDisplay),
-    [selectedRunWorkersForDisplay],
+    () => selectedRunIsTerminal
+      ? { active: [], finished: selectedRunWorkersForDisplay }
+      : buildWorkerLists(selectedRunWorkersForDisplay),
+    [selectedRunIsTerminal, selectedRunWorkersForDisplay],
   );
 
   const activeConversationWorkerIds = useMemo(
@@ -256,11 +263,12 @@ export function useHomeViewModel({
 
         return {
           agentName: agent.name,
+          text: rawThought,
           snippet,
           isLive: Boolean(agent.currentText?.trim()),
         };
       })
-      .filter((thought): thought is { agentName: string; snippet: string; isLive: boolean } => Boolean(thought))
+      .filter((thought): thought is { agentName: string; text: string; snippet: string; isLive: boolean } => Boolean(thought))
       .slice(0, 3);
   }, [activeConversationAgents]);
 
@@ -389,7 +397,8 @@ export function useHomeViewModel({
     latestExecutionEventCreatedAt: latestExecutionEvent?.createdAt,
   });
 
-  const isConversationThinking = hasActiveWorker
+  const isConversationThinking = isSupervisorRunning
+    || hasActiveWorker
     || Boolean(pendingPermissionAgent)
     || hasStuckWorker
     || showRecoverableRunningState

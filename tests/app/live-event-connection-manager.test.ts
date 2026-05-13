@@ -155,4 +155,34 @@ describe("LiveEventConnectionManager", () => {
     manager.stop();
     vi.useRealTimers();
   });
+
+  it("stops fallback polling when the event stream reconnects without a changed payload", async () => {
+    vi.useFakeTimers();
+    MockEventSource.instances = [];
+    const requestJson = vi.fn().mockResolvedValue(createState("persisted-initial"));
+    const manager = new LiveEventConnectionManager({
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestJson,
+      applyUpdate: vi.fn(),
+      reportError: vi.fn(),
+      fallbackIntervalMs: 100,
+      fallbackCooldownMs: 0,
+    });
+
+    manager.start();
+    await vi.runAllTicks();
+    await Promise.resolve();
+
+    MockEventSource.instances[0]?.onerror?.();
+    await vi.runAllTicks();
+    await Promise.resolve();
+
+    MockEventSource.instances[0]?.onopen?.();
+    await vi.advanceTimersByTimeAsync(350);
+
+    expect(requestJson).toHaveBeenCalledTimes(2);
+
+    manager.stop();
+    vi.useRealTimers();
+  });
 });

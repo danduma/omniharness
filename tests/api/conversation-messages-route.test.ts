@@ -228,7 +228,7 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
   });
 
-  it("queues active implementation follow-ups instead of trying to wake an already-running supervisor", async () => {
+  it("stores active implementation follow-ups as steering instead of queueing the supervisor", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
 
@@ -258,7 +258,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       method: "POST",
       body: JSON.stringify({
         content: "stop the current server on 3002",
-        busyAction: "steer",
+        busyAction: "queue",
       }),
     });
 
@@ -276,7 +276,7 @@ describe("POST /api/conversations/[id]/messages", () => {
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
     expect(queuedMessages).toHaveLength(1);
     expect(storedMessages).toHaveLength(0);
-    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
   });
 
   it("sends a queued implementation message immediately as steering", async () => {
@@ -323,25 +323,20 @@ describe("POST /api/conversations/[id]/messages", () => {
     const response = await SEND_QUEUED_NOW(request, { params: Promise.resolve({ id: runId, messageId: queuedMessageId }) });
     expect(response.status).toBe(200);
     const payload = await response.json();
-    expect(payload.message).toMatchObject({
-      runId,
-      role: "user",
-      kind: "checkpoint",
-      content: "Use this note right now.",
-    });
+    expect(payload.message).toBeUndefined();
     expect(payload.queuedMessage).toMatchObject({
       id: queuedMessageId,
       runId,
       action: "steer",
-      status: "delivered",
+      status: "pending",
       content: "Use this note right now.",
     });
 
     const storedQueued = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queuedMessageId)).get();
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
-    expect(storedQueued?.status).toBe("delivered");
+    expect(storedQueued?.status).toBe("pending");
     expect(storedQueued?.action).toBe("steer");
-    expect(storedMessages).toHaveLength(1);
+    expect(storedMessages).toHaveLength(0);
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
   });
 

@@ -8,7 +8,7 @@ import { syncConversationSessions } from "@/server/conversations/sync";
 import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
 import { requireApiSession } from "@/server/auth/guards";
 import { buildLiveWorkerSnapshots } from "@/server/workers/live-snapshots";
-import { waitForEventStreamNotification } from "@/server/events/live-updates";
+import { getEventStreamNotificationVersion, waitForEventStreamNotification } from "@/server/events/live-updates";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { serializeMessageRecord } from "@/server/conversations/message-records";
 import { serializeQueuedConversationMessage } from "@/server/conversations/queued-messages";
@@ -55,37 +55,80 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}) {
       ]
     : [];
 
-  const msgs = selectedRunId
-    ? await db.select().from(messages).where(inArray(messages.runId, transcriptRunIds)).orderBy(asc(messages.createdAt))
-    : [];
-  const allAccounts = await db.select().from(accounts);
-  const allWorkers = await db.select().from(workers);
-  const allPlanItems = selectedPlanId
-    ? await db.select().from(planItems).where(eq(planItems.planId, selectedPlanId))
-    : [];
-  const allClarifications = selectedRunId
-    ? await db.select().from(clarifications).where(eq(clarifications.runId, selectedRunId)).orderBy(desc(clarifications.createdAt))
-    : [];
-  const allExecutionEvents = selectedRunId
-    ? await db.select().from(executionEvents).where(eq(executionEvents.runId, selectedRunId)).orderBy(desc(executionEvents.createdAt)).limit(EXECUTION_EVENT_LIMIT)
-    : [];
-  const allSupervisorInterventions = selectedRunId
-    ? await db.select().from(supervisorInterventions).where(eq(supervisorInterventions.runId, selectedRunId)).orderBy(desc(supervisorInterventions.createdAt))
-    : [];
-  const allQueuedMessages = selectedRunId
-    ? await db.select().from(queuedConversationMessages)
-      .where(and(
-        eq(queuedConversationMessages.runId, selectedRunId),
-        inArray(queuedConversationMessages.status, ["pending", "delivering"]),
-      ))
-      .orderBy(desc(queuedConversationMessages.createdAt))
-    : [];
-  const allRecoveryIncidents = selectedRunId
-    ? await db.select().from(recoveryIncidents)
-      .where(eq(recoveryIncidents.runId, selectedRunId))
-      .orderBy(desc(recoveryIncidents.updatedAt))
-      .limit(20)
-    : [];
+  const [
+    msgs,
+    allAccounts,
+    allWorkers,
+    selectedAgentWorkers,
+    allPlanItems,
+    allClarifications,
+    allExecutionEvents,
+    allSupervisorInterventions,
+    allQueuedMessages,
+    allRecoveryIncidents,
+  ] = await Promise.all([
+    selectedRunId
+      ? db.select().from(messages).where(inArray(messages.runId, transcriptRunIds)).orderBy(asc(messages.createdAt))
+      : [],
+    db.select().from(accounts),
+    db.select({
+      id: workers.id,
+      runId: workers.runId,
+      type: workers.type,
+      status: workers.status,
+      workerNumber: workers.workerNumber,
+      title: workers.title,
+      initialPrompt: workers.initialPrompt,
+      createdAt: workers.createdAt,
+      updatedAt: workers.updatedAt,
+    }).from(workers),
+    selectedRunId
+      ? db.select({
+        id: workers.id,
+        runId: workers.runId,
+        type: workers.type,
+        status: workers.status,
+        cwd: workers.cwd,
+        outputLog: workers.outputLog,
+        outputEntriesJson: workers.outputEntriesJson,
+        currentText: workers.currentText,
+        lastText: workers.lastText,
+        bridgeSessionId: workers.bridgeSessionId,
+        bridgeSessionMode: workers.bridgeSessionMode,
+        workerNumber: workers.workerNumber,
+        title: workers.title,
+        initialPrompt: workers.initialPrompt,
+        createdAt: workers.createdAt,
+        updatedAt: workers.updatedAt,
+      }).from(workers).where(eq(workers.runId, selectedRunId))
+      : [],
+    selectedPlanId
+      ? db.select().from(planItems).where(eq(planItems.planId, selectedPlanId))
+      : [],
+    selectedRunId
+      ? db.select().from(clarifications).where(eq(clarifications.runId, selectedRunId)).orderBy(desc(clarifications.createdAt))
+      : [],
+    selectedRunId
+      ? db.select().from(executionEvents).where(eq(executionEvents.runId, selectedRunId)).orderBy(desc(executionEvents.createdAt)).limit(EXECUTION_EVENT_LIMIT)
+      : [],
+    selectedRunId
+      ? db.select().from(supervisorInterventions).where(eq(supervisorInterventions.runId, selectedRunId)).orderBy(desc(supervisorInterventions.createdAt))
+      : [],
+    selectedRunId
+      ? db.select().from(queuedConversationMessages)
+        .where(and(
+          eq(queuedConversationMessages.runId, selectedRunId),
+          inArray(queuedConversationMessages.status, ["pending", "delivering"]),
+        ))
+        .orderBy(desc(queuedConversationMessages.createdAt))
+      : [],
+    selectedRunId
+      ? db.select().from(recoveryIncidents)
+        .where(eq(recoveryIncidents.runId, selectedRunId))
+        .orderBy(desc(recoveryIncidents.updatedAt))
+        .limit(20)
+      : [],
+  ]);
 
   return {
     msgs,
@@ -93,6 +136,7 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}) {
     allRuns,
     allAccounts,
     allWorkers,
+    selectedAgentWorkers,
     allPlanItems,
     allClarifications,
     allExecutionEvents,
@@ -154,7 +198,7 @@ function selectedRunWorkers(
     return [];
   }
 
-  return records.allWorkers.filter((worker) => worker.runId === selectedRunId);
+  return records.selectedAgentWorkers;
 }
 
 function selectedRunIds(options: EventPayloadOptions) {
@@ -682,6 +726,7 @@ export async function GET(req: NextRequest) {
       });
 
       while (!isClosed) {
+        const notificationVersionAtStart = getEventStreamNotificationVersion();
         try {
           const runtimePayloadPromise = buildRuntimeEnrichedEventPayload(eventPayloadOptions);
           const runtimePayload = await Promise.race([
@@ -707,7 +752,7 @@ export async function GET(req: NextRequest) {
         }
 
         if (!isClosed) {
-          await waitForEventStreamNotification(STREAM_REFRESH_INTERVAL_MS);
+          await waitForEventStreamNotification(STREAM_REFRESH_INTERVAL_MS, notificationVersionAtStart);
         }
       }
     }

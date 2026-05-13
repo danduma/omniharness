@@ -1,15 +1,26 @@
 type LiveUpdateListener = () => void;
 
 const listeners = new Set<LiveUpdateListener>();
+let notificationVersion = 0;
 
 export function notifyEventStreamSubscribers() {
+  notificationVersion += 1;
   for (const listener of listeners) {
     listener();
   }
 }
 
-export function waitForEventStreamNotification(timeoutMs: number) {
+export function getEventStreamNotificationVersion() {
+  return notificationVersion;
+}
+
+export function waitForEventStreamNotification(timeoutMs: number, afterVersion = notificationVersion) {
   return new Promise<void>((resolve) => {
+    if (notificationVersion > afterVersion) {
+      resolve();
+      return;
+    }
+
     let settled = false;
     let timeout: ReturnType<typeof setTimeout> | null = null;
 

@@ -81,6 +81,84 @@ describe("EventStreamStateManager", () => {
     ]);
   });
 
+  it("does not let a cached working snapshot override a fresh completed bootstrap", () => {
+    const storage = new MemoryStorage();
+    const snapshotCache = new EventStreamSnapshotCacheManager({
+      storage,
+      storageKey: "test-event-stream-snapshot-cache",
+    });
+
+    snapshotCache.rememberState(createState({
+      messages: [{
+        id: "stale-message",
+        runId: "run-1",
+        role: "supervisor",
+        kind: "update",
+        content: "Still checking...",
+        createdAt: "2026-05-04T00:00:00.000Z",
+      }],
+      runs: [{
+        id: "run-1",
+        planId: "plan-1",
+        mode: "implementation",
+        status: "running",
+        createdAt: "2026-05-04T00:00:00.000Z",
+        projectPath: "/repo",
+        title: "Cached conversation",
+      }],
+      workers: [{ id: "run-1-worker-1", runId: "run-1", type: "codex", status: "working" }],
+      agents: [{
+        name: "run-1-worker-1",
+        type: "codex",
+        state: "working",
+        currentText: "Still working",
+      }],
+    }), "run-1");
+
+    const reloadedManager = new EventStreamStateManager(createState({
+      messages: [{
+        id: "completion-message",
+        runId: "run-1",
+        role: "supervisor",
+        kind: "completion",
+        content: "Final summary",
+        createdAt: "2026-05-04T00:01:00.000Z",
+      }],
+      runs: [{
+        id: "run-1",
+        planId: "plan-1",
+        mode: "implementation",
+        status: "done",
+        createdAt: "2026-05-04T00:00:00.000Z",
+        updatedAt: "2026-05-04T00:01:00.000Z",
+        projectPath: "/repo",
+        title: "Cached conversation",
+      }],
+      workers: [{ id: "run-1-worker-1", runId: "run-1", type: "codex", status: "cancelled" }],
+      agents: [{
+        name: "run-1-worker-1",
+        type: "codex",
+        state: "cancelled",
+        currentText: "",
+        lastText: "Finished",
+        bridgeMissing: true,
+      }],
+    }), {
+      snapshotCache: new EventStreamSnapshotCacheManager({
+        storage,
+        storageKey: "test-event-stream-snapshot-cache",
+      }),
+      snapshotCacheScope: "run-1",
+    });
+
+    expect(reloadedManager.getSnapshot().runs[0].status).toBe("done");
+    expect(reloadedManager.getSnapshot().messages.map((message) => message.id)).toEqual(["completion-message"]);
+    expect(reloadedManager.getSnapshot().agents[0]).toEqual(expect.objectContaining({
+      state: "cancelled",
+      bridgeMissing: true,
+    }));
+  });
+
   it("persists worker output lines once globally and hydrates them after a reload", () => {
     const storage = new MemoryStorage();
     const cacheOptions = {
@@ -290,6 +368,59 @@ describe("EventStreamStateManager", () => {
       "run-1-message-1",
       "run-1-message-2",
       "run-2-message-1",
+    ]);
+  });
+
+  it("does not let an older scoped payload roll a generated conversation title back", () => {
+    const manager = new EventStreamStateManager(createState({
+      runs: [
+        {
+          id: "run-1",
+          planId: "plan-1",
+          status: "running",
+          createdAt: "2026-05-04T00:00:00.000Z",
+          updatedAt: "2026-05-04T00:00:10.000Z",
+          projectPath: null,
+          title: "Debug Gemini title flicker",
+        },
+        {
+          id: "run-2",
+          planId: "plan-2",
+          status: "running",
+          createdAt: "2026-05-04T00:01:00.000Z",
+          updatedAt: "2026-05-04T00:01:10.000Z",
+          projectPath: null,
+          title: "Compare direct sessions",
+        },
+      ],
+    }));
+
+    const next = manager.update(createState({
+      runs: [
+        {
+          id: "run-2",
+          planId: "plan-2",
+          status: "running",
+          createdAt: "2026-05-04T00:01:00.000Z",
+          updatedAt: "2026-05-04T00:01:00.000Z",
+          projectPath: null,
+          title: "compare the two direct control sessions and tell me what is happening",
+        },
+        {
+          id: "run-1",
+          planId: "plan-1",
+          status: "running",
+          createdAt: "2026-05-04T00:00:00.000Z",
+          updatedAt: "2026-05-04T00:00:00.000Z",
+          projectPath: null,
+          title: "debug title flicker when switching between sessions",
+        },
+      ],
+    }));
+
+    expect(next.runs.map((run) => [run.id, run.title])).toEqual([
+      ["run-2", "Compare direct sessions"],
+      ["run-1", "Debug Gemini title flicker"],
     ]);
   });
 
@@ -562,6 +693,27 @@ describe("EventStreamStateManager", () => {
       lastText: "Finished",
       bridgeMissing: true,
     }));
+  });
+
+  it("drops cached live agents once the persisted worker is terminal", () => {
+    const manager = new EventStreamStateManager(createState({
+      workers: [{ id: "run-1-worker-1", runId: "run-1", type: "codex", status: "working" }],
+      agents: [{
+        name: "run-1-worker-1",
+        type: "codex",
+        state: "working",
+        currentText: "Still typing",
+        displayText: "Still typing",
+        bridgeMissing: false,
+      }],
+    }));
+
+    const next = manager.update(createState({
+      workers: [{ id: "run-1-worker-1", runId: "run-1", type: "codex", status: "cancelled" }],
+      agents: [],
+    }));
+
+    expect(next.agents).toEqual([]);
   });
 
   it("keeps previously seen worker output entries when live snapshots only include a compact window", () => {

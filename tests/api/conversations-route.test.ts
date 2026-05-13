@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { db } from "@/server/db";
 import { eq } from "drizzle-orm";
-import { messages, plans, runs, workerCounters, workers } from "@/server/db/schema";
+import { executionEvents, messages, plans, runs, workerCounters, workers } from "@/server/db/schema";
 import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
 import { getAppRoot } from "@/server/app-root";
+import type { GitWorkspaceSnapshot, GitWorkspaceTarget } from "@/lib/git-workspace";
 
 const {
   mockStartSupervisorRun,
@@ -14,11 +15,15 @@ const {
   mockAskAgent,
   mockGetAgent,
   mockNotifyEventStreamSubscribers,
+  mockValidateWorkspaceTarget,
+  mockCreateBranchWorktree,
 } = vi.hoisted(() => ({
   mockStartSupervisorRun: vi.fn(),
   mockQueueConversationTitleGeneration: vi.fn().mockResolvedValue(undefined),
   mockEnsureSupervisorRuntimeStarted: vi.fn().mockResolvedValue(undefined),
   mockNotifyEventStreamSubscribers: vi.fn(),
+  mockValidateWorkspaceTarget: vi.fn(),
+  mockCreateBranchWorktree: vi.fn(),
   mockSpawnAgent: vi.fn().mockResolvedValue({
     name: "worker-1",
     type: "codex",
@@ -76,6 +81,22 @@ vi.mock("@/server/events/live-updates", () => ({
   notifyEventStreamSubscribers: mockNotifyEventStreamSubscribers,
 }));
 
+vi.mock("@/server/git/workspaces", () => ({
+  validateWorkspaceTarget: mockValidateWorkspaceTarget,
+  createBranchWorktree: mockCreateBranchWorktree,
+  GitWorkspaceError: class GitWorkspaceError extends Error {
+    code: string;
+    details: Record<string, unknown>;
+
+    constructor(code: string, message: string, details: Record<string, unknown> = {}) {
+      super(message);
+      this.name = "GitWorkspaceError";
+      this.code = code;
+      this.details = details;
+    }
+  },
+}));
+
 import { POST } from "@/app/api/conversations/route";
 
 function delay(ms: number) {
@@ -98,6 +119,42 @@ async function waitFor<T>(read: () => T | Promise<T>, predicate: (value: T) => b
   return latest;
 }
 
+function buildWorkspaceSnapshot(overrides: Partial<GitWorkspaceSnapshot> = {}): GitWorkspaceSnapshot {
+  const branchName = overrides.branchName === undefined ? "feature/test" : overrides.branchName;
+  return {
+    repoRoot: "/workspace/app",
+    gitCommonDir: "/workspace/app/.git",
+    checkoutPath: "/workspace/app-feature",
+    headSha: "abc1234567890",
+    branchName,
+    detachedLabel: null,
+    isDetached: branchName === null,
+    isBare: false,
+    dirtyFileCount: 0,
+    conflictedFileCount: 0,
+    aheadCount: 0,
+    behindCount: 0,
+    statusFingerprint: "fingerprint",
+    worktrees: [],
+    branches: [],
+    warnings: [],
+    refreshedAt: new Date(0).toISOString(),
+    ...overrides,
+  };
+}
+
+function buildWorkspaceTarget(overrides: Partial<GitWorkspaceTarget> = {}): GitWorkspaceTarget {
+  return {
+    kind: "worktree",
+    repoRoot: "/workspace/app",
+    gitCommonDir: "/workspace/app/.git",
+    checkoutPath: "/workspace/app-feature",
+    branchName: "feature/test",
+    worktreeId: "/workspace/app-feature",
+    ...overrides,
+  };
+}
+
 describe("POST /api/conversations", () => {
   beforeEach(async () => {
     mockStartSupervisorRun.mockClear();
@@ -107,12 +164,141 @@ describe("POST /api/conversations", () => {
     mockAskAgent.mockClear();
     mockGetAgent.mockClear();
     mockNotifyEventStreamSubscribers.mockClear();
+    mockValidateWorkspaceTarget.mockReset();
+    mockCreateBranchWorktree.mockReset();
 
+    await db.delete(executionEvents);
     await db.delete(messages);
     await db.delete(workers);
     await db.delete(workerCounters);
     await db.delete(runs);
     await db.delete(plans);
+  });
+
+  it("pins a new direct conversation to a selected git workspace target", async () => {
+    const target = buildWorkspaceTarget();
+    const snapshot = buildWorkspaceSnapshot({ warnings: [{ code: "git_lfs", message: "Git LFS filters are configured." }] });
+    mockValidateWorkspaceTarget.mockResolvedValueOnce(snapshot);
+    mockSpawnAgent.mockImplementationOnce((args: { cwd: string; type: string; name: string }) => Promise.resolve({
+      name: args.name,
+      type: args.type,
+      state: "idle",
+      cwd: args.cwd,
+      lastText: "",
+      currentText: "",
+      stderrBuffer: [],
+      stopReason: null,
+    }));
+    mockGetAgent.mockResolvedValueOnce({
+      name: "worker-1",
+      type: "codex",
+      state: "working",
+      cwd: target.checkoutPath,
+      lastText: "Acknowledged.",
+      currentText: "",
+      renderedOutput: "",
+      outputEntries: [{ id: "entry-1", type: "message", text: "Acknowledged.", timestamp: new Date(0).toISOString() }],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command: "Run in selected workspace",
+        projectPath: "/workspace/app",
+        gitWorkspaceTarget: target,
+        preferredWorkerType: "codex",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+    const createdWorker = await db.select().from(workers).where(eq(workers.runId, payload.runId)).get();
+    const workspaceSnapshot = JSON.parse(createdRun?.gitWorkspaceJson ?? "{}");
+
+    expect(mockValidateWorkspaceTarget).toHaveBeenCalledWith(target);
+    expect(createdRun?.projectPath).toBe(target.checkoutPath);
+    expect(payload.run.projectPath).toBe(target.checkoutPath);
+    expect(createdWorker?.cwd).toBe(target.checkoutPath);
+    expect(workspaceSnapshot.target).toEqual(target);
+    expect(workspaceSnapshot.worktrees).toBeUndefined();
+    expect(workspaceSnapshot.branches).toBeUndefined();
+    expect(workspaceSnapshot.warnings).toEqual(snapshot.warnings);
+  });
+
+  it("creates a branch-backed worktree at submit time and pins the run there", async () => {
+    const target = buildWorkspaceTarget({
+      checkoutPath: "/workspace/app-new-feature",
+      branchName: "feature/new-run",
+      worktreeId: "/workspace/app-new-feature",
+    });
+    const snapshot = buildWorkspaceSnapshot({
+      checkoutPath: "/workspace/app",
+      branchName: "main",
+      headSha: "def1234567890",
+      statusFingerprint: "new-fingerprint",
+    });
+    mockCreateBranchWorktree.mockResolvedValueOnce({
+      target,
+      snapshot: buildWorkspaceSnapshot({
+        checkoutPath: "/workspace/app",
+        branchName: "main",
+        worktrees: [{
+          checkoutPath: target.checkoutPath,
+          headSha: "def1234567890",
+          branchName: target.branchName,
+          detachedLabel: null,
+          isCurrent: false,
+          isDetached: false,
+          isBare: false,
+          isPrunable: false,
+          dirtyFileCount: 0,
+          conflictedFileCount: 0,
+        }],
+      }),
+    });
+
+    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "implementation",
+        command: "Start isolated implementation",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+        allowedWorkerTypes: ["codex"],
+        gitWorkspaceLaunch: {
+          mode: "new_worktree",
+          projectPath: "/workspace/app",
+          newBranchName: "feature/new-run",
+          checkoutPath: target.checkoutPath,
+          expectedHeadSha: snapshot.headSha,
+          expectedStatusFingerprint: snapshot.statusFingerprint,
+        },
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, payload.runId));
+    const workspaceSnapshot = JSON.parse(createdRun?.gitWorkspaceJson ?? "{}");
+
+    expect(mockCreateBranchWorktree).toHaveBeenCalledWith(expect.objectContaining({
+      projectPath: "/workspace/app",
+      newBranchName: "feature/new-run",
+      checkoutPath: target.checkoutPath,
+      expectedHeadSha: snapshot.headSha,
+      expectedStatusFingerprint: snapshot.statusFingerprint,
+    }));
+    expect(createdRun?.projectPath).toBe(target.checkoutPath);
+    expect(payload.run.projectPath).toBe(target.checkoutPath);
+    expect(workspaceSnapshot.target).toEqual(target);
+    expect(workspaceSnapshot.worktrees).toBeUndefined();
+    expect(workspaceSnapshot.branches).toBeUndefined();
+    expect(events.some((event) => event.eventType === "git_workspace_selected")).toBe(true);
   });
 
   it("starts an implementation conversation and wakes the supervisor", async () => {
@@ -154,6 +340,46 @@ describe("POST /api/conversations", () => {
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
     expect(mockSpawnAgent).not.toHaveBeenCalled();
     expect(mockNotifyEventStreamSubscribers).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists and returns a new implementation conversation before supervisor startup completes", async () => {
+    mockEnsureSupervisorRuntimeStarted.mockImplementationOnce(() => new Promise(() => {}));
+    const request = new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "implementation",
+        command: "Start immediately",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+        allowedWorkerTypes: ["codex"],
+      }),
+    });
+
+    const response = await Promise.race([
+      POST(request),
+      delay(100).then(() => "timeout" as const),
+    ]);
+
+    expect(response).not.toBe("timeout");
+    if (response === "timeout") return;
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    const run = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+    const message = await db.select().from(messages).where(eq(messages.runId, payload.runId)).get();
+
+    expect(run).toEqual(expect.objectContaining({
+      id: payload.runId,
+      mode: "implementation",
+      projectPath: "/workspace/app",
+      title: "Start immediately",
+    }));
+    expect(message).toEqual(expect.objectContaining({
+      role: "user",
+      kind: "checkpoint",
+      content: "Start immediately",
+    }));
+    expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
   });
 
   it("uses the first prompt line as the temporary conversation title", async () => {

@@ -5,6 +5,54 @@ import { requireApiSession } from "@/server/auth/guards";
 import { createConversation } from "@/server/conversations/create";
 import { normalizeConversationMode } from "@/server/conversations/modes";
 import { normalizeChatAttachments } from "@/lib/chat-attachments";
+import type { GitWorkspaceTarget } from "@/lib/git-workspace";
+
+function readGitWorkspaceTarget(value: unknown): GitWorkspaceTarget | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Partial<GitWorkspaceTarget>;
+  if (
+    (candidate.kind === "current_checkout" || candidate.kind === "worktree")
+    && typeof candidate.repoRoot === "string"
+    && typeof candidate.gitCommonDir === "string"
+    && typeof candidate.checkoutPath === "string"
+    && (typeof candidate.branchName === "string" || candidate.branchName === null)
+    && (typeof candidate.worktreeId === "string" || candidate.worktreeId === null)
+  ) {
+    return candidate as GitWorkspaceTarget;
+  }
+  return null;
+}
+
+function readGitWorkspaceLaunch(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  if (candidate.mode !== "new_worktree") {
+    return null;
+  }
+  if (
+    typeof candidate.projectPath !== "string"
+    || typeof candidate.newBranchName !== "string"
+    || typeof candidate.checkoutPath !== "string"
+    || typeof candidate.expectedStatusFingerprint !== "string"
+    || !(typeof candidate.expectedHeadSha === "string" || candidate.expectedHeadSha === null)
+  ) {
+    return null;
+  }
+  return {
+    mode: "new_worktree" as const,
+    projectPath: candidate.projectPath,
+    newBranchName: candidate.newBranchName,
+    checkoutPath: candidate.checkoutPath,
+    startPoint: typeof candidate.startPoint === "string" ? candidate.startPoint : undefined,
+    worktreeParent: typeof candidate.worktreeParent === "string" ? candidate.worktreeParent : undefined,
+    expectedHeadSha: candidate.expectedHeadSha,
+    expectedStatusFingerprint: candidate.expectedStatusFingerprint,
+  };
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -30,13 +78,17 @@ export async function POST(req: NextRequest) {
     }
 
     if (mode === "implementation") {
-      await ensureSupervisorRuntimeStarted();
+      ensureSupervisorRuntimeStarted().catch((error) => {
+        console.error("Supervisor runtime startup failed while creating a conversation:", error);
+      });
     }
 
     const result = await createConversation({
       mode,
       command,
       projectPath: typeof body?.projectPath === "string" ? body.projectPath : null,
+      gitWorkspaceTarget: readGitWorkspaceTarget(body?.gitWorkspaceTarget),
+      gitWorkspaceLaunch: readGitWorkspaceLaunch(body?.gitWorkspaceLaunch),
       preferredWorkerType: typeof body?.preferredWorkerType === "string" ? body.preferredWorkerType : null,
       preferredWorkerModel: typeof body?.preferredWorkerModel === "string" ? body.preferredWorkerModel : null,
       preferredWorkerEffort: typeof body?.preferredWorkerEffort === "string" ? body.preferredWorkerEffort : null,

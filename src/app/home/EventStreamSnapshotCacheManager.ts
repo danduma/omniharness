@@ -62,6 +62,10 @@ function compactStateForCache(state: EventStreamState): EventStreamState {
   };
 }
 
+function preferInitialArray<T>(initial: T[] | undefined, cached: T[] | undefined) {
+  return initial && initial.length > 0 ? initial : cached ?? [];
+}
+
 function isEventStreamState(value: unknown): value is EventStreamState {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -92,9 +96,22 @@ export class EventStreamSnapshotCacheManager {
       return initialState;
     }
 
+    const cachedState = snapshot.state;
     return {
+      ...cachedState,
       ...initialState,
-      ...snapshot.state,
+      messages: preferInitialArray(initialState.messages, cachedState.messages),
+      plans: preferInitialArray(initialState.plans, cachedState.plans),
+      runs: preferInitialArray(initialState.runs, cachedState.runs),
+      accounts: preferInitialArray(initialState.accounts, cachedState.accounts),
+      agents: preferInitialArray(initialState.agents, cachedState.agents),
+      workers: preferInitialArray(initialState.workers, cachedState.workers),
+      planItems: preferInitialArray(initialState.planItems, cachedState.planItems),
+      clarifications: preferInitialArray(initialState.clarifications, cachedState.clarifications),
+      executionEvents: preferInitialArray(initialState.executionEvents, cachedState.executionEvents),
+      supervisorInterventions: preferInitialArray(initialState.supervisorInterventions, cachedState.supervisorInterventions),
+      queuedMessages: preferInitialArray(initialState.queuedMessages, cachedState.queuedMessages),
+      recoveryIncidents: preferInitialArray(initialState.recoveryIncidents, cachedState.recoveryIncidents),
       frontendErrors: [],
     };
   }

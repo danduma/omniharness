@@ -70,6 +70,35 @@ function isTerminalProcessNotFoundError(error: unknown) {
   return /terminal process not found/i.test(message);
 }
 
+function readGitWorkspaceLaunch(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  if (candidate.mode !== "new_worktree") {
+    return null;
+  }
+  if (
+    typeof candidate.projectPath !== "string"
+    || typeof candidate.newBranchName !== "string"
+    || typeof candidate.checkoutPath !== "string"
+    || typeof candidate.expectedStatusFingerprint !== "string"
+    || !(typeof candidate.expectedHeadSha === "string" || candidate.expectedHeadSha === null)
+  ) {
+    return null;
+  }
+  return {
+    mode: "new_worktree" as const,
+    projectPath: candidate.projectPath,
+    newBranchName: candidate.newBranchName,
+    checkoutPath: candidate.checkoutPath,
+    startPoint: typeof candidate.startPoint === "string" ? candidate.startPoint : undefined,
+    worktreeParent: typeof candidate.worktreeParent === "string" ? candidate.worktreeParent : undefined,
+    expectedHeadSha: candidate.expectedHeadSha,
+    expectedStatusFingerprint: candidate.expectedStatusFingerprint,
+  };
+}
+
 const USER_STOPPED_WORKER_QUESTION = "I paused the active workers after you stopped one. Is there anything you want to modify before I continue?";
 
 async function insertExecutionEvent(
@@ -380,6 +409,7 @@ export async function POST(
       action,
       targetMessageId,
       content,
+      gitWorkspaceLaunch: readGitWorkspaceLaunch(body?.gitWorkspaceLaunch),
     });
     notifyEventStreamSubscribers();
 
