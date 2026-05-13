@@ -3,13 +3,18 @@ import os from "os";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  getProjectGitWorkspaceConfig,
   getProjectConfigPath,
   getProjectSetting,
   isProjectMemoryEnabled,
   readProjectConfig,
+  resolveProjectGitWorkspaceDefault,
+  setProjectGitWorkspaceDefaultTarget,
+  setProjectGitWorkspaceParent,
   setProjectSetting,
   writeProjectConfig,
 } from "@/server/projects/config";
+import { GitWorkspaceTarget } from "@/lib/git-workspace";
 
 let projectPath: string;
 
@@ -64,5 +69,54 @@ describe("project config", () => {
   it("isProjectMemoryEnabled returns false when no project path is given", () => {
     expect(isProjectMemoryEnabled(null)).toBe(false);
     expect(isProjectMemoryEnabled("")).toBe(false);
+  });
+
+  it("persists git workspace defaults under project config", () => {
+    const target: GitWorkspaceTarget = {
+      kind: "worktree",
+      repoRoot: "/repo",
+      gitCommonDir: "/repo/.git",
+      checkoutPath: "/repo-feature",
+      branchName: "feature/test",
+      worktreeId: "/repo-feature",
+    };
+
+    setProjectGitWorkspaceDefaultTarget(projectPath, target);
+    setProjectGitWorkspaceParent(projectPath, "/worktrees");
+
+    expect(getProjectGitWorkspaceConfig(projectPath)).toEqual({
+      defaultTarget: target,
+      worktreeParent: "/worktrees",
+    });
+  });
+
+  it("falls back when a persisted git workspace target belongs to a different repository", () => {
+    const savedTarget: GitWorkspaceTarget = {
+      kind: "worktree",
+      repoRoot: "/repo",
+      gitCommonDir: "/repo/.git",
+      checkoutPath: "/repo-feature",
+      branchName: "feature/test",
+      worktreeId: "/repo-feature",
+    };
+    const fallbackTarget: GitWorkspaceTarget = {
+      kind: "current_checkout",
+      repoRoot: "/other",
+      gitCommonDir: "/other/.git",
+      checkoutPath: "/other",
+      branchName: "main",
+      worktreeId: null,
+    };
+    setProjectGitWorkspaceDefaultTarget(projectPath, savedTarget);
+
+    const resolved = resolveProjectGitWorkspaceDefault(projectPath, {
+      repoRoot: "/other",
+      gitCommonDir: "/other/.git",
+    }, fallbackTarget);
+
+    expect(resolved.target).toBe(fallbackTarget);
+    expect(resolved.savedTarget).toEqual(savedTarget);
+    expect(resolved.warning?.code).toBe("stale_workspace_target");
+    expect(getProjectGitWorkspaceConfig(projectPath).defaultTarget).toEqual(savedTarget);
   });
 });

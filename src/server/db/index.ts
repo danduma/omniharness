@@ -5,6 +5,8 @@ import { getAppDataPath } from '@/server/app-root';
 
 const dbPath = getAppDataPath('sqlite.db');
 const sqlite = new Database(dbPath);
+sqlite.pragma('journal_mode = WAL');
+sqlite.pragma('busy_timeout = 5000');
 sqlite.pragma('foreign_keys = ON');
 
 sqlite.exec(`
@@ -34,6 +36,7 @@ CREATE TABLE IF NOT EXISTS runs (
   auto_commit_milestones integer NOT NULL DEFAULT 0,
   push_on_commit integer NOT NULL DEFAULT 0,
   git_baseline_json text,
+  git_workspace_json text,
   completion_commit_sha text,
   status text NOT NULL,
   failed_at integer,
@@ -359,6 +362,10 @@ if (!runColumnNames.has("push_on_commit")) {
 
 if (!runColumnNames.has("git_baseline_json")) {
   sqlite.exec("ALTER TABLE runs ADD COLUMN git_baseline_json text;");
+}
+
+if (!runColumnNames.has("git_workspace_json")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN git_workspace_json text;");
 }
 
 if (!runColumnNames.has("completion_commit_sha")) {

@@ -1,10 +1,19 @@
 import fs from "fs";
 import path from "path";
+import type { GitRepositoryIdentity, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
+
+export interface ProjectGitWorkspaceConfig {
+  defaultTarget?: GitWorkspaceTarget;
+  worktreeParent?: string;
+}
 
 export interface ProjectConfig {
   version: 1;
   supervisor?: {
     memoryEnabled?: boolean;
+  };
+  git?: {
+    workspace?: ProjectGitWorkspaceConfig;
   };
 }
 
@@ -41,6 +50,9 @@ export function readProjectConfig(projectPath: string): ProjectConfig {
       version: PROJECT_CONFIG_VERSION,
       supervisor: typeof candidate.supervisor === "object" && candidate.supervisor !== null
         ? (candidate.supervisor as ProjectConfig["supervisor"])
+        : undefined,
+      git: typeof candidate.git === "object" && candidate.git !== null
+        ? (candidate.git as ProjectConfig["git"])
         : undefined,
     };
   } catch {
@@ -124,4 +136,46 @@ export function isProjectMemoryEnabled(projectPath: string | null | undefined): 
 
   const value = getProjectSetting<boolean>(projectPath, "supervisor.memoryEnabled", true);
   return value !== false;
+}
+
+export function getProjectGitWorkspaceConfig(projectPath: string): ProjectGitWorkspaceConfig {
+  return getProjectSetting<ProjectGitWorkspaceConfig>(projectPath, "git.workspace", {});
+}
+
+export function setProjectGitWorkspaceDefaultTarget(projectPath: string, target: GitWorkspaceTarget) {
+  setProjectSetting(projectPath, "git.workspace.defaultTarget", target);
+}
+
+export function setProjectGitWorkspaceParent(projectPath: string, worktreeParent: string | undefined) {
+  setProjectSetting(projectPath, "git.workspace.worktreeParent", worktreeParent);
+}
+
+export function resolveProjectGitWorkspaceDefault(
+  projectPath: string,
+  identity: GitRepositoryIdentity,
+  fallbackTarget: GitWorkspaceTarget,
+): {
+  target: GitWorkspaceTarget;
+  savedTarget: GitWorkspaceTarget | null;
+  warning: GitWorkspaceWarning | null;
+} {
+  const savedTarget = getProjectGitWorkspaceConfig(projectPath).defaultTarget ?? null;
+  if (!savedTarget) {
+    return { target: fallbackTarget, savedTarget: null, warning: null };
+  }
+  if (savedTarget.gitCommonDir !== identity.gitCommonDir) {
+    return {
+      target: fallbackTarget,
+      savedTarget,
+      warning: {
+        code: "stale_workspace_target",
+        message: "Saved workspace target belongs to a different repository.",
+        details: {
+          savedGitCommonDir: savedTarget.gitCommonDir,
+          currentGitCommonDir: identity.gitCommonDir,
+        },
+      },
+    };
+  }
+  return { target: savedTarget, savedTarget, warning: null };
 }

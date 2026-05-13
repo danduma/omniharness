@@ -1,7 +1,8 @@
 import { randomUUID } from "crypto";
+import fs from "fs";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { messages as dbMessages, plans, runs, settings, workers } from "@/server/db/schema";
+import { executionEvents, messages as dbMessages, plans, runs, settings, workers } from "@/server/db/schema";
 import { createAdHocPlan } from "@/server/runs/ad-hoc-plan";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { askAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
@@ -26,6 +27,9 @@ import {
 import { captureGitBaseline } from "@/server/git/auto-commit";
 import { serializeMessageRecord } from "./message-records";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
+import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
+import { createBranchWorktree, validateWorkspaceTarget } from "@/server/git/workspaces";
+import { setProjectGitWorkspaceDefaultTarget } from "@/server/projects/config";
 
 
 function buildInitialWorkerPrompt(mode: ConversationMode, command: string) {
@@ -85,6 +89,93 @@ async function readCommitWorkflowSettings() {
     autoCommitMilestones: parseBooleanSetting(values[GIT_AUTO_COMMIT_MILESTONES_SETTING], false),
     pushOnCommit: parseBooleanSetting(values[GIT_PUSH_ON_COMMIT_SETTING], false),
   };
+}
+
+type GitWorkspaceLaunchRequest = {
+  mode: "new_worktree";
+  projectPath: string;
+  newBranchName: string;
+  checkoutPath: string;
+  startPoint?: string;
+  worktreeParent?: string;
+  expectedHeadSha: string | null;
+  expectedStatusFingerprint: string;
+};
+
+type ResolvedConversationWorkspace = {
+  projectPath: string;
+  runSnapshot: GitWorkspaceRunSnapshot | null;
+};
+
+function buildRunWorkspaceSnapshot(args: {
+  target: GitWorkspaceTarget;
+  snapshot: GitWorkspaceSnapshot;
+  warnings?: GitWorkspaceWarning[];
+}): GitWorkspaceRunSnapshot {
+  const matchingWorktree = args.snapshot.worktrees.find((worktree) => worktree.checkoutPath === args.target.checkoutPath);
+  const selectedAt = new Date().toISOString();
+  return {
+    target: args.target,
+    headSha: matchingWorktree?.headSha ?? args.snapshot.headSha,
+    branchName: matchingWorktree?.branchName ?? args.target.branchName ?? args.snapshot.branchName,
+    detachedLabel: matchingWorktree?.detachedLabel ?? args.snapshot.detachedLabel,
+    dirtyFileCount: matchingWorktree?.dirtyFileCount ?? args.snapshot.dirtyFileCount,
+    conflictedFileCount: matchingWorktree?.conflictedFileCount ?? args.snapshot.conflictedFileCount,
+    aheadCount: args.snapshot.aheadCount,
+    behindCount: args.snapshot.behindCount,
+    warnings: args.warnings ?? args.snapshot.warnings,
+    selectedAt,
+  };
+}
+
+async function resolveConversationWorkspace(args: {
+  projectPath: string;
+  gitWorkspaceTarget?: GitWorkspaceTarget | null;
+  gitWorkspaceLaunch?: GitWorkspaceLaunchRequest | null;
+}): Promise<ResolvedConversationWorkspace> {
+  if (args.gitWorkspaceLaunch) {
+    const result = await createBranchWorktree({
+      projectPath: args.gitWorkspaceLaunch.projectPath,
+      newBranchName: args.gitWorkspaceLaunch.newBranchName,
+      checkoutPath: args.gitWorkspaceLaunch.checkoutPath,
+      startPoint: args.gitWorkspaceLaunch.startPoint,
+      worktreeParent: args.gitWorkspaceLaunch.worktreeParent,
+      expectedHeadSha: args.gitWorkspaceLaunch.expectedHeadSha,
+      expectedStatusFingerprint: args.gitWorkspaceLaunch.expectedStatusFingerprint,
+    });
+    persistWorkspaceDefaultTarget(args.gitWorkspaceLaunch.projectPath, result.target);
+    return {
+      projectPath: result.target.checkoutPath,
+      runSnapshot: buildRunWorkspaceSnapshot({
+        target: result.target,
+        snapshot: result.snapshot,
+      }),
+    };
+  }
+
+  if (args.gitWorkspaceTarget) {
+    const snapshot = await validateWorkspaceTarget(args.gitWorkspaceTarget);
+    persistWorkspaceDefaultTarget(args.projectPath, args.gitWorkspaceTarget);
+    return {
+      projectPath: args.gitWorkspaceTarget.checkoutPath,
+      runSnapshot: buildRunWorkspaceSnapshot({
+        target: args.gitWorkspaceTarget,
+        snapshot,
+      }),
+    };
+  }
+
+  return {
+    projectPath: args.projectPath,
+    runSnapshot: null,
+  };
+}
+
+function persistWorkspaceDefaultTarget(projectPath: string, target: GitWorkspaceTarget) {
+  if (!fs.existsSync(projectPath)) {
+    return;
+  }
+  setProjectGitWorkspaceDefaultTarget(projectPath, target);
 }
 
 function buildInitialConversationTitle(command: string) {
@@ -294,6 +385,8 @@ export async function createConversation(args: {
   mode?: unknown;
   command: string;
   projectPath?: string | null;
+  gitWorkspaceTarget?: GitWorkspaceTarget | null;
+  gitWorkspaceLaunch?: GitWorkspaceLaunchRequest | null;
   preferredWorkerType?: string | null;
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
@@ -302,7 +395,13 @@ export async function createConversation(args: {
 }) {
   const mode = normalizeConversationMode(args.mode);
   const command = args.command.trim();
-  const projectPath = args.projectPath?.trim() || getAppRoot();
+  const requestedProjectPath = args.projectPath?.trim() || getAppRoot();
+  const resolvedWorkspace = await resolveConversationWorkspace({
+    projectPath: requestedProjectPath,
+    gitWorkspaceTarget: args.gitWorkspaceTarget,
+    gitWorkspaceLaunch: args.gitWorkspaceLaunch,
+  });
+  const projectPath = resolvedWorkspace.projectPath;
   const attachments = normalizeChatAttachments(args.attachments ?? []);
   const attachmentsJson = serializeChatAttachments(attachments);
   const workerPrompt = appendAttachmentContext(command, attachments);
@@ -349,11 +448,32 @@ export async function createConversation(args: {
     autoCommitMilestones: commitWorkflowSettings.autoCommitMilestones,
     pushOnCommit: commitWorkflowSettings.pushOnCommit,
     gitBaselineJson: gitBaseline ? JSON.stringify(gitBaseline) : null,
+    gitWorkspaceJson: resolvedWorkspace.runSnapshot ? JSON.stringify(resolvedWorkspace.runSnapshot) : null,
     completionCommitSha: null,
     status: mode === "planning" ? "starting" : "running",
     createdAt: new Date(),
     updatedAt: new Date(),
   });
+
+  if (resolvedWorkspace.runSnapshot) {
+    await db.insert(executionEvents).values({
+      id: randomUUID(),
+      runId,
+      eventType: "git_workspace_selected",
+      details: JSON.stringify({
+        target: resolvedWorkspace.runSnapshot.target,
+        headSha: resolvedWorkspace.runSnapshot.headSha,
+        branchName: resolvedWorkspace.runSnapshot.branchName,
+        detachedLabel: resolvedWorkspace.runSnapshot.detachedLabel,
+        dirtyFileCount: resolvedWorkspace.runSnapshot.dirtyFileCount,
+        conflictedFileCount: resolvedWorkspace.runSnapshot.conflictedFileCount,
+        aheadCount: resolvedWorkspace.runSnapshot.aheadCount,
+        behindCount: resolvedWorkspace.runSnapshot.behindCount,
+        warnings: resolvedWorkspace.runSnapshot.warnings,
+      }),
+      createdAt: new Date(),
+    });
+  }
 
   const initialMessageId = randomUUID();
   await db.insert(dbMessages).values({

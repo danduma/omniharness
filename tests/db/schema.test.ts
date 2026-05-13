@@ -39,4 +39,8 @@ describe("db schema", () => {
     expect(schema.runs).toHaveProperty("gitBaselineJson");
     expect(schema.runs).toHaveProperty("completionCommitSha");
   });
+
+  it("persists immutable git workspace launch snapshots on runs", () => {
+    expect(schema.runs).toHaveProperty("gitWorkspaceJson");
+  });
 });

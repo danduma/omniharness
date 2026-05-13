@@ -26,6 +26,7 @@ export const runs = sqliteTable('runs', {
   autoCommitMilestones: integer('auto_commit_milestones', { mode: 'boolean' }).notNull().default(false),
   pushOnCommit: integer('push_on_commit', { mode: 'boolean' }).notNull().default(false),
   gitBaselineJson: text('git_baseline_json'),
+  gitWorkspaceJson: text('git_workspace_json'),
   completionCommitSha: text('completion_commit_sha'),
   status: text('status').notNull(), // 'running', 'done', 'failed'
   failedAt: integer('failed_at', { mode: 'timestamp' }),
