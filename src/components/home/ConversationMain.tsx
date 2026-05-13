@@ -1,10 +1,21 @@
 import type React from "react";
-import { ArrowDown, Blocks, ChevronDown, CirclePlay, CircleStop, GitBranch, ListTree, Pencil, RotateCcw, Route } from "lucide-react";
+import dynamic from "next/dynamic";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowDown, Blocks, ChevronDown, CirclePlay, CircleStop, FolderGit2, GitBranch, Pencil, RotateCcw, Route } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MarkdownContent } from "@/components/MarkdownContent";
-import { Terminal, type TerminalUserMessage } from "@/components/Terminal";
+import type { TerminalUserMessage } from "@/components/Terminal";
 import { PlanningArtifactsPanel } from "@/components/PlanningArtifactsPanel";
 import { conversationMainManager } from "@/components/component-state-managers";
 import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
@@ -14,132 +25,162 @@ import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, NoticeDescript
 import type { RecoveryIncidentRecord, RunRecoveryState } from "@/app/home/types";
 import { formatExecutionTimestamp, getExecutionEventDetailRows, summarizeExecutionEvent, type ConversationTimelineItem } from "@/app/home/utils";
 import { cn } from "@/lib/utils";
-import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import { shallowEqualRecord, useManagerSelector, useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { ProjectFileReference } from "@/lib/project-file-links";
+import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "@/app/home/GitWorkspaceManager";
 import { ErrorNotice } from "./ErrorNotice";
 import { RecoveryIncidentInspector } from "./RecoveryIncidentInspector";
 import { RunRecoveryNotice } from "./RunRecoveryNotice";
 import { UserInputMessage, type UserInputMessageAction } from "./UserInputMessage";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 
+const Terminal = dynamic(
+  () => import("@/components/Terminal").then((m) => m.Terminal),
+  { ssr: false },
+);
+
+function slugBranchName(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9/_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    || "workspace";
+}
+
+function suggestCheckoutPath(repoRoot: string | undefined, branchName: string) {
+  if (!repoRoot) {
+    return "";
+  }
+  const pieces = repoRoot.split("/");
+  const repoName = pieces.pop() || "repo";
+  const parent = pieces.join("/") || "/";
+  return `${parent}/${repoName}-${slugBranchName(branchName).replace(/\//g, "-")}`;
+}
+
 interface ConversationExecutionStatusProps {
   liveExecutionStatus: { label: string; detail: string; tone: "error" | "warning" | "muted" | "active" };
-  liveThoughts: Array<{ agentName: string; snippet: string; isLive: boolean }>;
+  liveThoughts: Array<{ agentName: string; text: string; snippet: string; isLive: boolean }>;
 }
 
-function ConversationExecutionStatus({
+function ConversationExecutionPanel({
+  runId,
   liveExecutionStatus,
   liveThoughts,
-}: ConversationExecutionStatusProps) {
-  const liveThoughtText = liveThoughts[0]?.snippet?.trim() ?? "";
-  const statusText = liveExecutionStatus.detail || liveThoughtText;
-
-  return (
-  <div className="group flex w-full min-w-0 items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-sm" aria-label="Conversation status">
-      <span
-        className={cn(
-          "shrink-0 text-xs font-semibold tracking-wide",
-          liveExecutionStatus.tone === "error"
-            ? "text-destructive"
-            : liveExecutionStatus.tone === "warning"
-              ? "text-amber-700"
-              : liveExecutionStatus.tone === "muted"
-                ? "text-muted-foreground"
-                : "text-amber-600",
-        )}
-      >
-        {liveExecutionStatus.label}
-      </span>
-      {liveExecutionStatus.tone !== "muted" ? (
-        <div className="flex shrink-0 items-center gap-1" aria-hidden={liveExecutionStatus.tone !== "active"}>
-          {[0, 1, 2].map((index) => (
-            <span
-              key={index}
-              className={cn(
-                "h-1.5 w-1.5 rounded-full",
-                liveExecutionStatus.tone === "error"
-                  ? "bg-destructive/70"
-                  : liveExecutionStatus.tone === "warning"
-                    ? "bg-amber-500/80"
-                    : "bg-amber-500/80 animate-pulse",
-              )}
-              style={{ animationDelay: `${index * 180}ms` }}
-            />
-          ))}
-        </div>
-      ) : null}
-    {statusText ? (
-      <span className="min-w-0 truncate text-xs leading-5 text-muted-foreground">{statusText}</span>
-    ) : null}
-  </div>
-  );
-}
-
-function ConversationRunLog({
-  runId,
   executionEvents,
-}: {
+}: ConversationExecutionStatusProps & {
   runId: string | null;
   executionEvents: ExecutionEventRecord[];
 }) {
   const { runLogOpenByRunId } = useManagerSnapshot(conversationMainManager);
-
-  if (!runId || executionEvents.length === 0) {
-    return null;
-  }
-
-  const open = Boolean(runLogOpenByRunId[runId]);
+  const liveThoughtText = liveThoughts[0]?.snippet?.trim() ?? "";
+  const statusText = liveExecutionStatus.detail || liveThoughtText;
+  const open = Boolean(runId && runLogOpenByRunId[runId]);
 
   return (
-    <Collapsible open={open} onOpenChange={(nextOpen) => conversationMainManager.setRunLogOpen(runId, nextOpen)}>
-      <div className="rounded-lg border border-border/70 bg-muted/20 text-sm" aria-label="Run Log">
-        <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left">
-          <span className="flex min-w-0 items-center gap-2 text-xs font-semibold text-muted-foreground">
-            <ListTree className="h-3.5 w-3.5 shrink-0" />
-            Run Log
+    <Collapsible
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (runId) {
+          conversationMainManager.setRunLogOpen(runId, nextOpen);
+        }
+      }}
+    >
+      <div className="omni-run-status rounded-lg text-sm" aria-label="Run Log">
+        <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left">
+          <span
+            className={cn(
+              "shrink-0 text-xs font-semibold tracking-wide",
+              liveExecutionStatus.tone === "error"
+                ? "text-destructive"
+                : liveExecutionStatus.tone === "warning"
+                  ? "text-amber-600 dark:text-amber-300"
+                  : liveExecutionStatus.tone === "muted"
+                    ? "text-muted-foreground"
+                    : "omni-run-status-label",
+            )}
+          >
+            {liveExecutionStatus.label}
+          </span>
+          {liveExecutionStatus.tone !== "muted" ? (
+            <div className="flex shrink-0 items-center gap-1" aria-hidden={liveExecutionStatus.tone !== "active"}>
+              {[0, 1, 2].map((index) => (
+                <span
+                  key={index}
+                  className={cn(
+                    "h-1.5 w-1.5 rounded-full",
+                    liveExecutionStatus.tone === "error"
+                      ? "bg-destructive/70"
+                      : liveExecutionStatus.tone === "warning"
+                        ? "bg-amber-500/80"
+                        : "bg-muted-foreground/80 animate-pulse",
+                  )}
+                  style={{ animationDelay: `${index * 180}ms` }}
+                />
+              ))}
+            </div>
+          ) : null}
+          {statusText ? (
+            <span className="min-w-0 flex-1 truncate text-xs leading-5 text-muted-foreground">{statusText}</span>
+          ) : <span className="min-w-0 flex-1" />}
+          {executionEvents.length > 0 ? (
             <span className="rounded-full bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
               {executionEvents.length}
             </span>
-          </span>
+          ) : null}
           <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="border-t border-border/60 px-3 py-2">
-            <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-              {executionEvents.map((event) => {
-                const detailRows = getExecutionEventDetailRows(event);
-                return (
-                  <div key={event.id} className="rounded-md border border-border/50 bg-background/70 p-2">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="break-words text-xs font-medium text-foreground">{event.eventType}</p>
-                        <p className="mt-0.5 break-words text-[11px] leading-relaxed text-muted-foreground">
-                          {summarizeExecutionEvent(event)}
-                        </p>
-                      </div>
-                      <span className="shrink-0 text-[10px] text-muted-foreground/60">
-                        {formatExecutionTimestamp(event.createdAt)}
-                      </span>
-                    </div>
-                    {detailRows.length > 0 ? (
-                      <dl className="mt-2 grid gap-1.5 text-[10px] leading-relaxed text-muted-foreground">
-                        {detailRows.map((row) => (
-                          <div key={row.key} className="grid gap-0.5 sm:grid-cols-[6.5rem_minmax(0,1fr)] sm:gap-2">
-                            <dt className="font-medium text-muted-foreground/80">{row.label}</dt>
-                            <dd className={cn(
-                              "min-w-0 break-words",
-                              row.multiline && "max-h-24 overflow-auto whitespace-pre-wrap rounded bg-muted/35 px-1.5 py-1",
-                            )}>
-                              {row.value}
-                            </dd>
-                          </div>
-                        ))}
-                      </dl>
-                    ) : null}
+          <div className="border-t border-border/35 px-3 py-2">
+            {liveThoughts.length > 0 ? (
+              <div className="space-y-2 pb-2">
+                {liveThoughts.map((thought) => (
+                  <div key={`${thought.agentName}:${thought.text}`} className="rounded-md bg-background/55 p-2">
+                    <p className="break-words text-xs font-medium text-foreground">{thought.agentName}</p>
+                    <p className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed text-muted-foreground">
+                      {thought.text}
+                    </p>
                   </div>
-                );
-              })}
-            </div>
+                ))}
+              </div>
+            ) : null}
+            {executionEvents.length > 0 ? (
+              <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                {executionEvents.map((event) => {
+                  const detailRows = getExecutionEventDetailRows(event);
+                  return (
+                    <div key={event.id} className="rounded-md bg-background/55 p-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="break-words text-xs font-medium text-foreground">{event.eventType}</p>
+                          <p className="mt-0.5 break-words text-[11px] leading-relaxed text-muted-foreground">
+                            {summarizeExecutionEvent(event)}
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-[10px] text-muted-foreground/60">
+                          {formatExecutionTimestamp(event.createdAt)}
+                        </span>
+                      </div>
+                      {detailRows.length > 0 ? (
+                        <dl className="mt-2 grid gap-1.5 text-[10px] leading-relaxed text-muted-foreground">
+                          {detailRows.map((row) => (
+                            <div key={row.key} className="grid gap-0.5 sm:grid-cols-[6.5rem_minmax(0,1fr)] sm:gap-2">
+                              <dt className="font-medium text-muted-foreground/80">{row.label}</dt>
+                              <dd className={cn(
+                                "min-w-0 break-words",
+                                row.multiline && "max-h-24 overflow-auto whitespace-pre-wrap rounded bg-muted/35 px-1.5 py-1",
+                              )}>
+                                {row.value}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
           </div>
         </CollapsibleContent>
       </div>
@@ -212,15 +253,15 @@ function SupervisorActivityMessage({ item }: { item: Extract<ConversationTimelin
   const icon = renderSupervisorActivityIcon(item);
 
   return (
-    <div className="group flex w-full px-1 text-sm" aria-label="Conversation event">
-      <div className="flex h-5 w-6 shrink-0 items-center justify-center pr-1 text-muted-foreground/65">
+    <div className="group ml-6 flex w-[calc(100%-1.5rem)] px-1 py-0.5 text-sm" aria-label="Supervisor action">
+      <div className="omni-activity-icon mt-[0.18em] flex h-3.5 w-6 shrink-0 items-center justify-center pr-1">
         {icon}
       </div>
       <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
-        <p className="min-w-0 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-foreground">
+        <p className="omni-activity-text min-w-0 whitespace-pre-wrap break-words text-[13px] leading-[1.45]">
           {renderSupervisorActivityText(item.text)}
         </p>
-        <span className="shrink-0 text-[10px] text-muted-foreground/50">
+        <span className="shrink-0 pt-[0.18em] text-[10px] text-muted-foreground/50">
           {formatExecutionTimestamp(item.createdAt)}
         </span>
       </div>
@@ -256,7 +297,7 @@ function WorkerOutputMessage({
 
   return (
     <Collapsible open={fullOutputOpen} onOpenChange={(open) => conversationMainManager.setFullOutputOpen(message.id, open)}>
-      <div className="overflow-hidden rounded-xl border border-emerald-600/20 bg-emerald-950/[0.08] shadow-sm">
+      <div className="omni-worker-output overflow-hidden rounded-lg">
         <div className="space-y-3 p-4">
           <MarkdownContent
             content={summaryText}
@@ -265,7 +306,7 @@ function WorkerOutputMessage({
             onOpenProjectFile={onOpenProjectFile}
           />
           <CollapsibleTrigger
-            className="inline-flex items-center gap-1.5 rounded-md text-xs font-medium text-emerald-700 transition-colors hover:text-emerald-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-emerald-300 dark:hover:text-emerald-100"
+            className="omni-worker-output-toggle inline-flex items-center gap-1.5 rounded-md text-xs font-medium transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label={fullOutputOpen ? "Hide full worker output" : "Show full worker output"}
           >
             <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", fullOutputOpen && "rotate-180")} />
@@ -273,7 +314,7 @@ function WorkerOutputMessage({
           </CollapsibleTrigger>
         </div>
         <CollapsibleContent>
-          <div className="border-t border-emerald-600/15 bg-muted/20 p-2 dark:bg-[#0b0d10]">
+          <div className="border-t border-border/35 bg-muted/20 p-2 dark:bg-background/70">
             <Terminal
               agent={fullOutputAgent}
               className="h-72"
@@ -350,6 +391,12 @@ interface ConversationMainProps {
   handleResumeRunRecovery: () => void;
   handleStartEditingMessage: (message: Pick<MessageRecord, "id" | "content">) => void;
   handleForkMessage: (message: Pick<MessageRecord, "id" | "content">) => void;
+  handleForkMessageIntoWorktree: (message: Pick<MessageRecord, "id" | "content">) => void;
+  handleConfirmForkMessageIntoWorktree: (request: GitWorkspaceLaunchRequest & {
+    runId: string;
+    targetMessageId: string;
+    content: string;
+  }) => void;
   editingMessageId: string | null;
   editingMessageValue: string;
   setEditingMessageValue: (value: string) => void;
@@ -433,6 +480,8 @@ export function ConversationMain({
   handleResumeRunRecovery,
   handleStartEditingMessage,
   handleForkMessage,
+  handleForkMessageIntoWorktree,
+  handleConfirmForkMessageIntoWorktree,
   editingMessageId,
   editingMessageValue,
   setEditingMessageValue,
@@ -450,6 +499,42 @@ export function ConversationMain({
 }: ConversationMainProps) {
   useI18nSnapshot();
   const { hasOutputBelow } = useManagerSnapshot(conversationMainManager);
+  const forkWorkspaceSelector = useMemo(() => {
+    return (state: ReturnType<typeof gitWorkspaceManager.getSnapshot>) => {
+      const dialog = state.activeDialog?.kind === "fork_message_worktree"
+        ? state.activeDialog
+        : null;
+      const projectPath = dialog?.projectPath ?? null;
+      return {
+        dialog,
+        snapshot: projectPath ? state.snapshotsByProject[projectPath] : undefined,
+        loading: projectPath ? Boolean(state.loadingByProject[projectPath]) : false,
+        pendingOperation: state.pendingOperation,
+        lastError: state.lastError,
+      };
+    };
+  }, []);
+  const { dialog: forkWorkspaceDialog, snapshot: forkWorkspaceSnapshot, loading: forkWorkspaceLoading, pendingOperation: forkWorkspacePendingOperation, lastError: forkWorkspaceError } = useManagerSelector(
+    gitWorkspaceManager,
+    forkWorkspaceSelector,
+    shallowEqualRecord,
+  );
+  const [forkBranchName, setForkBranchName] = useState("");
+  const [forkCheckoutPath, setForkCheckoutPath] = useState("");
+  useEffect(() => {
+    if (!forkWorkspaceDialog) {
+      return;
+    }
+    void gitWorkspaceManager.loadStatus(forkWorkspaceDialog.projectPath).catch(() => undefined);
+  }, [forkWorkspaceDialog]);
+  useEffect(() => {
+    if (!forkWorkspaceDialog || !forkWorkspaceSnapshot) {
+      return;
+    }
+    const nextBranch = `fork/${slugBranchName(selectedRun?.title || forkWorkspaceSnapshot.branchName || forkWorkspaceSnapshot.detachedLabel || "workspace")}`;
+    setForkBranchName(nextBranch);
+    setForkCheckoutPath(suggestCheckoutPath(forkWorkspaceSnapshot.repoRoot, nextBranch));
+  }, [forkWorkspaceDialog, forkWorkspaceSnapshot, selectedRun?.title]);
   const handleCopyDirectMessage = async (content: string) => {
     try {
       await navigator.clipboard.writeText(content);
@@ -466,7 +551,7 @@ export function ConversationMain({
 
     const retryActions: UserInputMessageAction[] = [
       {
-        label: isImplementationConversation ? "Resume from here" : "Retry from here",
+        label: t(isImplementationConversation ? "conversation.message.action.resumeFromHere" : "conversation.message.action.retryFromHere"),
         icon: <RotateCcw className="h-3.5 w-3.5" />,
         disabled: recoverRun.isPending,
         onClick: () => handleRetryMessage(message.id),
@@ -480,16 +565,22 @@ export function ConversationMain({
     return [
       ...retryActions,
       {
-        label: "Edit in place",
+        label: t("conversation.message.action.editInPlace"),
         icon: <Pencil className="h-3.5 w-3.5" />,
         disabled: recoverRun.isPending,
         onClick: () => handleStartEditingMessage(message),
       },
       {
-        label: "Fork from here",
+        label: t("conversation.message.action.forkFromHere"),
         icon: <GitBranch className="h-3.5 w-3.5" />,
         disabled: recoverRun.isPending,
         onClick: () => handleForkMessage(message),
+      },
+      {
+        label: t("git.workspace.action.forkMessageWorktree"),
+        icon: <FolderGit2 className="h-3.5 w-3.5" />,
+        disabled: recoverRun.isPending,
+        onClick: () => handleForkMessageIntoWorktree(message),
       },
     ];
   };
@@ -498,6 +589,22 @@ export function ConversationMain({
     viewport?.scrollTo({
       top: viewport.scrollHeight,
       behavior: "smooth",
+    });
+  };
+  const confirmForkMessageIntoWorktree = () => {
+    if (!forkWorkspaceDialog || !forkWorkspaceSnapshot || !forkBranchName.trim() || !forkCheckoutPath.trim()) {
+      return;
+    }
+    handleConfirmForkMessageIntoWorktree({
+      mode: "new_worktree",
+      projectPath: forkWorkspaceDialog.projectPath,
+      newBranchName: forkBranchName.trim(),
+      checkoutPath: forkCheckoutPath.trim(),
+      expectedHeadSha: forkWorkspaceSnapshot.headSha,
+      expectedStatusFingerprint: forkWorkspaceSnapshot.statusFingerprint,
+      runId: forkWorkspaceDialog.runId,
+      targetMessageId: forkWorkspaceDialog.targetMessageId,
+      content: forkWorkspaceDialog.content,
     });
   };
 
@@ -573,13 +680,14 @@ export function ConversationMain({
               const speakerLabel = (isPlanningConversation && msg.role === "worker") || isPlanningWorkerMessage
                 ? t("planning.agent.label")
                 : msg.role;
+              const shouldShowSpeakerHeader = !isUserMessage && msg.role !== "supervisor";
 
               return (
               <div key={msg.id} className="group flex w-full flex-col text-sm">
-                {!isUserMessage ? (
+                {shouldShowSpeakerHeader ? (
                   <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
                     <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold capitalize tracking-wider text-emerald-600">
+                    <span className="omni-supervisor-speaker text-xs font-semibold capitalize tracking-wider">
                       {speakerLabel}
                     </span>
                     {msg.kind === "error" ? (
@@ -588,7 +696,7 @@ export function ConversationMain({
                       </span>
                     ) : null}
                     <span className="text-[10px] text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100">
-                      {new Date(msg.createdAt).toLocaleTimeString()}
+                      {formatExecutionTimestamp(msg.createdAt)}
                     </span>
                   </div>
                 </div>
@@ -638,11 +746,13 @@ export function ConversationMain({
                   />
                 ) : (
                   <div className={cn(
-                    "overflow-x-auto rounded-lg border p-4 leading-relaxed",
+                    "overflow-x-auto leading-relaxed",
                     msg.role !== "supervisor" && "whitespace-pre-wrap",
                     msg.kind === "error"
-                      ? "border-destructive/30 bg-destructive/5 text-destructive"
-                      : "border-border bg-card",
+                      ? "rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-destructive"
+                      : msg.role === "supervisor"
+                        ? "bg-transparent px-1"
+                        : "omni-plain-message rounded-lg p-4",
                   )}>
                     {msg.role === "supervisor" ? (
                       <MarkdownContent
@@ -685,15 +795,10 @@ export function ConversationMain({
           ) : null}
 
           {isImplementationConversation && showConversationExecution ? (
-          <ConversationExecutionStatus
-            liveExecutionStatus={liveExecutionStatus}
-            liveThoughts={liveThoughts}
-          />
-        ) : null}
-
-          {isImplementationConversation ? (
-            <ConversationRunLog
+            <ConversationExecutionPanel
               runId={selectedRunId}
+              liveExecutionStatus={liveExecutionStatus}
+              liveThoughts={liveThoughts}
               executionEvents={executionEvents}
             />
           ) : null}
@@ -775,6 +880,53 @@ export function ConversationMain({
       <ArrowDown className="h-[17px] w-[17px]" />
     </Button>
   </div>
+  <Dialog
+    open={Boolean(forkWorkspaceDialog)}
+    onOpenChange={(open) => {
+      if (!open) {
+        gitWorkspaceManager.setKey("activeDialog", null);
+      }
+    }}
+  >
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>{t("git.workspace.dialog.fork.title")}</DialogTitle>
+        <DialogDescription>{t("git.workspace.dialog.fork.description")}</DialogDescription>
+      </DialogHeader>
+      <div className="grid gap-3">
+        <label className="grid gap-1.5 text-sm">
+          <span className="font-medium">{t("git.workspace.field.branchName")}</span>
+          <Input value={forkBranchName} onChange={(event) => {
+            const nextBranch = event.target.value;
+            setForkBranchName(nextBranch);
+            setForkCheckoutPath((current) => current || suggestCheckoutPath(forkWorkspaceSnapshot?.repoRoot, nextBranch));
+          }} />
+        </label>
+        <label className="grid gap-1.5 text-sm">
+          <span className="font-medium">{t("git.workspace.field.checkoutPath")}</span>
+          <Input value={forkCheckoutPath} onChange={(event) => setForkCheckoutPath(event.target.value)} />
+        </label>
+        {forkWorkspaceError ? (
+          <div className="rounded-md border border-destructive/25 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+            <div className="font-medium">{forkWorkspaceError.message}</div>
+            {forkWorkspaceError.details?.length ? <div className="mt-1 opacity-80">{forkWorkspaceError.details.join(" ")}</div> : null}
+          </div>
+        ) : null}
+      </div>
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={() => gitWorkspaceManager.setKey("activeDialog", null)}>
+          {t("common.cancel")}
+        </Button>
+        <Button
+          type="button"
+          onClick={confirmForkMessageIntoWorktree}
+          disabled={forkWorkspaceLoading || !forkBranchName.trim() || !forkCheckoutPath.trim() || Boolean(forkWorkspacePendingOperation) || recoverRun.isPending}
+        >
+          {t("git.workspace.dialog.fork.confirm")}
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
   </div>
 
   );

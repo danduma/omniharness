@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Cpu, Moon, PanelRightClose, Sun, Terminal as TerminalIcon } from "lucide-react";
+import { Cpu, PanelRightClose, Terminal as TerminalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkerCard } from "@/components/WorkerCard";
@@ -27,27 +27,6 @@ export interface WorkersSidebarProps {
   stoppingTerminalProcess?: { workerId: string; terminalProcessId: string } | null;
   onClose?: () => void;
   showHeader?: boolean;
-}
-
-interface ThemeModeToggleProps {
-  themeMode: "day" | "night";
-  setThemeMode: React.Dispatch<React.SetStateAction<"day" | "night">>;
-}
-
-export function ThemeModeToggle({ themeMode, setThemeMode }: ThemeModeToggleProps) {
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon"
-      className="h-8 w-8 text-muted-foreground hover:text-foreground"
-      aria-label={themeMode === "night" ? "Switch to day mode" : "Switch to night mode"}
-      title={themeMode === "night" ? "Switch to day mode" : "Switch to night mode"}
-      onClick={() => setThemeMode((current) => (current === "day" ? "night" : "day"))}
-    >
-      {themeMode === "night" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-    </Button>
-  );
 }
 
 function formatWorkerRuntime(type: string | undefined) {

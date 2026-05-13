@@ -12,6 +12,7 @@ import {
 } from "@/lib/commit-workflow";
 import { homeUiSetters } from "./HomeUiStateManager";
 import { sideWindowManager } from "./SideWindowManager";
+import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "./GitWorkspaceManager";
 import { shouldOpenMobileSideWindow } from "./side-window-viewport";
 import type { MessageRecord, RunRecord, SidebarRun } from "./types";
 
@@ -20,7 +21,7 @@ type MutationsRef = {
   deleteRun: { mutate: (vars: { runId: string }) => void };
   archiveRun: { mutate: (vars: { runId: string }) => void };
   recoverRun: {
-    mutate: (vars: { runId: string; action: "retry" | "edit" | "fork"; targetMessageId: string; content?: string }, opts?: { onError?: (err: unknown) => void }) => void;
+    mutate: (vars: { runId: string; action: "retry" | "edit" | "fork"; targetMessageId: string; content?: string; gitWorkspaceLaunch?: GitWorkspaceLaunchRequest }, opts?: { onError?: (err: unknown) => void }) => void;
     isPending: boolean;
   };
   resumeRunRecovery: { mutate: (vars: { runId: string }) => void };
@@ -46,7 +47,7 @@ export function useConversationActions({
   selectedRunId,
   currentProjectScope,
   explicitProjects,
-  runs: _runs,
+  runs,
   apiKeys,
   commandInputRef,
 }: UseConversationActionsParams) {
@@ -132,6 +133,9 @@ export function useConversationActions({
   const handleSelectRun = (runId: string) => {
     setSelectedRunId(runId);
     setDraftProjectPath(null);
+    setCommand("");
+    setCommandCursor(0);
+    clearAttachments();
     setMobileNavOpen(false);
   };
 
@@ -220,6 +224,29 @@ export function useConversationActions({
     mutations.recoverRun.mutate({ runId: selectedRunId, action: "fork", targetMessageId: message.id, content });
   };
 
+  const handleForkMessageIntoWorktree = (message: Pick<MessageRecord, "id" | "content">) => {
+    if (!selectedRunId) return;
+    const selectedRun = runs.find((run) => run.id === selectedRunId);
+    const projectPath = selectedRun?.projectPath || currentProjectScope;
+    if (!projectPath) return;
+    gitWorkspaceManager.requestForkMessageWorktree(projectPath, selectedRunId, message.id, message.content);
+  };
+
+  const handleConfirmForkMessageIntoWorktree = (request: GitWorkspaceLaunchRequest & {
+    runId: string;
+    targetMessageId: string;
+    content: string;
+  }) => {
+    mutations.recoverRun.mutate({
+      runId: request.runId,
+      action: "fork",
+      targetMessageId: request.targetMessageId,
+      content: request.content,
+      gitWorkspaceLaunch: request,
+    });
+    gitWorkspaceManager.setKey("activeDialog", null);
+  };
+
   const handleEditQueuedMessage = (message: { id: string; runId: string; content: string }) => {
     const nextCommand = message.content;
     setCommand(nextCommand);
@@ -297,6 +324,8 @@ export function useConversationActions({
     handleCancelEditingMessage,
     handleSaveEditedMessage,
     handleForkMessage,
+    handleForkMessageIntoWorktree,
+    handleConfirmForkMessageIntoWorktree,
     handleEditQueuedMessage,
     handleOpenProjectFile,
     handleProjectOpenChange,

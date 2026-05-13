@@ -20,7 +20,7 @@ export class StateManager<TState> {
     };
   }
 
-  update(updater: StateUpdate<TState>) {
+  update(updater: StateUpdate<TState>, notify = true) {
     const nextState = typeof updater === "function"
       ? (updater as (current: TState) => TState)(this.state)
       : updater;
@@ -30,18 +30,20 @@ export class StateManager<TState> {
     }
 
     this.state = nextState;
-    this.listeners.forEach((listener) => listener());
+    if (notify) {
+      this.listeners.forEach((listener) => listener());
+    }
     return this.state;
   }
 
-  patch(patch: Partial<TState> | ((current: TState) => Partial<TState>)) {
+  patch(patch: Partial<TState> | ((current: TState) => Partial<TState>), notify = true) {
     return this.update((current) => ({
       ...current,
       ...(typeof patch === "function" ? patch(current) : patch),
-    }));
+    }), notify);
   }
 
-  setKey<TKey extends keyof TState>(key: TKey, value: StateUpdate<TState[TKey]>) {
+  setKey<TKey extends keyof TState>(key: TKey, value: StateUpdate<TState[TKey]>, notify = true) {
     return this.update((current) => {
       const nextValue = typeof value === "function"
         ? (value as (currentValue: TState[TKey]) => TState[TKey])(current[key])
@@ -55,6 +57,6 @@ export class StateManager<TState> {
         ...current,
         [key]: nextValue,
       };
-    });
+    }, notify);
   }
 }

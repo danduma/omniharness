@@ -127,7 +127,7 @@ export function getTerminalActivityVersion(activity: TerminalActivityItem[]) {
       case "tool_group":
         return `${item.id}:${item.kind}:${item.timestamp}:${item.status}:${item.tools.length}:${item.tools.map((tool) => `${tool.id}:${tool.status}:${tool.title.length}:${tool.inputPane?.text.length ?? 0}:${tool.outputPane?.text.length ?? 0}`).join(",")}`;
       case "permission":
-        return `${item.id}:${item.kind}:${item.timestamp}:${item.title.length}:${item.text.length}`;
+        return `${item.id}:${item.kind}:${item.timestamp}:${item.status}:${item.title.length}:${item.text.length}:${item.detail?.length ?? 0}`;
       case "message":
       case "user_message":
         return `${item.id}:${item.kind}:${item.timestamp}:${item.text.length}`;
@@ -281,6 +281,13 @@ function formatCountSegment(count: number, singleKey: string, pluralKey: string)
   return t(count === 1 ? singleKey : pluralKey, { count });
 }
 
+function capitalizeFirstCharacter(value: string) {
+  if (!value) {
+    return value;
+  }
+  return value.charAt(0).toLocaleUpperCase() + value.slice(1);
+}
+
 function formatToolGroupSummary(counts: AgentToolGroupCounts) {
   const segments = [
     formatCountSegment(counts.editedFiles, "conversation.toolGroup.editedFile", "conversation.toolGroup.editedFiles"),
@@ -291,9 +298,11 @@ function formatToolGroupSummary(counts: AgentToolGroupCounts) {
     formatCountSegment(counts.tools, "conversation.toolGroup.usedTool", "conversation.toolGroup.usedTools"),
   ].filter((segment): segment is string => Boolean(segment));
 
-  return segments.length > 0
+  const summary = segments.length > 0
     ? segments.join(t("conversation.toolGroup.summarySeparator"))
     : t(counts.total === 1 ? "conversation.toolGroup.usedTool" : "conversation.toolGroup.usedTools", { count: counts.total });
+
+  return capitalizeFirstCharacter(summary);
 }
 
 function statusBadgeClass(status: string, variant: "terminal" | "native") {
@@ -336,7 +345,7 @@ function TimelineMarker({
   variant,
 }: {
   running?: boolean;
-  tone: "thought" | "tool" | "error" | "user";
+  tone: "thought" | "tool" | "error" | "user" | "permission";
   variant: "terminal" | "native";
 }) {
   const toneClass = {
@@ -352,6 +361,9 @@ function TimelineMarker({
     user: variant === "native"
       ? "border-primary/75 bg-primary"
       : "border-cyan-600/75 bg-cyan-600 dark:border-cyan-400/75 dark:bg-cyan-400",
+    permission: variant === "native"
+      ? "border-amber-500/75 bg-amber-500"
+      : "border-amber-500/75 bg-amber-500 dark:border-amber-300/75 dark:bg-amber-300",
   }[tone];
   const runningClass = {
     thought: variant === "native"
@@ -366,6 +378,9 @@ function TimelineMarker({
     user: variant === "native"
       ? "border-primary/75 bg-transparent"
       : "border-cyan-600/75 bg-transparent dark:border-cyan-400/75",
+    permission: variant === "native"
+      ? "border-amber-500/75 bg-transparent"
+      : "border-amber-500/75 bg-transparent dark:border-amber-300/75",
   }[tone];
 
   return (
@@ -500,7 +515,6 @@ function formatVisibleDiffLine(line: string): string | null {
 }
 
 function DiffPane({
-  label,
   text,
   variant,
   preview = false,
@@ -508,7 +522,6 @@ function DiffPane({
   interactive = true,
   onClick,
 }: {
-  label: string;
   text: string;
   variant: "terminal" | "native";
   preview?: boolean;
@@ -553,29 +566,19 @@ function DiffPane({
         }
       } : undefined}
     >
-      <div className="flex items-stretch">
-        <div className={cn(
-          "flex w-10 shrink-0 items-start justify-center border-r px-1 py-2 font-mono text-[length:var(--terminal-pane-label-size)] font-semibold uppercase tracking-[0.18em]",
-          variant === "native"
-            ? "border-border/60 bg-background/40 text-muted-foreground"
-            : "border-border/60 bg-muted/40 text-muted-foreground dark:border-white/8 dark:bg-black/20 dark:text-zinc-500",
-        )}>
-          {label}
-        </div>
-        <pre className={cn(
-          "min-w-0 flex-1 overflow-auto py-2 font-mono whitespace-pre-wrap break-words text-[length:var(--terminal-pane-size)]",
-          variant === "native" ? "leading-[1.5]" : "leading-[1.55]",
-        )}>
-          {lines.map((line) => (
-            <span
-              key={line.id}
-              className={cn("block px-2.5", diffLineClass(line.original, variant))}
-            >
-              {line.visible && line.visible.length > 0 ? line.visible : " "}
-            </span>
-          ))}
-        </pre>
-      </div>
+      <pre className={cn(
+        "block w-full overflow-auto py-2 font-mono font-semibold whitespace-pre-wrap break-words text-[length:var(--terminal-pane-size)]",
+        variant === "native" ? "leading-[1.5]" : "leading-[1.55]",
+      )}>
+        {lines.map((line) => (
+          <span
+            key={line.id}
+            className={cn("block px-2.5", diffLineClass(line.original, variant))}
+          >
+            {line.visible && line.visible.length > 0 ? line.visible : " "}
+          </span>
+        ))}
+      </pre>
     </div>
   );
 }
@@ -861,7 +864,6 @@ function ToolActivity({
               ) : null}
               {activity.outputPane?.kind === "diff" ? (
                 <DiffPane
-                  label={activity.outputPane.label}
                   text={activity.outputPane.text}
                   variant={variant}
                   preview
@@ -976,13 +978,10 @@ function ToolGroupActivity({
         aria-label={t("conversation.toolGroup.toggleAriaLabel", { summary })}
         title={open ? t("conversation.toolGroup.collapseTitle") : t("conversation.toolGroup.expandTitle")}
       >
-        <span className={cn("text-[length:var(--terminal-tool-label-size)] font-semibold tracking-tight", variant === "native" ? "text-foreground" : "text-foreground dark:text-zinc-100")}>
-          {t("conversation.toolGroup.label")}
-        </span>
         <span
           className={cn(
-            "font-mono leading-[1.45] text-[length:var(--terminal-tool-title-size)]",
-            variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-300/95",
+            "font-mono font-semibold leading-[1.45] text-[length:var(--terminal-tool-title-size)]",
+            variant === "native" ? "text-foreground" : "text-foreground dark:text-zinc-100",
           )}
         >
           {summary}
@@ -995,16 +994,6 @@ function ToolGroupActivity({
             )}
             aria-label={formatActivityStatus(activity.status)}
           />
-        ) : null}
-        {shouldShowToolStatusBadge(activity.status) ? (
-          <span
-            className={cn(
-              "rounded-full border px-1.5 py-0.5 font-mono text-[length:var(--terminal-badge-size)] font-semibold uppercase tracking-[0.1em]",
-              statusBadgeClass(activity.status, variant),
-            )}
-          >
-            {formatActivityStatus(activity.status)}
-          </span>
         ) : null}
         <ChevronDown
           className={cn(
@@ -1198,6 +1187,8 @@ function ActivityRow({
     : (activity.kind === "tool" || activity.kind === "tool_group") && isRunningActivityStatus(activity.status);
   const markerTone = activity.kind === "tool" || activity.kind === "tool_group"
     ? isErrorActivityStatus(activity.status) ? "error" : "tool"
+    : activity.kind === "permission"
+      ? "permission"
     : "thought";
 
   return (
@@ -1256,15 +1247,32 @@ function ActivityRow({
           />
         ) : null}
         {activity.kind === "permission" ? (
-          <div className={cn(
-            "rounded-[0.85rem] border px-2.5 py-2",
-            variant === "native"
-              ? "border-amber-500/25 bg-amber-500/8"
-              : "border-amber-500/25 bg-amber-500/10 dark:border-amber-400/20 dark:bg-[rgba(96,67,22,0.34)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
-          )}>
-            <div className={cn("text-[length:var(--terminal-permission-title-size)] font-semibold tracking-tight", variant === "native" ? "text-amber-800 dark:text-amber-300" : "text-amber-800 dark:text-amber-100")}>{t(activity.title)}</div>
-            <p className={cn("mt-0.5 whitespace-pre-wrap text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/85 dark:text-amber-100/85" : "text-amber-900/85 dark:text-amber-50/85")}>{activity.text}</p>
-          </div>
+          activity.status === "pending" ? (
+            <div className={cn(
+              "rounded-[0.85rem] border px-2.5 py-2",
+              variant === "native"
+                ? "border-amber-500/25 bg-amber-500/8"
+                : "border-amber-500/25 bg-amber-500/10 dark:border-amber-400/20 dark:bg-[rgba(96,67,22,0.34)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
+            )}>
+              <div className={cn("text-[length:var(--terminal-permission-title-size)] font-semibold tracking-tight", variant === "native" ? "text-amber-800 dark:text-amber-300" : "text-amber-800 dark:text-amber-100")}>{t(activity.title)}</div>
+              {activity.detail ? (
+                <p className={cn("mt-0.5 break-words font-mono text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/85 dark:text-amber-100/85" : "text-amber-900/85 dark:text-amber-50/85")}>{t("terminal.permission.for", { detail: activity.detail })}</p>
+              ) : null}
+              {activity.text ? (
+                <p className={cn("mt-0.5 whitespace-pre-wrap text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/75 dark:text-amber-100/75" : "text-amber-900/75 dark:text-amber-50/75")}>{activity.text}</p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="py-0.5">
+              <div className={cn("text-[length:var(--terminal-permission-title-size)] font-medium", variant === "native" ? "text-foreground/80 dark:text-zinc-300" : "text-foreground/80 dark:text-zinc-300")}>{t(activity.title)}</div>
+              {activity.detail ? (
+                <p className={cn("mt-0.5 break-words font-mono text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-500")}>{t("terminal.permission.for", { detail: activity.detail })}</p>
+              ) : null}
+              {activity.text ? (
+                <p className={cn("mt-0.5 whitespace-pre-wrap text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-500")}>{activity.text}</p>
+              ) : null}
+            </div>
+          )
         ) : null}
       </div>
     </div>

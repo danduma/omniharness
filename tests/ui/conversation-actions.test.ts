@@ -44,6 +44,7 @@ test("conversation rows expose archive in the overflow menu and commit rows expo
   expect(sidebarSource).toContain("Archive");
   expect(sidebarSource).toContain("isCommitConversation");
   expect(sidebarSource).toContain("const canArchiveConversation = isArchivableRunStatus(run.status);");
+  expect(sidebarSource).toContain('className: "border-[#c88b45]/30 bg-[#c88b45]/12 text-[#9e5f18] dark:border-[#f0b15d]/25 dark:bg-[#f0b15d]/10 dark:text-[#f0b15d]",');
   expect(sidebarSource).toContain('aria-label={`Archive ${run.title}`}');
   expect(sidebarSource).toContain("archiveRun(run)");
   expect(sidebarSource).toContain("{canArchiveConversation && isCommitConversation ? (");
@@ -161,9 +162,9 @@ test("stopping a conversation updates local worker state before the request reso
 });
 
 test("direct control user messages expose retry, edit, and fork recovery controls", () => {
-  expect(pageSource).toContain("Retry from here");
-  expect(pageSource).toContain("Edit in place");
-  expect(pageSource).toContain("Fork from here");
+  expect(pageSource).toContain("conversation.message.action.retryFromHere");
+  expect(pageSource).toContain("conversation.message.action.editInPlace");
+  expect(pageSource).toContain("conversation.message.action.forkFromHere");
   expect(pageSource).toContain("const canRecoverUserMessage = isDirectConversation || isImplementationConversation;");
   expect(pageSource).toContain("getUserMessageActions={getUserMessageActions}");
   expect(pageSource).toContain("actions={userMessageActions}");

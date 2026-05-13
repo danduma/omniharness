@@ -9,7 +9,6 @@ import { AttachmentImagePreviewDialog } from "@/components/AttachmentImagePrevie
 import { ConversationMain } from "@/components/home/ConversationMain";
 import { ConversationSidebar } from "@/components/home/ConversationSidebar";
 import { HomeHeader } from "@/components/home/HomeHeader";
-import { SideWindow } from "@/components/home/SideWindow";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { WORKER_OPTIONS, RUN_PATH_PATTERN } from "./constants";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
@@ -41,6 +40,7 @@ import { shallowEqualRecord, useManagerSelector, useManagerSnapshot } from "@/li
 import { useRunRecoveryState } from "./useRunRecoveryState";
 import { useRunSelectionEffects } from "./useRunSelectionEffects";
 import type { EventStreamState, MessageRecord, SidebarGroup } from "./types";
+import type { HomeBootstrapPayload } from "./bootstrap.server";
 import { useHomeQueries } from "./useHomeQueries";
 import { useHomeViewModel } from "./useHomeViewModel";
 import { useHomeMutations } from "./useHomeMutations";
@@ -65,8 +65,13 @@ const OnboardingSetupDialog = dynamic(
   () => import("@/components/home/OnboardingSetupDialog").then((m) => m.OnboardingSetupDialog),
   { ssr: false },
 );
+const SideWindow = dynamic(
+  () => import("@/components/home/SideWindow").then((m) => m.SideWindow),
+  { ssr: false },
+);
 
 const ONBOARDING_SEEN_STORAGE_KEY = "omni.onboarding.seen";
+let appliedHomeBootstrapId: string | null = null;
 
 type HomeAppState = Omit<HomeUiState, "command" | "commandCursor" | "mentionIndex" | "attachments">;
 
@@ -84,7 +89,38 @@ function getInitialSnapshotScope() {
   return window.location.pathname.match(RUN_PATH_PATTERN)?.[1]?.trim() || null;
 }
 
-export function HomeApp() {
+function applyHomeBootstrap(bootstrap: HomeBootstrapPayload | null | undefined, notify = true) {
+  if (!bootstrap || appliedHomeBootstrapId === bootstrap.id) {
+    return;
+  }
+
+  appliedHomeBootstrapId = bootstrap.id;
+
+  const settingsValues = bootstrap.initialQueries.settings?.values ?? {};
+  if (bootstrap.initialQueries.settings) {
+    settingsDraftManager.hydrate(settingsValues, notify);
+  }
+
+  homeUiStateManager.patch((current) => ({
+    routeReady: true,
+    hasReceivedInitialEventStreamPayload: Boolean(bootstrap.initialEventState),
+    selectedRunId: bootstrap.route.selectedRunId,
+    draftProjectPath: bootstrap.route.selectedRunId ? null : bootstrap.route.draftProjectPath,
+    pairTokenFromUrl: bootstrap.route.pairTokenFromUrl,
+    apiKeys: { ...current.apiKeys, ...settingsValues },
+    settingsDiagnostics: bootstrap.initialQueries.settings?.diagnostics ?? current.settingsDiagnostics,
+  }), notify);
+
+  if (bootstrap.initialEventState?.queuedMessages) {
+    busyMessageQueueManager.setQueuedMessages(bootstrap.initialEventState.queuedMessages, notify);
+  }
+}
+
+export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null }) {
+  applyHomeBootstrap(bootstrap, false);
+  const initialEventState = bootstrap?.initialEventState ?? INITIAL_EVENT_STREAM_STATE;
+  const initialSnapshotScope = bootstrap?.route.selectedRunId ?? getInitialSnapshotScope();
+
   const {
     themeMode,
     showSettings,
@@ -167,13 +203,13 @@ export function HomeApp() {
   } = homeUiSetters;
 
   // Event stream state
-  const stateManager = useMemo(() => new EventStreamStateManager(INITIAL_EVENT_STREAM_STATE, {
-    snapshotCacheScope: getInitialSnapshotScope(),
-  }), []);
+  const stateManager = useMemo(() => new EventStreamStateManager(initialEventState, {
+    snapshotCacheScope: initialSnapshotScope,
+  }), [initialEventState, initialSnapshotScope]);
   const state = useSyncExternalStore(
     useCallback((listener) => stateManager.subscribe(listener), [stateManager]),
     useCallback(() => stateManager.getSnapshot(), [stateManager]),
-    () => INITIAL_EVENT_STREAM_STATE,
+    () => initialEventState,
   );
   const setState = useCallback<React.Dispatch<React.SetStateAction<EventStreamState>>>(
     (action) => {
@@ -260,7 +296,11 @@ export function HomeApp() {
     authEnabled,
     authConfigurationError,
     appUnlocked,
-  } = useHomeQueries({ currentProjectScope });
+  } = useHomeQueries({
+    currentProjectScope,
+    bootstrapId: bootstrap?.id,
+    initialQueries: bootstrap?.initialQueries,
+  });
 
   // View model
   const vm = useHomeViewModel({
@@ -354,7 +394,6 @@ export function HomeApp() {
     selectedEffort,
     autoSelectedWorkerType,
     activeAllowedWorkerTypes,
-    currentProjectScope,
     renamingRunId,
     pendingDeletedRunIdsRef,
     pendingCreatedConversationSnapshotsRef,
@@ -584,7 +623,10 @@ export function HomeApp() {
   const stoppableConversationWorkerId = busyConversationWorkerId ?? pendingConversationWorkerId;
   const isConversationStoppable = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
   const isStopConversationPending = stopSupervisor.isPending || stopWorker.isPending;
-  const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || sendQueuedMessageNow.isPending || promotePlanningConversation.isPending || isStopConversationPending;
+  const isStartingCurrentProjectConversation = runCommand.isPending
+    && !selectedRunId
+    && (runCommand.variables?.projectPath ?? null) === (currentProjectScope ?? null);
+  const isComposerSubmitting = isStartingCurrentProjectConversation || sendConversationMessage.isPending || sendQueuedMessageNow.isPending || promotePlanningConversation.isPending || isStopConversationPending;
   const busyMessageAction = parseBusyMessageAction(apiKeys.BUSY_MESSAGE_ACTION);
   const hasBusyConversation = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
   const lockedDirectWorkerLabel = WORKER_OPTIONS.find((o) => o.value === (selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent))?.label
@@ -642,7 +684,7 @@ export function HomeApp() {
       onSendConversationMessage={(content, attachments, busyAction) => {
         if (selectedRunId) sendConversationMessage.mutate({ runId: selectedRunId, content, attachments, busyAction });
       }}
-      onRunCommand={(content, attachments) => runCommand.mutate({ content, attachments })}
+      onRunCommand={(content, attachments) => runCommand.mutate({ content, attachments, projectPath: currentProjectScope })}
       onStopConversation={handleStopConversation}
     />
   );
@@ -799,6 +841,8 @@ export function HomeApp() {
           handleResumeRunRecovery={actions.handleResumeRunRecovery}
           handleStartEditingMessage={actions.handleStartEditingMessage}
           handleForkMessage={actions.handleForkMessage}
+          handleForkMessageIntoWorktree={actions.handleForkMessageIntoWorktree}
+          handleConfirmForkMessageIntoWorktree={actions.handleConfirmForkMessageIntoWorktree}
           editingMessageId={editingMessageId}
           editingMessageValue={editingMessageValue}
           setEditingMessageValue={setEditingMessageValue}
@@ -900,4 +944,3 @@ export function HomeApp() {
     </div>
   );
 }
-

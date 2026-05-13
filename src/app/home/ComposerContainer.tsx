@@ -130,6 +130,7 @@ export function ComposerContainer({
     isConversationStoppable,
     hasContent: Boolean(command.trim() || attachments.length > 0),
     busyMessageAction,
+    forceSteer: selectedConversationMode === "implementation",
   });
 
   useEffect(() => {
@@ -172,6 +173,7 @@ export function ComposerContainer({
       setSelectedConversationMode={setSelectedConversationMode}
       showMentionPicker={showMentionPicker}
       currentProjectScope={currentProjectScope}
+      workspaceProjectPath={currentProjectScope}
       filteredProjectFiles={filteredProjectFiles}
       mentionIndex={mentionIndex}
       setMentionIndex={setMentionIndex}

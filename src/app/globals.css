@@ -56,7 +56,7 @@
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.68 0.16 48);
-  --primary-foreground: oklch(0.985 0.006 48);
+  --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
@@ -91,7 +91,7 @@
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
   --primary: oklch(0.78 0.14 48);
-  --primary-foreground: oklch(0.16 0.018 48);
+  --primary-foreground: oklch(0.16 0 0);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -109,8 +109,8 @@
   --chart-5: oklch(0.269 0 0);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.985 0 0);
+  --sidebar-primary-foreground: oklch(0.205 0 0);
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
@@ -189,6 +189,66 @@
     color: oklch(0.52 0.2 25);
   }
 
+  .omni-run-status {
+    background: color-mix(in oklch, var(--card) 70%, var(--muted));
+    box-shadow: inset 0 1px 0 color-mix(in oklch, var(--foreground) 7%, transparent);
+  }
+
+  .omni-run-status-label {
+    color: color-mix(in oklch, var(--foreground) 82%, var(--muted-foreground));
+  }
+
+  .omni-supervisor-speaker {
+    color: color-mix(in oklch, var(--foreground) 82%, var(--muted-foreground));
+  }
+
+  .omni-plain-message {
+    background: var(--card);
+    box-shadow: inset 0 1px 0 color-mix(in oklch, var(--foreground) 6%, transparent);
+  }
+
+  .omni-activity-icon {
+    color: var(--muted-foreground);
+  }
+
+  .omni-activity-text {
+    color: color-mix(in oklch, var(--foreground) 82%, var(--muted-foreground));
+  }
+
+  .omni-worker-output {
+    background: color-mix(in oklch, var(--card) 76%, var(--muted));
+    box-shadow: inset 0 1px 0 color-mix(in oklch, var(--foreground) 6%, transparent);
+  }
+
+  .omni-worker-output-toggle {
+    color: color-mix(in oklch, var(--foreground) 72%, var(--muted-foreground));
+  }
+
+  .omni-user-message {
+    --omni-user-message-bg: color-mix(in oklch, var(--muted) 68%, var(--card));
+    --omni-user-message-hover-bg: color-mix(in oklch, var(--muted) 86%, var(--card));
+    background: var(--omni-user-message-bg);
+    color: var(--foreground);
+    box-shadow: inset 0 1px 0 color-mix(in oklch, var(--foreground) 5%, transparent);
+  }
+
+  .omni-user-message:hover {
+    --omni-user-message-bg: var(--omni-user-message-hover-bg);
+  }
+
+  .omni-user-message-expand {
+    color: color-mix(in oklch, var(--foreground) 54%, var(--muted-foreground));
+  }
+
+  .omni-user-message-expand--collapsed {
+    background: linear-gradient(
+      to top,
+      var(--omni-user-message-bg) 0%,
+      color-mix(in oklch, var(--omni-user-message-bg) 95%, transparent) 58%,
+      transparent 100%
+    );
+  }
+
   .dark .syntax-highlight .hljs-keyword,
   .dark .syntax-highlight .hljs-selector-tag,
   .dark .syntax-highlight .hljs-subst {
@@ -234,6 +294,31 @@
 
   .dark .syntax-highlight .hljs-deletion {
     color: oklch(0.78 0.15 25);
+  }
+
+  .dark .omni-run-status {
+    background: color-mix(in oklch, var(--card) 72%, var(--muted));
+  }
+
+  .dark .omni-run-status-label {
+    color: color-mix(in oklch, var(--foreground) 82%, var(--muted-foreground));
+  }
+
+  .dark .omni-supervisor-speaker {
+    color: color-mix(in oklch, var(--foreground) 82%, var(--muted-foreground));
+  }
+
+  .dark .omni-worker-output {
+    background: color-mix(in oklch, var(--card) 86%, var(--background));
+  }
+
+  .dark .omni-worker-output-toggle {
+    color: color-mix(in oklch, var(--foreground) 76%, var(--muted-foreground));
+  }
+
+  .dark .omni-user-message {
+    --omni-user-message-bg: color-mix(in oklch, var(--muted) 58%, var(--background));
+    --omni-user-message-hover-bg: color-mix(in oklch, var(--muted) 76%, var(--background));
   }
 }
 

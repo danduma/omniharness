@@ -9,7 +9,12 @@ import { t, useI18nSnapshot } from "@/lib/i18n";
 function formatTime(value: string | null | undefined) {
   if (!value) return t("recovery.inspector.notResolved");
   const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toLocaleString() : value;
+  return Number.isFinite(date.getTime())
+    ? new Intl.DateTimeFormat("en-GB", {
+      dateStyle: "medium",
+      timeStyle: "medium",
+    }).format(date)
+    : value;
 }
 
 function parseDetails(details: string | null | undefined) {

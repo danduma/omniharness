@@ -30,13 +30,12 @@ export function ModelProfileForm({
   const apiKeyKey = `${prefix}_API_KEY`;
   const defaultProvider = prefix === "SUPERVISOR_LLM" ? "gemini" : "openai";
   const provider = settings[providerKey] || defaultProvider;
-  const apiKey = settings[apiKeyKey] || "";
   const currentModel = settings[modelKey] || "";
   const apiKeyConfigured = secretStates?.[apiKeyKey]?.configured ?? false;
 
   const geminiModelsQuery = useQuery({
-    queryKey: ["llm-models", prefix, provider, apiKey],
-    enabled: provider === "gemini" && apiKey.trim().length > 0,
+    queryKey: ["llm-models", prefix, provider],
+    enabled: provider === "gemini",
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       return requestJson<{ models: Array<{ id: string; label: string }> }>("/api/llm-models", {
@@ -44,7 +43,6 @@ export function ModelProfileForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider,
-          apiKey,
         }),
       }, {
         source: t("settings.models.errorSource"),
@@ -89,15 +87,13 @@ export function ModelProfileForm({
               value={availableModels.find((model) => model.id === currentModel) ?? null}
               itemToStringValue={(model) => model.label}
               onValueChange={(model) => setSetting(modelKey, model?.id ?? "")}
-              disabled={!apiKey.trim() || geminiModelsQuery.isPending}
+              disabled={geminiModelsQuery.isPending}
             >
               <ComboboxInput
                 id={modelKey}
                 aria-label={t("settings.models.model")}
                 placeholder={
-                  !apiKey.trim()
-                    ? t("settings.models.enterApiKeyFirst")
-                    : geminiModelsQuery.isPending
+                  geminiModelsQuery.isPending
                       ? t("settings.models.loadingModels")
                       : t("settings.models.searchGeminiModels")
                 }
@@ -105,9 +101,7 @@ export function ModelProfileForm({
               />
               <ComboboxContent className="w-[var(--anchor-width)]">
                 <ComboboxEmpty>
-                  {!apiKey.trim()
-                    ? t("settings.models.enterApiKeyFirst")
-                    : geminiModelsQuery.isPending
+                  {geminiModelsQuery.isPending
                       ? t("settings.models.loadingModels")
                       : t("settings.models.noGeminiModels")}
                 </ComboboxEmpty>

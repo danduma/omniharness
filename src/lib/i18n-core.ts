@@ -58,7 +58,40 @@ const createStableI18nManager = () => {
 
 export const i18nManager = createStableI18nManager();
 
-export const t = i18nManager.t;
+const notifyI18nListeners = (i18nManager as unknown as { notify: () => void }).notify.bind(i18nManager);
+const enqueueMicrotask = typeof queueMicrotask === "function"
+  ? queueMicrotask
+  : (callback: () => void) => {
+      void Promise.resolve().then(callback);
+    };
+let translationDepth = 0;
+let hasDeferredI18nNotify = false;
+
+(i18nManager as unknown as { notify: () => void }).notify = () => {
+  if (translationDepth === 0) {
+    notifyI18nListeners();
+    return;
+  }
+
+  if (hasDeferredI18nNotify) {
+    return;
+  }
+
+  hasDeferredI18nNotify = true;
+  enqueueMicrotask(() => {
+    hasDeferredI18nNotify = false;
+    notifyI18nListeners();
+  });
+};
+
+export const t: typeof i18nManager.t = (...args) => {
+  translationDepth += 1;
+  try {
+    return i18nManager.t(...args);
+  } finally {
+    translationDepth -= 1;
+  }
+};
 
 export function supportedLocaleOptions() {
   return i18nManager.getSnapshot().supportedLocales.map((locale) => ({

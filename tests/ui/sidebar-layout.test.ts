@@ -99,7 +99,7 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('h-9 w-full shrink-0 justify-start px-2 text-sm text-[#333333]');
   expect(pageSource).toContain('min-h-0 flex-1 overflow-hidden');
   expect(pageSource).toContain('mt-auto shrink-0 border-t border-border/60 bg-background/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-background/80');
-  expect(pageSource).toContain('"group flex min-w-0 cursor-pointer overflow-hidden rounded-xl py-1.5 pl-4 pr-2 text-sm transition-colors"');
+  expect(pageSource).toContain('"group flex min-w-0 cursor-pointer overflow-hidden rounded-xl py-1.5 pl-2.5 pr-2 text-sm transition-colors"');
   expect(pageSource).toContain('"bg-[#e2e1df] text-[#1f1f1f] dark:bg-white/[0.08] dark:text-zinc-100"');
   expect(pageSource).toContain('"text-[#424242] hover:bg-[#e8e7e5] hover:text-[#1f1f1f] dark:text-zinc-300 dark:hover:bg-white/[0.045] dark:hover:text-zinc-100"');
   expect(pageSource).not.toContain('ml-3 group flex min-w-0 cursor-pointer gap-2 overflow-hidden rounded-lg border px-3 py-1.5 text-sm transition-colors');
@@ -111,8 +111,9 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(workerCardSource).toContain("Permissions waiting");
   expect(workerCardSource).toContain("Context usage not reported");
   expect(workerCardSource).toContain("Context usage ");
-  expect(cliBrandIconsSource).toContain("siClaude");
-  expect(cliBrandIconsSource).toContain("siGooglegemini");
+  expect(cliBrandIconsSource).toContain("CLAUDE_ICON_PATH");
+  expect(cliBrandIconsSource).toContain("GEMINI_ICON_PATH");
+  expect(cliBrandIconsSource).not.toContain("simple-icons");
   expect(cliBrandIconsSource).toContain("Codex");
   expect(cliBrandIconsSource).toContain("OPENCODE_ICON_SRC");
   expect(pageSource).toContain("Claude Code");
@@ -557,13 +558,13 @@ test("direct conversations render the user transcript next to the worker surface
   expect(pageSource).toContain('const isLongMessage = content.length > 420 || content.split(/\\r\\n|\\r|\\n/).length > 6;');
   expect(pageSource).toContain('{isExpanded || isLongMessage ? (');
   expect(pageSource).toContain('{isExpanded ? "less" : "...more"}');
-  expect(pageSource).toContain('text-[#202124]');
-  expect(pageSource).toContain('dark:text-[#d8d8d8]');
+  expect(pageSource).toContain("omni-user-message");
+  expect(pageSource).toContain("omni-user-message-expand");
   expect(pageSource).toContain("conversation.message.copyAria");
-  expect(pageSource).toContain('label: isImplementationConversation ? "Resume from here" : "Retry from here"');
+  expect(pageSource).toContain('label: t(isImplementationConversation ? "conversation.message.action.resumeFromHere" : "conversation.message.action.retryFromHere")');
   expect(pageSource).toContain('aria-label={action.label}');
   expect(pageSource).toContain('onClick: () => handleRetryMessage(message.id)');
-  expect(pageSource).toContain('rounded-[1.55rem] bg-[#f3f3f3]');
+  expect(pageSource).toContain("rounded-2xl");
   expect(pageSource).toContain('px-5 py-3.5');
   expect(pageSource).toContain('text-sm leading-6');
   expect(pageSource).toContain('createdAt={msg.createdAt}');
@@ -678,19 +679,20 @@ test("failed runs surface recovery UI in the header and conversation feed", () =
 });
 
 test("running conversations render an in-thread execution indicator and timeline activity rows", () => {
-  expect(pageSource).toContain("function ConversationExecutionStatus");
-  expect(pageSource).toContain("function ConversationRunLog");
+  expect(pageSource).toContain("function ConversationExecutionPanel");
+  expect(pageSource).not.toContain("function ConversationRunLog");
   expect(pageSource).toContain("function SupervisorActivityMessage");
   expect(pageSource).toContain("function renderSupervisorActivityText");
   expect(pageSource).toContain("Starting (?:worker \\d+|planning agent)|Steering worker \\d+");
   expect(pageSource).toContain('text.startsWith("Starting planning agent")');
-  expect(pageSource).toContain('text-[13px] leading-relaxed text-foreground');
+  expect(pageSource).toContain('text-[13px] leading-[1.45]');
   expect(pageSource).toContain('<strong className="font-semibold text-foreground">{match[1]}</strong>');
-  expect(pageSource).toContain('aria-label="Conversation event"');
+  expect(pageSource).toContain('aria-label="Supervisor action"');
   expect(pageSource).toContain('aria-label="Run Log"');
   expect(pageSource).toContain('Run Log');
   expect(pageSource).toContain('runLogOpenByRunId');
   expect(pageSource).toContain("const isConversationThinking =");
+  expect(pageSource).toContain("const isConversationThinking = isSupervisorRunning");
   expect(pageSource).toContain("const liveThoughts = useMemo(() => {");
   expect(pageSource).toContain("const selectedRunExecutionEvents = useMemo(() => (");
   expect(pageSource).toContain("const conversationTimelineItems = useMemo(() => buildConversationTimelineItems");
@@ -699,8 +701,9 @@ test("running conversations render an in-thread execution indicator and timeline
   expect(pageSource).toContain("buildConversationTimelineItems");
   expect(pageSource).toContain('item.type === "activity"');
   expect(pageSource).toContain('statusText');
-  expect(pageSource).not.toContain("liveThoughts.map");
-  expect(pageSource).toContain("Thinking");
+  expect(pageSource).toContain("liveThoughts.map");
+  expect(pageSource).toContain("thought.text");
+  expect(pageSource).toContain("Working");
   expect(pageSource).toContain("animate-pulse");
   expect(pageSource).toContain("animationDelay:");
   expect(pageSource).toContain("activity");
@@ -743,6 +746,10 @@ test("new conversations expose a mode picker and only existing direct runs lock 
   expect(conversationModePickerSource).toContain("conversation.mode.direct.label");
   expect(conversationModePickerSource).toContain("useI18nSnapshot()");
   expect(conversationModePickerSource).toContain('const MODE_ORDER: ConversationModeOption[] = ["direct", "planning", "implementation"]');
+  expect(conversationModePickerSource).toContain("w-fit max-w-full");
+  expect(conversationModePickerSource).toContain("break-words hyphens-auto");
+  expect(conversationModePickerSource).not.toContain("overflow-x-auto");
+  expect(conversationModePickerSource).not.toContain("whitespace-nowrap rounded-xl");
   expect(pageSource).toContain('const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct"');
   expect(pageSource).not.toContain("Direct worker:");
   expect(pageSource).toContain("{shouldLockDirectWorker ? (");

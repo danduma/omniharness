@@ -30,6 +30,7 @@ export type RunRecord = {
   autoCommitMilestones?: boolean | null;
   pushOnCommit?: boolean | null;
   gitBaselineJson?: string | null;
+  gitWorkspaceJson?: string | null;
   completionCommitSha?: string | null;
 };
 export type PlanItemRecord = { id: string; planId: string; title: string; phase: string | null; status: string };
@@ -119,7 +120,18 @@ export type AgentSnapshot = {
   protocolVersion?: string | number | null;
   lastError?: string | null;
   recentStderr?: string[];
-  pendingPermissions?: Array<{ requestId: number; requestedAt: string; sessionId?: string | null; options?: Array<{ optionId: string; kind: string; name: string }> }>;
+  pendingPermissions?: Array<{
+    requestId: number;
+    requestedAt: string;
+    sessionId?: string | null;
+    toolCall?: {
+      toolCallId?: string | null;
+      kind?: string | null;
+      title?: string | null;
+      status?: string | null;
+    } | null;
+    options?: Array<{ optionId: string; kind: string; name: string }>;
+  }>;
   createdAt?: string;
   updatedAt?: string;
   contextUsage?: {

@@ -2,7 +2,6 @@ CRITICAL!!:
 - NEVER EVER EVER create a branch!!! branches are FORBIDDEN!!!
 - NEVER create a worktree, UNLESS the user has specifically asked for it!
 
-- Never use file-based routing
 - When the user gives a UUID and asks what is going on with it, treat it as an OmniHarness conversation/session lookup: check `sqlite.db`, starting with the `runs` row for that UUID, then inspect related `workers`, `messages`, `execution_events`, queued messages, and validation/plan records as needed.
 - To delete all conversations and associated persisted artifacts, use `scripts/delete-conversations.sh`
 

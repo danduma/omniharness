@@ -163,6 +163,7 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain('const isStopButtonVisible = composerBehavior.buttonKind === "stop"');
   expect(pageSource).toContain('const isSubmitButtonDisabled = isStopButtonVisible\n    ? isStopConversationPending');
   expect(pageSource).toContain("resolveBusyComposerBehavior({");
+  expect(pageSource).toContain('forceSteer: selectedConversationMode === "implementation"');
   expect(pageSource).toContain("disabled={isSubmitButtonDisabled}");
   expect(pageSource).toContain("aria-label={sendButtonAriaLabel}");
   expect(pageSource).toContain('composerBehavior.submitAction === "stop"');
@@ -171,6 +172,7 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain("if (selectedRunId) {");
   expect(pageSource).toContain("sendConversationMessage.mutate({ runId: selectedRunId, content, attachments, busyAction })");
   expect(pageSource).toContain("resolveBusyMessageActionForSubmitAction(composerBehavior.submitAction");
+  expect(pageSource).toContain("composerBehavior.allowAlternateBusyAction && useAlternateBusyAction");
   expect(pageSource).toContain("shouldUseAlternateComposerSubmitKeyDown({");
   expect(pageSource).toContain("getComposerSubmitShortcutLabel(isAppleComposerShortcutPlatform())");
   expect(pageSource).toContain("sendButtonTitle");

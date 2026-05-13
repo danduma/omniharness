@@ -51,7 +51,6 @@ export function FolderPickerDialog({
     return items.filter((dir: { name: string }) => dir.name.toLowerCase().includes(term));
   }, [data?.directories, search]);
 
-  const canGoUp = Boolean(data && data.parent && data.parent !== data.current);
   const handleNavigate = (path: string) => {
     folderPickerManager.navigate(path);
   };
@@ -60,27 +59,11 @@ export function FolderPickerDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex h-[500px] max-w-md flex-col overflow-hidden p-0">
         <DialogHeader className="shrink-0 gap-3 border-b bg-muted/20 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <DialogTitle>{t("folder.picker.title")}</DialogTitle>
-              <div className="mt-1 truncate text-xs text-muted-foreground" title={data?.current || t("folder.picker.loading")}>
-                {data?.current || t("folder.picker.loading")}
-              </div>
+          <div className="min-w-0">
+            <DialogTitle>{t("folder.picker.title")}</DialogTitle>
+            <div className="mt-1 truncate text-xs text-muted-foreground" title={data?.current || t("folder.picker.loading")}>
+              {data?.current || t("folder.picker.loading")}
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="shrink-0"
-              disabled={!canGoUp}
-              onClick={() => {
-                if (data?.parent && canGoUp) {
-                  handleNavigate(data.parent);
-                }
-              }}
-            >
-              <ArrowUpCircle className="mr-2 h-4 w-4" />
-              Up
-            </Button>
           </div>
           <Input
             value={search}

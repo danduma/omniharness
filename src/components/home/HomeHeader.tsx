@@ -1,4 +1,5 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
+import dynamic from "next/dynamic";
 import { AlertTriangle, Bell, BellOff, ChevronDown, GitCommitHorizontal, Menu, PanelLeft, PanelRight, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
@@ -20,8 +21,13 @@ import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { ConversationSidebar } from "./ConversationSidebar";
-import { SideWindow } from "./SideWindow";
-import { ThemeModeToggle } from "./WorkersSidebar";
+import { RunWorkspaceBadge } from "./RunWorkspaceBadge";
+import { ThemeModeToggle } from "./ThemeModeToggle";
+
+const SideWindow = dynamic(
+  () => import("./SideWindow").then((m) => m.SideWindow),
+  { ssr: false },
+);
 
 interface HomeHeaderProps {
   mobileNavOpen: boolean;
@@ -322,6 +328,7 @@ export function HomeHeader({
                 {rootFolderLabel}
               </span>
             ) : null}
+            <RunWorkspaceBadge run={selectedRun} fallbackPath={activeConversationCwd} />
           </div>
         ) : null}
         {selectedRun?.status === "failed" ? (

@@ -45,8 +45,8 @@ export function ConversationModePicker({
 
   return (
     <div className="mb-9 space-y-4">
-      <div className="relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-screen overflow-x-auto px-4 sm:static sm:mx-0 sm:flex sm:w-auto sm:justify-center sm:px-0">
-        <div className="mx-auto inline-flex w-max rounded-2xl border border-border/70 bg-muted/40 p-1.5 dark:border-white/[0.12] dark:bg-black/[0.12]">
+      <div className="flex w-full justify-center">
+        <div className="mx-auto flex w-fit max-w-full rounded-2xl border border-border/70 bg-muted/40 p-1.5 dark:border-white/[0.12] dark:bg-black/[0.12]">
           {MODE_ORDER.map((mode) => {
             const config = getConversationModeCopy(mode);
 
@@ -55,7 +55,7 @@ export function ConversationModePicker({
                 key={mode}
                 type="button"
                 className={cn(
-                  "shrink-0 whitespace-nowrap rounded-xl border px-3.5 py-2 text-sm font-semibold transition-colors",
+                  "min-w-0 shrink rounded-xl border px-3.5 py-2 text-center text-sm font-semibold leading-[1.15] break-words hyphens-auto transition-colors",
                   value === mode
                     ? "border-primary/[0.22] bg-primary/[0.055] text-primary"
                     : "border-transparent text-muted-foreground hover:bg-background/40 hover:text-foreground",

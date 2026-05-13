@@ -107,12 +107,21 @@ test("terminal keeps tool output compact and expandable", () => {
 });
 
 test("terminal renders edit diffs with dedicated red and green lines", () => {
+  const diffPaneSource = terminalSource.slice(
+    terminalSource.indexOf("function DiffPane"),
+    terminalSource.indexOf("function ThinkingDots"),
+  );
+
   expect(terminalSource).toContain("function DiffPane");
   expect(terminalSource).toContain("function diffLineClass");
   expect(terminalSource).toContain("function formatVisibleDiffLine");
   expect(terminalSource).toContain('activity.outputPane?.kind === "diff"');
   expect(terminalSource).toContain("bg-emerald-500/10 text-emerald-800");
   expect(terminalSource).toContain("bg-red-500/10 text-red-800");
+  expect(diffPaneSource).toContain("block w-full overflow-auto py-2 font-mono font-semibold whitespace-pre-wrap");
+  expect(terminalSource).not.toContain("<DiffPane\n                  label=");
+  expect(diffPaneSource).not.toContain("label,");
+  expect(diffPaneSource).not.toContain("label: string;");
   expect(terminalSource).toContain('line.startsWith("+")');
   expect(terminalSource).toContain('line.startsWith("-")');
   expect(terminalSource).toContain("return line.slice(1);");

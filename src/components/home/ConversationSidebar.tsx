@@ -28,7 +28,7 @@ const CONVERSATION_VISUAL_CONFIG: Record<ConversationVisualKind, {
   supervisor: {
     label: "Supervisor",
     Icon: OmniHarnessLogoGlyph,
-    className: "border-[#858a68]/25 bg-[#858a68]/10 text-[#5f6548] dark:border-[#c5ca9a]/25 dark:bg-[#c5ca9a]/10 dark:text-[#c5ca9a]",
+    className: "border-[#c88b45]/30 bg-[#c88b45]/12 text-[#9e5f18] dark:border-[#f0b15d]/25 dark:bg-[#f0b15d]/10 dark:text-[#f0b15d]",
   },
   direct: {
     label: "Direct control",
@@ -164,7 +164,7 @@ export function ConversationSidebar({
             placeholder="Search"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-9 w-full border-transparent bg-[#e4e3e1] pl-8 text-sm text-[#333333] transition-all placeholder:text-[#333333]/75 hover:bg-[#deddda] focus-visible:border-[#c8c7c5] focus-visible:bg-[#e4e3e1] focus-visible:ring-1 dark:bg-muted/50 dark:text-zinc-100 dark:placeholder:text-zinc-400 dark:hover:bg-muted/60 dark:focus-visible:bg-muted/50"
+            className="h-9 w-full border-transparent bg-[#e4e3e1] pl-8 text-sm text-[#333333] transition-all placeholder:text-[#333333]/75 hover:bg-[#deddda] focus-visible:border-[#c8c7c5] focus-visible:bg-[#e4e3e1] focus-visible:ring-1 dark:bg-white/[0.08] dark:text-zinc-100 dark:placeholder:text-zinc-400 dark:hover:bg-white/[0.095] dark:focus-visible:bg-white/[0.08]"
           />
         </div>
       </div>
@@ -273,7 +273,7 @@ export function ConversationSidebar({
                         key={run.id}
                         onClick={() => selectRun(run.id)}
                         className={cn(
-                          "group flex min-w-0 cursor-pointer overflow-hidden rounded-xl py-1.5 pl-4 pr-2 text-sm transition-colors",
+                          "group flex min-w-0 cursor-pointer overflow-hidden rounded-xl py-1.5 pl-2.5 pr-2 text-sm transition-colors",
                           selectedRunId === run.id
                             ? "bg-[#e2e1df] text-[#1f1f1f] dark:bg-white/[0.08] dark:text-zinc-100"
                             : "text-[#424242] hover:bg-[#e8e7e5] hover:text-[#1f1f1f] dark:text-zinc-300 dark:hover:bg-white/[0.045] dark:hover:text-zinc-100",

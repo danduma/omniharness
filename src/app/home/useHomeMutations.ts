@@ -12,6 +12,7 @@ import { busyMessageQueueManager } from "./BusyMessageQueueManager";
 import { homeUiSetters, homeUiStateManager } from "./HomeUiStateManager";
 import { appearancePreferencesManager } from "./AppearancePreferencesManager";
 import { settingsDraftManager } from "./SettingsDraftManager";
+import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "./GitWorkspaceManager";
 import type { BusyMessageAction } from "./busy-message-behavior";
 import {
   appendCreatedConversationSnapshot,
@@ -183,7 +184,6 @@ export interface UseHomeMutationsParams {
   selectedEffort: string;
   autoSelectedWorkerType: string | null;
   activeAllowedWorkerTypes: string[];
-  currentProjectScope: string | null;
   renamingRunId: string | null;
   pendingDeletedRunIdsRef: React.RefObject<Set<string>>;
   pendingCreatedConversationSnapshotsRef: React.RefObject<Map<string, CreatedConversationSnapshot>>;
@@ -203,7 +203,6 @@ export function useHomeMutations({
   selectedEffort,
   autoSelectedWorkerType,
   activeAllowedWorkerTypes,
-  currentProjectScope,
   renamingRunId,
   pendingDeletedRunIdsRef,
   pendingCreatedConversationSnapshotsRef,
@@ -466,15 +465,16 @@ export function useHomeMutations({
   });
 
   const recoverRun = useMutation({
-    mutationFn: async ({ runId, action, targetMessageId, content }: {
+    mutationFn: async ({ runId, action, targetMessageId, content, gitWorkspaceLaunch }: {
       runId: string;
       action: "retry" | "edit" | "fork";
       targetMessageId: string;
       content?: string;
+      gitWorkspaceLaunch?: GitWorkspaceLaunchRequest;
     }) => requestJson<{ runId?: string }>(`/api/runs/${runId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, targetMessageId, content }),
+      body: JSON.stringify({ action, targetMessageId, content, gitWorkspaceLaunch }),
     }, {
       source: "Runs",
       action: "Recover conversation",
@@ -510,17 +510,26 @@ export function useHomeMutations({
   });
 
   const runCommand = useMutation({
-    mutationFn: async (payload: { content: string; attachments: PendingChatAttachment[] }) => {
+    mutationFn: async (payload: { content: string; attachments: PendingChatAttachment[]; projectPath: string | null }) => {
       const isAutoWorkerSelection = selectedCliAgent === "auto";
       const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel);
       const uploadedAttachments = await uploadPendingChatAttachments(payload.attachments);
+      const workspaceState = payload.projectPath ? gitWorkspaceManager.getSnapshot() : null;
+      const pendingWorkspaceLaunch = payload.projectPath
+        ? workspaceState?.pendingLaunchByProject[payload.projectPath] ?? null
+        : null;
+      const selectedWorkspaceTarget = payload.projectPath && !pendingWorkspaceLaunch
+        ? workspaceState?.selectedTargetsByProject[payload.projectPath] ?? null
+        : null;
       return requestJson<{ runId?: string } & CreatedConversationSnapshot>("/api/conversations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mode: selectedConversationMode,
           command: payload.content,
-          projectPath: currentProjectScope,
+          projectPath: payload.projectPath,
+          gitWorkspaceLaunch: pendingWorkspaceLaunch,
+          gitWorkspaceTarget: selectedWorkspaceTarget,
           preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
           preferredWorkerModel: resolvedSelectedModel,
           preferredWorkerEffort: selectedEffort.toLowerCase(),
@@ -532,9 +541,22 @@ export function useHomeMutations({
         action: "Start a run",
       });
     },
-    onSuccess: (data) => {
+    onMutate: (payload) => {
+      const previousCommand = homeUiStateManager.getSnapshot().command;
+      const previousCommandCursor = homeUiStateManager.getSnapshot().commandCursor;
       setCommand("");
+      homeUiSetters.setCommandCursor(0);
+      return {
+        projectPath: payload.projectPath,
+        previousCommand,
+        previousCommandCursor,
+      };
+    },
+    onSuccess: (data, variables) => {
       clearAttachments();
+      if (variables.projectPath) {
+        gitWorkspaceManager.consumePendingLaunch(variables.projectPath);
+      }
       if (data.runId) {
         if (data.run) {
           pendingCreatedConversationSnapshotsRef.current.set(data.runId, {
@@ -545,6 +567,13 @@ export function useHomeMutations({
           setState((current) => appendCreatedConversationSnapshot(current, data));
         }
         setSelectedRunId(data.runId);
+      }
+    },
+    onError: (_error, _variables, context) => {
+      const snapshot = homeUiStateManager.getSnapshot();
+      if (context && !snapshot.command.trim()) {
+        setCommand(context.previousCommand);
+        homeUiSetters.setCommandCursor(context.previousCommandCursor);
       }
     },
   });

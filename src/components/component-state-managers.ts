@@ -1,7 +1,4 @@
-import { QueryClient } from "@tanstack/react-query";
 import { StateManager, type StateUpdate } from "@/lib/state-manager";
-
-export const queryClient = new QueryClient();
 
 export const loginShellManager = new class extends StateManager<{ password: string }> {
   constructor() {
@@ -107,16 +104,6 @@ export class FileViewerPanelManager extends StateManager<{ wordWrap: boolean }> 
 }
 
 export const fileViewerPanelManager = new FileViewerPanelManager();
-
-export const composerModelPickerManager = new class extends StateManager<{ open: boolean; query: string }> {
-  constructor() {
-    super({ open: false, query: "" });
-  }
-
-  setOpen = (open: boolean) => this.setKey("open", open);
-  setQuery = (query: string) => this.setKey("query", query);
-  closeAndReset = () => this.patch({ open: false, query: "" });
-}();
 
 export const conversationMainManager = new class extends StateManager<{
   fullOutputOpenByMessageId: Record<string, boolean>;

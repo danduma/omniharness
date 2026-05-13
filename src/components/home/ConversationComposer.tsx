@@ -1,13 +1,13 @@
 import Image from "next/image";
 import { useRef } from "react";
 import type React from "react";
-import { useMediaQuery } from "@base-ui/react/unstable-use-media-query";
 import { ArrowUp, FileText, LoaderCircle, Plus, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ComposerModelPicker } from "@/components/composer/ComposerModelPicker";
 import { ComposerSelect } from "@/components/composer/ComposerSelect";
 import { ConversationModePicker, type ConversationModeOption } from "@/components/ConversationModePicker";
 import { QueuedMessageDrawer } from "./QueuedMessageDrawer";
+import { BranchWorkspaceButton } from "./BranchWorkspaceButton";
 import { EFFORT_OPTIONS } from "@/app/home/constants";
 import { resolveBusyMessageActionForSubmitAction, type BusyComposerBehavior, type BusyMessageAction } from "@/app/home/busy-message-behavior";
 import { getComposerSubmitShortcutLabel, isAppleComposerShortcutPlatform, shouldSubmitComposerKeyDown, shouldUseAlternateComposerSubmitKeyDown } from "@/app/home/composer-keyboard";
@@ -28,6 +28,7 @@ interface ConversationComposerProps {
   setSelectedConversationMode: (value: ConversationModeOption) => void;
   showMentionPicker: boolean;
   currentProjectScope: string | null;
+  workspaceProjectPath: string | null;
   filteredProjectFiles: string[];
   mentionIndex: number;
   setMentionIndex: React.Dispatch<React.SetStateAction<number>>;
@@ -74,6 +75,7 @@ export function ConversationComposer({
   setSelectedConversationMode,
   showMentionPicker,
   currentProjectScope,
+  workspaceProjectPath,
   filteredProjectFiles,
   mentionIndex,
   setMentionIndex,
@@ -110,10 +112,6 @@ export function ConversationComposer({
   const trimmedCommand = command.trim();
   const hasAttachments = attachments.length > 0;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const isDesktopComposerViewport = useMediaQuery("(min-width: 640px)", {
-    defaultMatches: false,
-    noSsr: true,
-  });
   const isStopButtonVisible = composerBehavior.buttonKind === "stop";
   const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;
   const isStopButtonBusy = isStopButtonVisible && isStopConversationPending;
@@ -124,9 +122,11 @@ export function ConversationComposer({
   const sendButtonAriaLabel = t(composerBehavior.ariaLabelKey);
   const sendButtonTitle = composerBehavior.submitAction === "send_queue"
     ? t("conversation.composer.sendButton.queueTitle", { shortcut: alternateSubmitShortcutLabel })
-    : composerBehavior.submitAction === "send_steer"
+    : composerBehavior.submitAction === "send_steer" && composerBehavior.allowAlternateBusyAction
       ? t("conversation.composer.sendButton.steerTitle", { shortcut: alternateSubmitShortcutLabel })
-      : t(`${composerBehavior.ariaLabelKey}Title`);
+      : composerBehavior.submitAction === "send_steer"
+        ? sendButtonAriaLabel
+        : t(`${composerBehavior.ariaLabelKey}Title`);
   const composerPlaceholder = selectedRunId
     ? selectedConversationMode === "planning"
       ? t("conversation.composer.placeholder.planning")
@@ -220,7 +220,7 @@ export function ConversationComposer({
           "rounded-[1.5rem] px-4 pb-0 pt-3 transition-all sm:px-5 sm:pb-0 sm:pt-4",
           themeMode === "night"
             ? "border border-transparent bg-muted/80 shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] focus-within:bg-muted/90 dark:bg-[#2f2f2f] dark:focus-within:bg-[#343434]"
-            : "rounded-[2rem] border border-[#dededd] bg-[#fdfdfc] shadow-none focus-within:border-[#d2d2d0] focus-within:bg-[#fdfdfc] sm:rounded-[2.35rem]",
+            : "rounded-[2rem] border border-[#dededd] bg-[#fdfdfc] shadow-none focus-within:border-[#d2d2d0] focus-within:bg-[#fdfdfc] dark:border-transparent dark:bg-[#2f2f2f] dark:shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] dark:focus-within:bg-[#343434] sm:rounded-[2.35rem]",
         )}
       >
         <textarea
@@ -276,7 +276,7 @@ export function ConversationComposer({
             if (shouldSubmitComposerKeyDown({
               key: e.key,
               shiftKey: e.shiftKey,
-              isMobileViewport: !isDesktopComposerViewport,
+              isMobileViewport: window.matchMedia("(max-width: 639px)").matches,
             })) {
               e.preventDefault();
               const useAlternateBusyAction = shouldUseAlternateComposerSubmitKeyDown({
@@ -298,7 +298,7 @@ export function ConversationComposer({
                   onSendConversationMessage(
                     command,
                     resolveBusyMessageActionForSubmitAction(composerBehavior.submitAction, {
-                      useAlternate: useAlternateBusyAction,
+                      useAlternate: composerBehavior.allowAlternateBusyAction && useAlternateBusyAction,
                     }),
                   );
                 } else {
@@ -315,7 +315,7 @@ export function ConversationComposer({
             hasAttachments ? "min-h-[112px]" : "min-h-[72px]",
             themeMode === "night"
               ? "text-foreground placeholder:text-muted-foreground/80"
-              : "text-[#454545] placeholder:text-[#c4c4c2]",
+              : "text-[#454545] placeholder:text-[#c4c4c2] dark:text-foreground dark:placeholder:text-muted-foreground/80",
           )}
         />
 
@@ -330,7 +330,7 @@ export function ConversationComposer({
                     : "inline-flex max-w-full items-center gap-2 rounded-full px-3 py-1.5 text-xs shadow-sm",
                   themeMode === "night"
                     ? "bg-background/65 text-foreground dark:bg-black/20"
-                    : "border border-[#e2e2df] bg-white/95 text-[#4d4d4d]",
+                    : "border border-[#e2e2df] bg-white/95 text-[#4d4d4d] dark:border-transparent dark:bg-black/20 dark:text-foreground",
                 )}
               >
                 {attachment.kind === "image" && attachment.previewUrl ? (
@@ -352,7 +352,7 @@ export function ConversationComposer({
                     "inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors",
                     themeMode === "night"
                       ? "text-muted-foreground hover:bg-background/60 hover:text-foreground"
-                      : "text-[#8f8f8f] hover:bg-black/5 hover:text-[#5c5c5c]",
+                      : "text-[#8f8f8f] hover:bg-black/5 hover:text-[#5c5c5c] dark:text-muted-foreground dark:hover:bg-background/60 dark:hover:text-foreground",
                   )}
                   aria-label={`Remove ${attachment.name}`}
                 >
@@ -388,12 +388,20 @@ export function ConversationComposer({
                 "h-8 w-8 shrink-0 rounded-full",
                 themeMode === "night"
                   ? "text-muted-foreground hover:bg-background/45 hover:text-foreground"
-                  : "text-[#959595] hover:bg-black/[0.04] hover:text-[#666666]",
+                  : "text-[#959595] hover:bg-black/[0.04] hover:text-[#666666] dark:text-muted-foreground dark:hover:bg-background/45 dark:hover:text-foreground",
               )}
               aria-label="Attach files"
             >
               <Plus className="h-[18px] w-[18px]" />
             </Button>
+
+          {!selectedRunId ? (
+            <BranchWorkspaceButton
+              projectPath={workspaceProjectPath}
+              disabled={isComposerSubmitting}
+              themeMode={themeMode}
+            />
+          ) : null}
 
           <div className="ml-auto flex min-w-0 items-center justify-end gap-1 sm:gap-2">
             {shouldLockDirectWorker ? (
@@ -401,7 +409,7 @@ export function ConversationComposer({
                 "w-max min-w-0 max-w-[8.5rem] shrink truncate rounded-full border px-2 py-1 text-xs font-semibold sm:px-3",
                 themeMode === "night"
                   ? "border-border/60 bg-background/50 text-muted-foreground"
-                  : "border-[#d8d8d8] bg-white/90 text-[#6a6a6a]",
+                  : "border-[#d8d8d8] bg-white/90 text-[#6a6a6a] dark:border-border/60 dark:bg-background/50 dark:text-muted-foreground",
               )}>
                 {lockedDirectWorkerLabel}
               </div>

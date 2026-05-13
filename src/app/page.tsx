@@ -1,5 +1,11 @@
 import { HomeApp } from "./home/HomeApp";
+import { buildHomeBootstrap } from "./home/bootstrap.server";
 
-export default function Page() {
-  return <HomeApp />;
+type PageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export default async function Page({ searchParams }: PageProps) {
+  const bootstrap = await buildHomeBootstrap(await searchParams);
+  return <HomeApp bootstrap={bootstrap} />;
 }

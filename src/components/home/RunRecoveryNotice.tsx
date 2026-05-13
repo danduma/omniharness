@@ -8,7 +8,12 @@ import { t, useI18nSnapshot } from "@/lib/i18n";
 function formatRecoveryTime(value: string | null | undefined) {
   if (!value) return null;
   const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toLocaleString() : value;
+  return Number.isFinite(date.getTime())
+    ? new Intl.DateTimeFormat("en-GB", {
+      dateStyle: "medium",
+      timeStyle: "medium",
+    }).format(date)
+    : value;
 }
 
 export function RunRecoveryNotice({

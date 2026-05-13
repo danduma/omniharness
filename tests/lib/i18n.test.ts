@@ -67,4 +67,22 @@ describe("OmniHarness i18n adapter", () => {
     expect(Object.keys(ja).sort()).toEqual(englishKeys);
     expect(Object.keys(ko).sort()).toEqual(englishKeys);
   });
+
+  it("defers missing key notifications until after translation returns", async () => {
+    let notificationCount = 0;
+    const unsubscribe = i18nManager.subscribe(() => {
+      notificationCount += 1;
+    });
+
+    try {
+      expect(t(`test.missing.${Date.now()}`)).toMatch(/^test\.missing\./);
+      expect(notificationCount).toBe(0);
+
+      await Promise.resolve();
+
+      expect(notificationCount).toBe(1);
+    } finally {
+      unsubscribe();
+    }
+  });
 });

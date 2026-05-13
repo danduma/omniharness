@@ -25,6 +25,12 @@ export type WorkerCardAgent = AgentTerminalPayload & {
     requestId: number;
     requestedAt: string;
     sessionId?: string | null;
+    toolCall?: {
+      toolCallId?: string | null;
+      kind?: string | null;
+      title?: string | null;
+      status?: string | null;
+    } | null;
     options?: Array<{ optionId: string; kind: string; name: string }>;
   }>;
   contextUsage?: {
@@ -330,6 +336,14 @@ function PermissionWarning({ workerId, pendingPermissions }: { workerId: string;
               <div key={permission.requestId} className="rounded-xl border border-border/70 bg-muted/20 p-2.5 text-[11px] text-foreground dark:border-white/8 dark:bg-white/[0.03] dark:text-zinc-200">
                 <div className="font-medium text-foreground dark:text-zinc-100">Request {permission.requestId}</div>
                 <div className="mt-1 text-muted-foreground dark:text-zinc-500">{permission.requestedAt}</div>
+                {permission.toolCall?.title ? (
+                  <div className="mt-2 rounded-lg bg-amber-500/8 px-2 py-1.5 text-amber-900 dark:bg-amber-400/8 dark:text-amber-100">
+                    {permission.toolCall.kind ? (
+                      <span className="mr-1.5 font-medium uppercase tracking-[0.04em]">{permission.toolCall.kind}</span>
+                    ) : null}
+                    <span className="break-words font-mono text-[10.5px]">{permission.toolCall.title}</span>
+                  </div>
+                ) : null}
                 {permission.options?.length ? (
                   <div className="mt-2 space-y-1">
                     {permission.options.map((option) => (

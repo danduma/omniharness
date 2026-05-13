@@ -30,11 +30,11 @@ function formatUserMessageTimestamp(value: string) {
     return "";
   }
 
-  return date.toLocaleTimeString([], {
+  return new Intl.DateTimeFormat("en-GB", {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  });
+  }).format(date);
 }
 
 export function UserInputMessage({
@@ -55,8 +55,8 @@ export function UserInputMessage({
 
   return (
     <div className="flex justify-end">
-      <div className="flex w-full max-w-[min(72ch,calc(100%-1rem))] flex-col items-end sm:max-w-[min(78ch,calc(100%-1.5rem))]">
-        <div className="group/user-message relative w-full overflow-hidden rounded-[1.55rem] bg-[#f3f3f3] px-5 py-3.5 text-left text-sm leading-6 text-[#202124] transition-colors hover:bg-[#eeeeee] dark:bg-[#3a3a3a] dark:text-[#d8d8d8] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] dark:hover:bg-[#404040]">
+      <div className="flex w-full max-w-[min(68ch,calc(100%-1rem))] flex-col items-end sm:max-w-[min(74ch,calc(100%-1.5rem))]">
+        <div className="omni-user-message group/user-message relative w-full overflow-hidden rounded-2xl px-5 py-3.5 text-left text-sm leading-6 transition-colors">
           {content ? (
             <span
               className="block select-text overflow-hidden whitespace-pre-wrap break-words"
@@ -74,7 +74,7 @@ export function UserInputMessage({
                     type="button"
                     key={attachment.id}
                     onClick={() => attachmentImagePreviewManager.open({ url, name: attachment.name, size: attachment.size })}
-                    className="group/attachment inline-flex max-w-full items-center gap-2 overflow-hidden rounded-xl border border-border/60 bg-[#e9e9e9] p-1.5 pr-3 text-xs dark:border-white/10 dark:bg-black/15"
+                    className="group/attachment inline-flex max-w-full items-center gap-2 overflow-hidden rounded-xl bg-muted/60 p-1.5 pr-3 text-xs"
                     title={`Preview ${attachment.name}`}
                     aria-label={`Preview ${attachment.name}`}
                   >
@@ -94,7 +94,7 @@ export function UserInputMessage({
                 ) : (
                   <div
                     key={attachment.id}
-                    className="inline-flex max-w-full items-center gap-2 rounded-full border border-border/60 bg-[#e9e9e9] px-3 py-1.5 text-xs dark:border-white/10 dark:bg-black/15"
+                    className="inline-flex max-w-full items-center gap-2 rounded-full bg-muted/60 px-3 py-1.5 text-xs"
                   >
                     <span className="truncate">{attachment.name}</span>
                     <span className="shrink-0 opacity-60">{formatBytes(attachment.size)}</span>
@@ -110,10 +110,10 @@ export function UserInputMessage({
               aria-label={isExpanded ? "Show less message text" : "Show more message text"}
               onClick={onToggleExpanded}
               className={cn(
-                "text-[#606164] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 dark:text-[#d8d8d8] dark:focus-visible:ring-white/45",
+                "omni-user-message-expand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45",
                 isExpanded
                   ? "mt-1 block w-full text-right text-[11px] font-semibold leading-5"
-                  : "absolute inset-x-0 bottom-0 flex justify-end bg-gradient-to-t from-[#f3f3f3] via-[#f3f3f3]/95 to-transparent px-5 pb-3.5 pt-5 text-[11px] font-semibold leading-5 transition-colors group-hover/user-message:from-[#eeeeee] group-hover/user-message:via-[#eeeeee]/95 dark:from-[#3a3a3a] dark:via-[#3a3a3a]/95 dark:group-hover/user-message:from-[#404040] dark:group-hover/user-message:via-[#404040]/95",
+                  : "omni-user-message-expand--collapsed absolute inset-x-0 bottom-0 flex justify-end px-5 pb-3.5 pt-5 text-[11px] font-semibold leading-5 transition-colors",
               )}
             >
               {isExpanded ? "less" : "...more"}

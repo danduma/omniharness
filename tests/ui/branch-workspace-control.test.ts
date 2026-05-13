@@ -7,8 +7,10 @@ const sources = [
   "src/components/home/BranchWorkspaceButton.tsx",
   "src/app/home/ComposerContainer.tsx",
   "src/app/home/useHomeMutations.ts",
+  "src/app/home/useConversationActions.ts",
   "src/app/home/GitWorkspaceManager.ts",
   "src/components/home/HomeHeader.tsx",
+  "src/components/home/ConversationMain.tsx",
   "src/components/home/RunWorkspaceBadge.tsx",
 ].map((relativePath) => fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8")).join("\n");
 
@@ -50,6 +52,16 @@ describe("branch workspace control", () => {
     expect(sources).toContain("gitWorkspaceManager.requestCheckout(projectPath, branch.name)");
     expect(sources).toContain("gitWorkspaceManager.requestCreateWorktree(projectPath, branch.name)");
     expect(sources).toContain("gitWorkspaceManager.requestRemoveWorktree(projectPath, worktree.checkoutPath)");
+  });
+
+  it("adds a translated fork-into-worktree action for message checkpoints", () => {
+    expect(sources).toContain("requestForkMessageWorktree(projectPath: string, runId: string, targetMessageId: string, content: string)");
+    expect(sources).toContain("handleForkMessageIntoWorktree");
+    expect(sources).toContain("handleConfirmForkMessageIntoWorktree");
+    expect(sources).toContain("git.workspace.action.forkMessageWorktree");
+    expect(sources).toContain("git.workspace.dialog.fork.title");
+    expect(sources).toContain("git.workspace.dialog.fork.confirm");
+    expect(sources).toContain("gitWorkspaceLaunch");
   });
 
   it("sends selected or pending git workspace intent only when starting a new run", () => {
