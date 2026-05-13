@@ -32,14 +32,14 @@ export class SettingsDraftManager extends StateManager<SettingsDraftState> {
     });
   }
 
-  hydrate(values: ServerSettingsValues) {
+  hydrate(values: ServerSettingsValues, notify = true) {
     const normalized = normalizeSettings(values);
     this.patch({
       baseline: normalized,
       draft: normalized,
       dirtyKeys: new Set(),
       hydrated: true,
-    });
+    }, notify);
   }
 
   setField(key: string, value: string) {

@@ -75,6 +75,7 @@ export type AgentActivityItem =
       kind: "permission";
       title: string;
       text: string;
+      detail?: string | null;
       timestamp: string;
       status: string;
     };
@@ -89,6 +90,7 @@ type AgentOutputSnapshot = {
 
 type MutableToolActivity = Extract<AgentActivityItem, { kind: "tool" }>;
 type MutableThinkingActivity = Extract<AgentActivityItem, { kind: "thinking" }>;
+type MutablePermissionActivity = Extract<AgentActivityItem, { kind: "permission" }>;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
@@ -405,6 +407,20 @@ function extractStringDiff(value: unknown): string | null {
   return normalizeMultilineText(value).trim();
 }
 
+function buildLineDiff(path: string | null, marker: "+" | "-", value: unknown, label: string): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = normalizeMultilineText(value);
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  const lines = normalized.split("\n").map((line) => `${marker}${line}`).join("\n");
+  return `${pathPrefixForDiff(path, "")}@@ ${label} @@\n${lines}`;
+}
+
 function collectChangeDiffs(value: unknown): string[] {
   const changes = asRecord(value);
   if (!changes) {
@@ -418,8 +434,34 @@ function collectChangeDiffs(value: unknown): string[] {
       const diff = extractStringDiff(record?.unified_diff)
         || extractStringDiff(record?.diff)
         || extractStringDiff(record?.patch);
-      return diff ? [`${pathPrefixForDiff(path, diff)}${diff}`] : [];
+      if (diff) {
+        return [`${pathPrefixForDiff(path, diff)}${diff}`];
+      }
+
+      if (record?.type === "add") {
+        const addDiff = buildLineDiff(path, "+", record.content, "add");
+        return addDiff ? [addDiff] : [];
+      }
+
+      if (record?.type === "delete") {
+        const deleteDiff = buildLineDiff(path, "-", record.content, "delete");
+        return deleteDiff ? [deleteDiff] : [];
+      }
+
+      return [];
     });
+}
+
+function buildReplacementDiffFromStrings(path: string | null, oldValue: unknown, newValue: unknown): string | null {
+  const oldString = typeof oldValue === "string" ? normalizeMultilineText(oldValue) : null;
+  const newString = typeof newValue === "string" ? normalizeMultilineText(newValue) : null;
+  if (oldString == null || newString == null || oldString === newString) {
+    return null;
+  }
+
+  const removed = oldString.split("\n").map((line) => `-${line}`).join("\n");
+  const added = newString.split("\n").map((line) => `+${line}`).join("\n");
+  return `${pathPrefixForDiff(path, "")}@@ replacement @@\n${removed}\n${added}`;
 }
 
 function buildReplacementDiff(rawInput: Record<string, unknown> | null): string | null {
@@ -427,16 +469,52 @@ function buildReplacementDiff(rawInput: Record<string, unknown> | null): string 
     return null;
   }
 
-  const oldString = typeof rawInput.old_string === "string" ? normalizeMultilineText(rawInput.old_string) : null;
-  const newString = typeof rawInput.new_string === "string" ? normalizeMultilineText(rawInput.new_string) : null;
-  if (oldString == null || newString == null || oldString === newString) {
-    return null;
+  return buildReplacementDiffFromStrings(
+    extractPrimaryPath({ rawInput }),
+    rawInput.old_string,
+    rawInput.new_string,
+  );
+}
+
+function collectContentDiffs(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
   }
 
-  const path = extractPrimaryPath({ rawInput });
-  const removed = oldString.split("\n").map((line) => `-${line}`).join("\n");
-  const added = newString.split("\n").map((line) => `+${line}`).join("\n");
-  return `${pathPrefixForDiff(path, "")}@@ replacement @@\n${removed}\n${added}`;
+  return value.flatMap((item) => {
+    const record = asRecord(item);
+    if (!record) {
+      return [];
+    }
+
+    const nested = asRecord(record.content);
+    const diff = extractStringDiff(nested?.text) || extractStringDiff(record.text);
+    if (diff) {
+      return [diff];
+    }
+
+    const contentKind = asNonEmptyString(record.type) || asNonEmptyString(asRecord(record._meta)?.kind);
+    if (contentKind === "diff" || contentKind === "modify") {
+      const replacementDiff = buildReplacementDiffFromStrings(
+        asNonEmptyString(record.path),
+        record.oldText,
+        record.newText,
+      );
+      if (replacementDiff) {
+        return [replacementDiff];
+      }
+
+      const addDiff = buildLineDiff(asNonEmptyString(record.path), "+", record.newText, "add");
+      if (addDiff) {
+        return [addDiff];
+      }
+
+      const deleteDiff = buildLineDiff(asNonEmptyString(record.path), "-", record.oldText, "delete");
+      return deleteDiff ? [deleteDiff] : [];
+    }
+
+    return [];
+  });
 }
 
 function extractToolDiff(raw: Record<string, unknown> | null, contentText?: string | null): string | null {
@@ -449,6 +527,7 @@ function extractToolDiff(raw: Record<string, unknown> | null, contentText?: stri
   const diffs = [
     ...collectChangeDiffs(rawOutput?.changes),
     ...collectChangeDiffs(rawInput?.changes),
+    ...collectContentDiffs(raw.content),
   ];
 
   for (const candidate of [
@@ -472,7 +551,8 @@ function extractToolDiff(raw: Record<string, unknown> | null, contentText?: stri
     diffs.push(replacementDiff);
   }
 
-  return diffs.length > 0 ? diffs.join("\n\n") : null;
+  const uniqueDiffs = [...new Set(diffs)];
+  return uniqueDiffs.length > 0 ? uniqueDiffs.join("\n\n") : null;
 }
 
 function normalizeToolKind(toolKind: string | null | undefined, title: string): AgentToolActivityKind {
@@ -549,7 +629,7 @@ function deriveToolInputPane(entry: AgentOutputEntry): AgentOutputPane | undefin
     return undefined;
   }
 
-  if (kind === "bash" || kind === "agent") {
+  if (kind === "bash") {
     const text = cleanPaneText(promptLike);
     return text ? { label: "IN", text } : undefined;
   }
@@ -617,6 +697,43 @@ function permissionTitleKeyForStatus(status: string) {
   return "terminal.permission.requested";
 }
 
+function permissionRequestId(entry: AgentOutputEntry): number | null {
+  const raw = asRecord(entry.raw);
+  const requestId = raw?.requestId;
+  if (typeof requestId === "number" && Number.isFinite(requestId)) {
+    return requestId;
+  }
+  const match = entry.text.match(/\brequest\s+(\d+)\b/i);
+  if (!match) {
+    return null;
+  }
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function permissionToolCallDetail(entry: AgentOutputEntry): string | null {
+  const raw = asRecord(entry.raw);
+  const toolCall = asRecord(raw?.toolCall);
+  if (toolCall) {
+    const title = asNonEmptyString(toolCall.title);
+    const kind = asNonEmptyString(toolCall.kind);
+    if (title && kind) {
+      return `${kind}: ${title}`;
+    }
+    return title ?? kind;
+  }
+
+  const requestedTarget = entry.text.match(/^Permission requested for\s+(.+?)(?::\s*(?:allow|reject|proceed)[\w-]*\b.*)?$/i);
+  return requestedTarget?.[1]?.trim() || null;
+}
+
+function permissionDisplayText(entry: AgentOutputEntry, detail: string | null | undefined): string {
+  if (detail || /^Permission (?:requested|approved|denied|cancelled|canceled)\b/i.test(entry.text)) {
+    return "";
+  }
+  return normalizeMultilineText(entry.text || "").trim();
+}
+
 function isFinalToolStatus(value: string | null | undefined): boolean {
   return value ? TERMINAL_TOOL_STATUSES.has(value.trim().toLowerCase()) : false;
 }
@@ -627,6 +744,11 @@ function mergeToolStatus(currentStatus: string, nextStatus: string | null | unde
     return currentStatus;
   }
   return normalizedNext;
+}
+
+function isFailedToolStatus(value: string | null | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "failed" || normalized === "error" || normalized === "cancelled" || normalized === "canceled";
 }
 
 function isReplaceableToolTitle(value: string): boolean {
@@ -687,6 +809,14 @@ function applyToolUpdate(target: MutableToolActivity, entry: AgentOutputEntry): 
 
   const outputPane = deriveToolOutputPane(entry);
   if (outputPane) {
+    if (
+      target.outputPane?.kind === "diff"
+      && outputPane.kind !== "diff"
+      && target.actionKind === "edit"
+      && !isFailedToolStatus(target.status)
+    ) {
+      return;
+    }
     target.outputPane = outputPane;
   }
 }
@@ -819,6 +949,8 @@ export function formatActivityStatus(status: string): string {
 export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentActivityItem[] {
   const items: AgentActivityItem[] = [];
   const toolIndexById = new Map<string, number>();
+  const permissionDetailByRequestId = new Map<number, string>();
+  const permissionIndexByRequestId = new Map<number, number>();
   const outputEntries = Array.isArray(snapshot.outputEntries) ? snapshot.outputEntries : [];
   let openThinking: MutableThinkingActivity | null = null;
 
@@ -883,11 +1015,34 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
       }
       finishOpenThinking(entry.timestamp);
       const status = normalizeStatus(entry.status);
+      const requestId = permissionRequestId(entry);
+      const directDetail = permissionToolCallDetail(entry);
+      if (requestId !== null && directDetail) {
+        permissionDetailByRequestId.set(requestId, directDetail);
+      }
+      const detail = directDetail ?? (requestId !== null ? permissionDetailByRequestId.get(requestId) ?? null : null);
+      const existingIndex = requestId !== null ? permissionIndexByRequestId.get(requestId) : undefined;
+      if (existingIndex != null) {
+        const existing = items[existingIndex];
+        if (existing?.kind === "permission") {
+          const permissionActivity = existing as MutablePermissionActivity;
+          permissionActivity.title = permissionTitleKeyForStatus(status);
+          permissionActivity.text = permissionDisplayText(entry, detail);
+          permissionActivity.detail = detail;
+          permissionActivity.timestamp = entry.timestamp;
+          permissionActivity.status = status;
+          continue;
+        }
+      }
+      if (requestId !== null) {
+        permissionIndexByRequestId.set(requestId, items.length);
+      }
       items.push({
         id: entry.id,
         kind: "permission",
         title: permissionTitleKeyForStatus(status),
-        text,
+        text: permissionDisplayText(entry, detail),
+        detail,
         timestamp: entry.timestamp,
         status,
       });

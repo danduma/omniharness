@@ -19,7 +19,13 @@ interface RuntimeDoctorResult {
   message?: string;
 }
 
+interface RuntimeDoctorSnapshot {
+  results: RuntimeDoctorResult[];
+  diagnostic: ReturnType<typeof buildAppError> | null;
+}
+
 const WORKER_MODEL_CATALOG_CACHE_KEY = "__WORKER_MODEL_CATALOG_CACHE";
+const RUNTIME_DOCTOR_TIMEOUT_MS = 2_000;
 
 const workerModelCatalogManager = new WorkerModelCatalogManager({
   loadCachedCatalog: async () => {
@@ -53,6 +59,56 @@ const workerModelCatalogManager = new WorkerModelCatalogManager({
   },
 });
 
+async function fetchRuntimeDoctor() {
+  const controller = new AbortController();
+  let didTimeout = false;
+  const timeout = setTimeout(() => {
+    didTimeout = true;
+    controller.abort();
+  }, RUNTIME_DOCTOR_TIMEOUT_MS);
+
+  try {
+    return await fetch(`${BRIDGE_URL}/doctor`, { signal: controller.signal });
+  } catch (error) {
+    if (didTimeout) {
+      throw new Error(`Agent runtime doctor request timed out after ${RUNTIME_DOCTOR_TIMEOUT_MS}ms.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readRuntimeDoctorSnapshot(): Promise<RuntimeDoctorSnapshot> {
+  try {
+    const doctorResponse = await fetchRuntimeDoctor();
+    if (!doctorResponse.ok) {
+      return {
+        results: [],
+        diagnostic: buildAppError(`Agent runtime doctor request failed with status ${doctorResponse.status}`, {
+          status: doctorResponse.status,
+          source: "Agent runtime",
+          action: "Load worker availability",
+        }),
+      };
+    }
+
+    const payload = await doctorResponse.json() as { results?: RuntimeDoctorResult[] };
+    return {
+      results: payload.results ?? [],
+      diagnostic: null,
+    };
+  } catch (error) {
+    return {
+      results: [],
+      diagnostic: buildAppError(error, {
+        source: "Agent runtime",
+        action: "Load worker availability",
+      }),
+    };
+  }
+}
+
 export async function GET(req: NextRequest) {
   try {
     const auth = await requireApiSession(req, {
@@ -63,33 +119,27 @@ export async function GET(req: NextRequest) {
       return auth.response;
     }
 
-    const [allSettings, doctorResponse, workerModelSnapshot] = await Promise.all([
+    const [allSettings, doctorSnapshot, workerModelSnapshot] = await Promise.all([
       db.select().from(settings),
-      fetch(`${BRIDGE_URL}/doctor`),
+      readRuntimeDoctorSnapshot(),
       workerModelCatalogManager.getCatalogSnapshot({ refreshOnFirstLoad: true }),
     ]);
 
-    if (!doctorResponse.ok) {
-      return errorResponse(`Agent runtime doctor request failed with status ${doctorResponse.status}`, {
-        status: doctorResponse.status,
-        source: "Agent runtime",
-        action: "Load worker availability",
-      });
-    }
-
-    const payload = await doctorResponse.json() as { results?: RuntimeDoctorResult[] };
-    const results = payload.results ?? [];
+    const results = doctorSnapshot.results;
     const byType = new Map(results.map((result) => [result.type, result]));
     const { decryptionFailures } = hydrateRuntimeEnvFromSettings(allSettings);
 
     return NextResponse.json({
-      diagnostics: decryptionFailures.map((failure) => buildAppError(
-        `Unable to decrypt runtime setting "${failure.key}".`,
-        {
-          source: "Settings",
-          action: "Load worker availability",
-        },
-      )),
+      diagnostics: [
+        ...decryptionFailures.map((failure) => buildAppError(
+          `Unable to decrypt runtime setting "${failure.key}".`,
+          {
+            source: "Settings",
+            action: "Load worker availability",
+          },
+        )),
+        ...(doctorSnapshot.diagnostic ? [doctorSnapshot.diagnostic] : []),
+      ],
       workerModels: workerModelSnapshot.catalog,
       workerModelsRefreshing: workerModelSnapshot.refreshing,
       workers: SUPPORTED_WORKER_TYPES.map((type) => {

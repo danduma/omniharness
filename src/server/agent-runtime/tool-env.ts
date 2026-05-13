@@ -351,9 +351,9 @@ export function buildManagedPath(input: BuildManagedPathInput = {}): string {
   return mergePathEntries([
     createCodexArgv0ShimDir(env),
     ...projectBinDirs(input.cwd, home),
-    ...envBinDirs(env, home),
     ...inherited,
     ...splitPath(loginPath || undefined),
+    ...envBinDirs(env, home),
     ...systemBinDirs(),
   ]);
 }

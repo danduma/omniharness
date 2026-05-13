@@ -28,6 +28,12 @@ export interface AgentRecord {
     requestId: number;
     requestedAt: string;
     sessionId?: string | null;
+    toolCall?: {
+      toolCallId?: string | null;
+      kind?: string | null;
+      title?: string | null;
+      status?: string | null;
+    } | null;
     options?: Array<{ optionId: string; kind: string; name: string }>;
   }>;
   outputEntries?: Array<{
@@ -149,6 +155,19 @@ function asPermissionOptions(value: unknown) {
     .filter((item) => item.optionId && item.kind && item.name);
 }
 
+function asPermissionToolCall(value: unknown) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const item = value as Record<string, unknown>;
+  return {
+    toolCallId: asNullableString(item.toolCallId),
+    kind: asNullableString(item.kind),
+    title: asNullableString(item.title),
+    status: asNullableString(item.status),
+  };
+}
+
 function asPendingPermissions(value: unknown): AgentRecord["pendingPermissions"] {
   if (!Array.isArray(value)) {
     return [];
@@ -159,12 +178,14 @@ function asPendingPermissions(value: unknown): AgentRecord["pendingPermissions"]
       requestId?: unknown;
       requestedAt?: unknown;
       sessionId?: unknown;
+      toolCall?: unknown;
       options?: unknown;
     } => typeof item === "object" && item !== null)
     .map((item) => ({
       requestId: typeof item.requestId === "number" ? item.requestId : -1,
       requestedAt: asString(item.requestedAt),
       sessionId: typeof item.sessionId === "string" ? item.sessionId : null,
+      toolCall: asPermissionToolCall(item.toolCall),
       options: asPermissionOptions(item.options),
     }))
     .filter((item) => item.requestId >= 0 && item.requestedAt);
@@ -207,6 +228,10 @@ function normalizeModelForWorkerType(type: string, model?: string) {
   if (normalizedType === "opencode") {
     if (normalizedModel.startsWith("gpt-")) return `openai/${normalizedModel}`;
     if (normalizedModel === "claude-sonnet-4") return "anthropic/claude-sonnet-4";
+  }
+
+  if (normalizedType === "gemini" && normalizedModel === "gemini-3") {
+    return undefined;
   }
 
   return trimmedModel;
@@ -414,9 +439,11 @@ export async function spawnAgent(params: {
   mcpServers?: BridgeMcpServer[];
   resumeSessionId?: string;
 }) {
+  const normalizedModel = params.model ? normalizeModelForWorkerType(params.type, params.model) : undefined;
+  const { model: _model, ...restParams } = params;
   const normalizedParams = {
-    ...params,
-    ...(params.model ? { model: normalizeModelForWorkerType(params.type, params.model) } : {}),
+    ...restParams,
+    ...(normalizedModel ? { model: normalizedModel } : {}),
   };
 
   return requestBridge<AgentRecord>(

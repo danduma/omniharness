@@ -283,6 +283,29 @@ describe("bridge client", () => {
     expect(openCodeInit?.body).toContain('"model":"openai/gpt-5.5"');
   });
 
+  it("omits the Gemini model override for the Gemini 3 CLI-default option", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ name: "worker-1", state: "idle" }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { spawnAgent } = await import("@/server/bridge-client");
+    await spawnAgent({
+      type: "gemini",
+      cwd: "/tmp",
+      name: "worker-1",
+      model: "gemini-3",
+    });
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const body = JSON.parse(String(init?.body));
+    expect(body.type).toBe("gemini");
+    expect(body.model).toBeUndefined();
+  });
+
   it("passes resumeSessionId through when respawning a worker from saved history", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ name: "worker-1", state: "idle", sessionId: "session-123" }), {

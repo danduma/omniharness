@@ -161,4 +161,32 @@ describe("GET /api/agents/catalog", () => {
       setupCommand: "codex login",
     });
   });
+
+  it("returns cached worker availability with a diagnostic when the runtime doctor is unreachable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("doctor unavailable")));
+
+    mockIsSpawnableWorkerType.mockImplementation((type: string) => (
+      type === "codex"
+        ? { ok: true, type: "codex" }
+        : { ok: false, type, reason: `${type} unavailable` }
+    ));
+
+    const response = await GET(new NextRequest("http://localhost/api/agents/catalog"));
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    const codex = payload.workers.find((worker: { type: string }) => worker.type === "codex");
+
+    expect(payload.diagnostics).toEqual([
+      expect.objectContaining({
+        source: "Agent runtime",
+        action: "Load worker availability",
+        message: "doctor unavailable",
+      }),
+    ]);
+    expect(codex?.availability.status).toBe("ok");
+    expect(payload.workerModels.codex).toEqual(expect.arrayContaining([
+      { value: "gpt-5.4", label: "GPT-5.4" },
+    ]));
+  });
 });

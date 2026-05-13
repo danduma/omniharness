@@ -266,6 +266,8 @@ process.stdin.on('data', (chunk) => {
       write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
     } else if (message.method === 'session/new') {
       write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-1' } });
+    } else if (message.method === 'session/set_mode') {
+      write({ jsonrpc: '2.0', id: message.id, result: {} });
     } else if (message.method === 'session/prompt') {
       promptRequestId = message.id;
       write({
@@ -788,12 +790,16 @@ describe("internal agent runtime HTTP API", () => {
         const response = await fetch(`${baseUrl}/agents/permission-worker`);
         expect(response.status).toBe(200);
         return response.json() as Promise<{
-          pendingPermissions?: unknown[];
+          pendingPermissions?: Array<{ toolCall?: { kind?: string; title?: string } | null }>;
           outputEntries?: Array<{ type: string; status?: string; raw?: unknown }>;
         }>;
       },
       (agent) => (agent.pendingPermissions?.length ?? 0) === 1,
     );
+    expect(pendingAgent.pendingPermissions?.[0]?.toolCall).toMatchObject({
+      kind: "execute",
+      title: "Run command",
+    });
     const requestEntry = pendingAgent.outputEntries?.find((entry) => entry.type === "permission" && entry.status === "pending");
     expect(requestEntry).toMatchObject({
       raw: expect.objectContaining({ requestId: 1 }),
@@ -813,16 +819,82 @@ describe("internal agent runtime HTTP API", () => {
     const permissionEntries = agent.outputEntries.filter((entry) => entry.type === "permission");
     expect(permissionEntries).toMatchObject([
       {
-        text: "Permission requested: allow_always Always Allow, allow_once Allow, reject_once Reject",
+        text: "Permission requested for execute: Run command: allow_always Always Allow, allow_once Allow, reject_once Reject",
         status: "pending",
         raw: expect.objectContaining({ requestId: 1 }),
       },
       {
         text: "Permission approved for request 1: allow_once Allow",
         status: "approved",
-        raw: expect.objectContaining({ requestId: 1, decision: "approve", optionId: "allow_once" }),
+        raw: expect.objectContaining({
+          requestId: 1,
+          decision: "approve",
+          optionId: "allow_once",
+          toolCall: expect.objectContaining({ kind: "execute", title: "Run command" }),
+        }),
       },
     ]);
+  }, 30_000);
+
+  it("auto-approves permission requests when the session is full-access", async () => {
+    const projectDir = createTempDir("omni-runtime-permission-yolo-project-");
+    const binDir = createTempDir("omni-runtime-permission-yolo-bin-");
+    const fakeAgent = createExecutable(binDir, "fake-permission-acp-agent", fakePermissionAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "permission-yolo-worker",
+        mode: "full-access",
+      }),
+    });
+    expect(spawnResponse.status).toBe(201);
+
+    const askResponse = await fetch(`${baseUrl}/agents/permission-yolo-worker/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "need permission" }),
+    });
+    expect(askResponse.status).toBe(200);
+
+    const agentResponse = await fetch(`${baseUrl}/agents/permission-yolo-worker`);
+    expect(agentResponse.status).toBe(200);
+    const agent = await agentResponse.json() as {
+      pendingPermissions: unknown[];
+      outputEntries: Array<{ type: string; text: string; status?: string; raw?: unknown }>;
+    };
+    expect(agent.pendingPermissions).toHaveLength(0);
+    expect(agent.outputEntries.some((entry) => entry.text.includes('permission response {"outcome":{"outcome":"selected","optionId":"allow_always"}}'))).toBe(true);
+    const permissionEntries = agent.outputEntries.filter((entry) => entry.type === "permission");
+    expect(permissionEntries).toMatchObject([
+      {
+        text: "Permission requested for execute: Run command: allow_always Always Allow, allow_once Allow, reject_once Reject",
+        status: "pending",
+        raw: expect.objectContaining({ requestId: expect.any(Number) }),
+      },
+      {
+        status: "approved",
+        raw: expect.objectContaining({
+          decision: "approve",
+          optionId: "allow_always",
+          toolCall: expect.objectContaining({ kind: "execute", title: "Run command" }),
+        }),
+      },
+    ]);
+    expect(permissionEntries[1].text).toMatch(/^Permission approved for request \d+: allow_always Always Allow$/);
   }, 30_000);
 
   it("keeps nonfatal agent stderr diagnostics out of lastError", async () => {

@@ -435,10 +435,18 @@ class RuntimeClient implements acp.Client {
     record.state = "working";
     appendOutputEntry(record, {
       type: "permission",
-      text: `Permission requested${params.options.length > 0 ? `: ${params.options.map((option) => `${option.kind} ${option.name}`).join(", ")}` : ""}`,
+      text: buildPermissionRequestText(params),
       status: "pending",
       raw: { ...params, requestId },
     });
+    if (isFullAccessPermissionMode(record.sessionMode)) {
+      const optionId = findAutoApprovePermissionOptionId(params);
+      appendPermissionOutcomeEntry(record, requestId, params, "approve", optionId);
+      record.updatedAt = nowIso();
+      return optionId
+        ? { outcome: { outcome: "selected", optionId } }
+        : { outcome: { outcome: "cancelled" } };
+    }
     return new Promise((resolve) => {
       record.pendingPermissions.push({
         requestId,
@@ -530,6 +538,93 @@ class RuntimeClient implements acp.Client {
 
 let nextPermissionRequestId = 1;
 
+function describePermissionToolCall(params: acp.RequestPermissionRequest) {
+  const toolCall = asRecord(params.toolCall);
+  if (!toolCall) {
+    return null;
+  }
+  const title = asNonEmptyString(toolCall.title);
+  const kind = asNonEmptyString(toolCall.kind);
+  if (title && kind) {
+    return `${kind}: ${title}`;
+  }
+  return title ?? kind;
+}
+
+function buildPermissionRequestText(params: acp.RequestPermissionRequest) {
+  const target = describePermissionToolCall(params);
+  const optionsText = params.options.length > 0
+    ? `: ${params.options.map((option) => `${option.kind} ${option.name}`).join(", ")}`
+    : "";
+  return target
+    ? `Permission requested for ${target}${optionsText}`
+    : `Permission requested${optionsText}`;
+}
+
+function isFullAccessPermissionMode(mode: string | null) {
+  return mode === "full-access" || mode === "danger-full-access";
+}
+
+function findPermissionOptionId(params: acp.RequestPermissionRequest, mode: "approve" | "deny", explicitOptionId?: string) {
+  if (explicitOptionId && params.options.some((option) => option.optionId === explicitOptionId)) {
+    return explicitOptionId;
+  }
+  const preferred = mode === "approve"
+    ? params.options.find((option) => option.kind === "allow_always" || option.optionId === "allow_always" || option.optionId === "proceed_always")
+      ?? params.options.find((option) => option.kind.startsWith("allow"))
+    : params.options.find((option) => option.kind.startsWith("reject"));
+  return preferred?.optionId ?? params.options[0]?.optionId ?? null;
+}
+
+function findAutoApprovePermissionOptionId(params: acp.RequestPermissionRequest) {
+  const preferred =
+    params.options.find((option) => option.kind === "allow_always" || option.optionId === "allow_always" || option.optionId === "proceed_always")
+    ?? params.options.find((option) => option.kind.startsWith("allow"));
+  return preferred?.optionId ?? null;
+}
+
+function appendPermissionOutcomeEntry(
+  record: AgentRecord,
+  requestId: number,
+  params: acp.RequestPermissionRequest,
+  decision: "approve" | "deny" | "cancel",
+  optionId: string | null,
+) {
+  if (decision === "cancel") {
+    appendOutputEntry(record, {
+      type: "permission",
+      text: `Permission cancelled for request ${requestId}`,
+      status: "cancelled",
+      raw: { requestId, decision },
+    });
+    return;
+  }
+
+  const option = optionId
+    ? params.options.find((candidate) => candidate.optionId === optionId)
+    : null;
+  const status = optionId
+    ? decision === "approve" ? "approved" : "denied"
+    : "cancelled";
+  const optionLabel = option
+    ? `${option.kind} ${option.name}`.trim()
+    : optionId;
+  appendOutputEntry(record, {
+    type: "permission",
+    text: optionLabel
+      ? `Permission ${status} for request ${requestId}: ${optionLabel}`
+      : `Permission ${status} for request ${requestId}`,
+    status,
+    raw: {
+      requestId,
+      decision,
+      optionId: optionId ?? null,
+      option: option ?? null,
+      toolCall: params.toolCall,
+    },
+  });
+}
+
 export class AgentRuntimeManager {
   readonly agents = new Map<string, AgentRecord>();
   private readonly chunkSubscribers = new Map<string, Set<(chunk: string) => void>>();
@@ -569,6 +664,17 @@ export class AgentRuntimeManager {
         requestId: item.requestId,
         requestedAt: item.requestedAt,
         sessionId: item.params.sessionId,
+        toolCall: (() => {
+          const toolCall = asRecord(item.params.toolCall);
+          return toolCall
+            ? {
+                toolCallId: asNonEmptyString(toolCall.toolCallId),
+                kind: asNonEmptyString(toolCall.kind),
+                title: asNonEmptyString(toolCall.title),
+                status: asNonEmptyString(toolCall.status),
+              }
+            : null;
+        })(),
         options: item.params.options.map((option) => ({
           optionId: option.optionId,
           kind: option.kind,
@@ -1128,52 +1234,16 @@ export class AgentRuntimeManager {
 
     if (decision === "cancel") {
       pending.resolve({ outcome: { outcome: "cancelled" } });
-      appendOutputEntry(record, {
-        type: "permission",
-        text: `Permission cancelled for request ${pending.requestId}`,
-        status: "cancelled",
-        raw: { requestId: pending.requestId, decision },
-      });
+      appendPermissionOutcomeEntry(record, pending.requestId, pending.params, decision, null);
     } else {
-      const optionId = this.findPermissionOptionId(pending.params, decision, explicitOptionId);
+      const optionId = findPermissionOptionId(pending.params, decision, explicitOptionId);
       pending.resolve(optionId
         ? { outcome: { outcome: "selected", optionId } }
         : { outcome: { outcome: "cancelled" } });
-      const option = optionId
-        ? pending.params.options.find((candidate) => candidate.optionId === optionId)
-        : null;
-      const status = optionId
-        ? decision === "approve" ? "approved" : "denied"
-        : "cancelled";
-      const optionLabel = option
-        ? `${option.kind} ${option.name}`.trim()
-        : optionId;
-      appendOutputEntry(record, {
-        type: "permission",
-        text: optionLabel
-          ? `Permission ${status} for request ${pending.requestId}: ${optionLabel}`
-          : `Permission ${status} for request ${pending.requestId}`,
-        status,
-        raw: {
-          requestId: pending.requestId,
-          decision,
-          optionId: optionId ?? null,
-          option: option ?? null,
-        },
-      });
+      appendPermissionOutcomeEntry(record, pending.requestId, pending.params, decision, optionId);
     }
     record.updatedAt = nowIso();
     return pending;
-  }
-
-  private findPermissionOptionId(params: acp.RequestPermissionRequest, mode: "approve" | "deny", explicitOptionId?: string) {
-    if (explicitOptionId && params.options.some((option) => option.optionId === explicitOptionId)) {
-      return explicitOptionId;
-    }
-    const preferred = mode === "approve"
-      ? params.options.find((option) => option.kind.startsWith("allow"))
-      : params.options.find((option) => option.kind.startsWith("reject"));
-    return preferred?.optionId ?? params.options[0]?.optionId ?? null;
   }
 
   private async runDoctorForType(type: string): Promise<DoctorResult> {

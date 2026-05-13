@@ -33,7 +33,7 @@ const ACTIVE_PROCESS_STATUSES = new Set<WorkerTerminalProcessStatus>([
   "working",
 ]);
 const TERMINAL_TOOL_KIND_PATTERN = /\b(exec|execute|exec_command|terminal|shell|bash)\b/i;
-const NON_TERMINAL_TOOL_KIND_PATTERN = /\b(read|open|view|edit|write|replace|patch|create|search|find|grep|glob|agent|delegate|dispatch|spawn|worker)\b/i;
+const NON_TERMINAL_TOOL_KIND_PATTERN = /\b(read|open|view|edit|write|replace|patch|create|search|find|grep|glob|list|list_files|agent|delegate|dispatch|spawn|worker)\b/i;
 const OUTPUT_TAIL_LIMIT = 640;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -190,6 +190,44 @@ function extractProcessId(raw: Record<string, unknown> | null): string | null {
   return null;
 }
 
+function extractParsedCommandTypes(raw: Record<string, unknown> | null): string[] {
+  if (!raw) {
+    return [];
+  }
+
+  const rawInput = asRecord(raw.rawInput);
+  const rawOutput = asRecord(raw.rawOutput);
+  const parsedCommandValues = [
+    rawInput?.parsed_cmd,
+    rawInput?.parsedCommand,
+    raw.parsed_cmd,
+    raw.parsedCommand,
+    rawOutput?.parsed_cmd,
+    rawOutput?.parsedCommand,
+  ];
+
+  const parsedTypes: string[] = [];
+  for (const value of parsedCommandValues) {
+    const records = Array.isArray(value) ? value : [value];
+    for (const item of records) {
+      const record = asRecord(item);
+      const parsedType = asNonEmptyString(record?.type);
+      if (parsedType) {
+        parsedTypes.push(parsedType);
+      }
+    }
+  }
+
+  return parsedTypes;
+}
+
+function hasOnlyNonTerminalParsedCommands(raw: Record<string, unknown> | null): boolean {
+  const parsedTypes = extractParsedCommandTypes(raw);
+  return parsedTypes.length > 0
+    && parsedTypes.every((type) => isNonTerminalToolKind(type))
+    && !parsedTypes.some((type) => isTerminalToolKind(type));
+}
+
 function extractOutputText(raw: Record<string, unknown> | null): string | null {
   if (!raw) {
     return null;
@@ -255,6 +293,10 @@ export function isWorkerTerminalToolCallStart(entry: AgentOutputEntry): boolean 
     return false;
   }
 
+  if (hasOnlyNonTerminalParsedCommands(raw)) {
+    return false;
+  }
+
   if (isTerminalToolKind(toolKind)) {
     return true;
   }
@@ -268,11 +310,15 @@ function isTerminalLike(entry: AgentOutputEntry, command: string | null, process
     return false;
   }
 
+  const raw = asRecord(entry.raw);
+  if (hasOnlyNonTerminalParsedCommands(raw)) {
+    return false;
+  }
+
   if (isTerminalToolKind(toolKind)) {
     return true;
   }
 
-  const raw = asRecord(entry.raw);
   return Boolean(command || processId || isTerminalToolKind(asNonEmptyString(raw?.title)));
 }
 
@@ -378,5 +424,5 @@ export function deriveVisibleWorkerTerminalProcesses(
     return [];
   }
 
-  return deriveWorkerTerminalProcesses(outputEntries);
+  return deriveWorkerTerminalProcesses(outputEntries).filter(isActiveWorkerTerminalProcess);
 }

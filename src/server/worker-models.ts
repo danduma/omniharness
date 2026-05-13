@@ -40,6 +40,7 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
     { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
   ],
   gemini: [
+    { value: "gemini-3", label: "Gemini 3" },
     { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
   ],
   opencode: [

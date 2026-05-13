@@ -38,6 +38,7 @@ describe("worker model catalog", () => {
       "anthropic/claude-sonnet-4",
     ]));
     expect(catalog.gemini).toEqual([
+      { value: "gemini-3", label: "Gemini 3" },
       { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
     ]);
   });

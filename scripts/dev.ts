@@ -6,6 +6,7 @@ import { acquireBridgeLock, isBridgeStarterProcessAlive, releaseBridgeLock, reso
 import { describeBridgeToolingProblem } from "../src/server/dev/bridge-health";
 import { bridgeNeedsBuild, resolveBridgeDir, resolveBridgeUrl, shouldAutoStartBridge } from "../src/server/dev/managed-bridge";
 import { detectNextDevRouteEnoent, type NextDevRouteEnoentRecovery } from "./dev-web-recovery";
+import { isNextDevReadyLine, prewarmDevPaths, resolveDevPrewarmBaseUrl, resolveDevPrewarmPaths } from "./dev-prewarm";
 
 const repoRoot = process.cwd();
 const serverMode = process.env.OMNIHARNESS_SERVER_MODE === "production" ? "production" : "development";
@@ -37,6 +38,7 @@ let shuttingDown = false;
 let ownsBridgeLock = false;
 let webRecoveryTimer: NodeJS.Timeout | null = null;
 let webRecoveryChild: ChildProcess | null = null;
+let webPrewarmStarted = false;
 
 function bridgePort() {
   try {
@@ -343,10 +345,41 @@ function scheduleWebRecovery(recovery: NextDevRouteEnoentRecovery) {
   webRecoveryTimer = setTimeout(() => relaunchWebAfterRecovery(webChild), 100);
 }
 
+function startDevPrewarm() {
+  if (serverMode !== "development" || webPrewarmStarted) {
+    return;
+  }
+
+  const paths = resolveDevPrewarmPaths(process.env);
+  if (paths.length === 0) {
+    webPrewarmStarted = true;
+    return;
+  }
+
+  webPrewarmStarted = true;
+  const baseUrl = resolveDevPrewarmBaseUrl(webHost, webPort);
+  console.log(`[${logLabel}] Prewarming Next dev routes: ${paths.join(", ")}`);
+  void prewarmDevPaths({ baseUrl, paths }).then((results) => {
+    const failures = results.filter((result) => result.error);
+    for (const result of results) {
+      const status = result.error ? `failed: ${result.error}` : `HTTP ${result.status}`;
+      console.log(`[${logLabel}] Prewarmed ${result.path} (${status}, ${result.elapsedMs}ms)`);
+    }
+    if (failures.length > 0) {
+      console.warn(`[${logLabel}] ${failures.length} dev prewarm request${failures.length === 1 ? "" : "s"} failed; continuing.`);
+    }
+  }).catch((error) => {
+    console.warn(`[${logLabel}] Dev route prewarm failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
+}
+
 function handleWebOutputLine(line: string) {
   const recovery = detectNextDevRouteEnoent(line, repoRoot);
   if (recovery) {
     scheduleWebRecovery(recovery);
+  }
+  if (isNextDevReadyLine(line)) {
+    startDevPrewarm();
   }
 }
 

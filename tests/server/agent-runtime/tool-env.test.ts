@@ -104,6 +104,30 @@ describe("agent runtime tool environment diagnostics", () => {
     }
   });
 
+  it("keeps explicit PATH entries ahead of stale version-manager bin variables", () => {
+    const home = createTempDir("omni-tool-env-home-");
+    const pathBin = createTempDir("omni-tool-env-path-bin-");
+    const staleNvmBin = createTempDir("omni-tool-env-nvm-bin-");
+    createExecutable(pathBin, "gemini");
+    createExecutable(staleNvmBin, "gemini");
+    createExecutable(staleNvmBin, "nvm-only-tool");
+
+    const managedEnv = {
+      HOME: home,
+      PATH: buildManagedPath({
+        env: {
+          HOME: home,
+          PATH: pathBin,
+          NVM_BIN: staleNvmBin,
+          OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        },
+      }),
+    };
+
+    expect(resolveCommand("gemini", { env: managedEnv })).toBe(join(pathBin, "gemini"));
+    expect(resolveCommand("nvm-only-tool", { env: managedEnv })).toBe(join(staleNvmBin, "nvm-only-tool"));
+  });
+
   it("adds a Codex managed config that enables standard core tools", () => {
     const env: Record<string, string | undefined> = withCodexStandardTooling({
       HOME: createTempDir("omni-tool-env-home-"),

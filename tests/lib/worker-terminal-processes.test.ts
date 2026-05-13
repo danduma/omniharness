@@ -105,6 +105,24 @@ describe("worker terminal process derivation", () => {
     expect(deriveVisibleWorkerTerminalProcesses(outputEntries, "working")).toHaveLength(1);
   });
 
+  it("hides completed command rows from the running terminal list while the worker is active", () => {
+    const outputEntries: AgentOutputEntry[] = [
+      {
+        id: "start-completed",
+        type: "tool_call",
+        text: "Terminal",
+        timestamp: "2026-05-03T00:00:01.000Z",
+        toolCallId: "completed",
+        toolKind: "execute",
+        status: "completed",
+        raw: { command: "pnpm test" },
+      },
+    ];
+
+    expect(deriveWorkerTerminalProcesses(outputEntries)).toHaveLength(1);
+    expect(deriveVisibleWorkerTerminalProcesses(outputEntries, "working")).toEqual([]);
+  });
+
   it("formats shell command arrays and surfaces CLI process handles when provided", () => {
     const outputEntries: AgentOutputEntry[] = [
       {
@@ -204,6 +222,61 @@ describe("worker terminal process derivation", () => {
             path: "/workspace/tests/ui/terminal-fit.test.ts",
             text: "Success. Updated the following files: M tests/ui/terminal-fit.test.ts",
           },
+        },
+      },
+    ];
+
+    expect(deriveWorkerTerminalProcesses(outputEntries)).toEqual([]);
+  });
+
+  it("does not create terminal processes from completed sparse read and search updates", () => {
+    const outputEntries: AgentOutputEntry[] = [
+      {
+        id: "read-update",
+        type: "tool_call_update",
+        text: "Tool call call_read completed",
+        timestamp: "2026-05-03T00:00:00.000Z",
+        toolCallId: "call_read",
+        toolKind: null,
+        status: "completed",
+        raw: {
+          rawOutput: {
+            process_id: "52769",
+            command: ["/bin/zsh", "-lc", "sed -n '1,240p' tests/ui/composer-shell.test.ts"],
+            parsed_cmd: [
+              {
+                type: "read",
+                cmd: "sed -n '1,240p' tests/ui/composer-shell.test.ts",
+                path: "tests/ui/composer-shell.test.ts",
+              },
+            ],
+            status: "completed",
+          },
+          status: "completed",
+        },
+      },
+      {
+        id: "search-update",
+        type: "tool_call_update",
+        text: "Tool call call_search completed",
+        timestamp: "2026-05-03T00:00:01.000Z",
+        toolCallId: "call_search",
+        toolKind: null,
+        status: "completed",
+        raw: {
+          rawOutput: {
+            process_id: "47045",
+            command: ["/bin/zsh", "-lc", "rg -n \"PopoverPrimitive|DropdownMenu|Dialog\" src/components"],
+            parsed_cmd: [
+              {
+                type: "search",
+                cmd: "rg -n \"PopoverPrimitive|DropdownMenu|Dialog\" src/components",
+                query: "PopoverPrimitive|DropdownMenu|Dialog",
+              },
+            ],
+            status: "completed",
+          },
+          status: "completed",
         },
       },
     ];
