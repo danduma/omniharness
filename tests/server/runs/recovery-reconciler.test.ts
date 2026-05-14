@@ -158,6 +158,30 @@ describe("reconcileRunRecovery", () => {
     expect(incident?.status).toBe("resolved");
   });
 
+  it("restarts implementation runs when a saved session is rejected by the bridge", async () => {
+    const { runId, workerId } = await createImplementationRun();
+    await db.update(workers).set({
+      bridgeSessionId: "missing-session",
+    }).where(eq(workers.id, workerId));
+    mockSpawnAgent.mockRejectedValue(new Error('Spawn failed: failed to start gemini agent via gemini: {"code":-32603,"message":"Internal error","data":{"details":"Invalid session identifier \\"missing-session\\"."}}'));
+
+    const result = await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+
+    expect(result.action).toBe("restart_from_checkpoint");
+    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
+    expect(run?.status).toBe("running");
+    expect(run?.lastError).toBeNull();
+    expect(worker?.status).toBe("lost");
+    expect(incident).toMatchObject({
+      kind: "session_missing",
+      status: "resolved",
+      autoAttemptCount: 2,
+    });
+  });
+
   it("auto-resumes a missing direct worker with a saved session even after a queued steer failed", async () => {
     const { runId, workerId } = await createDirectRun();
     await db.insert(queuedConversationMessages).values({
@@ -262,5 +286,39 @@ describe("reconcileRunRecovery", () => {
     const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
     expect(run?.status).toBe("needs_recovery");
     expect(incident?.status).toBe("needs_user");
+  });
+
+  it("does not append duplicate needs-user events while a run is already awaiting manual recovery", async () => {
+    const { runId, workerId } = await createImplementationRun();
+    await db.update(runs).set({
+      status: "needs_recovery",
+      lastError: "This run needs manual recovery before it can continue.",
+    }).where(eq(runs.id, runId));
+    await db.insert(recoveryIncidents).values({
+      id: randomUUID(),
+      runId,
+      workerId,
+      queuedMessageId: null,
+      kind: "worker_lost",
+      status: "needs_user",
+      autoAttemptCount: 0,
+      lastError: "This run needs manual recovery before it can continue.",
+      details: JSON.stringify({
+        recoveryState: "needs_recovery",
+        recommendedAction: "manual_resume",
+      }),
+      detectedAt: new Date(0),
+      updatedAt: new Date(0),
+      resolvedAt: null,
+    });
+
+    await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+    await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+
+    const needsUserEvents = await db.select().from(executionEvents).where(eq(executionEvents.eventType, "recovery_needs_user"));
+    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
+    expect(needsUserEvents).toHaveLength(0);
+    expect(incident?.status).toBe("needs_user");
+    expect(incident?.lastError).toBe("This run needs manual recovery before it can continue.");
   });
 });

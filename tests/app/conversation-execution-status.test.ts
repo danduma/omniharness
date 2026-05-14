@@ -81,6 +81,36 @@ describe("useConversationExecutionStatus", () => {
     expect(liveExecutionStatus.detail).toContain("Stopped supervisor and cancelled active workers.");
   });
 
+  it("shows manual recovery state instead of generic working status", () => {
+    const { liveExecutionStatus } = useConversationExecutionStatus({
+      selectedRun: buildRun({
+        status: "needs_recovery",
+        lastError: "This run needs manual recovery before it can continue.",
+      }),
+      latestExecutionEvent: buildExecutionEvent({
+        eventType: "recovery_needs_user",
+        details: JSON.stringify({ summary: "This run needs manual recovery before it can continue." }),
+      }),
+      erroredAgent: null,
+      pendingPermissionAgent: null,
+      hasStuckWorker: false,
+      latestStuckEvent: null,
+      showRecoverableRunningState: false,
+      latestWaitEvent: null,
+      latestPromptDeferredEvent: null,
+      completionEvent: null,
+      queuedMessageCount: 0,
+      activeConversationAgents: [],
+      liveThoughts: [],
+    });
+
+    expect(liveExecutionStatus).toMatchObject({
+      label: "Needs recovery",
+      tone: "warning",
+    });
+    expect(liveExecutionStatus.detail).toContain("This run needs manual recovery before it can continue.");
+  });
+
   it("shows completed runs even if a stale worker snapshot still looks active", () => {
     const { liveExecutionStatus } = useConversationExecutionStatus({
       selectedRun: buildRun({

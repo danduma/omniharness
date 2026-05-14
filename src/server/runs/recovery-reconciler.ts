@@ -216,6 +216,10 @@ export async function reconcileRunRecovery(args: {
     return { action: "none" as const, runId: run.id, recoveryState: state };
   }
 
+  if (state.kind === "needs_recovery" && run.status === "needs_recovery" && !args.force) {
+    return { action: "needs_user" as const, runId: run.id, recoveryState: state };
+  }
+
   const incident = await openRecoveryIncident({
     runId: run.id,
     workerId: state.workerId,

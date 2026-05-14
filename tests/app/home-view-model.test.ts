@@ -92,4 +92,38 @@ describe("useHomeViewModel", () => {
     expect(viewModel.isConversationStoppable).toBe(false);
     expect(viewModel.isConversationThinking).toBe(false);
   });
+
+  it("does not show a manual-recovery run as thinking because of a stale recovering worker", () => {
+    const viewModel = useRenderViewModel(createState({
+      runs: [createRun({
+        mode: "implementation",
+        status: "needs_recovery",
+        lastError: "This run needs manual recovery before it can continue.",
+      })],
+      plans: [{ id: "plan-1", path: "/workspace/project" }],
+      messages: [{
+        id: "message-1",
+        runId: "run-1",
+        role: "user",
+        kind: "checkpoint",
+        content: "Do the thing",
+        createdAt: "2026-05-13T00:00:00.000Z",
+      }],
+      workers: [{
+        id: "run-1-worker-1",
+        runId: "run-1",
+        type: "gemini",
+        status: "recovering",
+        createdAt: "2026-05-13T00:00:00.000Z",
+        updatedAt: "2026-05-13T00:01:00.000Z",
+      }],
+    }));
+
+    expect(viewModel.conversationWorkerGroups.active).toEqual([]);
+    expect(viewModel.conversationWorkerGroups.finished.map((worker) => worker.id)).toEqual(["run-1-worker-1"]);
+    expect(viewModel.activeConversationAgents).toEqual([]);
+    expect(viewModel.hasActiveWorker).toBe(false);
+    expect(viewModel.isConversationStoppable).toBe(false);
+    expect(viewModel.isConversationThinking).toBe(false);
+  });
 });

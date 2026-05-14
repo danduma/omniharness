@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { t } from "@/lib/i18n";
 import type { AgentSnapshot, ExecutionEventRecord, RunRecord } from "./types";
 import { getRunDurationLabel, parseExecutionEventDetails, summarizeExecutionEvent } from "./utils";
 
@@ -67,6 +68,16 @@ export function useConversationExecutionStatus({
       return {
         label: "Awaiting input",
         detail: "The supervisor asked for clarification before continuing.",
+        tone: "warning" as const,
+      };
+    }
+
+    if (selectedRun?.status === "needs_recovery") {
+      return {
+        label: t("recovery.notice.title.needsRecovery"),
+        detail: [durationLabel, selectedRun.lastError || (latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : t("recovery.notice.description.needsRecovery"))]
+          .filter(Boolean)
+          .join(". "),
         tone: "warning" as const,
       };
     }

@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { buildConversationGroups } from "@/lib/conversations";
-import { isTerminalRunStatus } from "@/lib/run-status";
+import { isTerminalRunStatus, normalizeRunStatus } from "@/lib/run-status";
 import {
   buildWorkerLists,
   isWorkerActiveStatus,
@@ -50,6 +50,7 @@ export function useHomeViewModel({
 
   const selectedRun = selectedRunId ? runs.find((run) => run.id === selectedRunId) ?? null : null;
   const selectedRunIsTerminal = isTerminalRunStatus(selectedRun?.status);
+  const selectedRunNeedsRecovery = normalizeRunStatus(selectedRun?.status) === "needs_recovery";
 
   const isSupervisorRunning = Boolean(selectedRun && selectedRun.mode === "implementation" && selectedRun.status === "running");
   const selectedRunMode: ConversationModeOption = selectedRun?.mode || "implementation";
@@ -184,7 +185,7 @@ export function useHomeViewModel({
 
     return selectedRunWorkers.map((worker) => {
       const candidateAgent = liveAgentsById.get(worker.id);
-      const liveAgent = selectedRunIsTerminal && candidateAgent && isWorkerActiveStatus(candidateAgent.state)
+      const liveAgent = (selectedRunIsTerminal || selectedRunNeedsRecovery) && candidateAgent && isWorkerActiveStatus(candidateAgent.state)
         ? null
         : candidateAgent;
       return liveAgent ?? {
@@ -195,7 +196,7 @@ export function useHomeViewModel({
         lastText: "",
       };
     });
-  }, [selectedRunIsTerminal, selectedRunWorkers, state.agents]);
+  }, [selectedRunIsTerminal, selectedRunNeedsRecovery, selectedRunWorkers, state.agents]);
 
   const selectedRunWorkersForDisplay = useMemo(
     () => mergeWorkerLiveStatus(selectedRunWorkers, conversationAgents),
@@ -208,10 +209,10 @@ export function useHomeViewModel({
   );
 
   const conversationWorkerGroups = useMemo(
-    () => selectedRunIsTerminal
+    () => selectedRunIsTerminal || selectedRunNeedsRecovery
       ? { active: [], finished: selectedRunWorkersForDisplay }
       : buildWorkerLists(selectedRunWorkersForDisplay),
-    [selectedRunIsTerminal, selectedRunWorkersForDisplay],
+    [selectedRunIsTerminal, selectedRunNeedsRecovery, selectedRunWorkersForDisplay],
   );
 
   const activeConversationWorkerIds = useMemo(
