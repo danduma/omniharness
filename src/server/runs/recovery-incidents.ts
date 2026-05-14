@@ -169,12 +169,17 @@ export async function markRecoveryIncidentNeedsUser(args: {
   details?: Record<string, unknown>;
 }) {
   const now = new Date();
+  const existing = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.id, args.incidentId)).get();
+  const alreadyNeedsUser = existing?.status === "needs_user";
   await db.update(recoveryIncidents).set({
     status: "needs_user",
     lastError: args.reason,
     details: serializeDetails(args.details),
     updatedAt: now,
   }).where(eq(recoveryIncidents.id, args.incidentId));
+  if (alreadyNeedsUser && existing?.lastError === args.reason) {
+    return;
+  }
   await insertRecoveryEvent(args.runId, args.workerId, "recovery_needs_user", {
     summary: args.reason,
     incidentId: args.incidentId,
