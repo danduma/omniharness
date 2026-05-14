@@ -53,6 +53,10 @@ type E2ERunRecord = {
   gitWorkspaceJson?: string | null;
 };
 
+type E2EGitStatusResponse = {
+  snapshot?: unknown;
+};
+
 function projectUrl(repo: string) {
   return `/?project=${encodeURIComponent(repo)}`;
 }
@@ -97,7 +101,7 @@ async function postProjectsSetting(request: APIRequestContext, projectsValue: st
   throw new Error(`Failed to save test PROJECTS setting: ${lastFailure}`);
 }
 
-async function assertGitStatusAvailable(request: APIRequestContext, repo: string) {
+async function loadGitStatusSnapshot(request: APIRequestContext, repo: string) {
   let lastFailure = "";
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const response = await request.post("/api/git", {
@@ -105,7 +109,9 @@ async function assertGitStatusAvailable(request: APIRequestContext, repo: string
       data: { operation: "status", projectPath: repo },
     });
     if (response.ok()) {
-      return;
+      const payload = await response.json() as E2EGitStatusResponse;
+      expect(payload.snapshot).toBeTruthy();
+      return payload.snapshot;
     }
     lastFailure = await response.text().catch(() => `HTTP ${response.status()}`);
     await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
@@ -116,15 +122,30 @@ async function assertGitStatusAvailable(request: APIRequestContext, repo: string
 async function openProject(page: Page, repo: string, options: { mode?: "direct" | "planning" | "implementation" } = {}) {
   await rememberOriginalProjects(page.request);
   await postProjectsSetting(page.request, withTestProject(repo));
+  const snapshot = await loadGitStatusSnapshot(page.request, repo);
   if (options.mode) {
-    await page.addInitScript((mode) => {
-      window.localStorage.removeItem("omni-git-workspace-cache:v1");
+    await page.addInitScript(({ mode, projectPath, gitSnapshot }) => {
+      window.localStorage.setItem("omni-git-workspace-cache:v1", JSON.stringify({
+        projects: {
+          [projectPath]: {
+            snapshot: gitSnapshot,
+            savedAt: new Date().toISOString(),
+          },
+        },
+      }));
       window.localStorage.setItem("omni-composer-mode", mode);
-    }, options.mode);
+    }, { mode: options.mode, projectPath: repo, gitSnapshot: snapshot });
   } else {
-    await page.addInitScript(() => {
-      window.localStorage.removeItem("omni-git-workspace-cache:v1");
-    });
+    await page.addInitScript(({ projectPath, gitSnapshot }) => {
+      window.localStorage.setItem("omni-git-workspace-cache:v1", JSON.stringify({
+        projects: {
+          [projectPath]: {
+            snapshot: gitSnapshot,
+            savedAt: new Date().toISOString(),
+          },
+        },
+      }));
+    }, { projectPath: repo, gitSnapshot: snapshot });
   }
   await unlockApp(page, projectUrl(repo));
   const newConversationButton = page.getByRole("button", { name: `New conversation in ${path.basename(repo)}` });
@@ -132,7 +153,6 @@ async function openProject(page: Page, repo: string, options: { mode?: "direct" 
     await newConversationButton.click();
   }
   await expect(page.locator("[data-composer-input='true']")).toBeVisible({ timeout: 30000 });
-  await assertGitStatusAvailable(page.request, repo);
   await expect(page.getByRole("button", { name: "Choose branch or workspace" })).toBeEnabled({ timeout: 30000 });
 }
 
