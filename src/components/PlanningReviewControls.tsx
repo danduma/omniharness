@@ -132,7 +132,6 @@ export function PlanningReviewControls({
             <Button
               onClick={handleStart}
               disabled={isReviewing}
-              className="w-full"
               size="sm"
             >
               {isReviewing ? (

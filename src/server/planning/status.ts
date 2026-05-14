@@ -22,7 +22,16 @@ export function hasReadyPlannerArtifact(artifacts: PlannerArtifacts) {
     (candidate) => candidate.kind === "plan" && candidate.path === artifacts.planPath,
   );
 
-  return Boolean(selectedPlan?.exists && selectedPlan.readiness?.ready);
+  if (!selectedPlan) {
+    return true;
+  }
+  if (selectedPlan.exists === false) {
+    return false;
+  }
+  if (!selectedPlan.readiness) {
+    return true;
+  }
+  return Boolean(selectedPlan.readiness.ready);
 }
 
 export function derivePlanningStatus(args: {

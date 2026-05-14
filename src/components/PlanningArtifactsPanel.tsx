@@ -8,6 +8,7 @@ import { t, useI18nSnapshot } from "@/lib/i18n";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { ProjectFileReference } from "@/lib/project-file-links";
 import { PlanningReviewControls } from "./PlanningReviewControls";
+import { planningReviewPreferencesManager } from "@/app/home/PlanningReviewPreferencesManager";
 import { type PlanningReviewRunRecord, type PlanningReviewRoundRecord, type PlanningReviewFindingRecord } from "@/app/home/types";
 import { type PlanningReviewAgentSelection } from "@/server/planning/review-preferences";
 
@@ -95,7 +96,7 @@ function PlanningArtifactFileLink({
 
   if (!reference || !onOpenProjectFile) {
     return (
-      <span className="inline-flex min-w-0 max-w-full items-baseline gap-2">
+      <span className="flex min-w-0 max-w-full items-baseline gap-2">
         {content}
       </span>
     );
@@ -104,7 +105,7 @@ function PlanningArtifactFileLink({
   return (
     <button
       type="button"
-      className="inline-flex min-w-0 max-w-full items-baseline gap-2 text-left underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
+      className="flex min-w-0 max-w-full items-baseline gap-2 text-left underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
       onClick={() => onOpenProjectFile(reference)}
       title={t("planning.artifacts.openFileTitle", { path: displayPath })}
       aria-label={t("planning.artifacts.openFile", { label })}
@@ -144,6 +145,7 @@ export function PlanningArtifactsPanel({
   onStartReview?: (prefs: { agentSelection: PlanningReviewAgentSelection; rounds: number }) => void;
 }) {
   useI18nSnapshot();
+  const { isExpanded: isReviewPanelExpanded } = useManagerSnapshot(planningReviewPreferencesManager);
   const artifacts = useMemo(() => normalizeArtifacts(plannerArtifactsJson), [plannerArtifactsJson]);
   const allCandidates = artifacts.candidates ?? [];
   const allPlanCandidates = (artifacts.candidates ?? []).filter((candidate) => candidate.kind === "plan");
@@ -158,7 +160,13 @@ export function PlanningArtifactsPanel({
   const selectedPlanPath = currentManagerSelectedPlanPath || planPath || artifacts.planPath || planCandidates[0]?.path || null;
 
   const selectedCandidate = planCandidates.find((candidate) => candidate.path === selectedPlanPath) ?? null;
-  const ready = Boolean(selectedCandidate?.readiness?.ready || (!selectedCandidate && selectedPlanPath));
+  const ready = Boolean(
+    selectedPlanPath && (
+      !selectedCandidate ||
+      !selectedCandidate.readiness ||
+      selectedCandidate.readiness.ready
+    ),
+  );
   const resolvedSpecPath = specPath || artifacts.specPath || null;
   const readinessGap = selectedCandidate?.readiness?.gaps?.[0] ?? null;
   const otherPlanCandidates = planCandidates.filter((candidate) => candidate.path !== selectedPlanPath);
@@ -213,22 +221,39 @@ export function PlanningArtifactsPanel({
           type="button"
           size="sm"
           variant="ghost"
-          onClick={() => document.querySelector<HTMLTextAreaElement>("[data-composer-input='true']")?.focus()}
+          onClick={() => {
+            planningReviewPreferencesManager.setExpanded(false);
+            document.querySelector<HTMLTextAreaElement>("[data-composer-input='true']")?.focus();
+          }}
         >
           {t("planning.artifacts.continueRevising")}
         </Button>
+        {ready && runId && onStartReview && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            aria-expanded={isReviewPanelExpanded}
+            onClick={() => planningReviewPreferencesManager.setExpanded(!isReviewPanelExpanded)}
+          >
+            {t("planning.artifacts.improvePlan")}
+          </Button>
+        )}
         <Button
           type="button"
           size="sm"
           variant="outline"
           disabled={!selectedPlanPath || !ready || isPromoting}
-          onClick={() => onPromote(selectedPlanPath)}
+          onClick={() => {
+            planningReviewPreferencesManager.setExpanded(false);
+            onPromote(selectedPlanPath);
+          }}
         >
           {t("planning.artifacts.startImplementation")}
         </Button>
       </div>
 
-      {ready && runId && onStartReview && (
+      {ready && runId && onStartReview && isReviewPanelExpanded && (
         <PlanningReviewControls
           isReviewing={Boolean(isReviewing)}
           latestReviewRun={latestReviewRun}
