@@ -59,29 +59,35 @@ const workerModelCatalogManager = new WorkerModelCatalogManager({
   },
 });
 
-async function fetchRuntimeDoctor() {
+async function fetchRuntimeDoctor(options: { refresh?: boolean } = {}) {
   const controller = new AbortController();
   let didTimeout = false;
-  const timeout = setTimeout(() => {
+  const doctorUrl = new URL(`${BRIDGE_URL}/doctor`);
+  if (options.refresh) {
+    doctorUrl.searchParams.set("refresh", "1");
+  }
+  const timeout = options.refresh ? null : setTimeout(() => {
     didTimeout = true;
     controller.abort();
   }, RUNTIME_DOCTOR_TIMEOUT_MS);
 
   try {
-    return await fetch(`${BRIDGE_URL}/doctor`, { signal: controller.signal });
+    return await fetch(doctorUrl, { signal: controller.signal });
   } catch (error) {
     if (didTimeout) {
       throw new Error(`Agent runtime doctor request timed out after ${RUNTIME_DOCTOR_TIMEOUT_MS}ms.`);
     }
     throw error;
   } finally {
-    clearTimeout(timeout);
+    if (timeout) {
+      clearTimeout(timeout);
+    }
   }
 }
 
-async function readRuntimeDoctorSnapshot(): Promise<RuntimeDoctorSnapshot> {
+async function readRuntimeDoctorSnapshot(options: { refresh?: boolean } = {}): Promise<RuntimeDoctorSnapshot> {
   try {
-    const doctorResponse = await fetchRuntimeDoctor();
+    const doctorResponse = await fetchRuntimeDoctor(options);
     if (!doctorResponse.ok) {
       return {
         results: [],
@@ -119,9 +125,10 @@ export async function GET(req: NextRequest) {
       return auth.response;
     }
 
+    const forceRefresh = req.nextUrl.searchParams.get("refresh") === "1";
     const [allSettings, doctorSnapshot, workerModelSnapshot] = await Promise.all([
       db.select().from(settings),
-      readRuntimeDoctorSnapshot(),
+      readRuntimeDoctorSnapshot({ refresh: forceRefresh }),
       workerModelCatalogManager.getCatalogSnapshot({ refreshOnFirstLoad: true }),
     ]);
 

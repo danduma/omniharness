@@ -471,8 +471,119 @@ describe("internal agent runtime HTTP API", () => {
       expect.objectContaining({
         type: "codex",
         binary: true,
+        endpoint: null,
+      }),
+    ]));
+
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    const refreshedResponse = await fetch(`http://127.0.0.1:${port}/doctor`);
+    const refreshedPayload = await refreshedResponse.json();
+    expect(refreshedPayload.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "codex",
+        binary: true,
         endpoint: false,
         message: expect.stringContaining("ETIMEDOUT"),
+      }),
+    ]));
+  });
+
+  it("does not repeat slow login shell PATH discovery for every doctor worker", async () => {
+    const shellDir = createTempDir("omni-runtime-doctor-shell-");
+    const slowShell = createExecutable(shellDir, "slow-shell", `#!/bin/sh
+sleep 0.35
+if [ "$1" = "-l" ]; then shift; fi
+if [ "$1" = "-c" ]; then
+  eval "$2"
+  exit $?
+fi
+exec /bin/sh "$@"
+`);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        SHELL: slowShell,
+        PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const startedAt = Date.now();
+
+    const doctorResponse = await fetch(`http://127.0.0.1:${port}/doctor`);
+
+    expect(Date.now() - startedAt).toBeLessThan(1_500);
+    expect(doctorResponse.status).toBe(200);
+    await expect(doctorResponse.json()).resolves.toMatchObject({ results: expect.any(Array) });
+  });
+
+  it("uses cached login shell PATH discovery after it completes", async () => {
+    const binDir = createTempDir("omni-runtime-doctor-login-bin-");
+    createExecutable(binDir, "codex-acp", "#!/bin/sh\nexit 0\n");
+    const shellDir = createTempDir("omni-runtime-doctor-login-shell-");
+    const slowShell = createExecutable(shellDir, "slow-shell", `#!/bin/sh
+sleep 0.35
+printf %s "${binDir}:$PATH"
+`);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        SHELL: slowShell,
+        PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+
+    const initialResponse = await fetch(`http://127.0.0.1:${port}/doctor`);
+    const initialPayload = await initialResponse.json();
+    const initialCodex = initialPayload.results.find((result: { type: string }) => result.type === "codex");
+    expect(initialCodex?.tools?.path).not.toContain(binDir);
+
+    const refreshedCodex = await waitFor(async () => {
+      const refreshedResponse = await fetch(`http://127.0.0.1:${port}/doctor`);
+      const refreshedPayload = await refreshedResponse.json();
+      return refreshedPayload.results.find((result: { type: string }) => result.type === "codex");
+    }, (result) => String(result?.tools?.path ?? "").includes(binDir));
+    expect(refreshedCodex?.tools?.path).toContain(binDir);
+  });
+
+  it("keeps doctor under the catalog timeout when advisory checks are slow", async () => {
+    const binDir = createTempDir("omni-runtime-doctor-budget-bin-");
+    createExecutable(binDir, "codex-acp", "#!/bin/sh\nexit 0\n");
+    const shellDir = createTempDir("omni-runtime-doctor-budget-shell-");
+    const slowShell = createExecutable(shellDir, "slow-shell", `#!/bin/sh
+sleep 2
+if [ "$1" = "-l" ]; then shift; fi
+if [ "$1" = "-c" ]; then
+  eval "$2"
+  exit $?
+fi
+exec /bin/sh "$@"
+`);
+    const hangingEndpoint = createServer((_req, _res) => {
+      // Keep the socket open so the doctor's endpoint probe must enforce its own budget.
+    });
+    const endpointPort = await listen(hangingEndpoint);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        SHELL: slowShell,
+        OPENAI_BASE_URL: `http://127.0.0.1:${endpointPort}/v1`,
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const startedAt = Date.now();
+
+    const doctorResponse = await fetch(`http://127.0.0.1:${port}/doctor`);
+
+    expect(Date.now() - startedAt).toBeLessThan(1_500);
+    expect(doctorResponse.status).toBe(200);
+    const payload = await doctorResponse.json();
+    expect(payload.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "codex",
+        binary: true,
+        endpoint: null,
       }),
     ]));
   });

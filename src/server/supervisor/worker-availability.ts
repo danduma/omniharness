@@ -95,10 +95,11 @@ function anyFileExists(paths: string[], fileExists: (filePath: string) => boolea
   });
 }
 
-function runAuthStatusCommand(commandRunner: CommandRunner, command: string, args: string[]) {
+function runAuthStatusCommand(commandRunner: CommandRunner, command: string, args: string[], env: EnvLike) {
   try {
     return String(commandRunner(command, args, {
       encoding: "utf8",
+      env: withManagedPath(env) as NodeJS.ProcessEnv,
       timeout: 1_500,
       maxBuffer: 64 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
@@ -304,7 +305,7 @@ export function getWorkerAuthenticationInfo(type: string, options: WorkerAuthent
       };
     }
 
-    const status = runAuthStatusCommand(commandRunner, "codex", ["login", "status"]);
+    const status = runAuthStatusCommand(commandRunner, "codex", ["login", "status"], env);
     if (status && /\blogged\s*in\b/i.test(status) && !/\bnot\s+logged\s*in\b/i.test(status)) {
       return {
         status: "authenticated",
@@ -332,7 +333,7 @@ export function getWorkerAuthenticationInfo(type: string, options: WorkerAuthent
       };
     }
 
-    const status = runAuthStatusCommand(commandRunner, "claude", ["auth", "status"]);
+    const status = runAuthStatusCommand(commandRunner, "claude", ["auth", "status"], env);
     if (parseClaudeAuthStatus(status)) {
       return {
         status: "authenticated",

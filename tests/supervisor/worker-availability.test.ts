@@ -121,6 +121,24 @@ describe("selectSpawnableWorkerType", () => {
     });
   });
 
+  it("checks Claude auth using the managed runtime PATH", async () => {
+    mockExecFileSync.mockImplementation((command: string, args: string[], options: { env?: Record<string, string> } = {}) => {
+      if (command === "claude" && args[0] === "auth" && args[1] === "status" && options.env?.PATH?.includes("/Users/tester/.local/bin")) {
+        return Buffer.from(JSON.stringify({ loggedIn: true, authMethod: "claude.ai" }));
+      }
+      throw new Error("not found");
+    });
+
+    const { getWorkerAuthenticationInfo } = await import("@/server/supervisor/worker-availability");
+
+    expect(getWorkerAuthenticationInfo("claude", {
+      env: { HOME: "/Users/tester", PATH: "/usr/bin:/bin" },
+    })).toMatchObject({
+      status: "authenticated",
+      method: "status_command",
+    });
+  });
+
   it("accepts gemini when the CLI is available even without GEMINI_API_KEY", async () => {
     mockExecFileSync.mockImplementation((command: string, args: string[]) => {
       if (args[0] === "gemini") {

@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import {
   closeSync,
   constants,
@@ -50,6 +50,7 @@ type BuildManagedPathInput = {
   cwd?: string;
   env?: EnvLike;
   loginShellPathProvider?: (env: EnvLike) => string | null | undefined;
+  loginShellPathMode?: "blocking" | "cached";
 };
 
 type CommandLookupInput = {
@@ -110,9 +111,9 @@ const DEFAULT_STRUCTURED_TOOLS = [
   "acp_fs/edit_text_file",
   "acp_fs/multi_edit_text_file",
 ];
-
 const codexArgv0ShimDirs = new Map<string, string>();
 const codexManagedConfigPaths = new Map<string, string>();
+const loginShellPathCache = new Map<string, { path: string | null; refreshing: boolean }>();
 
 const CODEX_STANDARD_TOOL_CONFIG = `[features]
 apply_patch_freeform = true
@@ -336,7 +337,47 @@ export function createCodexManagedToolConfigPath(env: EnvLike = process.env): st
   }
 }
 
-function readLoginShellPath(env: EnvLike): string | null {
+function loginShellPathCacheKey(env: EnvLike, shell: string) {
+  return [
+    shell,
+    env.HOME || homedir(),
+    env.USER || "",
+    env.LOGNAME || "",
+  ].join("\0");
+}
+
+function readLoginShellPathBlocking(shell: string, env: EnvLike): string | null {
+  try {
+    return execFileSync(shell, ["-l", "-c", "printf %s \"$PATH\""], {
+      env: env as NodeJS.ProcessEnv,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function refreshLoginShellPath(cacheKey: string, shell: string, env: EnvLike) {
+  const cached = loginShellPathCache.get(cacheKey);
+  if (cached?.refreshing) {
+    return;
+  }
+
+  loginShellPathCache.set(cacheKey, { path: cached?.path ?? null, refreshing: true });
+  const child = execFile(shell, ["-l", "-c", "printf %s \"$PATH\""], {
+    env: env as NodeJS.ProcessEnv,
+    encoding: "utf8",
+  }, (error, stdout) => {
+    loginShellPathCache.set(cacheKey, {
+      path: error ? cached?.path ?? null : stdout.trim(),
+      refreshing: false,
+    });
+  });
+  child.unref?.();
+}
+
+function getLoginShell(env: EnvLike): string | null {
   if (env.OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH === "1" || env.ACP_BRIDGE_DISABLE_LOGIN_PATH === "1") {
     return null;
   }
@@ -346,16 +387,42 @@ function readLoginShellPath(env: EnvLike): string | null {
     return null;
   }
 
-  try {
-    return execFileSync(shell, ["-l", "-c", "printf %s \"$PATH\""], {
-      env: env as NodeJS.ProcessEnv,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 1500,
-    }).trim();
-  } catch {
+  return shell;
+}
+
+export async function refreshCachedLoginShellPath(env: EnvLike): Promise<void> {
+  const shell = getLoginShell(env);
+  if (!shell) {
+    return;
+  }
+
+  const cacheKey = loginShellPathCacheKey(env, shell);
+  const cached = loginShellPathCache.get(cacheKey);
+  if (cached?.refreshing) {
+    return;
+  }
+
+  loginShellPathCache.set(cacheKey, { path: cached?.path ?? null, refreshing: true });
+  const path = readLoginShellPathBlocking(shell, env);
+  loginShellPathCache.set(cacheKey, { path, refreshing: false });
+}
+
+function readLoginShellPath(env: EnvLike, mode: "blocking" | "cached"): string | null {
+  const shell = getLoginShell(env);
+  if (!shell) {
     return null;
   }
+
+  const cacheKey = loginShellPathCacheKey(env, shell);
+  if (mode === "blocking") {
+    const path = readLoginShellPathBlocking(shell, env);
+    loginShellPathCache.set(cacheKey, { path, refreshing: false });
+    return path;
+  }
+
+  const cached = loginShellPathCache.get(cacheKey);
+  refreshLoginShellPath(cacheKey, shell, env);
+  return cached?.path ?? null;
 }
 
 export function buildManagedPath(input: BuildManagedPathInput = {}): string {
@@ -364,7 +431,7 @@ export function buildManagedPath(input: BuildManagedPathInput = {}): string {
   const inherited = splitPath(env.PATH);
   const loginPath = input.loginShellPathProvider
     ? input.loginShellPathProvider(env)
-    : readLoginShellPath(env);
+    : readLoginShellPath(env, input.loginShellPathMode ?? "blocking");
 
   return mergePathEntries([
     createCodexArgv0ShimDir(env),
@@ -376,10 +443,10 @@ export function buildManagedPath(input: BuildManagedPathInput = {}): string {
   ]);
 }
 
-export function withManagedPath<T extends EnvLike>(env: T, cwd?: string): T {
+export function withManagedPath<T extends EnvLike>(env: T, cwd?: string, options: { loginShellPathMode?: "blocking" | "cached" } = {}): T {
   return {
     ...env,
-    PATH: buildManagedPath({ cwd, env }),
+    PATH: buildManagedPath({ cwd, env, loginShellPathMode: options.loginShellPathMode }),
   };
 }
 
@@ -422,8 +489,11 @@ export function createToolDiagnostics(input: {
   required?: string[];
   optional?: string[];
   structured?: string[];
+  assumeManagedPath?: boolean;
 } = {}): ToolDiagnostics {
-  const managedEnv = withManagedPath(input.env || process.env, input.cwd);
+  const managedEnv = input.assumeManagedPath
+    ? input.env || process.env
+    : withManagedPath(input.env || process.env, input.cwd);
   const required = input.required || DEFAULT_REQUIRED_TOOLS;
   const optional = input.optional || DEFAULT_OPTIONAL_TOOLS;
   const structured = input.structured || DEFAULT_STRUCTURED_TOOLS;

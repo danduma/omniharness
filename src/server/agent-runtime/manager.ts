@@ -9,7 +9,7 @@ import { Readable, Writable } from "stream";
 import * as acp from "@agentclientprotocol/sdk";
 import { applyCodexBridgeEnv, buildCodexConfigArgs, shouldSetRequestedMode } from "./codex";
 import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
-import { commandAvailable, createToolDiagnostics, withCodexStandardTooling, withManagedPath } from "./tool-env";
+import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, withCodexStandardTooling, withManagedPath } from "./tool-env";
 import {
   appendBoundedText,
   appendMessageChunk,
@@ -43,6 +43,8 @@ type EndpointCheckResult = {
   latencyMs: number | null;
   errorCode: string | null;
 };
+
+const endpointCheckCache = new Map<string, { result: EndpointCheckResult | null; refreshing: boolean }>();
 
 function nowIso() {
   return new Date().toISOString();
@@ -439,6 +441,31 @@ function endpointCheck(urlString: string): Promise<EndpointCheckResult> {
     });
     req.end();
   });
+}
+
+function refreshEndpointCheck(urlString: string) {
+  const cached = endpointCheckCache.get(urlString);
+  if (cached?.refreshing) {
+    return;
+  }
+
+  endpointCheckCache.set(urlString, { result: cached?.result ?? null, refreshing: true });
+  void endpointCheck(urlString)
+    .then((result) => {
+      endpointCheckCache.set(urlString, { result, refreshing: false });
+    })
+    .catch(() => {
+      endpointCheckCache.set(urlString, {
+        result: cached?.result ?? null,
+        refreshing: false,
+      });
+    });
+}
+
+function readCachedEndpointCheck(urlString: string): EndpointCheckResult | null {
+  const cached = endpointCheckCache.get(urlString);
+  refreshEndpointCheck(urlString);
+  return cached?.result ?? null;
 }
 
 class RuntimeClient implements acp.Client {
@@ -1090,9 +1117,15 @@ export class AgentRuntimeManager {
     return this.resolvePermission(name, "deny", optionId);
   }
 
-  async doctor() {
+  async doctor(options: { refresh?: boolean } = {}) {
     const types = ["codex", "claude", "gemini", "opencode"];
-    const results = await Promise.all(types.map((type) => this.runDoctorForType(type)));
+    const baseEnv = this.options.env || process.env;
+    if (options.refresh) {
+      await refreshCachedLoginShellPath(baseEnv);
+    }
+    const env = withManagedPath(baseEnv, undefined, { loginShellPathMode: "cached" });
+    const tools = createToolDiagnostics({ env, assumeManagedPath: true });
+    const results = await Promise.all(types.map((type) => this.runDoctorForType(type, { env, tools })));
     return { results };
   }
 
@@ -1268,9 +1301,8 @@ export class AgentRuntimeManager {
     return pending;
   }
 
-  private async runDoctorForType(type: string): Promise<DoctorResult> {
-    const baseEnv = this.options.env || process.env;
-    const env = withManagedPath(baseEnv);
+  private async runDoctorForType(type: string, input: { env: EnvLike; tools: ReturnType<typeof createToolDiagnostics> }): Promise<DoctorResult> {
+    const { env, tools } = input;
     const commandHint =
       type === "codex"
         ? "codex-acp"
@@ -1288,9 +1320,9 @@ export class AgentRuntimeManager {
     if (binary && (apiKey === null || apiKey)) {
       const baseUrl = getTypeBaseUrl(type, env);
       if (baseUrl) {
-        const endpointResult = await endpointCheck(baseUrl);
-        endpoint = endpointResult.reachable;
-        if (!endpoint && !message) {
+        const endpointResult = readCachedEndpointCheck(baseUrl);
+        endpoint = endpointResult?.reachable ?? null;
+        if (endpointResult && !endpoint && !message) {
           message = `Endpoint ${baseUrl} is unreachable (${endpointResult.errorCode || "UNKNOWN"})`;
         }
       }
@@ -1302,7 +1334,7 @@ export class AgentRuntimeManager {
       binary,
       apiKey,
       endpoint,
-      tools: createToolDiagnostics({ env }),
+      tools,
       ...(message ? { message } : {}),
     };
   }

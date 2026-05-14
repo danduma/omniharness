@@ -66,7 +66,8 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
       }
 
       if (method === "GET" && parts.length === 1 && parts[0] === "doctor") {
-        writeJson(res, 200, await manager.doctor());
+        const refresh = requestUrl(req).searchParams.get("refresh") === "1";
+        writeJson(res, 200, await manager.doctor({ refresh }));
         return;
       }
 
