@@ -16,6 +16,7 @@ const sources = [
   "src/components/Terminal.tsx",
   "src/components/home/RunWorkspaceBadge.tsx",
 ].map((relativePath) => fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8")).join("\n");
+const branchWorkspaceButtonSource = fs.readFileSync(path.resolve(process.cwd(), "src/components/home/BranchWorkspaceButton.tsx"), "utf8");
 
 describe("branch workspace control", () => {
   it("mounts a translated composer workspace control for new conversations", () => {
@@ -58,6 +59,11 @@ describe("branch workspace control", () => {
     expect(sources).toContain("gitWorkspaceManager.requestRemoveWorktree(projectPath, worktree.checkoutPath)");
   });
 
+  it("does not show the top-level branch button warning icon for non-blocking repository warnings", () => {
+    expect(branchWorkspaceButtonSource).not.toContain("snapshot.warnings.length > 0");
+    expect(branchWorkspaceButtonSource).not.toContain('tone === "warning"');
+  });
+
   it("adds a translated fork-into-worktree action for message checkpoints", () => {
     expect(sources).toContain("requestForkMessageWorktree(projectPath: string, runId: string, targetMessageId: string, content: string)");
     expect(sources).toContain("handleForkMessageIntoWorktree");
@@ -69,12 +75,12 @@ describe("branch workspace control", () => {
     expect(sources).toContain("gitWorkspaceLaunch");
   });
 
-  it("adds a translated fork-into-worktree action for the selected session", () => {
+  it("does not render a duplicate selected-session worktree fork button", () => {
     expect(sources).toContain("menuItems?: UserInputMessageActionItem[]");
     expect(sources).toContain("menuItems?: TerminalUserMessageActionItem[]");
     expect(sources).toContain("requestForkSessionWorktree(projectPath: string, runId: string, targetMessageId: string, content: string)");
     expect(sources).toContain("handleForkSessionIntoWorktree");
-    expect(sources).toContain("git.workspace.action.forkSessionWorktree");
+    expect(sources).not.toContain("SessionWorkspaceAction");
   });
 
   it("sends selected or pending git workspace intent only when starting a new run", () => {

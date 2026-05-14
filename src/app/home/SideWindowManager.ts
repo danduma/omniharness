@@ -35,7 +35,7 @@ export type OpenSideWindowFileInput = {
 const WORKERS_TAB: SideWindowWorkersTab = {
   id: "workers",
   kind: "workers",
-  title: "Conversation Workers",
+  title: "Session workers",
   closeable: false,
 };
 

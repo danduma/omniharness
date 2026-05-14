@@ -1,6 +1,6 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import dynamic from "next/dynamic";
-import { AlertTriangle, Bell, BellOff, ChevronDown, GitCommitHorizontal, Menu, PanelLeft, PanelRight, Pencil } from "lucide-react";
+import { AlertTriangle, ChevronDown, GitCommitHorizontal, Menu, PanelLeft, PanelRight, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import {
@@ -15,7 +15,6 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Switch } from "@/components/ui/switch";
 import { OmniHarnessMark } from "@/components/OmniHarnessMark";
 import { PRODUCT_NAME } from "@/app/home/constants";
-import type { ConversationNotificationState } from "@/app/home/ConversationNotificationManager";
 import type { AgentSnapshot, MessageRecord, RunRecord, SidebarGroup, SidebarRun, SupervisorInterventionRecord } from "@/app/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
@@ -86,9 +85,6 @@ interface HomeHeaderProps {
   onAutoCommitMilestonesChange: (checked: boolean) => void;
   onPushOnCommitChange: (checked: boolean) => void;
   isAutoCommitChatPending: boolean;
-  notificationState: ConversationNotificationState;
-  onEnableNotifications: () => void;
-  onDisableNotifications: () => void;
   onStopWorker?: (workerId: string) => void;
   onStopTerminalProcess?: (workerId: string, terminalProcess: WorkerTerminalProcess) => void;
   onLoadWorkerHistory?: (workerId: string) => void;
@@ -153,9 +149,6 @@ export function HomeHeader({
   onAutoCommitMilestonesChange,
   onPushOnCommitChange,
   isAutoCommitChatPending,
-  notificationState,
-  onEnableNotifications,
-  onDisableNotifications,
   onStopWorker,
   onStopTerminalProcess,
   onLoadWorkerHistory,
@@ -170,16 +163,6 @@ export function HomeHeader({
     ? activeConversationCwd.split(/[\\/]/).filter(Boolean).pop() || activeConversationCwd
     : "";
   const commitButtonLabel = pushOnCommitEnabled ? t("commit.menu.commitAndPushNow") : t("commit.menu.commitNow");
-  const notificationsActive = notificationState.enabled && notificationState.permission === "granted";
-  const notificationsBlocked = notificationState.permission === "denied";
-  const notificationsUnsupported = notificationState.permission === "unsupported";
-  const notificationButtonLabel = notificationsUnsupported
-    ? t("notifications.button.unavailable")
-    : notificationsBlocked
-    ? t("notifications.button.blocked")
-    : notificationsActive
-    ? t("notifications.button.disable")
-    : t("notifications.button.enable");
 
   const beginTopBarTitleEdit = () => {
     if (!selectedRun) {
@@ -223,46 +206,48 @@ export function HomeHeader({
         <Button variant="ghost" size="icon" className="h-8 w-8 lg:hidden" aria-label="Open navigation" onClick={() => setMobileNavOpen(true)}>
           <Menu className="h-4 w-4" />
         </Button>
-        <SheetContent side="left" className="w-[min(22rem,calc(100vw-1rem))] p-0 lg:hidden" showCloseButton={false}>
-          <SheetHeader className="border-b border-border/60">
-            <SheetTitle className="flex items-center gap-2 text-left">
-              <OmniHarnessMark className="h-8 w-8 p-1" />
-              <span>{PRODUCT_NAME}</span>
-            </SheetTitle>
-          </SheetHeader>
-          <ConversationSidebar
-            filteredProjects={filteredProjects as SidebarGroup[]}
-            isHydratingConversations={isHydratingConversations}
-            searchQuery={searchQuery}
-            setSearchQuery={setSearchQuery}
-            selectedRunId={selectedRunId}
-            messages={messages}
-            readMarkers={readMarkers}
-            collapsedProjectPaths={collapsedProjectPaths}
-            onProjectOpenChange={onProjectOpenChange}
-            setShowSettings={setShowSettings}
-            openOnboarding={openOnboarding}
-            openFolderPicker={openFolderPicker}
-            startNewPlan={startNewPlan}
-            beginConversationInProject={beginConversationInProject}
-            autoCommitProject={autoCommitProject}
-            isAutoCommitProjectPending={isAutoCommitProjectPending}
-            handleRemoveProject={handleRemoveProject}
-            selectRun={selectRun}
-            renamingRunId={renamingRunId}
-            renameValue={renameValue}
-            renameSource={renameSource}
-            setRenameValue={setRenameValue}
-            startRenamingRun={startRenamingRun}
-            commitRenamingRun={commitRenamingRun}
-            cancelRenamingRun={cancelRenamingRun}
-            archiveRun={archiveRun}
-            deleteRun={deleteRun}
-            authEnabled={authEnabled}
-            openPairDeviceDialog={openPairDeviceDialog}
-            logout={logout}
-          />
-        </SheetContent>
+        {mobileNavOpen ? (
+          <SheetContent side="left" className="w-[min(22rem,calc(100vw-1rem))] p-0 lg:hidden" showCloseButton={false}>
+            <SheetHeader className="border-b border-border/60">
+              <SheetTitle className="flex items-center gap-2 text-left">
+                <OmniHarnessMark className="h-8 w-8 p-1" />
+                <span>{PRODUCT_NAME}</span>
+              </SheetTitle>
+            </SheetHeader>
+            <ConversationSidebar
+              filteredProjects={filteredProjects as SidebarGroup[]}
+              isHydratingConversations={isHydratingConversations}
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+              selectedRunId={selectedRunId}
+              messages={messages}
+              readMarkers={readMarkers}
+              collapsedProjectPaths={collapsedProjectPaths}
+              onProjectOpenChange={onProjectOpenChange}
+              setShowSettings={setShowSettings}
+              openOnboarding={openOnboarding}
+              openFolderPicker={openFolderPicker}
+              startNewPlan={startNewPlan}
+              beginConversationInProject={beginConversationInProject}
+              autoCommitProject={autoCommitProject}
+              isAutoCommitProjectPending={isAutoCommitProjectPending}
+              handleRemoveProject={handleRemoveProject}
+              selectRun={selectRun}
+              renamingRunId={renamingRunId}
+              renameValue={renameValue}
+              renameSource={renameSource}
+              setRenameValue={setRenameValue}
+              startRenamingRun={startRenamingRun}
+              commitRenamingRun={commitRenamingRun}
+              cancelRenamingRun={cancelRenamingRun}
+              archiveRun={archiveRun}
+              deleteRun={deleteRun}
+              authEnabled={authEnabled}
+              openPairDeviceDialog={openPairDeviceDialog}
+              logout={logout}
+            />
+          </SheetContent>
+        ) : null}
       </Sheet>
 
       <div className="flex min-w-0 items-center gap-2">
@@ -349,15 +334,14 @@ export function HomeHeader({
         <ButtonGroup aria-label={t("commit.menu.label")}>
           <Button
             variant="ghost"
-            size="sm"
-            className="h-8 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+            size="icon-sm"
+            className="h-8 w-8 text-muted-foreground hover:text-foreground"
             aria-label={commitButtonLabel}
             title={commitButtonLabel}
             onClick={onPrimaryCommit}
             disabled={isAutoCommitChatPending}
           >
             <GitCommitHorizontal className="h-3.5 w-3.5" />
-            <span className="hidden md:inline">{commitButtonLabel}</span>
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -424,17 +408,6 @@ export function HomeHeader({
           </DropdownMenu>
         </ButtonGroup>
       ) : null}
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8 text-muted-foreground hover:text-foreground"
-        aria-label={notificationButtonLabel}
-        title={notificationState.lastError || notificationButtonLabel}
-        onClick={notificationsActive ? onDisableNotifications : onEnableNotifications}
-        disabled={notificationsUnsupported}
-      >
-        {notificationsActive ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
-      </Button>
       <ThemeModeToggle themeMode={themeMode} setThemeMode={setThemeMode} />
       {workspaceSideWindowAvailable && !rightSidebarOpen ? (
         <Button
@@ -454,24 +427,26 @@ export function HomeHeader({
             <PanelRight className="h-4 w-4" />
           </Button>
         ) : null}
-        <SheetContent side="right" className="!inset-0 h-[100dvh] !w-screen !max-w-none gap-0 !border-0 p-0 sm:!max-w-none lg:hidden" showCloseButton={false}>
-          <SheetTitle className="sr-only">Workspace tools</SheetTitle>
-          <SideWindow
-            projectRoot={projectRoot}
-            workers={selectedRunId && isImplementationConversation ? selectedRunWorkers : []}
-            agents={selectedRunId && isImplementationConversation ? conversationAgents : []}
-            supervisorInterventions={selectedRunId && isImplementationConversation ? supervisorInterventions : []}
-            preferredModel={selectedRun?.preferredWorkerModel ?? null}
-            preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
-            onStopWorker={onStopWorker}
-            onStopTerminalProcess={onStopTerminalProcess}
-            onLoadWorkerHistory={onLoadWorkerHistory}
-            stoppingWorkerId={stoppingWorkerId}
-            stoppingTerminalProcess={stoppingTerminalProcess}
-            onCloseWindow={() => setMobileWorkersOpen(false)}
-            closeButtonVariant="back"
-          />
-        </SheetContent>
+        {mobileWorkersOpen ? (
+          <SheetContent side="right" className="!inset-0 h-[100dvh] !w-screen !max-w-none gap-0 !border-0 p-0 sm:!max-w-none lg:hidden" showCloseButton={false}>
+            <SheetTitle className="sr-only">Workspace tools</SheetTitle>
+            <SideWindow
+              projectRoot={projectRoot}
+              workers={selectedRunId && isImplementationConversation ? selectedRunWorkers : []}
+              agents={selectedRunId && isImplementationConversation ? conversationAgents : []}
+              supervisorInterventions={selectedRunId && isImplementationConversation ? supervisorInterventions : []}
+              preferredModel={selectedRun?.preferredWorkerModel ?? null}
+              preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
+              onStopWorker={onStopWorker}
+              onStopTerminalProcess={onStopTerminalProcess}
+              onLoadWorkerHistory={onLoadWorkerHistory}
+              stoppingWorkerId={stoppingWorkerId}
+              stoppingTerminalProcess={stoppingTerminalProcess}
+              onCloseWindow={() => setMobileWorkersOpen(false)}
+              closeButtonVariant="back"
+            />
+          </SheetContent>
+        ) : null}
       </Sheet>
     </div>
   </header>

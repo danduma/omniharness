@@ -269,7 +269,7 @@ test("workspace side window owns workers and file tabs", () => {
   expect(pageSource).toContain('t("fileViewer.menu.wordWrap")');
   expect(pageSource).toContain('t("fileViewer.menu.refresh")');
   expect(sideWindowSource.indexOf('aria-label={`Close ${tab.relativePath}`}')).toBeLessThan(
-    sideWindowSource.indexOf('<span className="truncate">{tab.title}</span>'),
+    sideWindowSource.indexOf('<span className="truncate">{tab.kind === "workers" ? workersTabLabel : tab.title}</span>'),
   );
   expect(sideWindowSource).toContain("showHeader={false}");
 });
@@ -290,18 +290,19 @@ test("workers sidebar gives a single visible worker the full available window an
   expect(workerCardSource).not.toContain('fillAvailable && "flex h-full min-h-0 flex-col"');
 });
 
-test("workers sidebar can focus one terminal while keeping other workers compactly switchable", () => {
+test("workers sidebar can focus one terminal across the workers tab", () => {
   expect(pageSource).toContain('focusedWorkerId: null');
   expect(pageSource).toContain('setFocusedWorker = (focusedWorkerId: string | null)');
   expect(pageSource).toContain('toggleFocusedWorker = (workerId: string)');
   expect(workersSidebarSource).toContain("const focusedWorkerVisible = Boolean(focusedWorkerId && visibleWorkers.some((worker) => worker.id === focusedWorkerId));");
   expect(workersSidebarSource).toContain("const isFocusMode = visibleWorkers.length > 1 && focusedWorkerVisible;");
   expect(workersSidebarSource).toContain("const focusedWorker = isFocusMode ? visibleWorkers.find((worker) => worker.id === focusedWorkerId) ?? null : null;");
-  expect(workersSidebarSource).toContain("const compactWorkers = isFocusMode ? visibleWorkers.filter((worker) => worker.id !== focusedWorkerId) : [];");
   expect(workersSidebarSource).toContain('className="min-h-0 flex-1 p-3"');
-  expect(workersSidebarSource).toContain('className="flex h-full min-h-0 flex-col gap-3"');
-  expect(workersSidebarSource).toContain('className="min-h-0 flex-1"');
-  expect(workersSidebarSource).toContain('className="max-h-64 shrink-0 pr-1"');
+  expect(workersSidebarSource).toContain('className="h-full min-h-0"');
+  expect(workersSidebarSource).not.toContain("const compactWorkers = isFocusMode ? visibleWorkers.filter((worker) => worker.id !== focusedWorkerId) : [];");
+  expect(workersSidebarSource).not.toContain('className="max-h-64 shrink-0 pr-1"');
+  expect(workersSidebarSource).toContain("import { workerCardManager, workersSidebarManager } from");
+  expect(workersSidebarSource).toContain("if (focusedWorkerId !== worker.id) {\n            workerCardManager.setOpen(worker.id, true);\n          }");
   expect(workersSidebarSource).toContain('workersSidebarManager.toggleFocusedWorker(worker.id)');
   expect(workersSidebarSource).toContain('const isCompactWorker = Boolean(options.compact);');
   expect(workersSidebarSource).toContain('compact={isCompactWorker}');

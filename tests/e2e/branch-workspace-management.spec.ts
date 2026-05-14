@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 import { execFileSync } from "child_process";
 import fs from "fs";
 import { mkdtemp } from "fs/promises";
@@ -44,8 +44,63 @@ async function createConflictedRepo(name: string) {
   return repo;
 }
 
+let originalProjectsValue: string | null = null;
+
 function projectUrl(repo: string) {
   return `/?project=${encodeURIComponent(repo)}`;
+}
+
+async function rememberOriginalProjects(request: APIRequestContext) {
+  if (originalProjectsValue !== null) {
+    return originalProjectsValue;
+  }
+
+  const response = await request.get("/api/settings");
+  expect(response.ok()).toBe(true);
+  const payload = await response.json() as { values?: { PROJECTS?: string } };
+  originalProjectsValue = payload.values?.PROJECTS ?? "[]";
+  return originalProjectsValue;
+}
+
+async function restoreOriginalProjects(request: APIRequestContext) {
+  if (originalProjectsValue === null) {
+    return;
+  }
+
+  const response = await request.post("/api/settings", {
+    data: { PROJECTS: originalProjectsValue },
+  });
+  expect(response.ok()).toBe(true);
+}
+
+function withTestProject(projectsValue: string, repo: string) {
+  try {
+    const projects = JSON.parse(projectsValue);
+    if (Array.isArray(projects)) {
+      return JSON.stringify([
+        repo,
+        ...projects.filter((project): project is string => typeof project === "string" && project !== repo),
+      ]);
+    }
+  } catch {
+    // Fall through to a minimal valid list if persisted settings are malformed.
+  }
+  return JSON.stringify([repo]);
+}
+
+async function openProject(page: Page, repo: string) {
+  const originalProjects = await rememberOriginalProjects(page.request);
+  const response = await page.request.post("/api/settings", {
+    data: { PROJECTS: withTestProject(originalProjects, repo) },
+  });
+  expect(response.ok()).toBe(true);
+  await unlockApp(page, projectUrl(repo));
+  await expect(page.locator("[data-composer-input='true']")).toBeVisible({ timeout: 30000 });
+  const statusResponse = await page.request.post("/api/git", {
+    data: { operation: "status", projectPath: repo },
+  });
+  expect(statusResponse.ok()).toBe(true);
+  await expect(page.getByRole("button", { name: "Choose branch or workspace" })).toBeEnabled({ timeout: 30000 });
 }
 
 async function openWorkspaceMenu(page: Page) {
@@ -68,9 +123,13 @@ async function workspaceMenuText(page: Page) {
 test.describe("approval-gated branch workspace journeys", () => {
   test.setTimeout(90000);
 
+  test.afterEach(async ({ request }) => {
+    await restoreOriginalProjects(request);
+  });
+
   test("discovers the branch button and opens a real git status selector", async ({ page }) => {
     const repo = await createRepo("discovery");
-    await unlockApp(page, projectUrl(repo));
+    await openProject(page, repo);
 
     await openWorkspaceMenu(page);
 
@@ -87,10 +146,12 @@ test.describe("approval-gated branch workspace journeys", () => {
     const branchName = "feature/e2e-start-worktree";
     const checkoutPath = path.join(path.dirname(repo), `${path.basename(repo)}-feature-e2e-start-worktree`);
 
-    await unlockApp(page, projectUrl(repo));
+    await openProject(page, repo);
     await page.locator("[data-composer-input='true']").fill("Verify this run is pinned to its new worktree.");
     await openWorkspaceMenu(page);
-    await page.getByRole("menuitem", { name: /Start in new worktree/ }).click();
+    const startWorktreeItem = page.getByRole("menuitem", { name: /Start in new worktree/ });
+    await expect(startWorktreeItem).not.toHaveAttribute("aria-disabled", "true", { timeout: 60000 });
+    await startWorktreeItem.click();
     await expect(page.getByRole("dialog", { name: "Start in new worktree" })).toBeVisible();
     await page.getByLabel("Branch name").fill(branchName);
     await page.getByLabel("Checkout path").fill(checkoutPath);
@@ -114,7 +175,7 @@ test.describe("approval-gated branch workspace journeys", () => {
     fs.writeFileSync(path.join(repo, "dirty.txt"), "dirty parent\n", "utf8");
     fs.writeFileSync(path.join(worktreePath, "dirty.txt"), "dirty worktree\n", "utf8");
 
-    await unlockApp(page, projectUrl(repo));
+    await openProject(page, repo);
     await expect.poll(() => workspaceMenuText(page), { timeout: 60000 }).toContain("1 dirty");
     await openWorkspaceMenu(page);
     await expect(page.getByRole("button", { name: "Checkout" }).first()).toBeDisabled();
@@ -129,7 +190,7 @@ test.describe("approval-gated branch workspace journeys", () => {
     const repo = await createConflictedRepo("conflict-safety");
     const beforeBranch = git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]);
 
-    await unlockApp(page, projectUrl(repo));
+    await openProject(page, repo);
     await expect.poll(() => workspaceMenuText(page), {
       timeout: 60000,
     }).toContain("conflicted");

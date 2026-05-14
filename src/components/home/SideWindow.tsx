@@ -10,7 +10,7 @@ import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { FileViewerPanel } from "./FileViewerPanel";
 import { WorkersSidebar } from "./WorkersSidebar";
-import { t } from "@/lib/i18n";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 
 export function SideWindow({
   projectRoot,
@@ -41,11 +41,13 @@ export function SideWindow({
   onCloseWindow?: () => void;
   closeButtonVariant?: "collapse" | "back";
 }) {
+  useI18nSnapshot();
   const { tabs, activeTabId } = useManagerSnapshot(sideWindowManager);
   const workerGroups = buildWorkerLists(workers);
   const hasConversationWorkers = workerGroups.active.length > 0 || workerGroups.finished.length > 0;
   const visibleTabs = hasConversationWorkers ? tabs : tabs.filter((tab) => tab.kind !== "workers");
   const activeTab = visibleTabs.find((tab) => tab.id === activeTabId) ?? visibleTabs[0] ?? null;
+  const workersTabLabel = t("side.window.workersTabAria");
   const closeButtonLabel = closeButtonVariant === "back" ? t("common.back") : t("side.window.collapseAria");
   const CloseButtonIcon = closeButtonVariant === "back" ? ArrowLeft : PanelRightClose;
   const closeButton = onCloseWindow ? (
@@ -75,7 +77,7 @@ export function SideWindow({
                   ? "-mb-px border-foreground/15 border-b-background bg-background text-foreground shadow-sm dark:border-foreground/20 dark:border-b-background"
                   : "border-border/80 bg-muted/35 text-muted-foreground hover:border-foreground/15 hover:bg-muted/65 hover:text-foreground dark:border-foreground/10 dark:bg-muted/25 dark:hover:border-foreground/18 dark:hover:bg-muted/45",
               )}
-              title={tab.kind === "file" ? tab.relativePath : tab.title}
+              title={tab.kind === "file" ? tab.relativePath : workersTabLabel}
             >
               {tab.kind === "file" ? (
                 <button
@@ -94,11 +96,11 @@ export function SideWindow({
               <button
                 type="button"
                 onClick={() => sideWindowManager.selectTab(tab.id)}
-                aria-label={tab.kind === "workers" ? t("side.window.workersTabAria") : `Open ${tab.relativePath}`}
+                aria-label={tab.kind === "workers" ? workersTabLabel : `Open ${tab.relativePath}`}
                 className="inline-flex min-w-0 flex-1 items-center gap-1.5 px-2"
               >
                 {tab.kind === "file" ? <FileText className="h-3.5 w-3.5 shrink-0" /> : <Cpu className="h-3.5 w-3.5 shrink-0" />}
-                <span className="truncate">{tab.title}</span>
+                <span className="truncate">{tab.kind === "workers" ? workersTabLabel : tab.title}</span>
               </button>
             </div>
           ))}

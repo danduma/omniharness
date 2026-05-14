@@ -102,6 +102,70 @@ const INITIAL_STATE: GitWorkspaceManagerState = {
   lastError: null,
 };
 
+const CACHE_STORAGE_KEY = "omni-git-workspace-cache:v1";
+const CACHE_MAX_PROJECTS = 20;
+const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+type CachedGitWorkspaceProject = {
+  snapshot?: GitWorkspaceSnapshot;
+  selectedTarget?: GitWorkspaceTarget;
+  savedAt: string;
+};
+
+type CachedGitWorkspaceState = {
+  projects: Record<string, CachedGitWorkspaceProject | undefined>;
+};
+
+function getCacheStorage(): Storage | null {
+  if (typeof window === "undefined" || typeof window.localStorage === "undefined") {
+    return null;
+  }
+  return window.localStorage;
+}
+
+function readCache(): CachedGitWorkspaceState {
+  const storage = getCacheStorage();
+  if (!storage) {
+    return { projects: {} };
+  }
+  try {
+    const raw = storage.getItem(CACHE_STORAGE_KEY);
+    if (!raw) {
+      return { projects: {} };
+    }
+    const parsed = JSON.parse(raw) as Partial<CachedGitWorkspaceState>;
+    return parsed && typeof parsed === "object" && parsed.projects && typeof parsed.projects === "object"
+      ? { projects: parsed.projects }
+      : { projects: {} };
+  } catch {
+    return { projects: {} };
+  }
+}
+
+function writeCache(cache: CachedGitWorkspaceState) {
+  const storage = getCacheStorage();
+  if (!storage) {
+    return;
+  }
+  try {
+    const entries = Object.entries(cache.projects)
+      .filter((entry): entry is [string, CachedGitWorkspaceProject] => Boolean(entry[1]?.snapshot))
+      .sort(([, first], [, second]) => Date.parse(second.savedAt) - Date.parse(first.savedAt))
+      .slice(0, CACHE_MAX_PROJECTS);
+    storage.setItem(CACHE_STORAGE_KEY, JSON.stringify({ projects: Object.fromEntries(entries) }));
+  } catch {
+    // The live git API remains the source of truth when browser storage is unavailable.
+  }
+}
+
+function isFreshCachedProject(cached: CachedGitWorkspaceProject | undefined) {
+  if (!cached?.snapshot) {
+    return false;
+  }
+  const savedAt = Date.parse(cached.savedAt);
+  return Number.isFinite(savedAt) && Date.now() - savedAt <= CACHE_MAX_AGE_MS;
+}
+
 async function defaultGitWorkspaceApi(request: GitWorkspaceApiRequest): Promise<GitWorkspaceApiResponse> {
   const response = await fetch("/api/git", {
     method: "POST",
@@ -141,13 +205,33 @@ export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> 
     this.api = api;
   }
 
+  hydrateCachedProject(projectPath: string) {
+    if (this.getSnapshot().snapshotsByProject[projectPath]) {
+      return false;
+    }
+    const cached = readCache().projects[projectPath];
+    if (!cached?.snapshot || !isFreshCachedProject(cached)) {
+      return false;
+    }
+    const cachedSnapshot = cached.snapshot;
+    this.patch((current) => ({
+      snapshotsByProject: { ...current.snapshotsByProject, [projectPath]: cachedSnapshot },
+      selectedTargetsByProject: cached.selectedTarget
+        ? { ...current.selectedTargetsByProject, [projectPath]: cached.selectedTarget }
+        : current.selectedTargetsByProject,
+    }));
+    return true;
+  }
+
   async loadStatus(projectPath: string) {
+    this.hydrateCachedProject(projectPath);
     this.patch((current) => ({
       loadingByProject: { ...current.loadingByProject, [projectPath]: true },
       lastError: null,
     }));
     try {
       const payload = await this.api({ operation: "status", projectPath });
+      this.rememberCacheEntry(projectPath, payload.snapshot);
       this.patch((current) => ({
         snapshotsByProject: payload.snapshot
           ? { ...current.snapshotsByProject, [projectPath]: payload.snapshot }
@@ -292,6 +376,7 @@ export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> 
     this.patch({ pendingOperation: request.operation, lastError: null });
     try {
       const payload = await this.api(request);
+      this.rememberCacheEntry(request.projectPath, payload.snapshot, payload.target);
       this.patch({
         ...applyPayload(payload),
         pendingOperation: null,
@@ -305,6 +390,20 @@ export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> 
       });
       throw error;
     }
+  }
+
+  private rememberCacheEntry(projectPath: string, snapshot?: GitWorkspaceSnapshot, selectedTarget?: GitWorkspaceTarget) {
+    if (!snapshot) {
+      return;
+    }
+    const currentSelectedTarget = selectedTarget ?? this.getSnapshot().selectedTargetsByProject[projectPath];
+    const cache = readCache();
+    cache.projects[projectPath] = {
+      snapshot,
+      selectedTarget: currentSelectedTarget,
+      savedAt: new Date().toISOString(),
+    };
+    writeCache(cache);
   }
 }
 

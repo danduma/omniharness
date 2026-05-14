@@ -397,7 +397,6 @@ interface ConversationMainProps {
   handleStartEditingMessage: (message: Pick<MessageRecord, "id" | "content">) => void;
   handleForkMessage: (message: Pick<MessageRecord, "id" | "content">) => void;
   handleForkMessageIntoWorktree: (message: Pick<MessageRecord, "id" | "content">) => void;
-  handleForkSessionIntoWorktree: () => void;
   handleConfirmForkMessageIntoWorktree: (request: GitWorkspaceLaunchRequest & {
     runId: string;
     targetMessageId: string;
@@ -459,38 +458,6 @@ function LatestRecoveryAction({
   );
 }
 
-function SessionWorkspaceAction({
-  canForkSession,
-  recoverRun,
-  latestUserCheckpoint,
-  handleForkSessionIntoWorktree,
-}: {
-  canForkSession: boolean;
-  recoverRun: { isPending: boolean };
-  latestUserCheckpoint: MessageRecord | null;
-  handleForkSessionIntoWorktree: () => void;
-}) {
-  if (!canForkSession || !latestUserCheckpoint) {
-    return null;
-  }
-
-  return (
-    <div className="flex justify-start">
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={handleForkSessionIntoWorktree}
-        disabled={recoverRun.isPending}
-        title={t("git.workspace.action.forkSessionWorktree")}
-        aria-label={t("git.workspace.action.forkSessionWorktree")}
-      >
-        <FolderGit2 className="mr-2 h-4 w-4" /> {t("git.workspace.action.forkSessionWorktree")}
-      </Button>
-    </div>
-  );
-}
-
 export function ConversationMain({
   scrollRef,
   selectedRunId,
@@ -523,7 +490,6 @@ export function ConversationMain({
   handleStartEditingMessage,
   handleForkMessage,
   handleForkMessageIntoWorktree,
-  handleForkSessionIntoWorktree,
   handleConfirmForkMessageIntoWorktree,
   editingMessageId,
   editingMessageValue,
@@ -590,7 +556,6 @@ export function ConversationMain({
   };
   const canRetryConversation = isDirectConversation || (isImplementationConversation && selectedRun?.status !== "failed");
   const canRecoverUserMessage = isDirectConversation || isImplementationConversation;
-  const canForkSessionIntoWorktree = isDirectConversation || isImplementationConversation;
   const getUserMessageActions = (message: Pick<MessageRecord, "id" | "content">): UserInputMessageAction[] => {
     if (!canRecoverUserMessage) {
       return [];
@@ -689,12 +654,6 @@ export function ConversationMain({
               />
             </div>
           ) : null}
-          <SessionWorkspaceAction
-            canForkSession={canForkSessionIntoWorktree}
-            recoverRun={recoverRun}
-            latestUserCheckpoint={latestUserCheckpoint}
-            handleForkSessionIntoWorktree={handleForkSessionIntoWorktree}
-          />
           <DirectControlTerminalColumn>
             <Terminal
               agent={primaryConversationAgent}
@@ -724,13 +683,6 @@ export function ConversationMain({
               onResume={handleResumeRunRecovery}
             />
           ) : null}
-          <SessionWorkspaceAction
-            canForkSession={canForkSessionIntoWorktree}
-            recoverRun={recoverRun}
-            latestUserCheckpoint={latestUserCheckpoint}
-            handleForkSessionIntoWorktree={handleForkSessionIntoWorktree}
-          />
-
           {conversationTimelineItems.length > 0 ? (
             conversationTimelineItems.map((item: ConversationTimelineItem) => {
               if (item.type === "activity") {
@@ -853,7 +805,7 @@ export function ConversationMain({
               runId={selectedRunId ?? undefined}
               isReviewing={selectedRun?.status === "reviewing_plan" || selectedRun?.status === "revising_plan"}
               latestReviewRun={reviewRuns[0]}
-              latestReviewRound={reviewRounds.find(r => r.reviewRunId === reviewRuns[0]?.id)}
+              latestReviewRound={reviewRounds.filter(r => r.reviewRunId === reviewRuns[0]?.id).pop()}
               reviewFindings={reviewFindings.filter(f => f.reviewRunId === reviewRuns[0]?.id)}
               onStartReview={onStartReview}
               onPromote={(planPath) => {

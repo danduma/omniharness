@@ -52,9 +52,6 @@ function statusTone(snapshot: GitWorkspaceSnapshot | undefined) {
   if (snapshot.conflictedFileCount > 0) {
     return "danger";
   }
-  if (snapshot.warnings.length > 0) {
-    return "warning";
-  }
   return "clean";
 }
 
@@ -277,8 +274,8 @@ export function BranchWorkspaceButton({ projectPath, disabled = false, themeMode
         >
           {loading ? (
             <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-          ) : tone === "danger" || tone === "warning" ? (
-            <AlertTriangle className={cn("h-3.5 w-3.5", tone === "danger" ? "text-destructive" : "text-amber-600")} />
+          ) : tone === "danger" ? (
+            <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
           ) : selectedTarget?.kind === "worktree" || pendingLaunch ? (
             <FolderGit2 className="h-3.5 w-3.5" />
           ) : (

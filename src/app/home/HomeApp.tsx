@@ -231,7 +231,6 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   const autoResumeRunKeysRef = useRef<Set<string>>(new Set());
 
   // Appearance
-  const notificationState = useManagerSnapshot(conversationNotificationManager);
   const appearancePreferences = useManagerSnapshot(appearancePreferencesManager);
   const appearanceTextSizeStyle = useMemo(
     () => getAppearanceTextSizeStyle(appearancePreferences.uiTextSize, appearancePreferences.conversationTextSize),
@@ -262,8 +261,6 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     });
   }, []);
 
-  const enableNotifications = useCallback(() => { void conversationNotificationManager.requestEnable(); }, []);
-  const disableNotifications = useCallback(() => { conversationNotificationManager.disable(); }, []);
   useEffect(() => { conversationNotificationManager.hydrateFromBrowser(); }, []);
 
   // Filter event stream state
@@ -799,9 +796,6 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           onAutoCommitMilestonesChange={(checked) => actions.updateCommitWorkflowSetting("GIT_AUTO_COMMIT_MILESTONES", checked)}
           onPushOnCommitChange={(checked) => actions.updateCommitWorkflowSetting("GIT_PUSH_ON_COMMIT", checked)}
           isAutoCommitChatPending={autoCommitChat.isPending}
-          notificationState={notificationState}
-          onEnableNotifications={enableNotifications}
-          onDisableNotifications={disableNotifications}
           onStopWorker={(workerId) => {
             if (selectedRunId) stopWorker.mutate({ runId: selectedRunId, workerId });
           }}
@@ -854,7 +848,6 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           handleStartEditingMessage={actions.handleStartEditingMessage}
           handleForkMessage={actions.handleForkMessage}
           handleForkMessageIntoWorktree={actions.handleForkMessageIntoWorktree}
-          handleForkSessionIntoWorktree={actions.handleForkSessionIntoWorktree}
           handleConfirmForkMessageIntoWorktree={actions.handleConfirmForkMessageIntoWorktree}
           editingMessageId={editingMessageId}
           editingMessageValue={editingMessageValue}

@@ -7,7 +7,7 @@ describe("SideWindowManager", () => {
 
     expect(manager.getSnapshot()).toMatchObject({
       activeTabId: "workers",
-      tabs: [{ id: "workers", kind: "workers", title: "Conversation Workers", closeable: false }],
+      tabs: [{ id: "workers", kind: "workers", title: "Session workers", closeable: false }],
     });
   });
 

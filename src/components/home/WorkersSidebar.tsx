@@ -3,7 +3,7 @@ import { Cpu, PanelRightClose, Terminal as TerminalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkerCard } from "@/components/WorkerCard";
-import { workersSidebarManager } from "@/components/component-state-managers";
+import { workerCardManager, workersSidebarManager } from "@/components/component-state-managers";
 import { WORKER_OPTIONS } from "@/app/home/constants";
 import type { AgentSnapshot, SupervisorInterventionRecord } from "@/app/home/types";
 import { buildWorkerLists, getWorkerRuntimeLabel, type ConversationWorkerRecord } from "@/lib/conversation-workers";
@@ -148,7 +148,6 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
   const focusedWorkerVisible = Boolean(focusedWorkerId && visibleWorkers.some((worker) => worker.id === focusedWorkerId));
   const isFocusMode = visibleWorkers.length > 1 && focusedWorkerVisible;
   const focusedWorker = isFocusMode ? visibleWorkers.find((worker) => worker.id === focusedWorkerId) ?? null : null;
-  const compactWorkers = isFocusMode ? visibleWorkers.filter((worker) => worker.id !== focusedWorkerId) : [];
   const renderWorkerCard = (worker: ConversationWorkerRecord, options: { compact?: boolean; isFocused?: boolean } = {}) => {
     const agent = agentsById.get(worker.id) ?? {
       name: worker.id,
@@ -176,7 +175,12 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
         compact={isCompactWorker}
         isFocused={isFocusedWorker}
         canFocus={visibleWorkers.length > 1}
-        onToggleFocus={() => workersSidebarManager.toggleFocusedWorker(worker.id)}
+        onToggleFocus={() => {
+          if (focusedWorkerId !== worker.id) {
+            workerCardManager.setOpen(worker.id, true);
+          }
+          workersSidebarManager.toggleFocusedWorker(worker.id);
+        }}
         onStopWorker={onStopWorker}
         onStopTerminalProcess={onStopTerminalProcess}
         onLoadWorkerHistory={onLoadWorkerHistory}
@@ -198,7 +202,7 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
       {showHeader ? (
       <div className="flex items-center justify-between border-b px-3 py-2.5">
         <h3 className="flex items-center gap-2 text-sm font-semibold">
-          <Cpu className="h-4 w-4" /> Conversation Workers
+          <Cpu className="h-4 w-4" /> {t("side.window.workersTabAria")}
         </h3>
         {onClose && (
           <Button
@@ -244,17 +248,8 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
       </div>
       {isFocusMode && focusedWorker ? (
         <div className="min-h-0 flex-1 p-3">
-          <div className="flex h-full min-h-0 flex-col gap-3">
-            <div className="min-h-0 flex-1">
-              {renderWorkerCard(focusedWorker, { isFocused: true })}
-            </div>
-            {compactWorkers.length > 0 ? (
-              <ScrollArea className="max-h-64 shrink-0 pr-1">
-                <div className="space-y-2">
-                  {compactWorkers.map((worker) => renderWorkerCard(worker, { compact: true }))}
-                </div>
-              </ScrollArea>
-            ) : null}
+          <div className="h-full min-h-0">
+            {renderWorkerCard(focusedWorker, { isFocused: true })}
           </div>
         </div>
       ) : (
