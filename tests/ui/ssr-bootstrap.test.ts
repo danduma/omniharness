@@ -14,13 +14,16 @@ describe("home SSR bootstrap", () => {
 
   it("hydrates route, auth, settings, and event data before HomeApp subscribes to managers", () => {
     const homeSource = readSource("src/app/home/HomeApp.tsx");
+    const queriesSource = readSource("src/app/home/useHomeQueries.ts");
 
-    expect(homeSource).toContain("applyHomeBootstrap(bootstrap)");
-    expect(homeSource.indexOf("applyHomeBootstrap(bootstrap)")).toBeLessThan(
+    expect(homeSource).toContain("applyHomeBootstrap(bootstrap, false)");
+    expect(homeSource.indexOf("applyHomeBootstrap(bootstrap, false)")).toBeLessThan(
       homeSource.indexOf("useManagerSelector(homeUiStateManager"),
     );
     expect(homeSource).toContain("initialEventState");
     expect(homeSource).toContain("initialQueries");
+    expect(queriesSource).toContain('queryClient.setQueryData(["auth-session"], initialQueries.session)');
+    expect(queriesSource).not.toContain('typeof window !== "undefined"');
   });
 
   it("keeps the slow worker catalog out of the blocking SSR bootstrap", () => {

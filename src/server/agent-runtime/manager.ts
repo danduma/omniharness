@@ -108,6 +108,10 @@ function applySessionUsageUpdate(record: AgentRecord, update: Record<string, unk
   return true;
 }
 
+function stripAgentControlText(text: string) {
+  return text.replace(/^\[MODE_UPDATE\]\s*autoEdit/i, "");
+}
+
 function expandHomePath(input: string, env: EnvLike = process.env) {
   if (input.startsWith("~/")) {
     return join(env.HOME || homedir(), input.slice(2));
@@ -488,7 +492,7 @@ class RuntimeClient implements acp.Client {
 
     if (update.sessionUpdate === "agent_message_chunk") {
       const content = asRecord(update.content);
-      const text = content?.type === "text" && typeof content.text === "string" ? content.text : "";
+      const text = content?.type === "text" && typeof content.text === "string" ? stripAgentControlText(content.text) : "";
       if (text) {
         record.currentText = appendBoundedText(record.currentText, text, MAX_TEXT_FIELD_CHARS);
         record.lastText = record.currentText;

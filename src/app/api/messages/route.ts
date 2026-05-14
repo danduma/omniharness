@@ -4,6 +4,8 @@ import { messages } from '@/server/db/schema';
 import { requireApiSession } from "@/server/auth/guards";
 import { serializeMessageRecord } from "@/server/conversations/message-records";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req: NextRequest) {
   const auth = await requireApiSession(req, {
     source: "Messages",

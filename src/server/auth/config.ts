@@ -62,6 +62,11 @@ export function isAuthEnabled() {
   return isAuthRequired() || isAuthConfigured();
 }
 
+export function isAutomationAuthBypassEnabled() {
+  return process.env.OMNIHARNESS_TEST_BYPASS_AUTH === "true"
+    && (process.env.NODE_ENV === "test" || process.env.OMNIHARNESS_E2E_BYPASS_AUTH === "true");
+}
+
 export function getAuthConfigurationError() {
   if (!isAuthRequired() || isAuthConfigured()) {
     return null;

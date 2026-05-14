@@ -86,6 +86,17 @@ describe("PWA installability", () => {
     expect(serviceWorkerSource).toContain('self.addEventListener("notificationclick"');
     expect(serviceWorkerSource).toContain("event.notification.data?.url");
     expect(serviceWorkerSource).toContain("client.url === targetUrl.href");
+    expect(serviceWorkerSource).toContain("navigableClient.navigate(targetUrl.href)");
     expect(serviceWorkerSource).toContain("self.clients.openWindow(targetUrl.href)");
+    expect(serviceWorkerSource).not.toContain('clients.find((client) => "focus" in client)');
+  });
+
+  test("service worker suppresses push notifications while any app window is visible", () => {
+    const serviceWorkerSource = readText("public/sw.js");
+
+    expect(serviceWorkerSource).toContain("hasVisibleWindowClient");
+    expect(serviceWorkerSource).toContain('client.visibilityState === "visible"');
+    expect(serviceWorkerSource).toContain("if (hasVisibleClient) {");
+    expect(serviceWorkerSource).toContain("return;");
   });
 });

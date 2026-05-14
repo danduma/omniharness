@@ -61,6 +61,9 @@ function deleteConversationRows() {
     if (tables.has("queued_conversation_messages")) {
       db.prepare("delete from queued_conversation_messages where run_id in (select id from runs)").run();
     }
+    if (tables.has("worker_assignments")) {
+      db.prepare("delete from worker_assignments where run_id in (select id from runs)").run();
+    }
     db.prepare("delete from workers where run_id in (select id from runs)").run();
     if (tables.has("worker_counters")) {
       db.prepare("delete from worker_counters where run_id in (select id from runs)").run();

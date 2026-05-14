@@ -2,6 +2,7 @@
 
 import { ChevronDownIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 import type { WorkerModelOption } from "@/app/home/types";
 
 type ComposerModelPickerProps = {
@@ -24,7 +25,7 @@ export function ComposerModelPicker({
     <span className="relative inline-flex min-w-0 max-w-[13rem] shrink items-center">
       <select
         value={value}
-        aria-label="Worker model"
+        aria-label={t("conversation.composer.workerModelAria")}
         title={selectedLabel}
         onChange={(event) => onChange(event.target.value)}
         className={cn(

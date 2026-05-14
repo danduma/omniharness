@@ -59,6 +59,41 @@ when needed, then starts both pieces OmniHarness needs:
 - the Next.js web UI on `http://localhost:3050`
 - the in-repo agent runtime on `http://127.0.0.1:7800`
 
+Run the separate restart control app if you want a small remote escape hatch
+with its own password-gated interface:
+
+```bash
+pnpm restart:control
+```
+
+It listens on port `3099`. Open `http://localhost:3099` to see status, recent
+logs, and buttons to start OmniHarness in dev or production mode. The web login
+uses `OMNIHARNESS_AUTH_PASSWORD_HASH` or `OMNIHARNESS_AUTH_PASSWORD` when either
+is configured, then falls back to `OMNIHARNESS_REMOTE_RESTART_PASSWORD`, then to
+the generated token file.
+
+The script API creates `.omniharness/remote-restart-token` on first run and
+accepts bearer auth:
+
+```bash
+curl -X POST "http://HOST:3099/restart?mode=dev" \
+  -H "Authorization: Bearer $(cat .omniharness/remote-restart-token)"
+```
+
+Use `mode=prod` to launch `./omniharness` instead of `pnpm run dev`.
+
+For phone access through Cloudflare Tunnel, expose the restart app as a second
+hostname that points to `http://localhost:3099`, for example:
+
+```yaml
+ingress:
+  - hostname: horse-battery-staple.omniharness.dev
+    service: http://localhost:3050
+  - hostname: restart-horse-battery-staple.omniharness.dev
+    service: http://localhost:3099
+  - service: http_status:404
+```
+
 ## Optional Setup
 
 Create a local env file only if you want password auth, phone pairing, public-origin links, or API-key based agent/model access:

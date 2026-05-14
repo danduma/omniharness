@@ -39,18 +39,15 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('"w-full resize-none bg-transparent text-[15px] leading-6 outline-none"');
   expect(pageSource).toContain('hasAttachments ? "min-h-[112px]" : "min-h-[72px]"');
   expect(pageSource).toContain("rows={1}");
-  expect(composerSelectSource).toContain("<Select");
-  expect(composerSelectSource).not.toContain("<select");
+  expect(composerSelectSource).toContain("<select");
+  expect(composerSelectSource).toContain("<ChevronDownIcon");
   expect(composerSelectSource).not.toContain("selectedLabel");
   expect(composerSelectSource).not.toContain("opacity-0");
   expect(pageSource).toContain("<ComposerModelPicker");
   expect(pageSource).toContain('ariaLabel="Worker effort"');
-  expect(composerModelPickerSource).toContain("Choose model");
-  expect(composerModelPickerSource).toContain("useMediaQuery");
-  expect(composerModelPickerSource).toContain("<PopoverPrimitive.Root");
-  expect(composerModelPickerSource).toContain('side="top"');
-  expect(composerModelPickerSource).toContain('side="bottom"');
-  expect(composerModelPickerSource).toContain("models.picker.searchPlaceholder");
+  expect(composerModelPickerSource).toContain("<select");
+  expect(composerModelPickerSource).toContain('aria-label={t("conversation.composer.workerModelAria")}');
+  expect(composerModelPickerSource).toContain("selectedLabel");
   expect(pageSource).toContain("const WORKER_OPTIONS: Array<{ value: WorkerType; label: string }> = [");
   expect(pageSource).toContain('const COMPOSER_WORKER_OPTIONS: Array<{ value: ComposerWorkerOption; label: string }> = [');
   expect(pageSource).toContain('{ value: "auto", label: "Auto" }');
@@ -73,7 +70,7 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain("preferredWorkerEffort: selectedEffort.toLowerCase()");
   expect(pageSource).toContain("allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent]");
   expect(pageSource).toContain("options={composerWorkerOptions}");
-  expect(composerSelectSource).toContain("options={options}");
+  expect(composerSelectSource).toContain("options.map");
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)');
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)');
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_EFFORT_STORAGE_KEY)');
@@ -82,7 +79,7 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_EFFORT_STORAGE_KEY, selectedEffort)');
   expect(pageSource).toContain("const activeWorkerModelOptions = useMemo(");
   expect(pageSource).toContain("options={activeWorkerModelOptions}");
-  expect(composerModelPickerSource).toContain("filteredOptions.map");
+  expect(composerModelPickerSource).toContain("options.map");
   expect(pageSource).not.toContain('if (selectedCliAgent !== "auto") {\n      setSelectedCliAgent("auto");');
   expect(pageSource).toContain('hydratedRunSelectionId: null');
   expect(pageSource).toContain('setHydratedRunSelectionId: homeUiStateManager.createSetter("hydratedRunSelectionId")');
@@ -97,8 +94,8 @@ test("direct mode requires an explicit cli agent and tightens dropdown alignment
   expect(pageSource).toContain('const nextDirectWorker = selectedCliAgent === "auto" ? (autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex") : selectedCliAgent;');
   expect(pageSource).toContain('<ComposerSelect');
   expect(pageSource).toContain('<ComposerModelPicker');
-  expect(composerSelectSource).toContain('"h-7 w-max min-w-0 max-w-[8.5rem] shrink border-0 bg-transparent px-1.5 text-xs shadow-none sm:h-8 sm:px-2 sm:text-sm [&>span]:text-right"');
-  expect(composerModelPickerSource).toContain('"h-7 w-max min-w-0 max-w-[13rem] shrink truncate px-1.5 text-xs font-normal sm:h-8 sm:px-2 sm:text-sm"');
+  expect(composerSelectSource).toContain('"h-7 w-full min-w-0 appearance-none truncate rounded-md border-0 bg-transparent py-0 pl-1.5 pr-5 text-right text-xs shadow-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/45 sm:h-8 sm:pl-2 sm:text-sm"');
+  expect(composerModelPickerSource).toContain('"h-7 w-full min-w-0 appearance-none truncate rounded-md border-0 bg-transparent py-0 pl-1.5 pr-5 text-right text-xs font-normal shadow-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/45 sm:h-8 sm:pl-2 sm:text-sm"');
 });
 
 test("composer exposes native file input, paste ingestion, previews, and removal controls", () => {

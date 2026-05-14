@@ -5,10 +5,12 @@ import { test, expect } from "vitest";
 const readSource = (relativePath: string) => fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 const source = [
   "src/app/page.tsx",
+  "src/app/home/HomeApp.tsx",
   "src/app/home/types.ts",
   "src/components/home/ConversationSidebar.tsx",
   "src/components/home/ConversationMain.tsx",
   "src/components/home/HomeHeader.tsx",
+  "src/components/home/OnboardingSetupDialog.tsx",
 ].map(readSource).join("\n");
 
 test("page shell keeps connect-phone as a desktop-only menu action and trims route-only session chrome", () => {
@@ -23,7 +25,7 @@ test("page shell keeps connect-phone as a desktop-only menu action and trims rou
 
 test("empty state includes CLI setup onboarding driven by worker authentication diagnostics", () => {
   expect(source).toContain("authentication?: WorkerAuthentication");
-  expect(source).toContain("CliSetupOnboarding");
+  expect(source).toContain("OnboardingSetupDialog");
   expect(source).toContain("settings.agents.onboarding.title");
   expect(source).toContain("settings.agents.onboarding.command");
   expect(source).toContain("worker.authentication?.status");

@@ -1,5 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { constants, accessSync, existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  accessSync,
+  existsSync,
+  mkdtempSync,
+  openSync,
+  readSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { delimiter, dirname, isAbsolute, join, parse } from "node:path";
 import { arch, homedir, platform, tmpdir } from "node:os";
 
@@ -218,10 +228,18 @@ function codexTargetTriple() {
 }
 
 function isProbablyNodeLauncher(filePath: string) {
+  let fd: number | null = null;
   try {
-    return readFileSync(filePath, "utf8").slice(0, 256).includes("/usr/bin/env node");
+    fd = openSync(filePath, "r");
+    const buffer = Buffer.alloc(256);
+    const bytesRead = readSync(fd, buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, bytesRead).toString("utf8").includes("/usr/bin/env node");
   } catch {
     return false;
+  } finally {
+    if (fd !== null) {
+      closeSync(fd);
+    }
   }
 }
 

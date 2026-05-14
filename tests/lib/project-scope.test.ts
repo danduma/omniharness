@@ -14,6 +14,30 @@ describe("resolveProjectScope", () => {
     expect(result).toBe("/workspace/app");
   });
 
+  it("uses the only configured project when starting a new conversation without a draft path", () => {
+    const result = resolveProjectScope({
+      draftProjectPath: null,
+      selectedRunId: null,
+      plans: [],
+      runs: [],
+      explicitProjects: ["/workspace/app"],
+    });
+
+    expect(result).toBe("/workspace/app");
+  });
+
+  it("keeps new conversations unscoped when multiple projects are configured", () => {
+    const result = resolveProjectScope({
+      draftProjectPath: null,
+      selectedRunId: null,
+      plans: [],
+      runs: [],
+      explicitProjects: ["/workspace/app", "/workspace/other"],
+    });
+
+    expect(result).toBeNull();
+  });
+
   it("finds the matching explicit project for an existing run", () => {
     const result = resolveProjectScope({
       draftProjectPath: null,

@@ -2,6 +2,7 @@ import {
   AUTH_SESSION_COOKIE,
   getAuthConfigurationError,
   getPublicOriginFromRequest,
+  isAutomationAuthBypassEnabled,
   isAuthEnabled,
 } from "@/server/auth/config";
 import { getSessionFromTokenValue, listActiveSessions, type ActiveAuthSession } from "@/server/auth/session";
@@ -39,6 +40,17 @@ export async function buildAuthSessionState(args: {
   headers: Headers;
 }): Promise<AuthSessionResponse> {
   const publicOrigin = getPublicOriginFromRequest(args.url, args.headers);
+
+  if (isAutomationAuthBypassEnabled()) {
+    return {
+      enabled: false,
+      authenticated: true,
+      currentSession: null,
+      sessions: [],
+      configurationError: null,
+      publicOrigin,
+    };
+  }
 
   if (!isAuthEnabled()) {
     return {

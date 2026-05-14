@@ -29,6 +29,7 @@ const pageSource = [
   "src/components/home/ConversationMain.tsx",
   "src/components/home/ConversationSidebar.tsx",
   "src/components/home/HomeHeader.tsx",
+  "src/components/home/ThemeModeToggle.tsx",
   "src/components/home/SideWindow.tsx",
   "src/components/home/FileViewerPanel.tsx",
   "src/components/home/SettingsDialog.tsx",
@@ -327,7 +328,8 @@ test("worker detail renders from streamed agent state instead of per-worker poll
   expect(pageSource).not.toContain('return requestJson<AgentSnapshot>(`/api/agents/${worker.id}`, undefined, {');
   expect(pageSource).not.toContain('refetchInterval: ["starting", "working", "stuck"].includes(normalizeWorkerStatus(worker.status)) ? 2000 : false');
   expect(pageSource).toContain('const liveAgentsById = new Map(');
-  expect(pageSource).toContain('const liveAgent = liveAgentsById.get(worker.id);');
+  expect(pageSource).toContain('const candidateAgent = liveAgentsById.get(worker.id);');
+  expect(pageSource).toContain('const liveAgent = selectedRunIsTerminal && candidateAgent && isWorkerActiveStatus(candidateAgent.state)');
 });
 
 test("conversation output only follows live worker updates when already near the bottom", () => {
@@ -592,7 +594,8 @@ test("header includes a persistent day night mode toggle beside the workers side
   expect(pageSource).toContain("if (!didMountThemeEffectRef.current)");
   expect(pageSource).toContain('window.localStorage.setItem("omni-theme-mode", themeMode)');
   expect(pageSource).toContain('document.documentElement.classList.toggle("dark", themeMode === "night")');
-  expect(pageSource).toContain('aria-label={themeMode === "night" ? "Switch to day mode" : "Switch to night mode"}');
+  expect(pageSource).toContain('const label = t(themeMode === "night" ? "theme.mode.switchDay" : "theme.mode.switchNight")');
+  expect(pageSource).toContain("aria-label={label}");
   expect(pageSource).toContain('setThemeMode((current) => (current === "day" ? "night" : "day"))');
   expect(pageSource).toContain('themeMode === "night" ? <Sun');
   expect(pageSource).toContain(': <Moon');
@@ -636,7 +639,7 @@ test("command input uses mode-aware helper placeholders instead of echoing the s
 });
 
 test("send button swaps to a spinner while a command submission is pending", () => {
-  expect(pageSource).toContain("const isComposerSubmitting = runCommand.isPending || sendConversationMessage.isPending || sendQueuedMessageNow.isPending");
+  expect(pageSource).toContain("const isComposerSubmitting = isStartingCurrentProjectConversation || sendConversationMessage.isPending || sendQueuedMessageNow.isPending || promotePlanningConversation.isPending || isStopConversationPending;");
   expect(pageSource).toContain("const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;");
   expect(pageSource).toContain("const isStopButtonBusy = isStopButtonVisible && isStopConversationPending;");
   expect(pageSource).toContain('disabled={isSubmitButtonDisabled}');

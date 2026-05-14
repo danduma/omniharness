@@ -151,6 +151,51 @@ describe("durable supervisor wake schedule", () => {
     expect(executor).toHaveBeenCalledWith(runId);
   });
 
+  it("fires future durable wakes after an in-memory scheduler restart", async () => {
+    const runId = await insertRun();
+    const executor = vi.fn(async () => {});
+    setDurableSupervisorWakeExecutorForTests(executor);
+    await scheduleDurableSupervisorWakeAt({
+      runId,
+      wakeAt: new Date(baseNow.getTime() + 5_000),
+      reason: "quota_wait",
+      source: "absolute-timestamp",
+      details: { resetAt: new Date(baseNow.getTime() + 5_000).toISOString() },
+    });
+
+    resetDurableSupervisorWakeSchedulerForTests();
+    setDurableSupervisorWakeExecutorForTests(executor);
+    await rehydrateDurableSupervisorWakes();
+
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(executor).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(executor).toHaveBeenCalledWith(runId);
+    const row = await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get();
+    expect(row?.details).toBe(JSON.stringify({ resetAt: new Date(baseNow.getTime() + 5_000).toISOString() }));
+  });
+
+  it("drops persisted wakes for terminal runs during restart rehydration", async () => {
+    const runId = await insertRun("done");
+    const executor = vi.fn(async () => {});
+    setDurableSupervisorWakeExecutorForTests(executor);
+    await scheduleDurableSupervisorWakeAt({
+      runId,
+      wakeAt: new Date(baseNow.getTime() + 1_000),
+      reason: "quota_wait",
+    });
+
+    resetDurableSupervisorWakeSchedulerForTests();
+    setDurableSupervisorWakeExecutorForTests(executor);
+    await rehydrateDurableSupervisorWakes();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(executor).not.toHaveBeenCalled();
+    expect(await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get()).toBeUndefined();
+  });
+
   it("cancels durable rows and in-memory timers", async () => {
     const runId = await insertRun();
     const executor = vi.fn(async () => {});

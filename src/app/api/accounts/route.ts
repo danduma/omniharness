@@ -3,6 +3,8 @@ import { db } from '@/server/db';
 import { accounts } from '@/server/db/schema';
 import { requireApiSession } from "@/server/auth/guards";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req: NextRequest) {
   const auth = await requireApiSession(req, {
     source: "Accounts",

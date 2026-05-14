@@ -23,8 +23,7 @@ export function useHomeQueries({ currentProjectScope, bootstrapId, initialQuerie
   const primedBootstrapIdRef = useRef<string | null>(null);
 
   if (
-    typeof window !== "undefined"
-    && bootstrapId
+    bootstrapId
     && primedBootstrapIdRef.current !== bootstrapId
   ) {
     if (initialQueries?.session) {

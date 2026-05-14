@@ -103,6 +103,19 @@ function setupTempDb(dbPath: string, rootDir: string) {
       FOREIGN KEY (plan_item_id) REFERENCES plan_items(id)
     );
 
+    CREATE TABLE worker_assignments (
+      id text PRIMARY KEY NOT NULL,
+      run_id text NOT NULL,
+      worker_id text,
+      plan_item_id text NOT NULL,
+      status text NOT NULL,
+      created_at integer NOT NULL,
+      updated_at integer NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES runs(id),
+      FOREIGN KEY (worker_id) REFERENCES workers(id),
+      FOREIGN KEY (plan_item_id) REFERENCES plan_items(id)
+    );
+
     CREATE TABLE supervisor_interventions (
       id text PRIMARY KEY NOT NULL,
       run_id text NOT NULL,
@@ -195,6 +208,8 @@ function setupTempDb(dbPath: string, rootDir: string) {
     .run(randomUUID(), runId, planItemId, "failed", now, now);
   db.prepare("insert into execution_events (id, run_id, worker_id, plan_item_id, event_type, created_at) values (?, ?, ?, ?, ?, ?)")
     .run(randomUUID(), runId, workerId, planItemId, "spawned", now);
+  db.prepare("insert into worker_assignments (id, run_id, worker_id, plan_item_id, status, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?)")
+    .run(randomUUID(), runId, workerId, planItemId, "running", now, now);
   db.prepare("insert into supervisor_interventions (id, run_id, worker_id, intervention_type, prompt, summary, created_at) values (?, ?, ?, ?, ?, ?, ?)")
     .run(randomUUID(), runId, workerId, "continue", "keep going", "nudged worker", now);
   db.prepare("insert into recovery_incidents (id, run_id, worker_id, kind, status, auto_attempt_count, details, detected_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
@@ -243,6 +258,7 @@ describe("delete-conversations.sh", () => {
     expect(count("plan_items")).toBe(0);
     expect(count("validation_runs")).toBe(0);
     expect(count("execution_events")).toBe(0);
+    expect(count("worker_assignments")).toBe(0);
     expect(count("supervisor_interventions")).toBe(0);
     expect(count("recovery_incidents")).toBe(0);
     expect(count("queued_conversation_messages")).toBe(0);

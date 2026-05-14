@@ -40,7 +40,7 @@ function createRun(overrides: Partial<RunRecord> = {}): RunRecord {
   };
 }
 
-function renderViewModel(state: EventStreamState) {
+function useRenderViewModel(state: EventStreamState) {
   return useHomeViewModel({
     state,
     selectedRunId: "run-1",
@@ -57,7 +57,7 @@ function renderViewModel(state: EventStreamState) {
 
 describe("useHomeViewModel", () => {
   it("does not keep a completed direct conversation busy just because its worker is idle", () => {
-    const viewModel = renderViewModel(createState({
+    const viewModel = useRenderViewModel(createState({
       runs: [createRun()],
       plans: [{ id: "plan-1", path: "/workspace/project" }],
       messages: [{

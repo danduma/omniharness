@@ -1,4 +1,4 @@
-const CACHE_VERSION = "omniharness-pwa-v3";
+const CACHE_VERSION = "omniharness-pwa-v4";
 const OFFLINE_URL = "/offline.html";
 const CORE_ASSETS = [
   OFFLINE_URL,
@@ -74,48 +74,74 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
-self.addEventListener("push", (event) => {
-  let payload = {};
-  try {
-    payload = event.data ? event.data.json() : {};
-  } catch {
-    payload = {};
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
+function hasVisibleWindowClient(clients) {
+  return clients.some((client) => client.visibilityState === "visible");
+}
+
+function focusOrOpenTarget(targetUrl, clients) {
+  const exactClient = clients.find((client) => {
+    return "focus" in client && client.url === targetUrl.href;
+  });
+
+  if (exactClient) {
+    return exactClient.focus();
   }
 
-  const title = typeof payload.title === "string" && payload.title.trim()
-    ? payload.title
-    : "OmniHarness";
-  const options = {
-    body: typeof payload.body === "string" ? payload.body : "",
-    tag: typeof payload.tag === "string" ? payload.tag : "omniharness-notification",
-    data: {
-      url: typeof payload.url === "string" ? payload.url : "/",
-    },
-    icon: "/icons/icon-192.png",
-    badge: "/icons/icon-192.png",
-  };
+  const navigableClient = clients.find((client) => "navigate" in client);
+  if (navigableClient) {
+    return navigableClient.navigate(targetUrl.href).then((client) => client?.focus());
+  }
 
-  event.waitUntil(self.registration.showNotification(title, options));
+  if (self.clients.openWindow) {
+    return self.clients.openWindow(targetUrl.href);
+  }
+
+  return undefined;
+}
+
+self.addEventListener("push", (event) => {
+  event.waitUntil(
+    self.clients.matchAll({ type: "window" }).then((clients) => {
+      const hasVisibleClient = hasVisibleWindowClient(clients);
+      if (hasVisibleClient) {
+        return;
+      }
+
+      let payload = {};
+      try {
+        payload = event.data ? event.data.json() : {};
+      } catch {
+        payload = {};
+      }
+
+      const title = typeof payload.title === "string" && payload.title.trim()
+        ? payload.title
+        : "OmniHarness";
+      const options = {
+        body: typeof payload.body === "string" ? payload.body : "",
+        tag: typeof payload.tag === "string" ? payload.tag : "omniharness-notification",
+        data: {
+          url: typeof payload.url === "string" ? payload.url : "/",
+        },
+        icon: "/icons/icon-192-v2.png",
+        badge: "/icons/icon-192-v2.png",
+      };
+
+      return self.registration.showNotification(title, options);
+    }),
+  );
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const targetUrl = new URL(event.notification.data?.url || "/", self.location.origin);
   event.waitUntil(
-    self.clients.matchAll({ type: "window" }).then((clients) => {
-      const existingClient = clients.find((client) => {
-        return "focus" in client && client.url === targetUrl.href;
-      }) || clients.find((client) => "focus" in client);
-
-      if (existingClient) {
-        return existingClient.focus();
-      }
-
-      if (self.clients.openWindow) {
-        return self.clients.openWindow(targetUrl.href);
-      }
-
-      return undefined;
-    }),
+    self.clients.matchAll({ type: "window" }).then((clients) => focusOrOpenTarget(targetUrl, clients)),
   );
 });
