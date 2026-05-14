@@ -6,6 +6,8 @@ export type ConversationWorkerRecord = {
   workerNumber?: number | null;
   title?: string | null;
   initialPrompt?: string | null;
+  activeWorkStartedAt?: string | Date | null;
+  activeWorkDurationMs?: number | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -84,6 +86,16 @@ function formatCompactWorkerDuration(durationMs: number) {
 }
 
 export function getWorkerRuntimeLabel(worker: ConversationWorkerRecord, now = Date.now()) {
+  const persistedWorkMs = worker.activeWorkDurationMs;
+  if (typeof persistedWorkMs === "number") {
+    const activeWorkStartedAt = parseTimestampMs(worker.activeWorkStartedAt);
+    const activeWorkMs = normalizeWorkerStatus(worker.status) === "working" && activeWorkStartedAt !== null
+      ? Math.max(0, now - activeWorkStartedAt)
+      : 0;
+
+    return formatCompactWorkerDuration(Math.max(0, persistedWorkMs + activeWorkMs));
+  }
+
   const startedAt = parseTimestampMs(worker.createdAt);
   if (startedAt === null) {
     return null;

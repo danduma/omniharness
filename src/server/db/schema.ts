@@ -53,6 +53,8 @@ export const workers = sqliteTable('workers', {
   lastText: text('last_text').notNull().default(''),
   bridgeSessionId: text('bridge_session_id'),
   bridgeSessionMode: text('bridge_session_mode'),
+  activeWorkStartedAt: integer('active_work_started_at', { mode: 'timestamp' }),
+  activeWorkDurationMs: integer('active_work_duration_ms').notNull().default(0),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });

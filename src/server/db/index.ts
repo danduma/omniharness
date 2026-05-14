@@ -64,6 +64,8 @@ CREATE TABLE IF NOT EXISTS workers (
   last_text text NOT NULL DEFAULT '',
   bridge_session_id text,
   bridge_session_mode text,
+  active_work_started_at integer,
+  active_work_duration_ms integer NOT NULL DEFAULT 0,
   created_at integer NOT NULL,
   updated_at integer NOT NULL,
   FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action
@@ -488,6 +490,61 @@ if (!workerColumnNames.has("bridge_session_id")) {
 if (!workerColumnNames.has("bridge_session_mode")) {
   sqlite.exec("ALTER TABLE workers ADD COLUMN bridge_session_mode text;");
 }
+
+if (!workerColumnNames.has("active_work_started_at")) {
+  sqlite.exec("ALTER TABLE workers ADD COLUMN active_work_started_at integer;");
+}
+
+if (!workerColumnNames.has("active_work_duration_ms")) {
+  sqlite.exec("ALTER TABLE workers ADD COLUMN active_work_duration_ms integer NOT NULL DEFAULT 0;");
+  sqlite.exec(`
+    UPDATE workers
+    SET active_work_duration_ms = MAX(0, updated_at - created_at) * 1000
+    WHERE active_work_duration_ms = 0;
+  `);
+}
+
+sqlite.exec(`
+  UPDATE workers
+  SET active_work_started_at = updated_at
+  WHERE active_work_started_at IS NULL
+    AND lower(substr(status, 1, instr(status || ':', ':') - 1)) = 'working';
+`);
+
+sqlite.exec(`
+CREATE TRIGGER IF NOT EXISTS workers_work_timer_insert
+AFTER INSERT ON workers
+WHEN lower(substr(NEW.status, 1, instr(NEW.status || ':', ':') - 1)) = 'working'
+BEGIN
+  UPDATE workers
+  SET active_work_started_at = COALESCE(NEW.active_work_started_at, NEW.created_at),
+      active_work_duration_ms = COALESCE(NEW.active_work_duration_ms, 0)
+  WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS workers_work_timer_start
+AFTER UPDATE OF status, updated_at ON workers
+WHEN lower(substr(OLD.status, 1, instr(OLD.status || ':', ':') - 1)) != 'working'
+  AND lower(substr(NEW.status, 1, instr(NEW.status || ':', ':') - 1)) = 'working'
+BEGIN
+  UPDATE workers
+  SET active_work_started_at = NEW.updated_at,
+      active_work_duration_ms = COALESCE(NEW.active_work_duration_ms, OLD.active_work_duration_ms, 0)
+  WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS workers_work_timer_stop
+AFTER UPDATE OF status, updated_at ON workers
+WHEN lower(substr(OLD.status, 1, instr(OLD.status || ':', ':') - 1)) = 'working'
+  AND lower(substr(NEW.status, 1, instr(NEW.status || ':', ':') - 1)) != 'working'
+BEGIN
+  UPDATE workers
+  SET active_work_started_at = NULL,
+      active_work_duration_ms = COALESCE(OLD.active_work_duration_ms, 0)
+        + (MAX(0, NEW.updated_at - COALESCE(OLD.active_work_started_at, OLD.updated_at, OLD.created_at, NEW.updated_at)) * 1000)
+  WHERE id = NEW.id;
+END;
+`);
 
 if (!messageColumnNames.has("kind")) {
   sqlite.exec("ALTER TABLE messages ADD COLUMN kind text;");

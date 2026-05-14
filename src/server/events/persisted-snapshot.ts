@@ -243,6 +243,8 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
       workerNumber: workers.workerNumber,
       title: workers.title,
       initialPrompt: workers.initialPrompt,
+      activeWorkStartedAt: workers.activeWorkStartedAt,
+      activeWorkDurationMs: workers.activeWorkDurationMs,
       createdAt: workers.createdAt,
       updatedAt: workers.updatedAt,
     }).from(workers),
