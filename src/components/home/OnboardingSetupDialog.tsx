@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleAlert, Settings, Terminal as TerminalIcon } from "lucide-react";
+import { CheckCircle2, CircleAlert, RefreshCw, Settings, Terminal as TerminalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { WorkerAvailability } from "@/app/home/types";
@@ -39,10 +39,19 @@ interface OnboardingSetupDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   workers: WorkerAvailability[];
+  onRefreshWorkerCatalog: () => void;
+  workerCatalogRefreshing: boolean;
   onOpenAgentSettings: () => void;
 }
 
-export function OnboardingSetupDialog({ open, onOpenChange, workers, onOpenAgentSettings }: OnboardingSetupDialogProps) {
+export function OnboardingSetupDialog({
+  open,
+  onOpenChange,
+  workers,
+  onRefreshWorkerCatalog,
+  workerCatalogRefreshing,
+  onOpenAgentSettings,
+}: OnboardingSetupDialogProps) {
   useI18nSnapshot();
 
   return (
@@ -99,6 +108,10 @@ export function OnboardingSetupDialog({ open, onOpenChange, workers, onOpenAgent
 
         <DialogFooter className="shrink-0">
           <Button variant="ghost" onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button>
+          <Button variant="outline" onClick={onRefreshWorkerCatalog} disabled={workerCatalogRefreshing}>
+            <RefreshCw className={cn("h-3.5 w-3.5", workerCatalogRefreshing && "animate-spin")} aria-hidden="true" />
+            {workerCatalogRefreshing ? t("settings.agents.refreshingAvailability") : t("settings.agents.refreshAvailability")}
+          </Button>
           <Button onClick={() => { onOpenChange(false); onOpenAgentSettings(); }}>
             <Settings className="h-3.5 w-3.5" />
             {t("settings.agents.onboarding.openSettings")}

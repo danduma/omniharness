@@ -53,6 +53,8 @@
   "settings.agents.toggleDangerouslySkipPermissions": "Toggle YOLO / Dangerously skip permissions",
   "settings.agents.dangerouslySkipPermissions": "YOLO / Dangerously skip permissions",
   "settings.agents.workerAvailability": "Worker 사용 가능 상태",
+  "settings.agents.refreshAvailability": "사용 가능 여부 새로고침",
+  "settings.agents.refreshingAvailability": "새로고침 중...",
   "settings.agents.unavailableNow": "현재 사용할 수 없습니다.",
   "settings.agents.toggleWorker": "{worker} 전환",
   "settings.agents.installedDir": "설치된 디렉터리",

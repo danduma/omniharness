@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { ArrowDown, ArrowUp, RefreshCw } from "lucide-react";
 import { WORKER_OPTIONS } from "@/app/home/constants";
 import type { WorkerAvailability, WorkerModelCatalog, WorkerType } from "@/app/home/types";
 import { buildInlineError, parseBooleanSetting, parseWorkerType, parseWorkerTypes } from "@/app/home/utils";
@@ -19,9 +19,12 @@ interface AgentsSettingsPanelProps {
   workerModelsRefreshing?: boolean;
   workerCatalogQuery: {
     isError: boolean;
+    isFetching?: boolean;
     error: unknown;
     data?: { diagnostics?: AppErrorDescriptor[] };
   };
+  onRefreshWorkerCatalog: () => void;
+  workerCatalogRefreshing: boolean;
 }
 
 export function AgentsSettingsPanel({
@@ -31,6 +34,8 @@ export function AgentsSettingsPanel({
   workerModels,
   workerModelsRefreshing = false,
   workerCatalogQuery,
+  onRefreshWorkerCatalog,
+  workerCatalogRefreshing,
 }: AgentsSettingsPanelProps) {
   useI18nSnapshot();
   const configuredAllowedWorkerTypes = parseWorkerTypes(settings.WORKER_ALLOWED_TYPES);
@@ -156,9 +161,21 @@ export function AgentsSettingsPanel({
 
       <div className="space-y-2">
         <div className="space-y-1">
-          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <div className="text-xs font-semibold text-muted-foreground">{t("settings.agents.workerAvailability")}</div>
-            <div className="text-xs font-medium text-foreground">{t("settings.agents.autoPriority")}</div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <div className="text-xs font-semibold text-muted-foreground">{t("settings.agents.workerAvailability")}</div>
+              <div className="text-xs font-medium text-foreground">{t("settings.agents.autoPriority")}</div>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onRefreshWorkerCatalog}
+              disabled={workerCatalogRefreshing}
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", workerCatalogRefreshing && "animate-spin")} aria-hidden="true" />
+              {workerCatalogRefreshing ? t("settings.agents.refreshingAvailability") : t("settings.agents.refreshAvailability")}
+            </Button>
           </div>
           <p className="text-xs text-muted-foreground">{t("settings.agents.autoPriorityHelp")}</p>
         </div>

@@ -40,9 +40,12 @@ interface SettingsDialogProps {
   settingsWorkers: WorkerAvailability[];
   workerCatalogQuery: {
     isError: boolean;
+    isFetching?: boolean;
     error: unknown;
     data?: Partial<WorkerCatalogResponse> & { diagnostics?: AppErrorDescriptor[] };
   };
+  onRefreshWorkerCatalog: () => void;
+  workerCatalogRefreshing: boolean;
   settingsDiagnostics: AppErrorDescriptor[];
   saveSettings: {
     error: unknown;
@@ -65,6 +68,8 @@ export function SettingsDialog({
   secretStates,
   settingsWorkers,
   workerCatalogQuery,
+  onRefreshWorkerCatalog,
+  workerCatalogRefreshing,
   settingsDiagnostics,
   saveSettings,
   activeProjectPath,
@@ -142,6 +147,8 @@ export function SettingsDialog({
                 workerModels={workerCatalogQuery.data?.workerModels}
                 workerModelsRefreshing={workerCatalogQuery.data?.workerModelsRefreshing}
                 workerCatalogQuery={workerCatalogQuery}
+                onRefreshWorkerCatalog={onRefreshWorkerCatalog}
+                workerCatalogRefreshing={workerCatalogRefreshing}
               />
             ) : null}
             {activeSettingsTab === "runtime" ? (

@@ -295,6 +295,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     sessionQuery,
     settingsQuery,
     workerCatalogQuery,
+    refreshWorkerCatalog,
     projectFilesQuery,
     authEnabled,
     authConfigurationError,
@@ -921,6 +922,8 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
         open={showOnboarding}
         onOpenChange={setShowOnboarding}
         workers={catalogWorkers}
+        onRefreshWorkerCatalog={() => refreshWorkerCatalog.mutate()}
+        workerCatalogRefreshing={refreshWorkerCatalog.isPending || workerCatalogQuery.isFetching}
         onOpenAgentSettings={() => { setActiveSettingsTab("agents"); setShowSettings(true); }}
       />
 
@@ -937,6 +940,8 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
         secretStates={settingsQuery.data?.secrets}
         settingsWorkers={settingsWorkers}
         workerCatalogQuery={workerCatalogQuery}
+        onRefreshWorkerCatalog={() => refreshWorkerCatalog.mutate()}
+        workerCatalogRefreshing={refreshWorkerCatalog.isPending || workerCatalogQuery.isFetching}
         settingsDiagnostics={settingsDiagnostics}
         saveSettings={saveSettings}
         activeProjectPath={activeConversationCwd ?? null}

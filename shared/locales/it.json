@@ -53,6 +53,8 @@
   "settings.agents.toggleDangerouslySkipPermissions": "Toggle YOLO / Dangerously skip permissions",
   "settings.agents.dangerouslySkipPermissions": "YOLO / Dangerously skip permissions",
   "settings.agents.workerAvailability": "Stato disponibilità worker",
+  "settings.agents.refreshAvailability": "Aggiorna disponibilità",
+  "settings.agents.refreshingAvailability": "Aggiornamento...",
   "settings.agents.unavailableNow": "Non disponibile al momento.",
   "settings.agents.toggleWorker": "Attiva/disattiva {worker}",
   "settings.agents.installedDir": "Cartella installata",

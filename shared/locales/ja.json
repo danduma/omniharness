@@ -53,6 +53,8 @@
   "settings.agents.toggleDangerouslySkipPermissions": "Toggle YOLO / Dangerously skip permissions",
   "settings.agents.dangerouslySkipPermissions": "YOLO / Dangerously skip permissions",
   "settings.agents.workerAvailability": "Worker 可用性ステータス",
+  "settings.agents.refreshAvailability": "可用性を更新",
+  "settings.agents.refreshingAvailability": "更新中...",
   "settings.agents.unavailableNow": "現在利用できません。",
   "settings.agents.toggleWorker": "{worker} を切り替え",
   "settings.agents.installedDir": "インストール先ディレクトリ",

@@ -53,6 +53,8 @@
   "settings.agents.toggleDangerouslySkipPermissions": "Toggle YOLO / Dangerously skip permissions",
   "settings.agents.dangerouslySkipPermissions": "YOLO / Dangerously skip permissions",
   "settings.agents.workerAvailability": "Worker 可用状态",
+  "settings.agents.refreshAvailability": "刷新可用性",
+  "settings.agents.refreshingAvailability": "正在刷新...",
   "settings.agents.unavailableNow": "当前不可用。",
   "settings.agents.toggleWorker": "切换 {worker}",
   "settings.agents.installedDir": "安装目录",

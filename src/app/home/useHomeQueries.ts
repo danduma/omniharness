@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { requestJson } from "@/lib/app-errors";
 import { homeUiSetters } from "./HomeUiStateManager";
@@ -87,6 +87,20 @@ export function useHomeQueries({ currentProjectScope, bootstrapId, initialQuerie
     ),
   });
 
+  const refreshWorkerCatalog = useMutation({
+    mutationFn: async () => requestJson<WorkerCatalogResponse & { diagnostics?: AppErrorDescriptor[] }>(
+      "/api/agents/catalog?refresh=1",
+      undefined,
+      {
+        source: "Agent runtime",
+        action: "Refresh worker availability",
+      },
+    ),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["worker-catalog"], data);
+    },
+  });
+
   const projectFilesQuery = useQuery<ProjectFilesResponse>({
     queryKey: ["project-files", currentProjectScope],
     queryFn: async () => requestJson<ProjectFilesResponse>(
@@ -105,6 +119,7 @@ export function useHomeQueries({ currentProjectScope, bootstrapId, initialQuerie
     sessionQuery,
     settingsQuery,
     workerCatalogQuery,
+    refreshWorkerCatalog,
     projectFilesQuery,
     authEnabled,
     authConfigurationError,

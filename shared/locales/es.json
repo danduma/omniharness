@@ -53,6 +53,8 @@
   "settings.agents.toggleDangerouslySkipPermissions": "Toggle YOLO / Dangerously skip permissions",
   "settings.agents.dangerouslySkipPermissions": "YOLO / Dangerously skip permissions",
   "settings.agents.workerAvailability": "Estado de disponibilidad de workers",
+  "settings.agents.refreshAvailability": "Actualizar disponibilidad",
+  "settings.agents.refreshingAvailability": "Actualizando...",
   "settings.agents.unavailableNow": "No disponible ahora.",
   "settings.agents.toggleWorker": "Alternar {worker}",
   "settings.agents.installedDir": "Directorio instalado",
