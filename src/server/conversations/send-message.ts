@@ -276,6 +276,10 @@ export async function sendConversationMessage({
     throw Object.assign(new Error("Conversation not found"), { status: 404 });
   }
 
+  if (run.mode === "planning" && (run.status === "reviewing_plan" || run.status === "revising_plan")) {
+    throw Object.assign(new Error("Plan review is in progress. Please wait for the review to complete before sending further messages."), { status: 409 });
+  }
+
   if (run.mode === "implementation" && (busyAction === "queue" || busyAction === "steer")) {
     const queuedMessage = await createQueuedConversationMessage({
       runId,

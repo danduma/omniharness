@@ -124,6 +124,43 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(mockAskAgent).toHaveBeenCalledWith(workerId, "Can you revise the plan for direct mode?");
   });
 
+  it("blocks user messages when planning review is in progress", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/planning.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "planning",
+      status: "reviewing_plan",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const req = new NextRequest("http://localhost/api/conversations/run-1/messages", {
+      method: "POST",
+      body: JSON.stringify({ content: "Wait, I want to change something." }),
+    });
+
+    const res = await POST(req, { params: Promise.resolve({ id: runId }) });
+    expect(res.status).toBe(409);
+
+    const body = await res.json();
+    expect(body.error.message).toContain("Plan review is in progress");
+
+    // Verify no message was inserted
+    const msgs = await db.select().from(messages).where(eq(messages.runId, runId));
+    expect(msgs.length).toBe(0);
+  });
+
   it("sends attachment-only follow-ups to a planning worker and persists metadata", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

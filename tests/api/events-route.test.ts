@@ -6,7 +6,7 @@ import os from "os";
 import path from "path";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { executionEvents, messages, plans, recoveryIncidents, runs, supervisorInterventions, workerCounters, workers } from "@/server/db/schema";
+import { executionEvents, messages, planningReviewFindings, planningReviewRounds, planningReviewRuns, plans, recoveryIncidents, runs, supervisorInterventions, workerCounters, workers } from "@/server/db/schema";
 import { buildAgentOutputActivity } from "@/lib/agent-output";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 
@@ -2037,5 +2037,79 @@ summary: Plan is ready.
     expect(persistedWorker?.status).toBe("error");
     expect(persistedWorker?.outputLog).toBe(diagnostic);
     expect(storedMessages.some((message) => message.kind === "error" && message.content.includes(diagnostic))).toBe(true);
+  });
+
+  it("includes planning review records in snapshots", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const reviewRunId = randomUUID();
+    const roundId = randomUUID();
+    const findingId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/reviewable-plan.md",
+      status: "done",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "planning",
+      status: "ready",
+      title: "Reviewable plan",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(planningReviewRuns).values({
+      id: reviewRunId,
+      runId,
+      status: "completed",
+      agentSelection: "auto",
+      roundsRequested: 1,
+      roundsCompleted: 1,
+      startedAt: now,
+      completedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(planningReviewRounds).values({
+      id: roundId,
+      reviewRunId,
+      runId,
+      roundNumber: 1,
+      status: "completed",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(planningReviewFindings).values({
+      id: findingId,
+      reviewRunId,
+      roundId,
+      runId,
+      severity: "major",
+      category: "testing",
+      title: "Missing unit tests",
+      details: "The plan should include unit tests for the new module.",
+      recommendation: "Add unit tests to the plan.",
+      createdAt: now,
+    });
+
+    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    const payload = await response.json();
+
+    expect(payload.reviewRuns).toHaveLength(1);
+    expect(payload.reviewRuns[0].id).toBe(reviewRunId);
+    expect(payload.reviewRounds).toHaveLength(1);
+    expect(payload.reviewRounds[0].id).toBe(roundId);
+    expect(payload.reviewFindings).toHaveLength(1);
+    expect(payload.reviewFindings[0].id).toBe(findingId);
+    expect(payload.reviewFindings[0].title).toBe("Missing unit tests");
   });
 });

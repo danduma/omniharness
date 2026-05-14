@@ -1,3 +1,4 @@
+// Implemented Planning Review Preferences Manager
 import { StateManager } from "@/lib/state-manager";
 import { requestJson } from "@/lib/app-errors";
 import { t } from "@/lib/i18n";

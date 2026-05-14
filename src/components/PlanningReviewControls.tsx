@@ -1,3 +1,4 @@
+// Implemented Planning Review UI
 "use client";
 
 import React from "react";
@@ -36,13 +37,18 @@ export function PlanningReviewControls({
 
   const statusText = React.useMemo(() => {
     if (!latestReviewRun) return null;
+
+    const totalRounds = latestReviewRun.roundsRequested;
+    const currentRoundNumber = latestReviewRound?.roundNumber ?? (latestReviewRun.status === "completed" ? totalRounds : Math.min(latestReviewRun.roundsCompleted + 1, totalRounds));
+    const progress = totalRounds > 1 ? ` (${currentRoundNumber}/${totalRounds})` : "";
+
     if (latestReviewRun.status === "running") {
-      if (latestReviewRound?.status === "reviewing") return t("planning.review.reviewing");
-      if (latestReviewRound?.status === "revising") return t("planning.review.revising");
-      return t("planning.review.starting");
+      if (latestReviewRound?.status === "reviewing") return t("planning.review.reviewing") + progress;
+      if (latestReviewRound?.status === "revising") return t("planning.review.revising") + progress;
+      return t("planning.review.starting") + progress;
     }
     if (latestReviewRun.status === "completed") return t("planning.review.completed");
-    if (latestReviewRun.status === "failed") return t("planning.review.failed");
+    if (latestReviewRun.status === "failed") return t("planning.review.failed") + progress;
     return null;
   }, [latestReviewRun, latestReviewRound]);
 

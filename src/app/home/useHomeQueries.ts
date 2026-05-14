@@ -6,6 +6,7 @@ import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { requestJson } from "@/lib/app-errors";
 import { homeUiSetters } from "./HomeUiStateManager";
 import { settingsDraftManager } from "./SettingsDraftManager";
+import { planningReviewPreferencesManager } from "./PlanningReviewPreferencesManager";
 import type { AuthSessionResponse, ProjectFilesResponse, SettingsResponse, WorkerCatalogResponse } from "./types";
 
 export interface UseHomeQueriesParams {
@@ -64,6 +65,7 @@ export function useHomeQueries({ currentProjectScope, bootstrapId, initialQuerie
         action: "Load saved settings",
       });
       settingsDraftManager.hydrate(data.values || {});
+      planningReviewPreferencesManager.hydrate(data.values || {});
       setApiKeys((prev) => ({ ...prev, ...settingsDraftManager.getSnapshot().draft }));
       setSettingsDiagnostics(data.diagnostics ?? []);
       return data;

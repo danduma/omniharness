@@ -197,7 +197,8 @@ async function orchestratePlanningReview(reviewRunId: string) {
 
         // Update run status back to revising_plan because askAgent might have changed it to working?
         // Actually, askAgent doesn't update the DB. refreshPlanningArtifacts will update it.
-        await refreshPlanningArtifactsForRun({ run, status: "revising_plan" });
+        const latestRun = await db.select().from(runs).where(eq(runs.id, run.id)).get();
+        await refreshPlanningArtifactsForRun({ run: latestRun || run, status: "revising_plan" });
       }
 
       await cancelAgent(reviewerName);
@@ -219,7 +220,8 @@ async function orchestratePlanningReview(reviewRunId: string) {
     }).where(eq(planningReviewRuns.id, reviewRunId));
 
     // Final refresh to return to 'ready'
-    await refreshPlanningArtifactsForRun({ run });
+    const finalRun = await db.select().from(runs).where(eq(runs.id, run.id)).get();
+    await refreshPlanningArtifactsForRun({ run: finalRun || run });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     await db.update(planningReviewRuns).set({

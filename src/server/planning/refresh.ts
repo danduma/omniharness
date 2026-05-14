@@ -53,11 +53,20 @@ export async function refreshPlanningArtifactsForRun(args: {
 
   const artifacts = await collectPlannerArtifacts({ cwd, outputText });
   const lastError = snapshot?.lastError ?? (isAgentBusyError(args.run.lastError) ? null : args.run.lastError);
-  const nextStatus = args.status ?? derivePlanningStatus({
-    workerState: snapshot?.state ?? worker?.status,
-    lastError,
-    artifacts,
-  });
+
+  let nextStatus = args.status;
+  if (!nextStatus) {
+    if (args.run.status === "reviewing_plan" || args.run.status === "revising_plan") {
+      nextStatus = args.run.status as PlanningConversationStatus;
+    } else {
+      nextStatus = derivePlanningStatus({
+        workerState: snapshot?.state ?? worker?.status,
+        lastError,
+        artifacts,
+      });
+    }
+  }
+
   const now = new Date();
 
   await db.update(runs).set({
