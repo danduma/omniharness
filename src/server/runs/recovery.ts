@@ -23,7 +23,7 @@ import { createRunId } from "@/server/runs/ids";
 import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { getAppDataPath } from "@/server/app-root";
-import { PLANNER_SYSTEM_PROMPT } from "@/server/prompts";
+import { buildPlannerSystemPrompt } from "@/server/prompts";
 import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/supervisor/worker-types";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
@@ -128,9 +128,9 @@ async function clearRunDerivedState(runId: string, planId: string) {
   await db.delete(planItems).where(eq(planItems.planId, planId));
 }
 
-function buildDirectWorkerPrompt(mode: string, content: string) {
+function buildDirectWorkerPrompt(mode: string, content: string, projectRoot: string) {
   if (mode === "planning") {
-    return `${PLANNER_SYSTEM_PROMPT}\n\nUser request:\n${content}`;
+    return `${buildPlannerSystemPrompt(projectRoot)}\n\nUser request:\n${content}`;
   }
 
   return content;
@@ -196,7 +196,7 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string) 
     model: run.preferredWorkerModel?.trim() || undefined,
     effort: run.preferredWorkerEffort?.trim().toLowerCase() || undefined,
   });
-  const response = await askAgent(workerId, buildDirectWorkerPrompt(run.mode, content));
+  const response = await askAgent(workerId, buildDirectWorkerPrompt(run.mode, content, cwd));
   let snapshot: AgentRecord | null = null;
   try {
     snapshot = await getAgent(workerId);
@@ -323,7 +323,7 @@ async function resumeDirectRunFromSavedSession(
     updatedAt: resumedAt,
   }).where(eq(runs.id, run.id));
 
-  const response = await askAgent(worker.id, buildDirectWorkerPrompt(run.mode, content));
+  const response = await askAgent(worker.id, buildDirectWorkerPrompt(run.mode, content, worker.cwd));
   let snapshot: AgentRecord | null = null;
   try {
     snapshot = await getAgent(worker.id);

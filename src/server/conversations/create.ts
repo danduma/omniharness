@@ -9,7 +9,7 @@ import { askAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridg
 import { queueConversationTitleGeneration } from "@/server/conversation-title";
 import { normalizeConversationMode, type ConversationMode } from "./modes";
 import { normalizeWorkerType, parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
-import { PLANNER_SYSTEM_PROMPT } from "@/server/prompts";
+import { buildPlannerSystemPrompt } from "@/server/prompts";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { createRunId } from "@/server/runs/ids";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
@@ -33,9 +33,9 @@ import { setProjectGitWorkspaceDefaultTarget } from "@/server/projects/config";
 import { pendingOrphanWorktreeError } from "@/server/git/orphan-recovery";
 
 
-function buildInitialWorkerPrompt(mode: ConversationMode, command: string) {
+function buildInitialWorkerPrompt(mode: ConversationMode, command: string, projectRoot: string) {
   if (mode === "planning") {
-    return `${PLANNER_SYSTEM_PROMPT}\n\nUser request:\n${command}`;
+    return `${buildPlannerSystemPrompt(projectRoot)}\n\nUser request:\n${command}`;
   }
 
   return command;
@@ -248,7 +248,7 @@ async function runInitialWorkerTurn(args: {
     }
     notifyEventStreamSubscribers();
 
-    const response = await askAgent(args.workerId, buildInitialWorkerPrompt(args.mode, args.command));
+    const response = await askAgent(args.workerId, buildInitialWorkerPrompt(args.mode, args.command, args.cwd));
     let snapshot: AgentRecord | null = null;
     try {
       snapshot = await getAgent(args.workerId);

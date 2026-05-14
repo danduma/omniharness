@@ -3,6 +3,7 @@ import {
   CONVERSATION_TITLE_SYSTEM_PROMPT,
   PLANNER_SYSTEM_PROMPT,
   SUPERVISOR_SYSTEM_PROMPT,
+  buildPlannerSystemPrompt,
 } from "@/server/prompts";
 
 describe("prompt markdown loading", () => {
@@ -19,7 +20,14 @@ describe("prompt markdown loading", () => {
   it("loads the planner prompt from markdown", () => {
     expect(PLANNER_SYSTEM_PROMPT).toContain("<omniharness-plan-handoff>");
     expect(PLANNER_SYSTEM_PROMPT).toContain("Do not start implementation");
-    expect(PLANNER_SYSTEM_PROMPT).toContain("relative to the current cwd");
+    expect(PLANNER_SYSTEM_PROMPT).toContain("absolute paths under that project root");
+    expect(PLANNER_SYSTEM_PROMPT).toContain("{{project_root}}");
+  });
+
+  it("substitutes the project root into the planner prompt", () => {
+    const rendered = buildPlannerSystemPrompt("/tmp/example-project");
+    expect(rendered).toContain("/tmp/example-project/docs/superpowers/plans/");
+    expect(rendered).not.toContain("{{project_root}}");
     expect(PLANNER_SYSTEM_PROMPT).toContain("high-level objective");
     expect(PLANNER_SYSTEM_PROMPT).toContain("before writing final artifacts whenever the request is underspecified");
     expect(PLANNER_SYSTEM_PROMPT).toContain("Skip questions only when the request is already concrete enough");
