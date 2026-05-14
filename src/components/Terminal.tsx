@@ -1444,7 +1444,7 @@ export function Terminal({
       "relative w-full",
       textSizeScope === "conversation" && "omni-conversation-text-scale",
       variant === "native"
-        ? "bg-transparent text-foreground"
+        ? "flex flex-col bg-transparent text-foreground"
         : "h-full overflow-hidden rounded-[1.05rem] border border-border/70 bg-card text-foreground shadow-sm dark:border-transparent dark:bg-[#0b0d10] dark:text-zinc-100 dark:shadow-none",
       className,
     )}
@@ -1466,7 +1466,7 @@ export function Terminal({
         }}
         className={cn(
           variant === "native"
-            ? "overflow-visible px-1 py-2"
+            ? "flex flex-1 flex-col overflow-visible px-1 py-2"
             : "h-full overflow-y-auto px-3 pb-2.5 pt-9 [scrollbar-color:rgba(113,113,122,0.28)_transparent] [scrollbar-width:thin] dark:[scrollbar-color:rgba(255,255,255,0.16)_transparent]",
         )}
       >
@@ -1501,7 +1501,7 @@ export function Terminal({
           <>{emptyState}</>
         ) : (
           <div className={cn(
-            "flex h-full min-h-full items-center justify-center rounded-xl border border-dashed px-4 text-center text-sm",
+            "flex h-full min-h-full flex-1 items-center justify-center rounded-xl border border-dashed px-4 text-center text-sm",
             variant === "native"
               ? "border-border bg-muted/20 text-muted-foreground"
               : "border-border/70 bg-muted/25 text-muted-foreground dark:border-white/10 dark:bg-black/10 dark:text-zinc-500",
