@@ -4,7 +4,7 @@ import { BRIDGE_URL } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
 import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
-import { getWorkerAuthenticationInfo, getWorkerInstallationInfo, isSpawnableWorkerType } from "@/server/supervisor/worker-availability";
+import { getWorkerAuthenticationInfo, getWorkerInstallationInfo, getWorkerTokenQuotaInfo, isSpawnableWorkerType } from "@/server/supervisor/worker-availability";
 import { SUPPORTED_WORKER_TYPES, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
 import { buildAppError, errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
@@ -127,7 +127,11 @@ export async function GET(req: NextRequest) {
 
     const results = doctorSnapshot.results;
     const byType = new Map(results.map((result) => [result.type, result]));
-    const { decryptionFailures } = hydrateRuntimeEnvFromSettings(allSettings);
+    const { env: runtimeSettingsEnv, decryptionFailures } = hydrateRuntimeEnvFromSettings(allSettings);
+    const workerDetectionEnv = {
+      ...process.env,
+      ...runtimeSettingsEnv,
+    };
 
     return NextResponse.json({
       diagnostics: [
@@ -143,16 +147,17 @@ export async function GET(req: NextRequest) {
       workerModels: workerModelSnapshot.catalog,
       workerModelsRefreshing: workerModelSnapshot.refreshing,
       workers: SUPPORTED_WORKER_TYPES.map((type) => {
-        const installation = getWorkerInstallationInfo(type);
-        const authentication = getWorkerAuthenticationInfo(type);
+        const installation = getWorkerInstallationInfo(type, { env: workerDetectionEnv });
+        const authentication = getWorkerAuthenticationInfo(type, { env: workerDetectionEnv });
         return {
           type,
           label: WORKER_TYPE_LABELS[type],
           installation,
           authentication,
+          tokenQuota: getWorkerTokenQuotaInfo(type, { env: workerDetectionEnv }),
           availability: (() => {
             const doctorAvailability = byType.get(type);
-            const localAvailability = isSpawnableWorkerType(type);
+            const localAvailability = isSpawnableWorkerType(type, { env: workerDetectionEnv });
 
             if (localAvailability.ok) {
               if (authentication.status === "not_authenticated") {

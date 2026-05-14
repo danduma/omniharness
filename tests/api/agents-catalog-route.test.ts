@@ -3,16 +3,18 @@ import { NextRequest } from "next/server";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
 
-const { mockGetCatalogSnapshot, mockGetWorkerAuthenticationInfo, mockGetWorkerInstallationInfo, mockIsSpawnableWorkerType } = vi.hoisted(() => ({
+const { mockGetCatalogSnapshot, mockGetWorkerAuthenticationInfo, mockGetWorkerInstallationInfo, mockGetWorkerTokenQuotaInfo, mockIsSpawnableWorkerType } = vi.hoisted(() => ({
   mockGetCatalogSnapshot: vi.fn(),
   mockGetWorkerAuthenticationInfo: vi.fn(),
   mockGetWorkerInstallationInfo: vi.fn(),
+  mockGetWorkerTokenQuotaInfo: vi.fn(),
   mockIsSpawnableWorkerType: vi.fn(),
 }));
 
 vi.mock("@/server/supervisor/worker-availability", () => ({
   getWorkerAuthenticationInfo: mockGetWorkerAuthenticationInfo,
   getWorkerInstallationInfo: mockGetWorkerInstallationInfo,
+  getWorkerTokenQuotaInfo: mockGetWorkerTokenQuotaInfo,
   isSpawnableWorkerType: mockIsSpawnableWorkerType,
 }));
 
@@ -59,6 +61,16 @@ describe("GET /api/agents/catalog", () => {
       path: `/opt/omni/bin/${type}`,
       dir: "/opt/omni/bin",
     }));
+    mockGetWorkerTokenQuotaInfo.mockReset();
+    mockGetWorkerTokenQuotaInfo.mockReturnValue({
+      status: "unknown",
+      source: "test",
+      message: "Quota unavailable.",
+      remainingTokens: null,
+      monthlyLimitTokens: null,
+      usedTokens: null,
+      resetAt: null,
+    });
     return db.delete(settings);
   });
 

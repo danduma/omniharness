@@ -92,13 +92,8 @@ export function useHomeViewModel({
   }, [availableWorkerTypes, configuredAllowedWorkerTypes, selectedRun, selectedRunAllowedWorkerTypes]);
 
   const autoSelectedWorkerType = useMemo(() => {
-    const normalizedDefaultWorkerType = parseWorkerType(apiKeys.WORKER_DEFAULT_TYPE);
-    if (normalizedDefaultWorkerType && activeAllowedWorkerTypes.includes(normalizedDefaultWorkerType)) {
-      return normalizedDefaultWorkerType;
-    }
-
     return activeAllowedWorkerTypes[0] ?? null;
-  }, [activeAllowedWorkerTypes, apiKeys.WORKER_DEFAULT_TYPE]);
+  }, [activeAllowedWorkerTypes]);
 
   const shouldOfferAutoWorkerOption = activeComposerMode !== "direct";
 

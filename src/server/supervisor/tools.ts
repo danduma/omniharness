@@ -86,10 +86,11 @@ export function buildSupervisorTools(options?: {
     worker_spawn: createTool({
       id: "worker_spawn",
       description:
-        `Spawn a new external coding worker. Prefer one main worker unless a distinct independent validator or sidecar is necessary. ` +
+        `Spawn a new external coding worker. Use multiple workers when the work can be split into independent, non-overlapping tasks that can safely run in parallel. ` +
+        `Use one main worker when the next step is tightly coupled or would create duplicate/conflicting edits. ` +
         `Use independent validator workers to check mocked paths, fake controls, placeholder implementations, and whether the real user-facing path works. ` +
         `Only use these worker types for this run: ${allowedWorkerTypes.join(", ")}.` +
-        (preferredWorkerType ? ` Prefer ${preferredWorkerType} when it is suitable.` : ""),
+        (preferredWorkerType ? ` Prefer ${preferredWorkerType} first when it is suitable, then follow the allowed worker order for fallbacks.` : ""),
       inputSchema: z.object({
         type: z.string().describe(`External harness type. Valid values for this run: ${allowedWorkerTypes.join(", ")}.`),
         cwd: z.string().describe("Working directory for the worker. Relative paths resolve under the run project directory."),

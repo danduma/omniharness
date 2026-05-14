@@ -214,6 +214,15 @@ export type WorkerAuthentication = {
   message: string;
   setupCommand: string | null;
 };
+export type WorkerTokenQuota = {
+  status: "reported" | "usage_only" | "unavailable" | "unknown";
+  source: string;
+  message: string;
+  remainingTokens: number | null;
+  monthlyLimitTokens: number | null;
+  usedTokens: number | null;
+  resetAt: string | null;
+};
 export type WorkerAvailability = {
   type: WorkerType;
   label: string;
@@ -230,6 +239,7 @@ export type WorkerAvailability = {
     message?: string;
   };
   authentication?: WorkerAuthentication;
+  tokenQuota?: WorkerTokenQuota;
 };
 export type WorkerModelOption = { value: string; label: string };
 export type WorkerModelCatalog = Record<WorkerType, WorkerModelOption[]>;

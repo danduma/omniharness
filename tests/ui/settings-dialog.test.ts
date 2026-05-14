@@ -84,6 +84,11 @@ test("models, agents, and runtime panels preserve server-backed settings", () =>
   expect(settingsSource).toContain("SUPERVISOR_FALLBACK_LLM_API_KEY");
   expect(settingsSource).toContain("/api/llm-models");
   expect(settingsSource).toContain('t("settings.agents.workerAvailability")');
+  expect(settingsSource).toContain('t("settings.agents.autoPriority")');
+  expect(settingsSource).toContain('t("settings.agents.autoPriorityHelp")');
+  expect(settingsSource).toContain('t("settings.agents.moveWorkerUp"');
+  expect(settingsSource).toContain('t("settings.agents.moveWorkerDown"');
+  expect(settingsSource).toContain('t("settings.agents.monthlyTokens")');
   expect(settingsSource).toContain('t("settings.agents.defaultWorker")');
   expect(settingsSource).toContain('t("settings.agents.dangerouslySkipPermissions")');
   expect(settingsSource).toContain('t("settings.agents.toggleDangerouslySkipPermissions")');

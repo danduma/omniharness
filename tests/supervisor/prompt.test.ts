@@ -37,10 +37,10 @@ describe("SUPERVISOR_SYSTEM_PROMPT", () => {
   });
 
   it("forbids duplicate main implementers unless work is explicitly separated", () => {
-    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Single-worker allocation");
-    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Do not spawn two main implementation workers for the same plan");
-    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("part A");
-    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("part B");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Worker allocation");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Do not spawn two workers for the same files");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("independent, non-overlapping slices");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("explicit ownership");
   });
 
   it("requires preflight intent confirmation before starting workers", () => {

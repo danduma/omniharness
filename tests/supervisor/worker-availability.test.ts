@@ -47,6 +47,23 @@ describe("selectSpawnableWorkerType", () => {
     });
   });
 
+  it("uses the configured allowed-worker order when choosing a fallback", async () => {
+    mockExecFileSync.mockImplementation((command: string, args: string[]) => {
+      if (args[0] === "opencode" || args[0] === "gemini") {
+        return Buffer.from(`/usr/local/bin/${args[0]}\n`);
+      }
+      throw new Error("not found");
+    });
+
+    const { selectSpawnableWorkerType } = await import("@/server/supervisor/worker-availability");
+
+    expect(selectSpawnableWorkerType("codex", {}, ["opencode", "gemini", "codex"])).toEqual({
+      type: "opencode",
+      requestedType: "codex",
+      fallbackReason: "codex ACP adapter is not installed.",
+    });
+  });
+
   it("accepts codex when the ACP adapter is available even without OPENAI_API_KEY", async () => {
     mockExecFileSync.mockImplementation((command: string, args: string[]) => {
       if (args[0] === "codex-acp") {
@@ -121,6 +138,28 @@ describe("selectSpawnableWorkerType", () => {
     });
   });
 
+  it("detects installed workers from the managed runtime PATH", async () => {
+    mockExecFileSync.mockImplementation((command: string, args: string[], options: { env?: Record<string, string> } = {}) => {
+      if (command === "which" && args[0] === "opencode" && options.env?.PATH?.includes("/Users/tester/.opencode/bin")) {
+        return Buffer.from("/Users/tester/.opencode/bin/opencode\n");
+      }
+      throw new Error("not found");
+    });
+
+    const { getWorkerInstallationInfo, isSpawnableWorkerType } = await import("@/server/supervisor/worker-availability");
+    const env = { HOME: "/Users/tester", PATH: "/usr/bin:/bin" };
+
+    expect(getWorkerInstallationInfo("opencode", { env })).toEqual({
+      command: "opencode",
+      path: "/Users/tester/.opencode/bin/opencode",
+      dir: "/Users/tester/.opencode/bin",
+    });
+    expect(isSpawnableWorkerType("opencode", { env })).toEqual({
+      ok: true,
+      type: "opencode",
+    });
+  });
+
   it("throws an actionable error when nothing spawnable is available", async () => {
     mockExecFileSync.mockImplementation(() => {
       throw new Error("not found");
@@ -160,6 +199,27 @@ describe("selectSpawnableWorkerType", () => {
     })).toMatchObject({
       status: "authenticated",
       method: "session_file",
+    });
+  });
+
+  it("parses reported monthly token quota text when a CLI exposes it", async () => {
+    const { parseWorkerTokenQuotaOutput } = await import("@/server/supervisor/worker-availability");
+
+    expect(parseWorkerTokenQuotaOutput("Monthly tokens remaining: 1,234,567 of 2,000,000", "test cli")).toMatchObject({
+      status: "reported",
+      remainingTokens: 1234567,
+      monthlyLimitTokens: 2000000,
+      source: "test cli",
+    });
+  });
+
+  it("reports usage-only token stats when remaining quota is not exposed", async () => {
+    const { parseWorkerTokenQuotaOutput } = await import("@/server/supervisor/worker-availability");
+
+    expect(parseWorkerTokenQuotaOutput("Input 100\nOutput 250\nCache Read 50\nCache Write 25", "opencode stats")).toMatchObject({
+      status: "usage_only",
+      usedTokens: 425,
+      source: "opencode stats",
     });
   });
 });

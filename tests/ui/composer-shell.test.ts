@@ -63,7 +63,7 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
 test("composer supports auto agent selection while pinning explicit agent choices", () => {
   expect(pageSource).toContain('const isAutoWorkerSelection = selectedCliAgent === "auto"');
   expect(pageSource).toContain("const autoSelectedWorkerType = useMemo(() => {");
-  expect(pageSource).toContain('const normalizedDefaultWorkerType = parseWorkerType(apiKeys.WORKER_DEFAULT_TYPE)');
+  expect(pageSource).toContain("return activeAllowedWorkerTypes[0] ?? null;");
   expect(pageSource).toContain("preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent");
   expect(pageSource).toContain("const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel)");
   expect(pageSource).toContain("preferredWorkerModel: resolvedSelectedModel");

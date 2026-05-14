@@ -2,12 +2,11 @@ import { execFileSync } from "child_process";
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
+import { withManagedPath } from "@/server/agent-runtime/tool-env";
 import { SUPPORTED_WORKER_TYPES, type SupportedWorkerType, normalizeWorkerType } from "./worker-types";
 
 type EnvLike = Record<string, string | undefined>;
 type CommandRunner = typeof execFileSync;
-
-const FALLBACK_ORDER: SupportedWorkerType[] = ["codex", "claude", "gemini", "opencode"];
 
 const WORKER_BINARY_COMMANDS: Record<SupportedWorkerType, string> = {
   codex: "codex-acp",
@@ -24,6 +23,16 @@ export type WorkerAuthenticationInfo = {
   message: string;
   setupCommand: string | null;
 };
+export type WorkerTokenQuotaStatus = "reported" | "usage_only" | "unavailable" | "unknown";
+export type WorkerTokenQuotaInfo = {
+  status: WorkerTokenQuotaStatus;
+  source: string;
+  message: string;
+  remainingTokens: number | null;
+  monthlyLimitTokens: number | null;
+  usedTokens: number | null;
+  resetAt: string | null;
+};
 
 type WorkerAuthenticationDetectionOptions = {
   env?: EnvLike;
@@ -32,10 +41,15 @@ type WorkerAuthenticationDetectionOptions = {
   commandRunner?: CommandRunner;
 };
 
-function resolveCommandPath(command: string) {
+type WorkerDetectionOptions = {
+  env?: EnvLike;
+};
+
+function resolveCommandPath(command: string, env: EnvLike = process.env) {
   try {
     return String(execFileSync("which", [command], {
       encoding: "utf8",
+      env: withManagedPath(env) as NodeJS.ProcessEnv,
       timeout: 1_500,
       maxBuffer: 64 * 1024,
     })).trim() || null;
@@ -44,8 +58,8 @@ function resolveCommandPath(command: string) {
   }
 }
 
-function workerBinaryAvailable(type: SupportedWorkerType) {
-  return resolveCommandPath(WORKER_BINARY_COMMANDS[type]) !== null;
+function workerBinaryAvailable(type: SupportedWorkerType, env: EnvLike = process.env) {
+  return resolveCommandPath(WORKER_BINARY_COMMANDS[type], env) !== null;
 }
 
 function workerHasApiKey(type: SupportedWorkerType) {
@@ -92,6 +106,152 @@ function runAuthStatusCommand(commandRunner: CommandRunner, command: string, arg
   } catch {
     return null;
   }
+}
+
+function parseTokenCount(value: string | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.replace(/,/g, "").trim();
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function firstNumberAfter(pattern: RegExp, output: string) {
+  const match = output.match(pattern);
+  return parseTokenCount(match?.[1]);
+}
+
+function sumNamedTokenRows(output: string) {
+  const rowNames = ["Input", "Output", "Cache Read", "Cache Write"];
+  let total = 0;
+  let found = false;
+
+  for (const name of rowNames) {
+    const escapedName = name.replace(/\s+/g, "\\s+");
+    const value = firstNumberAfter(new RegExp(`^\\s*${escapedName}\\s+([\\d,]+)\\s*$`, "im"), output);
+    if (value !== null) {
+      total += value;
+      found = true;
+    }
+  }
+
+  return found ? total : null;
+}
+
+export function parseWorkerTokenQuotaOutput(output: string | null | undefined, source: string): WorkerTokenQuotaInfo {
+  const text = output?.replace(/\u001b\[[0-9;]*m/g, "").trim() ?? "";
+  const remainingTokens =
+    firstNumberAfter(/\b(?:remaining|left|available)\b[^\d]{0,60}([\d,]+)\s*(?:tokens?)?/i, text)
+    ?? firstNumberAfter(/([\d,]+)\s*(?:tokens?)?\s*(?:remaining|left|available)\b/i, text);
+  const monthlyLimitTokens =
+    firstNumberAfter(/\b(?:of|out of|limit|monthly limit)\b[^\d]{0,40}([\d,]+)\s*(?:tokens?)?/i, text)
+    ?? firstNumberAfter(/\bmonthly\b[^\n\d]{0,80}([\d,]+)\s*(?:tokens?)?\s*(?:limit|quota)/i, text);
+  const resetMatch = text.match(/\b(?:reset|resets|renews)\b[^\n]{0,40}\b(\d{4}-\d{2}-\d{2}(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?)\b/i);
+  const usedTokens =
+    firstNumberAfter(/\b(?:used|usage|consumed)\b[^\d]{0,60}([\d,]+)\s*(?:tokens?)?/i, text)
+    ?? sumNamedTokenRows(text);
+
+  if (remainingTokens !== null) {
+    return {
+      status: "reported",
+      source,
+      message: "Monthly token quota reported by CLI.",
+      remainingTokens,
+      monthlyLimitTokens,
+      usedTokens,
+      resetAt: resetMatch?.[1] ?? null,
+    };
+  }
+
+  if (usedTokens !== null) {
+    return {
+      status: "usage_only",
+      source,
+      message: "CLI reports token usage, but not remaining monthly quota.",
+      remainingTokens: null,
+      monthlyLimitTokens,
+      usedTokens,
+      resetAt: resetMatch?.[1] ?? null,
+    };
+  }
+
+  return {
+    status: "unknown",
+    source,
+    message: text ? "CLI output did not include monthly token quota." : "Monthly token quota is not reported by this CLI.",
+    remainingTokens: null,
+    monthlyLimitTokens: null,
+    usedTokens: null,
+    resetAt: null,
+  };
+}
+
+function runQuotaCommand(commandRunner: CommandRunner, command: string, args: string[], env: EnvLike) {
+  try {
+    return String(commandRunner(command, args, {
+      encoding: "utf8",
+      env: withManagedPath(env) as NodeJS.ProcessEnv,
+      timeout: 2_500,
+      maxBuffer: 256 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    }));
+  } catch {
+    return null;
+  }
+}
+
+export function getWorkerTokenQuotaInfo(type: string, options: { commandRunner?: CommandRunner; env?: EnvLike } = {}): WorkerTokenQuotaInfo {
+  const normalized = normalizeWorkerType(type);
+  const supportedType = SUPPORTED_WORKER_TYPES.includes(normalized as SupportedWorkerType)
+    ? normalized as SupportedWorkerType
+    : null;
+  const commandRunner = options.commandRunner ?? execFileSync;
+  const env = options.env ?? process.env;
+
+  if (!supportedType) {
+    return {
+      status: "unavailable",
+      source: "unsupported worker",
+      message: `Unsupported worker type "${type}".`,
+      remainingTokens: null,
+      monthlyLimitTokens: null,
+      usedTokens: null,
+      resetAt: null,
+    };
+  }
+
+  if (supportedType === "opencode") {
+    return parseWorkerTokenQuotaOutput(
+      runQuotaCommand(commandRunner, "opencode", ["stats", "--days", "31"], env),
+      "opencode stats --days 31",
+    );
+  }
+
+  if (supportedType === "claude") {
+    return parseWorkerTokenQuotaOutput(
+      runQuotaCommand(commandRunner, "claude", ["auth", "status"], env),
+      "claude auth status",
+    );
+  }
+
+  if (supportedType === "codex") {
+    return parseWorkerTokenQuotaOutput(
+      runQuotaCommand(commandRunner, "codex", ["login", "status"], env),
+      "codex login status",
+    );
+  }
+
+  return {
+    status: "unknown",
+    source: `${supportedType} CLI`,
+    message: "Monthly token quota is not reported by this CLI.",
+    remainingTokens: null,
+    monthlyLimitTokens: null,
+    usedTokens: null,
+    resetAt: null,
+  };
 }
 
 function parseClaudeAuthStatus(output: string | null) {
@@ -259,7 +419,7 @@ export function getWorkerAuthenticationInfo(type: string, options: WorkerAuthent
   };
 }
 
-export function isSpawnableWorkerType(type: string) {
+export function isSpawnableWorkerType(type: string, options: WorkerDetectionOptions = {}) {
   const normalized = normalizeWorkerType(type);
   if (!SUPPORTED_WORKER_TYPES.includes(normalized as SupportedWorkerType)) {
     return {
@@ -270,8 +430,9 @@ export function isSpawnableWorkerType(type: string) {
   }
 
   const supportedType = normalized as SupportedWorkerType;
+  const env = options.env ?? process.env;
 
-  if (!workerBinaryAvailable(supportedType)) {
+  if (!workerBinaryAvailable(supportedType, env)) {
     const reason =
       supportedType === "codex"
         ? "codex ACP adapter is not installed."
@@ -297,13 +458,13 @@ export function isSpawnableWorkerType(type: string) {
   };
 }
 
-export function getWorkerInstallationInfo(type: string) {
+export function getWorkerInstallationInfo(type: string, options: WorkerDetectionOptions = {}) {
   const normalized = normalizeWorkerType(type);
   const supportedType = SUPPORTED_WORKER_TYPES.includes(normalized as SupportedWorkerType)
     ? normalized as SupportedWorkerType
     : null;
   const command = supportedType ? WORKER_BINARY_COMMANDS[supportedType] : normalized;
-  const path = resolveCommandPath(command);
+  const path = resolveCommandPath(command, options.env ?? process.env);
 
   return {
     command,
@@ -323,7 +484,7 @@ export function selectSpawnableWorkerType(requestedType: string, env: EnvLike, a
     if (!firstAllowed) {
       throw new Error("No allowed worker types are configured for this run.");
     }
-    const availability = isSpawnableWorkerType(firstAllowed);
+    const availability = isSpawnableWorkerType(firstAllowed, { env });
     if (availability.ok) {
       return {
         type: availability.type,
@@ -333,7 +494,7 @@ export function selectSpawnableWorkerType(requestedType: string, env: EnvLike, a
     }
   }
 
-  const requested = isSpawnableWorkerType(normalizedRequestedType);
+  const requested = isSpawnableWorkerType(normalizedRequestedType, { env });
   if (requested.ok && normalizedAllowedTypes.includes(requested.type)) {
     return {
       type: requested.type,
@@ -342,11 +503,11 @@ export function selectSpawnableWorkerType(requestedType: string, env: EnvLike, a
     };
   }
 
-  for (const candidate of FALLBACK_ORDER) {
+  for (const candidate of normalizedAllowedTypes) {
     if (candidate === normalizedRequestedType || !normalizedAllowedTypes.includes(candidate)) {
       continue;
     }
-    const availability = isSpawnableWorkerType(candidate);
+    const availability = isSpawnableWorkerType(candidate, { env });
     if (availability.ok) {
       return {
         type: availability.type,

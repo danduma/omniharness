@@ -1,9 +1,11 @@
+import { ArrowDown, ArrowUp } from "lucide-react";
 import { WORKER_OPTIONS } from "@/app/home/constants";
 import type { WorkerAvailability, WorkerModelCatalog, WorkerType } from "@/app/home/types";
 import { buildInlineError, parseBooleanSetting, parseWorkerType, parseWorkerTypes } from "@/app/home/utils";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { cn } from "@/lib/utils";
 import { ErrorNotice } from "@/components/home/ErrorNotice";
+import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { t, useI18nSnapshot } from "@/lib/i18n";
@@ -39,6 +41,16 @@ export function AgentsSettingsPanel({
   const defaultWorkerOptions = WORKER_OPTIONS
     .filter((option) => configuredAllowedWorkerSet.has(option.value))
     .map((option) => ({ value: option.value, label: option.label }));
+  const orderedWorkers = [
+    ...configuredAllowedWorkerTypes.flatMap((type) => settingsWorkers.find((worker) => worker.type === type) ?? []),
+    ...settingsWorkers.filter((worker) => !configuredAllowedWorkerSet.has(worker.type)),
+  ];
+
+  const persistAllowedWorkerOrder = (nextAllowed: WorkerType[]) => {
+    setSetting("WORKER_ALLOWED_TYPES", JSON.stringify(nextAllowed));
+    setSetting("WORKER_DEFAULT_TYPE", nextAllowed[0] ?? "codex");
+  };
+
   const toggleAllowedWorker = (workerType: WorkerType, checked: boolean) => {
     const nextAllowed = checked
       ? Array.from(new Set([...configuredAllowedWorkerTypes, workerType]))
@@ -48,10 +60,58 @@ export function AgentsSettingsPanel({
       return;
     }
 
-    setSetting("WORKER_ALLOWED_TYPES", JSON.stringify(nextAllowed));
-    if (!nextAllowed.includes(defaultWorkerType)) {
-      setSetting("WORKER_DEFAULT_TYPE", nextAllowed[0]);
+    persistAllowedWorkerOrder(nextAllowed);
+  };
+
+  const moveAllowedWorker = (workerType: WorkerType, direction: -1 | 1) => {
+    const currentIndex = configuredAllowedWorkerTypes.indexOf(workerType);
+    const nextIndex = currentIndex + direction;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= configuredAllowedWorkerTypes.length) {
+      return;
     }
+
+    const nextAllowed = [...configuredAllowedWorkerTypes];
+    [nextAllowed[currentIndex], nextAllowed[nextIndex]] = [nextAllowed[nextIndex], nextAllowed[currentIndex]];
+    persistAllowedWorkerOrder(nextAllowed);
+  };
+
+  const setDefaultWorkerType = (workerType: string) => {
+    const parsedWorkerType = parseWorkerType(workerType);
+    if (!parsedWorkerType || !configuredAllowedWorkerSet.has(parsedWorkerType)) {
+      return;
+    }
+
+    persistAllowedWorkerOrder([
+      parsedWorkerType,
+      ...configuredAllowedWorkerTypes.filter((type) => type !== parsedWorkerType),
+    ]);
+  };
+
+  const formatTokenCount = (value: number | null | undefined) => (
+    typeof value === "number" && Number.isFinite(value) ? new Intl.NumberFormat().format(value) : null
+  );
+
+  const formatTokenQuota = (worker: WorkerAvailability) => {
+    const quota = worker.tokenQuota;
+    if (!quota) {
+      return t("settings.agents.monthlyTokensUnknown");
+    }
+
+    const remaining = formatTokenCount(quota.remainingTokens);
+    const limit = formatTokenCount(quota.monthlyLimitTokens);
+    const used = formatTokenCount(quota.usedTokens);
+
+    if (quota.status === "reported" && remaining) {
+      return limit
+        ? t("settings.agents.monthlyTokensRemainingOf", { remaining, limit })
+        : t("settings.agents.monthlyTokensRemaining", { remaining });
+    }
+
+    if (quota.status === "usage_only" && used) {
+      return t("settings.agents.monthlyTokensUsageOnly", { used });
+    }
+
+    return t("settings.agents.monthlyTokensUnknown");
   };
 
   return (
@@ -65,7 +125,7 @@ export function AgentsSettingsPanel({
           className="flex-1"
           value={defaultWorkerType}
           options={defaultWorkerOptions}
-          onValueChange={(value) => setSetting("WORKER_DEFAULT_TYPE", value)}
+          onValueChange={setDefaultWorkerType}
         />
       </div>
 
@@ -95,10 +155,19 @@ export function AgentsSettingsPanel({
       </div>
 
       <div className="space-y-2">
-        <div className="text-xs font-semibold text-muted-foreground">{t("settings.agents.workerAvailability")}</div>
-        {settingsWorkers.map((worker) => {
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <div className="text-xs font-semibold text-muted-foreground">{t("settings.agents.workerAvailability")}</div>
+            <div className="text-xs font-medium text-foreground">{t("settings.agents.autoPriority")}</div>
+          </div>
+          <p className="text-xs text-muted-foreground">{t("settings.agents.autoPriorityHelp")}</p>
+        </div>
+        {orderedWorkers.map((worker) => {
           const isAvailable = worker.availability.status === "ok";
           const isChecked = configuredAllowedWorkerSet.has(worker.type);
+          const priorityIndex = configuredAllowedWorkerTypes.indexOf(worker.type);
+          const canMoveUp = isChecked && priorityIndex > 0;
+          const canMoveDown = isChecked && priorityIndex >= 0 && priorityIndex < configuredAllowedWorkerTypes.length - 1;
           const modelOptions = workerModels?.[worker.type] ?? [];
           const availabilityMessage = isAvailable ? null : getWorkerAvailabilityMessage(worker);
           const availabilityTone =
@@ -127,6 +196,11 @@ export function AgentsSettingsPanel({
                 <div className="min-w-0 space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-medium break-words">{worker.label}</span>
+                    {isChecked ? (
+                      <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">
+                        {t("settings.agents.priorityRank", { rank: String(priorityIndex + 1) })}
+                      </span>
+                    ) : null}
                     <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em]", availabilityTone)}>
                       {worker.availability.status}
                     </span>
@@ -140,6 +214,10 @@ export function AgentsSettingsPanel({
                     <dt className="whitespace-nowrap font-medium text-foreground/70">{t("settings.agents.installedDir")}</dt>
                     <dd className="min-w-0 truncate" title={worker.installation?.path ?? undefined}>
                       {worker.installation?.dir ?? (worker.availability.binary ? t("common.unknown") : t("settings.agents.notInstalled"))}
+                    </dd>
+                    <dt className="whitespace-nowrap font-medium text-foreground/70">{t("settings.agents.monthlyTokens")}</dt>
+                    <dd className="min-w-0 truncate" title={worker.tokenQuota?.source}>
+                      {formatTokenQuota(worker)}
                     </dd>
                     <dt className="whitespace-nowrap font-medium text-foreground/70">{t("settings.tabs.models")}</dt>
                     <dd className="min-w-0">
@@ -157,6 +235,28 @@ export function AgentsSettingsPanel({
                     </dd>
                   </dl>
                 </div>
+              </div>
+              <div className="flex shrink-0 flex-col gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t("settings.agents.moveWorkerUp", { worker: worker.label })}
+                  disabled={!canMoveUp}
+                  onClick={() => moveAllowedWorker(worker.type, -1)}
+                >
+                  <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t("settings.agents.moveWorkerDown", { worker: worker.label })}
+                  disabled={!canMoveDown}
+                  onClick={() => moveAllowedWorker(worker.type, 1)}
+                >
+                  <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+                </Button>
               </div>
             </div>
           );
