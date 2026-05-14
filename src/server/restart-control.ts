@@ -203,12 +203,21 @@ export function createRestartController({ config, system }: {
   };
 
   return {
+    async stop(reason = "manual") {
+      await system.appendLog(`stop requested: ${reason}`);
+      await stopCurrent();
+      await system.appendLog("stop completed");
+    },
     async restart(reason = "manual", mode: RestartMode = "dev") {
       await system.appendLog(`${mode} restart requested: ${reason}`);
       await stopCurrent();
       const entry = await start(mode, reason);
       await system.appendLog(`${mode} restart completed: spawned pid ${entry.pid}`);
       return entry;
+    },
+    async restartCurrent(reason = "manual") {
+      const pidEntry = await system.readPidFile();
+      return this.restart(reason, pidEntry?.mode ?? "dev");
     },
     start,
     async getStatus() {
@@ -291,12 +300,14 @@ export function createNodeRestartSystem(config: RestartControlConfig): RestartSy
       }
     },
     spawnDetached: async (command, args, options) => {
-      const logStream = fs.createWriteStream(options?.logFile ?? config.logFile, { flags: "a" });
+      const logFile = options?.logFile ?? config.logFile;
+      fs.mkdirSync(path.dirname(logFile), { recursive: true });
+      const logFd = fs.openSync(logFile, "a");
       const child = spawn(command, args, {
         cwd: options?.cwd ?? config.cwd,
         detached: true,
         env: options?.env ?? process.env,
-        stdio: ["ignore", logStream, logStream],
+        stdio: ["ignore", logFd, logFd],
       });
       child.unref();
       if (!child.pid) {

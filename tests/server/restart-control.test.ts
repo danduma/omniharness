@@ -172,6 +172,90 @@ describe("restart controller", () => {
     expect(actions).toContain("write:prod:999");
   });
 
+  it("can stop the current OmniHarness server without spawning a replacement", async () => {
+    const actions: string[] = [];
+    const controller = createRestartController({
+      config: resolveRestartControlConfig("/repo", {
+        OMNIHARNESS_REMOTE_RESTART_TOKEN: "secret-token",
+      }),
+      system: {
+        appendLog: (message) => {
+          actions.push(`log:${message}`);
+        },
+        ensureDir: () => undefined,
+        findListenerPids: async () => [202],
+        isProcessAlive: async (pid) => pid === 777,
+        readPidFile: async () => ({ pid: 777, startedAt: 1, command: ["./omniharness"], mode: "prod" }),
+        readRecentLog: async () => "",
+        removePidFile: async () => {
+          actions.push("rm-pid");
+        },
+        signalProcess: async (pid, signal) => {
+          actions.push(`signal:${pid}:${signal}`);
+        },
+        spawnDetached: async () => {
+          actions.push("spawn");
+          return 999;
+        },
+        waitForExit: async (pids) => {
+          actions.push(`wait:${pids.join(",")}`);
+        },
+        writePidFile: async () => undefined,
+      },
+    });
+
+    await controller.stop("test");
+
+    expect(actions).toEqual([
+      "log:stop requested: test",
+      "signal:-777:SIGTERM",
+      "wait:777",
+      "rm-pid",
+      "signal:202:SIGTERM",
+      "wait:202",
+      "log:stop completed",
+    ]);
+  });
+
+  it("can restart the current recorded mode", async () => {
+    const actions: string[] = [];
+    const controller = createRestartController({
+      config: resolveRestartControlConfig("/repo", {
+        OMNIHARNESS_REMOTE_RESTART_TOKEN: "secret-token",
+      }),
+      system: {
+        appendLog: (message) => {
+          actions.push(`log:${message}`);
+        },
+        ensureDir: () => undefined,
+        findListenerPids: async () => [],
+        isProcessAlive: async (pid) => pid === 777,
+        readPidFile: async () => ({ pid: 777, startedAt: 1, command: ["./omniharness"], mode: "prod" }),
+        readRecentLog: async () => "",
+        removePidFile: async () => {
+          actions.push("rm-pid");
+        },
+        signalProcess: async (pid, signal) => {
+          actions.push(`signal:${pid}:${signal}`);
+        },
+        spawnDetached: async (command, args) => {
+          actions.push(`spawn:${command} ${args.join(" ")}`);
+          return 999;
+        },
+        waitForExit: async () => undefined,
+        writePidFile: async (entry) => {
+          actions.push(`write:${entry.mode}:${entry.pid}`);
+        },
+      },
+    });
+
+    const result = await controller.restartCurrent("test");
+
+    expect(result.mode).toBe("prod");
+    expect(actions).toContain("spawn:./omniharness ");
+    expect(actions).toContain("write:prod:999");
+  });
+
   it("reports running status, listener pids, and recent logs", async () => {
     const controller = createRestartController({
       config: resolveRestartControlConfig("/repo", {

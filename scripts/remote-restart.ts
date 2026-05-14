@@ -88,92 +88,177 @@ function renderShell(body: string) {
   <style>
     :root {
       color-scheme: dark;
-      --bg: #111315;
-      --panel: #191d21;
-      --panel-2: #20262b;
-      --text: #f4f1e8;
-      --muted: #a9b0b6;
-      --line: #343b42;
-      --accent: #f0b35a;
-      --accent-2: #8fd5c7;
-      --danger: #ef6d64;
+      --bg: #0b0d0f;
+      --panel: #111417;
+      --panel-2: #171b1f;
+      --text: #f2efe7;
+      --muted: #9099a2;
+      --line: #262c32;
+      --accent: #d7a84b;
+      --ok: #73c7b7;
+      --danger: #e16b61;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background: radial-gradient(circle at 30% 10%, #263038 0, transparent 36rem), var(--bg);
+      background: var(--bg);
       color: var(--text);
-      font: 16px/1.5 ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+      font: 13px/1.4 ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
     }
     main {
-      width: min(92vw, 520px);
-      border: 1px solid var(--line);
-      background: linear-gradient(180deg, var(--panel), #131619);
-      box-shadow: 0 24px 80px rgb(0 0 0 / 38%);
+      width: min(100%, 980px);
+      height: 100vh;
+      margin: 0 auto;
+      background: var(--panel);
+      border-inline: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
     }
-    header, section, footer { padding: 24px; }
-    header { border-bottom: 1px solid var(--line); }
-    h1 { margin: 0; font-size: 22px; font-weight: 760; letter-spacing: 0; }
-    p { margin: 8px 0 0; color: var(--muted); }
-    .field { display: grid; gap: 8px; margin-top: 18px; }
-    label, .label { color: var(--muted); font-size: 13px; text-transform: uppercase; }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid var(--line);
+    }
+    h1 { margin: 0; font-size: 18px; font-weight: 760; letter-spacing: 0; }
+    p { margin: 0; color: var(--muted); }
+    a { color: var(--text); text-decoration-color: var(--line); }
+    section { padding: 12px 16px; }
+    footer { padding: 10px 16px 14px; border-top: 1px solid var(--line); }
+    .subtle { color: var(--muted); }
+    .field { display: grid; gap: 6px; margin-top: 12px; }
+    label, .label {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
     input {
       width: 100%;
       border: 1px solid var(--line);
-      background: #0e1012;
+      background: #0b0d0f;
       color: var(--text);
-      padding: 13px 14px;
+      padding: 10px 11px;
       font: inherit;
     }
-    button {
-      width: 100%;
-      border: 0;
-      background: var(--accent);
-      color: #16110a;
-      padding: 14px 16px;
-      font: inherit;
-      font-weight: 800;
-      cursor: pointer;
-    }
-    button.secondary {
+    button, .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 34px;
       border: 1px solid var(--line);
       background: var(--panel-2);
       color: var(--text);
+      padding: 8px 11px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
     }
-    .grid { display: grid; gap: 12px; }
-    .actions { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
-    .metric {
+    button.primary {
+      background: var(--accent);
+      color: #151008;
+      border-color: var(--accent);
+    }
+    button.danger { border-color: #68403c; color: #ffb2aa; }
+    button:disabled {
+      cursor: not-allowed;
+      color: #6f7780;
+      background: #101316;
+      border-color: #1b2025;
+    }
+    .login {
+      width: min(100%, 420px);
+      margin: 18vh auto 0;
+      padding: 0 16px;
+    }
+    .login header, .login section { padding-inline: 0; border: 0; }
+    .login button { width: 100%; margin-top: 10px; }
+    .status-line {
       display: flex;
-      justify-content: space-between;
       gap: 16px;
-      padding: 12px;
-      background: #111518;
-      border: 1px solid var(--line);
+      align-items: baseline;
+      flex-wrap: wrap;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #0d1012;
     }
-    .metric strong { text-align: right; overflow-wrap: anywhere; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 2px 8px;
+      border: 1px solid var(--line);
+      background: #0b0d0f;
+      font-weight: 760;
+    }
+    .pill.ok { color: var(--ok); border-color: #264a43; }
+    .pill.warn { color: var(--danger); border-color: #633631; }
+    .facts {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      border-bottom: 1px solid var(--line);
+    }
+    .fact {
+      min-width: 0;
+      padding: 10px 12px;
+      border-right: 1px solid var(--line);
+    }
+    .fact:nth-child(4n) { border-right: 0; }
+    .fact dt { margin: 0 0 4px; color: var(--muted); font-size: 11px; text-transform: uppercase; }
+    .fact dd { margin: 0; font-weight: 760; overflow-wrap: anywhere; }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .toolbar form { margin: 0; }
+    .toolbar .spacer { flex: 1; }
+    .notice {
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--line);
+      color: var(--ok);
+      background: #101816;
+    }
+    .notice.warn { color: var(--danger); background: #1a1110; }
+    .log-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 16px 8px;
+    }
     pre {
-      max-height: 42vh;
+      flex: 1;
+      min-height: 0;
+      max-height: none;
       overflow: auto;
       margin: 0;
-      padding: 14px;
-      background: #090b0c;
-      border: 1px solid var(--line);
-      color: #d6ddd8;
+      padding: 10px 16px 18px;
+      background: #080a0b;
+      border-top: 1px solid var(--line);
+      color: #d7ddd8;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
-      font: 12px/1.5 ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+      font: 12px/1.45 ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
     }
-    .ok { color: var(--accent-2); }
+    .ok { color: var(--ok); }
     .warn { color: var(--danger); }
-    footer { border-top: 1px solid var(--line); display: grid; gap: 10px; }
-    @media (max-width: 420px) {
-      body { place-items: stretch; }
-      main { width: 100%; min-height: 100vh; border: 0; }
-      header, section, footer { padding: 20px; }
-      .actions { grid-template-columns: 1fr; }
+    @media (max-width: 720px) {
+      main { min-height: 100vh; height: auto; border: 0; }
+      header { align-items: flex-start; flex-direction: column; }
+      .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .fact:nth-child(2n) { border-right: 0; }
+      .toolbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .toolbar .spacer { display: none; }
+      button, .button { width: 100%; }
+      pre { min-height: 52vh; flex: initial; }
     }
   </style>
 </head>
@@ -185,58 +270,93 @@ function renderShell(body: string) {
 
 function renderLoginPage(error = false) {
   return renderShell(`
-    <header>
-      <h1>OmniHarness Restart</h1>
-      <p>Remote control is locked. Sign in before touching the server.</p>
-    </header>
-    <section>
-      ${error ? `<p class="warn">Password was not accepted.</p>` : ""}
-      <form method="post" action="/login" class="grid">
-        <div class="field">
-          <label for="password">Password</label>
-          <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
-        </div>
-        <button type="submit">Unlock</button>
-      </form>
-    </section>`);
+    <div class="login">
+      <header>
+        <h1>OmniHarness Restart</h1>
+        <span class="pill warn">locked</span>
+      </header>
+      <section>
+        <p>Use the OmniHarness password.</p>
+        ${error ? `<p class="warn">Password was not accepted.</p>` : ""}
+        <form method="post" action="/login">
+          <div class="field">
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+          </div>
+          <button class="primary" type="submit">Unlock</button>
+        </form>
+      </section>
+    </div>`);
 }
 
-async function renderControlPage(status: { mode?: RestartMode; restarted?: boolean; error?: string } = {}) {
+async function renderControlPage(status: { mode?: RestartMode; restarted?: boolean; stopped?: boolean; error?: string } = {}) {
   const runtime = await controller.getStatus();
   const command = runtime.command.length > 0 ? runtime.command.join(" ") : "Not started by restart control";
   const mode = runtime.mode ?? "unknown";
+  const startedAt = runtime.startedAt ? new Date(runtime.startedAt).toLocaleString() : "unknown";
+  const listeners = runtime.listenerPids.length > 0 ? runtime.listenerPids.join(", ") : "none";
+  const appLink = "http://localhost:3035";
+  const canRestartCurrent = runtime.running && runtime.mode !== null;
+  const devActive = runtime.running && runtime.mode === "dev";
+  const prodActive = runtime.running && runtime.mode === "prod";
+  const devLabel = devActive ? "Dev Running" : runtime.running ? "Switch to Dev" : "Start Dev";
+  const prodLabel = prodActive ? "Prod Running" : runtime.running ? "Switch to Prod" : "Start Prod";
   return renderShell(`
     <header>
       <h1>OmniHarness Restart</h1>
-      <p class="${runtime.running ? "ok" : "warn"}">${runtime.running ? "OmniHarness appears to be running." : "No managed OmniHarness process detected."}</p>
+      <span class="pill ${runtime.running ? "ok" : "warn"}">${runtime.running ? "running" : "stopped"}</span>
     </header>
-    <section class="grid">
-      ${status.restarted ? `<p class="ok">${status.mode === "prod" ? "Production" : "Development"} start signal accepted.</p>` : ""}
-      ${status.error ? `<p class="warn">${escapeHtml(status.error)}</p>` : ""}
-      <div class="metric"><span class="label">Status</span><strong>${runtime.running ? "Running" : "Stopped"}</strong></div>
-      <div class="metric"><span class="label">Mode</span><strong>${escapeHtml(mode)}</strong></div>
-      <div class="metric"><span class="label">PID</span><strong>${runtime.pid ?? "none"}</strong></div>
-      <div class="metric"><span class="label">Command</span><strong>${escapeHtml(command)}</strong></div>
-      <div class="metric"><span class="label">Ports</span><strong>${config.managedPorts.join(", ")}</strong></div>
-      <div class="metric"><span class="label">Listeners</span><strong>${runtime.listenerPids.length > 0 ? runtime.listenerPids.join(", ") : "none"}</strong></div>
-      <div class="metric"><span class="label">Log file</span><strong>${escapeHtml(config.logFile)}</strong></div>
-      <pre>${escapeHtml(runtime.recentLog || "No restart-control logs yet.")}</pre>
-    </section>
-    <footer>
-      <div class="actions">
-        <form method="post" action="/start">
-          <input type="hidden" name="mode" value="dev">
-          <button type="submit">Start Dev</button>
-        </form>
-        <form method="post" action="/start">
-          <input type="hidden" name="mode" value="prod">
-          <button type="submit">Start Prod</button>
-        </form>
-      </div>
-      <form method="post" action="/logout">
-        <button class="secondary" type="submit">Lock</button>
+    <div class="status-line">
+      <strong>${runtime.running ? "OmniHarness is responding on managed ports." : "No managed process detected."}</strong>
+      <span class="subtle">mode ${escapeHtml(mode)}</span>
+      <span class="subtle">pid ${runtime.pid ?? "none"}</span>
+      <span class="subtle">started ${escapeHtml(startedAt)}</span>
+    </div>
+    ${status.restarted ? `<div class="notice">${status.mode === "prod" ? "Production" : "Development"} action accepted.</div>` : ""}
+    ${status.stopped ? `<div class="notice warn">Stop signal accepted.</div>` : ""}
+    ${status.error ? `<div class="notice warn">${escapeHtml(status.error)}</div>` : ""}
+    <dl class="facts">
+      <div class="fact"><dt>Command</dt><dd>${escapeHtml(command)}</dd></div>
+      <div class="fact"><dt>Ports</dt><dd>${config.managedPorts.join(", ")}</dd></div>
+      <div class="fact"><dt>Listeners</dt><dd>${escapeHtml(listeners)}</dd></div>
+      <div class="fact"><dt>Log</dt><dd>${escapeHtml(path.basename(config.logFile))}</dd></div>
+    </dl>
+    <div class="toolbar">
+      <form method="post" action="/restart-current">
+        <button class="primary" type="submit" ${canRestartCurrent ? "" : "disabled"}>Restart Current</button>
       </form>
-    </footer>`);
+      <form method="post" action="/stop">
+        <button class="danger" type="submit" ${runtime.running ? "" : "disabled"}>Stop</button>
+      </form>
+      <form method="post" action="/start">
+        <input type="hidden" name="mode" value="dev">
+        <button type="submit" ${devActive ? "disabled" : ""}>${devLabel}</button>
+      </form>
+      <form method="post" action="/start">
+        <input type="hidden" name="mode" value="prod">
+        <button type="submit" ${prodActive ? "disabled" : ""}>${prodLabel}</button>
+      </form>
+      <a class="button" href="/">Refresh</a>
+      <a class="button" href="/status">JSON</a>
+      <a class="button" href="${appLink}">Open App</a>
+      <span class="spacer"></span>
+      <form method="post" action="/logout">
+        <button class="danger" type="submit">Lock</button>
+      </form>
+    </div>
+    <div class="log-head">
+      <span class="label">Recent log</span>
+      <span class="subtle">${escapeHtml(config.logFile)}</span>
+    </div>
+    <pre id="log-viewer">${escapeHtml(runtime.recentLog || "No restart-control logs yet.")}</pre>
+    <script>
+      const logViewer = document.getElementById("log-viewer");
+      if (logViewer) {
+        requestAnimationFrame(() => {
+          logViewer.scrollTop = logViewer.scrollHeight;
+        });
+      }
+    </script>`);
 }
 
 const token = ensureToken();
@@ -273,6 +393,7 @@ const server = createServer((request, response) => {
       sendHtml(response, 200, await renderControlPage({
         mode,
         restarted: url.searchParams.get("restarted") === "1",
+        stopped: url.searchParams.get("stopped") === "1",
       }));
       return;
     }
@@ -307,9 +428,55 @@ const server = createServer((request, response) => {
       return;
     }
 
+    if (request.method === "POST" && url.pathname === "/stop") {
+      if (activeRestart) {
+        sendJson(response, 409, { ok: false, error: "operation already in progress" });
+        return;
+      }
+
+      activeRestart = controller.stop("remote request")
+        .then(() => {
+          if (request.headers.accept?.includes("text/html")) {
+            redirect(response, "/?stopped=1");
+            return;
+          }
+          sendJson(response, 202, { ok: true, stopped: true });
+        })
+        .catch((error) => {
+          sendJson(response, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+        })
+        .finally(() => {
+          activeRestart = null;
+        });
+      return;
+    }
+
+    if (request.method === "POST" && (url.pathname === "/restart-current" || url.pathname === "/restart/current")) {
+      if (activeRestart) {
+        sendJson(response, 409, { ok: false, error: "operation already in progress" });
+        return;
+      }
+
+      activeRestart = controller.restartCurrent("remote request")
+        .then((entry) => {
+          if (request.headers.accept?.includes("text/html")) {
+            redirect(response, `/?restarted=1&mode=${entry.mode}`);
+            return;
+          }
+          sendJson(response, 202, { ok: true, pid: entry.pid, mode: entry.mode, startedAt: entry.startedAt });
+        })
+        .catch((error) => {
+          sendJson(response, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+        })
+        .finally(() => {
+          activeRestart = null;
+        });
+      return;
+    }
+
     if (request.method === "POST" && (url.pathname === "/start" || url.pathname === "/restart")) {
       if (activeRestart) {
-        sendJson(response, 409, { ok: false, error: "restart already in progress" });
+        sendJson(response, 409, { ok: false, error: "operation already in progress" });
         return;
       }
 
