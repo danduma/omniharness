@@ -7,6 +7,8 @@ export type PlanningConversationStatus =
   | "working"
   | "awaiting_user"
   | "ready"
+  | "reviewing_plan"
+  | "revising_plan"
   | "promoting"
   | "promoted"
   | "failed";

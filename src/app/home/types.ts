@@ -91,6 +91,49 @@ export type RecoveryIncidentRecord = {
   updatedAt: string;
   resolvedAt?: string | null;
 };
+export type PlanningReviewRunRecord = {
+  id: string;
+  runId: string;
+  status: string;
+  agentSelection: string;
+  resolvedWorkerType?: string | null;
+  roundsRequested: number;
+  roundsCompleted: number;
+  startedAt: string;
+  completedAt?: string | null;
+  lastError?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type PlanningReviewRoundRecord = {
+  id: string;
+  reviewRunId: string;
+  runId: string;
+  roundNumber: number;
+  status: string;
+  workerId?: string | null;
+  resolvedWorkerType?: string | null;
+  selectionReason?: string | null;
+  findingsSummary?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  lastError?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type PlanningReviewFindingRecord = {
+  id: string;
+  reviewRunId: string;
+  roundId: string;
+  runId: string;
+  severity: string;
+  category: string;
+  title: string;
+  details: string;
+  recommendation: string;
+  sourcePath?: string | null;
+  createdAt: string;
+};
 export type RunRecoveryState = {
   kind: string;
   status: string;
@@ -235,6 +278,9 @@ export type EventStreamState = {
   queuedMessages?: QueuedConversationMessageRecord[];
   recoveryIncidents?: RecoveryIncidentRecord[];
   recoveryState?: RunRecoveryState | null;
+  reviewRuns?: PlanningReviewRunRecord[];
+  reviewRounds?: PlanningReviewRoundRecord[];
+  reviewFindings?: PlanningReviewFindingRecord[];
   frontendErrors?: AppErrorDescriptor[];
 };
 export type SettingsTab = "general" | "models" | "agents" | "runtime" | "memory";

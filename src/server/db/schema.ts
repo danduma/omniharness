@@ -245,3 +245,49 @@ export const supervisorInterventions = sqliteTable('supervisor_interventions', {
   summary: text('summary'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
+
+export const planningReviewRuns = sqliteTable('planning_review_runs', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').notNull().references(() => runs.id),
+  status: text('status').notNull(),
+  agentSelection: text('agent_selection').notNull(),
+  resolvedWorkerType: text('resolved_worker_type'),
+  roundsRequested: integer('rounds_requested').notNull(),
+  roundsCompleted: integer('rounds_completed').notNull().default(0),
+  startedAt: integer('started_at', { mode: 'timestamp' }).notNull(),
+  completedAt: integer('completed_at', { mode: 'timestamp' }),
+  lastError: text('last_error'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const planningReviewRounds = sqliteTable('planning_review_rounds', {
+  id: text('id').primaryKey(),
+  reviewRunId: text('review_run_id').notNull().references(() => planningReviewRuns.id),
+  runId: text('run_id').notNull().references(() => runs.id),
+  roundNumber: integer('round_number').notNull(),
+  status: text('status').notNull(),
+  workerId: text('worker_id'),
+  resolvedWorkerType: text('resolved_worker_type'),
+  selectionReason: text('selection_reason'),
+  findingsSummary: text('findings_summary'),
+  startedAt: integer('started_at', { mode: 'timestamp' }),
+  completedAt: integer('completed_at', { mode: 'timestamp' }),
+  lastError: text('last_error'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const planningReviewFindings = sqliteTable('planning_review_findings', {
+  id: text('id').primaryKey(),
+  reviewRunId: text('review_run_id').notNull().references(() => planningReviewRuns.id),
+  roundId: text('round_id').notNull().references(() => planningReviewRounds.id),
+  runId: text('run_id').notNull().references(() => runs.id),
+  severity: text('severity').notNull(),
+  category: text('category').notNull(),
+  title: text('title').notNull(),
+  details: text('details').notNull(),
+  recommendation: text('recommendation').notNull(),
+  sourcePath: text('source_path'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+});

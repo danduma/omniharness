@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/server/db";
-import { messages, plans, runs, accounts, workers, planItems, clarifications, executionEvents, supervisorInterventions, queuedConversationMessages, recoveryIncidents } from "@/server/db/schema";
+import { messages, plans, runs, accounts, workers, planItems, clarifications, executionEvents, supervisorInterventions, queuedConversationMessages, recoveryIncidents, planningReviewRuns, planningReviewRounds, planningReviewFindings } from "@/server/db/schema";
 import { BRIDGE_URL } from "@/server/bridge-client";
 import { buildAppError } from "@/server/api-errors";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
@@ -68,6 +68,9 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}) {
     allSupervisorInterventions,
     allQueuedMessages,
     allRecoveryIncidents,
+    allReviewRuns,
+    allReviewRounds,
+    allReviewFindings,
   ] = await Promise.all([
     selectedRunId
       ? db.select().from(messages).where(inArray(messages.runId, transcriptRunIds)).orderBy(asc(messages.createdAt))
@@ -130,6 +133,15 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}) {
         .orderBy(desc(recoveryIncidents.updatedAt))
         .limit(20)
       : [],
+    selectedRunId
+      ? db.select().from(planningReviewRuns).where(eq(planningReviewRuns.runId, selectedRunId)).orderBy(desc(planningReviewRuns.createdAt))
+      : [],
+    selectedRunId
+      ? db.select().from(planningReviewRounds).where(eq(planningReviewRounds.runId, selectedRunId)).orderBy(asc(planningReviewRounds.roundNumber))
+      : [],
+    selectedRunId
+      ? db.select().from(planningReviewFindings).where(eq(planningReviewFindings.runId, selectedRunId)).orderBy(desc(planningReviewFindings.createdAt))
+      : [],
   ]);
 
   return {
@@ -145,6 +157,9 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}) {
     allSupervisorInterventions,
     allQueuedMessages,
     allRecoveryIncidents,
+    allReviewRuns,
+    allReviewRounds,
+    allReviewFindings,
   };
 }
 
@@ -290,6 +305,14 @@ function compactSupervisorIntervention(intervention: PersistedEventRecords["allS
     ...intervention,
     prompt: truncateText(intervention.prompt, SUPERVISOR_INTERVENTION_TEXT_LIMIT),
     summary: truncateText(intervention.summary, SUPERVISOR_INTERVENTION_TEXT_LIMIT),
+  };
+}
+
+function compactReviewFinding(finding: PersistedEventRecords["allReviewFindings"][number]) {
+  return {
+    ...finding,
+    details: truncateText(finding.details, 2_000),
+    recommendation: truncateText(finding.recommendation, 2_000),
   };
 }
 
@@ -585,6 +608,10 @@ function buildEventPayload(
     recoveryIncidents: filterSelectedRunScopedRecords(records.allRecoveryIncidents, runIds)
       .map(compactRecoveryIncident),
     recoveryState: runIds ? deriveRecoveryState(records.allRecoveryIncidents) : null,
+    reviewRuns: filterSelectedRunScopedRecords(records.allReviewRuns, runIds),
+    reviewRounds: filterSelectedRunScopedRecords(records.allReviewRounds, runIds),
+    reviewFindings: filterSelectedRunScopedRecords(records.allReviewFindings, runIds)
+      .map(compactReviewFinding),
     frontendErrors,
   };
 }

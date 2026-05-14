@@ -40,7 +40,9 @@ describe("db schema", () => {
     expect(schema.runs).toHaveProperty("completionCommitSha");
   });
 
-  it("persists immutable git workspace launch snapshots on runs", () => {
-    expect(schema.runs).toHaveProperty("gitWorkspaceJson");
+  it("defines planning review tables", () => {
+    expect(schema).toHaveProperty("planningReviewRuns");
+    expect(schema).toHaveProperty("planningReviewRounds");
+    expect(schema).toHaveProperty("planningReviewFindings");
   });
 });

@@ -280,6 +280,58 @@ CREATE TABLE IF NOT EXISTS supervisor_interventions (
   FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action,
   FOREIGN KEY (worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE no action
 );
+
+CREATE TABLE IF NOT EXISTS planning_review_runs (
+  id text PRIMARY KEY NOT NULL,
+  run_id text NOT NULL,
+  status text NOT NULL,
+  agent_selection text NOT NULL,
+  resolved_worker_type text,
+  rounds_requested integer NOT NULL,
+  rounds_completed integer NOT NULL DEFAULT 0,
+  started_at integer NOT NULL,
+  completed_at integer,
+  last_error text,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE IF NOT EXISTS planning_review_rounds (
+  id text PRIMARY KEY NOT NULL,
+  review_run_id text NOT NULL,
+  run_id text NOT NULL,
+  round_number integer NOT NULL,
+  status text NOT NULL,
+  worker_id text,
+  resolved_worker_type text,
+  selection_reason text,
+  findings_summary text,
+  started_at integer,
+  completed_at integer,
+  last_error text,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (review_run_id) REFERENCES planning_review_runs(id) ON UPDATE no action ON DELETE no action,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE IF NOT EXISTS planning_review_findings (
+  id text PRIMARY KEY NOT NULL,
+  review_run_id text NOT NULL,
+  round_id text NOT NULL,
+  run_id text NOT NULL,
+  severity text NOT NULL,
+  category text NOT NULL,
+  title text NOT NULL,
+  details text NOT NULL,
+  recommendation text NOT NULL,
+  source_path text,
+  created_at integer NOT NULL,
+  FOREIGN KEY (review_run_id) REFERENCES planning_review_runs(id) ON UPDATE no action ON DELETE no action,
+  FOREIGN KEY (round_id) REFERENCES planning_review_rounds(id) ON UPDATE no action ON DELETE no action,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action
+);
 `);
 
 sqlite.exec(`
@@ -289,6 +341,9 @@ CREATE INDEX IF NOT EXISTS plan_items_plan_idx ON plan_items(plan_id);
 CREATE INDEX IF NOT EXISTS clarifications_run_created_idx ON clarifications(run_id, created_at);
 CREATE INDEX IF NOT EXISTS execution_events_run_created_idx ON execution_events(run_id, created_at);
 CREATE INDEX IF NOT EXISTS supervisor_interventions_run_created_idx ON supervisor_interventions(run_id, created_at);
+CREATE INDEX IF NOT EXISTS planning_review_runs_run_idx ON planning_review_runs(run_id);
+CREATE INDEX IF NOT EXISTS planning_review_rounds_run_idx ON planning_review_rounds(run_id);
+CREATE INDEX IF NOT EXISTS planning_review_findings_run_idx ON planning_review_findings(run_id);
 CREATE INDEX IF NOT EXISTS queued_conversation_messages_run_status_created_idx ON queued_conversation_messages(run_id, status, created_at);
 CREATE INDEX IF NOT EXISTS recovery_incidents_run_status_updated_idx ON recovery_incidents(run_id, status, updated_at);
 CREATE INDEX IF NOT EXISTS supervisor_scheduled_wakes_wake_at_idx ON supervisor_scheduled_wakes(wake_at);

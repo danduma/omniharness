@@ -14,6 +14,7 @@ import { appearancePreferencesManager } from "./AppearancePreferencesManager";
 import { settingsDraftManager } from "./SettingsDraftManager";
 import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "./GitWorkspaceManager";
 import type { BusyMessageAction } from "./busy-message-behavior";
+import type { PlanningReviewAgentSelection } from "@/server/planning/review-preferences";
 import {
   appendCreatedConversationSnapshot,
   appendSentConversationMessageSnapshot,
@@ -798,6 +799,17 @@ export function useHomeMutations({
     },
   });
 
+  const startPlanningReview = useMutation({
+    mutationFn: async (payload: { runId: string; agentSelection: PlanningReviewAgentSelection; rounds: number }) => requestJson<{ ok: true; reviewRunId: string }>(`/api/planning/${payload.runId}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentSelection: payload.agentSelection, rounds: payload.rounds }),
+    }, {
+      source: "Planning",
+      action: "Start planning review",
+    }),
+  });
+
   const handleLoadWorkerHistory = async (workerId: string) => {
     const normalizedWorkerId = workerId.trim();
     if (!normalizedWorkerId || loadingWorkerHistoryIdsRef.current.has(normalizedWorkerId)) {
@@ -856,6 +868,7 @@ export function useHomeMutations({
     stopWorker,
     stopWorkerTerminalProcess,
     promotePlanningConversation,
+    startPlanningReview,
     handleLoadWorkerHistory,
   };
 }

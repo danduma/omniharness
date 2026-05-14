@@ -6,6 +6,9 @@ import { planningArtifactsManager } from "@/components/component-state-managers"
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { ProjectFileReference } from "@/lib/project-file-links";
+import { PlanningReviewControls } from "./PlanningReviewControls";
+import { type PlanningReviewRunRecord, type PlanningReviewRoundRecord, type PlanningReviewFindingRecord } from "@/app/home/types";
+import { type PlanningReviewAgentSelection } from "@/server/planning/review-preferences";
 
 type Candidate = {
   path: string;
@@ -118,6 +121,12 @@ export function PlanningArtifactsPanel({
   isPromoting,
   projectRoot,
   onOpenProjectFile,
+  runId,
+  isReviewing,
+  latestReviewRun,
+  latestReviewRound,
+  reviewFindings,
+  onStartReview,
 }: {
   specPath?: string | null;
   planPath?: string | null;
@@ -126,6 +135,12 @@ export function PlanningArtifactsPanel({
   isPromoting?: boolean;
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
+  runId?: string;
+  isReviewing?: boolean;
+  latestReviewRun?: PlanningReviewRunRecord | null;
+  latestReviewRound?: PlanningReviewRoundRecord | null;
+  reviewFindings?: PlanningReviewFindingRecord[];
+  onStartReview?: (prefs: { agentSelection: PlanningReviewAgentSelection; rounds: number }) => void;
 }) {
   useI18nSnapshot();
   const artifacts = useMemo(() => normalizeArtifacts(plannerArtifactsJson), [plannerArtifactsJson]);
@@ -211,6 +226,16 @@ export function PlanningArtifactsPanel({
           {t("planning.artifacts.startImplementation")}
         </Button>
       </div>
+
+      {ready && runId && onStartReview && (
+        <PlanningReviewControls
+          isReviewing={Boolean(isReviewing)}
+          latestReviewRun={latestReviewRun}
+          latestReviewRound={latestReviewRound}
+          findings={reviewFindings}
+          onStartReview={onStartReview}
+        />
+      )}
     </div>
   );
 }

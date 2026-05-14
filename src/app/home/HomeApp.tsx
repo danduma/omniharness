@@ -24,6 +24,7 @@ import {
 } from "./HomeUiStateManager";
 import { appearancePreferencesManager, getAppearanceTextSizeStyle } from "./AppearancePreferencesManager";
 import { settingsDraftManager } from "./SettingsDraftManager";
+import { planningReviewPreferencesManager } from "./PlanningReviewPreferencesManager";
 import {
   filterOptimisticallyDeletedRuns,
   mergePendingCreatedConversationSnapshots,
@@ -99,6 +100,7 @@ function applyHomeBootstrap(bootstrap: HomeBootstrapPayload | null | undefined, 
   const settingsValues = bootstrap.initialQueries.settings?.values ?? {};
   if (bootstrap.initialQueries.settings) {
     settingsDraftManager.hydrate(settingsValues, notify);
+    planningReviewPreferencesManager.hydrate(settingsValues);
   }
 
   homeUiStateManager.patch((current) => ({
@@ -424,6 +426,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     stopWorker,
     stopWorkerTerminalProcess,
     promotePlanningConversation,
+    startPlanningReview,
     handleLoadWorkerHistory,
   } = mutations;
 
@@ -444,6 +447,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     currentProjectScope,
     explicitProjects,
     runs,
+    latestUserCheckpoint,
     renamingRunId,
     apiKeys,
     commandInputRef,
@@ -829,6 +833,14 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           toggleDirectMessageExpansion={actions.toggleDirectMessageExpansion}
           primaryConversationAgent={vm.primaryConversationAgent}
           promotePlanningConversation={promotePlanningConversation}
+          onStartReview={(prefs) => {
+            if (selectedRunId) {
+              startPlanningReview.mutate({ runId: selectedRunId, ...prefs });
+            }
+          }}
+          reviewRuns={state.reviewRuns}
+          reviewRounds={state.reviewRounds}
+          reviewFindings={state.reviewFindings}
           conversationTimelineItems={conversationTimelineItems}
           recoverRun={recoverRun}
           recoveryState={selectedRecoveryState}
@@ -842,6 +854,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           handleStartEditingMessage={actions.handleStartEditingMessage}
           handleForkMessage={actions.handleForkMessage}
           handleForkMessageIntoWorktree={actions.handleForkMessageIntoWorktree}
+          handleForkSessionIntoWorktree={actions.handleForkSessionIntoWorktree}
           handleConfirmForkMessageIntoWorktree={actions.handleConfirmForkMessageIntoWorktree}
           editingMessageId={editingMessageId}
           editingMessageValue={editingMessageValue}
