@@ -182,6 +182,45 @@ describe("deriveWorkerEvents", () => {
     expect(events.some((event) => event.type === "worker_stuck")).toBe(false);
   });
 
+  it("does not mark a completed idle worker stuck after end_turn output", () => {
+    const { events } = deriveWorkerEvents({
+      workerId: "worker-1",
+      snapshot: {
+        state: "idle",
+        currentText: "Implemented the change and verified the focused tests.",
+        lastText: "Implemented the change and verified the focused tests.",
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: "end_turn",
+      },
+      previous: {
+        fingerprint: JSON.stringify({
+          state: "idle",
+          currentText: "Implemented the change and verified the focused tests.",
+          lastText: "Implemented the change and verified the focused tests.",
+          pendingPermissions: [],
+          stopReason: "end_turn",
+          stderrTail: [],
+        }),
+        lastChangedAt: 0,
+        lastMeaningfulActivityAt: 0,
+        progressSignature: JSON.stringify({
+          state: "idle",
+          currentText: "Implemented the change and verified the focused tests.",
+          lastText: "Implemented the change and verified the focused tests.",
+          pendingPermissions: [],
+          stopReason: "end_turn",
+        }),
+        idleNotified: true,
+        stuckNotified: false,
+        completionHintNotified: true,
+      },
+      now: 5 * 60_000,
+    });
+
+    expect(events.some((event) => event.type === "worker_stuck")).toBe(false);
+  });
+
   it("wakes the supervisor immediately when ACP reports a worker turn is complete", () => {
     const { nextState, events } = deriveWorkerEvents({
       workerId: "worker-1",
@@ -1116,6 +1155,73 @@ describe("deriveWorkerEvents", () => {
 
     expect(workerEvents.filter((event) => event.eventType === "worker_turn_completed")).toHaveLength(1);
     expect(wakeSupervisor).not.toHaveBeenCalled();
+  });
+
+  it("persists a long final-looking worker turn as idle even when the bridge still reports working", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+    const finalText = [
+      "Implemented the planning review agents feature and verified the critical path.",
+      "",
+      "Verification:",
+      "- Focused planning review tests passed.",
+      "- UI controls render translated labels.",
+      "- The persisted review preferences survive reloads.",
+      "- The agent selection request creates the expected records.",
+      "- The plan artifact panel shows review controls only when ready.",
+      "- No placeholder paths or fake review agents remain in the implementation.",
+      "- The supervisor can continue after this result because the worker has provided a complete implementation summary.",
+      "- The implementation covered the server route, persisted review rounds, review status refresh, translated frontend copy, and the panel controls.",
+      "- I also checked that the generated review findings flow back into the same artifact surface instead of creating a disconnected mock view.",
+      "- Remaining supervisor work can now inspect the result and decide whether to mark the plan complete or request a focused follow-up.",
+    ].join("\n");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "opencode",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockGetAgent.mockResolvedValue({
+      state: "working",
+      currentText: finalText,
+      lastText: finalText,
+      pendingPermissions: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    await pollRunWorkers(runId, wakeSupervisor);
+
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+
+    expect(persistedWorker?.status).toBe("idle");
+    expect(workerEvents.some((event) => event.eventType === "worker_turn_completed")).toBe(true);
+    expect(wakeSupervisor).toHaveBeenCalledWith(runId, 0);
   });
 
   it("persists a stuck status and wakes the supervisor when a worker stops making meaningful progress", async () => {

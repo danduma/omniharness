@@ -223,6 +223,27 @@ function hasLongCompletionHint(snapshot: WorkerBridgeSnapshot) {
     && isLongWorkerCompletionText(snapshot.lastText);
 }
 
+function hasCompletedIdleTurn(snapshot: WorkerBridgeSnapshot) {
+  return normalizeWorkerStatus(snapshot.state) === "idle"
+    && snapshot.stopReason === "end_turn"
+    && Boolean((snapshot.currentText || snapshot.lastText).trim());
+}
+
+function resolvePersistedWorkerStatus(snapshot: WorkerBridgeSnapshot, events: DerivedWorkerEvent[]) {
+  if (events.some((event) => event.type === "worker_stuck")) {
+    return "stuck";
+  }
+
+  if (
+    hasCompletedIdleTurn(snapshot)
+    || events.some((event) => event.type === WORKER_TURN_COMPLETED_EVENT_TYPE)
+  ) {
+    return "idle";
+  }
+
+  return snapshot.state;
+}
+
 function parseSnapshotFingerprint(fingerprint: string | undefined) {
   if (!fingerprint) {
     return null;
@@ -455,7 +476,12 @@ export function deriveWorkerEvents(args: {
     idleNotified = true;
   }
 
-  if (!stuckNotified && silenceMs >= STUCK_THRESHOLD_MS && !hasActiveTerminalProcess(args.snapshot)) {
+  if (
+    !stuckNotified
+    && silenceMs >= STUCK_THRESHOLD_MS
+    && !hasCompletedIdleTurn(args.snapshot)
+    && !hasActiveTerminalProcess(args.snapshot)
+  ) {
     events.push({
       type: "worker_stuck",
       summary: `${args.workerId} appears stuck after ${Math.round(silenceMs / 1000)} seconds without meaningful progress`,
@@ -932,9 +958,8 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
         : events;
 
       const activityEvent = filteredEvents.find((event) => event.updatesActivity);
-      const stuckEvent = filteredEvents.find((event) => event.type === "worker_stuck");
       await db.update(workers).set({
-        status: stuckEvent ? "stuck" : snapshot.state,
+        status: resolvePersistedWorkerStatus(snapshot, filteredEvents),
         bridgeSessionId: snapshot.sessionId ?? worker.bridgeSessionId,
         bridgeSessionMode: snapshot.sessionMode ?? worker.bridgeSessionMode,
         updatedAt: activityEvent ? new Date(now) : worker.updatedAt,
