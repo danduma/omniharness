@@ -771,6 +771,7 @@ function formatDetailLabel(key: string) {
     cancelError: "Cancel error",
     currentText: "Current",
     lastText: "Last",
+    text: "Text",
     projectPath: "Project",
     resolvedWorkerCwd: "Resolved cwd",
     stopReason: "Stop reason",

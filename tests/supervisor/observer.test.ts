@@ -20,7 +20,7 @@ import { deriveWorkerEvents, pollRunWorkers, startRunObserver, stopRunObserver }
 import { approvePermission as mockApprovePermission } from "@/server/bridge-client";
 import { spawnAgent as mockSpawnAgent } from "@/server/bridge-client";
 import { deriveWorkerTerminalProcesses } from "@/lib/worker-terminal-processes";
-import { parseWorkerOutputEntries } from "@/server/workers/snapshots";
+import { readWorkerOutputEntries } from "@/server/workers/output-store";
 
 describe("deriveWorkerEvents", () => {
   beforeEach(async () => {
@@ -2157,7 +2157,9 @@ describe("deriveWorkerEvents", () => {
     const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     expect(persistedWorker?.currentText).toBe("Wrapping up verification");
     expect(persistedWorker?.lastText).toBe("Ran the focused test suite");
-    const persistedOutputEntries = parseWorkerOutputEntries(persistedWorker?.outputEntriesJson);
+    const persistedOutputEntries = persistedWorker
+      ? await readWorkerOutputEntries(persistedWorker.runId, persistedWorker.id)
+      : [];
     expect(persistedOutputEntries).toEqual([
       expect.objectContaining({
         id: "tool-1",

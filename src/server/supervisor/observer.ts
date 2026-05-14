@@ -967,12 +967,12 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
       notifyEventStreamSubscribers();
 
       for (const event of filteredEvents) {
+        const eventText = (snapshot.currentText || snapshot.lastText || "").slice(-500);
         const insertedEvent = await insertExecutionEvent(runId, worker.id, event.type, {
           summary: event.summary,
           state: snapshot.state,
           stopReason: snapshot.stopReason,
-          currentText: snapshot.currentText.slice(-1000),
-          lastText: snapshot.lastText.slice(-1000),
+          ...(eventText ? { text: eventText } : {}),
         });
         if (insertedEvent && event.shouldWakeSupervisor && latestRun.status !== "awaiting_user") {
           wakeSupervisor(runId, 0);
