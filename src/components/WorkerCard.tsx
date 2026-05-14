@@ -392,7 +392,7 @@ export function WorkerCard({
   stoppingTerminalProcessId,
 }: WorkerCardProps) {
   const { openByWorkerId } = useManagerSnapshot(workerCardManager);
-  const open = openByWorkerId[workerId] ?? defaultOpen;
+  const open = isFocused || (openByWorkerId[workerId] ?? defaultOpen);
   const promptPreviewText = promptPreview?.trim() ?? "";
   const stateLabel = formatWorkerStateLabel(agent.state);
   const showPromptPreview = promptPreviewText.length > 0;

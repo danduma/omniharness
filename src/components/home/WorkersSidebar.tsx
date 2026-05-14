@@ -3,7 +3,7 @@ import { Cpu, PanelRightClose, Terminal as TerminalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkerCard } from "@/components/WorkerCard";
-import { workerCardManager, workersSidebarManager } from "@/components/component-state-managers";
+import { workersSidebarManager } from "@/components/component-state-managers";
 import { WORKER_OPTIONS } from "@/app/home/constants";
 import type { AgentSnapshot, SupervisorInterventionRecord } from "@/app/home/types";
 import { buildWorkerLists, getWorkerRuntimeLabel, type ConversationWorkerRecord } from "@/lib/conversation-workers";
@@ -175,12 +175,7 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
         compact={isCompactWorker}
         isFocused={isFocusedWorker}
         canFocus={visibleWorkers.length > 1}
-        onToggleFocus={() => {
-          if (focusedWorkerId !== worker.id) {
-            workerCardManager.setOpen(worker.id, true);
-          }
-          workersSidebarManager.toggleFocusedWorker(worker.id);
-        }}
+        onToggleFocus={() => workersSidebarManager.toggleFocusedWorker(worker.id)}
         onStopWorker={onStopWorker}
         onStopTerminalProcess={onStopTerminalProcess}
         onLoadWorkerHistory={onLoadWorkerHistory}

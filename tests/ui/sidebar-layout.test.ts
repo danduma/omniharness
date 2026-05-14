@@ -301,9 +301,10 @@ test("workers sidebar can focus one terminal across the workers tab", () => {
   expect(workersSidebarSource).toContain('className="h-full min-h-0"');
   expect(workersSidebarSource).not.toContain("const compactWorkers = isFocusMode ? visibleWorkers.filter((worker) => worker.id !== focusedWorkerId) : [];");
   expect(workersSidebarSource).not.toContain('className="max-h-64 shrink-0 pr-1"');
-  expect(workersSidebarSource).toContain("import { workerCardManager, workersSidebarManager } from");
-  expect(workersSidebarSource).toContain("if (focusedWorkerId !== worker.id) {\n            workerCardManager.setOpen(worker.id, true);\n          }");
-  expect(workersSidebarSource).toContain('workersSidebarManager.toggleFocusedWorker(worker.id)');
+  expect(workersSidebarSource).toContain('import { workersSidebarManager } from "@/components/component-state-managers";');
+  expect(workersSidebarSource).not.toContain("workerCardManager.setOpen(worker.id, true)");
+  expect(workersSidebarSource).toContain("onToggleFocus={() => workersSidebarManager.toggleFocusedWorker(worker.id)}");
+  expect(workerCardSource).toContain("const open = isFocused || (openByWorkerId[workerId] ?? defaultOpen);");
   expect(workersSidebarSource).toContain('const isCompactWorker = Boolean(options.compact);');
   expect(workersSidebarSource).toContain('compact={isCompactWorker}');
   expect(workersSidebarSource).toContain('isFocused={isFocusedWorker}');
