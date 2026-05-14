@@ -23,7 +23,7 @@ function isAgentBusyError(error: unknown) {
 }
 
 function isAgentNotFoundError(error: unknown) {
-  return /\b(agent not found|not_found|session not found|404)\b/i.test(formatErrorMessage(error));
+  return /\b(agent not found|not_found|session not found|invalid session identifier|404)\b/i.test(formatErrorMessage(error));
 }
 
 function isAgentAlreadyExistsError(error: unknown, workerId: string) {
@@ -75,22 +75,33 @@ async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRecord) {
   const sessionMode = worker.bridgeSessionMode?.trim();
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
+  const spawnParams = {
+    type: worker.type,
+    cwd: worker.cwd,
+    name: worker.id,
+    ...(workerMode ? { mode: workerMode } : {}),
+    ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+    ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+  };
   let resumedWorker;
   try {
     resumedWorker = await spawnAgent({
-      type: worker.type,
-      cwd: worker.cwd,
-      name: worker.id,
-      ...(workerMode ? { mode: workerMode } : {}),
-      ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
-      ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+      ...spawnParams,
       resumeSessionId: sessionId,
     });
   } catch (error) {
-    if (!isAgentAlreadyExistsError(error, worker.id)) {
+    if (isAgentAlreadyExistsError(error, worker.id)) {
+      resumedWorker = await getAgent(worker.id);
+    } else if (isAgentNotFoundError(error)) {
+      await db.update(workers).set({
+        status: "starting",
+        bridgeSessionId: null,
+        updatedAt: new Date(),
+      }).where(eq(workers.id, worker.id));
+      resumedWorker = await spawnAgent(spawnParams);
+    } else {
       throw error;
     }
-    resumedWorker = await getAgent(worker.id);
   }
 
   await db.insert(executionEvents).values({

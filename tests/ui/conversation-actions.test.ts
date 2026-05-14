@@ -168,7 +168,7 @@ test("direct control user messages expose retry, edit, and fork recovery control
   expect(pageSource).toContain("const canRecoverUserMessage = isDirectConversation || isImplementationConversation;");
   expect(pageSource).toContain("getUserMessageActions={getUserMessageActions}");
   expect(pageSource).toContain("actions={userMessageActions}");
-  expect(pageSource).toContain('body: JSON.stringify({ action, targetMessageId, content })');
+  expect(pageSource).toContain('body: JSON.stringify({ action, targetMessageId, content, gitWorkspaceLaunch })');
 });
 
 test("implementation failures expose retry without direct-control edit and fork actions", () => {
@@ -193,8 +193,8 @@ test("user input messages share the direct-control bubble renderer", () => {
   expect(userInputSource).toContain("export function UserInputMessage");
   expect(userInputSource).toContain('flex justify-end');
   expect(userInputSource).toContain('flex-col items-end');
-  expect(userInputSource).toContain('rounded-[1.55rem] bg-[#f3f3f3]');
-  expect(userInputSource).toContain('dark:bg-[#3a3a3a]');
+  expect(userInputSource).toContain('omni-user-message group/user-message relative w-full overflow-hidden rounded-2xl');
+  expect(userInputSource).toContain('transition-colors');
   expect(userInputSource).toContain('const timestampLabel = createdAt ? formatUserMessageTimestamp(createdAt) : "";');
   expect(userInputSource).toContain('{timestampLabel ? <span>{timestampLabel}</span> : null}');
   expect(userInputSource).toContain('px-5 py-3.5');

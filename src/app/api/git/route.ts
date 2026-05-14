@@ -12,6 +12,7 @@ import {
   validateWorkspaceTarget,
 } from "@/server/git/workspaces";
 import { setProjectGitWorkspaceDefaultTarget } from "@/server/projects/config";
+import { forkRunIntoWorktree } from "@/server/runs/recovery";
 
 type GitOperation =
   | "status"
@@ -19,6 +20,7 @@ type GitOperation =
   | "checkout_existing_branch"
   | "prepare_session_worktree"
   | "create_worktree_existing_branch"
+  | "fork_run_worktree"
   | "remove_worktree";
 
 const ACTION_LABELS: Record<GitOperation, string> = {
@@ -27,6 +29,7 @@ const ACTION_LABELS: Record<GitOperation, string> = {
   checkout_existing_branch: "Checkout existing branch",
   prepare_session_worktree: "Prepare session worktree",
   create_worktree_existing_branch: "Create worktree for existing branch",
+  fork_run_worktree: "Fork run into worktree",
   remove_worktree: "Remove worktree",
 };
 
@@ -103,6 +106,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(result);
     }
 
+    if (operation === "fork_run_worktree") {
+      const result = await forkRunIntoWorktree({
+        runId: readString(body, "runId"),
+        targetMessageId: readOptionalString(body, "targetMessageId"),
+        contentOverride: readOptionalString(body, "contentOverride"),
+        newBranchName: readString(body, "newBranchName"),
+        checkoutPath: readString(body, "checkoutPath"),
+        startPoint: readOptionalString(body, "startPoint"),
+        worktreeParent: readOptionalString(body, "worktreeParent"),
+        expectedHeadSha: readNullableString(body, "expectedHeadSha"),
+        expectedStatusFingerprint: readString(body, "expectedStatusFingerprint"),
+      });
+      return NextResponse.json(result);
+    }
+
     const result = await removeWorktree({
       projectPath: readString(body, "projectPath"),
       checkoutPath: readString(body, "checkoutPath"),
@@ -123,6 +141,7 @@ function parseOperation(value: unknown): GitOperation {
     || value === "checkout_existing_branch"
     || value === "prepare_session_worktree"
     || value === "create_worktree_existing_branch"
+    || value === "fork_run_worktree"
     || value === "remove_worktree"
   ) {
     return value;
@@ -160,9 +179,13 @@ function gitErrorResponse(error: unknown, action: string) {
     || error.code.includes("dirty")
     || error.code.includes("conflicted")
     || error.code === "branch_checked_out_elsewhere"
+    || error.code === "pending_orphan_worktree"
   ) ? 409 : 400;
   const details = [
     error instanceof GitWorkspaceError ? `code: ${error.code}` : null,
+    error instanceof GitWorkspaceError && Object.keys(error.details).length > 0
+      ? `details: ${JSON.stringify(error.details)}`
+      : null,
     error instanceof GitCommandError ? `git: ${["git", ...error.args].join(" ")}` : null,
     error instanceof GitCommandError && error.exitCode !== null ? `exit: ${error.exitCode}` : null,
     error instanceof GitCommandError && error.stderr ? `stderr: ${error.stderr.trim()}` : null,

@@ -161,6 +161,11 @@ export async function removeWorktree(input: RemoveWorktreeInput): Promise<{ snap
 
 export async function createWorktreeForExistingBranch(input: CreateBranchWorktreeInput & { branchName: string }) {
   const before = await assertFreshSnapshot(input.projectPath, input);
+  if (before.conflictedFileCount > 0) {
+    throw new GitWorkspaceError("conflicted_checkout", "Conflicted checkouts cannot create worktrees.", {
+      conflictedFileCount: before.conflictedFileCount,
+    });
+  }
   await assertValidBranchName(before.repoRoot, input.branchName);
   const branch = before.branches.find((candidate) => !candidate.isRemote && candidate.name === input.branchName);
   if (!branch) {

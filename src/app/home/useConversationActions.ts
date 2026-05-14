@@ -37,6 +37,7 @@ export interface UseConversationActionsParams {
   currentProjectScope: string | null;
   explicitProjects: string[];
   runs: RunRecord[];
+  latestUserCheckpoint: MessageRecord | null;
   renamingRunId?: string | null;
   apiKeys: Record<string, string>;
   commandInputRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -48,6 +49,7 @@ export function useConversationActions({
   currentProjectScope,
   explicitProjects,
   runs,
+  latestUserCheckpoint,
   apiKeys,
   commandInputRef,
 }: UseConversationActionsParams) {
@@ -75,7 +77,7 @@ export function useConversationActions({
 
   const handleStartNewPlan = () => {
     setSelectedRunId(null);
-    setDraftProjectPath(null);
+    setDraftProjectPath(currentProjectScope);
     setCommand("");
     clearAttachments();
     setMobileNavOpen(false);
@@ -232,6 +234,14 @@ export function useConversationActions({
     gitWorkspaceManager.requestForkMessageWorktree(projectPath, selectedRunId, message.id, message.content);
   };
 
+  const handleForkSessionIntoWorktree = () => {
+    if (!selectedRunId || !latestUserCheckpoint) return;
+    const selectedRun = runs.find((run) => run.id === selectedRunId);
+    const projectPath = selectedRun?.projectPath || currentProjectScope;
+    if (!projectPath) return;
+    gitWorkspaceManager.requestForkSessionWorktree(projectPath, selectedRunId, latestUserCheckpoint.id, latestUserCheckpoint.content);
+  };
+
   const handleConfirmForkMessageIntoWorktree = (request: GitWorkspaceLaunchRequest & {
     runId: string;
     targetMessageId: string;
@@ -325,6 +335,7 @@ export function useConversationActions({
     handleSaveEditedMessage,
     handleForkMessage,
     handleForkMessageIntoWorktree,
+    handleForkSessionIntoWorktree,
     handleConfirmForkMessageIntoWorktree,
     handleEditQueuedMessage,
     handleOpenProjectFile,

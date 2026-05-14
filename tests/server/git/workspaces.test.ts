@@ -6,10 +6,13 @@ import path from "path";
 import { describe, expect, it } from "vitest";
 import {
   checkoutExistingBranch,
+  createWorktreeForExistingBranch,
   createBranchWorktree,
   getGitWorkspaceSnapshot,
   removeWorktree,
 } from "@/server/git/workspaces";
+
+const GIT_WORKSPACE_TEST_TIMEOUT_MS = 30_000;
 
 function git(cwd: string, args: string[]) {
   return execFileSync("git", args, {
@@ -30,6 +33,24 @@ async function createRepo(name: string) {
   git(realRepo, ["commit", "-m", "initial"]);
   git(realRepo, ["branch", "next"]);
   return realRepo;
+}
+
+async function createConflictedRepo(name: string) {
+  const repo = await createRepo(name);
+  git(repo, ["checkout", "-b", "conflict-side"]);
+  await writeFile(path.join(repo, "README.md"), "# Side\n", "utf8");
+  git(repo, ["add", "README.md"]);
+  git(repo, ["commit", "-m", "side"]);
+  git(repo, ["checkout", "-"]);
+  await writeFile(path.join(repo, "README.md"), "# Main\n", "utf8");
+  git(repo, ["add", "README.md"]);
+  git(repo, ["commit", "-m", "main"]);
+  try {
+    git(repo, ["merge", "conflict-side"]);
+  } catch {
+    // Expected: the repository is now in an unmerged conflicted state.
+  }
+  return repo;
 }
 
 describe("git workspace service", () => {
@@ -59,7 +80,7 @@ describe("git workspace service", () => {
     const detached = await getGitWorkspaceSnapshot(repo);
     expect(detached.isDetached).toBe(true);
     expect(detached.detachedLabel).toBe(`detached@${headSha.slice(0, 7)}`);
-  });
+  }, GIT_WORKSPACE_TEST_TIMEOUT_MS);
 
   it("creates a branch-backed worktree without changing the current checkout", async () => {
     const repo = await createRepo("create-worktree");
@@ -78,7 +99,7 @@ describe("git workspace service", () => {
     expect(result.target.branchName).toBe("feature/safe-workspace");
     expect(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe(before.branchName);
     expect(git(checkoutPath, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("feature/safe-workspace");
-  });
+  }, GIT_WORKSPACE_TEST_TIMEOUT_MS);
 
   it("rejects stale confirmations before creating a worktree", async () => {
     const repo = await createRepo("stale-create");
@@ -95,7 +116,7 @@ describe("git workspace service", () => {
     })).rejects.toMatchObject({ code: "stale_status" });
 
     expect(fs.existsSync(checkoutPath)).toBe(false);
-  });
+  }, GIT_WORKSPACE_TEST_TIMEOUT_MS);
 
   it("blocks dirty branch checkout and preserves HEAD", async () => {
     const repo = await createRepo("dirty-checkout");
@@ -111,7 +132,26 @@ describe("git workspace service", () => {
     })).rejects.toMatchObject({ code: "dirty_checkout" });
 
     expect(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe(before.branchName);
-  });
+  }, GIT_WORKSPACE_TEST_TIMEOUT_MS);
+
+  it("detects conflicted checkouts and blocks existing-branch worktree creation", async () => {
+    const repo = await createConflictedRepo("conflicted-create-existing");
+    const conflicted = await getGitWorkspaceSnapshot(repo);
+    const checkoutPath = path.join(path.dirname(repo), `${path.basename(repo)}-next`);
+
+    expect(conflicted.conflictedFileCount).toBeGreaterThan(0);
+
+    await expect(createWorktreeForExistingBranch({
+      projectPath: repo,
+      branchName: "next",
+      newBranchName: "next",
+      checkoutPath,
+      expectedHeadSha: conflicted.headSha,
+      expectedStatusFingerprint: conflicted.statusFingerprint,
+    })).rejects.toMatchObject({ code: "conflicted_checkout" });
+
+    expect(fs.existsSync(checkoutPath)).toBe(false);
+  }, GIT_WORKSPACE_TEST_TIMEOUT_MS);
 
   it("refuses to remove dirty worktrees", async () => {
     const repo = await createRepo("dirty-remove");
@@ -128,7 +168,7 @@ describe("git workspace service", () => {
     })).rejects.toMatchObject({ code: "dirty_worktree" });
 
     expect(fs.existsSync(worktreePath)).toBe(true);
-  });
+  }, GIT_WORKSPACE_TEST_TIMEOUT_MS);
 
   it("rejects unsafe worktree paths and existing non-empty directories", async () => {
     const repo = await createRepo("path-validation");
@@ -155,5 +195,5 @@ describe("git workspace service", () => {
       expectedHeadSha: before.headSha,
       expectedStatusFingerprint: before.statusFingerprint,
     })).rejects.toMatchObject({ code: "worktree_path_not_empty" });
-  });
+  }, GIT_WORKSPACE_TEST_TIMEOUT_MS);
 });

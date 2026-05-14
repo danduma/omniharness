@@ -6,6 +6,7 @@ import { createConversation } from "@/server/conversations/create";
 import { normalizeConversationMode } from "@/server/conversations/modes";
 import { normalizeChatAttachments } from "@/lib/chat-attachments";
 import type { GitWorkspaceTarget } from "@/lib/git-workspace";
+import { GitWorkspaceError } from "@/server/git/workspaces";
 
 function readGitWorkspaceTarget(value: unknown): GitWorkspaceTarget | null {
   if (!value || typeof value !== "object") {
@@ -54,6 +55,22 @@ function readGitWorkspaceLaunch(value: unknown) {
   };
 }
 
+function gitWorkspaceStatus(error: unknown) {
+  if (!(error instanceof GitWorkspaceError)) {
+    return null;
+  }
+  if (
+    error.code.startsWith("stale_")
+    || error.code.includes("dirty")
+    || error.code.includes("conflicted")
+    || error.code === "branch_checked_out_elsewhere"
+    || error.code === "pending_orphan_worktree"
+  ) {
+    return 409;
+  }
+  return 400;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const auth = await requireApiSession(req, {
@@ -100,10 +117,17 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true, ...result });
   } catch (error: unknown) {
+    const gitStatus = gitWorkspaceStatus(error);
     return errorResponse(error, {
-      status: 500,
+      status: gitStatus ?? 500,
       source: "Conversations",
       action: "Start a conversation",
+      details: error instanceof GitWorkspaceError
+        ? [
+          `code: ${error.code}`,
+          Object.keys(error.details).length > 0 ? `details: ${JSON.stringify(error.details)}` : null,
+        ].filter((detail): detail is string => Boolean(detail))
+        : undefined,
     });
   }
 }

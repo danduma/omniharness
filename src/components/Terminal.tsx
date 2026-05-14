@@ -58,6 +58,15 @@ export interface TerminalUserMessageAction {
   title?: string;
   icon: ReactNode;
   disabled?: boolean;
+  onClick?: () => void;
+  menuItems?: TerminalUserMessageActionItem[];
+}
+
+export interface TerminalUserMessageActionItem {
+  label: string;
+  title?: string;
+  icon: ReactNode;
+  disabled?: boolean;
   onClick: () => void;
 }
 
@@ -1156,17 +1165,43 @@ function ActivityRow({
         {!isEditing && activity.actions.length > 0 ? (
           <div className="mt-1 flex items-center justify-end gap-1 pr-1 text-muted-foreground/70">
             {activity.actions.map((action) => (
-              <button
-                key={action.label}
-                type="button"
-                aria-label={action.label}
-                title={action.title ?? action.label}
-                disabled={action.disabled}
-                onClick={action.onClick}
-                className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {action.icon}
-              </button>
+              action.menuItems?.length ? (
+                <DropdownMenu key={action.label}>
+                  <DropdownMenuTrigger
+                    aria-label={action.label}
+                    title={action.title ?? action.label}
+                    disabled={action.disabled}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {action.icon}
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {action.menuItems.map((item) => (
+                      <DropdownMenuItem
+                        key={item.label}
+                        className="cursor-pointer whitespace-nowrap"
+                        disabled={item.disabled}
+                        onClick={item.onClick}
+                      >
+                        <span className="mr-2 inline-flex h-4 w-4 items-center justify-center">{item.icon}</span>
+                        {item.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
+                <button
+                  key={action.label}
+                  type="button"
+                  aria-label={action.label}
+                  title={action.title ?? action.label}
+                  disabled={action.disabled}
+                  onClick={action.onClick}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {action.icon}
+                </button>
+              )
             ))}
           </div>
         ) : null}

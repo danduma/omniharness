@@ -11,6 +11,9 @@ const sources = [
   "src/app/home/GitWorkspaceManager.ts",
   "src/components/home/HomeHeader.tsx",
   "src/components/home/ConversationMain.tsx",
+  "src/components/home/ConversationSidebar.tsx",
+  "src/components/home/UserInputMessage.tsx",
+  "src/components/Terminal.tsx",
   "src/components/home/RunWorkspaceBadge.tsx",
 ].map((relativePath) => fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8")).join("\n");
 
@@ -19,6 +22,7 @@ describe("branch workspace control", () => {
     expect(sources).toContain('import { BranchWorkspaceButton } from "./BranchWorkspaceButton";');
     expect(sources).toContain("<BranchWorkspaceButton");
     expect(sources).toContain("workspaceProjectPath={currentProjectScope}");
+    expect(sources).toContain("setDraftProjectPath(currentProjectScope)");
     expect(sources).toContain("git.workspace.button.aria");
     expect(sources).toContain("git.workspace.action.startNewWorktree");
     expect(sources).toContain("git.workspace.dialog.start.confirm");
@@ -58,10 +62,19 @@ describe("branch workspace control", () => {
     expect(sources).toContain("requestForkMessageWorktree(projectPath: string, runId: string, targetMessageId: string, content: string)");
     expect(sources).toContain("handleForkMessageIntoWorktree");
     expect(sources).toContain("handleConfirmForkMessageIntoWorktree");
+    expect(sources).toContain("menuItems: [");
     expect(sources).toContain("git.workspace.action.forkMessageWorktree");
     expect(sources).toContain("git.workspace.dialog.fork.title");
     expect(sources).toContain("git.workspace.dialog.fork.confirm");
     expect(sources).toContain("gitWorkspaceLaunch");
+  });
+
+  it("adds a translated fork-into-worktree action for the selected session", () => {
+    expect(sources).toContain("menuItems?: UserInputMessageActionItem[]");
+    expect(sources).toContain("menuItems?: TerminalUserMessageActionItem[]");
+    expect(sources).toContain("requestForkSessionWorktree(projectPath: string, runId: string, targetMessageId: string, content: string)");
+    expect(sources).toContain("handleForkSessionIntoWorktree");
+    expect(sources).toContain("git.workspace.action.forkSessionWorktree");
   });
 
   it("sends selected or pending git workspace intent only when starting a new run", () => {

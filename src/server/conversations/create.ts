@@ -30,6 +30,7 @@ import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/wor
 import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
 import { createBranchWorktree, validateWorkspaceTarget } from "@/server/git/workspaces";
 import { setProjectGitWorkspaceDefaultTarget } from "@/server/projects/config";
+import { pendingOrphanWorktreeError } from "@/server/git/orphan-recovery";
 
 
 function buildInitialWorkerPrompt(mode: ConversationMode, command: string) {
@@ -105,6 +106,7 @@ type GitWorkspaceLaunchRequest = {
 type ResolvedConversationWorkspace = {
   projectPath: string;
   runSnapshot: GitWorkspaceRunSnapshot | null;
+  createdWorktree?: { projectPath: string; target: GitWorkspaceTarget };
 };
 
 function buildRunWorkspaceSnapshot(args: {
@@ -150,6 +152,10 @@ async function resolveConversationWorkspace(args: {
         target: result.target,
         snapshot: result.snapshot,
       }),
+      createdWorktree: {
+        projectPath: args.gitWorkspaceLaunch.projectPath,
+        target: result.target,
+      },
     };
   }
 
@@ -396,161 +402,175 @@ export async function createConversation(args: {
   const mode = normalizeConversationMode(args.mode);
   const command = args.command.trim();
   const requestedProjectPath = args.projectPath?.trim() || getAppRoot();
-  const resolvedWorkspace = await resolveConversationWorkspace({
-    projectPath: requestedProjectPath,
-    gitWorkspaceTarget: args.gitWorkspaceTarget,
-    gitWorkspaceLaunch: args.gitWorkspaceLaunch,
-  });
-  const projectPath = resolvedWorkspace.projectPath;
-  const attachments = normalizeChatAttachments(args.attachments ?? []);
-  const attachmentsJson = serializeChatAttachments(attachments);
-  const workerPrompt = appendAttachmentContext(command, attachments);
-  const preferredWorkerType = args.preferredWorkerType?.trim()
-    ? normalizeWorkerType(args.preferredWorkerType)
-    : null;
-  const defaultTitle = getDefaultConversationTitle(mode, command);
-  const generateTitle = shouldGenerateConversationTitle(mode, command);
-  const allowedWorkerTypes = parseAllowedWorkerTypes(
-    Array.isArray(args.allowedWorkerTypes)
-      ? JSON.stringify(args.allowedWorkerTypes)
-      : typeof args.allowedWorkerTypes === "string"
-        ? args.allowedWorkerTypes
-        : null,
-  );
+  let createdWorktree: { projectPath: string; target: GitWorkspaceTarget } | null = null;
+  let runCreated = false;
 
-  const planPath = createAdHocPlan(command, attachments);
-  const commitWorkflowSettings = mode === "implementation"
-    ? await readCommitWorkflowSettings()
-    : { autoCommitMilestones: false, pushOnCommit: false };
-  const gitBaseline = mode === "implementation" && commitWorkflowSettings.autoCommitMilestones
-    ? captureGitBaseline(projectPath)
-    : null;
-  const planId = randomUUID();
-  await db.insert(plans).values({
-    id: planId,
-    path: planPath,
-    status: mode === "planning" ? "starting" : "running",
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
-
-  const runId = createRunId();
-  await db.insert(runs).values({
-    id: runId,
-    planId,
-    mode,
-    projectPath,
-    title: defaultTitle,
-    preferredWorkerType,
-    preferredWorkerModel: args.preferredWorkerModel?.trim() || null,
-    preferredWorkerEffort: args.preferredWorkerEffort?.trim().toLowerCase() || null,
-    allowedWorkerTypes: JSON.stringify(allowedWorkerTypes),
-    autoCommitMilestones: commitWorkflowSettings.autoCommitMilestones,
-    pushOnCommit: commitWorkflowSettings.pushOnCommit,
-    gitBaselineJson: gitBaseline ? JSON.stringify(gitBaseline) : null,
-    gitWorkspaceJson: resolvedWorkspace.runSnapshot ? JSON.stringify(resolvedWorkspace.runSnapshot) : null,
-    completionCommitSha: null,
-    status: mode === "planning" ? "starting" : "running",
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
-
-  if (resolvedWorkspace.runSnapshot) {
-    await db.insert(executionEvents).values({
-      id: randomUUID(),
-      runId,
-      eventType: "git_workspace_selected",
-      details: JSON.stringify({
-        target: resolvedWorkspace.runSnapshot.target,
-        headSha: resolvedWorkspace.runSnapshot.headSha,
-        branchName: resolvedWorkspace.runSnapshot.branchName,
-        detachedLabel: resolvedWorkspace.runSnapshot.detachedLabel,
-        dirtyFileCount: resolvedWorkspace.runSnapshot.dirtyFileCount,
-        conflictedFileCount: resolvedWorkspace.runSnapshot.conflictedFileCount,
-        aheadCount: resolvedWorkspace.runSnapshot.aheadCount,
-        behindCount: resolvedWorkspace.runSnapshot.behindCount,
-        warnings: resolvedWorkspace.runSnapshot.warnings,
-      }),
-      createdAt: new Date(),
+  try {
+    const resolvedWorkspace = await resolveConversationWorkspace({
+      projectPath: requestedProjectPath,
+      gitWorkspaceTarget: args.gitWorkspaceTarget,
+      gitWorkspaceLaunch: args.gitWorkspaceLaunch,
     });
-  }
+    createdWorktree = resolvedWorkspace.createdWorktree ?? null;
+    const projectPath = resolvedWorkspace.projectPath;
+    const attachments = normalizeChatAttachments(args.attachments ?? []);
+    const attachmentsJson = serializeChatAttachments(attachments);
+    const workerPrompt = appendAttachmentContext(command, attachments);
+    const preferredWorkerType = args.preferredWorkerType?.trim()
+      ? normalizeWorkerType(args.preferredWorkerType)
+      : null;
+    const defaultTitle = getDefaultConversationTitle(mode, command);
+    const generateTitle = shouldGenerateConversationTitle(mode, command);
+    const allowedWorkerTypes = parseAllowedWorkerTypes(
+      Array.isArray(args.allowedWorkerTypes)
+        ? JSON.stringify(args.allowedWorkerTypes)
+        : typeof args.allowedWorkerTypes === "string"
+          ? args.allowedWorkerTypes
+          : null,
+    );
 
-  const initialMessageId = randomUUID();
-  await db.insert(dbMessages).values({
-    id: initialMessageId,
-    runId,
-    role: "user",
-    kind: "checkpoint",
-    content: command,
-    attachmentsJson,
-    createdAt: new Date(),
-  });
-  notifyEventStreamSubscribers();
-
-  if (mode === "implementation") {
-    startSupervisorRun(runId);
-  } else {
-    const { workerId, workerNumber } = await allocateWorkerIdentity(runId);
-    const cwd = projectPath || process.cwd();
-    const workerType = preferredWorkerType || allowedWorkerTypes[0] || "codex";
-    const yoloModeEnabled = await readWorkerYoloModeEnabled();
-    const workerMode = resolveWorkerLaunchMode(undefined, yoloModeEnabled);
-
-    await db.insert(workers).values({
-      id: workerId,
-      runId,
-      type: workerType,
-      status: "starting",
-      cwd,
-      workerNumber,
-      outputLog: "",
-      outputEntriesJson: "[]",
-      currentText: "",
-      lastText: "",
+    const planPath = createAdHocPlan(command, attachments);
+    const commitWorkflowSettings = mode === "implementation"
+      ? await readCommitWorkflowSettings()
+      : { autoCommitMilestones: false, pushOnCommit: false };
+    const gitBaseline = mode === "implementation" && commitWorkflowSettings.autoCommitMilestones
+      ? captureGitBaseline(projectPath)
+      : null;
+    const planId = randomUUID();
+    await db.insert(plans).values({
+      id: planId,
+      path: planPath,
+      status: mode === "planning" ? "starting" : "running",
       createdAt: new Date(),
       updatedAt: new Date(),
     });
 
-    const response = await buildCreatedConversationResponse({ planId, runId, messageId: initialMessageId, mode });
+    const runId = createRunId();
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode,
+      projectPath,
+      title: defaultTitle,
+      preferredWorkerType,
+      preferredWorkerModel: args.preferredWorkerModel?.trim() || null,
+      preferredWorkerEffort: args.preferredWorkerEffort?.trim().toLowerCase() || null,
+      allowedWorkerTypes: JSON.stringify(allowedWorkerTypes),
+      autoCommitMilestones: commitWorkflowSettings.autoCommitMilestones,
+      pushOnCommit: commitWorkflowSettings.pushOnCommit,
+      gitBaselineJson: gitBaseline ? JSON.stringify(gitBaseline) : null,
+      gitWorkspaceJson: resolvedWorkspace.runSnapshot ? JSON.stringify(resolvedWorkspace.runSnapshot) : null,
+      completionCommitSha: null,
+      status: mode === "planning" ? "starting" : "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    runCreated = true;
 
-    if (mode === "direct") {
-      startDirectWorkerConversation({
+    if (resolvedWorkspace.runSnapshot) {
+      await db.insert(executionEvents).values({
+        id: randomUUID(),
         runId,
-        workerId,
-        workerType,
-        cwd,
-        mode: workerMode,
-        preferredWorkerModel: args.preferredWorkerModel,
-        preferredWorkerEffort: args.preferredWorkerEffort,
-        command: workerPrompt,
-      }).catch((error) => {
-        console.error("Initial direct conversation worker failed:", error);
+        eventType: "git_workspace_selected",
+        details: JSON.stringify({
+          target: resolvedWorkspace.runSnapshot.target,
+          headSha: resolvedWorkspace.runSnapshot.headSha,
+          branchName: resolvedWorkspace.runSnapshot.branchName,
+          detachedLabel: resolvedWorkspace.runSnapshot.detachedLabel,
+          dirtyFileCount: resolvedWorkspace.runSnapshot.dirtyFileCount,
+          conflictedFileCount: resolvedWorkspace.runSnapshot.conflictedFileCount,
+          aheadCount: resolvedWorkspace.runSnapshot.aheadCount,
+          behindCount: resolvedWorkspace.runSnapshot.behindCount,
+          warnings: resolvedWorkspace.runSnapshot.warnings,
+        }),
+        createdAt: new Date(),
       });
+    }
+
+    const initialMessageId = randomUUID();
+    await db.insert(dbMessages).values({
+      id: initialMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: command,
+      attachmentsJson,
+      createdAt: new Date(),
+    });
+    notifyEventStreamSubscribers();
+
+    if (mode === "implementation") {
+      startSupervisorRun(runId);
     } else {
-      const agent = await spawnAgent({
-        type: workerType,
-        cwd,
-        name: workerId,
-        ...(workerMode ? { mode: workerMode } : {}),
-        model: args.preferredWorkerModel?.trim() || undefined,
-        effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
-      });
+      const { workerId, workerNumber } = await allocateWorkerIdentity(runId);
+      const cwd = projectPath || process.cwd();
+      const workerType = preferredWorkerType || allowedWorkerTypes[0] || "codex";
+      const yoloModeEnabled = await readWorkerYoloModeEnabled();
+      const workerMode = resolveWorkerLaunchMode(undefined, yoloModeEnabled);
 
-      runInitialWorkerTurn({
+      await db.insert(workers).values({
+        id: workerId,
         runId,
-        workerId,
-        workerType,
+        type: workerType,
+        status: "starting",
         cwd,
-        agent,
-        mode,
-        command: workerPrompt,
-      }).catch((error) => {
-        if (isAgentBusyError(error)) {
-          return;
-        }
-
-        console.error(`Initial ${mode} conversation turn failed:`, error);
+        workerNumber,
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        createdAt: new Date(),
+        updatedAt: new Date(),
       });
+
+      const response = await buildCreatedConversationResponse({ planId, runId, messageId: initialMessageId, mode });
+
+      if (mode === "direct") {
+        startDirectWorkerConversation({
+          runId,
+          workerId,
+          workerType,
+          cwd,
+          mode: workerMode,
+          preferredWorkerModel: args.preferredWorkerModel,
+          preferredWorkerEffort: args.preferredWorkerEffort,
+          command: workerPrompt,
+        }).catch((error) => {
+          console.error("Initial direct conversation worker failed:", error);
+        });
+      } else {
+        const agent = await spawnAgent({
+          type: workerType,
+          cwd,
+          name: workerId,
+          ...(workerMode ? { mode: workerMode } : {}),
+          model: args.preferredWorkerModel?.trim() || undefined,
+          effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
+        });
+
+        runInitialWorkerTurn({
+          runId,
+          workerId,
+          workerType,
+          cwd,
+          agent,
+          mode,
+          command: workerPrompt,
+        }).catch((error) => {
+          if (isAgentBusyError(error)) {
+            return;
+          }
+
+          console.error(`Initial ${mode} conversation turn failed:`, error);
+        });
+      }
+
+      if (generateTitle) {
+        queueConversationTitleGeneration({ runId, command }).catch((error) => {
+          console.error("Conversation title generation failed:", error);
+        });
+      }
+      return response;
     }
 
     if (generateTitle) {
@@ -558,14 +578,17 @@ export async function createConversation(args: {
         console.error("Conversation title generation failed:", error);
       });
     }
-    return response;
-  }
 
-  if (generateTitle) {
-    queueConversationTitleGeneration({ runId, command }).catch((error) => {
-      console.error("Conversation title generation failed:", error);
-    });
+    return buildCreatedConversationResponse({ planId, runId, messageId: initialMessageId, mode });
+  } catch (error) {
+    if (createdWorktree && !runCreated) {
+      throw pendingOrphanWorktreeError({
+        projectPath: createdWorktree.projectPath,
+        operation: "conversation_launch",
+        target: createdWorktree.target,
+        error,
+      });
+    }
+    throw error;
   }
-
-  return buildCreatedConversationResponse({ planId, runId, messageId: initialMessageId, mode });
 }

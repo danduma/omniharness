@@ -1,6 +1,6 @@
 import type React from "react";
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { ArrowDown, Blocks, ChevronDown, CirclePlay, CircleStop, FolderGit2, GitBranch, Pencil, RotateCcw, Route } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -21,13 +21,14 @@ import { conversationMainManager } from "@/components/component-state-managers";
 import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
 import { extractLatestPlainTextTurn } from "@/lib/agent-output";
 import { shouldShowPlanningTerminalActivity } from "@/lib/planning-output";
-import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, NoticeDescriptor, RunRecord } from "@/app/home/types";
+import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, NoticeDescriptor, RunRecord, PlanningReviewRunRecord, PlanningReviewRoundRecord, PlanningReviewFindingRecord } from "@/app/home/types";
 import type { RecoveryIncidentRecord, RunRecoveryState } from "@/app/home/types";
 import { formatExecutionTimestamp, getExecutionEventDetailRows, summarizeExecutionEvent, type ConversationTimelineItem } from "@/app/home/utils";
 import { cn } from "@/lib/utils";
 import { shallowEqualRecord, useManagerSelector, useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { ProjectFileReference } from "@/lib/project-file-links";
 import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "@/app/home/GitWorkspaceManager";
+import { type PlanningReviewAgentSelection } from "@/server/planning/review-preferences";
 import { ErrorNotice } from "./ErrorNotice";
 import { RecoveryIncidentInspector } from "./RecoveryIncidentInspector";
 import { RunRecoveryNotice } from "./RunRecoveryNotice";
@@ -379,6 +380,10 @@ interface ConversationMainProps {
     isPending: boolean;
     mutate: (payload: { runId: string; planPath: string | null }) => void;
   };
+  onStartReview?: (prefs: { agentSelection: PlanningReviewAgentSelection; rounds: number }) => void;
+  reviewRuns?: PlanningReviewRunRecord[];
+  reviewRounds?: PlanningReviewRoundRecord[];
+  reviewFindings?: PlanningReviewFindingRecord[];
   conversationTimelineItems: ConversationTimelineItem[];
   recoverRun: { isPending: boolean };
   recoveryState: RunRecoveryState | null;
@@ -392,6 +397,7 @@ interface ConversationMainProps {
   handleStartEditingMessage: (message: Pick<MessageRecord, "id" | "content">) => void;
   handleForkMessage: (message: Pick<MessageRecord, "id" | "content">) => void;
   handleForkMessageIntoWorktree: (message: Pick<MessageRecord, "id" | "content">) => void;
+  handleForkSessionIntoWorktree: () => void;
   handleConfirmForkMessageIntoWorktree: (request: GitWorkspaceLaunchRequest & {
     runId: string;
     targetMessageId: string;
@@ -453,6 +459,38 @@ function LatestRecoveryAction({
   );
 }
 
+function SessionWorkspaceAction({
+  canForkSession,
+  recoverRun,
+  latestUserCheckpoint,
+  handleForkSessionIntoWorktree,
+}: {
+  canForkSession: boolean;
+  recoverRun: { isPending: boolean };
+  latestUserCheckpoint: MessageRecord | null;
+  handleForkSessionIntoWorktree: () => void;
+}) {
+  if (!canForkSession || !latestUserCheckpoint) {
+    return null;
+  }
+
+  return (
+    <div className="flex justify-start">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={handleForkSessionIntoWorktree}
+        disabled={recoverRun.isPending}
+        title={t("git.workspace.action.forkSessionWorktree")}
+        aria-label={t("git.workspace.action.forkSessionWorktree")}
+      >
+        <FolderGit2 className="mr-2 h-4 w-4" /> {t("git.workspace.action.forkSessionWorktree")}
+      </Button>
+    </div>
+  );
+}
+
 export function ConversationMain({
   scrollRef,
   selectedRunId,
@@ -468,6 +506,10 @@ export function ConversationMain({
   toggleDirectMessageExpansion,
   primaryConversationAgent,
   promotePlanningConversation,
+  onStartReview,
+  reviewRuns = [],
+  reviewRounds = [],
+  reviewFindings = [],
   conversationTimelineItems,
   recoverRun,
   recoveryState,
@@ -481,6 +523,7 @@ export function ConversationMain({
   handleStartEditingMessage,
   handleForkMessage,
   handleForkMessageIntoWorktree,
+  handleForkSessionIntoWorktree,
   handleConfirmForkMessageIntoWorktree,
   editingMessageId,
   editingMessageValue,
@@ -501,7 +544,7 @@ export function ConversationMain({
   const { hasOutputBelow } = useManagerSnapshot(conversationMainManager);
   const forkWorkspaceSelector = useMemo(() => {
     return (state: ReturnType<typeof gitWorkspaceManager.getSnapshot>) => {
-      const dialog = state.activeDialog?.kind === "fork_message_worktree"
+      const dialog = state.activeDialog?.kind === "fork_message_worktree" || state.activeDialog?.kind === "fork_session_worktree"
         ? state.activeDialog
         : null;
       const projectPath = dialog?.projectPath ?? null;
@@ -510,17 +553,18 @@ export function ConversationMain({
         snapshot: projectPath ? state.snapshotsByProject[projectPath] : undefined,
         loading: projectPath ? Boolean(state.loadingByProject[projectPath]) : false,
         pendingOperation: state.pendingOperation,
+        dialogDraft: state.dialogDraft,
         lastError: state.lastError,
       };
     };
   }, []);
-  const { dialog: forkWorkspaceDialog, snapshot: forkWorkspaceSnapshot, loading: forkWorkspaceLoading, pendingOperation: forkWorkspacePendingOperation, lastError: forkWorkspaceError } = useManagerSelector(
+  const { dialog: forkWorkspaceDialog, snapshot: forkWorkspaceSnapshot, loading: forkWorkspaceLoading, pendingOperation: forkWorkspacePendingOperation, dialogDraft: forkWorkspaceDraft, lastError: forkWorkspaceError } = useManagerSelector(
     gitWorkspaceManager,
     forkWorkspaceSelector,
     shallowEqualRecord,
   );
-  const [forkBranchName, setForkBranchName] = useState("");
-  const [forkCheckoutPath, setForkCheckoutPath] = useState("");
+  const forkBranchName = forkWorkspaceDraft.branchName;
+  const forkCheckoutPath = forkWorkspaceDraft.checkoutPath;
   useEffect(() => {
     if (!forkWorkspaceDialog) {
       return;
@@ -532,8 +576,10 @@ export function ConversationMain({
       return;
     }
     const nextBranch = `fork/${slugBranchName(selectedRun?.title || forkWorkspaceSnapshot.branchName || forkWorkspaceSnapshot.detachedLabel || "workspace")}`;
-    setForkBranchName(nextBranch);
-    setForkCheckoutPath(suggestCheckoutPath(forkWorkspaceSnapshot.repoRoot, nextBranch));
+    gitWorkspaceManager.setDialogDraft({
+      branchName: nextBranch,
+      checkoutPath: suggestCheckoutPath(forkWorkspaceSnapshot.repoRoot, nextBranch),
+    });
   }, [forkWorkspaceDialog, forkWorkspaceSnapshot, selectedRun?.title]);
   const handleCopyDirectMessage = async (content: string) => {
     try {
@@ -544,6 +590,7 @@ export function ConversationMain({
   };
   const canRetryConversation = isDirectConversation || (isImplementationConversation && selectedRun?.status !== "failed");
   const canRecoverUserMessage = isDirectConversation || isImplementationConversation;
+  const canForkSessionIntoWorktree = isDirectConversation || isImplementationConversation;
   const getUserMessageActions = (message: Pick<MessageRecord, "id" | "content">): UserInputMessageAction[] => {
     if (!canRecoverUserMessage) {
       return [];
@@ -574,13 +621,20 @@ export function ConversationMain({
         label: t("conversation.message.action.forkFromHere"),
         icon: <GitBranch className="h-3.5 w-3.5" />,
         disabled: recoverRun.isPending,
-        onClick: () => handleForkMessage(message),
-      },
-      {
-        label: t("git.workspace.action.forkMessageWorktree"),
-        icon: <FolderGit2 className="h-3.5 w-3.5" />,
-        disabled: recoverRun.isPending,
-        onClick: () => handleForkMessageIntoWorktree(message),
+        menuItems: [
+          {
+            label: t("conversation.message.action.forkFromHere"),
+            icon: <GitBranch className="h-3.5 w-3.5" />,
+            disabled: recoverRun.isPending,
+            onClick: () => handleForkMessage(message),
+          },
+          {
+            label: t("git.workspace.action.forkMessageWorktree"),
+            icon: <FolderGit2 className="h-3.5 w-3.5" />,
+            disabled: recoverRun.isPending,
+            onClick: () => handleForkMessageIntoWorktree(message),
+          },
+        ],
       },
     ];
   };
@@ -635,6 +689,12 @@ export function ConversationMain({
               />
             </div>
           ) : null}
+          <SessionWorkspaceAction
+            canForkSession={canForkSessionIntoWorktree}
+            recoverRun={recoverRun}
+            latestUserCheckpoint={latestUserCheckpoint}
+            handleForkSessionIntoWorktree={handleForkSessionIntoWorktree}
+          />
           <DirectControlTerminalColumn>
             <Terminal
               agent={primaryConversationAgent}
@@ -664,6 +724,12 @@ export function ConversationMain({
               onResume={handleResumeRunRecovery}
             />
           ) : null}
+          <SessionWorkspaceAction
+            canForkSession={canForkSessionIntoWorktree}
+            recoverRun={recoverRun}
+            latestUserCheckpoint={latestUserCheckpoint}
+            handleForkSessionIntoWorktree={handleForkSessionIntoWorktree}
+          />
 
           {conversationTimelineItems.length > 0 ? (
             conversationTimelineItems.map((item: ConversationTimelineItem) => {
@@ -784,6 +850,12 @@ export function ConversationMain({
               isPromoting={promotePlanningConversation.isPending}
               projectRoot={projectRoot}
               onOpenProjectFile={onOpenProjectFile}
+              runId={selectedRunId ?? undefined}
+              isReviewing={selectedRun?.status === "reviewing_plan" || selectedRun?.status === "revising_plan"}
+              latestReviewRun={reviewRuns[0]}
+              latestReviewRound={reviewRounds.find(r => r.reviewRunId === reviewRuns[0]?.id)}
+              reviewFindings={reviewFindings.filter(f => f.reviewRunId === reviewRuns[0]?.id)}
+              onStartReview={onStartReview}
               onPromote={(planPath) => {
                 if (!selectedRunId) {
                   return;
@@ -898,13 +970,12 @@ export function ConversationMain({
           <span className="font-medium">{t("git.workspace.field.branchName")}</span>
           <Input value={forkBranchName} onChange={(event) => {
             const nextBranch = event.target.value;
-            setForkBranchName(nextBranch);
-            setForkCheckoutPath((current) => current || suggestCheckoutPath(forkWorkspaceSnapshot?.repoRoot, nextBranch));
+            gitWorkspaceManager.setDialogBranchName(nextBranch, suggestCheckoutPath(forkWorkspaceSnapshot?.repoRoot, nextBranch));
           }} />
         </label>
         <label className="grid gap-1.5 text-sm">
           <span className="font-medium">{t("git.workspace.field.checkoutPath")}</span>
-          <Input value={forkCheckoutPath} onChange={(event) => setForkCheckoutPath(event.target.value)} />
+          <Input value={forkCheckoutPath} onChange={(event) => gitWorkspaceManager.setDialogCheckoutPath(event.target.value)} />
         </label>
         {forkWorkspaceError ? (
           <div className="rounded-md border border-destructive/25 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { AlertTriangle, Check, FolderGit2, GitBranch, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -52,7 +52,7 @@ function statusTone(snapshot: GitWorkspaceSnapshot | undefined) {
   if (snapshot.conflictedFileCount > 0) {
     return "danger";
   }
-  if (snapshot.dirtyFileCount > 0 || snapshot.warnings.length > 0) {
+  if (snapshot.warnings.length > 0) {
     return "warning";
   }
   return "clean";
@@ -102,6 +102,7 @@ function selectWorkspaceState(projectPath: string | null) {
         loading: false,
         pendingOperation: snapshot.pendingOperation,
         activeDialog: snapshot.activeDialog,
+        dialogDraft: snapshot.dialogDraft,
         lastError: snapshot.lastError,
       };
     }
@@ -112,6 +113,7 @@ function selectWorkspaceState(projectPath: string | null) {
       loading: Boolean(snapshot.loadingByProject[projectPath]),
       pendingOperation: snapshot.pendingOperation,
       activeDialog: snapshot.activeDialog,
+      dialogDraft: snapshot.dialogDraft,
       lastError: snapshot.lastError,
     };
   };
@@ -120,13 +122,12 @@ function selectWorkspaceState(projectPath: string | null) {
 export function BranchWorkspaceButton({ projectPath, disabled = false, themeMode }: BranchWorkspaceButtonProps) {
   useI18nSnapshot();
   const selector = useMemo(() => selectWorkspaceState(projectPath), [projectPath]);
-  const { snapshot, selectedTarget, pendingLaunch, loading, pendingOperation, activeDialog, lastError } = useManagerSelector(
+  const { snapshot, selectedTarget, pendingLaunch, loading, pendingOperation, activeDialog, dialogDraft, lastError } = useManagerSelector(
     gitWorkspaceManager,
     selector,
     shallowEqualRecord,
   );
-  const [branchName, setBranchName] = useState("");
-  const [checkoutPath, setCheckoutPath] = useState("");
+  const { branchName, checkoutPath } = dialogDraft;
   const canUseGit = Boolean(projectPath);
   const tone = statusTone(snapshot);
   const label = pendingLaunch?.newBranchName ?? workspaceLabel(snapshot, selectedTarget);
@@ -156,16 +157,20 @@ export function BranchWorkspaceButton({ projectPath, disabled = false, themeMode
   useEffect(() => {
     if (activeDialog?.kind === "start_new_worktree" && snapshot) {
       const nextBranch = `feature/${slugBranchName(snapshot.branchName ?? snapshot.detachedLabel ?? "workspace")}`;
-      setBranchName(nextBranch);
-      setCheckoutPath(suggestCheckoutPath(snapshot, nextBranch));
+      gitWorkspaceManager.setDialogDraft({
+        branchName: nextBranch,
+        checkoutPath: suggestCheckoutPath(snapshot, nextBranch),
+      });
     }
   }, [activeDialog, snapshot]);
 
   useEffect(() => {
     if (activeDialog?.kind === "create_worktree" && snapshot) {
       const nextBranch = activeDialog.branchName ?? snapshot.branchName ?? snapshot.detachedLabel ?? "workspace";
-      setBranchName(nextBranch);
-      setCheckoutPath(suggestCheckoutPath(snapshot, nextBranch));
+      gitWorkspaceManager.setDialogDraft({
+        branchName: nextBranch,
+        checkoutPath: suggestCheckoutPath(snapshot, nextBranch),
+      });
     }
   }, [activeDialog, snapshot]);
 
@@ -371,7 +376,7 @@ export function BranchWorkspaceButton({ projectPath, disabled = false, themeMode
                   >
                     {checked ? <Check className="h-4 w-4 shrink-0" /> : <FolderGit2 className="h-4 w-4 shrink-0" />}
                     <span className="min-w-0 flex-1 truncate">{worktreeLabel(worktree)}</span>
-                    {worktree.dirtyFileCount > 0 || worktree.conflictedFileCount > 0 ? <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" /> : null}
+                    {worktree.conflictedFileCount > 0 ? <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" /> : null}
                   </button>
                   <Button
                     type="button"
@@ -418,13 +423,12 @@ export function BranchWorkspaceButton({ projectPath, disabled = false, themeMode
               <span className="font-medium">{t("git.workspace.field.branchName")}</span>
               <Input value={branchName} onChange={(event) => {
                 const nextBranch = event.target.value;
-                setBranchName(nextBranch);
-                setCheckoutPath((current) => current || suggestCheckoutPath(snapshot, nextBranch));
+                gitWorkspaceManager.setDialogBranchName(nextBranch, suggestCheckoutPath(snapshot, nextBranch));
               }} />
             </label>
             <label className="grid gap-1.5 text-sm">
               <span className="font-medium">{t("git.workspace.field.checkoutPath")}</span>
-              <Input value={checkoutPath} onChange={(event) => setCheckoutPath(event.target.value)} />
+              <Input value={checkoutPath} onChange={(event) => gitWorkspaceManager.setDialogCheckoutPath(event.target.value)} />
             </label>
             {pendingLaunch ? (
               <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-700 dark:text-amber-300">
@@ -493,13 +497,12 @@ export function BranchWorkspaceButton({ projectPath, disabled = false, themeMode
               <span className="font-medium">{t("git.workspace.field.branchName")}</span>
               <Input value={branchName} onChange={(event) => {
                 const nextBranch = event.target.value;
-                setBranchName(nextBranch);
-                setCheckoutPath((current) => current || suggestCheckoutPath(snapshot, nextBranch));
+                gitWorkspaceManager.setDialogBranchName(nextBranch, suggestCheckoutPath(snapshot, nextBranch));
               }} />
             </label>
             <label className="grid gap-1.5 text-sm">
               <span className="font-medium">{t("git.workspace.field.checkoutPath")}</span>
-              <Input value={checkoutPath} onChange={(event) => setCheckoutPath(event.target.value)} />
+              <Input value={checkoutPath} onChange={(event) => gitWorkspaceManager.setDialogCheckoutPath(event.target.value)} />
             </label>
           </div>
           <DialogFooter>

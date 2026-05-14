@@ -1,10 +1,16 @@
 import fs from "fs";
 import path from "path";
-import type { GitRepositoryIdentity, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
+import type {
+  GitRepositoryIdentity,
+  GitWorkspaceTarget,
+  GitWorkspaceWarning,
+  PendingOrphanWorktreeRecovery,
+} from "@/lib/git-workspace";
 
 export interface ProjectGitWorkspaceConfig {
   defaultTarget?: GitWorkspaceTarget;
   worktreeParent?: string;
+  pendingOrphanWorktrees?: PendingOrphanWorktreeRecovery[];
 }
 
 export interface ProjectConfig {
@@ -148,6 +154,15 @@ export function setProjectGitWorkspaceDefaultTarget(projectPath: string, target:
 
 export function setProjectGitWorkspaceParent(projectPath: string, worktreeParent: string | undefined) {
   setProjectSetting(projectPath, "git.workspace.worktreeParent", worktreeParent);
+}
+
+export function addProjectGitWorkspacePendingOrphan(
+  projectPath: string,
+  orphan: PendingOrphanWorktreeRecovery,
+) {
+  const existing = getProjectGitWorkspaceConfig(projectPath).pendingOrphanWorktrees ?? [];
+  const withoutDuplicate = existing.filter((candidate) => candidate.checkoutPath !== orphan.checkoutPath);
+  setProjectSetting(projectPath, "git.workspace.pendingOrphanWorktrees", [...withoutDuplicate, orphan]);
 }
 
 export function resolveProjectGitWorkspaceDefault(

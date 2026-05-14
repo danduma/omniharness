@@ -12,6 +12,7 @@ import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
 import { getAppDataPath } from "@/server/app-root";
 import { requireApiSession } from "@/server/auth/guards";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { GitWorkspaceError } from "@/server/git/workspaces";
 import { pauseForClarifications } from "@/server/clarifications/loop";
 import { isArchivableRunStatus } from "@/server/runs/status";
 import {
@@ -28,6 +29,7 @@ import {
   supervisorScheduledWakes,
   creditEvents,
   workerCounters,
+  workerAssignments,
 } from "@/server/db/schema";
 
 function normalizeTitle(input: unknown) {
@@ -63,6 +65,22 @@ function actionLabelForPostAction(action: unknown) {
     default:
       return "Recover conversation";
   }
+}
+
+function gitWorkspaceStatus(error: unknown) {
+  if (!(error instanceof GitWorkspaceError)) {
+    return null;
+  }
+  if (
+    error.code.startsWith("stale_")
+    || error.code.includes("dirty")
+    || error.code.includes("conflicted")
+    || error.code === "branch_checked_out_elsewhere"
+    || error.code === "pending_orphan_worktree"
+  ) {
+    return 409;
+  }
+  return 400;
 }
 
 function isTerminalProcessNotFoundError(error: unknown) {
@@ -416,17 +434,24 @@ export async function POST(
     return NextResponse.json({ ok: true, ...result });
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    const status = errorMessage.includes("must be a user message")
+    const status = gitWorkspaceStatus(error)
+      ?? (errorMessage.includes("must be a user message")
       || errorMessage.includes("required")
       || errorMessage.includes("direct control")
       ? 400
       : errorMessage.includes("not found")
         ? 404
-        : 500;
+        : 500);
     return errorResponse(error, {
       status,
       source: "Runs",
       action: postActionLabel,
+      details: error instanceof GitWorkspaceError
+        ? [
+          `code: ${error.code}`,
+          Object.keys(error.details).length > 0 ? `details: ${JSON.stringify(error.details)}` : null,
+        ].filter((detail): detail is string => Boolean(detail))
+        : undefined,
     });
   }
 }
@@ -485,6 +510,7 @@ export async function DELETE(
     await db.delete(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId));
     await db.delete(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
     await db.delete(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId));
+    await db.delete(workerAssignments).where(eq(workerAssignments.runId, runId));
     await db.delete(workers).where(eq(workers.runId, runId));
     await db.delete(workerCounters).where(eq(workerCounters.runId, runId));
     await db.delete(runs).where(eq(runs.id, runId));

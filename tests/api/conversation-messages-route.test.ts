@@ -642,6 +642,109 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(resumeEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
   });
 
+  it("starts a fresh direct worker when the saved Gemini session id is gone", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-missing-gemini-session.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      preferredWorkerType: "gemini",
+      preferredWorkerModel: "gemini-3",
+      preferredWorkerEffort: "high",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "gemini",
+      status: "idle",
+      cwd: "/workspace/app",
+      bridgeSessionId: "missing-session",
+      bridgeSessionMode: "full-access",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockAskAgent
+      .mockRejectedValueOnce(new Error(`Ask failed: Agent not found: ${workerId}`))
+      .mockResolvedValueOnce({
+        response: "Fresh Gemini session response.",
+        state: "idle",
+      });
+    mockSpawnAgent
+      .mockRejectedValueOnce(new Error('Spawn failed: failed to start gemini agent via gemini: {"code":-32603,"message":"Internal error","data":{"details":"Invalid session identifier \\"missing-session\\"."}}'))
+      .mockResolvedValueOnce({
+        name: workerId,
+        type: "gemini",
+        cwd: "/workspace/app",
+        state: "idle",
+        sessionId: "fresh-session",
+        sessionMode: "full-access",
+        outputEntries: [],
+        currentText: "",
+        lastText: "Fresh Gemini session response.",
+      });
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "continue" }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    await delay(20);
+
+    expect(mockSpawnAgent).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      name: workerId,
+      type: "gemini",
+      cwd: "/workspace/app",
+      mode: "full-access",
+      model: "gemini-3",
+      effort: "high",
+      resumeSessionId: "missing-session",
+    }));
+    expect(mockSpawnAgent).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      name: workerId,
+      type: "gemini",
+      cwd: "/workspace/app",
+      mode: "full-access",
+      model: "gemini-3",
+      effort: "high",
+    }));
+    expect(mockSpawnAgent.mock.calls[1]?.[0]).not.toHaveProperty("resumeSessionId");
+
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
+
+    expect(updatedRun?.status).toBe("running");
+    expect(updatedRun?.lastError).toBeNull();
+    expect(updatedWorker?.status).toBe("idle");
+    expect(updatedWorker?.bridgeSessionId).toBe("fresh-session");
+    expect(storedMessages.map((message) => message.role)).toEqual(["user", "worker"]);
+    expect(storedMessages[1]?.content).toBe("Fresh Gemini session response.");
+  });
+
   it("routes direct follow-ups to the latest non-cancelled worker", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

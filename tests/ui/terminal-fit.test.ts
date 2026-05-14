@@ -220,7 +220,7 @@ test("terminal user messages render as right-aligned transcript blocks outside t
   expect(terminalSource).toContain('if (activity.kind === "user_message")');
   expect(terminalSource).toContain('relative z-10 flex w-full flex-col items-end');
   expect(terminalSource).toContain('mt-1 flex items-center justify-end gap-1 pr-1');
-  expect(terminalSource).toContain('rounded-[1.55rem] bg-[#f3f3f3]');
+  expect(terminalSource).toContain('max-w-[min(72ch,calc(100%-1rem))] rounded-[1.55rem]');
   expect(terminalSource).toContain('dark:bg-[#3a3a3a]');
   expect(terminalSource).toContain('dark:text-[#d8d8d8]');
   expect(terminalSource).not.toContain('>You</div>');

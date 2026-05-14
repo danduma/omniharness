@@ -30,6 +30,7 @@ import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { isRecoverableAgentMissingError } from "./recovery-state";
 import { createBranchWorktree } from "@/server/git/workspaces";
+import { pendingOrphanWorktreeError } from "@/server/git/orphan-recovery";
 import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
 
 export type RecoveryAction = "retry" | "edit" | "fork";
@@ -45,6 +46,18 @@ interface RecoverRunArgs {
 interface GitWorkspaceLaunchRequest {
   mode: "new_worktree";
   projectPath: string;
+  newBranchName: string;
+  checkoutPath: string;
+  startPoint?: string;
+  worktreeParent?: string;
+  expectedHeadSha: string | null;
+  expectedStatusFingerprint: string;
+}
+
+export interface ForkRunWorktreeArgs {
+  runId: string;
+  targetMessageId?: string;
+  contentOverride?: string;
   newBranchName: string;
   checkoutPath: string;
   startPoint?: string;
@@ -71,6 +84,17 @@ function buildRunWorkspaceSnapshot(args: {
     warnings: args.warnings ?? args.snapshot.warnings,
     selectedAt: new Date().toISOString(),
   };
+}
+
+async function findLatestUserMessageId(runId: string) {
+  const runMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+  const latestUserMessage = runMessages
+    .filter((message) => message.role === "user")
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+  if (!latestUserMessage) {
+    throw new Error("Fork source run has no user message to fork from");
+  }
+  return latestUserMessage.id;
 }
 
 async function cancelRunWorkers(runId: string) {
@@ -456,7 +480,6 @@ export async function recoverRun(args: RecoverRunArgs) {
 
     const newPlanId = randomUUID();
     const newRunId = createRunId();
-    const planPath = createAdHocPlan(nextContent);
     const now = new Date();
     const workspaceResult = args.gitWorkspaceLaunch
       ? await createBranchWorktree({
@@ -475,75 +498,102 @@ export async function recoverRun(args: RecoverRunArgs) {
         snapshot: workspaceResult.snapshot,
       })
       : null;
+    let forkedRunCreated = false;
 
-    await db.insert(plans).values({
-      id: newPlanId,
-      path: planPath,
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
+    try {
+      const planPath = createAdHocPlan(nextContent);
 
-    await db.insert(runs).values({
-      id: newRunId,
-      planId: newPlanId,
-      mode: run.mode,
-      title: run.title,
-      projectPath: workspaceResult?.target.checkoutPath ?? run.projectPath,
-      preferredWorkerType: run.preferredWorkerType,
-      preferredWorkerModel: run.preferredWorkerModel,
-      preferredWorkerEffort: run.preferredWorkerEffort,
-      allowedWorkerTypes: run.allowedWorkerTypes,
-      gitWorkspaceJson: runWorkspaceSnapshot ? JSON.stringify(runWorkspaceSnapshot) : null,
-      parentRunId: args.runId,
-      forkedFromMessageId: args.targetMessageId,
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    const messagesToCopy = (await db.select().from(messages).where(eq(messages.runId, args.runId)))
-      .filter((message) => message.createdAt <= targetMessage.createdAt)
-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-
-    for (const message of messagesToCopy) {
-      await db.insert(messages).values({
-        id: randomUUID(),
-        runId: newRunId,
-        role: message.role,
-        kind: message.id === args.targetMessageId ? "checkpoint" : message.kind,
-        content: message.id === args.targetMessageId ? nextContent : message.content,
+      await db.insert(plans).values({
+        id: newPlanId,
+        path: planPath,
+        status: "running",
         createdAt: now,
+        updatedAt: now,
       });
-    }
 
-    if (runWorkspaceSnapshot) {
-      await db.insert(executionEvents).values({
-        id: randomUUID(),
-        runId: newRunId,
-        eventType: "git_workspace_forked",
-        details: JSON.stringify({
-          parentRunId: args.runId,
-          forkedFromMessageId: args.targetMessageId,
-          target: runWorkspaceSnapshot.target,
-          headSha: runWorkspaceSnapshot.headSha,
-          branchName: runWorkspaceSnapshot.branchName,
-          detachedLabel: runWorkspaceSnapshot.detachedLabel,
-          dirtyFileCount: runWorkspaceSnapshot.dirtyFileCount,
-          conflictedFileCount: runWorkspaceSnapshot.conflictedFileCount,
-          warnings: runWorkspaceSnapshot.warnings,
-        }),
+      await db.insert(runs).values({
+        id: newRunId,
+        planId: newPlanId,
+        mode: run.mode,
+        title: run.title,
+        projectPath: workspaceResult?.target.checkoutPath ?? run.projectPath,
+        preferredWorkerType: run.preferredWorkerType,
+        preferredWorkerModel: run.preferredWorkerModel,
+        preferredWorkerEffort: run.preferredWorkerEffort,
+        allowedWorkerTypes: run.allowedWorkerTypes,
+        gitWorkspaceJson: runWorkspaceSnapshot ? JSON.stringify(runWorkspaceSnapshot) : null,
+        parentRunId: args.runId,
+        forkedFromMessageId: args.targetMessageId,
+        status: "running",
         createdAt: now,
+        updatedAt: now,
       });
-    }
+      forkedRunCreated = true;
 
-    const newRun = await db.select().from(runs).where(eq(runs.id, newRunId)).get();
-    if (!newRun) {
-      throw new Error("Forked run not found");
-    }
+      const messagesToCopy = (await db.select().from(messages).where(eq(messages.runId, args.runId)))
+        .filter((message) => message.createdAt <= targetMessage.createdAt)
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 
-    await startDirectRerun(newRun, nextContent);
-    return { runId: newRunId };
+      for (const message of messagesToCopy) {
+        await db.insert(messages).values({
+          id: randomUUID(),
+          runId: newRunId,
+          role: message.role,
+          kind: message.id === args.targetMessageId ? "checkpoint" : message.kind,
+          content: message.id === args.targetMessageId ? nextContent : message.content,
+          createdAt: now,
+        });
+      }
+
+      if (runWorkspaceSnapshot) {
+        await db.insert(executionEvents).values({
+          id: randomUUID(),
+          runId: newRunId,
+          eventType: "git_workspace_forked",
+          details: JSON.stringify({
+            parentRunId: args.runId,
+            forkedFromMessageId: args.targetMessageId,
+            target: runWorkspaceSnapshot.target,
+            headSha: runWorkspaceSnapshot.headSha,
+            branchName: runWorkspaceSnapshot.branchName,
+            detachedLabel: runWorkspaceSnapshot.detachedLabel,
+            dirtyFileCount: runWorkspaceSnapshot.dirtyFileCount,
+            conflictedFileCount: runWorkspaceSnapshot.conflictedFileCount,
+            warnings: runWorkspaceSnapshot.warnings,
+          }),
+          createdAt: now,
+        });
+      }
+
+      const newRun = await db.select().from(runs).where(eq(runs.id, newRunId)).get();
+      if (!newRun) {
+        throw new Error("Forked run not found");
+      }
+
+      await startDirectRerun(newRun, nextContent);
+      return {
+        runId: newRunId,
+        ...(workspaceResult && runWorkspaceSnapshot
+          ? {
+            target: workspaceResult.target,
+            runLaunchSnapshot: runWorkspaceSnapshot,
+            snapshot: workspaceResult.snapshot,
+          }
+          : {}),
+      };
+    } catch (error) {
+      if (workspaceResult && args.gitWorkspaceLaunch && !forkedRunCreated) {
+        throw pendingOrphanWorktreeError({
+          projectPath: args.gitWorkspaceLaunch.projectPath,
+          operation: "fork_run_worktree",
+          target: workspaceResult.target,
+          sourceRunId: args.runId,
+          targetMessageId: args.targetMessageId,
+          error,
+        });
+      }
+      throw error;
+    }
   }
 
   await cancelRunWorkers(args.runId);
@@ -582,4 +632,29 @@ export async function recoverRun(args: RecoverRunArgs) {
   await startDirectRerun(run, nextContent);
 
   return { runId: args.runId };
+}
+
+export async function forkRunIntoWorktree(args: ForkRunWorktreeArgs) {
+  const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
+  const projectPath = run?.projectPath?.trim();
+  if (!run || !projectPath) {
+    throw new Error("Fork source run is missing a project path");
+  }
+  const targetMessageId = args.targetMessageId?.trim() || await findLatestUserMessageId(args.runId);
+  return recoverRun({
+    runId: args.runId,
+    action: "fork",
+    targetMessageId,
+    content: args.contentOverride,
+    gitWorkspaceLaunch: {
+      mode: "new_worktree",
+      projectPath,
+      newBranchName: args.newBranchName,
+      checkoutPath: args.checkoutPath,
+      startPoint: args.startPoint,
+      worktreeParent: args.worktreeParent,
+      expectedHeadSha: args.expectedHeadSha,
+      expectedStatusFingerprint: args.expectedStatusFingerprint,
+    },
+  });
 }

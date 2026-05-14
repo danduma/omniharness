@@ -18,11 +18,17 @@ export type GitWorkspaceDialog =
   | { kind: "start_new_worktree"; projectPath: string }
   | { kind: "create_worktree"; projectPath: string; branchName?: string }
   | { kind: "remove_worktree"; projectPath: string; checkoutPath: string }
+  | { kind: "fork_session_worktree"; projectPath: string; runId: string; targetMessageId: string; content: string }
   | { kind: "fork_message_worktree"; projectPath: string; runId: string; targetMessageId: string; content: string };
 
 export type GitWorkspaceErrorState = {
   message: string;
   details?: string[];
+};
+
+export type GitWorkspaceDialogDraft = {
+  branchName: string;
+  checkoutPath: string;
 };
 
 export type GitWorkspaceApiRequest =
@@ -78,6 +84,7 @@ export type GitWorkspaceManagerState = {
   loadingByProject: Record<string, boolean | undefined>;
   pendingOperation: GitWorkspaceApiRequest["operation"] | null;
   activeDialog: GitWorkspaceDialog | null;
+  dialogDraft: GitWorkspaceDialogDraft;
   lastError: GitWorkspaceErrorState | null;
 };
 
@@ -88,6 +95,10 @@ const INITIAL_STATE: GitWorkspaceManagerState = {
   loadingByProject: {},
   pendingOperation: null,
   activeDialog: null,
+  dialogDraft: {
+    branchName: "",
+    checkoutPath: "",
+  },
   lastError: null,
 };
 
@@ -173,6 +184,28 @@ export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> 
     this.setKey("activeDialog", { kind: "checkout", projectPath, branchName });
   }
 
+  setDialogDraft(draft: GitWorkspaceDialogDraft) {
+    this.setKey("dialogDraft", draft);
+  }
+
+  setDialogBranchName(branchName: string, fallbackCheckoutPath = "") {
+    this.patch((current) => ({
+      dialogDraft: {
+        branchName,
+        checkoutPath: current.dialogDraft.checkoutPath || fallbackCheckoutPath,
+      },
+    }));
+  }
+
+  setDialogCheckoutPath(checkoutPath: string) {
+    this.patch((current) => ({
+      dialogDraft: {
+        ...current.dialogDraft,
+        checkoutPath,
+      },
+    }));
+  }
+
   async confirmCheckout(args: Extract<GitWorkspaceApiRequest, { operation: "checkout_existing_branch" }>) {
     return this.runOperation(args, (payload) => ({
       activeDialog: null,
@@ -246,6 +279,10 @@ export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> 
 
   requestForkMessageWorktree(projectPath: string, runId: string, targetMessageId: string, content: string) {
     this.setKey("activeDialog", { kind: "fork_message_worktree", projectPath, runId, targetMessageId, content });
+  }
+
+  requestForkSessionWorktree(projectPath: string, runId: string, targetMessageId: string, content: string) {
+    this.setKey("activeDialog", { kind: "fork_session_worktree", projectPath, runId, targetMessageId, content });
   }
 
   private async runOperation(

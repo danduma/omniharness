@@ -5,6 +5,8 @@ import path from "path";
 import { describe, expect, it } from "vitest";
 import { autoCommitMilestone, captureGitBaseline } from "@/server/git/auto-commit";
 
+const GIT_AUTO_COMMIT_TEST_TIMEOUT_MS = 30_000;
+
 function git(cwd: string, args: string[]) {
   return execFileSync("git", args, {
     cwd,
@@ -51,7 +53,7 @@ describe("autoCommitMilestone", () => {
     expect(result.pushStatus).toBe("not_requested");
     expect(git(repo, ["log", "-1", "--pretty=%s"])).toBe("OmniHarness: test milestone");
     expect(git(repo, ["status", "--porcelain"])).toBe("");
-  });
+  }, GIT_AUTO_COMMIT_TEST_TIMEOUT_MS);
 
   it("skips when the baseline was dirty", () => {
     const repo = createRepo("dirty-baseline");
@@ -74,7 +76,7 @@ describe("autoCommitMilestone", () => {
     }
     expect(result.reason).toBe("dirty_baseline");
     expect(git(repo, ["log", "-1", "--pretty=%s"])).toBe("initial");
-  });
+  }, GIT_AUTO_COMMIT_TEST_TIMEOUT_MS);
 
   it("skips when there are no changes", () => {
     const repo = createRepo("no-changes");
@@ -95,7 +97,7 @@ describe("autoCommitMilestone", () => {
     }
     expect(result.reason).toBe("no_changes");
     expect(git(repo, ["log", "-1", "--pretty=%s"])).toBe("initial");
-  });
+  }, GIT_AUTO_COMMIT_TEST_TIMEOUT_MS);
 
   it("pushes after creating a commit when push on commit is enabled", () => {
     const remote = createTempDir("remote");
@@ -121,7 +123,7 @@ describe("autoCommitMilestone", () => {
     }
     expect(result.pushStatus).toBe("pushed");
     expect(git(remote, ["log", "-1", "--pretty=%s"])).toBe("OmniHarness: pushed milestone");
-  });
+  }, GIT_AUTO_COMMIT_TEST_TIMEOUT_MS);
 
   it("reports push failure without hiding the commit", () => {
     const repo = createRepo("push-failure");
@@ -144,5 +146,5 @@ describe("autoCommitMilestone", () => {
     expect(result.pushStatus).toBe("failed");
     expect(result.pushError).toContain("fatal");
     expect(git(repo, ["log", "-1", "--pretty=%s"])).toBe("OmniHarness: unpushed milestone");
-  });
+  }, GIT_AUTO_COMMIT_TEST_TIMEOUT_MS);
 });

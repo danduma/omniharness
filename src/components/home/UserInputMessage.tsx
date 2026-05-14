@@ -2,16 +2,26 @@ import Image from "next/image";
 import type React from "react";
 import { Copy } from "lucide-react";
 import { attachmentImagePreviewManager } from "@/components/component-state-managers";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { formatBytes, type ChatAttachment } from "@/lib/chat-attachments";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
+
+export type UserInputMessageActionItem = {
+  label: string;
+  title?: string;
+  icon: React.ReactNode;
+  disabled?: boolean;
+  onClick: () => void;
+};
 
 export type UserInputMessageAction = {
   label: string;
   title?: string;
   icon: React.ReactNode;
   disabled?: boolean;
-  onClick: () => void;
+  onClick?: () => void;
+  menuItems?: UserInputMessageActionItem[];
 };
 
 interface UserInputMessageProps {
@@ -135,17 +145,43 @@ export function UserInputMessage({
               </button>
             ) : null}
             {actions.map((action) => (
-              <button
-                key={action.label}
-                type="button"
-                aria-label={action.label}
-                title={action.title ?? action.label}
-                disabled={action.disabled}
-                onClick={action.onClick}
-                className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {action.icon}
-              </button>
+              action.menuItems?.length ? (
+                <DropdownMenu key={action.label}>
+                  <DropdownMenuTrigger
+                    aria-label={action.label}
+                    title={action.title ?? action.label}
+                    disabled={action.disabled}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {action.icon}
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {action.menuItems.map((item) => (
+                      <DropdownMenuItem
+                        key={item.label}
+                        className="cursor-pointer whitespace-nowrap"
+                        disabled={item.disabled}
+                        onClick={item.onClick}
+                      >
+                        <span className="mr-2 inline-flex h-4 w-4 items-center justify-center">{item.icon}</span>
+                        {item.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
+                <button
+                  key={action.label}
+                  type="button"
+                  aria-label={action.label}
+                  title={action.title ?? action.label}
+                  disabled={action.disabled}
+                  onClick={action.onClick}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {action.icon}
+                </button>
+              )
             ))}
           </div>
         ) : null}

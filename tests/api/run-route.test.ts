@@ -17,6 +17,7 @@ import {
   creditEvents,
   accounts,
   settings,
+  workerAssignments,
 } from "@/server/db/schema";
 import { PATCH, DELETE, POST } from "@/app/api/runs/[id]/route";
 
@@ -104,6 +105,17 @@ vi.mock("@/server/conversation-title", () => ({
 
 vi.mock("@/server/git/workspaces", () => ({
   createBranchWorktree: mockCreateBranchWorktree,
+  GitWorkspaceError: class GitWorkspaceError extends Error {
+    readonly code: string;
+    readonly details: Record<string, unknown>;
+
+    constructor(code: string, message: string, details: Record<string, unknown> = {}) {
+      super(message);
+      this.name = "GitWorkspaceError";
+      this.code = code;
+      this.details = details;
+    }
+  },
 }));
 
 describe("PATCH /api/runs/[id]", () => {
@@ -1506,6 +1518,16 @@ describe("DELETE /api/runs/[id]", () => {
       updatedAt: new Date(),
     });
 
+    await db.insert(workerAssignments).values({
+      id: randomUUID(),
+      runId,
+      workerId,
+      planItemId: itemId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
     await db.insert(executionEvents).values({
       id: randomUUID(),
       runId,
@@ -1537,6 +1559,7 @@ describe("DELETE /api/runs/[id]", () => {
     expect(await db.select().from(plans).where(eq(plans.id, planId)).get()).toBeUndefined();
     expect(await db.select().from(workers).where(eq(workers.id, workerId)).get()).toBeUndefined();
     expect(await db.select().from(planItems).where(eq(planItems.id, itemId)).get()).toBeUndefined();
+    expect(await db.select().from(workerAssignments).where(eq(workerAssignments.runId, runId))).toHaveLength(0);
     expect(fs.existsSync(adHocAbsolutePath)).toBe(false);
   });
 });

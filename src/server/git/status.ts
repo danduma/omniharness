@@ -10,6 +10,7 @@ import {
   GitWorktreeSummary,
 } from "@/lib/git-workspace";
 import { runGit } from "@/server/git/command";
+import { getProjectGitWorkspaceConfig } from "@/server/projects/config";
 
 interface ParsedStatus {
   headSha: string | null;
@@ -244,6 +245,24 @@ async function readWorktrees(repoRoot: string): Promise<ParsedWorktree[]> {
 
 async function readWarnings(repoRoot: string): Promise<GitWorkspaceWarning[]> {
   const warnings: GitWorkspaceWarning[] = [];
+  const pendingOrphans = getProjectGitWorkspaceConfig(repoRoot).pendingOrphanWorktrees ?? [];
+  for (const orphan of pendingOrphans) {
+    warnings.push({
+      code: "pending_orphan_worktree",
+      message: "A worktree was created but the run failed before it was recorded.",
+      details: {
+        id: orphan.id,
+        operation: orphan.operation,
+        checkoutPath: orphan.checkoutPath,
+        branchName: orphan.branchName,
+        sourceRunId: orphan.sourceRunId,
+        targetMessageId: orphan.targetMessageId,
+        errorMessage: orphan.errorMessage,
+        createdAt: orphan.createdAt,
+      },
+    });
+  }
+
   const superproject = await runGit({
     cwd: repoRoot,
     args: ["rev-parse", "--show-superproject-working-tree"],

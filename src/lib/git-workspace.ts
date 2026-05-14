@@ -76,6 +76,20 @@ export interface GitWorkspaceRunSnapshot {
   selectedAt: string;
 }
 
+export interface PendingOrphanWorktreeRecovery {
+  id: string;
+  operation: "conversation_launch" | "fork_run_worktree";
+  repoRoot: string;
+  gitCommonDir: string;
+  checkoutPath: string;
+  branchName: string | null;
+  worktreeId: string | null;
+  sourceRunId?: string;
+  targetMessageId?: string;
+  errorMessage: string;
+  createdAt: string;
+}
+
 export function formatDetachedLabel(headSha: string | null) {
   return headSha ? `detached@${headSha.slice(0, 7)}` : "detached";
 }
