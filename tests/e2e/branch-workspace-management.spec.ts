@@ -224,7 +224,7 @@ test.describe("approval-gated branch workspace journeys", () => {
     fs.writeFileSync(path.join(repo, "dirty.txt"), "dirty parent\n", "utf8");
     fs.writeFileSync(path.join(worktreePath, "dirty.txt"), "dirty worktree\n", "utf8");
 
-    await openProject(page, repo);
+    await openProject(page, repo, { mode: "direct" });
     await expect.poll(() => workspaceMenuText(page), { timeout: 60000 }).toContain("1 dirty");
     await openWorkspaceMenu(page);
     await expect(page.getByRole("button", { name: "Checkout" }).first()).toBeDisabled();
@@ -239,7 +239,7 @@ test.describe("approval-gated branch workspace journeys", () => {
     const repo = await createConflictedRepo("conflict-safety");
     const beforeBranch = git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]);
 
-    await openProject(page, repo);
+    await openProject(page, repo, { mode: "direct" });
     await expect.poll(() => workspaceMenuText(page), {
       timeout: 60000,
     }).toContain("conflicted");
