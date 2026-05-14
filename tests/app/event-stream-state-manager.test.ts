@@ -930,4 +930,57 @@ describe("EventStreamStateManager", () => {
       "entry-67",
     ]);
   });
+
+  it("keeps existing selected-run messages when a scoped live payload omits them but includes newer worker messages", () => {
+    const manager = new EventStreamStateManager(createState({
+      messages: [{
+        id: "user-message",
+        runId: "run-1",
+        role: "user",
+        kind: "checkpoint",
+        content: "Start the task",
+        createdAt: "2026-05-14T15:15:49.000Z",
+      }],
+      runs: [{
+        id: "run-1",
+        planId: "plan-1",
+        mode: "direct",
+        status: "running",
+        createdAt: "2026-05-14T15:15:49.000Z",
+        updatedAt: "2026-05-14T15:15:49.000Z",
+        title: "New conversation",
+      }],
+    }));
+
+    const next = manager.update(createState({
+      messages: [{
+        id: "worker-message",
+        runId: "run-1",
+        role: "worker",
+        kind: "direct",
+        content: "Working on it",
+        workerId: "run-1-worker-1",
+        createdAt: "2026-05-14T15:16:00.000Z",
+      }],
+      runs: [{
+        id: "run-1",
+        planId: "plan-1",
+        mode: "direct",
+        status: "running",
+        createdAt: "2026-05-14T15:15:49.000Z",
+        updatedAt: "2026-05-14T15:16:00.000Z",
+        title: "New conversation",
+      }],
+      workers: [{
+        id: "run-1-worker-1",
+        runId: "run-1",
+        type: "gemini",
+        status: "working",
+        createdAt: "2026-05-14T15:15:49.000Z",
+        updatedAt: "2026-05-14T15:16:00.000Z",
+      }],
+    }));
+
+    expect(next.messages.map((message) => message.id)).toEqual(["user-message", "worker-message"]);
+  });
 });

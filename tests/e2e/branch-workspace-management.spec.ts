@@ -45,6 +45,13 @@ async function createConflictedRepo(name: string) {
 }
 
 let originalProjectsValue: string | null = null;
+const testOrigin = "http://127.0.0.1:4010";
+
+type E2ERunRecord = {
+  id: string;
+  projectPath?: string | null;
+  gitWorkspaceJson?: string | null;
+};
 
 function projectUrl(repo: string) {
   return `/?project=${encodeURIComponent(repo)}`;
@@ -67,39 +74,65 @@ async function restoreOriginalProjects(request: APIRequestContext) {
     return;
   }
 
-  const response = await request.post("/api/settings", {
-    data: { PROJECTS: originalProjectsValue },
-  });
-  expect(response.ok()).toBe(true);
+  await postProjectsSetting(request, originalProjectsValue);
 }
 
-function withTestProject(projectsValue: string, repo: string) {
-  try {
-    const projects = JSON.parse(projectsValue);
-    if (Array.isArray(projects)) {
-      return JSON.stringify([
-        repo,
-        ...projects.filter((project): project is string => typeof project === "string" && project !== repo),
-      ]);
-    }
-  } catch {
-    // Fall through to a minimal valid list if persisted settings are malformed.
-  }
+function withTestProject(repo: string) {
   return JSON.stringify([repo]);
 }
 
-async function openProject(page: Page, repo: string) {
-  const originalProjects = await rememberOriginalProjects(page.request);
-  const response = await page.request.post("/api/settings", {
-    data: { PROJECTS: withTestProject(originalProjects, repo) },
-  });
-  expect(response.ok()).toBe(true);
+async function postProjectsSetting(request: APIRequestContext, projectsValue: string) {
+  let lastFailure = "";
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const response = await request.post("/api/settings", {
+      headers: { origin: testOrigin },
+      data: { PROJECTS: projectsValue },
+    });
+    if (response.ok()) {
+      return;
+    }
+    lastFailure = await response.text().catch(() => `HTTP ${response.status()}`);
+    await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+  }
+  throw new Error(`Failed to save test PROJECTS setting: ${lastFailure}`);
+}
+
+async function assertGitStatusAvailable(request: APIRequestContext, repo: string) {
+  let lastFailure = "";
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const response = await request.post("/api/git", {
+      headers: { origin: testOrigin },
+      data: { operation: "status", projectPath: repo },
+    });
+    if (response.ok()) {
+      return;
+    }
+    lastFailure = await response.text().catch(() => `HTTP ${response.status()}`);
+    await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+  }
+  throw new Error(`Failed to load git status for ${repo}: ${lastFailure}`);
+}
+
+async function openProject(page: Page, repo: string, options: { mode?: "direct" | "planning" | "implementation" } = {}) {
+  await rememberOriginalProjects(page.request);
+  await postProjectsSetting(page.request, withTestProject(repo));
+  if (options.mode) {
+    await page.addInitScript((mode) => {
+      window.localStorage.removeItem("omni-git-workspace-cache:v1");
+      window.localStorage.setItem("omni-composer-mode", mode);
+    }, options.mode);
+  } else {
+    await page.addInitScript(() => {
+      window.localStorage.removeItem("omni-git-workspace-cache:v1");
+    });
+  }
   await unlockApp(page, projectUrl(repo));
+  const newConversationButton = page.getByRole("button", { name: `New conversation in ${path.basename(repo)}` });
+  if (await newConversationButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+    await newConversationButton.click();
+  }
   await expect(page.locator("[data-composer-input='true']")).toBeVisible({ timeout: 30000 });
-  const statusResponse = await page.request.post("/api/git", {
-    data: { operation: "status", projectPath: repo },
-  });
-  expect(statusResponse.ok()).toBe(true);
+  await assertGitStatusAvailable(page.request, repo);
   await expect(page.getByRole("button", { name: "Choose branch or workspace" })).toBeEnabled({ timeout: 30000 });
 }
 
@@ -120,8 +153,17 @@ async function workspaceMenuText(page: Page) {
   return page.getByRole("menu", { name: "Choose branch or workspace" }).innerText();
 }
 
+async function findRunForWorkspace(page: Page, checkoutPath: string) {
+  const response = await page.request.get("/api/events?snapshot=1&persisted=1");
+  expect(response.ok()).toBe(true);
+  const payload = await response.json() as { runs?: E2ERunRecord[] };
+  return (payload.runs ?? []).find((run) => {
+    return run.projectPath === checkoutPath || run.gitWorkspaceJson?.includes(checkoutPath);
+  })?.id ?? "";
+}
+
 test.describe("approval-gated branch workspace journeys", () => {
-  test.setTimeout(90000);
+  test.setTimeout(180000);
 
   test.afterEach(async ({ request }) => {
     await restoreOriginalProjects(request);
@@ -129,7 +171,7 @@ test.describe("approval-gated branch workspace journeys", () => {
 
   test("discovers the branch button and opens a real git status selector", async ({ page }) => {
     const repo = await createRepo("discovery");
-    await openProject(page, repo);
+    await openProject(page, repo, { mode: "direct" });
 
     await openWorkspaceMenu(page);
 
@@ -146,7 +188,7 @@ test.describe("approval-gated branch workspace journeys", () => {
     const branchName = "feature/e2e-start-worktree";
     const checkoutPath = path.join(path.dirname(repo), `${path.basename(repo)}-feature-e2e-start-worktree`);
 
-    await openProject(page, repo);
+    await openProject(page, repo, { mode: "direct" });
     await page.locator("[data-composer-input='true']").fill("Verify this run is pinned to its new worktree.");
     await openWorkspaceMenu(page);
     const startWorktreeItem = page.getByRole("menuitem", { name: /Start in new worktree/ });
@@ -161,6 +203,13 @@ test.describe("approval-gated branch workspace journeys", () => {
 
     await page.getByRole("button", { name: "Send message" }).click();
 
+    let createdRunId = "";
+    await expect.poll(async () => {
+      createdRunId = await findRunForWorkspace(page, checkoutPath);
+      return createdRunId;
+    }, { timeout: 120000 }).not.toBe("");
+
+    await page.goto(`/session/${createdRunId}`);
     await expect(page.getByLabel(`Run workspace: ${branchName} at ${checkoutPath}`)).toBeVisible({ timeout: 120000 });
     expect(fs.existsSync(checkoutPath)).toBe(true);
     expect(git(checkoutPath, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe(branchName);

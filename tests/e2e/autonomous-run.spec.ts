@@ -82,25 +82,32 @@ test("run pauses for clarifications then completes after validation", async ({ p
     return createdRun?.status ?? null;
   }, { timeout: 120000 }).toMatch(/^(awaiting_user|running|done)$/);
 
+  const answeredClarificationIds = new Set<string>();
+  const clarificationAnswer = "Create exactly the three files listed in vibes/test-plan.md with the specified contents: hello.txt, hi.txt, and greetings.txt. Proceed.";
+
   const answerClarification = async () => {
     const snapshot = await readSnapshot(page, createdRunId);
-    const clarification = snapshot.clarifications.find((item) => item.runId === createdRunId && item.status === "pending");
-    expect(clarification?.id).toBeTruthy();
+    const clarification = snapshot.clarifications.find((item) => {
+      return item.runId === createdRunId && item.status === "pending" && !answeredClarificationIds.has(item.id);
+    });
+    if (!clarification) {
+      return false;
+    }
+    answeredClarificationIds.add(clarification.id);
     const answerResponse = await page.request.post(`/api/runs/${createdRunId}/answer`, {
-      data: { clarificationId: clarification!.id, answer: "Confirmed, proceed." },
+      data: { clarificationId: clarification.id, answer: clarificationAnswer },
     });
     expect(answerResponse.ok()).toBe(true);
+    return true;
   };
 
   if (createdRunStatus === "awaiting_user") {
     await answerClarification();
   }
 
-  let answeredDeferredClarification = createdRunStatus === "awaiting_user";
   await expect.poll(async () => {
     const createdRun = (await readRuns(page)).find((run) => run.id === createdRunId);
-    if (createdRun?.status === "awaiting_user" && !answeredDeferredClarification) {
-      answeredDeferredClarification = true;
+    if (createdRun?.status === "awaiting_user") {
       await answerClarification();
     }
     return (

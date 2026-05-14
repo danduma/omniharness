@@ -267,7 +267,7 @@ function mergeScopedMessages(current: EventStreamState, incoming: EventStreamSta
   const retainedCurrentMessages = (current.messages ?? []).filter((message) => (
     liveRunIds.has(message.runId)
     && !incomingMessageIds.has(message.id)
-    && !incomingMessageRunIds.has(message.runId)
+    && (!incomingMessageRunIds.has(message.runId) || message.role === "user")
   ));
   const mergedMessages = sortMessages([
     ...retainedCurrentMessages,
