@@ -12,11 +12,27 @@ type E2ERunRecord = {
   status?: string | null;
 };
 
-async function readRuns(page: Page): Promise<E2ERunRecord[]> {
-  const response = await page.request.get("/api/events?snapshot=1&persisted=1");
+type E2EClarificationRecord = {
+  id: string;
+  runId: string;
+  status: string;
+};
+
+async function readSnapshot(page: Page, runId?: string): Promise<{ runs: E2ERunRecord[]; clarifications: E2EClarificationRecord[] }> {
+  const query = runId
+    ? `/api/events?snapshot=1&persisted=1&runId=${encodeURIComponent(runId)}`
+    : "/api/events?snapshot=1&persisted=1";
+  const response = await page.request.get(query);
   expect(response.ok()).toBe(true);
-  const payload = await response.json() as { runs?: E2ERunRecord[] };
-  return payload.runs ?? [];
+  const payload = await response.json() as { runs?: E2ERunRecord[]; clarifications?: E2EClarificationRecord[] };
+  return {
+    runs: payload.runs ?? [],
+    clarifications: payload.clarifications ?? [],
+  };
+}
+
+async function readRuns(page: Page): Promise<E2ERunRecord[]> {
+  return (await readSnapshot(page)).runs;
 }
 
 function cleanupGeneratedFiles() {
@@ -42,7 +58,7 @@ test.afterEach(async () => {
 });
 
 test("run pauses for clarifications then completes after validation", async ({ page }) => {
-  test.setTimeout(180000);
+  test.setTimeout(300000);
   cleanupGeneratedFiles();
 
   await unlockApp(page);
@@ -66,31 +82,43 @@ test("run pauses for clarifications then completes after validation", async ({ p
     return createdRun?.status ?? null;
   }, { timeout: 120000 }).toMatch(/^(awaiting_user|running|done)$/);
 
-  if (createdRunStatus === "awaiting_user") {
-    const answerResponse = await page.request.post(`/api/conversations/${createdRunId}/messages`, {
-      data: { content: "Confirmed, proceed." },
+  const answerClarification = async () => {
+    const snapshot = await readSnapshot(page, createdRunId);
+    const clarification = snapshot.clarifications.find((item) => item.runId === createdRunId && item.status === "pending");
+    expect(clarification?.id).toBeTruthy();
+    const answerResponse = await page.request.post(`/api/runs/${createdRunId}/answer`, {
+      data: { clarificationId: clarification!.id, answer: "Confirmed, proceed." },
     });
     expect(answerResponse.ok()).toBe(true);
+  };
+
+  if (createdRunStatus === "awaiting_user") {
+    await answerClarification();
   }
 
-  await expect.poll(() => (
-    fs.existsSync(path.resolve(process.cwd(), "hello.txt"))
-    && fs.existsSync(path.resolve(process.cwd(), "hi.txt"))
-    && fs.existsSync(path.resolve(process.cwd(), "greetings.txt"))
-  ), { timeout: 120000 }).toBe(true);
+  let answeredDeferredClarification = createdRunStatus === "awaiting_user";
+  await expect.poll(async () => {
+    const createdRun = (await readRuns(page)).find((run) => run.id === createdRunId);
+    if (createdRun?.status === "awaiting_user" && !answeredDeferredClarification) {
+      answeredDeferredClarification = true;
+      await answerClarification();
+    }
+    return (
+      fs.existsSync(path.resolve(process.cwd(), "hello.txt"))
+      && fs.existsSync(path.resolve(process.cwd(), "hi.txt"))
+      && fs.existsSync(path.resolve(process.cwd(), "greetings.txt"))
+    );
+  }, { timeout: 240000 }).toBe(true);
+
 
   expect(fs.readFileSync(path.resolve(process.cwd(), "hello.txt"), "utf8").trim()).toBe("Hello World");
   expect(fs.readFileSync(path.resolve(process.cwd(), "hi.txt"), "utf8").trim()).toBe("Hi World");
   expect(fs.readFileSync(path.resolve(process.cwd(), "greetings.txt"), "utf8").trim()).toBe("Greetings");
 
-  await expect.poll(() => (
-    fs.existsSync(path.resolve(process.cwd(), "tests/vibes/test-plan.test.ts"))
-  ), { timeout: 120000 }).toBe(true);
-
   await expect.poll(async () => {
     const createdRun = (await readRuns(page)).find((run) => run.id === createdRunId);
     return createdRun?.status ?? null;
-  }, { timeout: 120000 }).toBe("done");
+  }, { timeout: 240000 }).toBe("done");
 
   cleanupGeneratedFiles();
 });

@@ -84,6 +84,8 @@
   "conversation.sidebar.otherSessions": "Altre sessioni",
   "conversation.sidebar.status.completedAttention": "Terminata con messaggi non letti",
   "conversation.sidebar.status.awaitingUser": "In attesa del tuo input",
+  "conversation.preflightConfirmation.yes": "Sì, continua",
+  "conversation.preflightConfirmation.no": "No, voglio chiarire",
   "conversation.mode.direct.label": "Controllo diretto",
   "conversation.mode.direct.description": "Usalo per interagire direttamente con la CLI selezionata, con funzionalità complete di controllo remoto.",
   "conversation.mode.planning.label": "Crea piano",

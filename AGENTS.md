@@ -8,6 +8,7 @@ CRITICAL!!:
 Testing:
 - When testing the app, use the already-running process if one exists instead of starting another server.
 - The normal local app URL is `http://localhost:3035`; the compressed Next dev server is usually at `http://localhost:3050`.
+- Clean up any test sessions/conversations and their associated persisted artifacts before finishing.
 
 Frontend i18n:
 - EVERY user-facing frontend string MUST live in `shared/locales/*.json` and be rendered with the `t()` function from `@/lib/i18n`.

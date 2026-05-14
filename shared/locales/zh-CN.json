@@ -84,6 +84,8 @@
   "conversation.sidebar.otherSessions": "其他会话",
   "conversation.sidebar.status.completedAttention": "已完成且有未读消息",
   "conversation.sidebar.status.awaitingUser": "正在等待你的输入",
+  "conversation.preflightConfirmation.yes": "是，继续",
+  "conversation.preflightConfirmation.no": "否，我来澄清",
   "conversation.mode.direct.label": "直接控制",
   "conversation.mode.direct.description": "用于直接与所选 CLI 交互，并使用完整的远程控制能力。",
   "conversation.mode.planning.label": "创建计划",

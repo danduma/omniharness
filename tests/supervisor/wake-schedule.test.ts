@@ -85,6 +85,32 @@ describe("durable supervisor wake schedule", () => {
     expect(row?.wakeAt.getTime()).toBe(earlier.getTime());
   });
 
+  it("coalesces concurrent schedules for the same run without primary key conflicts", async () => {
+    const runId = await insertRun();
+    const earlier = new Date(baseNow.getTime() + 60_000);
+    const later = new Date(baseNow.getTime() + 120_000);
+
+    await expect(Promise.all([
+      scheduleDurableSupervisorWakeAt({
+        runId,
+        wakeAt: later,
+        reason: "quota_wait",
+        source: "absolute-timestamp",
+      }),
+      scheduleDurableSupervisorWakeAt({
+        runId,
+        wakeAt: earlier,
+        reason: "quota_wait",
+        source: "relative-duration",
+      }),
+    ])).resolves.toHaveLength(2);
+
+    const rows = await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.wakeAt.getTime()).toBe(earlier.getTime());
+    expect(rows[0]?.source).toBe("relative-duration");
+  });
+
   it("preserves quota resume wakes over earlier supervisor heartbeat backups", async () => {
     const runId = await insertRun();
     const quotaReset = new Date(baseNow.getTime() + 120_000);

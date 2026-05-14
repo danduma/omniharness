@@ -31,7 +31,7 @@ import type {
 import { RuntimeHttpError } from "./types";
 
 const MAX_STDERR_LINES = 50;
-const ENDPOINT_TIMEOUT_MS = 5000;
+const ENDPOINT_TIMEOUT_MS = 750;
 const WORKER_CONNECTION_RESET_MAX_BACKOFF_MS = 15 * 60_000;
 const MAX_TEXT_FIELD_CHARS = 100_000;
 
@@ -383,11 +383,24 @@ function getApiKeyRequirement(type: string) {
 
 function endpointCheck(urlString: string): Promise<EndpointCheckResult> {
   return new Promise((resolve) => {
+    let timeout: NodeJS.Timeout | null = null;
+    let settled = false;
+    const finish = (result: EndpointCheckResult) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      resolve(result);
+    };
+
     let url: URL;
     try {
       url = new URL(urlString);
     } catch {
-      resolve({ reachable: false, statusCode: null, latencyMs: null, errorCode: "EINVAL" });
+      finish({ reachable: false, statusCode: null, latencyMs: null, errorCode: "EINVAL" });
       return;
     }
 
@@ -403,7 +416,7 @@ function endpointCheck(urlString: string): Promise<EndpointCheckResult> {
       (res) => {
         res.resume();
         res.once("end", () => {
-          resolve({
+          finish({
             reachable: res.statusCode !== null,
             statusCode: res.statusCode ?? null,
             latencyMs: Date.now() - start,
@@ -413,11 +426,16 @@ function endpointCheck(urlString: string): Promise<EndpointCheckResult> {
       },
     );
 
+    timeout = setTimeout(() => {
+      req.destroy(Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }));
+      finish({ reachable: false, statusCode: null, latencyMs: Date.now() - start, errorCode: "ETIMEDOUT" });
+    }, ENDPOINT_TIMEOUT_MS);
+    timeout.unref?.();
     req.setTimeout(ENDPOINT_TIMEOUT_MS, () => {
       req.destroy(Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }));
     });
     req.once("error", (error: NodeJS.ErrnoException) => {
-      resolve({ reachable: false, statusCode: null, latencyMs: null, errorCode: error.code || "UNKNOWN" });
+      finish({ reachable: false, statusCode: null, latencyMs: Date.now() - start, errorCode: error.code || "UNKNOWN" });
     });
     req.end();
   });
@@ -844,7 +862,7 @@ export class AgentRuntimeManager {
 
     const modesRecord = asRecord(sessionRecord?.modes);
     const currentModeId = asNonEmptyString(modesRecord?.currentModeId);
-    if (connection && shouldSetRequestedMode(requestedMode, currentModeId)) {
+    if (connection && shouldSetRequestedMode(requestedMode, currentModeId, modesRecord?.availableModes)) {
       try {
         const setModeParams = {
           sessionId,

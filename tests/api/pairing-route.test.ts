@@ -14,6 +14,7 @@ describe("pairing routes", () => {
   beforeEach(async () => {
     process.env.OMNIHARNESS_AUTH_PASSWORD = "swordfish";
     delete process.env.OMNIHARNESS_AUTH_PASSWORD_HASH;
+    delete process.env.OMNIHARNESS_PUBLIC_ORIGIN;
     await db.delete(authEvents);
     await db.delete(authPairTokens);
     await db.delete(authSessions);

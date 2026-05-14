@@ -1,7 +1,7 @@
 import type React from "react";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo } from "react";
-import { ArrowDown, Blocks, ChevronDown, CirclePlay, CircleStop, FolderGit2, GitBranch, Pencil, RotateCcw, Route } from "lucide-react";
+import { ArrowDown, Blocks, Check, ChevronDown, CirclePlay, CircleStop, FolderGit2, GitBranch, Pencil, RotateCcw, Route } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { shallowEqualRecord, useManagerSelector, useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { ProjectFileReference } from "@/lib/project-file-links";
 import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "@/app/home/GitWorkspaceManager";
+import { preflightConfirmationActionsManager } from "@/app/home/PreflightConfirmationActionsManager";
 import { type PlanningReviewAgentSelection } from "@/server/planning/review-preferences";
 import { ErrorNotice } from "./ErrorNotice";
 import { RecoveryIncidentInspector } from "./RecoveryIncidentInspector";
@@ -58,6 +59,14 @@ function suggestCheckoutPath(repoRoot: string | undefined, branchName: string) {
   const parent = pieces.join("/") || "/";
   return `${parent}/${repoName}-${slugBranchName(branchName).replace(/\//g, "-")}`;
 }
+
+function isPreflightConfirmationMessage(message: MessageRecord) {
+  return message.role === "supervisor"
+    && message.kind === "clarification"
+    && message.content.startsWith("Before I start implementation, please confirm this is the intended job:");
+}
+
+const PREFLIGHT_CONFIRMATION_APPROVED_RESPONSE = "Yes, continue";
 
 interface ConversationExecutionStatusProps {
   liveExecutionStatus: { label: string; detail: string; tone: "error" | "warning" | "muted" | "active" };
@@ -407,6 +416,8 @@ interface ConversationMainProps {
   setEditingMessageValue: (value: string) => void;
   handleCancelEditingMessage: () => void;
   handleSaveEditedMessage: (messageId: string) => void;
+  handlePreflightConfirmationAnswer: (content: string) => void;
+  isPreflightConfirmationAnswering: boolean;
   conversationAgents: AgentSnapshot[];
   showDirectControlWorkingIndicator: boolean;
   showConversationExecution: boolean;
@@ -496,6 +507,8 @@ export function ConversationMain({
   setEditingMessageValue,
   handleCancelEditingMessage,
   handleSaveEditedMessage,
+  handlePreflightConfirmationAnswer,
+  isPreflightConfirmationAnswering,
   conversationAgents,
   showDirectControlWorkingIndicator,
   showConversationExecution,
@@ -508,6 +521,7 @@ export function ConversationMain({
 }: ConversationMainProps) {
   useI18nSnapshot();
   const { hasOutputBelow } = useManagerSnapshot(conversationMainManager);
+  const { handledMessageIds: handledPreflightConfirmationMessageIds } = useManagerSnapshot(preflightConfirmationActionsManager);
   const forkWorkspaceSelector = useMemo(() => {
     return (state: ReturnType<typeof gitWorkspaceManager.getSnapshot>) => {
       const dialog = state.activeDialog?.kind === "fork_message_worktree" || state.activeDialog?.kind === "fork_session_worktree"
@@ -695,6 +709,17 @@ export function ConversationMain({
               const isPlanningWorkerMessage = msg.role === "worker" && msg.kind === "planning";
               const isExpanded = expandedDirectMessageIds.has(msg.id);
               const userMessageActions: UserInputMessageAction[] = isCurrentRunMessage ? getUserMessageActions(msg) : [];
+              const hasLaterClarificationAnswer = conversationTimelineItems.some((candidate) => (
+                candidate.type === "message"
+                && candidate.message.runId === msg.runId
+                && candidate.message.kind === "clarification_answer"
+                && new Date(candidate.message.createdAt).getTime() > new Date(msg.createdAt).getTime()
+              ));
+              const showPreflightConfirmationActions = isCurrentRunMessage
+                && selectedRun?.status === "awaiting_user"
+                && isPreflightConfirmationMessage(msg)
+                && !hasLaterClarificationAnswer
+                && !handledPreflightConfirmationMessageIds.has(msg.id);
               const speakerLabel = (isPlanningConversation && msg.role === "worker") || isPlanningWorkerMessage
                 ? t("planning.agent.label")
                 : msg.role;
@@ -773,12 +798,40 @@ export function ConversationMain({
                         : "omni-plain-message rounded-lg p-4",
                   )}>
                     {msg.role === "supervisor" ? (
-                      <MarkdownContent
-                        content={msg.content}
-                        className="text-foreground"
-                        projectRoot={projectRoot}
-                        onOpenProjectFile={onOpenProjectFile}
-                      />
+                      <>
+                        <MarkdownContent
+                          content={msg.content}
+                          className="text-foreground"
+                          projectRoot={projectRoot}
+                          onOpenProjectFile={onOpenProjectFile}
+                        />
+                        {showPreflightConfirmationActions ? (
+                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={isPreflightConfirmationAnswering}
+                              onClick={() => {
+                                preflightConfirmationActionsManager.rememberMessage(msg.id);
+                                handlePreflightConfirmationAnswer(PREFLIGHT_CONFIRMATION_APPROVED_RESPONSE);
+                              }}
+                            >
+                              <Check aria-hidden="true" />
+                              {t("conversation.preflightConfirmation.yes")}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={isPreflightConfirmationAnswering}
+                              onClick={() => preflightConfirmationActionsManager.rememberMessage(msg.id)}
+                            >
+                              <Pencil aria-hidden="true" />
+                              {t("conversation.preflightConfirmation.no")}
+                            </Button>
+                          </div>
+                        ) : null}
+                      </>
                     ) : msg.content}
                   </div>
                 )}

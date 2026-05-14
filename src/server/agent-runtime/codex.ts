@@ -8,10 +8,28 @@ export function shouldEnableCodexModelRewriteProxy(env: Record<string, string | 
   return configured === "1" || configured === "true" || configured === "yes" || configured === "on";
 }
 
-export function shouldSetRequestedMode(requestedMode: string | null | undefined, currentModeId: string | null | undefined) {
+function modeIdFromUnknown(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const mode = value as { id?: unknown };
+  return typeof mode.id === "string" && mode.id.trim() ? mode.id.trim() : null;
+}
+
+export function shouldSetRequestedMode(
+  requestedMode: string | null | undefined,
+  currentModeId: string | null | undefined,
+  availableModes?: unknown,
+) {
   const normalizedRequested = requestedMode?.trim();
   if (!normalizedRequested) {
     return false;
+  }
+  if (Array.isArray(availableModes)) {
+    const availableModeIds = new Set(availableModes.map(modeIdFromUnknown).filter((id): id is string => id !== null));
+    if (availableModeIds.size > 0 && !availableModeIds.has(normalizedRequested)) {
+      return false;
+    }
   }
   const normalizedCurrent = currentModeId?.trim();
   return !normalizedCurrent || normalizedRequested !== normalizedCurrent;

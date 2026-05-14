@@ -84,6 +84,8 @@
   "conversation.sidebar.otherSessions": "その他のセッション",
   "conversation.sidebar.status.completedAttention": "未読メッセージがある完了済み",
   "conversation.sidebar.status.awaitingUser": "入力を待っています",
+  "conversation.preflightConfirmation.yes": "はい、続行",
+  "conversation.preflightConfirmation.no": "いいえ、補足します",
   "conversation.mode.direct.label": "直接操作",
   "conversation.mode.direct.description": "選択した CLI と直接やり取りし、完全なリモート操作機能を使います。",
   "conversation.mode.planning.label": "計画を作成",

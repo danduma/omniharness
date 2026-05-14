@@ -114,6 +114,8 @@
   "conversation.sidebar.otherSessions": "Other sessions",
   "conversation.sidebar.status.completedAttention": "Finished with unread messages",
   "conversation.sidebar.status.awaitingUser": "Waiting for your input",
+  "conversation.preflightConfirmation.yes": "Yes, continue",
+  "conversation.preflightConfirmation.no": "No, let me clarify",
   "conversation.mode.direct.label": "Direct control",
   "conversation.mode.direct.description": "Use this to directly interact with the selected CLI, with full remote control capabilities.",
   "conversation.mode.planning.label": "Create plan",

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import type { Server } from "http";
+import { createServer, type Server } from "http";
 import { dirname } from "path";
 import { createAgentRuntimeServer } from "@/server/agent-runtime/http";
 
@@ -444,6 +444,39 @@ async function waitForProcessExit(pid: number) {
 }
 
 describe("internal agent runtime HTTP API", () => {
+  it("keeps doctor responsive when a provider endpoint hangs", async () => {
+    const binDir = createTempDir("omni-runtime-doctor-bin-");
+    createExecutable(binDir, "codex-acp", "#!/bin/sh\nexit 0\n");
+    const hangingEndpoint = createServer((_req, _res) => {
+      // Keep the socket open to prove endpoint probes have their own wall-clock timeout.
+    });
+    const endpointPort = await listen(hangingEndpoint);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        OPENAI_BASE_URL: `http://127.0.0.1:${endpointPort}/v1`,
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const startedAt = Date.now();
+
+    const doctorResponse = await fetch(`http://127.0.0.1:${port}/doctor`);
+
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    expect(doctorResponse.status).toBe(200);
+    const payload = await doctorResponse.json();
+    expect(payload.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "codex",
+        binary: true,
+        endpoint: false,
+        message: expect.stringContaining("ETIMEDOUT"),
+      }),
+    ]));
+  });
+
   it("spawns ACP agents, forwards MCP servers, exposes skill roots, and serves agent output", async () => {
     const projectDir = createTempDir("omni-runtime-project-");
     const binDir = createTempDir("omni-runtime-bin-");

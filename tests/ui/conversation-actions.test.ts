@@ -293,6 +293,24 @@ test("clarification requests stay in the normal supervisor conversation", () => 
   expect(pageSource).not.toContain("Waiting for your reply${summary");
 });
 
+test("preflight implementation confirmations expose remembered quick actions", () => {
+  const conversationMainSource = readSource("src/components/home/ConversationMain.tsx");
+  const homeAppSource = readSource("src/app/home/HomeApp.tsx");
+  const managerSource = readSource("src/app/home/PreflightConfirmationActionsManager.ts");
+  const localeSource = readSource("shared/locales/en.json");
+
+  expect(conversationMainSource).toContain("isPreflightConfirmationMessage");
+  expect(conversationMainSource).toContain('t("conversation.preflightConfirmation.yes")');
+  expect(conversationMainSource).toContain('t("conversation.preflightConfirmation.no")');
+  expect(conversationMainSource).toContain("preflightConfirmationActionsManager.rememberMessage(msg.id)");
+  expect(conversationMainSource).toContain("handlePreflightConfirmationAnswer");
+  expect(homeAppSource).toContain("preflightConfirmationActionsManager.hydrateFromBrowser()");
+  expect(homeAppSource).toContain("sendConversationMessage.mutate({ runId: selectedRunId, content, attachments: [] })");
+  expect(managerSource).toContain("omni.preflight-confirmation-actions.handled");
+  expect(localeSource).toContain('"conversation.preflightConfirmation.yes": "Yes, continue"');
+  expect(localeSource).toContain('"conversation.preflightConfirmation.no": "No, let me clarify"');
+});
+
 test("supervisor conversation messages render markdown", () => {
   expect(pageSource).toContain('msg.role === "supervisor"');
   expect(pageSource).toContain("<MarkdownContent");

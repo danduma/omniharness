@@ -1,4 +1,4 @@
-import { and, eq, inArray, lte } from "drizzle-orm";
+import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/server/db";
 import { runs, supervisorScheduledWakes } from "@/server/db/schema";
 import { isTerminalRunStatus } from "@/server/runs/status";
@@ -23,10 +23,6 @@ let durableWakeExecutor: DurableWakeExecutor = async (runId) => {
 };
 
 const durableTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-function durableWakePriority(reason: string) {
-  return reason === "quota_wait" ? 2 : 1;
-}
 
 function serializeDetails(details: Record<string, unknown> | null | undefined) {
   return details ? JSON.stringify(details) : null;
@@ -62,24 +58,6 @@ async function rearmDurableSupervisorWake(runId: string) {
 }
 
 export async function scheduleDurableSupervisorWakeAt(args: DurableSupervisorWakeArgs) {
-  const existing = await db
-    .select()
-    .from(supervisorScheduledWakes)
-    .where(eq(supervisorScheduledWakes.runId, args.runId))
-    .get();
-
-  if (existing && !args.force) {
-    const existingPriority = durableWakePriority(existing.reason);
-    const nextPriority = durableWakePriority(args.reason);
-    if (
-      existingPriority > nextPriority ||
-      (existingPriority === nextPriority && existing.wakeAt.getTime() <= args.wakeAt.getTime())
-    ) {
-      armDurableTimer(args.runId, existing.wakeAt);
-      return existing;
-    }
-  }
-
   const now = new Date();
   const record = {
     runId: args.runId,
@@ -88,25 +66,47 @@ export async function scheduleDurableSupervisorWakeAt(args: DurableSupervisorWak
     source: args.source ?? null,
     incidentId: args.incidentId ?? null,
     details: serializeDetails(args.details),
-    createdAt: existing?.createdAt ?? now,
+    createdAt: now,
     updatedAt: now,
   };
 
-  if (existing) {
-    await db.update(supervisorScheduledWakes).set({
-      wakeAt: record.wakeAt,
-      reason: record.reason,
-      source: record.source,
-      incidentId: record.incidentId,
-      details: record.details,
-      updatedAt: record.updatedAt,
-    }).where(eq(supervisorScheduledWakes.runId, args.runId));
-  } else {
-    await db.insert(supervisorScheduledWakes).values(record);
+  const incomingPriority = sql`case when excluded.reason = 'quota_wait' then 2 else 1 end`;
+  const existingPriority = sql`case when ${supervisorScheduledWakes.reason} = 'quota_wait' then 2 else 1 end`;
+  const nonForcedReplacement = sql`
+    ${incomingPriority} > ${existingPriority}
+    or (
+      ${incomingPriority} = ${existingPriority}
+      and excluded.wake_at < ${supervisorScheduledWakes.wakeAt}
+    )
+  `;
+
+  await db.insert(supervisorScheduledWakes)
+    .values(record)
+    .onConflictDoUpdate({
+      target: supervisorScheduledWakes.runId,
+      set: {
+        wakeAt: sql`excluded.wake_at`,
+        reason: sql`excluded.reason`,
+        source: sql`excluded.source`,
+        incidentId: sql`excluded.incident_id`,
+        details: sql`excluded.details`,
+        updatedAt: sql`excluded.updated_at`,
+      },
+      ...(args.force ? {} : { setWhere: nonForcedReplacement }),
+    });
+
+  const scheduled = await db
+    .select()
+    .from(supervisorScheduledWakes)
+    .where(eq(supervisorScheduledWakes.runId, args.runId))
+    .get();
+
+  if (!scheduled) {
+    throw new Error(`Failed to schedule durable supervisor wake for run ${args.runId}`);
   }
 
-  armDurableTimer(args.runId, args.wakeAt);
-  return record;
+  armDurableTimer(args.runId, scheduled.wakeAt);
+  return scheduled;
 }
 
 export async function cancelDurableSupervisorWake(runId: string, reason?: string) {

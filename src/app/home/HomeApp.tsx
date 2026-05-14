@@ -25,6 +25,7 @@ import {
 import { appearancePreferencesManager, getAppearanceTextSizeStyle } from "./AppearancePreferencesManager";
 import { settingsDraftManager } from "./SettingsDraftManager";
 import { planningReviewPreferencesManager } from "./PlanningReviewPreferencesManager";
+import { preflightConfirmationActionsManager } from "./PreflightConfirmationActionsManager";
 import {
   filterOptimisticallyDeletedRuns,
   mergePendingCreatedConversationSnapshots,
@@ -261,7 +262,10 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     });
   }, []);
 
-  useEffect(() => { conversationNotificationManager.hydrateFromBrowser(); }, []);
+  useEffect(() => {
+    conversationNotificationManager.hydrateFromBrowser();
+    preflightConfirmationActionsManager.hydrateFromBrowser();
+  }, []);
 
   // Filter event stream state
   const filterEventStreamState = useCallback((incoming: EventStreamState) => {
@@ -854,6 +858,12 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           setEditingMessageValue={setEditingMessageValue}
           handleCancelEditingMessage={actions.handleCancelEditingMessage}
           handleSaveEditedMessage={(messageId) => actions.handleSaveEditedMessage(messageId, editingMessageValue)}
+          handlePreflightConfirmationAnswer={(content) => {
+            if (selectedRunId) {
+              sendConversationMessage.mutate({ runId: selectedRunId, content, attachments: [] });
+            }
+          }}
+          isPreflightConfirmationAnswering={sendConversationMessage.isPending}
           conversationAgents={conversationAgents}
           showDirectControlWorkingIndicator={showDirectControlWorkingIndicator}
           showConversationExecution={showConversationExecution}

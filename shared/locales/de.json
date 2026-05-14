@@ -84,6 +84,8 @@
   "conversation.sidebar.otherSessions": "Andere Sitzungen",
   "conversation.sidebar.status.completedAttention": "Fertig mit ungelesenen Nachrichten",
   "conversation.sidebar.status.awaitingUser": "Wartet auf deine Eingabe",
+  "conversation.preflightConfirmation.yes": "Ja, fortfahren",
+  "conversation.preflightConfirmation.no": "Nein, ich möchte klarstellen",
   "conversation.mode.direct.label": "Direkte Steuerung",
   "conversation.mode.direct.description": "Nutze dies, um direkt mit der ausgewählten CLI zu interagieren, mit vollständigen Fernsteuerungsfunktionen.",
   "conversation.mode.planning.label": "Plan erstellen",

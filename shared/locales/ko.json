@@ -84,6 +84,8 @@
   "conversation.sidebar.otherSessions": "기타 세션",
   "conversation.sidebar.status.completedAttention": "읽지 않은 메시지가 있는 완료됨",
   "conversation.sidebar.status.awaitingUser": "입력을 기다리는 중",
+  "conversation.preflightConfirmation.yes": "예, 계속",
+  "conversation.preflightConfirmation.no": "아니요, 설명할게요",
   "conversation.mode.direct.label": "직접 제어",
   "conversation.mode.direct.description": "선택한 CLI와 직접 상호작용하고 전체 원격 제어 기능을 사용합니다.",
   "conversation.mode.planning.label": "계획 만들기",
