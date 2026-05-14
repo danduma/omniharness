@@ -608,7 +608,7 @@ test("header includes a persistent day night mode toggle beside the workers side
 
 test("sidebar phone pairing entry point is hidden from the mobile settings menu", () => {
   expect(pageSource).toContain('<DropdownMenuItem className="hidden cursor-pointer whitespace-nowrap lg:flex" onClick={openPairDeviceDialog}>');
-  expect(pageSource).toContain('<Smartphone className="mr-2 h-4 w-4" /> Connect Phone');
+  expect(pageSource).toContain('<Smartphone className="mr-2 h-4 w-4" /> {t("mainMenu.connectPhone")}');
   expect(pageSource).not.toContain('max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5" onClick={openPairDeviceDialog}');
   expect(pageSource).not.toContain('className="mb-1 hidden h-9 w-full justify-start px-2 text-sm text-muted-foreground hover:text-foreground lg:flex"');
 });

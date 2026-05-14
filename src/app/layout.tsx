@@ -1,9 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import Script from "next/script";
 import "./globals.css";
 import { Providers } from "./providers";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { BugDropBootstrap } from "@/components/BugDropBootstrap";
 import { PwaBootstrap } from "@/components/PwaBootstrap";
 
 const geistSans = Geist({
@@ -106,11 +106,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}
       >
-        <Script
-          src="https://bugdrop.neonwatty.workers.dev/widget.js"
-          data-repo="danduma/omniharness"
-          strategy="afterInteractive"
-        />
+        <BugDropBootstrap />
         <PwaBootstrap />
         <Providers>
           <TooltipProvider>{children}</TooltipProvider>

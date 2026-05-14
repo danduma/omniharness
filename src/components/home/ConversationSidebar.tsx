@@ -1,6 +1,7 @@
 import type React from "react";
-import { Archive, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Trash2, TriangleAlert, Wand2 } from "lucide-react";
+import { Archive, Bug, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Trash2, TriangleAlert, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { requestBugDropOpen } from "@/components/BugDropBootstrap";
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -420,7 +421,7 @@ export function ConversationSidebar({
       <div className="mt-auto shrink-0 border-t border-border/60 bg-background/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <DropdownMenu>
           <DropdownMenuTrigger className="inline-flex h-9 w-full items-center justify-start rounded-md px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50">
-            <Settings className="mr-2 h-4 w-4" /> Settings
+            <Settings className="mr-2 h-4 w-4" /> {t("mainMenu.settings")}
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="end"
@@ -428,18 +429,21 @@ export function ConversationSidebar({
             className="w-fit min-w-fit max-lg:w-[min(20rem,calc(100vw-2rem))] max-lg:min-w-0 max-lg:rounded-xl max-lg:p-2 max-lg:shadow-2xl"
             positionerClassName="max-lg:!fixed max-lg:!inset-0 max-lg:!flex max-lg:!items-center max-lg:!justify-center max-lg:!p-4 max-lg:!transform-none max-lg:bg-background/55 max-lg:backdrop-blur-sm"
           >
+            <DropdownMenuItem className="cursor-pointer whitespace-nowrap max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5" onClick={requestBugDropOpen}>
+              <Bug className="mr-2 h-4 w-4" /> {t("mainMenu.reportBug")}
+            </DropdownMenuItem>
             <DropdownMenuItem className="cursor-pointer whitespace-nowrap max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5" onClick={() => setShowSettings(true)}>
-              <Settings className="mr-2 h-4 w-4" /> Settings
+              <Settings className="mr-2 h-4 w-4" /> {t("mainMenu.settings")}
             </DropdownMenuItem>
             <DropdownMenuItem className="cursor-pointer whitespace-nowrap max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5" onClick={openOnboarding}>
-              <Wand2 className="mr-2 h-4 w-4" /> Setup CLIs
+              <Wand2 className="mr-2 h-4 w-4" /> {t("mainMenu.setupClis")}
             </DropdownMenuItem>
             <DropdownMenuItem className="hidden cursor-pointer whitespace-nowrap lg:flex" onClick={openPairDeviceDialog}>
-              <Smartphone className="mr-2 h-4 w-4" /> Connect Phone
+              <Smartphone className="mr-2 h-4 w-4" /> {t("mainMenu.connectPhone")}
             </DropdownMenuItem>
             {authEnabled ? (
               <DropdownMenuItem variant="destructive" className="cursor-pointer whitespace-nowrap max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5" onClick={logout}>
-                <LogOut className="mr-2 h-4 w-4" /> Sign Out
+                <LogOut className="mr-2 h-4 w-4" /> {t("mainMenu.signOut")}
               </DropdownMenuItem>
             ) : null}
           </DropdownMenuContent>
