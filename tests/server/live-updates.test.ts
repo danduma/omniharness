@@ -12,7 +12,7 @@ describe("live update notifications", () => {
     notifyEventStreamSubscribers();
 
     const wait = waitForEventStreamNotification(15_000, versionBeforePayloadBuild);
-    await expect(wait).resolves.toBeUndefined();
+    await expect(wait).resolves.toEqual({ notified: true });
 
     vi.useRealTimers();
   });
@@ -20,8 +20,10 @@ describe("live update notifications", () => {
   it("waits for a new notification when none arrived after the observed version", async () => {
     vi.useFakeTimers();
     const version = getEventStreamNotificationVersion();
+    let waitResult: unknown = null;
     let resolved = false;
-    const wait = waitForEventStreamNotification(15_000, version).then(() => {
+    const wait = waitForEventStreamNotification(15_000, version).then((result) => {
+      waitResult = result;
       resolved = true;
     });
 
@@ -31,6 +33,18 @@ describe("live update notifications", () => {
     notifyEventStreamSubscribers();
     await wait;
     expect(resolved).toBe(true);
+    expect(waitResult).toEqual({ notified: true });
+
+    vi.useRealTimers();
+  });
+
+  it("reports timeout waits separately from notification waits", async () => {
+    vi.useFakeTimers();
+    const version = getEventStreamNotificationVersion();
+    const wait = waitForEventStreamNotification(15_000, version);
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    await expect(wait).resolves.toEqual({ notified: false });
 
     vi.useRealTimers();
   });

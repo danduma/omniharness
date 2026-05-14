@@ -20,6 +20,7 @@ const STREAM_REFRESH_INTERVAL_MS = 15_000;
 const RUNTIME_AGENT_GRACE_MS = 150;
 const RUNTIME_AGENT_TIMEOUT_MS = 5000;
 const EXECUTION_EVENT_LIMIT = 100;
+const EVENT_PAYLOAD_CACHE_LIMIT = 50;
 
 async function fetchWithTimeout(url: string, timeoutMs: number) {
   const controller = new AbortController();
@@ -46,6 +47,7 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}) {
   const selectedRunId = options.selectedRunId?.trim() || null;
   const allPlans = await db.select().from(plans).orderBy(desc(plans.createdAt));
   const allRuns = await db.select().from(runs).where(isNull(runs.archivedAt)).orderBy(desc(runs.createdAt));
+  const visibleRunIds = allRuns.map((run) => run.id);
   const selectedRun = selectedRunId ? allRuns.find((run) => run.id === selectedRunId) ?? null : null;
   const selectedPlanId = selectedRun?.planId ?? null;
   const transcriptRunIds = selectedRunId
@@ -81,7 +83,7 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}) {
       initialPrompt: workers.initialPrompt,
       createdAt: workers.createdAt,
       updatedAt: workers.updatedAt,
-    }).from(workers),
+    }).from(workers).where(visibleRunIds.length > 0 ? inArray(workers.runId, visibleRunIds) : eq(workers.id, "__none__")),
     selectedRunId
       ? db.select({
         id: workers.id,
@@ -152,6 +154,7 @@ type EventPayloadOptions = {
 };
 
 type PersistedEventRecords = Awaited<ReturnType<typeof readPersistedEventRecords>>;
+type EventPayload = ReturnType<typeof buildEventPayload>;
 type LiveWorkerOutputEntry = NonNullable<ReturnType<typeof buildLiveWorkerSnapshots>[number]["outputEntries"]>[number];
 
 const WORKER_INITIAL_PROMPT_PREVIEW_LIMIT = 1_000;
@@ -599,6 +602,60 @@ async function buildPersistedEventPayload(options: EventPayloadOptions = {}) {
   );
 }
 
+type EventPayloadCacheEntry = {
+  version: number;
+  promise: Promise<EventPayload>;
+};
+
+const cachedPersistedPayloads = new Map<string, EventPayloadCacheEntry>();
+const cachedRuntimePayloads = new Map<string, EventPayloadCacheEntry>();
+
+function eventPayloadCacheKey(options: EventPayloadOptions = {}) {
+  return options.selectedRunId?.trim() || "__all__";
+}
+
+function shareInFlightEventPayload(
+  cache: Map<string, EventPayloadCacheEntry>,
+  options: EventPayloadOptions,
+  build: () => Promise<EventPayload>,
+) {
+  const key = eventPayloadCacheKey(options);
+  const version = getEventStreamNotificationVersion();
+  const existing = cache.get(key);
+  if (existing?.version === version) {
+    return existing.promise;
+  }
+
+  const pending = build().catch((error) => {
+    const cached = cache.get(key);
+    if (cached?.promise === pending) {
+      cache.delete(key);
+    }
+    throw error;
+  });
+  cache.set(key, { version, promise: pending });
+  pruneEventPayloadCache(cache);
+  return pending;
+}
+
+function pruneEventPayloadCache(cache: Map<string, EventPayloadCacheEntry>) {
+  while (cache.size > EVENT_PAYLOAD_CACHE_LIMIT) {
+    const oldestKey = cache.keys().next().value;
+    if (!oldestKey) {
+      return;
+    }
+    cache.delete(oldestKey);
+  }
+}
+
+function buildSharedPersistedEventPayload(options: EventPayloadOptions = {}) {
+  return shareInFlightEventPayload(
+    cachedPersistedPayloads,
+    options,
+    () => buildPersistedEventPayload(options),
+  );
+}
+
 async function buildRuntimeEnrichedEventPayload(options: EventPayloadOptions = {}) {
   let records = await readPersistedEventRecords(options);
   let agentsData = buildLiveWorkerSnapshots({
@@ -656,6 +713,14 @@ async function buildRuntimeEnrichedEventPayload(options: EventPayloadOptions = {
   return buildEventPayload(records, agentsData, frontendErrors, options);
 }
 
+function buildSharedRuntimeEnrichedEventPayload(options: EventPayloadOptions = {}) {
+  return shareInFlightEventPayload(
+    cachedRuntimePayloads,
+    options,
+    () => buildRuntimeEnrichedEventPayload(options),
+  );
+}
+
 function delay(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
@@ -676,11 +741,11 @@ export async function GET(req: NextRequest) {
   if (req.nextUrl.searchParams.get("snapshot") === "1") {
     const persistedOnly = req.nextUrl.searchParams.get("persisted") === "1";
     if (persistedOnly) {
-      return NextResponse.json(await buildPersistedEventPayload(eventPayloadOptions));
+      return NextResponse.json(await buildSharedPersistedEventPayload(eventPayloadOptions));
     }
 
     await ensureSupervisorRuntimeStarted();
-    const payload = await buildRuntimeEnrichedEventPayload(eventPayloadOptions);
+    const payload = await buildSharedRuntimeEnrichedEventPayload(eventPayloadOptions);
     return NextResponse.json(payload);
   }
 
@@ -725,10 +790,11 @@ export async function GET(req: NextRequest) {
         isClosed = true;
       });
 
+      let notificationVersionAtStart = getEventStreamNotificationVersion();
       while (!isClosed) {
-        const notificationVersionAtStart = getEventStreamNotificationVersion();
         try {
-          const runtimePayloadPromise = buildRuntimeEnrichedEventPayload(eventPayloadOptions);
+          notificationVersionAtStart = getEventStreamNotificationVersion();
+          const runtimePayloadPromise = buildSharedRuntimeEnrichedEventPayload(eventPayloadOptions);
           const runtimePayload = await Promise.race([
             runtimePayloadPromise,
             delay(RUNTIME_AGENT_GRACE_MS).then(() => null),
@@ -737,7 +803,7 @@ export async function GET(req: NextRequest) {
           if (runtimePayload) {
             sendUpdateIfChanged(runtimePayload);
           } else {
-            sendUpdateIfChanged(await buildPersistedEventPayload(eventPayloadOptions));
+            sendUpdateIfChanged(await buildSharedPersistedEventPayload(eventPayloadOptions));
             const enrichedPayload = await runtimePayloadPromise;
             if (!isClosed) {
               sendUpdateIfChanged(enrichedPayload);
@@ -752,7 +818,13 @@ export async function GET(req: NextRequest) {
         }
 
         if (!isClosed) {
-          await waitForEventStreamNotification(STREAM_REFRESH_INTERVAL_MS, notificationVersionAtStart);
+          while (!isClosed) {
+            const waitResult = await waitForEventStreamNotification(STREAM_REFRESH_INTERVAL_MS, notificationVersionAtStart);
+            if (waitResult.notified) {
+              break;
+            }
+            sendHeartbeat();
+          }
         }
       }
     }

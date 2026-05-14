@@ -159,8 +159,13 @@ async function clearMatchingRunFailureMessage(run: typeof runs.$inferSelect) {
 
 export async function syncConversationSessions(rawAgents: unknown[], options: { selectedRunId?: string | null } = {}) {
   const agents = rawAgents.map((agent) => normalizeAgentRecord(agent));
-  const allRuns = await db.select().from(runs);
-  const allWorkers = await db.select().from(workers);
+  const selectedRunId = options.selectedRunId?.trim() || null;
+  const allRuns = selectedRunId
+    ? await db.select().from(runs).where(eq(runs.id, selectedRunId))
+    : await db.select().from(runs);
+  const allWorkers = selectedRunId
+    ? await db.select().from(workers).where(eq(workers.runId, selectedRunId))
+    : await db.select().from(workers);
 
   for (const run of allRuns) {
     const staleBusyFailure = isAgentBusyRunFailure(run);

@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { executionEvents, messages, plans, recoveryIncidents, runs, supervisorInterventions, workerCounters, workers } from "@/server/db/schema";
 import { buildAgentOutputActivity } from "@/lib/agent-output";
+import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 
 const { mockEnsureSupervisorRuntimeStarted, mockStartSupervisorRun } = vi.hoisted(() => ({
   mockEnsureSupervisorRuntimeStarted: vi.fn().mockResolvedValue(undefined),
@@ -52,6 +53,7 @@ describe("GET /api/events", () => {
   const originalFetch = global.fetch;
 
   beforeEach(async () => {
+    notifyEventStreamSubscribers();
     mockEnsureSupervisorRuntimeStarted.mockClear();
     mockStartSupervisorRun.mockClear();
     global.fetch = originalFetch;
@@ -137,6 +139,8 @@ describe("GET /api/events", () => {
     const archivedPlanId = randomUUID();
     const visibleRunId = randomUUID();
     const archivedRunId = randomUUID();
+    const visibleWorkerId = randomUUID();
+    const archivedWorkerId = randomUUID();
     const now = new Date();
 
     await db.insert(plans).values([
@@ -174,6 +178,34 @@ describe("GET /api/events", () => {
         updatedAt: now,
       },
     ]);
+    await db.insert(workers).values([
+      {
+        id: visibleWorkerId,
+        runId: visibleRunId,
+        type: "codex",
+        status: "idle",
+        cwd: "/workspace/app",
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: archivedWorkerId,
+        runId: archivedRunId,
+        type: "codex",
+        status: "idle",
+        cwd: "/workspace/app",
+        outputLog: "archived output should not be scanned",
+        outputEntriesJson: JSON.stringify([{ id: "archived-entry", type: "message", text: "x".repeat(50_000), timestamp: now.toISOString() }]),
+        currentText: "",
+        lastText: "",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
 
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
 
@@ -182,6 +214,8 @@ describe("GET /api/events", () => {
 
     expect(payload.runs.map((run: { id: string }) => run.id)).toContain(visibleRunId);
     expect(payload.runs.map((run: { id: string }) => run.id)).not.toContain(archivedRunId);
+    expect(payload.workers.map((worker: { id: string }) => worker.id)).toContain(visibleWorkerId);
+    expect(payload.workers.map((worker: { id: string }) => worker.id)).not.toContain(archivedWorkerId);
   });
 
   it("bounds selected-run live snapshots to recent compact terminal and event data", async () => {
@@ -811,6 +845,54 @@ describe("GET /api/events", () => {
     expect(payload.messages.find((message: { runId: string }) => message.runId === runId)?.content).toBe("Start this conversation");
   });
 
+  it("keeps idle SSE refreshes as heartbeats without rebuilding runtime snapshots", async () => {
+    vi.useFakeTimers();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/cheap-idle-sse.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      title: "Cheap idle SSE",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    global.fetch = vi.fn(() => new Promise<Response>(() => {}));
+
+    const controller = new AbortController();
+    const response = await GET(new NextRequest(`http://localhost/api/events?runId=${runId}`, {
+      signal: controller.signal,
+    }));
+    const reader = response.body!.getReader();
+
+    const firstRead = readWithTimeout(reader, 1000);
+    await vi.advanceTimersByTimeAsync(151);
+    const firstResult = await firstRead;
+    expect(firstResult.done).toBe(false);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    const heartbeatRead = reader.read();
+    await vi.advanceTimersByTimeAsync(15_000);
+    const heartbeatResult = await heartbeatRead;
+    controller.abort();
+    await reader.cancel();
+    vi.useRealTimers();
+
+    expect(new TextDecoder().decode(heartbeatResult.value!)).toBe(": heartbeat\n\n");
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("returns a JSON live snapshot for polling fallback", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -890,6 +972,82 @@ describe("GET /api/events", () => {
     expect(payload.frontendErrors).toEqual([]);
     expect(payload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Persisted snapshot conversation");
     expect(payload.messages.find((message: { runId: string }) => message.runId === runId)?.content).toBe("Recover from persisted state");
+  });
+
+  it("reuses cached persisted snapshots until a live update notification arrives", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/cached-persisted-snapshot.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      title: "Cached title before notification",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const firstResponse = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const firstPayload = await firstResponse.json();
+
+    await db.update(runs).set({
+      title: "Updated title after cache",
+      updatedAt: new Date(now.getTime() + 1000),
+    }).where(eq(runs.id, runId));
+
+    const cachedResponse = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const cachedPayload = await cachedResponse.json();
+
+    notifyEventStreamSubscribers();
+
+    const invalidatedResponse = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const invalidatedPayload = await invalidatedResponse.json();
+
+    expect(firstPayload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Cached title before notification");
+    expect(cachedPayload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Cached title before notification");
+    expect(invalidatedPayload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Updated title after cache");
+  });
+
+  it("reuses cached runtime snapshots without repeated bridge polling", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/cached-runtime-snapshot.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      title: "Cached runtime snapshot",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+    await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    notifyEventStreamSubscribers();
+    await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
   it("does not surface transient bridge agent-list failures as frontend errors", async () => {
@@ -1083,6 +1241,116 @@ describe("GET /api/events", () => {
     const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     expect(persistedWorker?.status).toBe("working");
     expect(persistedWorker?.currentText).toBe("still doing real work");
+  });
+
+  it("scopes bridge session sync to the selected run when viewing one conversation", async () => {
+    const selectedPlanId = randomUUID();
+    const unrelatedPlanId = randomUUID();
+    const selectedRunId = randomUUID();
+    const unrelatedRunId = randomUUID();
+    const selectedWorkerId = randomUUID();
+    const unrelatedWorkerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values([
+      {
+        id: selectedPlanId,
+        path: "vibes/ad-hoc/selected-sync-scope.md",
+        status: "running",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: unrelatedPlanId,
+        path: "vibes/ad-hoc/unrelated-sync-scope.md",
+        status: "running",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+    await db.insert(runs).values([
+      {
+        id: selectedRunId,
+        planId: selectedPlanId,
+        mode: "implementation",
+        status: "running",
+        title: "Selected sync scope",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: unrelatedRunId,
+        planId: unrelatedPlanId,
+        mode: "implementation",
+        status: "running",
+        title: "Unrelated sync scope",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+    await db.insert(workers).values([
+      {
+        id: selectedWorkerId,
+        runId: selectedRunId,
+        type: "codex",
+        status: "cancelled",
+        cwd: "/workspace/app",
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: unrelatedWorkerId,
+        runId: unrelatedRunId,
+        type: "codex",
+        status: "cancelled",
+        cwd: "/workspace/app",
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      {
+        name: selectedWorkerId,
+        type: "codex",
+        cwd: "/workspace/app",
+        state: "working",
+        currentText: "selected live work",
+        lastText: "selected live work",
+        outputEntries: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+      {
+        name: unrelatedWorkerId,
+        type: "codex",
+        cwd: "/workspace/app",
+        state: "working",
+        currentText: "unrelated live work",
+        lastText: "unrelated live work",
+        outputEntries: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    ]), { status: 200 }));
+
+    await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${selectedRunId}`));
+
+    const selectedWorker = await db.select().from(workers).where(eq(workers.id, selectedWorkerId)).get();
+    const unrelatedWorker = await db.select().from(workers).where(eq(workers.id, unrelatedWorkerId)).get();
+
+    expect(selectedWorker?.status).toBe("working");
+    expect(selectedWorker?.currentText).toBe("selected live work");
+    expect(unrelatedWorker?.status).toBe("cancelled");
+    expect(unrelatedWorker?.currentText).toBe("");
   });
 
   it("streams supervisor interventions with the live conversation payload", async () => {
