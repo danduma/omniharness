@@ -1,4 +1,3 @@
-import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 interface OmniHarnessMarkProps {
@@ -15,14 +14,20 @@ export function OmniHarnessMark({ className, imageClassName }: OmniHarnessMarkPr
       )}
       aria-hidden="true"
     >
-      <Image
-        src="/icons/oh1-split-2.svg"
-        alt=""
-        width={64}
-        height={64}
-        unoptimized
-        className={cn("h-full w-full object-contain", imageClassName)}
-      />
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 64 64"
+        className={cn("h-full w-full", imageClassName)}
+        aria-hidden="true"
+      >
+        <g fill="none" stroke="#e86b20" strokeWidth="4" strokeLinecap="butt" strokeLinejoin="miter">
+          <path d="M6.5 28A25.8 25.8 0 0 1 57.5 28" />
+          <path d="M57.5 36A25.8 25.8 0 0 1 6.5 36" />
+          <path d="M23 24v16" />
+          <path d="M41 24v16" />
+          <path d="M 26.417 32 L 37.466 32" />
+        </g>
+      </svg>
     </span>
   );
 }
