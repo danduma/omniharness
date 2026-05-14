@@ -197,29 +197,59 @@ function renderShell(body: string) {
     }
     .pill.ok { color: var(--ok); border-color: #264a43; }
     .pill.warn { color: var(--danger); border-color: #633631; }
-    .facts {
+    .chrome {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: minmax(220px, 280px) 1fr;
       border-bottom: 1px solid var(--line);
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-content: flex-start;
+      gap: 6px;
+      padding: 12px;
+      border-right: 1px solid var(--line);
+      background: #0d1012;
+    }
+    .actions form { margin: 0; display: inline-flex; }
+    .actions form button, .actions > .button, .actions > .auto-refresh {
+      width: auto;
+    }
+    .details {
+      margin: 0;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-content: start;
     }
     .fact {
       min-width: 0;
       padding: 10px 12px;
       border-right: 1px solid var(--line);
-    }
-    .fact:nth-child(4n) { border-right: 0; }
-    .fact dt { margin: 0 0 4px; color: var(--muted); font-size: 11px; text-transform: uppercase; }
-    .fact dd { margin: 0; font-weight: 760; overflow-wrap: anywhere; }
-    .toolbar {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-      padding: 10px 16px;
       border-bottom: 1px solid var(--line);
     }
-    .toolbar form { margin: 0; }
-    .toolbar .spacer { flex: 1; }
+    .details .fact:nth-child(2n) { border-right: 0; }
+    .details .fact:nth-last-child(-n+2) { border-bottom: 0; }
+    .fact dt { margin: 0 0 4px; color: var(--muted); font-size: 11px; text-transform: uppercase; }
+    .fact dd { margin: 0; font-weight: 760; overflow-wrap: anywhere; }
+    .auto-refresh {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 34px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      text-transform: none;
+      font-size: 13px;
+      letter-spacing: 0;
+    }
+    .auto-refresh input[type="number"] {
+      width: 56px;
+      padding: 4px 6px;
+      min-height: 0;
+    }
+    .auto-refresh input[type="checkbox"] { width: auto; margin: 0; }
     .notice {
       padding: 8px 16px;
       border-bottom: 1px solid var(--line);
@@ -253,10 +283,12 @@ function renderShell(body: string) {
     @media (max-width: 720px) {
       main { min-height: 100vh; height: auto; border: 0; }
       header { align-items: flex-start; flex-direction: column; }
-      .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .fact:nth-child(2n) { border-right: 0; }
-      .toolbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .toolbar .spacer { display: none; }
+      .chrome { grid-template-columns: 1fr; }
+      .actions { border-right: 0; border-bottom: 1px solid var(--line); }
+      .details { grid-template-columns: 1fr; }
+      .details .fact { border-right: 0; }
+      .details .fact:nth-last-child(-n+2) { border-bottom: 1px solid var(--line); }
+      .details .fact:last-child { border-bottom: 0; }
       button, .button { width: 100%; }
       pre { min-height: 52vh; flex: initial; }
     }
@@ -306,43 +338,48 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
       <h1>OmniHarness Restart</h1>
       <span class="pill ${runtime.running ? "ok" : "warn"}">${runtime.running ? "running" : "stopped"}</span>
     </header>
-    <div class="status-line">
-      <strong>${runtime.running ? "OmniHarness is responding on managed ports." : "No managed process detected."}</strong>
-      <span class="subtle">mode ${escapeHtml(mode)}</span>
-      <span class="subtle">pid ${runtime.pid ?? "none"}</span>
-      <span class="subtle">started ${escapeHtml(startedAt)}</span>
-    </div>
     ${status.restarted ? `<div class="notice">${status.mode === "prod" ? "Production" : "Development"} action accepted.</div>` : ""}
     ${status.stopped ? `<div class="notice warn">Stop signal accepted.</div>` : ""}
     ${status.error ? `<div class="notice warn">${escapeHtml(status.error)}</div>` : ""}
-    <dl class="facts">
-      <div class="fact"><dt>Command</dt><dd>${escapeHtml(command)}</dd></div>
-      <div class="fact"><dt>Ports</dt><dd>${config.managedPorts.join(", ")}</dd></div>
-      <div class="fact"><dt>Listeners</dt><dd>${escapeHtml(listeners)}</dd></div>
-      <div class="fact"><dt>Log</dt><dd>${escapeHtml(path.basename(config.logFile))}</dd></div>
-    </dl>
-    <div class="toolbar">
-      <form method="post" action="/restart-current">
-        <button class="primary" type="submit" ${canRestartCurrent ? "" : "disabled"}>Restart Current</button>
-      </form>
-      <form method="post" action="/stop">
-        <button class="danger" type="submit" ${runtime.running ? "" : "disabled"}>Stop</button>
-      </form>
-      <form method="post" action="/start">
-        <input type="hidden" name="mode" value="dev">
-        <button type="submit" ${devActive ? "disabled" : ""}>${devLabel}</button>
-      </form>
-      <form method="post" action="/start">
-        <input type="hidden" name="mode" value="prod">
-        <button type="submit" ${prodActive ? "disabled" : ""}>${prodLabel}</button>
-      </form>
-      <a class="button" href="/">Refresh</a>
-      <a class="button" href="/status">JSON</a>
-      <a class="button" href="${appLink}">Open App</a>
-      <span class="spacer"></span>
-      <form method="post" action="/logout">
-        <button class="danger" type="submit">Lock</button>
-      </form>
+    <div class="chrome">
+      <div class="actions">
+        <form method="post" action="/restart-current">
+          <button class="primary" type="submit" ${canRestartCurrent ? "" : "disabled"}>Restart Current</button>
+        </form>
+        <form method="post" action="/start">
+          <input type="hidden" name="mode" value="dev">
+          <button type="submit" ${devActive ? "disabled" : ""}>${devLabel}</button>
+        </form>
+        <form method="post" action="/start">
+          <input type="hidden" name="mode" value="prod">
+          <button type="submit" ${prodActive ? "disabled" : ""}>${prodLabel}</button>
+        </form>
+        <form method="post" action="/stop">
+          <button class="danger" type="submit" ${runtime.running ? "" : "disabled"}>Stop</button>
+        </form>
+        <a class="button" href="/">Refresh</a>
+        <label class="auto-refresh" title="Reload this page on a timer">
+          <input id="auto-refresh-toggle" type="checkbox">
+          <span>Auto-refresh</span>
+          <input id="auto-refresh-seconds" type="number" min="1" step="1" value="5">
+          <span class="subtle">s</span>
+        </label>
+        <a class="button" href="/status">JSON</a>
+        <a class="button" href="${appLink}">Open App</a>
+        <form method="post" action="/logout">
+          <button class="danger" type="submit">Lock</button>
+        </form>
+      </div>
+      <dl class="details">
+        <div class="fact"><dt>Status</dt><dd>${runtime.running ? "Responding on managed ports" : "No managed process detected"}</dd></div>
+        <div class="fact"><dt>Mode</dt><dd>${escapeHtml(mode)}</dd></div>
+        <div class="fact"><dt>PID</dt><dd>${runtime.pid ?? "none"}</dd></div>
+        <div class="fact"><dt>Started</dt><dd>${escapeHtml(startedAt)}</dd></div>
+        <div class="fact"><dt>Command</dt><dd>${escapeHtml(command)}</dd></div>
+        <div class="fact"><dt>Ports</dt><dd>${config.managedPorts.join(", ")}</dd></div>
+        <div class="fact"><dt>Listeners</dt><dd>${escapeHtml(listeners)}</dd></div>
+        <div class="fact"><dt>Log</dt><dd>${escapeHtml(path.basename(config.logFile))}</dd></div>
+      </dl>
     </div>
     <div class="log-head">
       <span class="label">Recent log</span>
@@ -356,6 +393,41 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
           logViewer.scrollTop = logViewer.scrollHeight;
         });
       }
+      (function () {
+        const STORAGE_KEY = "omniharness-restart-auto-refresh";
+        const toggle = document.getElementById("auto-refresh-toggle");
+        const seconds = document.getElementById("auto-refresh-seconds");
+        if (!toggle || !seconds) return;
+        let stored = {};
+        try { stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}") || {}; } catch (_) {}
+        const initialSeconds = Math.max(1, Math.floor(Number(stored.seconds) || 5));
+        seconds.value = String(initialSeconds);
+        toggle.checked = Boolean(stored.enabled);
+        let timer = null;
+        function save() {
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({
+              enabled: toggle.checked,
+              seconds: Math.max(1, Math.floor(Number(seconds.value) || 1)),
+            }));
+          } catch (_) {}
+        }
+        function schedule() {
+          if (timer) { clearTimeout(timer); timer = null; }
+          if (!toggle.checked) return;
+          const value = Math.max(1, Math.floor(Number(seconds.value) || 1));
+          timer = setTimeout(() => { window.location.reload(); }, value * 1000);
+        }
+        toggle.addEventListener("change", () => { save(); schedule(); });
+        seconds.addEventListener("change", () => {
+          const value = Math.max(1, Math.floor(Number(seconds.value) || 1));
+          seconds.value = String(value);
+          save();
+          schedule();
+        });
+        seconds.addEventListener("input", schedule);
+        schedule();
+      })();
     </script>`);
 }
 
