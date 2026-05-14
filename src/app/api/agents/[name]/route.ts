@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { buildLiveWorkerSnapshot } from "@/server/workers/live-snapshots";
+import { readWorkerOutputEntries } from "@/server/workers/output-store";
 import { formatErrorMessage } from "@/server/runs/failures";
 
 const FULL_HISTORY_ENTRY_LIMIT = 20_000;
@@ -138,19 +139,22 @@ export async function GET(
   const worker = await db.select().from(workers).where(eq(workers.id, name)).get();
   const run = worker ? await db.select().from(runs).where(eq(runs.id, worker.runId)).get() : null;
   const includeFullHistory = req.nextUrl.searchParams.get("history") === "full";
+  const workerWithEntries = worker
+    ? { ...worker, outputEntries: await readWorkerOutputEntries(worker.runId, worker.id) }
+    : null;
 
   try {
     const data = await loadAgentWithOptionalHistory(name, includeFullHistory);
     const snapshot = buildLiveWorkerSnapshot({
       agent: data,
-      worker,
+      worker: workerWithEntries,
       run,
     });
     return NextResponse.json(snapshot);
   } catch (error: unknown) {
-    if (worker && isMissingAgentError(error)) {
+    if (workerWithEntries && isMissingAgentError(error)) {
       const snapshot = buildLiveWorkerSnapshot({
-        worker,
+        worker: workerWithEntries,
         run,
         bridgeError: error,
       });

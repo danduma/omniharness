@@ -13,6 +13,7 @@ import { getAppDataPath } from "@/server/app-root";
 import { requireApiSession } from "@/server/auth/guards";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { GitWorkspaceError } from "@/server/git/workspaces";
+import { archiveRunOutputs } from "@/server/workers/output-store";
 import { pauseForClarifications } from "@/server/clarifications/loop";
 import { isArchivableRunStatus } from "@/server/runs/status";
 import {
@@ -261,6 +262,11 @@ export async function POST(
         archivedAt,
         updatedAt: archivedAt,
       }).where(eq(runs.id, runId));
+      try {
+        await archiveRunOutputs(runId);
+      } catch (error) {
+        console.warn(`Failed to zip output entries for run ${runId}:`, error);
+      }
       notifyEventStreamSubscribers();
 
       return NextResponse.json({ ok: true, runId, archivedAt });

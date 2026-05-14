@@ -1,7 +1,8 @@
 import type { AgentRecord } from "@/server/bridge-client";
 import { normalizeAgentRecord } from "@/server/bridge-client";
 import { formatErrorMessage } from "@/server/runs/failures";
-import { parseWorkerOutputEntries } from "@/server/workers/snapshots";
+
+type WorkerOutputEntry = NonNullable<AgentRecord["outputEntries"]>[number];
 
 type PersistedWorkerRecord = {
   id: string;
@@ -10,7 +11,7 @@ type PersistedWorkerRecord = {
   status: string;
   cwd: string;
   outputLog: string;
-  outputEntriesJson: string;
+  outputEntries?: WorkerOutputEntry[];
   currentText: string;
   lastText: string;
   bridgeSessionId: string | null;
@@ -165,7 +166,7 @@ export function buildLiveWorkerSnapshot(args: {
     return null;
   }
 
-  const persistedOutputEntries = parseWorkerOutputEntries(worker?.outputEntriesJson);
+  const persistedOutputEntries = worker?.outputEntries ?? [];
   const outputLog = worker?.outputLog ?? "";
   const persistedLastText = worker?.lastText ?? "";
   const requestedModel = normalizedAgent?.requestedModel ?? run?.preferredWorkerModel ?? null;

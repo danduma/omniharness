@@ -66,3 +66,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Per-run worker output entries (managed by src/server/workers/output-store.ts)
+run-data/

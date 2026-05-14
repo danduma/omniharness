@@ -7,7 +7,7 @@ import { persistRunFailure } from "@/server/runs/failures";
 import { isTerminalRunStatus } from "@/server/runs/status";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { isRecoverableConnectionSupervisorError, isTransientSupervisorError } from "@/server/supervisor/retry";
-import { parseWorkerOutputEntries, serializeWorkerOutputEntries } from "@/server/workers/snapshots";
+import { readWorkerOutputEntries, writeWorkerOutputEntries } from "@/server/workers/output-store";
 import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
 import { drainQueuedWorkerMessages } from "./queued-messages";
 
@@ -22,7 +22,7 @@ function hasAgentOutput(agent: ReturnType<typeof normalizeAgentRecord>) {
   );
 }
 
-function hasPersistedWorkerOutput(worker: typeof workers.$inferSelect) {
+async function hasPersistedWorkerOutput(worker: typeof workers.$inferSelect) {
   if (
     worker.outputLog.trim()
     || worker.currentText.trim()
@@ -31,7 +31,8 @@ function hasPersistedWorkerOutput(worker: typeof workers.$inferSelect) {
     return true;
   }
 
-  return parseWorkerOutputEntries(worker.outputEntriesJson).some((entry) => {
+  const entries = await readWorkerOutputEntries(worker.runId, worker.id);
+  return entries.some((entry) => {
     const text = (entry as { text?: unknown }).text;
     return typeof text === "string" && text.trim().length > 0;
   });
@@ -52,7 +53,7 @@ function resolveSyncedRunState(agent: ReturnType<typeof normalizeAgentRecord>) {
   return "running";
 }
 
-function resolvePersistedRunState(worker: typeof workers.$inferSelect) {
+async function resolvePersistedRunState(worker: typeof workers.$inferSelect) {
   const status = worker.status.trim().toLowerCase().split(":")[0]?.trim() ?? "";
 
   if (status === "error") {
@@ -61,7 +62,7 @@ function resolvePersistedRunState(worker: typeof workers.$inferSelect) {
 
   if (
     ["stopped", "cancelled", "done", "completed"].includes(status)
-    || (status === "idle" && hasPersistedWorkerOutput(worker))
+    || (status === "idle" && await hasPersistedWorkerOutput(worker))
   ) {
     return "done";
   }
@@ -69,9 +70,9 @@ function resolvePersistedRunState(worker: typeof workers.$inferSelect) {
   return "running";
 }
 
-function isEmptyIdlePersistedWorker(worker: typeof workers.$inferSelect) {
+async function isEmptyIdlePersistedWorker(worker: typeof workers.$inferSelect) {
   const status = worker.status.trim().toLowerCase().split(":")[0]?.trim() ?? "";
-  return status === "idle" && !hasPersistedWorkerOutput(worker);
+  return status === "idle" && !(await hasPersistedWorkerOutput(worker));
 }
 
 function isAgentBusyRunFailure(run: typeof runs.$inferSelect) {
@@ -181,10 +182,10 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
           continue;
         }
 
+        await writeWorkerOutputEntries(run.id, implementationWorker.id, implementationAgent.outputEntries);
         await db.update(workers).set({
           status: implementationAgent.state,
           cwd: implementationAgent.cwd || implementationWorker.cwd,
-          outputEntriesJson: serializeWorkerOutputEntries(implementationAgent.outputEntries),
           currentText: implementationAgent.currentText,
           lastText: implementationAgent.lastText,
           bridgeSessionId: implementationAgent.sessionId ?? implementationWorker.bridgeSessionId,
@@ -244,10 +245,10 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
         continue;
       }
 
+      await writeWorkerOutputEntries(run.id, implementationWorker.id, implementationAgent.outputEntries);
       await db.update(workers).set({
         status: implementationAgent.state,
         cwd: implementationAgent.cwd || implementationWorker.cwd,
-        outputEntriesJson: serializeWorkerOutputEntries(implementationAgent.outputEntries),
         currentText: implementationAgent.currentText,
         lastText: implementationAgent.lastText,
         updatedAt: new Date(),
@@ -277,10 +278,10 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       continue;
     }
 
+    await writeWorkerOutputEntries(run.id, worker.id, agent.outputEntries);
     await db.update(workers).set({
       status: agent.state,
       cwd: agent.cwd || worker.cwd,
-      outputEntriesJson: serializeWorkerOutputEntries(agent.outputEntries),
       currentText: agent.currentText,
       lastText: agent.lastText,
       updatedAt: new Date(),
@@ -344,7 +345,7 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       }
     }
 
-    if (isEmptyIdlePersistedWorker(worker)) {
+    if (await isEmptyIdlePersistedWorker(worker)) {
       await db.update(workers).set({
         status: "error",
         outputLog: MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC,
@@ -354,7 +355,7 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       continue;
     }
 
-    const nextRunState = resolvePersistedRunState(worker);
+    const nextRunState = await resolvePersistedRunState(worker);
     if (run.mode === "planning") {
       await refreshPlanningArtifactsForRun({
         run,

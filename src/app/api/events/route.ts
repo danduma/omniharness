@@ -8,6 +8,7 @@ import { syncConversationSessions } from "@/server/conversations/sync";
 import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
 import { requireApiSession } from "@/server/auth/guards";
 import { buildLiveWorkerSnapshots } from "@/server/workers/live-snapshots";
+import { readWorkerOutputEntries } from "@/server/workers/output-store";
 import { getEventStreamNotificationVersion, waitForEventStreamNotification } from "@/server/events/live-updates";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { serializeMessageRecord } from "@/server/conversations/message-records";
@@ -95,7 +96,6 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}) {
         status: workers.status,
         cwd: workers.cwd,
         outputLog: workers.outputLog,
-        outputEntriesJson: workers.outputEntriesJson,
         currentText: workers.currentText,
         lastText: workers.lastText,
         bridgeSessionId: workers.bridgeSessionId,
@@ -219,6 +219,15 @@ function selectedRunWorkers(
   }
 
   return records.selectedAgentWorkers;
+}
+
+async function attachOutputEntries<T extends { id: string; runId: string }>(rows: T[]) {
+  return Promise.all(
+    rows.map(async (row) => ({
+      ...row,
+      outputEntries: await readWorkerOutputEntries(row.runId, row.id),
+    })),
+  );
 }
 
 function selectedRunIds(options: EventPayloadOptions) {
@@ -578,20 +587,110 @@ function filterRuntimeAgentsForWorkers(rawAgents: unknown[], scopedWorkers: Pers
   });
 }
 
+function isStreamingAgentState(state: string | null | undefined) {
+  const normalized = (state ?? "").trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  return normalized === "starting" || normalized === "working" || normalized === "stuck";
+}
+
+function synthesizeStreamingWorkerMessages(
+  agents: ReturnType<typeof buildLiveWorkerSnapshots>,
+  workers: PersistedEventRecords["selectedAgentWorkers"],
+  persistedMessages: PersistedEventRecords["msgs"],
+) {
+  const workersById = new Map(workers.map((worker) => [worker.id, worker]));
+  const latestPersistedByWorker = new Map<string, number>();
+  for (const message of persistedMessages) {
+    if (message.role !== "worker" || !message.workerId) {
+      continue;
+    }
+    const createdAtMs = new Date(message.createdAt).getTime();
+    if (!Number.isFinite(createdAtMs)) {
+      continue;
+    }
+    const current = latestPersistedByWorker.get(message.workerId) ?? 0;
+    if (createdAtMs > current) {
+      latestPersistedByWorker.set(message.workerId, createdAtMs);
+    }
+  }
+
+  const synthesized: Array<{
+    id: string;
+    runId: string;
+    role: string;
+    kind: string;
+    content: string;
+    workerId: string;
+    attachmentsJson: string | null;
+    createdAt: Date;
+  }> = [];
+
+  for (const agent of agents) {
+    const worker = workersById.get(agent.name);
+    if (!worker || !isStreamingAgentState(agent.state)) {
+      continue;
+    }
+
+    const cutoffMs = latestPersistedByWorker.get(worker.id) ?? 0;
+    const entries = (agent.outputEntries ?? []).filter((entry) => {
+      if (entry.type !== "message" || typeof entry.text !== "string" || !entry.text.trim()) {
+        return false;
+      }
+      const entryMs = new Date(entry.timestamp).getTime();
+      return !Number.isFinite(entryMs) || entryMs > cutoffMs;
+    });
+    const liveText = (agent.currentText ?? "").trim();
+    if (entries.length === 0 && !liveText) {
+      continue;
+    }
+
+    const recentEntries = entries.slice(-3);
+    const joined = recentEntries.map((entry) => truncateText(entry.text.trim(), AGENT_ENTRY_TEXT_LIMIT)).join("\n\n");
+    const rawContent = liveText
+      ? (joined ? `${joined}\n\n${liveText}` : liveText)
+      : joined;
+    const content = truncateText(rawContent, AGENT_TEXT_FIELD_LIMIT);
+    if (!content) {
+      continue;
+    }
+
+    const latestEntryMs = entries.reduce((latest, entry) => {
+      const value = new Date(entry.timestamp).getTime();
+      return Number.isFinite(value) && value > latest ? value : latest;
+    }, 0);
+    const createdAtMs = latestEntryMs || new Date(worker.updatedAt ?? Date.now()).getTime();
+
+    synthesized.push({
+      id: `streaming:${worker.id}`,
+      runId: worker.runId,
+      role: "worker",
+      kind: "streaming",
+      content,
+      workerId: worker.id,
+      attachmentsJson: null,
+      createdAt: new Date(createdAtMs),
+    });
+  }
+
+  return synthesized;
+}
+
 function buildEventPayload(
   records: PersistedEventRecords,
-  agentsData = buildLiveWorkerSnapshots({
-    workers: selectedRunWorkers(records, {}),
-    runs: records.allRuns,
-  }),
+  agentsData: ReturnType<typeof buildLiveWorkerSnapshots>,
   frontendErrors: unknown[] = [],
   options: EventPayloadOptions = {},
 ) {
   const runIds = selectedRunIds(options);
   const planIds = selectedPlanIds(records, runIds);
+  const streamingMessages = synthesizeStreamingWorkerMessages(agentsData, records.selectedAgentWorkers, records.msgs);
+  const mergedMessages = [...records.msgs, ...streamingMessages].sort((left, right) => {
+    const leftMs = new Date(left.createdAt).getTime();
+    const rightMs = new Date(right.createdAt).getTime();
+    return leftMs - rightMs;
+  });
 
   return {
-    messages: records.msgs.map(serializeMessageRecord),
+    messages: mergedMessages.map(serializeMessageRecord),
     plans: records.allPlans,
     runs: records.allRuns,
     accounts: records.allAccounts,
@@ -620,10 +719,11 @@ function buildEventPayload(
 
 async function buildPersistedEventPayload(options: EventPayloadOptions = {}) {
   const records = await readPersistedEventRecords(options);
+  const workersWithEntries = await attachOutputEntries(selectedRunWorkers(records, options));
   return buildEventPayload(
     records,
     buildLiveWorkerSnapshots({
-      workers: selectedRunWorkers(records, options),
+      workers: workersWithEntries,
       runs: records.allRuns,
     }),
     undefined,
@@ -687,8 +787,9 @@ function buildSharedPersistedEventPayload(options: EventPayloadOptions = {}) {
 
 async function buildRuntimeEnrichedEventPayload(options: EventPayloadOptions = {}) {
   let records = await readPersistedEventRecords(options);
+  let workersWithEntries = await attachOutputEntries(selectedRunWorkers(records, options));
   let agentsData = buildLiveWorkerSnapshots({
-    workers: selectedRunWorkers(records, options),
+    workers: workersWithEntries,
     runs: records.allRuns,
   });
   const frontendErrors = [];
@@ -702,16 +803,16 @@ async function buildRuntimeEnrichedEventPayload(options: EventPayloadOptions = {
         selectedRunId: options.selectedRunId,
       });
       records = await readPersistedEventRecords(options);
-      const scopedWorkers = selectedRunWorkers(records, options);
+      workersWithEntries = await attachOutputEntries(selectedRunWorkers(records, options));
       agentsData = buildLiveWorkerSnapshots({
-        agents: filterRuntimeAgentsForWorkers(rawAgents, scopedWorkers),
-        workers: scopedWorkers,
+        agents: filterRuntimeAgentsForWorkers(rawAgents, workersWithEntries),
+        workers: workersWithEntries,
         runs: records.allRuns,
       });
     } else {
       const bridgeError = new Error(`Agent runtime list request failed with status ${res.status}.`);
       agentsData = buildLiveWorkerSnapshots({
-        workers: selectedRunWorkers(records, options),
+        workers: workersWithEntries,
         runs: records.allRuns,
         bridgeError,
       });
@@ -727,7 +828,7 @@ async function buildRuntimeEnrichedEventPayload(options: EventPayloadOptions = {
     }
   } catch (error) {
     agentsData = buildLiveWorkerSnapshots({
-      workers: selectedRunWorkers(records, options),
+      workers: workersWithEntries,
       runs: records.allRuns,
       bridgeError: error,
     });
