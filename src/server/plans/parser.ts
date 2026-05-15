@@ -23,7 +23,7 @@ export function parsePlan(markdown: string): ParsedPlan {
       continue;
     }
 
-    const itemMatch = line.match(/^- \[ \] (.+)$/);
+    const itemMatch = line.match(/^(?:- \[ \]|\d+\.)\s+(.+)$/);
     if (itemMatch) {
       items.push({
         id: `item-${index + 1}`,
@@ -43,7 +43,7 @@ function collectItemDetails(lines: string[], itemIndex: number) {
 
   for (let index = itemIndex + 1; index < lines.length; index += 1) {
     const line = lines[index];
-    if (/^#{1,6}\s+(.+)$/.test(line) || /^- \[ \] (.+)$/.test(line)) {
+    if (/^#{1,6}\s+(.+)$/.test(line) || /^(?:- \[ \]|\d+\.)\s+(.+)$/.test(line)) {
       break;
     }
     if (line.trim().length > 0) {

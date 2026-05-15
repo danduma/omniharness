@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS runs (
   spec_path text,
   artifact_plan_path text,
   planner_artifacts_json text,
+  planner_readiness_verdict_json text,
   parent_run_id text,
   forked_from_message_id text,
   auto_commit_milestones integer NOT NULL DEFAULT 0,
@@ -403,6 +404,10 @@ if (!runColumnNames.has("artifact_plan_path")) {
 
 if (!runColumnNames.has("planner_artifacts_json")) {
   sqlite.exec("ALTER TABLE runs ADD COLUMN planner_artifacts_json text;");
+}
+
+if (!runColumnNames.has("planner_readiness_verdict_json")) {
+  sqlite.exec("ALTER TABLE runs ADD COLUMN planner_readiness_verdict_json text;");
 }
 
 if (!runColumnNames.has("parent_run_id")) {

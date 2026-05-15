@@ -21,6 +21,7 @@ export const runs = sqliteTable('runs', {
   specPath: text('spec_path'),
   artifactPlanPath: text('artifact_plan_path'),
   plannerArtifactsJson: text('planner_artifacts_json'),
+  plannerReadinessVerdictJson: text('planner_readiness_verdict_json'),
   parentRunId: text('parent_run_id'),
   forkedFromMessageId: text('forked_from_message_id'),
   autoCommitMilestones: integer('auto_commit_milestones', { mode: 'boolean' }).notNull().default(false),
