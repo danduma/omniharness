@@ -12,8 +12,9 @@ import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
 import { getAppDataPath } from "@/server/app-root";
 import { requireApiSession } from "@/server/auth/guards";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { emitNamedEvent } from "@/server/events/named-events";
 import { GitWorkspaceError } from "@/server/git/workspaces";
-import { archiveRunOutputs } from "@/server/workers/output-store";
+import { compactRunOutputs } from "@/server/workers/output-store";
 import { pauseForClarifications } from "@/server/clarifications/loop";
 import { isArchivableRunStatus } from "@/server/runs/status";
 import {
@@ -31,6 +32,9 @@ import {
   creditEvents,
   workerCounters,
   workerAssignments,
+  planningReviewRuns,
+  planningReviewRounds,
+  planningReviewFindings,
 } from "@/server/db/schema";
 
 function normalizeTitle(input: unknown) {
@@ -263,9 +267,9 @@ export async function POST(
         updatedAt: archivedAt,
       }).where(eq(runs.id, runId));
       try {
-        await archiveRunOutputs(runId);
+        await compactRunOutputs(runId);
       } catch (error) {
-        console.warn(`Failed to zip output entries for run ${runId}:`, error);
+        console.warn(`Failed to compact output entries for run ${runId}:`, error);
       }
       notifyEventStreamSubscribers();
 
@@ -517,6 +521,9 @@ export async function DELETE(
     await db.delete(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
     await db.delete(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId));
     await db.delete(workerAssignments).where(eq(workerAssignments.runId, runId));
+    await db.delete(planningReviewFindings).where(eq(planningReviewFindings.runId, runId));
+    await db.delete(planningReviewRounds).where(eq(planningReviewRounds.runId, runId));
+    await db.delete(planningReviewRuns).where(eq(planningReviewRuns.runId, runId));
     await db.delete(workers).where(eq(workers.runId, runId));
     await db.delete(workerCounters).where(eq(workerCounters.runId, runId));
     await db.delete(runs).where(eq(runs.id, runId));
@@ -534,12 +541,42 @@ export async function DELETE(
         fs.rmSync(absolutePlanPath);
       }
     }
+    emitNamedEvent({ kind: "conversation.deleted", runId });
     notifyEventStreamSubscribers();
 
     return NextResponse.json({ ok: true, runId });
   } catch (error: unknown) {
+    let deleteFailedRunId = "";
+    try {
+      ({ id: deleteFailedRunId } = await params);
+    } catch {
+      // If even params didn't resolve, skip the named event — there's
+      // no run scope to attach it to. The error response below still fires.
+    }
+    const cause = error instanceof Error ? error : new Error(String(error));
+    const fkMatch = /FOREIGN KEY constraint failed/i.test(cause.message);
+    const blockingTable = fkMatch
+      ? cause.message.match(/table[: ]\s*([a-z_]+)/i)?.[1] ?? null
+      : null;
+    if (deleteFailedRunId) {
+      emitNamedEvent({
+        kind: "conversation.delete_failed",
+        runId: deleteFailedRunId,
+        blockingTable,
+      });
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: fkMatch ? "conversation.delete.foreign_key" : "conversation.delete.failed",
+        message: fkMatch
+          ? `Could not delete conversation: a related row in ${blockingTable ?? "another table"} blocks the deletion. This is an OmniHarness bug; please report it.`
+          : `Could not delete conversation: ${cause.message}`,
+        surface: "toast",
+        runId: deleteFailedRunId,
+        cause: { name: cause.name, message: cause.message },
+      });
+    }
     return errorResponse(error, {
-      status: 500,
+      status: fkMatch ? 409 : 500,
       source: "Runs",
       action: "Delete",
     });

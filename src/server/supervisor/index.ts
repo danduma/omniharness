@@ -27,6 +27,7 @@ import { recordSupervisorIntervention } from "@/server/supervisor/interventions"
 import { normalizeWorkerStatus, workerTurnRecheckDelayMs } from "@/server/supervisor/worker-completion";
 import { drainQueuedImplementationMessages } from "@/server/conversations/queued-messages";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { emitNamedEvent } from "@/server/events/named-events";
 import { parsePlan } from "@/server/plans/parser";
 import { syncPlanItems } from "@/server/plans/checklist";
 import { assessPlanReadiness } from "@/server/plans/readiness";
@@ -623,6 +624,7 @@ async function reserveWorkerRow(args: {
     createdAt: new Date(),
     updatedAt: new Date(),
   });
+  emitNamedEvent({ kind: "worker.spawned", runId: args.runId, workerId, workerType: args.workerType });
   notifyEventStreamSubscribers();
 
   return workerId;

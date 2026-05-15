@@ -15,6 +15,7 @@ import { createRunId } from "@/server/runs/ids";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { emitNamedEvent } from "@/server/events/named-events";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { getAppRoot } from "@/server/app-root";
 import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
@@ -522,6 +523,7 @@ export async function createConversation(args: {
         createdAt: new Date(),
         updatedAt: new Date(),
       });
+      emitNamedEvent({ kind: "worker.spawned", runId, workerId, workerType });
 
       const response = await buildCreatedConversationResponse({ planId, runId, messageId: initialMessageId, mode });
 

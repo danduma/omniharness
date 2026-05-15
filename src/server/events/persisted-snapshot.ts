@@ -14,6 +14,7 @@ import {
   workers,
 } from "@/server/db/schema";
 import { serializeMessageRecord } from "@/server/conversations/message-records";
+import { isTerminalRunStatus } from "@/lib/run-status";
 import type { EventStreamState } from "@/app/home/types";
 import { normalizeChatAttachments } from "@/lib/chat-attachments";
 import type { BusyMessageAction } from "@/app/home/busy-message-behavior";
@@ -291,7 +292,9 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
       .filter((message) => message.status === "pending" || message.status === "delivering")
       .map(serializeQueuedConversationMessage),
     recoveryIncidents: selectedRunScoped(allRecoveryIncidents).map(compactRecoveryIncident),
-    recoveryState: runIds ? deriveRecoveryState(allRecoveryIncidents) : null,
+    recoveryState: runIds && !isTerminalRunStatus(selectedRun?.status)
+      ? deriveRecoveryState(allRecoveryIncidents)
+      : null,
     frontendErrors: [],
   };
 }

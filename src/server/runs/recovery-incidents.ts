@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
 import { executionEvents, recoveryIncidents } from "@/server/db/schema";
+import { emitNamedEvent } from "@/server/events/named-events";
 
 export type RecoveryIncidentKind = "worker_lost" | "session_missing" | "queue_blocked" | "stale_running" | "quota_exhausted";
 export type RecoveryIncidentStatus = "open" | "recovering" | "resolved" | "needs_user" | "failed";
@@ -107,6 +108,12 @@ export async function openRecoveryIncident(args: {
     queuedMessageId: args.queuedMessageId ?? null,
     ...(args.details ?? {}),
   });
+  emitNamedEvent({
+    kind: "recovery.opened",
+    runId: args.runId,
+    incidentId: record.id,
+    recoveryKind: args.kind,
+  });
   return record;
 }
 
@@ -137,6 +144,12 @@ export async function markRecoveryIncidentRecovering(args: {
     autoAttemptCount: nextAttempts,
     ...(args.details ?? {}),
   });
+  emitNamedEvent({
+    kind: "recovery.attempt",
+    runId: args.runId,
+    incidentId: args.incidentId,
+    attempt: nextAttempts,
+  });
 }
 
 export async function markRecoveryIncidentResolved(args: {
@@ -158,6 +171,11 @@ export async function markRecoveryIncidentResolved(args: {
     summary: args.summary,
     incidentId: args.incidentId,
     ...(args.details ?? {}),
+  });
+  emitNamedEvent({
+    kind: "recovery.resolved",
+    runId: args.runId,
+    incidentId: args.incidentId,
   });
 }
 
@@ -195,6 +213,7 @@ export async function markRecoveryIncidentFailed(args: {
   details?: Record<string, unknown>;
 }) {
   const now = new Date();
+  const existing = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.id, args.incidentId)).get();
   await db.update(recoveryIncidents).set({
     status: "failed",
     lastError: args.reason,
@@ -206,6 +225,20 @@ export async function markRecoveryIncidentFailed(args: {
     summary: args.reason,
     incidentId: args.incidentId,
     ...(args.details ?? {}),
+  });
+  emitNamedEvent({
+    kind: "recovery.gave_up",
+    runId: args.runId,
+    incidentId: args.incidentId,
+    attempts: existing?.autoAttemptCount ?? 0,
+  });
+  emitNamedEvent({
+    kind: "error.surfaced",
+    code: "recovery.gave_up",
+    message: args.reason,
+    surface: "banner",
+    runId: args.runId,
+    ...(args.workerId ? { workerId: args.workerId } : {}),
   });
 }
 

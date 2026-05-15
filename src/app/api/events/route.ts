@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/server/db";
 import { messages, plans, runs, accounts, workers, planItems, clarifications, executionEvents, supervisorInterventions, queuedConversationMessages, recoveryIncidents, planningReviewRuns, planningReviewRounds, planningReviewFindings } from "@/server/db/schema";
 import { BRIDGE_URL } from "@/server/bridge-client";
+import { isTerminalRunStatus } from "@/lib/run-status";
 import { buildAppError } from "@/server/api-errors";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { syncConversationSessions } from "@/server/conversations/sync";
@@ -10,6 +11,11 @@ import { requireApiSession } from "@/server/auth/guards";
 import { buildLiveWorkerSnapshots } from "@/server/workers/live-snapshots";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
 import { getEventStreamNotificationVersion, waitForEventStreamNotification } from "@/server/events/live-updates";
+import {
+  getEventCursor,
+  getNamedEventsSince,
+  recordSnapshotMarker,
+} from "@/server/events/named-events";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { serializeMessageRecord } from "@/server/conversations/message-records";
 import { serializeQueuedConversationMessage } from "@/server/conversations/queued-messages";
@@ -708,7 +714,11 @@ function buildEventPayload(
       .map(serializeQueuedConversationMessage),
     recoveryIncidents: filterSelectedRunScopedRecords(records.allRecoveryIncidents, runIds)
       .map(compactRecoveryIncident),
-    recoveryState: runIds ? deriveRecoveryState(records.allRecoveryIncidents) : null,
+    recoveryState: runIds && !isTerminalRunStatus(
+      records.allRuns.find((run) => runIds.has(run.id))?.status,
+    )
+      ? deriveRecoveryState(records.allRecoveryIncidents)
+      : null,
     reviewRuns: filterSelectedRunScopedRecords(records.allReviewRuns, runIds),
     reviewRounds: filterSelectedRunScopedRecords(records.allReviewRounds, runIds),
     reviewFindings: filterSelectedRunScopedRecords(records.allReviewFindings, runIds)
@@ -855,6 +865,21 @@ function delay(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
+function parseLastEventId(raw: string | null | undefined): number | null {
+  if (!raw) {
+    return null;
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  return parsed;
+}
+
 export async function GET(req: NextRequest) {
   const auth = await requireApiSession(req, {
     source: "Events",
@@ -870,33 +895,52 @@ export async function GET(req: NextRequest) {
 
   if (req.nextUrl.searchParams.get("snapshot") === "1") {
     const persistedOnly = req.nextUrl.searchParams.get("persisted") === "1";
-    if (persistedOnly) {
-      return NextResponse.json(await buildSharedPersistedEventPayload(eventPayloadOptions));
-    }
+    const payload = persistedOnly
+      ? await buildSharedPersistedEventPayload(eventPayloadOptions)
+      : await (async () => {
+        await ensureSupervisorRuntimeStarted();
+        return buildSharedRuntimeEnrichedEventPayload(eventPayloadOptions);
+      })();
 
-    await ensureSupervisorRuntimeStarted();
-    const payload = await buildSharedRuntimeEnrichedEventPayload(eventPayloadOptions);
-    return NextResponse.json(payload);
+    // Anchor the snapshot to the current cursor so a subsequent SSE
+    // connection can pass `Last-Event-ID: <lastEventId>` (or
+    // `?lastEventId=`) and receive only events newer than this body.
+    // Exposed as a response header to avoid changing the JSON shape
+    // that the UI consumes.
+    const response = NextResponse.json(payload);
+    response.headers.set("x-omni-last-event-id", String(getEventCursor()));
+    return response;
   }
 
   await ensureSupervisorRuntimeStarted();
+
+  const lastEventIdHeader = req.headers.get("last-event-id");
+  const resumeFromHeader = parseLastEventId(lastEventIdHeader);
+  const resumeFromQuery = parseLastEventId(req.nextUrl.searchParams.get("lastEventId"));
+  const resumeFromId = resumeFromHeader ?? resumeFromQuery;
+  const runIdScope = eventPayloadOptions.selectedRunId ?? null;
 
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
       let isClosed = false;
       let lastUpdatePayload = "";
+      // Cursor tracking the highest id we've already streamed to this
+      // client; used to drain only newly-buffered named events on each
+      // poll iteration without re-emitting events we already replayed.
+      let lastDeliveredId = resumeFromId ?? getEventCursor();
 
-      const sendSerializedEvent = (event: string, serializedData: string) => {
+      const writeFrame = (id: number | null, event: string, serializedData: string) => {
         try {
-          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${serializedData}\n\n`));
+          const idLine = id === null ? "" : `id: ${id}\n`;
+          controller.enqueue(encoder.encode(`${idLine}event: ${event}\ndata: ${serializedData}\n\n`));
         } catch {
           // Stream might be closed
         }
       };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const sendEvent = (event: string, data: any) => {
-        sendSerializedEvent(event, JSON.stringify(data));
+      const sendEvent = (event: string, data: any, id: number | null = null) => {
+        writeFrame(id, event, JSON.stringify(data));
       };
       const sendHeartbeat = () => {
         try {
@@ -913,17 +957,46 @@ export async function GET(req: NextRequest) {
         }
 
         lastUpdatePayload = serializedPayload;
-        sendSerializedEvent("update", serializedPayload);
+        const version = getEventStreamNotificationVersion();
+        const marker = recordSnapshotMarker(version, runIdScope);
+        lastDeliveredId = marker.id;
+        writeFrame(marker.id, "update", serializedPayload);
+      };
+      const drainBufferedEvents = () => {
+        const replay = getNamedEventsSince(lastDeliveredId, { runId: runIdScope });
+        if (replay.resyncRequired) {
+          // Anchor the resync frame to the current cursor so the
+          // client's resume position advances; without an id, the
+          // next reconnect would replay this same control message.
+          sendEvent("stream.resync_required", { reason: "id_out_of_buffer" }, replay.lastEventId);
+          lastDeliveredId = replay.lastEventId;
+          return;
+        }
+        for (const entry of replay.events) {
+          if (entry.event.kind === "snapshot.marker") {
+            continue;
+          }
+          writeFrame(entry.id, entry.event.kind, JSON.stringify(entry.event));
+          lastDeliveredId = entry.id;
+        }
       };
 
       req.signal.addEventListener("abort", () => {
         isClosed = true;
       });
 
+      // Replay any events the client missed during disconnect. If their
+      // last id has fallen out of the ring, the resync event tells the
+      // client to re-bootstrap from /api/events?snapshot=1.
+      if (resumeFromId !== null) {
+        drainBufferedEvents();
+      }
+
       let notificationVersionAtStart = getEventStreamNotificationVersion();
       while (!isClosed) {
         try {
           notificationVersionAtStart = getEventStreamNotificationVersion();
+          drainBufferedEvents();
           const runtimePayloadPromise = buildSharedRuntimeEnrichedEventPayload(eventPayloadOptions);
           const runtimePayload = await Promise.race([
             runtimePayloadPromise,
@@ -939,6 +1012,11 @@ export async function GET(req: NextRequest) {
               sendUpdateIfChanged(enrichedPayload);
             }
           }
+          // Named events emitted during snapshot construction must be
+          // flushed before we park; otherwise a worker.* event fired
+          // mid-build would wait an entire idle cycle to reach the
+          // client.
+          drainBufferedEvents();
         } catch (e) {
           console.error("SSE Poll Error", e);
           sendEvent("update_error", buildAppError(e, {

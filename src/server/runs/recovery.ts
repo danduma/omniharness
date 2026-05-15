@@ -28,6 +28,7 @@ import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/superviso
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
+import { emitNamedEvent } from "@/server/events/named-events";
 import { isRecoverableAgentMissingError } from "./recovery-state";
 import { createBranchWorktree } from "@/server/git/workspaces";
 import { pendingOrphanWorktreeError } from "@/server/git/orphan-recovery";
@@ -187,6 +188,7 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string) 
     createdAt: now,
     updatedAt: now,
   });
+  emitNamedEvent({ kind: "worker.spawned", runId: run.id, workerId, workerType });
 
   const agent = await spawnAgent({
     type: workerType,

@@ -14,6 +14,7 @@ import { isLongWorkerCompletionText, normalizeWorkerStatus } from "@/server/supe
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { emitNamedEvent } from "@/server/events/named-events";
 import { notifyRunLifecycleEventBestEffort } from "@/server/notifications/triggers";
 import { deriveWorkerTerminalProcesses } from "@/lib/worker-terminal-processes";
 
@@ -64,6 +65,19 @@ export interface DerivedWorkerEvent {
   summary: string;
   shouldWakeSupervisor: boolean;
   updatesActivity: boolean;
+}
+
+const TERMINAL_WORKER_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "canceled",
+  "error",
+  "stopped",
+]);
+
+function isTerminalWorkerStatus(status: string) {
+  return TERMINAL_WORKER_STATUSES.has(status.toLowerCase());
 }
 
 const observerIntervals = new Map<string, ReturnType<typeof setInterval>>();
@@ -675,6 +689,11 @@ async function reviveWorkerFromSavedSession(args: {
     bridgeSessionMode: resumedWorker.sessionMode ?? sessionMode ?? null,
     updatedAt: new Date(args.now),
   }).where(eq(workers.id, args.worker.id));
+  emitNamedEvent({
+    kind: "worker.reattached",
+    runId: args.run.id,
+    workerId: args.worker.id,
+  });
   notifyEventStreamSubscribers();
 
   return normalizeSnapshot(resumedWorker).snapshot;
@@ -958,12 +977,31 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
         : events;
 
       const activityEvent = filteredEvents.find((event) => event.updatesActivity);
+      const nextStatus = resolvePersistedWorkerStatus(snapshot, filteredEvents);
+      const prevStatus = worker.status;
       await db.update(workers).set({
-        status: resolvePersistedWorkerStatus(snapshot, filteredEvents),
+        status: nextStatus,
         bridgeSessionId: snapshot.sessionId ?? worker.bridgeSessionId,
         bridgeSessionMode: snapshot.sessionMode ?? worker.bridgeSessionMode,
         updatedAt: activityEvent ? new Date(now) : worker.updatedAt,
       }).where(eq(workers.id, worker.id));
+      if (nextStatus !== prevStatus) {
+        emitNamedEvent({
+          kind: "worker.status",
+          runId,
+          workerId: worker.id,
+          prev: prevStatus,
+          next: nextStatus,
+        });
+        if (isTerminalWorkerStatus(nextStatus)) {
+          emitNamedEvent({
+            kind: "worker.terminal",
+            runId,
+            workerId: worker.id,
+            status: nextStatus,
+          });
+        }
+      }
       notifyEventStreamSubscribers();
 
       for (const event of filteredEvents) {

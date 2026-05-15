@@ -60,5 +60,9 @@ export function errorResponse(
   options: Omit<AppErrorPayload, "message"> & { message?: string; status?: number } = {},
 ) {
   const payload = buildAppError(error, options);
-  return NextResponse.json({ error: payload }, { status: options.status ?? payload.status ?? 500 });
+  const status = options.status ?? payload.status ?? 500;
+  const tag = [payload.source, payload.action].filter(Boolean).join(" / ") || "api";
+  const stack = error instanceof Error ? error.stack : undefined;
+  console.error(`[api-error ${status}] ${tag}: ${payload.message}${stack ? `\n${stack}` : ""}`);
+  return NextResponse.json({ error: payload }, { status });
 }
