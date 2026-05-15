@@ -76,6 +76,92 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const DIFF_CONTEXT_LINES = 3;
+const DIFF_SIDE_CHAR_LIMIT = 4_000;
+
+// Edit tool payloads arrive as { type: "diff", oldText, newText, path }
+// where oldText/newText are typically the full pre/post file contents. The
+// generic head+tail truncation in truncateHistoryString collapses both sides
+// to byte-identical strings when the divergence sits in the middle of a
+// large file — so the frontend then sees oldText === newText and renders no
+// diff pane at all. Strip the common leading and trailing lines before
+// truncation so the persisted oldText/newText retain their actual
+// divergence, with a few lines of context on each side.
+function compressDiffContentPair(record: Record<string, unknown>): Record<string, unknown> | null {
+  const type = typeof record.type === "string" ? record.type : null;
+  if (type !== "diff" && type !== "modify") {
+    return null;
+  }
+  const oldText = typeof record.oldText === "string" ? record.oldText : null;
+  const newText = typeof record.newText === "string" ? record.newText : null;
+  if (oldText == null || newText == null || oldText === newText) {
+    return null;
+  }
+
+  const oldLines = oldText.split("\n");
+  const newLines = newText.split("\n");
+  const maxPrefix = Math.min(oldLines.length, newLines.length);
+  let prefix = 0;
+  while (prefix < maxPrefix && oldLines[prefix] === newLines[prefix]) {
+    prefix += 1;
+  }
+  const remainingOld = oldLines.length - prefix;
+  const remainingNew = newLines.length - prefix;
+  let suffix = 0;
+  const maxSuffix = Math.min(remainingOld, remainingNew);
+  while (
+    suffix < maxSuffix
+    && oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+
+  if (prefix <= DIFF_CONTEXT_LINES && suffix <= DIFF_CONTEXT_LINES) {
+    return null;
+  }
+
+  const droppedPrefix = Math.max(0, prefix - DIFF_CONTEXT_LINES);
+  const droppedSuffix = Math.max(0, suffix - DIFF_CONTEXT_LINES);
+  const keptPrefix = prefix - droppedPrefix;
+  const keptSuffix = suffix - droppedSuffix;
+
+  function shrink(lines: string[]) {
+    const head = lines.slice(prefix - keptPrefix, prefix);
+    const tail = lines.slice(lines.length - suffix, lines.length - suffix + keptSuffix);
+    const middle = lines.slice(prefix, lines.length - suffix);
+    const segments: string[] = [];
+    if (droppedPrefix > 0) {
+      segments.push(`[${droppedPrefix} unchanged lines omitted]`);
+    }
+    segments.push(...head, ...middle, ...tail);
+    if (droppedSuffix > 0) {
+      segments.push(`[${droppedSuffix} unchanged lines omitted]`);
+    }
+    const joined = segments.join("\n");
+    if (joined.length <= DIFF_SIDE_CHAR_LIMIT) {
+      return joined;
+    }
+    // The divergent middle is itself enormous. Truncate the divergent
+    // region with a char budget rather than line counts so the divergence
+    // signal survives — line-based truncation would collapse both sides
+    // back to identical head/tail again.
+    const headBudget = Math.floor(DIFF_SIDE_CHAR_LIMIT / 2);
+    const tailBudget = DIFF_SIDE_CHAR_LIMIT - headBudget;
+    return [
+      joined.slice(0, headBudget),
+      `[${joined.length - DIFF_SIDE_CHAR_LIMIT} characters omitted from diff side]`,
+      joined.slice(-tailBudget),
+    ].join("\n");
+  }
+
+  return {
+    ...record,
+    oldText: shrink(oldLines),
+    newText: shrink(newLines),
+    __diffCompressed: true,
+  };
+}
+
 function compactHistoryRawValue(value: unknown): unknown {
   if (typeof value === "string") {
     return truncateHistoryString(value);
@@ -85,6 +171,23 @@ function compactHistoryRawValue(value: unknown): unknown {
   }
   if (!isPlainRecord(value)) {
     return value;
+  }
+  const compressed = compressDiffContentPair(value);
+  if (compressed) {
+    // oldText/newText have already been compacted with diff-aware logic
+    // that preserves their divergence. Skipping the generic per-string
+    // truncator on those two fields is required — line-based truncation
+    // would re-collapse them to identical head/tail strings and erase the
+    // diff signal.
+    return Object.fromEntries(
+      Object.entries(compressed)
+        .filter(([key]) => key !== "__diffCompressed")
+        .map(([key, nested]) => (
+          key === "oldText" || key === "newText"
+            ? [key, nested]
+            : [key, compactHistoryRawValue(nested)]
+        )),
+    );
   }
   return Object.fromEntries(
     Object.entries(value).map(([key, nested]) => [key, compactHistoryRawValue(nested)]),
