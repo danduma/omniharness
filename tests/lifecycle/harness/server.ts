@@ -72,17 +72,24 @@ async function nodeReqToWebRequest(req: http.IncomingMessage, url: string): Prom
       headers.set(key, value);
     }
   }
-  let body: ArrayBuffer | undefined;
+  let body: Uint8Array | undefined;
   if (method !== "GET" && method !== "HEAD") {
     const chunks: Buffer[] = [];
     for await (const chunk of req) {
       chunks.push(chunk as Buffer);
     }
     if (chunks.length > 0) {
-      body = Buffer.concat(chunks).buffer as ArrayBuffer;
+      // Buffer.concat returns a Buffer (Uint8Array view). Using
+      // `.buffer` here would yield the pooled underlying ArrayBuffer,
+      // which contains bytes outside our buffer's view and produces
+      // corrupt request bodies. Pass the Uint8Array directly.
+      body = new Uint8Array(Buffer.concat(chunks));
     }
   }
-  return new Request(url, { method, headers, body });
+  // BodyInit accepts BufferSource (which includes Uint8Array) at runtime
+  // but the lib.dom types don't always reflect that. Cast through any to
+  // keep typecheck honest without changing runtime semantics.
+  return new Request(url, { method, headers, body: body as unknown as BodyInit });
 }
 
 async function webResponseToNodeRes(res: Response, nodeRes: http.ServerResponse): Promise<void> {

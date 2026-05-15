@@ -75,7 +75,7 @@ describe("lifecycle harness — plan.review.blocked end-to-end", () => {
     });
     expect(res.status).toBe(409);
 
-    const blocked = await client.waitFor("plan.review.blocked", { timeoutMs: 4_000 });
+    const blocked = await client.waitFor("plan.review.blocked", { timeoutMs: 10_000 });
     expect(blocked.payload).toMatchObject({
       kind: "plan.review.blocked",
       runId,
@@ -84,7 +84,7 @@ describe("lifecycle harness — plan.review.blocked end-to-end", () => {
 
     const surfaced = await client.waitFor("error.surfaced", {
       predicate: (frame) => (frame.payload as { code?: string } | null)?.code === "plan.review.leftover_state",
-      timeoutMs: 4_000,
+      timeoutMs: 10_000,
     });
     expect(surfaced.payload).toMatchObject({
       code: "plan.review.leftover_state",

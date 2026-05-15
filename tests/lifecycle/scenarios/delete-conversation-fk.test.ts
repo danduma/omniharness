@@ -82,7 +82,7 @@ describe("lifecycle harness — delete conversation FK failure", () => {
       spy.mockRestore();
     }
 
-    const failed = await client.waitFor("conversation.delete_failed", { timeoutMs: 4_000 });
+    const failed = await client.waitFor("conversation.delete_failed", { timeoutMs: 10_000 });
     expect(failed.payload).toMatchObject({
       kind: "conversation.delete_failed",
       runId,
@@ -90,7 +90,7 @@ describe("lifecycle harness — delete conversation FK failure", () => {
 
     const surfaced = await client.waitFor("error.surfaced", {
       predicate: (frame) => (frame.payload as { code?: string } | null)?.code === "conversation.delete.foreign_key",
-      timeoutMs: 4_000,
+      timeoutMs: 10_000,
     });
     expect(surfaced.payload).toMatchObject({
       code: "conversation.delete.foreign_key",

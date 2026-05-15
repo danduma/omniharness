@@ -14,7 +14,7 @@ import { isLongWorkerCompletionText, normalizeWorkerStatus } from "@/server/supe
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
-import { emitNamedEvent } from "@/server/events/named-events";
+import { emitNamedEvent, type SupervisorStopReason } from "@/server/events/named-events";
 import { notifyRunLifecycleEventBestEffort } from "@/server/notifications/triggers";
 import { deriveWorkerTerminalProcesses } from "@/lib/worker-terminal-processes";
 
@@ -167,7 +167,7 @@ async function failRunForWorkerCwdMismatch(args: {
   }).where(eq(workers.id, args.worker.id));
   notifyEventStreamSubscribers();
 
-  stopRunObserver(args.runId);
+  stopRunObserver(args.runId, { reason: "cwd_mismatch" });
   await persistRunFailure(args.runId, new Error(`${args.mismatch.summary} Worker: ${args.worker.id}. This is an OmniHarness runtime bug; stopping the run instead of retrying the worker.`));
 }
 
@@ -745,7 +745,7 @@ async function markWorkerResumeFailed(args: {
 export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: string, delayMs?: number) => void) {
   const run = await loadActiveRun(runId);
   if (!run) {
-    stopRunObserver(runId);
+    stopRunObserver(runId, { reason: "run_terminated" });
     return;
   }
 
@@ -783,7 +783,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
 
       const latestRun = await loadActiveRun(runId);
       if (!latestRun) {
-        stopRunObserver(runId);
+        stopRunObserver(runId, { reason: "run_terminated" });
         return;
       }
 
@@ -799,7 +799,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
             stopReason: snapshot.stopReason,
           },
         });
-        stopRunObserver(runId);
+        stopRunObserver(runId, { reason: "snapshot_invalid" });
         await persistRunFailure(runId, error);
         return;
       }
@@ -821,7 +821,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
             }
           } catch (resumeError) {
             if (!await loadActiveRun(runId)) {
-              stopRunObserver(runId);
+              stopRunObserver(runId, { reason: "run_terminated" });
               return;
             }
             if (isMissingAgentError(resumeError)) {
@@ -844,7 +844,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
               sessionId: resumeSessionId,
               now,
             });
-            stopRunObserver(runId);
+            stopRunObserver(runId, { reason: "run_failed" });
             await persistRunFailure(runId, resumeError);
             return;
           }
@@ -852,7 +852,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
       }
     } catch (error) {
       if (!await loadActiveRun(runId)) {
-        stopRunObserver(runId);
+        stopRunObserver(runId, { reason: "run_terminated" });
         return;
       }
 
@@ -864,7 +864,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
           text: quotaInfo.rawText,
           now: new Date(now),
         });
-        stopRunObserver(runId);
+        stopRunObserver(runId, { reason: "quota_exhausted" });
         if (quotaResult.state === "needs_recovery") {
           wakeSupervisor(runId, 0);
         }
@@ -886,7 +886,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
           }
         } catch (resumeError) {
           if (!await loadActiveRun(runId)) {
-            stopRunObserver(runId);
+            stopRunObserver(runId, { reason: "run_terminated" });
             return;
           }
           if (isMissingAgentError(resumeError)) {
@@ -909,7 +909,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
             sessionId: worker.bridgeSessionId,
             now,
           });
-          stopRunObserver(runId);
+          stopRunObserver(runId, { reason: "run_failed" });
           await persistRunFailure(runId, resumeError);
           return;
         }
@@ -924,7 +924,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
           reason: formatErrorMessage(error),
           retryable,
         });
-        stopRunObserver(runId);
+        stopRunObserver(runId, { reason: "run_failed" });
         await persistRunFailure(runId, error);
         return;
       }
@@ -933,7 +933,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
     try {
       const latestRun = await loadActiveRun(runId);
       if (!latestRun) {
-        stopRunObserver(runId);
+        stopRunObserver(runId, { reason: "run_terminated" });
         return;
       }
 
@@ -958,7 +958,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
           text: quotaText,
           now: new Date(now),
         });
-        stopRunObserver(runId);
+        stopRunObserver(runId, { reason: "quota_exhausted" });
         if (quotaResult.state === "needs_recovery") {
           wakeSupervisor(runId, 0);
         }
@@ -966,7 +966,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
       }
 
       if (fatalBridgeError) {
-        stopRunObserver(runId);
+        stopRunObserver(runId, { reason: "fatal_bridge_error" });
         await persistRunFailure(runId, new Error(fatalBridgeError));
         return;
       }
@@ -1018,14 +1018,14 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
       }
     } catch (error) {
       if (!await loadActiveRun(runId)) {
-        stopRunObserver(runId);
+        stopRunObserver(runId, { reason: "run_terminated" });
         return;
       }
       await insertExecutionEvent(runId, worker.id, "worker_observer_failed", {
         summary: `Observer failed while processing ${worker.id}`,
         reason: formatErrorMessage(error),
       });
-      stopRunObserver(runId);
+      stopRunObserver(runId, { reason: "run_failed" });
       await persistRunFailure(runId, error);
       return;
     }
@@ -1063,14 +1063,24 @@ export function startRunObserver(runId: string, wakeSupervisor: (runId: string, 
   runPoll();
 }
 
-export function stopRunObserver(runId: string) {
+export function stopRunObserver(runId: string, options: { reason?: SupervisorStopReason } = {}) {
   observerGenerations.set(runId, (observerGenerations.get(runId) ?? 0) + 1);
   observerPollsInFlight.delete(runId);
 
+  const wasActive = observerIntervals.has(runId);
   const interval = observerIntervals.get(runId);
   if (interval) {
     clearInterval(interval);
     observerIntervals.delete(runId);
+  }
+  // Emit only when we actually stopped an active observer; bare calls
+  // on a never-started runId would otherwise spam the stream.
+  if (wasActive) {
+    emitNamedEvent({
+      kind: "supervisor.stopped",
+      runId,
+      reason: options.reason ?? "explicit",
+    });
   }
 
   for (const key of observerState.keys()) {

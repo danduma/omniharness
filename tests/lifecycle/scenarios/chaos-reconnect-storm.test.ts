@@ -36,7 +36,7 @@ beforeEach(async () => {
   });
   client = new LifecycleClient({
     baseUrl: server.baseUrl,
-    chaos: new Chaos(seed, { dropSseRate: 0, flakeFetchRate: 0, flakeStatuses: [] }),
+    chaos: new Chaos(seed, { dropSseRate: 0.4, flakeFetchRate: 0, flakeStatuses: [] }),
   });
 });
 

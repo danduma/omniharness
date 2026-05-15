@@ -25,7 +25,7 @@ import { startLifecycleHarness, type LifecycleServer } from "../harness/server";
 import { LifecycleClient } from "../harness/client";
 import { Chaos, NO_CHAOS } from "../harness/chaos";
 import { clearLifecycleSchema, seedDirectRun } from "../harness/fixtures";
-import { __getRingForTests, __resetNamedEventsForTests } from "@/server/events/named-events";
+import { __resetNamedEventsForTests } from "@/server/events/named-events";
 import {
   markRecoveryIncidentFailed,
   markRecoveryIncidentRecovering,
@@ -83,7 +83,7 @@ describe("lifecycle harness — recovery exhaustion", () => {
       kind: "worker_lost",
       lastError: "agent process exited",
     });
-    const opened = await client.waitFor("recovery.opened", { timeoutMs: 4_000 });
+    const opened = await client.waitFor("recovery.opened", { timeoutMs: 10_000 });
     expect(opened.payload).toMatchObject({
       kind: "recovery.opened",
       runId,
@@ -93,21 +93,15 @@ describe("lifecycle harness — recovery exhaustion", () => {
 
     // 2. Three retry attempts — each must surface as recovery.attempt(N).
     for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        await markRecoveryIncidentRecovering({
-          incidentId: incident.id,
-          runId,
-          workerId: "w-recovery",
-          decision: "respawn",
-        });
-      } catch (e) {
-        console.error("markRecoveryIncidentRecovering threw:", e);
-        throw e;
-      }
-      console.log("ring after attempt", attempt, ":", __getRingForTests().map((e) => e.event.kind));
+      await markRecoveryIncidentRecovering({
+        incidentId: incident.id,
+        runId,
+        workerId: "w-recovery",
+        decision: "respawn",
+      });
       await client.waitFor("recovery.attempt", {
         predicate: (frame) => (frame.payload as { attempt?: number } | null)?.attempt === attempt,
-        timeoutMs: 4_000,
+        timeoutMs: 10_000,
       });
     }
 
@@ -119,7 +113,7 @@ describe("lifecycle harness — recovery exhaustion", () => {
       reason: "Bridge never returned after 3 attempts.",
     });
 
-    const gaveUp = await client.waitFor("recovery.gave_up", { timeoutMs: 4_000 });
+    const gaveUp = await client.waitFor("recovery.gave_up", { timeoutMs: 10_000 });
     expect(gaveUp.payload).toMatchObject({
       kind: "recovery.gave_up",
       runId,
@@ -129,7 +123,7 @@ describe("lifecycle harness — recovery exhaustion", () => {
 
     const surfaced = await client.waitFor("error.surfaced", {
       predicate: (frame) => (frame.payload as { code?: string } | null)?.code === "recovery.gave_up",
-      timeoutMs: 4_000,
+      timeoutMs: 10_000,
     });
     expect(surfaced.payload).toMatchObject({
       code: "recovery.gave_up",

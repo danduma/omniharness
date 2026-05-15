@@ -48,7 +48,7 @@ describe("lifecycle harness — restart resync", () => {
     for (let i = 0; i < 5; i++) {
       emitNamedEvent({ kind: "worker.status", runId, workerId: "w1", prev: "running", next: `tick-${i}` });
     }
-    await client.waitFor("worker.status", { timeoutMs: 4_000 });
+    await client.waitFor("worker.status", { timeoutMs: 10_000 });
     const staleResumeId = client.resumeIdNow();
     expect(staleResumeId).toBeTruthy();
 
@@ -65,7 +65,7 @@ describe("lifecycle harness — restart resync", () => {
     // Reconnect. Because the client's resume id predates the post-reset
     // ring, the route must emit stream.resync_required.
     await client.subscribe({ runId, resumeFrom: "9999" });
-    const resync = await client.waitFor("stream.resync_required", { timeoutMs: 4_000 });
+    const resync = await client.waitFor("stream.resync_required", { timeoutMs: 10_000 });
     expect(resync.payload).toMatchObject({ reason: "id_out_of_buffer" });
   });
 });

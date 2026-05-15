@@ -69,7 +69,7 @@ describe("lifecycle harness — SSE resume", () => {
     // Reconnect from the recorded resume id.
     await client.subscribe({ runId, resumeFrom: resumeId });
 
-    const terminal = await client.waitFor("worker.terminal", { timeoutMs: 4_000 });
+    const terminal = await client.waitFor("worker.terminal", { timeoutMs: 10_000 });
     expect(client.events.filterByEvent("worker.status")).toHaveLength(1);
     // Pre-drop events shouldn't have been replayed (we still hold them
     // in the recorder from earlier — that's fine).

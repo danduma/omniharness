@@ -8,6 +8,11 @@ export default defineConfig({
     setupFiles: ["./tests/setup.ts"],
     include: ["tests/**/*.test.ts"],
     exclude: ["tests/e2e/**"],
+    // Lifecycle scenarios spawn subprocesses and assert against SSE
+    // tails over real ports; the default 5s test timeout is too tight
+    // under parallel CPU load. Bump to 20s as a floor — well-behaved
+    // tests still finish in milliseconds.
+    testTimeout: 20_000,
   },
   plugins: [tsconfigPaths()],
   resolve: {

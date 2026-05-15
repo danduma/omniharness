@@ -40,6 +40,18 @@ export type WorkerEvent =
   | { kind: "worker.reattached"; runId: string; workerId: string }
   | { kind: "worker.recreated"; runId: string; workerId: string };
 
+export type SupervisorStopReason =
+  | "run_terminated"
+  | "run_failed"
+  | "cwd_mismatch"
+  | "snapshot_invalid"
+  | "quota_exhausted"
+  | "fatal_bridge_error"
+  | "explicit";
+
+export type SupervisorEvent =
+  | { kind: "supervisor.stopped"; runId: string; reason: SupervisorStopReason };
+
 export type PlanEvent =
   | { kind: "plan.ready"; runId: string; planId: string | null }
   | { kind: "plan.review.started"; runId: string; reviewRunId: string }
@@ -74,6 +86,7 @@ export type StreamControlEvent = {
 
 export type NamedEvent =
   | WorkerEvent
+  | SupervisorEvent
   | PlanEvent
   | RecoveryEvent
   | ConversationEvent

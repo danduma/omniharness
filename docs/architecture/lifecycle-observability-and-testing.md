@@ -324,3 +324,86 @@ Every reported bug should land at one of these four answers. If the answer is
   events. This is a one-time sweep; new code is held to the rules above
   going forward.
 - Build out the headless chaos harness and the scenario catalog.
+
+---
+
+## Audit log
+
+### `try/catch` sweep — first pass
+
+Walked every `} catch {` in `src/server/**` and `src/app/api/**`. Findings:
+
+- **Legitimate silent fallbacks** (kept as-is, comment explains why):
+  `restart-control.ts` process-liveness probes (`process.kill(pid, 0)`),
+  `restart-control.ts:264` lsof-empty no-listener case,
+  `conversations/create.ts:257` opportunistic snapshot persist (the
+  function's user-visible state still comes from the `askAgent`
+  response, not the dropped snapshot),
+  `planning/review.ts:313` reviewer snapshot persist (same shape),
+  parse-error fallbacks in `plans/readiness-pipeline.ts`,
+  `planning/artifacts.ts`, `auth/guards.ts`, `projects/canonicalize.ts`.
+  Each catches an internal probe that cannot affect user-visible state.
+  These match the rare-exception carve-out for idempotency / probe
+  catches.
+
+- **Bugs that were already fixed in phase 2** (no remaining silent
+  failure in this category):
+  - Plan-review leftover-state silent throw → now emits
+    `plan.review.blocked` + `error.surfaced` (`planning/review.ts`).
+  - Recovery exhaustion silent cap → now emits `recovery.gave_up` +
+    `error.surfaced` (`runs/recovery-incidents.ts`).
+  - Delete conversation FK 500 → now returns 409 with
+    `conversation.delete_failed` + `error.surfaced` (`api/runs/[id]`).
+
+- **No new offenders found in the first pass.** New code is held to the
+  rule via the AGENTS.md entry; reviewer should reject silent catches on
+  state-mutating paths.
+
+Future audit passes should look at:
+- ~~Early-return sites in `supervisor/observer.ts` (decision branches).~~
+  **Done.** All 16 `stopRunObserver` call sites now pass a typed
+  `reason` (`run_terminated`, `run_failed`, `cwd_mismatch`,
+  `snapshot_invalid`, `quota_exhausted`, `fatal_bridge_error`,
+  `explicit`). `supervisor.stopped` is emitted from inside
+  `stopRunObserver` itself, guarded by `wasActive` so bare stop calls
+  on never-started runs don't spam the stream. Scenario:
+  `tests/lifecycle/scenarios/supervisor-stopped.test.ts`.
+- ~~Every `if (!latestRun)` short-circuit that stops the observer.~~
+  Covered by the above — those now emit `supervisor.stopped` with
+  reason `run_terminated`.
+
+### Scenario catalog (`tests/lifecycle/scenarios/`)
+
+| Scenario | Asserts |
+|---|---|
+| `end-to-end-events` | Snapshot bootstrap + tail + event ordering |
+| `sse-resume` | `Last-Event-ID` replays the gap after a mid-stream drop |
+| `restart-resync` | `stream.resync_required` fires after a server restart |
+| `chaos-reconnect-storm` | Seeded high-drop-rate chaos doesn't lose events |
+| `plan-review-blocked` | Leftover-state throws → 409 + named events on the wire |
+| `delete-conversation-fk` | FK fail → 409 + named events, not a raw 500 |
+| `recovery-exhaustion` | Cap reached → `recovery.gave_up` + `error.surfaced` in order |
+| `worker-reattach` | Observer's revive branch emits `worker.reattached` |
+| `session-types` | Direct / planning / implementation conversation creation |
+| `conversation-continuation` | Mid-conversation SSE drop + reconnect; nothing lost |
+| `plan-improvement-flow` | Review start + worker spawn + restart-resync end-to-end |
+| `real-restart` | **Real subprocess** kill+respawn: sqlite persists, ring resets, client gets `stream.resync_required` |
+| `direct-mode-rerun` | User pressing "re-run" — same content sent twice persists as two rows in order |
+| `flaky-network` | Seeded HTTP flake: server stays consistent, deterministic across seed |
+| `worker-spawn-failure` | Bridge `spawnAgent` rejection now emits `error.surfaced(worker.spawn.failed)` instead of going silent |
+| `supervisor-stopped` | Every observer stop site emits `supervisor.stopped` with a typed reason (`run_terminated`, `run_failed`, `cwd_mismatch`, `snapshot_invalid`, `quota_exhausted`, `fatal_bridge_error`, `explicit`) |
+
+### Real protocol bug found via the harness
+
+While wiring `recovery-exhaustion`, the harness caught a real bug in the
+SSE route: when an `update` (snapshot) frame was about to be written,
+the route would record the snapshot marker (advancing the cursor) and
+set `lastDeliveredId = marker.id` directly. Any named event emitted
+*during* the snapshot build — id < marker.id — was then silently dropped
+on subsequent drains, because the next drain queried
+`getNamedEventsSince(marker.id, ...)`.
+
+Fix: drain once more *before* recording the marker, so the marker's id
+is monotonically ahead of all already-emitted named events. This was a
+latent bug that would have caused intermittent missed UI updates under
+load; the chaos harness paid for itself on its first real run.

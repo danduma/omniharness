@@ -949,19 +949,6 @@ export async function GET(req: NextRequest) {
           // Stream might be closed
         }
       };
-      const sendUpdateIfChanged = (payload: Awaited<ReturnType<typeof buildPersistedEventPayload>>) => {
-        const serializedPayload = JSON.stringify(payload);
-        if (serializedPayload === lastUpdatePayload) {
-          sendHeartbeat();
-          return;
-        }
-
-        lastUpdatePayload = serializedPayload;
-        const version = getEventStreamNotificationVersion();
-        const marker = recordSnapshotMarker(version, runIdScope);
-        lastDeliveredId = marker.id;
-        writeFrame(marker.id, "update", serializedPayload);
-      };
       const drainBufferedEvents = () => {
         const replay = getNamedEventsSince(lastDeliveredId, { runId: runIdScope });
         if (replay.resyncRequired) {
@@ -979,6 +966,26 @@ export async function GET(req: NextRequest) {
           writeFrame(entry.id, entry.event.kind, JSON.stringify(entry.event));
           lastDeliveredId = entry.id;
         }
+      };
+      const sendUpdateIfChanged = (payload: Awaited<ReturnType<typeof buildPersistedEventPayload>>) => {
+        const serializedPayload = JSON.stringify(payload);
+        if (serializedPayload === lastUpdatePayload) {
+          sendHeartbeat();
+          return;
+        }
+
+        // Flush any named events that landed in the ring *during* the
+        // snapshot build before allocating the marker id. Without this,
+        // the marker's id would leapfrog those events and the next
+        // drain (which uses lastDeliveredId = marker.id) would treat
+        // them as already-delivered, silently dropping them.
+        drainBufferedEvents();
+
+        lastUpdatePayload = serializedPayload;
+        const version = getEventStreamNotificationVersion();
+        const marker = recordSnapshotMarker(version, runIdScope);
+        lastDeliveredId = marker.id;
+        writeFrame(marker.id, "update", serializedPayload);
       };
 
       req.signal.addEventListener("abort", () => {

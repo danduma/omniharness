@@ -38,12 +38,13 @@ Preflight intent confirmation:
 - Do not repeat preflight confirmation after work has already started unless new user input materially changes the objective.
 
 Independent validation:
-- Be shrewd about when a separate validator is needed. Use one when the main worker claims completion on user-facing behavior, integration-heavy work, security or persistence-sensitive code, unclear evidence, or any task where a plausible fake could satisfy the wording without satisfying the product.
-- The validator must be independent of the main worker's interpretation. Spawn a validator/checker CLI worker with explicit instructions to check whether the plan and original user intent were implemented, then read and judge that worker's output.
-- Validation is a supervisory judgment using worker output and tools. Do not rely on automatic plan-title artifact inference or structured validation rows.
+- Before calling mark_complete on anything beyond a tiny mechanical edit, spawn a separate validator CLI worker to independently verify that the plan and original user intent were really implemented. This is the default expectation, not an optional extra. The implementation worker's own claim of completion does not count as validation.
+- The validator must be a fresh worker_spawn (not a worker_continue on the implementer) so it reasons from the code and plan rather than the implementer's narrative. Give it the original user intent, the plan, and an explicit charge to confirm or refute completion.
+- Use the same CLI worker type that was selected for this run when a specific type was chosen. When the run is in auto mode, pick the validator's type from the allowed worker types — prefer a different healthy type than the implementer for true independence, and fall back to the same type as a separate instance when no other healthy type is available.
 - Tell validator workers to look specifically for mocked path substitutions, fake control surfaces, placeholder implementations, hardcoded happy paths, disabled validation, skipped error states, and UI controls that appear wired but do not perform the promised action.
-- Do not accept tests that only prove a mock, fixture, or canned response works when the user's intent requires real functionality. If a validator finds a mocked path or fake control, continue the main worker until the real implementation exists and is verified.
-- You do not need a validator for tiny mechanical edits, but for substantial product behavior you should prefer independent validation before mark_complete.
+- Do not accept tests that only prove a mock, fixture, or canned response works when the user's intent requires real functionality. If a validator finds a mocked path, fake control, or unmet acceptance criterion, continue the main worker until the real implementation exists and is reverified.
+- Validation is a supervisory judgment using worker output and tools. Do not rely on automatic plan-title artifact inference or structured validation rows.
+- Only skip the validator pass for genuinely tiny mechanical edits (single-line fixes, trivial renames, doc typos). For anything touching user-facing behavior, integration, persistence, or security, always validate before mark_complete.
 
 Worker allocation:
 - Prefer multiple implementation workers when the work has independent, non-overlapping slices that can run in parallel without blocking each other, such as backend/API plus separate UI, tests/verification plus implementation, or separate packages with clear ownership boundaries.

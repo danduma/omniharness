@@ -10,7 +10,9 @@ import { SseClient, EventRecorder, type ParsedNamedEvent } from "./sse";
 import { Chaos, NO_CHAOS } from "./chaos";
 
 export interface LifecycleClientOptions {
-  baseUrl: string;
+  /** Either a static URL or a getter — the latter is required for
+   *  scenarios that restart the underlying server (the port changes). */
+  baseUrl: string | (() => string);
   chaos?: Chaos;
 }
 
@@ -21,6 +23,10 @@ export class LifecycleClient {
   private resumeId: string | null = null;
 
   constructor(public readonly opts: LifecycleClientOptions) {}
+
+  get baseUrl(): string {
+    return typeof this.opts.baseUrl === "function" ? this.opts.baseUrl() : this.opts.baseUrl;
+  }
 
   get chaos(): Chaos {
     return this.opts.chaos ?? new Chaos(0, NO_CHAOS);
@@ -35,7 +41,7 @@ export class LifecycleClient {
         headers: { "content-type": "application/json" },
       });
     }
-    const url = input.startsWith("http") ? input : `${this.opts.baseUrl}${input}`;
+    const url = input.startsWith("http") ? input : `${this.baseUrl}${input}`;
     return fetch(url, init);
   }
 
@@ -76,8 +82,8 @@ export class LifecycleClient {
       this.sse = null;
     }
     const url = runId
-      ? `${this.opts.baseUrl}/api/events?runId=${encodeURIComponent(runId)}`
-      : `${this.opts.baseUrl}/api/events`;
+      ? `${this.baseUrl}/api/events?runId=${encodeURIComponent(runId)}`
+      : `${this.baseUrl}/api/events`;
     this.sse = new SseClient({
       url,
       lastEventId: this.resumeId,

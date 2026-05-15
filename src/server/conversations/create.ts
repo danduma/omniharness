@@ -541,14 +541,33 @@ export async function createConversation(args: {
           console.error("Initial direct conversation worker failed:", error);
         });
       } else {
-        const agent = await spawnAgent({
-          type: workerType,
-          cwd,
-          name: workerId,
-          ...(workerMode ? { mode: workerMode } : {}),
-          model: args.preferredWorkerModel?.trim() || undefined,
-          effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
-        });
+        let agent;
+        try {
+          agent = await spawnAgent({
+            type: workerType,
+            cwd,
+            name: workerId,
+            ...(workerMode ? { mode: workerMode } : {}),
+            model: args.preferredWorkerModel?.trim() || undefined,
+            effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
+          });
+        } catch (error) {
+          // Worker row was inserted and `worker.spawned` already fired
+          // — without an explicit failure event, observers see the row
+          // in `starting` forever and the wire goes silent. Make the
+          // failure visible.
+          const cause = error instanceof Error ? error : new Error(String(error));
+          emitNamedEvent({
+            kind: "error.surfaced",
+            code: "worker.spawn.failed",
+            message: `Failed to spawn worker for ${mode} conversation: ${cause.message}`,
+            surface: "toast",
+            runId,
+            workerId,
+            cause: { name: cause.name, message: cause.message },
+          });
+          throw error;
+        }
 
         runInitialWorkerTurn({
           runId,

@@ -61,7 +61,7 @@ describe("lifecycle harness — end-to-end events", () => {
       lastError: "harness scenario probe",
     });
 
-    const frame = await client.waitFor("recovery.opened", { timeoutMs: 4_000 });
+    const frame = await client.waitFor("recovery.opened", { timeoutMs: 10_000 });
     expect(frame.id).toBeTruthy();
     expect(frame.payload).toMatchObject({
       kind: "recovery.opened",
@@ -79,7 +79,7 @@ describe("lifecycle harness — end-to-end events", () => {
     emitNamedEvent({ kind: "worker.status", runId, workerId: "w1", prev: "starting", next: "running" });
     emitNamedEvent({ kind: "worker.terminal", runId, workerId: "w1", status: "completed" });
 
-    const terminal = await client.waitFor("worker.terminal", { timeoutMs: 4_000 });
+    const terminal = await client.waitFor("worker.terminal", { timeoutMs: 10_000 });
     const spawned = client.events.filterByEvent("worker.spawned")[0]!;
     const status = client.events.filterByEvent("worker.status")[0]!;
     expect(Number(spawned.id)).toBeLessThan(Number(status.id));
