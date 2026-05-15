@@ -1,4 +1,4 @@
-const CACHE_VERSION = "omniharness-pwa-v4";
+const CACHE_VERSION = "omniharness-pwa-v5";
 const OFFLINE_URL = "/offline.html";
 const CORE_ASSETS = [
   OFFLINE_URL,
@@ -80,8 +80,8 @@ self.addEventListener("message", (event) => {
   }
 });
 
-function hasVisibleWindowClient(clients) {
-  return clients.some((client) => client.visibilityState === "visible");
+function hasFocusedWindowClient(clients) {
+  return clients.some((client) => client.focused === true);
 }
 
 function focusOrOpenTarget(targetUrl, clients) {
@@ -108,8 +108,7 @@ function focusOrOpenTarget(targetUrl, clients) {
 self.addEventListener("push", (event) => {
   event.waitUntil(
     self.clients.matchAll({ type: "window" }).then((clients) => {
-      const hasVisibleClient = hasVisibleWindowClient(clients);
-      if (hasVisibleClient) {
+      if (hasFocusedWindowClient(clients)) {
         return;
       }
 

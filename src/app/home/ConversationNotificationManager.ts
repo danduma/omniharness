@@ -42,6 +42,7 @@ type ConversationNotificationManagerOptions = {
   notifier?: ConversationNotifier;
   permissionProvider?: ConversationNotificationPermissionProvider;
   visibilityProvider?: () => DocumentVisibilityState;
+  focusProvider?: () => boolean;
   pushClient?: ConversationPushClient;
   subscriptionApi?: ConversationSubscriptionApi;
 };
@@ -235,6 +236,14 @@ function getBrowserVisibility(): DocumentVisibilityState {
   return document.visibilityState;
 }
 
+function getBrowserFocus(): boolean {
+  if (typeof document === "undefined" || typeof document.hasFocus !== "function") {
+    return true;
+  }
+
+  return document.hasFocus();
+}
+
 function normalizeStatus(status: string | null | undefined) {
   return (status ?? "").trim().toLowerCase();
 }
@@ -308,6 +317,7 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
   private readonly notifier: ConversationNotifier;
   private readonly permissionProvider: ConversationNotificationPermissionProvider;
   private readonly visibilityProvider: () => DocumentVisibilityState;
+  private readonly focusProvider: () => boolean;
   private readonly pushClient: ConversationPushClient;
   private readonly subscriptionApi: ConversationSubscriptionApi;
   private readonly observedRuns = new Map<string, ObservedRunState>();
@@ -319,6 +329,7 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
     this.notifier = options.notifier ?? createBrowserNotifier();
     this.permissionProvider = options.permissionProvider ?? createBrowserPermissionProvider();
     this.visibilityProvider = options.visibilityProvider ?? getBrowserVisibility;
+    this.focusProvider = options.focusProvider ?? getBrowserFocus;
     this.pushClient = options.pushClient ?? createBrowserPushClient();
     this.subscriptionApi = options.subscriptionApi ?? createBrowserSubscriptionApi();
   }
@@ -474,11 +485,15 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
 
   private canNotifyNow() {
     const snapshot = this.getSnapshot();
-    return (
-      snapshot.enabled
-      && snapshot.permission === "granted"
-      && this.visibilityProvider() !== "visible"
-    );
+    if (!snapshot.enabled || snapshot.permission !== "granted") {
+      return false;
+    }
+
+    if (this.visibilityProvider() !== "visible") {
+      return true;
+    }
+
+    return !this.focusProvider();
   }
 }
 
