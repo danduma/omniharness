@@ -239,11 +239,16 @@ export function createRestartController({ config, system }: {
   };
 }
 
+function formatLocalTimestamp(date = new Date()) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 export function createNodeRestartSystem(config: RestartControlConfig): RestartSystem {
   return {
     appendLog: (message) => {
       fs.mkdirSync(path.dirname(config.logFile), { recursive: true });
-      fs.appendFileSync(config.logFile, `[${new Date().toISOString()}] ${message}\n`);
+      fs.appendFileSync(config.logFile, `[${formatLocalTimestamp()}] ${message}\n`);
     },
     ensureDir: (dir) => {
       fs.mkdirSync(dir, { recursive: true });
@@ -315,16 +320,11 @@ export function createNodeRestartSystem(config: RestartControlConfig): RestartSy
         logStream.end();
         throw new Error("Failed to spawn restart process.");
       }
-      const formatTimestamp = () => {
-        const d = new Date();
-        const pad = (value: number) => String(value).padStart(2, "0");
-        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-      };
       const attachTimestampedStream = (stream: NodeJS.ReadableStream | null) => {
         if (!stream) return;
         let buffer = "";
         const flushLine = (line: string) => {
-          logStream.write(`[${formatTimestamp()}] ${line}\n`);
+          logStream.write(`[${formatLocalTimestamp()}] ${line}\n`);
         };
         stream.on("data", (chunk: Buffer) => {
           buffer += chunk.toString("utf8");
