@@ -5,6 +5,7 @@ import { startSupervisorRun } from "./start";
 import { clearSupervisorWakeLease } from "./lease";
 import { isTransientSupervisorError } from "./retry";
 import { cancelDurableSupervisorWakesForTerminalRuns, rehydrateDurableSupervisorWakes } from "./wake-schedule";
+import { compactStaleWorkerOutputs } from "@/server/workers/output-store";
 
 const WATCHDOG_INTERVAL_MS = 15_000;
 
@@ -51,6 +52,9 @@ async function resumeRecoverableFailedImplementationRun(run: typeof runs.$inferS
 export async function syncRunningSupervision() {
   await cancelDurableSupervisorWakesForTerminalRuns();
   await rehydrateDurableSupervisorWakes();
+  void compactStaleWorkerOutputs().catch((error) => {
+    console.warn("Worker output compaction sweep failed:", error);
+  });
   const activeRuns = await db.select().from(runs).where(and(
     inArray(runs.status, ["running", "failed", "quota_waiting"]),
     eq(runs.mode, "implementation"),
