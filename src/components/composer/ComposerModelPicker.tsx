@@ -23,19 +23,13 @@ export function ComposerModelPicker({
 
   return (
     <span className="relative inline-flex min-w-0 max-w-[13rem] shrink items-center">
-      <span
-        aria-hidden="true"
-        className="pointer-events-none invisible truncate whitespace-pre py-0 pl-1.5 pr-5 text-xs font-normal sm:pl-2 sm:text-sm"
-      >
-        {selectedLabel}
-      </span>
       <select
         value={value}
         aria-label={t("conversation.composer.workerModelAria")}
         title={selectedLabel}
         onChange={(event) => onChange(event.target.value)}
         className={cn(
-          "absolute inset-0 h-7 w-full min-w-0 appearance-none truncate rounded-md border-0 bg-transparent py-0 pl-1.5 pr-5 text-right text-xs font-normal shadow-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/45 sm:h-8 sm:pl-2 sm:text-sm",
+          "h-7 w-full min-w-0 appearance-none truncate rounded-md border-0 bg-transparent py-0 pl-1.5 pr-5 text-right text-xs font-normal shadow-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/45 sm:h-8 sm:pl-2 sm:text-sm [field-sizing:content]",
           themeMode === "night"
             ? "text-muted-foreground hover:bg-background/45 hover:text-foreground"
             : "text-[#8f8f8f] hover:bg-black/[0.04] hover:text-[#5e5e5e] dark:text-muted-foreground dark:hover:bg-background/45 dark:hover:text-foreground",

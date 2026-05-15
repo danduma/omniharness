@@ -93,14 +93,36 @@ export const planningArtifactsManager = new class extends StateManager<{ selecte
   setSelectedPlanPath = (selectedPlanPath: string | null) => this.setKey("selectedPlanPath", selectedPlanPath);
 }();
 
-export class FileViewerPanelManager extends StateManager<{ wordWrap: boolean }> {
+const FILE_VIEWER_RENDER_MARKDOWN_STORAGE_KEY = "omni-file-viewer-render-markdown";
+
+export class FileViewerPanelManager extends StateManager<{ wordWrap: boolean; renderMarkdown: boolean }> {
   constructor() {
-    super({ wordWrap: true });
+    super({ wordWrap: true, renderMarkdown: true });
+  }
+
+  hydrateFromLocalStorage() {
+    if (typeof window === "undefined" || typeof window.localStorage === "undefined") {
+      return;
+    }
+    const stored = window.localStorage.getItem(FILE_VIEWER_RENDER_MARKDOWN_STORAGE_KEY);
+    if (stored === "true" || stored === "false") {
+      this.setKey("renderMarkdown", stored === "true");
+    }
   }
 
   setWordWrap = (wordWrap: boolean) => this.setKey("wordWrap", wordWrap);
 
   toggleWordWrap = () => this.setKey("wordWrap", (current) => !current);
+
+  toggleRenderMarkdown = () => {
+    this.setKey("renderMarkdown", (current) => {
+      const next = !current;
+      if (typeof window !== "undefined" && typeof window.localStorage !== "undefined") {
+        window.localStorage.setItem(FILE_VIEWER_RENDER_MARKDOWN_STORAGE_KEY, String(next));
+      }
+      return next;
+    });
+  };
 }
 
 export const fileViewerPanelManager = new FileViewerPanelManager();

@@ -306,7 +306,7 @@ export type SidebarRun = {
 };
 export type SidebarGroup = { path: string; name: string; runs: SidebarRun[] };
 
-export type NoticeTone = "error" | "warning" | "success";
+export type NoticeTone = "error" | "warning" | "success" | "progress";
 export type NoticeDescriptor = AppErrorDescriptor & { tone?: NoticeTone };
 
 export type LlmProfileTab = "supervisor" | "fallback";

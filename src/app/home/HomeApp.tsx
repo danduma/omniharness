@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
 import { BootShell } from "@/components/BootShell";
 import { LoginShell } from "@/components/LoginShell";
@@ -10,7 +10,7 @@ import { ConversationMain } from "@/components/home/ConversationMain";
 import { ConversationSidebar } from "@/components/home/ConversationSidebar";
 import { HomeHeader } from "@/components/home/HomeHeader";
 import { resolveProjectScope } from "@/lib/project-scope";
-import { WORKER_OPTIONS, RUN_PATH_PATTERN } from "./constants";
+import { WORKER_OPTIONS } from "./constants";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
 import { conversationNotificationManager } from "./ConversationNotificationManager";
 import { sideWindowManager } from "./SideWindowManager";
@@ -33,6 +33,7 @@ import {
   parseProjectList,
   resolveRepoName,
   resolveSelectedWorkerModel,
+  stripRunFailurePrefix,
   type CreatedConversationSnapshot,
 } from "./utils";
 import { useAppErrors } from "./useAppErrors";
@@ -86,11 +87,6 @@ function selectHomeAppState(state: HomeUiState): HomeAppState {
   return s as HomeAppState;
 }
 
-function getInitialSnapshotScope() {
-  if (typeof window === "undefined") return null;
-  return window.location.pathname.match(RUN_PATH_PATTERN)?.[1]?.trim() || null;
-}
-
 function applyHomeBootstrap(bootstrap: HomeBootstrapPayload | null | undefined, notify = true) {
   if (!bootstrap || appliedHomeBootstrapId === bootstrap.id) {
     return;
@@ -120,9 +116,12 @@ function applyHomeBootstrap(bootstrap: HomeBootstrapPayload | null | undefined, 
 }
 
 export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null }) {
-  applyHomeBootstrap(bootstrap, false);
+  useState(() => {
+    applyHomeBootstrap(bootstrap, false);
+    return null;
+  });
   const initialEventState = bootstrap?.initialEventState ?? INITIAL_EVENT_STREAM_STATE;
-  const initialSnapshotScope = bootstrap?.route.selectedRunId ?? getInitialSnapshotScope();
+  const initialSnapshotScope = bootstrap?.route.selectedRunId ?? null;
 
   const {
     themeMode,
@@ -208,7 +207,11 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   // Event stream state
   const stateManager = useMemo(() => new EventStreamStateManager(initialEventState, {
     snapshotCacheScope: initialSnapshotScope,
+    deferCacheHydration: true,
   }), [initialEventState, initialSnapshotScope]);
+  useEffect(() => {
+    stateManager.hydrateFromCaches();
+  }, [stateManager]);
   const state = useSyncExternalStore(
     useCallback((listener) => stateManager.subscribe(listener), [stateManager]),
     useCallback(() => stateManager.getSnapshot(), [stateManager]),
@@ -229,7 +232,8 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   const pendingCreatedConversationSnapshotsRef = useRef<Map<string, CreatedConversationSnapshot>>(new Map());
   const pendingSentConversationMessagesRef = useRef<Map<string, MessageRecord>>(new Map());
   const loadingWorkerHistoryIdsRef = useRef<Set<string>>(new Set());
-  const autoResumeRunKeysRef = useRef<Set<string>>(new Set());
+  const autoResumeStateRef = useRef<Map<string, { failureKey: string; attempts: number; timerId: ReturnType<typeof setTimeout> | null }>>(new Map());
+  const [autoResumeExhaustedRunIds, setAutoResumeExhaustedRunIds] = useState<Set<string>>(new Set());
 
   // Appearance
   const appearancePreferences = useManagerSnapshot(appearancePreferencesManager);
@@ -349,7 +353,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     completionEvent,
     failedWorkerAvailability,
     workerFailureDetail,
-    conversationFailure,
+    conversationFailure: rawConversationFailure,
     directConversationMessages,
     pendingPermissionAgent,
     erroredAgent,
@@ -559,7 +563,10 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     }
   }, [isImplementationConversation, selectedRunId, selectedRunWorkersForDisplay.length, setRightSidebarOpen]);
 
-  // Auto-resume failed runs
+  // Auto-resume failed runs with backoff. Up to MAX_AUTO_RESUME_ATTEMPTS per
+  // distinct failure; after that, surface the real error so the user is not
+  // stuck staring at "Reconnecting..." forever.
+  const MAX_AUTO_RESUME_ATTEMPTS = 3;
   useEffect(() => {
     if (
       !selectedRunId || !selectedRun
@@ -569,11 +576,45 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
       || workerFailureDetail || !latestUserCheckpoint || recoverRun.isPending
     ) return;
 
-    const resumeKey = `${selectedRun.id}:${selectedRun.failedAt ?? ""}:${selectedRun.lastError ?? ""}`;
-    if (autoResumeRunKeysRef.current.has(resumeKey)) return;
-    autoResumeRunKeysRef.current.add(resumeKey);
-    recoverRun.mutate({ runId: selectedRunId, action: "retry", targetMessageId: latestUserCheckpoint.id });
+    const runId = selectedRunId;
+    const failureKey = `${selectedRun.failedAt ?? ""}:${selectedRun.lastError ?? ""}`;
+    const targetMessageId = latestUserCheckpoint.id;
+    const existing = autoResumeStateRef.current.get(runId);
+
+    // New failure for this run — reset attempt counter and clear exhausted flag.
+    if (!existing || existing.failureKey !== failureKey) {
+      if (existing?.timerId) clearTimeout(existing.timerId);
+      autoResumeStateRef.current.set(runId, { failureKey, attempts: 0, timerId: null });
+      if (autoResumeExhaustedRunIds.has(runId)) {
+        setAutoResumeExhaustedRunIds((prev) => {
+          if (!prev.has(runId)) return prev;
+          const next = new Set(prev);
+          next.delete(runId);
+          return next;
+        });
+      }
+    }
+
+    const state = autoResumeStateRef.current.get(runId)!;
+    if (state.timerId) return; // retry already scheduled
+    if (state.attempts >= MAX_AUTO_RESUME_ATTEMPTS) {
+      if (!autoResumeExhaustedRunIds.has(runId)) {
+        setAutoResumeExhaustedRunIds((prev) => new Set(prev).add(runId));
+      }
+      return;
+    }
+
+    // Backoff: 1s, 4s, 10s.
+    const delay = [1000, 4000, 10000][state.attempts] ?? 10000;
+    const timerId = setTimeout(() => {
+      const current = autoResumeStateRef.current.get(runId);
+      if (!current) return;
+      autoResumeStateRef.current.set(runId, { ...current, attempts: current.attempts + 1, timerId: null });
+      recoverRun.mutate({ runId, action: "retry", targetMessageId });
+    }, delay);
+    autoResumeStateRef.current.set(runId, { ...state, timerId });
   }, [
+    autoResumeExhaustedRunIds,
     failedWorkerAvailability?.availability.status,
     isDirectConversation,
     isImplementationConversation,
@@ -583,6 +624,25 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     selectedRunId,
     workerFailureDetail,
   ]);
+
+  useEffect(() => () => {
+    autoResumeStateRef.current.forEach((entry) => {
+      if (entry.timerId) clearTimeout(entry.timerId);
+    });
+    autoResumeStateRef.current.clear();
+  }, []);
+
+  const conversationFailure = useMemo(() => {
+    if (!rawConversationFailure || rawConversationFailure.tone !== "progress") return rawConversationFailure;
+    if (!selectedRunId || !autoResumeExhaustedRunIds.has(selectedRunId)) return rawConversationFailure;
+    return {
+      tone: "error" as const,
+      action: "Run failed",
+      message: stripRunFailurePrefix(selectedRun?.lastError) || "Auto-reconnect attempts exhausted.",
+      suggestion: "Click reconnect to try again, or fix the worker runtime first.",
+      details: [],
+    };
+  }, [autoResumeExhaustedRunIds, rawConversationFailure, selectedRun?.lastError, selectedRunId]);
 
   const { selectedRecoveryState, selectedRecoveryIncidents } = useRunRecoveryState({ state, selectedRunId });
   const { liveExecutionStatus } = useConversationExecutionStatus({

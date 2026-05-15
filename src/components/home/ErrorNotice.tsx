@@ -2,12 +2,44 @@ import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { NoticeDescriptor } from "@/app/home/types";
 
+function ProgressDots() {
+  return (
+    <span className="inline-flex items-center gap-0.5" aria-hidden="true">
+      {[0, 1, 2].map((index) => (
+        <span
+          key={index}
+          className="h-1 w-1 rounded-full bg-muted-foreground animate-pulse"
+          style={{ animationDelay: `${index * 160}ms` }}
+        />
+      ))}
+    </span>
+  );
+}
+
 export function ErrorNotice({
   error,
 }: {
   error: NoticeDescriptor;
 }) {
   const tone = error.tone ?? "error";
+
+  if (tone === "progress") {
+    return (
+      <div className="px-2 py-1 text-xs text-muted-foreground">
+        <div className="inline-flex items-baseline gap-1.5">
+          <span className="font-medium text-foreground/80">
+            {error.action || error.source || "Working"}
+          </span>
+          <span className="whitespace-pre-wrap break-words">{error.message}</span>
+          <ProgressDots />
+        </div>
+        {error.suggestion ? (
+          <div className="mt-0.5 leading-4">{error.suggestion}</div>
+        ) : null}
+      </div>
+    );
+  }
+
   const containerClass = cn(
     "rounded-md px-2 py-1 text-xs",
     tone === "success"

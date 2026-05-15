@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Ellipsis, FileText, LoaderCircle, RefreshCw, WrapText } from "lucide-react";
+import { AlertTriangle, BookOpen, Ellipsis, FileText, LoaderCircle, RefreshCw, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -11,6 +11,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { MarkdownContent } from "@/components/MarkdownContent";
 import { fileViewerPanelManager } from "@/components/component-state-managers";
 import { requestJson } from "@/lib/app-errors";
 import { formatBytes } from "@/lib/chat-attachments";
@@ -32,7 +33,9 @@ export function FileViewerPanel({
   className?: string;
 }) {
   const targetLineRef = useRef<HTMLDivElement | null>(null);
-  const { wordWrap } = useManagerSnapshot(fileViewerPanelManager);
+  const { wordWrap, renderMarkdown } = useManagerSnapshot(fileViewerPanelManager);
+  const isMarkdown = /\.(md|mdx|markdown)$/i.test(relativePath);
+  const renderAsMarkdown = isMarkdown && renderMarkdown;
   useI18nSnapshot();
   const fileQuery = useQuery<ProjectFileContentResponse>({
     queryKey: ["project-file", root, relativePath],
@@ -86,6 +89,15 @@ export function FileViewerPanel({
               <Ellipsis className="h-4 w-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-40">
+              {isMarkdown ? (
+                <DropdownMenuCheckboxItem
+                  checked={renderMarkdown}
+                  onCheckedChange={() => fileViewerPanelManager.toggleRenderMarkdown()}
+                >
+                  <BookOpen className="h-4 w-4" />
+                  <span>{t("fileViewer.menu.renderMarkdown")}</span>
+                </DropdownMenuCheckboxItem>
+              ) : null}
               <DropdownMenuCheckboxItem
                 checked={wordWrap}
                 onCheckedChange={() => fileViewerPanelManager.toggleWordWrap()}
@@ -132,6 +144,10 @@ export function FileViewerPanel({
           <p className="mt-1 break-words text-xs leading-5">
             {fileQuery.error instanceof Error ? fileQuery.error.message : String(fileQuery.error)}
           </p>
+        </div>
+      ) : renderAsMarkdown ? (
+        <div className="omni-conversation-text-scale min-h-0 flex-1 overflow-auto bg-background [scrollbar-width:thin]">
+          <MarkdownContent content={content} className="px-4 py-3" projectRoot={root} />
         </div>
       ) : (
         <div className="omni-conversation-text-scale min-h-0 flex-1 overflow-auto bg-muted/15 [scrollbar-width:thin]">

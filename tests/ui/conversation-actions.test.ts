@@ -177,7 +177,7 @@ test("implementation failures expose retry without direct-control edit and fork 
   expect(pageSource).toContain("if (!canRecoverUserMessage) {");
   expect(pageSource).toContain("if (!isDirectConversation) {");
   expect(pageSource).toContain("return retryActions;");
-  expect(homeAppSource).toContain("const autoResumeRunKeysRef = useRef<Set<string>>(new Set());");
+  expect(homeAppSource).toContain("autoResumeStateRef");
   expect(homeAppSource).toContain("failedWorkerAvailability?.availability.status !== \"ok\"");
   expect(homeAppSource).toContain("recoverRun.mutate({");
   expect(homeAppSource).toContain('action: "retry"');
@@ -279,7 +279,7 @@ test("failed runs render a single persisted error in the conversation view", () 
   expect(pageSource).toContain('action: workerFailureDetail ? "Worker setup" : staleFailure ? "Reconnecting" : "Run failed"');
   expect(pageSource).toContain('message: workerFailureDetail || (staleFailure');
   expect(pageSource).toContain("Update the model or account, then resume.");
-  expect(pageSource).toContain('`Reconnecting to ${workerLabel || "worker"}.`');
+  expect(pageSource).toContain('`to ${workerLabel || "worker"}`');
   expect(pageSource).not.toContain("This failure was recorded earlier and may be stale.");
   expect(pageSource).not.toContain('<div className="font-semibold">Run failed</div>');
   expect(pageSource).toContain("Run failed");

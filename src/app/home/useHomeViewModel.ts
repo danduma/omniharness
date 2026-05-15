@@ -314,15 +314,19 @@ export function useHomeViewModel({
       return null;
     }
 
-    const staleFailure = failedWorkerAvailability?.availability.status === "ok";
+    // Only show "Reconnecting" when an auto-resume will actually run. HomeApp
+    // only auto-resumes direct/implementation runs; planning runs surface the
+    // real error and rely on the user to act.
+    const autoResumes = selectedRun.mode === "direct" || selectedRun.mode === "implementation";
+    const staleFailure = autoResumes && failedWorkerAvailability?.availability.status === "ok";
     const workerLabel = failedWorkerAvailability?.label;
     const workerStatus = failedWorkerAvailability?.availability.message;
 
     return {
-      tone: workerFailureDetail ? "warning" : staleFailure ? "success" : "error",
+      tone: workerFailureDetail ? "warning" : staleFailure ? "progress" : "error",
       action: workerFailureDetail ? "Worker setup" : staleFailure ? "Reconnecting" : "Run failed",
       message: workerFailureDetail || (staleFailure
-        ? `Reconnecting to ${workerLabel || "worker"}.`
+        ? `to ${workerLabel || "worker"}`
         : stripRunFailurePrefix(selectedRun.lastError)),
       suggestion: workerFailureDetail
         ? "Update the model or account, then resume."

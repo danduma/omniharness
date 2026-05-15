@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { ArrowLeft, Cpu, FileText, PanelRightClose, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { sideWindowManager, type SideWindowFileTab } from "@/app/home/SideWindowManager";
@@ -47,6 +48,11 @@ export function SideWindow({
   const hasConversationWorkers = workerGroups.active.length > 0 || workerGroups.finished.length > 0;
   const visibleTabs = hasConversationWorkers ? tabs : tabs.filter((tab) => tab.kind !== "workers");
   const activeTab = visibleTabs.find((tab) => tab.id === activeTabId) ?? visibleTabs[0] ?? null;
+  useEffect(() => {
+    if (visibleTabs.length === 0) {
+      onCloseWindow?.();
+    }
+  }, [visibleTabs.length, onCloseWindow]);
   const workersTabLabel = t("side.window.workersTabAria");
   const closeButtonLabel = closeButtonVariant === "back" ? t("common.back") : t("side.window.collapseAria");
   const CloseButtonIcon = closeButtonVariant === "back" ? ArrowLeft : PanelRightClose;

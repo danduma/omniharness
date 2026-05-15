@@ -299,14 +299,33 @@ export class EventStreamStateManager {
     outputLineCache?: WorkerOutputLineCacheManager;
     snapshotCache?: EventStreamSnapshotCacheManager;
     snapshotCacheScope?: string | null;
+    deferCacheHydration?: boolean;
   } = {}) {
     this.outputLineCache = options.outputLineCache ?? new WorkerOutputLineCacheManager();
     this.snapshotCache = options.snapshotCache ?? new EventStreamSnapshotCacheManager();
     this.snapshotCacheScope = options.snapshotCacheScope?.trim() || null;
-    const cachedInitialState = this.snapshotCache.hydrateState(initialState, this.snapshotCacheScope);
-    const hydratedInitialState = this.outputLineCache.hydrateState(cachedInitialState);
-    this.state = hydratedInitialState;
-    this.rememberOutputEntries(hydratedInitialState);
+    if (options.deferCacheHydration) {
+      this.state = initialState;
+      this.rememberOutputEntries(initialState);
+    } else {
+      const cachedInitialState = this.snapshotCache.hydrateState(initialState, this.snapshotCacheScope);
+      const hydratedInitialState = this.outputLineCache.hydrateState(cachedInitialState);
+      this.state = hydratedInitialState;
+      this.rememberOutputEntries(hydratedInitialState);
+    }
+  }
+
+  hydrateFromCaches() {
+    const cached = this.snapshotCache.hydrateState(this.state, this.snapshotCacheScope);
+    const hydrated = this.outputLineCache.hydrateState(cached);
+    if (hydrated === this.state) {
+      return;
+    }
+    this.state = hydrated;
+    this.rememberOutputEntries(hydrated);
+    for (const listener of this.listeners) {
+      listener(this.state);
+    }
   }
 
   getSnapshot() {
