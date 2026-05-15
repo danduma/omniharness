@@ -1,6 +1,6 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import dynamic from "next/dynamic";
-import { AlertTriangle, ChevronDown, GitCommitHorizontal, Menu, PanelLeft, PanelRight, Pencil } from "lucide-react";
+import { AlertTriangle, ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, Menu, MoreHorizontal, PanelLeft, PanelRight, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import {
@@ -20,7 +20,6 @@ import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { ConversationSidebar } from "./ConversationSidebar";
-import { RunWorkspaceBadge } from "./RunWorkspaceBadge";
 import { ThemeModeToggle } from "./ThemeModeToggle";
 
 const SideWindow = dynamic(
@@ -90,6 +89,9 @@ interface HomeHeaderProps {
   onLoadWorkerHistory?: (workerId: string) => void;
   stoppingWorkerId?: string | null;
   stoppingTerminalProcess?: { workerId: string; terminalProcessId: string } | null;
+  onForkSession: () => void;
+  onForkSessionIntoWorktree: () => void;
+  canForkSession: boolean;
 }
 
 export function HomeHeader({
@@ -154,6 +156,9 @@ export function HomeHeader({
   onLoadWorkerHistory,
   stoppingWorkerId,
   stoppingTerminalProcess,
+  onForkSession,
+  onForkSessionIntoWorktree,
+  canForkSession,
 }: HomeHeaderProps) {
   useI18nSnapshot();
   const conversationTitle = selectedRun?.title?.trim() || "New conversation";
@@ -177,6 +182,36 @@ export function HomeHeader({
       createdAt: selectedRun.createdAt,
     });
   };
+
+  const copyToClipboard = useCallback(async (value: string) => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch (error) {
+      console.error("Copy failed:", error);
+    }
+  }, []);
+
+  const handleCopyWorkingDirectory = useCallback(() => {
+    void copyToClipboard(activeConversationCwd || selectedRun?.projectPath || "");
+  }, [copyToClipboard, activeConversationCwd, selectedRun?.projectPath]);
+
+  const handleCopySessionId = useCallback(() => {
+    void copyToClipboard(selectedRunId || "");
+  }, [copyToClipboard, selectedRunId]);
+
+  const handleCopyAsMarkdown = useCallback(() => {
+    if (!selectedRun) return;
+    const header = `# ${conversationTitle}\n`;
+    const body = messages
+      .filter((m) => m.runId === selectedRun.id && m.content?.trim())
+      .map((m) => {
+        const role = m.role === "user" ? "User" : m.role === "assistant" ? "Assistant" : m.role;
+        return `## ${role}\n\n${m.content}`;
+      })
+      .join("\n\n");
+    void copyToClipboard(`${header}\n${body}`);
+  }, [copyToClipboard, selectedRun, conversationTitle, messages]);
 
   const focusTitleInput = useCallback((node: HTMLInputElement | null) => {
     if (!node || !isEditingTitle) {
@@ -313,7 +348,43 @@ export function HomeHeader({
                 {rootFolderLabel}
               </span>
             ) : null}
-            <RunWorkspaceBadge run={selectedRun} fallbackPath={activeConversationCwd} />
+            {selectedRun ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={(
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+                      aria-label={t("session.menu.label")}
+                      title={t("session.menu.label")}
+                    >
+                      <MoreHorizontal className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                />
+                <DropdownMenuContent align="start" className="w-60">
+                  <DropdownMenuItem onClick={handleCopyWorkingDirectory} disabled={!activeConversationCwd && !selectedRun.projectPath}>
+                    <span>{t("session.menu.copyWorkingDirectory")}</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleCopySessionId} disabled={!selectedRunId}>
+                    <span>{t("session.menu.copySessionId")}</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleCopyAsMarkdown}>
+                    <span>{t("session.menu.copyAsMarkdown")}</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={onForkSession} disabled={!canForkSession}>
+                    <GitBranch className="h-4 w-4" />
+                    <span>{t("session.menu.forkSession")}</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={onForkSessionIntoWorktree} disabled={!canForkSession}>
+                    <FolderGit2 className="h-4 w-4" />
+                    <span>{t("session.menu.forkIntoWorktree")}</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
           </div>
         ) : null}
         {selectedRun?.status === "failed" ? (

@@ -242,6 +242,16 @@ export function useConversationActions({
     gitWorkspaceManager.requestForkSessionWorktree(projectPath, selectedRunId, latestUserCheckpoint.id, latestUserCheckpoint.content);
   };
 
+  const handleForkSession = () => {
+    if (!selectedRunId || !latestUserCheckpoint) return;
+    mutations.recoverRun.mutate({
+      runId: selectedRunId,
+      action: "fork",
+      targetMessageId: latestUserCheckpoint.id,
+      content: latestUserCheckpoint.content,
+    });
+  };
+
   const handleConfirmForkMessageIntoWorktree = (request: GitWorkspaceLaunchRequest & {
     runId: string;
     targetMessageId: string;
@@ -336,6 +346,7 @@ export function useConversationActions({
     handleForkMessage,
     handleForkMessageIntoWorktree,
     handleForkSessionIntoWorktree,
+    handleForkSession,
     handleConfirmForkMessageIntoWorktree,
     handleEditQueuedMessage,
     handleOpenProjectFile,

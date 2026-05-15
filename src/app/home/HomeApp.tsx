@@ -875,6 +875,9 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
             workerId: stopWorkerTerminalProcess.variables.workerId,
             terminalProcessId: stopWorkerTerminalProcess.variables.terminalProcess.id,
           } : null}
+          onForkSession={actions.handleForkSession}
+          onForkSessionIntoWorktree={actions.handleForkSessionIntoWorktree}
+          canForkSession={Boolean(selectedRunId && latestUserCheckpoint)}
         />
 
         <ConversationMain
