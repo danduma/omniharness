@@ -9,6 +9,7 @@ import { db } from "@/server/db";
 import { executionEvents, messages, planningReviewFindings, planningReviewRounds, planningReviewRuns, plans, recoveryIncidents, runs, supervisorInterventions, workerCounters, workers } from "@/server/db/schema";
 import { buildAgentOutputActivity } from "@/lib/agent-output";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { __resetNamedEventsForTests } from "@/server/events/named-events";
 
 const { mockEnsureSupervisorRuntimeStarted, mockStartSupervisorRun } = vi.hoisted(() => ({
   mockEnsureSupervisorRuntimeStarted: vi.fn().mockResolvedValue(undefined),
@@ -26,12 +27,63 @@ vi.mock("@/server/supervisor/start", () => ({
 import { GET } from "@/app/api/events/route";
 
 function decodeFirstEvent(chunk: Uint8Array) {
+  // Kept for legacy tests that read exactly one chunk AND expect the
+  // first data line to be the snapshot. The SSE wire now interleaves
+  // named events (e.g. recovery.opened) ahead of the snapshot, so new
+  // call sites should use readUntilUpdateFrame() instead.
   const text = new TextDecoder().decode(chunk);
-  const dataLine = text.split("\n").find((line) => line.startsWith("data: "));
-  if (!dataLine) {
-    throw new Error(`No SSE data line found in ${text}`);
+  const frames = text.split("\n\n");
+  for (const frame of frames) {
+    const eventLine = frame.split("\n").find((line) => line.startsWith("event: "));
+    if (eventLine?.slice("event: ".length) !== "update") continue;
+    const dataLine = frame.split("\n").find((line) => line.startsWith("data: "));
+    if (dataLine) {
+      return JSON.parse(dataLine.slice("data: ".length));
+    }
   }
-  return JSON.parse(dataLine.slice("data: ".length));
+  throw new Error(`No update SSE frame found in ${text}`);
+}
+
+/**
+ * Reads SSE chunks until an `event: update` frame arrives and returns
+ * its parsed JSON payload. Use this in tests that previously relied on
+ * "the first chunk contains the snapshot" — named events now interleave
+ * with snapshots on the wire.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function readUntilUpdateFrame(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs = 4_000,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any> {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const readResult = await Promise.race([
+      reader.read(),
+      new Promise<{ value?: Uint8Array; done?: boolean }>((resolve) =>
+        setTimeout(() => resolve({ value: undefined, done: false }), 200),
+      ),
+    ]);
+    if (readResult.done) {
+      throw new Error("SSE stream closed without an update frame");
+    }
+    if (!readResult.value) continue;
+    buffer += decoder.decode(readResult.value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      const lines = frame.split("\n");
+      const eventLine = lines.find((line) => line.startsWith("event: "));
+      if (eventLine?.slice("event: ".length) !== "update") continue;
+      const dataLine = lines.find((line) => line.startsWith("data: "));
+      if (dataLine) {
+        return JSON.parse(dataLine.slice("data: ".length)) as Record<string, unknown>;
+      }
+    }
+  }
+  throw new Error(`Timed out waiting ${timeoutMs}ms for an update frame`);
 }
 
 async function readWithTimeout(reader: ReadableStreamDefaultReader<Uint8Array>, timeoutMs: number) {
@@ -53,6 +105,12 @@ describe("GET /api/events", () => {
   const originalFetch = global.fetch;
 
   beforeEach(async () => {
+    // The named-event ring buffer is module-level state shared across
+    // tests in the same worker process. Without resetting it, earlier
+    // tests that emit (e.g. recovery.opened) leave entries that the
+    // SSE route then drains as the first frame on the next test's
+    // connection — pre-empting the snapshot frame the test expects.
+    __resetNamedEventsForTests();
     notifyEventStreamSubscribers();
     mockEnsureSupervisorRuntimeStarted.mockClear();
     mockStartSupervisorRun.mockClear();
@@ -1167,11 +1225,9 @@ describe("GET /api/events", () => {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
-    const { value } = await reader.read();
+    const payload = await readUntilUpdateFrame(reader);
     controller.abort();
     await reader.cancel();
-
-    const payload = decodeFirstEvent(value!);
     expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("done");
     expect(payload.workers.find((worker: { id: string }) => worker.id === workerId)?.status).toBe("cancelled");
 
@@ -1404,11 +1460,10 @@ describe("GET /api/events", () => {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
-    const { value } = await reader.read();
+    const payload = await readUntilUpdateFrame(reader);
     controller.abort();
     await reader.cancel();
 
-    const payload = decodeFirstEvent(value!);
     expect(payload.supervisorInterventions).toEqual([
       expect.objectContaining({
         runId,
@@ -1473,11 +1528,9 @@ describe("GET /api/events", () => {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
-    const { value } = await reader.read();
+    const payload = await readUntilUpdateFrame(reader);
     controller.abort();
     await reader.cancel();
-
-    const payload = decodeFirstEvent(value!);
     expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("cancelled");
     expect(payload.workers.find((worker: { id: string }) => worker.id === workerId)?.status).toBe("cancelled");
 
@@ -1549,11 +1602,9 @@ describe("GET /api/events", () => {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
-    const { value } = await reader.read();
+    const payload = await readUntilUpdateFrame(reader);
     controller.abort();
     await reader.cancel();
-
-    const payload = decodeFirstEvent(value!);
     expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("done");
     expect(payload.workers.find((worker: { id: string }) => worker.id === workerId)?.status).toBe("idle");
 
@@ -1632,11 +1683,9 @@ describe("GET /api/events", () => {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
-    const { value } = await reader.read();
+    const payload = await readUntilUpdateFrame(reader);
     controller.abort();
     await reader.cancel();
-
-    const payload = decodeFirstEvent(value!);
     expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("done");
     expect(payload.workers.find((worker: { id: string }) => worker.id === workerId)?.status).toBe("idle");
 
@@ -1737,13 +1786,16 @@ summary: Plan is ready.
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
-    const { value } = await reader.read();
+    const payload = await readUntilUpdateFrame(reader);
     controller.abort();
     await reader.cancel();
 
-    const payload = decodeFirstEvent(value!);
-    expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("ready");
-    expect(payload.workers.find((worker: { id: string }) => worker.id === workerId)?.status).toBe("idle");
+    type RunSnap = { id: string; status: string };
+    type WorkerSnap = { id: string; status: string };
+    const runsList = payload.runs as RunSnap[];
+    const workersList = payload.workers as WorkerSnap[];
+    expect(runsList.find((r) => r.id === runId)?.status).toBe("ready");
+    expect(workersList.find((w) => w.id === workerId)?.status).toBe("idle");
 
     const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
@@ -1828,11 +1880,9 @@ summary: Plan is ready.
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
-    const { value } = await reader.read();
+    const payload = await readUntilUpdateFrame(reader);
     controller.abort();
     await reader.cancel();
-
-    const payload = decodeFirstEvent(value!);
     expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("running");
     expect(payload.workers.find((worker: { id: string }) => worker.id === workerId)?.status).toBe("idle");
 
@@ -1963,11 +2013,9 @@ summary: Plan is ready.
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
-    const { value } = await reader.read();
+    const payload = await readUntilUpdateFrame(reader);
     controller.abort();
     await reader.cancel();
-
-    const payload = decodeFirstEvent(value!);
     expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("done");
     expect(payload.workers.find((worker: { id: string }) => worker.id === workerId)?.status).toBe("idle");
 
@@ -2019,11 +2067,9 @@ summary: Plan is ready.
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
-    const { value } = await reader.read();
+    const payload = await readUntilUpdateFrame(reader);
     controller.abort();
     await reader.cancel();
-
-    const payload = decodeFirstEvent(value!);
     const diagnostic = "Worker is idle with no recorded output, and the bridge no longer has a live session for it.";
     expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("failed");
     expect(payload.workers.find((worker: { id: string }) => worker.id === workerId)?.status).toBe("error");

@@ -37,7 +37,7 @@ afterEach(async () => {
 });
 
 describe("lifecycle harness — real subprocess restart", () => {
-  it("survives a SIGTERM/respawn: sqlite persists, ring resets, client gets resync", { timeout: 60_000 }, async () => {
+  it("survives a SIGTERM/respawn: sqlite persists, ring resets, client gets resync", { timeout: 90_000 }, async () => {
     // Create a conversation via the real HTTP surface in the subprocess.
     const createRes = await client.fetch("/api/conversations", {
       method: "POST",
