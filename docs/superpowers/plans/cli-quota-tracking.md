@@ -99,10 +99,83 @@ All reset times render in the user's local timezone. Polls scheduled for Gemini'
 
 ## Phase 5: Tests
 
-- `tests/server/quota/status.test.ts` — snapshot + incident fixtures across both modes; `waiting` only set while incident is open; soonest-reset window wins.
-- `tests/server/quota/tracker.test.ts` — scheduling on quota_wait open, backoff on no-confirmation, staleness short-circuit.
-- `tests/lifecycle/scenarios/quota-wait-display.test.ts` — open a quota_wait incident; assert SSE event emitted and conversation detail payload exposes `quota.waiting.resetAt`.
-- Component snapshots for `WorkerQuotaWaitBadge` (future / past / resuming / stale).
+All tests live under the existing `tests/` suite alongside today's quota tests (`tests/server/quota/`) and are picked up by the standard vitest run — no harness changes needed. Each test file owns DB cleanup with `db.delete(...)` in `beforeEach`, matching the pattern used in `tests/supervisor/observer.test.ts`.
+
+### Unit — parsing and detection (`tests/api/workers-availability.test.ts`, extend existing)
+
+- `parseWorkerTokenQuotaOutput` extracts `costUsd` from `$12.34` and `USD 12.34` shapes.
+- Parser returns one entry per named window when output mentions both "5-hour" and "weekly" (fixture-driven, even though real CLIs don't emit this today).
+- Login-only output (`{"loggedIn":true,"authMethod":"claudeai"}`) yields `mode: "subscription"` and empty `windows[]`.
+- Unsupported worker type returns `status: "unavailable"`.
+
+### Unit — plan detection (`tests/server/quota/plan-detection.test.ts`, new)
+
+- Mock the keychain reader to return a synthetic `Claude Code-credentials` blob; assert `subscriptionType: "pro"` + `rateLimitTier` flow into the returned `tier`.
+- Mock `~/.codex/auth.json` with a JWT whose payload contains `chatgpt_plan_type: "prolite"`; assert the JWT is decoded base64url without signature checks and `tier === "prolite"`.
+- JWT decode rejects garbage payloads with `tier: "unknown"`, never throws.
+- On Linux/Windows (mock `process.platform`), keychain reader is not invoked; returns `tier: "unknown"`.
+- **Security**: assert the returned object contains no `accessToken`, `refreshToken`, or `id_token` field. A negative test that fails if any of those keys leak into the result.
+
+### Unit — rate table and spend (`tests/server/quota/model-rates.test.ts`, new)
+
+- Known model ids resolve to per-MTok rates; unknown ids return zero-rate and emit one warning per process (verified via spy).
+- `computeCostUsd({model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens})` matches hand-computed values for a sample.
+
+### Unit — token usage rollups (`tests/server/quota/usage-rollup.test.ts`, new)
+
+- Insert synthetic `worker_token_usage` rows across a 14-day span; rollup for the 5h window includes only rows with `occurredAt > now - 5h`.
+- Weekly rollup respects the trailing 7d boundary; rows older than 7d ignored.
+- Multi-worker rows are partitioned by `workerType`.
+- `pctUsed` against a `plan-limits.ts` entry is correct at boundary values (0, exactly-at-limit, over-limit).
+- Rollup query uses the `(workerType, occurredAt)` index (asserted via `EXPLAIN QUERY PLAN`).
+
+### Unit — status derivation (`tests/server/quota/status.test.ts`, new)
+
+- Worker with no open incident → `waiting` is `undefined`.
+- Worker with open `quota_wait` incident → `waiting.resetAt` matches the incident's `resetAt`; if the incident's `resetAt` differs from the local rollup estimate, the incident value wins.
+- Multi-window worker reports all windows; the soonest-resetting one is flagged for the badge.
+- `mode: "api"` returns `api.spentUsd` from rollup and never populates `subscription`.
+
+### Unit — tracker scheduling (`tests/server/quota/tracker.test.ts`, new)
+
+- `pollWorkerQuota` writes a `worker_quota_snapshots` row and emits `worker_quota_changed` exactly once.
+- `maybePollIfStale` skips when last snapshot age < `policy.staleAfterMs`.
+- `scheduleResetPoll(type, resetAt)` enqueues a wake at the right time via the existing `wake-schedule` mock harness.
+- On no-confirmation (next poll still shows zero remaining), backs off `+5m`, `+15m`, `+1h` in order; max 3 retries before giving up and surfacing an error event.
+- Confirmation (remaining > 0) marks the open incident resolved via the existing `markRecoveryIncidentResolved` path.
+
+### Unit — observer hook (`tests/supervisor/observer-quota-hook.test.ts`, new)
+
+- Emitting a `worker_turn_completed` event with `usage` metadata inserts a corresponding `worker_token_usage` row.
+- The same event triggers `pollWorkerQuota` exactly once per turn (not once per tool call); verified by spying on the tracker.
+- Events without usage metadata don't insert a row and don't throw.
+
+### API tests
+
+- `tests/api/quota-status.test.ts` (new): `GET /api/quota/status` returns the right shape for each `mode`; respects auth; emits `worker_quota_changed` SSE on demand.
+- `tests/api/runs-route-quota.test.ts` (extend existing run-detail tests): the run detail payload includes `quota` per worker, with `waiting` populated when an incident is open.
+
+### Lifecycle scenarios (`tests/lifecycle/scenarios/`)
+
+- `quota-wait-display.test.ts` — drive a real run to a `quota_wait` incident via the harness fault-injection; assert (a) the SSE stream emits `worker_quota_changed`, (b) the run detail endpoint exposes `quota.waiting.resetAt`, (c) after a simulated reset the worker resumes and `waiting` clears.
+- `quota-poll-on-turn.test.ts` — complete a worker turn end-to-end; assert a `worker_token_usage` row exists and the latest snapshot reflects updated remaining.
+- `quota-reset-schedule.test.ts` — open a quota wait with `resetAt = now + 100ms`; advance fake timers; assert `pollWorkerQuota` fires once, confirms reset, resolves the incident, and worker resumes.
+
+### UI tests (`tests/ui/`)
+
+- `worker-quota-chip.test.ts` (new) — renders subscription vs API mode correctly; multi-window picks tightest constraint; tooltip surfaces snapshot age.
+- `worker-quota-wait-badge.test.ts` (new) — countdown updates per tick (fake timers); states: future / past / resuming / stale; reads `waiting.resetAt` in user-local TZ.
+- `conversation-sidebar-quota.test.ts` (extend or new alongside `sidebar-layout.test.ts`) — when a run has an open quota_wait incident, the wait badge replaces the awaiting-user indicator next to `CliBrandIcon`.
+- `settings-quota-panel.test.ts` (new) — `UsagePanel` shows one row per window per worker type, lists waiting workers separately, renders the 30-day chart.
+
+### Locale tests
+
+- `tests/ui/i18n-hardcoded-copy.test.ts` already enforces that all new UI strings live in `shared/locales/`. Adding quota copy will be validated automatically; ensure all 8 locale files are updated.
+
+### Security tests (`tests/server/quota/plan-detection-leak.test.ts`, new)
+
+- Snapshot the full result of `detectPlanTier()` and assert it does not match `/sk-ant-|sk-|ey[A-Za-z0-9_-]{20,}/`.
+- Same assertion on `worker_quota_snapshots` row JSON, on `/api/quota/status` response, and on the `worker_quota_changed` SSE payload. Prevents future regressions that accidentally leak OAuth material into telemetry.
 
 ## Resolved decisions (2026-05-15)
 
