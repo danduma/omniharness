@@ -5,12 +5,13 @@ import path from "path";
 import { eq } from "drizzle-orm";
 
 import { db } from "@/server/db";
-import { messages, plans, runs, workerCounters, workers } from "@/server/db/schema";
+import { messages, planningReviewRuns, plans, runs, workerCounters, workers } from "@/server/db/schema";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 
 describe("refreshPlanningArtifactsForRun", () => {
   beforeEach(async () => {
     await db.delete(messages);
+    await db.delete(planningReviewRuns);
     await db.delete(workers);
     await db.delete(workerCounters);
     await db.delete(runs);
@@ -207,5 +208,118 @@ summary: Plan is ready.
     expect(refreshedRun?.failedAt).toBeNull();
     expect(refreshedRun?.artifactPlanPath).toBe(planPath);
     expect(refreshedRun?.specPath).toBe(specPath);
+  });
+
+  it("clears revising_plan status once no review run is still running", async () => {
+    const now = new Date();
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "omni-planning-revising-"));
+    const specPath = path.join(cwd, "docs/superpowers/specs/spec.md");
+    const planPath = path.join(cwd, "docs/superpowers/plans/plan.md");
+    fs.mkdirSync(path.dirname(specPath), { recursive: true });
+    fs.mkdirSync(path.dirname(planPath), { recursive: true });
+    fs.writeFileSync(specPath, "# Spec\n");
+    fs.writeFileSync(planPath, "## Phase 1\n- [ ] Do the thing\n  - Verify: it works\n");
+
+    await db.insert(plans).values({
+      id: "plan-revising",
+      path: planPath,
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: "run-revising",
+      planId: "plan-revising",
+      mode: "planning",
+      projectPath: cwd,
+      title: "Revising run",
+      preferredWorkerType: "codex",
+      preferredWorkerModel: "gpt-5.4",
+      preferredWorkerEffort: "high",
+      allowedWorkerTypes: "codex",
+      status: "revising_plan",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: "worker-revising",
+      runId: "run-revising",
+      type: "codex",
+      status: "idle",
+      cwd,
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const handoff = `<omniharness-plan-handoff>
+spec_path: ${specPath}
+plan_path: ${planPath}
+ready: yes
+summary: Done.
+</omniharness-plan-handoff>`;
+
+    await db.insert(planningReviewRuns).values({
+      id: "review-active",
+      runId: "run-revising",
+      status: "running",
+      agentSelection: "auto",
+      roundsRequested: 1,
+      startedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const stillStuckRun = await db.select().from(runs).where(eq(runs.id, "run-revising")).get();
+    const stillStuck = await refreshPlanningArtifactsForRun({
+      run: stillStuckRun!,
+      worker: await db.select().from(workers).where(eq(workers.id, "worker-revising")).get(),
+      snapshot: {
+        name: "worker-revising",
+        type: "codex",
+        cwd,
+        state: "idle",
+        lastText: handoff,
+        currentText: "",
+        renderedOutput: handoff,
+        outputEntries: [
+          { id: "h", type: "message", text: handoff, timestamp: now.toISOString() },
+        ],
+        stderrBuffer: [],
+        stopReason: "end_turn",
+      },
+    });
+    expect(stillStuck.status).toBe("revising_plan");
+
+    await db.update(planningReviewRuns)
+      .set({ status: "completed", completedAt: now, updatedAt: now })
+      .where(eq(planningReviewRuns.id, "review-active"));
+
+    const releasedRun = await db.select().from(runs).where(eq(runs.id, "run-revising")).get();
+    const released = await refreshPlanningArtifactsForRun({
+      run: releasedRun!,
+      worker: await db.select().from(workers).where(eq(workers.id, "worker-revising")).get(),
+      snapshot: {
+        name: "worker-revising",
+        type: "codex",
+        cwd,
+        state: "idle",
+        lastText: handoff,
+        currentText: "",
+        renderedOutput: handoff,
+        outputEntries: [
+          { id: "h", type: "message", text: handoff, timestamp: now.toISOString() },
+        ],
+        stderrBuffer: [],
+        stopReason: "end_turn",
+      },
+    });
+    expect(released.status).toBe("ready");
+
+    const finalRun = await db.select().from(runs).where(eq(runs.id, "run-revising")).get();
+    expect(finalRun?.status).toBe("ready");
   });
 });

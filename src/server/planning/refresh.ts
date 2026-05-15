@@ -1,7 +1,7 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import fs from "fs";
 import { db } from "@/server/db";
-import { messages, runs, workers } from "@/server/db/schema";
+import { messages, planningReviewRuns, runs, workers } from "@/server/db/schema";
 import type { AgentRecord } from "@/server/bridge-client";
 import { collectPlannerArtifacts, type PlannerArtifactCandidate, type PlannerArtifacts } from "@/server/planning/artifacts";
 import { derivePlanningStatus, type PlanningConversationStatus } from "@/server/planning/status";
@@ -29,6 +29,17 @@ function isAgentBusyError(error: string | null | undefined) {
 }
 
 const WORKER_BUSY_STATES = new Set(["working", "starting"]);
+
+async function hasActiveReviewRun(runId: string): Promise<boolean> {
+  const active = await db.select({ id: planningReviewRuns.id })
+    .from(planningReviewRuns)
+    .where(and(
+      eq(planningReviewRuns.runId, runId),
+      eq(planningReviewRuns.status, "running"),
+    ))
+    .limit(1);
+  return active.length > 0;
+}
 
 function readPlanMarkdown(filePath: string | null | undefined): string | null {
   if (!filePath) return null;
@@ -143,7 +154,10 @@ export async function refreshPlanningArtifactsForRun(args: {
 
   let nextStatus = args.status;
   if (!nextStatus) {
-    if (args.run.status === "reviewing_plan" || args.run.status === "revising_plan") {
+    const reviewInProgress = (args.run.status === "reviewing_plan" || args.run.status === "revising_plan")
+      ? await hasActiveReviewRun(args.run.id)
+      : false;
+    if (reviewInProgress) {
       nextStatus = args.run.status as PlanningConversationStatus;
     } else {
       nextStatus = derivePlanningStatus({
