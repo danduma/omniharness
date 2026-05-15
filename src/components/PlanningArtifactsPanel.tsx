@@ -2,6 +2,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { planningArtifactsManager } from "@/components/component-state-managers";
 import { t, useI18nSnapshot } from "@/lib/i18n";
@@ -11,6 +12,28 @@ import { PlanningReviewControls } from "./PlanningReviewControls";
 import { planningReviewPreferencesManager } from "@/app/home/PlanningReviewPreferencesManager";
 import { type PlanningReviewRunRecord, type PlanningReviewRoundRecord, type PlanningReviewFindingRecord } from "@/app/home/types";
 import { type PlanningReviewAgentSelection } from "@/server/planning/review-preferences";
+
+type ReadinessConcern = {
+  kind?: string;
+  itemIndex?: number | null;
+  detail?: string;
+};
+
+type ReadinessVerdict = {
+  verdict?: "ready" | "needs_review" | "needs_rewrite";
+  headline?: string;
+  topConcern?: string | null;
+  concerns?: ReadinessConcern[];
+  rationale?: string;
+  confidence?: number;
+};
+
+type ReadinessRecord = {
+  status?: "analyzing" | "ready" | "fallback";
+  verdict?: ReadinessVerdict | null;
+  fallbackHeadline?: string | null;
+  error?: string | null;
+};
 
 type Candidate = {
   path: string;
@@ -22,6 +45,7 @@ type Candidate = {
     ready?: boolean;
     gaps?: string[];
   } | null;
+  readinessRecord?: ReadinessRecord | null;
 };
 
 type ArtifactsPayload = {
@@ -67,7 +91,7 @@ function resolveProjectFileReference(pathValue: string | null, projectRoot?: str
 
 function displayProjectPath(pathValue: string | null, projectRoot?: string | null) {
   if (!pathValue) {
-    return t("planning.artifacts.notDetected");
+    return "";
   }
 
   const reference = resolveProjectFileReference(pathValue, projectRoot);
@@ -160,44 +184,86 @@ export function PlanningArtifactsPanel({
   const selectedPlanPath = currentManagerSelectedPlanPath || planPath || artifacts.planPath || planCandidates[0]?.path || null;
 
   const selectedCandidate = planCandidates.find((candidate) => candidate.path === selectedPlanPath) ?? null;
-  const ready = Boolean(
-    selectedPlanPath && (
-      !selectedCandidate ||
-      !selectedCandidate.readiness ||
-      selectedCandidate.readiness.ready
-    ),
-  );
+  const record = selectedCandidate?.readinessRecord ?? null;
+  const recordStatus = record?.status ?? null;
+  const verdict = record?.verdict?.verdict ?? null;
+  const headlineText = record?.verdict?.headline?.trim() || record?.fallbackHeadline?.trim() || null;
+  const concerns = record?.verdict?.concerns ?? [];
+  const rationale = record?.verdict?.rationale?.trim() || null;
+
+  const legacyReady = !selectedCandidate?.readiness || selectedCandidate.readiness.ready !== false;
+  const isAnalyzing = recordStatus === "analyzing";
+  const canStartByVerdict = verdict
+    ? verdict !== "needs_rewrite"
+    : legacyReady;
+  const needsConfirmation = verdict === "needs_review";
+  const canStart = Boolean(selectedPlanPath) && !isAnalyzing && !isPromoting && canStartByVerdict;
+
+  const displayHeadline = isAnalyzing
+    ? t("planning.artifacts.analyzingPrompt")
+    : headlineText || t("planning.artifacts.fallbackPrompt");
+
   const resolvedSpecPath = specPath || artifacts.specPath || null;
-  const readinessGap = selectedCandidate?.readiness?.gaps?.[0] ?? null;
   const otherPlanCandidates = planCandidates.filter((candidate) => candidate.path !== selectedPlanPath);
 
   if (!hasArtifactSignal) {
     return null;
   }
 
+  const handleStartImplementation = () => {
+    if (needsConfirmation) {
+      const ok = typeof window !== "undefined"
+        ? window.confirm(t("planning.artifacts.needsReviewConfirm"))
+        : true;
+      if (!ok) return;
+    }
+    planningReviewPreferencesManager.setExpanded(false);
+    onPromote(selectedPlanPath);
+  };
+
   return (
     <div className="space-y-3 px-1 text-sm leading-relaxed text-foreground" role="note" aria-label={t("planning.artifacts.ariaLabel")}>
       <div className="space-y-2">
-        <p>
-          {ready
-            ? t("planning.artifacts.readyPrompt")
-            : readinessGap
-              ? t("planning.artifacts.needsReviewPrompt", { gap: readinessGap })
-              : t("planning.artifacts.detectedPrompt")}
+        <p className="flex items-start gap-2">
+          {isAnalyzing ? (
+            <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
+          ) : null}
+          <span>{displayHeadline}</span>
         </p>
+        {!isAnalyzing && concerns.length > 0 ? (
+          <details className="text-xs text-muted-foreground">
+            <summary className="cursor-pointer select-none hover:text-foreground">
+              {t("planning.artifacts.concernsSummary", { count: String(concerns.length) })}
+            </summary>
+            <ul className="mt-1 space-y-1 pl-4">
+              {concerns.map((concern, index) => (
+                <li key={index} className="list-disc">
+                  {concern.detail || concern.kind || ""}
+                </li>
+              ))}
+            </ul>
+            {rationale ? (
+              <p className="mt-2 whitespace-pre-wrap text-[11px] leading-snug">{rationale}</p>
+            ) : null}
+          </details>
+        ) : null}
         <div className="space-y-1.5">
-          <PlanningArtifactFileLink
-            label={t("planning.artifacts.spec")}
-            pathValue={resolvedSpecPath}
-            projectRoot={projectRoot}
-            onOpenProjectFile={onOpenProjectFile}
-          />
-          <PlanningArtifactFileLink
-            label={t("planning.artifacts.plan")}
-            pathValue={selectedPlanPath}
-            projectRoot={projectRoot}
-            onOpenProjectFile={onOpenProjectFile}
-          />
+          {resolvedSpecPath ? (
+            <PlanningArtifactFileLink
+              label={t("planning.artifacts.spec")}
+              pathValue={resolvedSpecPath}
+              projectRoot={projectRoot}
+              onOpenProjectFile={onOpenProjectFile}
+            />
+          ) : null}
+          {selectedPlanPath ? (
+            <PlanningArtifactFileLink
+              label={t("planning.artifacts.plan")}
+              pathValue={selectedPlanPath}
+              projectRoot={projectRoot}
+              onOpenProjectFile={onOpenProjectFile}
+            />
+          ) : null}
         </div>
         {otherPlanCandidates.length > 0 ? (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -220,7 +286,7 @@ export function PlanningArtifactsPanel({
         <Button
           type="button"
           size="sm"
-          variant="ghost"
+          variant="outline"
           onClick={() => {
             planningReviewPreferencesManager.setExpanded(false);
             document.querySelector<HTMLTextAreaElement>("[data-composer-input='true']")?.focus();
@@ -228,32 +294,27 @@ export function PlanningArtifactsPanel({
         >
           {t("planning.artifacts.continueRevising")}
         </Button>
-        {ready && runId && onStartReview && (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            aria-expanded={isReviewPanelExpanded}
-            onClick={() => planningReviewPreferencesManager.setExpanded(!isReviewPanelExpanded)}
-          >
-            {t("planning.artifacts.improvePlan")}
-          </Button>
-        )}
+        <Button
+          type="button"
+          size="sm"
+          variant={verdict && verdict !== "ready" ? "default" : "outline"}
+          aria-expanded={isReviewPanelExpanded}
+          onClick={() => planningReviewPreferencesManager.setExpanded(!isReviewPanelExpanded)}
+        >
+          {t("planning.artifacts.improvePlan")}
+        </Button>
         <Button
           type="button"
           size="sm"
           variant="outline"
-          disabled={!selectedPlanPath || !ready || isPromoting}
-          onClick={() => {
-            planningReviewPreferencesManager.setExpanded(false);
-            onPromote(selectedPlanPath);
-          }}
+          disabled={!canStart}
+          onClick={handleStartImplementation}
         >
           {t("planning.artifacts.startImplementation")}
         </Button>
       </div>
 
-      {ready && runId && onStartReview && isReviewPanelExpanded && (
+      {runId && onStartReview && isReviewPanelExpanded && (
         <PlanningReviewControls
           isReviewing={Boolean(isReviewing)}
           latestReviewRun={latestReviewRun}

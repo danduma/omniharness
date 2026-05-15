@@ -164,6 +164,44 @@ docs/superpowers/specs/old-design.md
     expect(artifacts.specPath).toBeNull();
   });
 
+  it("relocates handoff artifacts from the agent scratch dir into the project", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "omni-planning-"));
+    const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "omni-scratch-"));
+    const scratchPlansDir = path.join(scratchRoot, "omniharness", "abc-123", "plans");
+    fs.mkdirSync(scratchPlansDir, { recursive: true });
+    const scratchPlanPath = path.join(scratchPlansDir, "cli-quota-tracking-plan.md");
+    fs.writeFileSync(scratchPlanPath, "## Phase 1\n- [ ] Track CLI quota\n");
+
+    const previousOverride = process.env.OMNIHARNESS_AGENT_SCRATCH_ROOTS;
+    process.env.OMNIHARNESS_AGENT_SCRATCH_ROOTS = scratchRoot;
+    try {
+      const artifacts = await collectPlannerArtifacts({
+        cwd,
+        outputText: `
+Plan approved: ${scratchPlanPath}
+
+<omniharness-plan-handoff>
+plan_path: docs/superpowers/plans/cli-quota-tracking.md
+ready: yes
+</omniharness-plan-handoff>
+`,
+      });
+
+      const expectedTarget = path.join(cwd, "docs/superpowers/plans/cli-quota-tracking-plan.md");
+      expect(fs.existsSync(expectedTarget)).toBe(true);
+      expect(artifacts.planPath).toBe(expectedTarget);
+      const relocatedCandidate = artifacts.candidates.find((candidate) => candidate.path === expectedTarget);
+      expect(relocatedCandidate?.exists).toBe(true);
+      expect(relocatedCandidate?.evidence).toContain("relocated from agent scratch dir");
+    } finally {
+      if (previousOverride === undefined) {
+        delete process.env.OMNIHARNESS_AGENT_SCRATCH_ROOTS;
+      } else {
+        process.env.OMNIHARNESS_AGENT_SCRATCH_ROOTS = previousOverride;
+      }
+    }
+  });
+
   it("reports readiness gaps for invalid plan candidates", async () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "omni-planning-"));
     const planPath = path.join(cwd, "docs/superpowers/plans/invalid.md");

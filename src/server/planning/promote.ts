@@ -5,6 +5,7 @@ import { messages, plans, runs } from "@/server/db/schema";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { assessPlanReadiness } from "@/server/plans/readiness";
 import { parsePlan } from "@/server/plans/parser";
+import { readinessRecordForPlanFile } from "@/server/plans/readiness-pipeline";
 import { createRunId } from "@/server/runs/ids";
 import fs from "fs";
 
@@ -56,18 +57,23 @@ export async function promotePlanningRun(args: {
     throw new Error("No verified plan is available to promote");
   }
 
-  const matchingCandidate = artifacts.candidates?.find((candidate) => candidate.path === selectedPlanPath && candidate.kind === "plan");
-  if (matchingCandidate?.readiness?.ready === false) {
-    throw new Error("The selected plan is not ready for implementation");
-  }
-
   if (!fs.existsSync(selectedPlanPath)) {
     throw new Error(`Plan file not found: ${selectedPlanPath}`);
   }
 
+  const record = await readinessRecordForPlanFile({
+    runId: args.runId,
+    planPath: selectedPlanPath,
+  });
+  if (record?.verdict?.verdict === "needs_rewrite") {
+    throw new Error(`The selected plan needs a rewrite before implementation: ${record.verdict.headline}`);
+  }
+
+  // Even when a verdict is present, run the structural floor — it catches
+  // edge cases like a plan file emptied between the verdict and the promote.
   const planMarkdown = fs.readFileSync(selectedPlanPath, "utf8");
   const readiness = await assessPlanReadiness(parsePlan(planMarkdown));
-  if (!readiness.ready) {
+  if (!record?.verdict && !readiness.ready) {
     throw new Error("The selected plan is not ready for implementation");
   }
 

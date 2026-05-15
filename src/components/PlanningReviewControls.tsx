@@ -28,12 +28,27 @@ export function PlanningReviewControls({
 }: PlanningReviewControlsProps) {
   useI18nSnapshot();
   const { agentSelection, rounds, isExpanded, isSaving } = useManagerSnapshot(planningReviewPreferencesManager);
+  const [isStarting, setIsStarting] = React.useState(false);
 
   const agents: PlanningReviewAgentSelection[] = ["auto", "same", "codex", "claude", "gemini", "opencode"];
 
+  React.useEffect(() => {
+    if (isReviewing && isStarting) {
+      setIsStarting(false);
+    }
+  }, [isReviewing, isStarting]);
+
   const handleStart = () => {
-    onStartReview({ agentSelection, rounds });
+    setIsStarting(true);
+    try {
+      onStartReview({ agentSelection, rounds });
+    } catch (error) {
+      setIsStarting(false);
+      throw error;
+    }
   };
+
+  const showSpinner = isReviewing || isStarting;
 
   const statusText = React.useMemo(() => {
     if (!latestReviewRun) return null;
@@ -60,17 +75,22 @@ export function PlanningReviewControls({
       <button
         type="button"
         onClick={() => planningReviewPreferencesManager.setExpanded(!isExpanded)}
-        className="flex w-full items-center justify-between text-sm font-medium text-foreground hover:text-primary transition-colors"
+        className="flex w-full items-center justify-between gap-2 text-left text-foreground hover:text-primary transition-colors"
       >
-        <span className="flex items-center gap-2">
-          {t("planning.review.expand")}
-          {!isExpanded && (
-            <span className="text-xs font-normal text-muted-foreground">
-              {t(`planning.review.agent.${agentSelection}`)} · {roundsLabel}
-            </span>
-          )}
+        <span className="flex flex-col gap-0.5">
+          <span className="flex items-center gap-2 text-sm font-medium">
+            {t("planning.review.expand")}
+            {!isExpanded && (
+              <span className="text-xs font-normal text-muted-foreground">
+                {t(`planning.review.agent.${agentSelection}`)} · {roundsLabel}
+              </span>
+            )}
+          </span>
+          <span className="text-xs font-normal text-muted-foreground">
+            {t("planning.review.expandDescription")}
+          </span>
         </span>
-        {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        {isExpanded ? <ChevronUp className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
       </button>
 
       {isExpanded && (
@@ -85,7 +105,7 @@ export function PlanningReviewControls({
                   key={agent}
                   type="button"
                   onClick={() => planningReviewPreferencesSetters.setAgentSelection(agent)}
-                  disabled={isReviewing || isSaving}
+                  disabled={showSpinner || isSaving}
                   className={cn(
                     "px-3 py-1.5 rounded-md text-xs font-medium border transition-all",
                     agentSelection === agent
@@ -114,7 +134,7 @@ export function PlanningReviewControls({
                   key={val}
                   type="button"
                   onClick={() => planningReviewPreferencesSetters.setRounds(val)}
-                  disabled={isReviewing || isSaving}
+                  disabled={showSpinner || isSaving}
                   className={cn(
                     "w-8 h-8 rounded-full border flex items-center justify-center text-xs font-medium transition-all",
                     rounds === val
@@ -131,13 +151,13 @@ export function PlanningReviewControls({
           <div className="pt-2">
             <Button
               onClick={handleStart}
-              disabled={isReviewing}
+              disabled={showSpinner}
               size="sm"
             >
-              {isReviewing ? (
+              {showSpinner ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {statusText}
+                  {statusText ?? t("planning.review.starting")}
                 </>
               ) : (
                 <>
@@ -151,25 +171,32 @@ export function PlanningReviewControls({
       )}
 
       {latestReviewRun && !isExpanded && (
-        <div className="mt-2 flex items-center gap-2 text-xs">
-          {latestReviewRun.status === "running" ? (
-            <Loader2 className="h-3 w-3 animate-spin text-primary" />
-          ) : latestReviewRun.status === "completed" ? (
-            <CheckCircle2 className="h-3 w-3 text-green-500" />
-          ) : (
-            <AlertCircle className="h-3 w-3 text-destructive" />
-          )}
-          <span className={cn(
-            "font-medium",
-            latestReviewRun.status === "completed" ? "text-green-600 dark:text-green-400" :
-            latestReviewRun.status === "failed" ? "text-destructive" : "text-primary"
-          )}>
-            {statusText}
-          </span>
-          {findings.length > 0 && (
-            <span className="text-muted-foreground">
-              ({findingsSummary})
+        <div className="mt-2 space-y-1">
+          <div className="flex items-center gap-2 text-xs">
+            {latestReviewRun.status === "running" ? (
+              <Loader2 className="h-3 w-3 animate-spin text-primary" />
+            ) : latestReviewRun.status === "completed" ? (
+              <CheckCircle2 className="h-3 w-3 text-green-500" />
+            ) : (
+              <AlertCircle className="h-3 w-3 text-destructive" />
+            )}
+            <span className={cn(
+              "font-medium",
+              latestReviewRun.status === "completed" ? "text-green-600 dark:text-green-400" :
+              latestReviewRun.status === "failed" ? "text-destructive" : "text-primary"
+            )}>
+              {statusText}
             </span>
+            {findings.length > 0 && (
+              <span className="text-muted-foreground">
+                ({findingsSummary})
+              </span>
+            )}
+          </div>
+          {latestReviewRun.status === "failed" && (latestReviewRun.lastError || latestReviewRound?.lastError) && (
+            <p className="text-xs text-destructive break-words pl-5">
+              {latestReviewRun.lastError || latestReviewRound?.lastError}
+            </p>
           )}
         </div>
       )}

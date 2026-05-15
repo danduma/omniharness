@@ -1,10 +1,18 @@
 import { asc, eq } from "drizzle-orm";
+import fs from "fs";
 import { db } from "@/server/db";
 import { messages, runs, workers } from "@/server/db/schema";
 import type { AgentRecord } from "@/server/bridge-client";
-import { collectPlannerArtifacts } from "@/server/planning/artifacts";
+import { collectPlannerArtifacts, type PlannerArtifactCandidate, type PlannerArtifacts } from "@/server/planning/artifacts";
 import { derivePlanningStatus, type PlanningConversationStatus } from "@/server/planning/status";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
+import {
+  ensureReadinessVerdict,
+  hashPlanMarkdown,
+  loadCachedReadinessRecord,
+  type PlanReadinessRecord,
+} from "@/server/plans/readiness-pipeline";
+import { emitNamedEvent } from "@/server/events/named-events";
 
 function collectTextParts(...parts: Array<string | null | undefined>) {
   return parts
@@ -18,6 +26,70 @@ function isPlannerMessageEntry(entry: { type?: string; text?: string }) {
 
 function isAgentBusyError(error: string | null | undefined) {
   return /\bagent is busy\b/i.test(error ?? "");
+}
+
+const WORKER_BUSY_STATES = new Set(["working", "starting"]);
+
+function readPlanMarkdown(filePath: string | null | undefined): string | null {
+  if (!filePath) return null;
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    return fs.readFileSync(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+async function attachReadinessRecordsToCandidates(args: {
+  runId: string;
+  workerBusy: boolean;
+  artifacts: PlannerArtifacts;
+}): Promise<{
+  candidates: PlannerArtifactCandidate[];
+  selectedRecord: PlanReadinessRecord | null;
+}> {
+  const specMarkdown = readPlanMarkdown(args.artifacts.specPath);
+  let selectedRecord: PlanReadinessRecord | null = null;
+
+  const enriched = await Promise.all(args.artifacts.candidates.map(async (candidate) => {
+    if (candidate.kind !== "plan" || !candidate.exists) {
+      return candidate;
+    }
+
+    const planMarkdown = readPlanMarkdown(candidate.path);
+    if (!planMarkdown) {
+      return candidate;
+    }
+
+    const cached = await loadCachedReadinessRecord({
+      runId: args.runId,
+      planPath: candidate.path,
+      planHash: hashPlanMarkdown(planMarkdown),
+    });
+
+    const isSelected = candidate.path === args.artifacts.planPath;
+    let record: PlanReadinessRecord | null = cached;
+    if (isSelected && !args.workerBusy) {
+      record = await ensureReadinessVerdict({
+        runId: args.runId,
+        planPath: candidate.path,
+        planMarkdown,
+        specPath: args.artifacts.specPath,
+        specMarkdown,
+      });
+    }
+
+    if (isSelected) {
+      selectedRecord = record;
+    }
+
+    return {
+      ...candidate,
+      readinessRecord: record,
+    };
+  }));
+
+  return { candidates: enriched, selectedRecord };
 }
 
 export async function refreshPlanningArtifactsForRun(args: {
@@ -55,6 +127,20 @@ export async function refreshPlanningArtifactsForRun(args: {
   const artifacts = await collectPlannerArtifacts({ cwd, outputText });
   const lastError = snapshot?.lastError ?? (isAgentBusyError(args.run.lastError) ? null : args.run.lastError);
 
+  const rawWorkerState = (snapshot?.state ?? worker?.status ?? "").trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  const workerBusy = WORKER_BUSY_STATES.has(rawWorkerState);
+
+  const { candidates: enrichedCandidates, selectedRecord } = await attachReadinessRecordsToCandidates({
+    runId: args.run.id,
+    workerBusy,
+    artifacts,
+  });
+
+  const enrichedArtifacts: PlannerArtifacts = {
+    ...artifacts,
+    candidates: enrichedCandidates,
+  };
+
   let nextStatus = args.status;
   if (!nextStatus) {
     if (args.run.status === "reviewing_plan" || args.run.status === "revising_plan") {
@@ -63,7 +149,7 @@ export async function refreshPlanningArtifactsForRun(args: {
       nextStatus = derivePlanningStatus({
         workerState: snapshot?.state ?? worker?.status,
         lastError,
-        artifacts,
+        artifacts: enrichedArtifacts,
       });
     }
   }
@@ -74,11 +160,19 @@ export async function refreshPlanningArtifactsForRun(args: {
     status: nextStatus,
     failedAt: nextStatus === "failed" ? args.run.failedAt ?? now : null,
     lastError: nextStatus === "failed" ? lastError : null,
-    specPath: artifacts.specPath,
-    artifactPlanPath: artifacts.planPath,
-    plannerArtifactsJson: JSON.stringify(artifacts),
+    specPath: enrichedArtifacts.specPath,
+    artifactPlanPath: enrichedArtifacts.planPath,
+    plannerArtifactsJson: JSON.stringify(enrichedArtifacts),
     updatedAt: now,
   }).where(eq(runs.id, args.run.id));
 
-  return { artifacts, status: nextStatus };
+  if (nextStatus === "ready" && args.run.status !== "ready") {
+    emitNamedEvent({
+      kind: "plan.ready",
+      runId: args.run.id,
+      planId: args.run.planId ?? null,
+    });
+  }
+
+  return { artifacts: enrichedArtifacts, status: nextStatus, readinessRecord: selectedRecord };
 }

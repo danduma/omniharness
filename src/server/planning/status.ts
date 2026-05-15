@@ -28,6 +28,10 @@ export function hasReadyPlannerArtifact(artifacts: PlannerArtifacts) {
   if (selectedPlan.exists === false) {
     return false;
   }
+  const verdict = selectedPlan.readinessRecord?.verdict?.verdict;
+  if (verdict) {
+    return verdict !== "needs_rewrite";
+  }
   if (!selectedPlan.readiness) {
     return true;
   }

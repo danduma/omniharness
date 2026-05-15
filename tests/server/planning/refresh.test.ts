@@ -122,7 +122,7 @@ describe("refreshPlanningArtifactsForRun", () => {
     fs.mkdirSync(path.dirname(specPath), { recursive: true });
     fs.mkdirSync(path.dirname(planPath), { recursive: true });
     fs.writeFileSync(specPath, "# Ready Spec\n");
-    fs.writeFileSync(planPath, "## Phase 1\n- [ ] Implement the thing\n");
+    fs.writeFileSync(planPath, "## Phase 1\n- [ ] Implement the thing\n  - Verify: feature is live\n");
 
     await db.insert(plans).values({
       id: "plan-ready",

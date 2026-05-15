@@ -35,6 +35,7 @@ export async function POST(
     return NextResponse.json({ ok: true, ...result });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
+    console.error("[planning/review] failed:", error);
     const status = /not ready|no ready plan/i.test(message)
       ? 400
       : /not found/i.test(message)
