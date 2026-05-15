@@ -541,49 +541,54 @@ export async function createConversation(args: {
           console.error("Initial direct conversation worker failed:", error);
         });
       } else {
-        let agent;
-        try {
-          agent = await spawnAgent({
-            type: workerType,
-            cwd,
-            name: workerId,
-            ...(workerMode ? { mode: workerMode } : {}),
-            model: args.preferredWorkerModel?.trim() || undefined,
-            effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
-          });
-        } catch (error) {
-          // Worker row was inserted and `worker.spawned` already fired
-          // — without an explicit failure event, observers see the row
-          // in `starting` forever and the wire goes silent. Make the
-          // failure visible.
-          const cause = error instanceof Error ? error : new Error(String(error));
-          emitNamedEvent({
-            kind: "error.surfaced",
-            code: "worker.spawn.failed",
-            message: `Failed to spawn worker for ${mode} conversation: ${cause.message}`,
-            surface: "toast",
-            runId,
-            workerId,
-            cause: { name: cause.name, message: cause.message },
-          });
-          throw error;
-        }
-
-        runInitialWorkerTurn({
-          runId,
-          workerId,
-          workerType,
-          cwd,
-          agent,
-          mode,
-          command: workerPrompt,
-        }).catch((error) => {
-          if (isAgentBusyError(error)) {
+        // Planning mode: spawn the agent off the critical path so the
+        // response returns instantly, mirroring direct mode. Spawn
+        // failures surface via `error.surfaced` instead of the HTTP
+        // response — the worker row already exists in `starting` and
+        // `worker.spawned` has already fired, so observers can render.
+        void (async () => {
+          let agent;
+          try {
+            agent = await spawnAgent({
+              type: workerType,
+              cwd,
+              name: workerId,
+              ...(workerMode ? { mode: workerMode } : {}),
+              model: args.preferredWorkerModel?.trim() || undefined,
+              effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
+            });
+          } catch (error) {
+            const cause = error instanceof Error ? error : new Error(String(error));
+            emitNamedEvent({
+              kind: "error.surfaced",
+              code: "worker.spawn.failed",
+              message: `Failed to spawn worker for ${mode} conversation: ${cause.message}`,
+              surface: "toast",
+              runId,
+              workerId,
+              cause: { name: cause.name, message: cause.message },
+            });
+            console.error(`Spawn for ${mode} conversation failed:`, cause);
             return;
           }
 
-          console.error(`Initial ${mode} conversation turn failed:`, error);
-        });
+          try {
+            await runInitialWorkerTurn({
+              runId,
+              workerId,
+              workerType,
+              cwd,
+              agent,
+              mode,
+              command: workerPrompt,
+            });
+          } catch (error) {
+            if (isAgentBusyError(error)) {
+              return;
+            }
+            console.error(`Initial ${mode} conversation turn failed:`, error);
+          }
+        })();
       }
 
       if (generateTitle) {
