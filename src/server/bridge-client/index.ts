@@ -128,6 +128,10 @@ function isNonRetryableBridgeFailureDetail(detail: string) {
   return /\bAgent session did not include a session id\b/i.test(detail);
 }
 
+function isAgentBusyError(error: unknown) {
+  return /\bagent is busy\b/i.test(describeError(error));
+}
+
 function asString(value: unknown, fallback = "") {
   return typeof value === "string" ? value : fallback;
 }
@@ -482,7 +486,9 @@ export async function askAgent(name: string, prompt: string) {
     }, {
       maxDelayMs: BRIDGE_CONNECTION_RESET_MAX_BACKOFF_MS,
       operationLabel: `Ask /agents/${name}/ask`,
-      retryIndefinitelyWhen: (error) => isRecoverableConnectionSupervisorError(error) && !isBridgeConnectionRefused(error),
+      retryIndefinitelyWhen: (error) =>
+        isAgentBusyError(error) ||
+        (isRecoverableConnectionSupervisorError(error) && !isBridgeConnectionRefused(error)),
     });
   } catch (error) {
     if (isBridgeConnectionRefused(error)) {

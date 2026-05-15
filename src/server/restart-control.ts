@@ -45,7 +45,7 @@ export type RestartSystem = {
   findListenerPids: (ports: number[]) => Promise<number[]>;
   isProcessAlive: (pid: number) => Promise<boolean>;
   readPidFile: () => Promise<RestartPidEntry | null>;
-  readRecentLog: () => Promise<string>;
+  readRecentLog: (lines?: number) => Promise<string>;
   removePidFile: () => void | Promise<void>;
   signalProcess: (pid: number, signal: NodeJS.Signals) => void | Promise<void>;
   spawnDetached: (command: string, args: string[], options?: { cwd: string; logFile: string; env: NodeJS.ProcessEnv }) => Promise<number>;
@@ -220,10 +220,10 @@ export function createRestartController({ config, system }: {
       return this.restart(reason, pidEntry?.mode ?? "dev");
     },
     start,
-    async getStatus() {
+    async getStatus(options: { logLines?: number } = {}) {
       const pidEntry = await system.readPidFile();
       const listenerPids = await system.findListenerPids(config.managedPorts);
-      const recentLog = await system.readRecentLog();
+      const recentLog = await system.readRecentLog(options.logLines);
       const pidRunning = Boolean(pidEntry && await system.isProcessAlive(pidEntry.pid));
       return {
         running: pidRunning || listenerPids.length > 0,
@@ -282,9 +282,10 @@ export function createNodeRestartSystem(config: RestartControlConfig): RestartSy
         return null;
       }
     },
-    readRecentLog: async () => {
+    readRecentLog: async (lines) => {
+      const requested = Number.isFinite(lines) && (lines as number) > 0 ? Math.floor(lines as number) : 80;
       try {
-        return fs.readFileSync(config.logFile, "utf8").split("\n").slice(-40).join("\n").trim();
+        return fs.readFileSync(config.logFile, "utf8").split("\n").slice(-requested).join("\n").trim();
       } catch {
         return "";
       }
@@ -302,17 +303,45 @@ export function createNodeRestartSystem(config: RestartControlConfig): RestartSy
     spawnDetached: async (command, args, options) => {
       const logFile = options?.logFile ?? config.logFile;
       fs.mkdirSync(path.dirname(logFile), { recursive: true });
-      const logFd = fs.openSync(logFile, "a");
+      const logStream = fs.createWriteStream(logFile, { flags: "a" });
       const child = spawn(command, args, {
         cwd: options?.cwd ?? config.cwd,
         detached: true,
         env: options?.env ?? process.env,
-        stdio: ["ignore", logFd, logFd],
+        stdio: ["ignore", "pipe", "pipe"],
       });
       child.unref();
       if (!child.pid) {
+        logStream.end();
         throw new Error("Failed to spawn restart process.");
       }
+      const formatTimestamp = () => {
+        const d = new Date();
+        const pad = (value: number) => String(value).padStart(2, "0");
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      };
+      const attachTimestampedStream = (stream: NodeJS.ReadableStream | null) => {
+        if (!stream) return;
+        let buffer = "";
+        const flushLine = (line: string) => {
+          logStream.write(`[${formatTimestamp()}] ${line}\n`);
+        };
+        stream.on("data", (chunk: Buffer) => {
+          buffer += chunk.toString("utf8");
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) flushLine(line);
+        });
+        stream.on("end", () => {
+          if (buffer.length > 0) {
+            flushLine(buffer);
+            buffer = "";
+          }
+        });
+      };
+      attachTimestampedStream(child.stdout);
+      attachTimestampedStream(child.stderr);
+      child.once("close", () => { logStream.end(); });
       return child.pid;
     },
     waitForExit: async (pids, timeoutMs = 8_000) => {

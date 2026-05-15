@@ -47,6 +47,10 @@ function escapeHtml(value: string) {
     .replaceAll("\"", "&quot;");
 }
 
+function jsonForScript(value: unknown) {
+  return JSON.stringify(value).replace(/<\/(script)/gi, "<\\/$1");
+}
+
 function sendJson(response: ServerResponse, statusCode: number, body: Record<string, unknown>) {
   response.writeHead(statusCode, { "content-type": "application/json; charset=utf-8" });
   response.end(`${JSON.stringify(body)}\n`);
@@ -199,7 +203,7 @@ function renderShell(body: string) {
     .pill.warn { color: var(--danger); border-color: #633631; }
     .chrome {
       display: grid;
-      grid-template-columns: minmax(220px, 280px) 1fr;
+      grid-template-columns: minmax(320px, 360px) 1fr;
       border-bottom: 1px solid var(--line);
     }
     .actions {
@@ -212,9 +216,11 @@ function renderShell(body: string) {
       background: #0d1012;
     }
     .actions form { margin: 0; display: inline-flex; }
-    .actions form button, .actions > .button, .actions > .auto-refresh {
+    .actions form button, .actions > .button {
       width: auto;
+      padding: 8px 14px;
     }
+    .actions > .auto-refresh { width: auto; }
     .details {
       margin: 0;
       display: grid;
@@ -223,14 +229,17 @@ function renderShell(body: string) {
     }
     .fact {
       min-width: 0;
-      padding: 10px 12px;
+      padding: 10px 14px;
       border-right: 1px solid var(--line);
       border-bottom: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
     }
     .details .fact:nth-child(2n) { border-right: 0; }
     .details .fact:nth-last-child(-n+2) { border-bottom: 0; }
-    .fact dt { margin: 0 0 4px; color: var(--muted); font-size: 11px; text-transform: uppercase; }
-    .fact dd { margin: 0; font-weight: 760; overflow-wrap: anywhere; }
+    .fact dt { margin: 0; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+    .fact dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; font-size: 13px; min-width: 0; }
     .auto-refresh {
       display: inline-flex;
       align-items: center;
@@ -248,6 +257,7 @@ function renderShell(body: string) {
       width: 56px;
       padding: 4px 6px;
       min-height: 0;
+      text-align: right;
     }
     .auto-refresh input[type="checkbox"] { width: auto; margin: 0; }
     .notice {
@@ -264,6 +274,29 @@ function renderShell(body: string) {
       gap: 12px;
       padding: 10px 16px 8px;
     }
+    .log-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      align-items: center;
+      padding: 0 16px 8px;
+    }
+    .log-controls label { color: var(--muted); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+    .log-controls input[type="text"], .log-controls input[type="number"] {
+      width: auto;
+      min-height: 28px;
+      padding: 4px 8px;
+    }
+    .log-controls input[type="number"] { width: 80px; }
+    .log-controls input[type="text"] { width: 240px; }
+    .log-controls button { min-height: 28px; padding: 4px 10px; }
+    .log-lines-form, .log-filter, .log-regex-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .log-regex-toggle input[type="checkbox"] { width: auto; margin: 0; }
+    #log-filter-status.warn { color: var(--danger); }
     pre {
       flex: 1;
       min-height: 0;
@@ -284,10 +317,9 @@ function renderShell(body: string) {
       main { min-height: 100vh; height: auto; border: 0; }
       header { align-items: flex-start; flex-direction: column; }
       .chrome { grid-template-columns: 1fr; }
-      .actions { border-right: 0; border-bottom: 1px solid var(--line); }
+      .actions { border-right: 0; border-bottom: 1px solid var(--line); grid-template-columns: 1fr 1fr; }
       .details { grid-template-columns: 1fr; }
-      .details .fact { border-right: 0; }
-      .details .fact:nth-last-child(-n+2) { border-bottom: 1px solid var(--line); }
+      .details .fact { border-right: 0; border-bottom: 1px solid var(--line); }
       .details .fact:last-child { border-bottom: 0; }
       button, .button { width: 100%; }
       pre { min-height: 52vh; flex: initial; }
@@ -321,12 +353,23 @@ function renderLoginPage(error = false) {
     </div>`);
 }
 
-async function renderControlPage(status: { mode?: RestartMode; restarted?: boolean; stopped?: boolean; error?: string } = {}) {
-  const runtime = await controller.getStatus();
+const DEFAULT_LOG_LINES = 80;
+const MAX_LOG_LINES = 5000;
+
+function parseLogLines(value: string | null) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_LOG_LINES;
+  }
+  return Math.min(parsed, MAX_LOG_LINES);
+}
+
+async function renderControlPage(status: { mode?: RestartMode; restarted?: boolean; stopped?: boolean; error?: string; logLines?: number } = {}) {
+  const logLines = status.logLines ?? DEFAULT_LOG_LINES;
+  const runtime = await controller.getStatus({ logLines });
   const command = runtime.command.length > 0 ? runtime.command.join(" ") : "Not started by restart control";
   const mode = runtime.mode ?? "unknown";
   const startedAt = runtime.startedAt ? new Date(runtime.startedAt).toLocaleString() : "unknown";
-  const listeners = runtime.listenerPids.length > 0 ? runtime.listenerPids.join(", ") : "none";
   const appLink = "http://localhost:3035";
   const canRestartCurrent = runtime.running && runtime.mode !== null;
   const devActive = runtime.running && runtime.mode === "dev";
@@ -358,37 +401,126 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
           <button class="danger" type="submit" ${runtime.running ? "" : "disabled"}>Stop</button>
         </form>
         <a class="button" href="/">Refresh</a>
+        <a class="button" href="${appLink}">Open App</a>
+        <a class="button" href="/status">JSON</a>
+        <form method="post" action="/logout">
+          <button class="danger" type="submit">Lock</button>
+        </form>
         <label class="auto-refresh" title="Reload this page on a timer">
           <input id="auto-refresh-toggle" type="checkbox">
           <span>Auto-refresh</span>
           <input id="auto-refresh-seconds" type="number" min="1" step="1" value="5">
           <span class="subtle">s</span>
         </label>
-        <a class="button" href="/status">JSON</a>
-        <a class="button" href="${appLink}">Open App</a>
-        <form method="post" action="/logout">
-          <button class="danger" type="submit">Lock</button>
-        </form>
       </div>
       <dl class="details">
         <div class="fact"><dt>Status</dt><dd>${runtime.running ? "Responding on managed ports" : "No managed process detected"}</dd></div>
         <div class="fact"><dt>Mode</dt><dd>${escapeHtml(mode)}</dd></div>
         <div class="fact"><dt>PID</dt><dd>${runtime.pid ?? "none"}</dd></div>
+        <div class="fact"><dt>Ports</dt><dd>${config.managedPorts.join(", ")}</dd></div>
         <div class="fact"><dt>Started</dt><dd>${escapeHtml(startedAt)}</dd></div>
         <div class="fact"><dt>Command</dt><dd>${escapeHtml(command)}</dd></div>
-        <div class="fact"><dt>Ports</dt><dd>${config.managedPorts.join(", ")}</dd></div>
-        <div class="fact"><dt>Listeners</dt><dd>${escapeHtml(listeners)}</dd></div>
-        <div class="fact"><dt>Log</dt><dd>${escapeHtml(path.basename(config.logFile))}</dd></div>
       </dl>
     </div>
     <div class="log-head">
       <span class="label">Recent log</span>
       <span class="subtle">${escapeHtml(config.logFile)}</span>
     </div>
+    <div class="log-controls">
+      <form method="get" action="/" class="log-lines-form">
+        <label for="log-lines">Lines</label>
+        <input id="log-lines" name="lines" type="number" min="1" max="${MAX_LOG_LINES}" step="1" value="${logLines}">
+        <button type="submit">Apply</button>
+      </form>
+      <label class="log-filter">
+        <span>Filter</span>
+        <input id="log-filter-input" type="text" placeholder="substring or regex" autocomplete="off" spellcheck="false">
+      </label>
+      <label class="log-regex-toggle" title="Treat filter as a regular expression">
+        <input id="log-filter-regex" type="checkbox">
+        <span>Regex</span>
+      </label>
+      <span id="log-filter-status" class="subtle"></span>
+    </div>
     <pre id="log-viewer">${escapeHtml(runtime.recentLog || "No restart-control logs yet.")}</pre>
     <script>
+      window.__OMNIHARNESS_RAW_LOG__ = ${jsonForScript(runtime.recentLog || "")};
+    </script>
+    <script>
       const logViewer = document.getElementById("log-viewer");
-      if (logViewer) {
+      const filterInput = document.getElementById("log-filter-input");
+      const regexToggle = document.getElementById("log-filter-regex");
+      const filterStatus = document.getElementById("log-filter-status");
+      const linesInput = document.getElementById("log-lines");
+      const FILTER_KEY = "omniharness-restart-log-filter";
+      const LINES_KEY = "omniharness-restart-log-lines";
+      const rawLog = typeof window.__OMNIHARNESS_RAW_LOG__ === "string" ? window.__OMNIHARNESS_RAW_LOG__ : "";
+      function applyFilter() {
+        if (!logViewer) return;
+        const query = filterInput ? filterInput.value : "";
+        const useRegex = regexToggle ? regexToggle.checked : false;
+        if (filterStatus) { filterStatus.textContent = ""; filterStatus.classList.remove("warn"); }
+        if (!query) {
+          logViewer.textContent = rawLog || "No restart-control logs yet.";
+          return;
+        }
+        const lines = rawLog.split("\n");
+        let predicate;
+        if (useRegex) {
+          try {
+            const re = new RegExp(query, "i");
+            predicate = (line) => re.test(line);
+          } catch (err) {
+            if (filterStatus) {
+              filterStatus.textContent = "Invalid regex: " + (err && err.message ? err.message : String(err));
+              filterStatus.classList.add("warn");
+            }
+            return;
+          }
+        } else {
+          const needle = query.toLowerCase();
+          predicate = (line) => line.toLowerCase().includes(needle);
+        }
+        const matched = lines.filter(predicate);
+        logViewer.textContent = matched.length ? matched.join("\n") : "No lines match the filter.";
+        if (filterStatus) filterStatus.textContent = matched.length + " / " + lines.length + " lines";
+      }
+      if (filterInput && regexToggle) {
+        try {
+          const stored = JSON.parse(localStorage.getItem(FILTER_KEY) || "{}") || {};
+          if (typeof stored.query === "string") filterInput.value = stored.query;
+          regexToggle.checked = Boolean(stored.regex);
+        } catch (_) {}
+        const persist = () => {
+          try {
+            localStorage.setItem(FILTER_KEY, JSON.stringify({ query: filterInput.value, regex: regexToggle.checked }));
+          } catch (_) {}
+        };
+        filterInput.addEventListener("input", () => { persist(); applyFilter(); });
+        regexToggle.addEventListener("change", () => { persist(); applyFilter(); });
+        applyFilter();
+      }
+      if (linesInput) {
+        try {
+          const storedLines = localStorage.getItem(LINES_KEY);
+          if (storedLines && !new URLSearchParams(window.location.search).has("lines")) {
+            const parsed = Math.max(1, Math.min(${MAX_LOG_LINES}, parseInt(storedLines, 10) || ${DEFAULT_LOG_LINES}));
+            if (parsed !== ${logLines}) {
+              const url = new URL(window.location.href);
+              url.searchParams.set("lines", String(parsed));
+              window.location.replace(url.toString());
+            }
+          }
+        } catch (_) {}
+        linesInput.addEventListener("change", () => {
+          try {
+            const value = Math.max(1, Math.min(${MAX_LOG_LINES}, parseInt(linesInput.value, 10) || ${DEFAULT_LOG_LINES}));
+            linesInput.value = String(value);
+            localStorage.setItem(LINES_KEY, String(value));
+          } catch (_) {}
+        });
+      }
+      if (logViewer && !filterInput?.value) {
         requestAnimationFrame(() => {
           logViewer.scrollTop = logViewer.scrollHeight;
         });
@@ -466,6 +598,7 @@ const server = createServer((request, response) => {
         mode,
         restarted: url.searchParams.get("restarted") === "1",
         stopped: url.searchParams.get("stopped") === "1",
+        logLines: parseLogLines(url.searchParams.get("lines")),
       }));
       return;
     }
