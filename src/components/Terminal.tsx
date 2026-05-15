@@ -42,6 +42,7 @@ interface TerminalProps {
   thoughtsDefaultOpen?: boolean;
   toolGroupsDefaultOpen?: boolean;
   emptyState?: ReactNode;
+  isLoading?: boolean;
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
 }
@@ -1335,6 +1336,7 @@ export function Terminal({
   thoughtsDefaultOpen = false,
   toolGroupsDefaultOpen = false,
   emptyState,
+  isLoading = false,
   projectRoot,
   onOpenProjectFile,
 }: TerminalProps) {
@@ -1501,12 +1503,19 @@ export function Terminal({
           <>{emptyState}</>
         ) : (
           <div className={cn(
-            "flex h-full min-h-full flex-1 items-center justify-center rounded-xl border border-dashed px-4 text-center text-sm",
+            "flex h-full min-h-full flex-1 items-center justify-center gap-2 rounded-xl border border-dashed px-4 text-center text-sm",
             variant === "native"
               ? "border-border bg-muted/20 text-muted-foreground"
               : "border-border/70 bg-muted/25 text-muted-foreground dark:border-white/10 dark:bg-black/10 dark:text-zinc-500",
           )}>
-            {t("terminal.empty.loadingSession")}
+            {isLoading ? (
+              <>
+                <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                <span>{t("terminal.empty.loadingSession")}</span>
+              </>
+            ) : (
+              <span>{t("terminal.empty.noActivity")}</span>
+            )}
           </div>
         )}
       </div>

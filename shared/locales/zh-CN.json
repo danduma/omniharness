@@ -153,6 +153,7 @@
   "language.ja": "日语",
   "language.ko": "韩语",
   "terminal.empty.loadingSession": "正在加载会话",
+  "terminal.empty.noActivity": "此会话尚未记录任何活动。",
   "recovery.notice.ariaLabel": "Run recovery",
   "recovery.notice.title.default": "Recovery",
   "recovery.notice.title.quotaWaiting": "Waiting for quota reset",

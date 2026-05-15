@@ -385,6 +385,7 @@ interface ConversationMainProps {
   expandedDirectMessageIds: Set<string>;
   toggleDirectMessageExpansion: (messageId: string) => void;
   primaryConversationAgent: AgentSnapshot | null;
+  isHydratingConversations: boolean;
   promotePlanningConversation: {
     isPending: boolean;
     mutate: (payload: { runId: string; planPath: string | null }) => void;
@@ -483,6 +484,7 @@ export function ConversationMain({
   expandedDirectMessageIds,
   toggleDirectMessageExpansion,
   primaryConversationAgent,
+  isHydratingConversations,
   promotePlanningConversation,
   onStartReview,
   reviewRuns = [],
@@ -683,6 +685,7 @@ export function ConversationMain({
               textSizeScope="conversation"
               className="min-h-[32rem]"
               showPendingAssistantIndicator={showDirectControlWorkingIndicator}
+              isLoading={isHydratingConversations}
               projectRoot={projectRoot}
               onOpenProjectFile={onOpenProjectFile}
             />

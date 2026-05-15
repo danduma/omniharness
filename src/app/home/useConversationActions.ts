@@ -288,7 +288,7 @@ export function useConversationActions({
 
     if (!file?.root || !file.relativePath) return;
 
-    sideWindowManager.openFile(file);
+    if (!sideWindowManager.openFile(file)) return;
     if (shouldOpenMobileSideWindow()) {
       setMobileWorkersOpen(true);
       return;

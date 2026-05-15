@@ -64,11 +64,11 @@ export class SideWindowManager extends StateManager<SideWindowState> {
     });
   }
 
-  openFile(input: OpenSideWindowFileInput) {
+  openFile(input: OpenSideWindowFileInput): boolean {
     const root = normalizeRoot(input.root);
     const relativePath = normalizeRelativePath(input.relativePath);
     if (!root || !relativePath) {
-      return;
+      return false;
     }
 
     const id = sideWindowFileTabId(root, relativePath);
@@ -97,6 +97,7 @@ export class SideWindowManager extends StateManager<SideWindowState> {
         activeTabId: id,
       };
     });
+    return true;
   }
 
   closeTab(tabId: string) {

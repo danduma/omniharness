@@ -1,4 +1,5 @@
 import type React from "react";
+import { useEffect, useState } from "react";
 import { Archive, Bug, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Trash2, TriangleAlert, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { requestBugDropOpen } from "@/components/BugDropBootstrap";
@@ -132,6 +133,25 @@ export function ConversationSidebar({
   onCollapse,
 }: ConversationSidebarProps) {
   useI18nSnapshot();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    // First render (SSR + initial client paint) renders an empty shell so the
+    // client tree shape matches the server's. Without this, the project/run
+    // list populates from local state after hydration, shifting Base UI's
+    // auto-generated IDs and producing a hydration mismatch warning across
+    // every DropdownMenuTrigger in the sidebar.
+    return (
+      <div
+        className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#f1f1f0] dark:bg-muted/30"
+        aria-hidden="true"
+      />
+    );
+  }
+
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#f1f1f0] dark:bg-muted/30">
       <div className="space-y-1 px-3 pb-3 pt-2 lg:px-3 lg:pb-3 lg:pt-2">

@@ -185,16 +185,28 @@ export function useHomeViewModel({
 
     return selectedRunWorkers.map((worker) => {
       const candidateAgent = liveAgentsById.get(worker.id);
-      const liveAgent = (selectedRunIsTerminal || selectedRunNeedsRecovery) && candidateAgent && isWorkerActiveStatus(candidateAgent.state)
-        ? null
-        : candidateAgent;
-      return liveAgent ?? {
-        name: worker.id,
-        type: worker.type,
-        state: worker.status,
-        currentText: "",
-        lastText: "",
-      };
+      if (!candidateAgent) {
+        return {
+          name: worker.id,
+          type: worker.type,
+          state: worker.status,
+          currentText: "",
+          lastText: "",
+        };
+      }
+
+      // On a terminal/needs-recovery run, a worker stuck in an "active"
+      // state ("idle", "working", etc.) is stale runtime metadata — but the
+      // snapshot still carries the persisted outputEntries that the
+      // Terminal needs to render. Overlay the quiesced worker status
+      // without dropping the rest of the agent. Previously this branch
+      // returned a stub with no outputEntries, which made every direct
+      // conversation render an empty terminal.
+      if ((selectedRunIsTerminal || selectedRunNeedsRecovery) && isWorkerActiveStatus(candidateAgent.state)) {
+        return { ...candidateAgent, state: worker.status };
+      }
+
+      return candidateAgent;
     });
   }, [selectedRunIsTerminal, selectedRunNeedsRecovery, selectedRunWorkers, state.agents]);
 

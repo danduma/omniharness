@@ -153,6 +153,7 @@
   "language.ja": "Giapponese",
   "language.ko": "Coreano",
   "terminal.empty.loadingSession": "Caricamento sessione",
+  "terminal.empty.noActivity": "Nessuna attività registrata per questa sessione finora.",
   "recovery.notice.ariaLabel": "Run recovery",
   "recovery.notice.title.default": "Recovery",
   "recovery.notice.title.quotaWaiting": "Waiting for quota reset",

@@ -894,6 +894,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           expandedDirectMessageIds={expandedDirectMessageIds}
           toggleDirectMessageExpansion={actions.toggleDirectMessageExpansion}
           primaryConversationAgent={vm.primaryConversationAgent}
+          isHydratingConversations={isHydratingConversations}
           promotePlanningConversation={promotePlanningConversation}
           onStartReview={(prefs) => {
             if (selectedRunId) {
@@ -958,9 +959,9 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           <div className={`flex h-full min-w-0 flex-1 pl-2 transition-transform duration-150 ease-out motion-reduce:transition-none ${rightSidebarOpen ? "translate-x-0" : "translate-x-3"}`}>
             <SideWindow
               projectRoot={currentProjectScope}
-              workers={selectedRunId && isImplementationConversation ? selectedRunWorkersForDisplay : []}
-              agents={selectedRunId && isImplementationConversation ? conversationAgents : []}
-              supervisorInterventions={selectedRunId && isImplementationConversation ? selectedRunSupervisorInterventions : []}
+              workers={selectedRunId ? selectedRunWorkersForDisplay : []}
+              agents={selectedRunId ? conversationAgents : []}
+              supervisorInterventions={selectedRunId ? selectedRunSupervisorInterventions : []}
               preferredModel={selectedRun?.preferredWorkerModel ?? null}
               preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
               onStopWorker={(workerId) => { if (selectedRunId) stopWorker.mutate({ runId: selectedRunId, workerId }); }}

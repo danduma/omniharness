@@ -25,6 +25,22 @@ export const INITIAL_EVENT_STREAM_STATE: EventStreamState = {
   frontendErrors: [],
 };
 
+export type ComposerDraft = {
+  command: string;
+  commandCursor: number;
+  mentionIndex: number;
+  attachments: PendingChatAttachment[];
+};
+
+export const NEW_CONVERSATION_DRAFT_KEY = "__new__";
+
+const EMPTY_COMPOSER_DRAFT: ComposerDraft = {
+  command: "",
+  commandCursor: 0,
+  mentionIndex: 0,
+  attachments: [],
+};
+
 export type HomeUiState = {
   command: string;
   themeMode: ThemeMode;
@@ -70,6 +86,7 @@ export type HomeUiState = {
   pairRedeemAttempted: boolean;
   runtimeErrors: AppErrorDescriptor[];
   settingsDiagnostics: AppErrorDescriptor[];
+  composerDraftsByRun: Record<string, ComposerDraft>;
 };
 
 const initialHomeUiState: HomeUiState = {
@@ -117,6 +134,7 @@ const initialHomeUiState: HomeUiState = {
   pairRedeemAttempted: false,
   runtimeErrors: [],
   settingsDiagnostics: [],
+  composerDraftsByRun: {},
 };
 
 export class HomeUiStateManager extends StateManager<HomeUiState> {
@@ -191,6 +209,42 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
     this.setKey("attachments", []);
   }
 
+  selectRun(nextRunId: string | null) {
+    this.update((current) => {
+      if (current.selectedRunId === nextRunId) return current;
+      const prevKey = current.selectedRunId ?? NEW_CONVERSATION_DRAFT_KEY;
+      const nextKey = nextRunId ?? NEW_CONVERSATION_DRAFT_KEY;
+      const nextDraft = current.composerDraftsByRun[nextKey] ?? EMPTY_COMPOSER_DRAFT;
+      const drafts: Record<string, ComposerDraft> = { ...current.composerDraftsByRun };
+      const hasContent = current.command.length > 0
+        || current.commandCursor !== 0
+        || current.mentionIndex !== 0
+        || current.attachments.length > 0;
+      if (hasContent) {
+        drafts[prevKey] = {
+          command: current.command,
+          commandCursor: current.commandCursor,
+          mentionIndex: current.mentionIndex,
+          attachments: current.attachments,
+        };
+      } else {
+        delete drafts[prevKey];
+      }
+      if (nextDraft === EMPTY_COMPOSER_DRAFT) {
+        delete drafts[nextKey];
+      }
+      return {
+        ...current,
+        selectedRunId: nextRunId,
+        composerDraftsByRun: drafts,
+        command: nextDraft.command,
+        commandCursor: nextDraft.commandCursor,
+        mentionIndex: nextDraft.mentionIndex,
+        attachments: nextDraft.attachments,
+      };
+    });
+  }
+
   createSetter<TKey extends keyof HomeUiState>(key: TKey) {
     return (value: StateUpdate<HomeUiState[TKey]>) => {
       this.setKey(key, value);
@@ -210,7 +264,7 @@ export const homeUiSetters = {
   setActiveLlmProfileTab: homeUiStateManager.createSetter("activeLlmProfileTab"),
   setApiKeys: homeUiStateManager.createSetter("apiKeys"),
   setShowFolderPicker: homeUiStateManager.createSetter("showFolderPicker"),
-  setSelectedRunId: homeUiStateManager.createSetter("selectedRunId"),
+  setSelectedRunId: (value: string | null) => homeUiStateManager.selectRun(value),
   setLeftSidebarOpen: homeUiStateManager.createSetter("leftSidebarOpen"),
   setLeftSidebarWidth: homeUiStateManager.createSetter("leftSidebarWidth"),
   setRightSidebarOpen: homeUiStateManager.createSetter("rightSidebarOpen"),

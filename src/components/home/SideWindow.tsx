@@ -46,7 +46,11 @@ export function SideWindow({
   const { tabs, activeTabId } = useManagerSnapshot(sideWindowManager);
   const workerGroups = buildWorkerLists(workers);
   const hasConversationWorkers = workerGroups.active.length > 0 || workerGroups.finished.length > 0;
-  const visibleTabs = hasConversationWorkers ? tabs : tabs.filter((tab) => tab.kind !== "workers");
+  const filteredTabs = hasConversationWorkers ? tabs : tabs.filter((tab) => tab.kind !== "workers");
+  // Invariant: never render an empty tab strip while the side window is mounted.
+  // If filtering would hide every tab, fall back to the full tab list so the user
+  // always sees something (the workers tab at minimum) instead of a blank header.
+  const visibleTabs = filteredTabs.length > 0 ? filteredTabs : tabs;
   const activeTab = visibleTabs.find((tab) => tab.id === activeTabId) ?? visibleTabs[0] ?? null;
   useEffect(() => {
     if (visibleTabs.length === 0) {
