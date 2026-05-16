@@ -706,27 +706,6 @@ export function ConversationMain({
     {selectedRunId ? (
       isDirectConversation ? (
         <div className="mx-auto flex h-full w-full max-w-6xl flex-col gap-4 p-4 pb-24 sm:p-6 sm:pb-20">
-          {appErrors.length > 0 ? (
-            <div className="space-y-3">
-              {appErrors.map((error) => (
-                <ErrorNotice key={appErrorKey(error)} error={error} />
-              ))}
-            </div>
-          ) : null}
-          {conversationFailure ? (
-            <div className="space-y-3">
-              <ErrorNotice error={conversationFailure} />
-              <LatestRecoveryAction
-                selectedRun={selectedRun}
-                canRetryConversation={canRetryConversation}
-                recoverRun={recoverRun}
-                showRecoverableRunningState={showRecoverableRunningState}
-                hasStuckWorker={hasStuckWorker}
-                latestUserCheckpoint={latestUserCheckpoint}
-                handleRetryMessage={handleRetryMessage}
-              />
-            </div>
-          ) : null}
           {!isSelectedConversationLoaded || (
             unifiedWorkerStreamEnabled
               && primaryConversationWorkerId
@@ -770,6 +749,27 @@ export function ConversationMain({
               />
             </DirectControlTerminalColumn>
           )}
+          {appErrors.length > 0 ? (
+            <div className="space-y-3">
+              {appErrors.map((error) => (
+                <ErrorNotice key={appErrorKey(error)} error={error} />
+              ))}
+            </div>
+          ) : null}
+          {conversationFailure ? (
+            <div className="space-y-3">
+              <ErrorNotice error={conversationFailure} />
+              <LatestRecoveryAction
+                selectedRun={selectedRun}
+                canRetryConversation={canRetryConversation}
+                recoverRun={recoverRun}
+                showRecoverableRunningState={showRecoverableRunningState}
+                hasStuckWorker={hasStuckWorker}
+                latestUserCheckpoint={latestUserCheckpoint}
+                handleRetryMessage={handleRetryMessage}
+              />
+            </div>
+          ) : null}
         </div>
       ) : (
         <div className="omni-conversation-text-scale mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 pb-24 sm:gap-6 sm:p-6 sm:pb-20">

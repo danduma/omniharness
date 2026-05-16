@@ -20,6 +20,7 @@ import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { ConversationSidebar } from "./ConversationSidebar";
+import { RunWorkspaceBadge } from "./RunWorkspaceBadge";
 import { ThemeModeToggle } from "./ThemeModeToggle";
 
 const SideWindow = dynamic(
@@ -347,6 +348,9 @@ export function HomeHeader({
               >
                 {rootFolderLabel}
               </span>
+            ) : null}
+            {selectedRun ? (
+              <RunWorkspaceBadge run={selectedRun} fallbackPath={activeConversationCwd} />
             ) : null}
             {selectedRun ? (
               <DropdownMenu>
