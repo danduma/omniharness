@@ -80,8 +80,8 @@ self.addEventListener("message", (event) => {
   }
 });
 
-function hasFocusedWindowClient(clients) {
-  return clients.some((client) => client.focused === true);
+function hasVisibleWindowClient(clients) {
+  return clients.some((client) => client.visibilityState === "visible");
 }
 
 function focusOrOpenTarget(targetUrl, clients) {
@@ -108,7 +108,8 @@ function focusOrOpenTarget(targetUrl, clients) {
 self.addEventListener("push", (event) => {
   event.waitUntil(
     self.clients.matchAll({ type: "window" }).then((clients) => {
-      if (hasFocusedWindowClient(clients)) {
+      const hasVisibleClient = hasVisibleWindowClient(clients);
+      if (hasVisibleClient) {
         return;
       }
 
