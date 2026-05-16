@@ -234,6 +234,7 @@ async function runInitialWorkerTurn(args: {
   mode: "direct" | "planning";
   command: string;
   initialUserText: string;
+  initialUserMessageId: string;
   initialAttachments: ChatAttachment[];
 }) {
   try {
@@ -259,6 +260,7 @@ async function runInitialWorkerTurn(args: {
     // below so the transcript starts with user_input → bridge entries.
     const deliveredAt = new Date();
     await appendUserInputOnDelivery({
+      id: args.initialUserMessageId,
       runId: args.runId,
       workerId: args.workerId,
       text: args.initialUserText,
@@ -366,6 +368,7 @@ async function startDirectWorkerConversation(args: {
   preferredWorkerEffort?: string | null;
   command: string;
   initialUserText: string;
+  initialUserMessageId: string;
   initialAttachments: ChatAttachment[];
 }) {
   try {
@@ -389,6 +392,7 @@ async function startDirectWorkerConversation(args: {
       mode: "direct",
       command: args.command,
       initialUserText: args.initialUserText,
+      initialUserMessageId: args.initialUserMessageId,
       initialAttachments: args.initialAttachments,
     });
   } catch (error) {
@@ -570,6 +574,7 @@ export async function createConversation(args: {
           preferredWorkerEffort: args.preferredWorkerEffort,
           command: workerPrompt,
           initialUserText: command,
+          initialUserMessageId: initialMessageId,
           initialAttachments: attachments,
         }).catch((error) => {
           console.error("Initial direct conversation worker failed:", error);
@@ -617,6 +622,7 @@ export async function createConversation(args: {
               mode,
               command: workerPrompt,
               initialUserText: command,
+              initialUserMessageId: initialMessageId,
               initialAttachments: attachments,
             });
           } catch (error) {

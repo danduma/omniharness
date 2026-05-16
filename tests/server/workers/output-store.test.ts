@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getAppDataPath } from "@/server/app-root";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 import {
   __resetOutputStoreCachesForTests,
   appendWorkerEntry,
@@ -22,6 +23,7 @@ async function cleanupRun(runId: string) {
 
 afterEach(() => {
   __resetOutputStoreCachesForTests();
+  __resetNamedEventsForTests();
 });
 
 describe("appendWorkerEntry", () => {
@@ -164,6 +166,33 @@ describe("readWorkerEntriesSince", () => {
       await cleanupRun(runId);
     }
   });
+
+  it("keeps mixed legacy and newly appended entries in file order", async () => {
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    try {
+      const dir = path.dirname(workerOutputFilePathFor(runId, workerId));
+      await fs.mkdir(dir, { recursive: true });
+      const filePath = workerOutputFilePathFor(runId, workerId);
+      const legacy = [
+        JSON.stringify({ type: "message", text: "legacy-1", timestamp: "2026-01-01T00:00:00.000Z" }),
+        JSON.stringify({ type: "message", text: "legacy-2", timestamp: "2026-01-01T00:00:01.000Z" }),
+      ].join("\n") + "\n";
+      await fs.writeFile(filePath, legacy, "utf8");
+
+      __resetOutputStoreCachesForTests();
+      await writeWorkerOutputEntries(runId, workerId, [
+        { id: "new", type: "message", text: "new", timestamp: "2026-01-01T00:00:02.000Z" } as any,
+      ]);
+
+      const result = await readWorkerEntriesSince(runId, workerId, 0);
+      expect(result.entries.map((entry) => entry.text)).toEqual(["legacy-1", "legacy-2", "new"]);
+      expect(result.entries.map((entry) => entry.seq)).toEqual([1, 2, 3]);
+      expect(result.latestSeq).toBe(3);
+    } finally {
+      await cleanupRun(runId);
+    }
+  });
 });
 
 describe("compaction interaction with appends", () => {
@@ -198,6 +227,31 @@ describe("compaction interaction with appends", () => {
 });
 
 describe("writeWorkerOutputEntries (diff-and-append)", () => {
+  it("emits worker entry wake events for appended bridge entries", async () => {
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    try {
+      await writeWorkerOutputEntries(runId, workerId, [
+        { id: "a", type: "message", text: "one", timestamp: "2026-01-01T00:00:00.000Z" } as any,
+        { id: "b", type: "message", text: "two", timestamp: "2026-01-01T00:00:01.000Z" } as any,
+      ]);
+
+      const events = getNamedEventsSince(0).events
+        .map((entry) => entry.event)
+        .filter((event) => event.kind === "worker.entry_appended");
+      expect(events.map((event) => ({
+        runId: event.runId,
+        workerId: event.workerId,
+        seq: event.seq,
+      }))).toEqual([
+        { runId, workerId, seq: 1 },
+        { runId, workerId, seq: 2 },
+      ]);
+    } finally {
+      await cleanupRun(runId);
+    }
+  });
+
   it("does not re-add an entry with the same id", async () => {
     const runId = uniqueId("run");
     const workerId = uniqueId("worker");

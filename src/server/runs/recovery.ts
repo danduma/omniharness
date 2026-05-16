@@ -165,7 +165,7 @@ function buildEmptyWorkerOutputMessage(snapshot: AgentRecord | null, responseSta
   return `Agent stopped without producing output. Final state: ${responseState || "unknown"}.`;
 }
 
-async function startDirectRerun(run: typeof runs.$inferSelect, content: string) {
+async function startDirectRerun(run: typeof runs.$inferSelect, content: string, userInputId?: string) {
   const { workerId, workerNumber } = await allocateWorkerIdentity(run.id);
   const cwd = run.projectPath || process.cwd();
   const allowedWorkerTypes = parseAllowedWorkerTypes(run.allowedWorkerTypes);
@@ -204,6 +204,7 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string) 
   });
   const response = await askAgent(workerId, buildDirectWorkerPrompt(run.mode, content, cwd));
   await appendUserInputOnDelivery({
+    id: userInputId,
     runId: run.id,
     workerId,
     text: content,
@@ -331,6 +332,7 @@ async function resumeDirectRunFromSavedSession(
 
   const response = await askAgent(worker.id, buildDirectWorkerPrompt(run.mode, content, worker.cwd));
   await appendUserInputOnDelivery({
+    id: targetMessage.id,
     runId: run.id,
     workerId: worker.id,
     text: content,
@@ -538,9 +540,14 @@ export async function recoverRun(args: RecoverRunArgs) {
         .filter((message) => message.createdAt <= targetMessage.createdAt)
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 
+      let forkTargetMessageId: string | undefined;
       for (const message of messagesToCopy) {
+        const copiedMessageId = randomUUID();
+        if (message.id === args.targetMessageId) {
+          forkTargetMessageId = copiedMessageId;
+        }
         await db.insert(messages).values({
-          id: randomUUID(),
+          id: copiedMessageId,
           runId: newRunId,
           role: message.role,
           kind: message.id === args.targetMessageId ? "checkpoint" : message.kind,
@@ -574,7 +581,7 @@ export async function recoverRun(args: RecoverRunArgs) {
         throw new Error("Forked run not found");
       }
 
-      await startDirectRerun(newRun, nextContent);
+      await startDirectRerun(newRun, nextContent, forkTargetMessageId);
       return {
         runId: newRunId,
         ...(workspaceResult && runWorkspaceSnapshot
@@ -633,7 +640,7 @@ export async function recoverRun(args: RecoverRunArgs) {
     updatedAt: new Date(),
   }).where(eq(runs.id, args.runId));
 
-  await startDirectRerun(run, nextContent);
+  await startDirectRerun(run, nextContent, args.targetMessageId);
 
   return { runId: args.runId };
 }

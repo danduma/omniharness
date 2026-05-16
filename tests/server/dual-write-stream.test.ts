@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
   executionEvents,
@@ -126,7 +127,9 @@ describe("unified worker stream — dual-write on delivery", () => {
 
     const entries = await readWorkerOutputEntries(runId, workerId);
     const userInputs = entries.filter((entry) => (entry as any).type === "user_input");
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
     expect(userInputs).toHaveLength(1);
+    expect((userInputs[0] as any).id).toBe(storedMessages[0]?.id);
     expect((userInputs[0] as any).text).toBe("Add a sanity test for the cache invalidator.");
     expect((userInputs[0] as any).authorRole).toBe("user");
   });
@@ -166,7 +169,9 @@ describe("unified worker stream — dual-write on delivery", () => {
 
     const entries = await readWorkerOutputEntries(runId, workerId);
     const userInputs = entries.filter((entry) => (entry as any).type === "user_input");
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
     expect(userInputs).toHaveLength(1);
+    expect((userInputs[0] as any).id).toBe(storedMessages.find((message) => message.role === "user")?.id);
     expect((userInputs[0] as any).text).toBe("Pause and run the failing test under --inspect.");
   });
 

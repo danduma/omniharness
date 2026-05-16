@@ -160,12 +160,14 @@ async function continueWorkerConversation({
   worker,
   content,
   userInputText,
+  userInputId,
   attachments,
 }: {
   run: RunRecord;
   worker: WorkerRecord;
   content: string;
   userInputText: string;
+  userInputId?: string;
   attachments: ChatAttachment[];
 }) {
   try {
@@ -188,6 +190,7 @@ async function continueWorkerConversation({
     // the plan depends on user_input preceding tool_calls/messages.
     const deliveredAt = new Date();
     await appendUserInputOnDelivery({
+      id: userInputId,
       runId: run.id,
       workerId: worker.id,
       text: userInputText,
@@ -415,6 +418,7 @@ export async function sendConversationMessage({
           worker,
           content: workerContent,
           userInputText: trimmedContent,
+          userInputId: userMessage.id,
           attachments: normalizedAttachments,
         });
       } catch (error) {
@@ -448,6 +452,7 @@ export async function sendConversationMessage({
       worker,
       content: workerContent,
       userInputText: trimmedContent,
+      userInputId: userMessage.id,
       attachments: normalizedAttachments,
     }).catch((error) => {
       if (isAgentBusyError(error)) {
@@ -469,6 +474,7 @@ export async function sendConversationMessage({
       worker,
       content: workerContent,
       userInputText: trimmedContent,
+      userInputId: userMessage.id,
       attachments: normalizedAttachments,
     });
   } catch (error) {

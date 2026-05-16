@@ -195,6 +195,7 @@ async function deliverQueuedWorkerSteering(args: {
   // (record.content), not the bridge-augmented content with attachment
   // context appended.
   await appendUserInputOnDelivery({
+    id: args.userMessageId ?? undefined,
     runId: args.run.id,
     workerId: args.worker.id,
     text: args.userText,
@@ -502,7 +503,17 @@ export async function drainQueuedImplementationMessages(runId: string) {
         });
         const response = await askAgent(worker.id, workerContent);
         const deliveredAt = new Date();
+        const userMessage = {
+          id: randomUUID(),
+          runId,
+          role: "user" as const,
+          kind: "checkpoint" as const,
+          content: record.content,
+          attachmentsJson: record.attachmentsJson,
+          createdAt: now,
+        };
         await appendUserInputOnDelivery({
+          id: userMessage.id,
           runId,
           workerId: worker.id,
           text: record.content,
@@ -514,15 +525,7 @@ export async function drainQueuedImplementationMessages(runId: string) {
             sizeBytes: attachment.size,
           })),
         });
-        await db.insert(messages).values({
-          id: randomUUID(),
-          runId,
-          role: "user",
-          kind: "checkpoint",
-          content: record.content,
-          attachmentsJson: record.attachmentsJson,
-          createdAt: now,
-        });
+        await db.insert(messages).values(userMessage);
         await db.insert(messages).values({
           id: randomUUID(),
           runId,
@@ -578,8 +581,8 @@ export async function drainQueuedImplementationMessages(runId: string) {
     await db.insert(messages).values({
       id: randomUUID(),
       runId,
-      role: "user",
-      kind: "checkpoint",
+      role: "user" as const,
+      kind: "checkpoint" as const,
       content: record.content,
       attachmentsJson: record.attachmentsJson,
       createdAt: now,
@@ -635,15 +638,16 @@ export async function drainQueuedWorkerMessages({
       updatedAt: startedAt,
       lastError: null,
     }).where(eq(queuedConversationMessages.id, record.id));
-    await db.insert(messages).values({
+    const userMessage = {
       id: randomUUID(),
       runId,
-      role: "user",
-      kind: "checkpoint",
+      role: "user" as const,
+      kind: "checkpoint" as const,
       content: record.content,
       attachmentsJson: record.attachmentsJson,
       createdAt: startedAt,
-    });
+    };
+    await db.insert(messages).values(userMessage);
     await db.update(runs).set({
       status: run.mode === "planning" ? "working" : "running",
       failedAt: null,
@@ -659,6 +663,7 @@ export async function drainQueuedWorkerMessages({
       const response = await askAgent(workerId, workerContent);
       const deliveredAt = new Date();
       await appendUserInputOnDelivery({
+        id: userMessage.id,
         runId,
         workerId,
         text: record.content,

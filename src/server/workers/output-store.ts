@@ -4,6 +4,7 @@ import { gzipSync, gunzipSync } from "node:zlib";
 import AdmZip from "adm-zip";
 import type { AgentRecord } from "@/server/bridge-client";
 import { getAppDataPath } from "@/server/app-root";
+import { emitNamedEvent } from "@/server/events/named-events";
 import type {
   WorkerEntry,
   WorkerEntryAttachment,
@@ -353,7 +354,7 @@ async function ensureChainCaches(runId: string, workerId: string): Promise<{ nex
   if (nextSeq !== undefined && seen !== undefined) {
     return { nextSeq, seen };
   }
-  const existing = await readAllPersistedEntries(runId, workerId);
+  const existing = backfillVirtualSeqs(await readAllPersistedEntries(runId, workerId));
   let maxSeq = 0;
   seen = new Set<string>();
   for (const entry of existing) {
@@ -513,6 +514,7 @@ export async function writeWorkerOutputEntries(
     const newlineGuard = await needsLeadingNewline(target);
 
     const lines: string[] = [];
+    const appendedEntries: WorkerEntry[] = [];
     for (const entry of newEntries) {
       const id = typeof entry.id === "string" && entry.id ? entry.id : `synthetic-${nextSeq}`;
       // Preserve input shape: spread the entry first, then layer on
@@ -525,6 +527,7 @@ export async function writeWorkerOutputEntries(
       };
       const compact = compactEntryForHistory(promoted as unknown as CompactableEntry) as unknown as WorkerEntry;
       lines.push(JSON.stringify(compact));
+      appendedEntries.push(compact);
       seen.add(id);
       nextSeq += 1;
     }
@@ -538,6 +541,16 @@ export async function writeWorkerOutputEntries(
       await handle.close();
     }
     nextSeqByKey.set(key, nextSeq);
+    for (const entry of appendedEntries) {
+      if (typeof entry.seq === "number" && Number.isFinite(entry.seq) && entry.seq > 0) {
+        emitNamedEvent({
+          kind: "worker.entry_appended",
+          runId,
+          workerId,
+          seq: entry.seq,
+        });
+      }
+    }
   });
 }
 
@@ -678,28 +691,17 @@ export async function readWorkerEntriesSince(
 }
 
 function backfillVirtualSeqs(entries: WorkerEntry[]): WorkerEntry[] {
-  let maxSeenSeq = 0;
   let anyMissing = false;
   for (const entry of entries) {
-    if (typeof entry.seq === "number" && Number.isFinite(entry.seq)) {
-      if (entry.seq > maxSeenSeq) {
-        maxSeenSeq = entry.seq;
-      }
-    } else {
+    if (typeof entry.seq !== "number" || !Number.isFinite(entry.seq)) {
       anyMissing = true;
+      break;
     }
   }
   if (!anyMissing) {
     return entries;
   }
-  let cursor = maxSeenSeq;
-  return entries.map((entry) => {
-    if (typeof entry.seq === "number" && Number.isFinite(entry.seq)) {
-      return entry;
-    }
-    cursor += 1;
-    return { ...entry, seq: cursor };
-  });
+  return entries.map((entry, index) => ({ ...entry, seq: index + 1 }));
 }
 
 export function parseLegacyOutputEntriesJson(value: string | null | undefined): OutputEntry[] {
