@@ -1,10 +1,11 @@
 import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockSpawnAgent, mockAskAgent, mockCancelAgent, mockExecFileSync } = vi.hoisted(() => ({
+const { mockSpawnAgent, mockAskAgent, mockCancelAgent, mockGetAgent, mockExecFileSync } = vi.hoisted(() => ({
   mockSpawnAgent: vi.fn(),
   mockAskAgent: vi.fn(),
   mockCancelAgent: vi.fn(),
+  mockGetAgent: vi.fn(),
   mockExecFileSync: vi.fn(),
 }));
 
@@ -12,6 +13,7 @@ vi.mock("@/server/bridge-client", () => ({
   spawnAgent: mockSpawnAgent,
   askAgent: mockAskAgent,
   cancelAgent: mockCancelAgent,
+  getAgent: mockGetAgent,
 }));
 
 vi.mock("child_process", () => ({
@@ -23,7 +25,13 @@ describe("worker failover when the handoff turn itself fails", () => {
     mockSpawnAgent.mockReset();
     mockAskAgent.mockReset();
     mockCancelAgent.mockReset();
+    mockGetAgent.mockReset();
     mockExecFileSync.mockReset();
+    mockGetAgent.mockResolvedValue({
+      outputEntries: [],
+      currentText: "",
+      lastText: "",
+    });
     mockExecFileSync.mockImplementation((command: string, args: string[]) => {
       if (args[0] === "codex-acp" || args[0] === "claude-agent-acp") {
         return Buffer.from(`/usr/local/bin/${args[0]}\n`);
@@ -93,8 +101,13 @@ describe("worker failover when the handoff turn itself fails", () => {
       updatedAt: now,
     });
 
-    // Handoff ask rejects (outgoing worker is unresponsive)
-    mockAskAgent.mockRejectedValue(new Error("Ask failed: agent unresponsive"));
+    // Handoff ask rejects (outgoing worker is unresponsive), but the replacement receives the synthetic seed.
+    mockAskAgent.mockRejectedValueOnce(new Error("Ask failed: agent unresponsive"))
+      .mockResolvedValueOnce({
+        response: "Replacement continued from synthetic handoff.",
+        state: "idle",
+        stopReason: "end_turn",
+      });
     mockSpawnAgent.mockResolvedValueOnce({
       sessionId: "session-claude-1",
       sessionMode: "full-access",

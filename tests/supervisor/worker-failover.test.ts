@@ -2,10 +2,11 @@ import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 
-const { mockSpawnAgent, mockAskAgent, mockCancelAgent, mockExecFileSync } = vi.hoisted(() => ({
+const { mockSpawnAgent, mockAskAgent, mockCancelAgent, mockGetAgent, mockExecFileSync } = vi.hoisted(() => ({
   mockSpawnAgent: vi.fn(),
   mockAskAgent: vi.fn(),
   mockCancelAgent: vi.fn(),
+  mockGetAgent: vi.fn(),
   mockExecFileSync: vi.fn(),
 }));
 
@@ -13,6 +14,7 @@ vi.mock("@/server/bridge-client", () => ({
   spawnAgent: mockSpawnAgent,
   askAgent: mockAskAgent,
   cancelAgent: mockCancelAgent,
+  getAgent: mockGetAgent,
 }));
 
 vi.mock("child_process", () => ({
@@ -24,7 +26,13 @@ describe("attemptWorkerFailover", () => {
     mockSpawnAgent.mockReset();
     mockAskAgent.mockReset();
     mockCancelAgent.mockReset();
+    mockGetAgent.mockReset();
     mockExecFileSync.mockReset();
+    mockGetAgent.mockResolvedValue({
+      outputEntries: [],
+      currentText: "",
+      lastText: "",
+    });
 
     mockExecFileSync.mockImplementation((command: string, args: string[]) => {
       if (args[0] === "claude-agent-acp" || args[0] === "codex-acp" || args[0] === "opencode" || args[0] === "gemini") {
@@ -112,6 +120,10 @@ describe("attemptWorkerFailover", () => {
       response: "```omniharness-handoff\nTASK: refactor auth\nPROGRESS: wrote tests\nNEXT_STEPS: run tests\n```",
       state: "stopped",
       stopReason: "end_turn",
+    }).mockResolvedValueOnce({
+      response: "Replacement continued from handoff.",
+      state: "idle",
+      stopReason: "end_turn",
     });
     mockCancelAgent.mockResolvedValue(undefined);
     mockSpawnAgent.mockResolvedValueOnce({
@@ -136,6 +148,11 @@ describe("attemptWorkerFailover", () => {
     expect(result.state).toBe("failed_over");
     if (result.state !== "failed_over") return;
     expect(result.newType).toBe("claude");
+    expect(mockAskAgent).toHaveBeenCalledTimes(2);
+    expect(mockAskAgent.mock.calls[0]?.[0]).toBe(workerId);
+    expect(mockAskAgent.mock.calls[1]?.[0]).toBe(result.newWorkerId);
+    expect(mockAskAgent.mock.calls[1]?.[1]).toContain("# Failover Handoff");
+    expect(mockAskAgent.mock.calls[1]?.[1]).toContain("TASK:** refactor auth");
 
     const { __getRingForTests } = await import("@/server/events/named-events");
     const events = __getRingForTests();
@@ -144,6 +161,19 @@ describe("attemptWorkerFailover", () => {
     expect(kinds).toContain("worker.handoff_emitted");
     expect(kinds).toContain("worker.spawned");
     expect(kinds).toContain("worker.failover_completed");
+
+    const { db } = await import("@/server/db");
+    const schema = await import("@/server/db/schema");
+    const incidents = await db.select().from(schema.recoveryIncidents).where(eq(schema.recoveryIncidents.runId, runId));
+    expect(incidents).toHaveLength(1);
+    expect(incidents[0]?.status).toBe("resolved");
+
+    const { readWorkerOutputEntries } = await import("@/server/workers/output-store");
+    const entries = await readWorkerOutputEntries(runId, result.newWorkerId);
+    expect(entries.some((entry) =>
+      entry.type === "supervisor_input"
+      && entry.text.includes("# Failover Handoff")
+    )).toBe(true);
   });
 
   it("parks the run when no replacement worker is available", async () => {
@@ -180,7 +210,13 @@ describe("attemptWorkerFailover", () => {
     const runId = await seedRun(["codex", "claude"]);
     const workerId = await seedWorker(runId, "codex");
 
-    mockAskAgent.mockImplementation(() => new Promise(() => undefined));
+    mockAskAgent
+      .mockImplementationOnce(() => new Promise(() => undefined))
+      .mockResolvedValueOnce({
+        response: "Replacement continued from synthetic handoff.",
+        state: "idle",
+        stopReason: "end_turn",
+      });
     mockSpawnAgent.mockResolvedValueOnce({
       sessionId: "session-claude-1",
       sessionMode: "full-access",
@@ -213,6 +249,10 @@ describe("attemptWorkerFailover", () => {
     mockAskAgent.mockResolvedValueOnce({
       response: "```omniharness-handoff\nTASK: x\nPROGRESS: y\nNEXT_STEPS: z\n```",
       state: "stopped",
+      stopReason: "end_turn",
+    }).mockResolvedValueOnce({
+      response: "Gemini continued from handoff.",
+      state: "idle",
       stopReason: "end_turn",
     });
     mockSpawnAgent

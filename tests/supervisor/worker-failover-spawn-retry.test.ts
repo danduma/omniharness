@@ -2,10 +2,11 @@ import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 
-const { mockSpawnAgent, mockAskAgent, mockCancelAgent, mockExecFileSync } = vi.hoisted(() => ({
+const { mockSpawnAgent, mockAskAgent, mockCancelAgent, mockGetAgent, mockExecFileSync } = vi.hoisted(() => ({
   mockSpawnAgent: vi.fn(),
   mockAskAgent: vi.fn(),
   mockCancelAgent: vi.fn(),
+  mockGetAgent: vi.fn(),
   mockExecFileSync: vi.fn(),
 }));
 
@@ -13,6 +14,7 @@ vi.mock("@/server/bridge-client", () => ({
   spawnAgent: mockSpawnAgent,
   askAgent: mockAskAgent,
   cancelAgent: mockCancelAgent,
+  getAgent: mockGetAgent,
 }));
 
 vi.mock("child_process", () => ({
@@ -24,7 +26,13 @@ describe("worker failover bounded retry across the allowed list", () => {
     mockSpawnAgent.mockReset();
     mockAskAgent.mockReset();
     mockCancelAgent.mockReset();
+    mockGetAgent.mockReset();
     mockExecFileSync.mockReset();
+    mockGetAgent.mockResolvedValue({
+      outputEntries: [],
+      currentText: "",
+      lastText: "",
+    });
     mockExecFileSync.mockImplementation((command: string, args: string[]) => {
       if (args[0] === "codex-acp" || args[0] === "claude-agent-acp" || args[0] === "gemini") {
         return Buffer.from(`/usr/local/bin/${args[0]}\n`);

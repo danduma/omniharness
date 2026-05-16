@@ -8,6 +8,7 @@ import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { buildSyntheticHandoff, requestWorkerHandoff } from "@/server/handoff/request";
 import { renderHandoffSeed } from "@/server/handoff/render";
 import type { HandoffReport } from "@/server/handoff/parser";
+import { markRecoveryIncidentResolved } from "@/server/runs/recovery-incidents";
 import {
   parkRunForQuotaWait,
   recordWorkerQuotaBlock,
@@ -16,6 +17,8 @@ import {
 import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
 import { getRecoveryPolicy } from "@/server/runs/recovery-policy";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
+import { persistWorkerSnapshot } from "@/server/workers/snapshots";
+import { appendSupervisorInputOnDelivery } from "@/server/workers/stream-writer";
 import { selectSpawnableWorkerTypeAsync } from "@/server/supervisor/worker-availability";
 import {
   normalizeWorkerType,
@@ -57,6 +60,13 @@ export type AttemptWorkerFailoverResult =
 
 function truncate(value: string, maxLength = 2_000) {
   return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
+}
+
+function appendWorkerOutput(existingLog: string | null | undefined, nextChunk: string) {
+  if (!nextChunk.trim()) {
+    return existingLog ?? "";
+  }
+  return [existingLog ?? "", nextChunk].filter((part) => part.trim()).join("\n\n");
 }
 
 async function setIncidentFailoverFlag(incidentId: string, value: boolean | "resolved") {
@@ -297,7 +307,59 @@ export async function attemptWorkerFailover(
         updatedAt: new Date(),
       }).where(eq(workers.id, newWorkerId));
 
-      await setIncidentFailoverFlag(block.incidentId, "resolved");
+      const response = await bridge.askAgent(newWorkerId, seed);
+      await appendSupervisorInputOnDelivery({
+        runId: args.runId,
+        workerId: newWorkerId,
+        text: seed,
+        deliveredAt: new Date(),
+      });
+      let snapshot: Awaited<ReturnType<typeof bridge.getAgent>> | null = null;
+      try {
+        snapshot = await bridge.getAgent(newWorkerId);
+        await persistWorkerSnapshot(newWorkerId, snapshot);
+      } catch {
+        // The ask response still determines visible state if the bridge drops the worker quickly.
+      }
+      const latestWorker = await db.select().from(workers).where(eq(workers.id, newWorkerId)).get();
+      await db.update(workers).set({
+        status: response.state,
+        outputLog: appendWorkerOutput(latestWorker?.outputLog, response.response),
+        currentText: snapshot?.currentText ?? latestWorker?.currentText ?? "",
+        lastText: snapshot?.lastText || latestWorker?.lastText || response.response,
+        updatedAt: new Date(),
+      }).where(eq(workers.id, newWorkerId));
+      await recordFailoverEvent({
+        runId: args.runId,
+        workerId: newWorkerId,
+        type: "worker_prompted",
+        details: {
+          summary: `Sent failover handoff seed to ${newWorkerId}.`,
+          prompt: seed,
+          reason: "worker_failover",
+          outgoingWorkerId: args.outgoingWorkerId,
+          handoffSource: handoff.source,
+        },
+      });
+
+      await markRecoveryIncidentResolved({
+        incidentId: block.incidentId,
+        runId: args.runId,
+        workerId: args.outgoingWorkerId,
+        summary: "Worker failover completed after quota exhaustion.",
+        details: {
+          ...block.details,
+          recoveryState: "failover_completed",
+          recommendedAction: "none",
+          failover_pending: false,
+          failover_resolved_at: new Date().toISOString(),
+          outgoingWorkerId: args.outgoingWorkerId,
+          outgoingType: args.outgoingWorkerType,
+          newWorkerId,
+          newType: currentType,
+          handoffSource: handoff.source,
+        },
+      });
       await db.update(runs).set({
         status: "running",
         failedAt: null,
