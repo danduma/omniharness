@@ -108,13 +108,12 @@ export function structureHasBlockingGaps(structure: PlanStructuralFacts): boolea
   if (structure.itemsWithStubTitle.length > 0) return true;
 
   const allItemsMissingDetails = structure.itemsMissingDetails.length === structure.itemCount;
-  const noVerifyAnywhere = structure.itemsMissingVerify.length === structure.itemCount
-    && !structure.hasAcceptanceCriteria;
-  if (allItemsMissingDetails && noVerifyAnywhere) return true;
+  if (allItemsMissingDetails && !structure.hasAcceptanceCriteria) return true;
 
   if (structure.itemsWithVagueTitle.length > 0
     && !structure.hasAcceptanceCriteria
-    && structure.itemsMissingVerify.length === structure.itemCount) {
+    && structure.itemsMissingVerify.length === structure.itemCount
+    && structure.itemsMissingDetails.length === structure.itemCount) {
     return true;
   }
 

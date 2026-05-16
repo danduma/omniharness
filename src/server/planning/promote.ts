@@ -57,6 +57,12 @@ export async function promotePlanningRun(args: {
     throw new Error("No verified plan is available to promote");
   }
 
+  const selectedArtifact = artifacts.candidates?.find((candidate) => candidate.path === selectedPlanPath) ?? null;
+  if (selectedArtifact?.readiness && selectedArtifact.readiness.ready === false) {
+    throw new Error("The selected plan is not ready for implementation");
+  }
+  const artifactAlreadyReady = selectedArtifact?.readiness?.ready === true;
+
   if (!fs.existsSync(selectedPlanPath)) {
     throw new Error(`Plan file not found: ${selectedPlanPath}`);
   }
@@ -73,7 +79,7 @@ export async function promotePlanningRun(args: {
   // edge cases like a plan file emptied between the verdict and the promote.
   const planMarkdown = fs.readFileSync(selectedPlanPath, "utf8");
   const readiness = await assessPlanReadiness(parsePlan(planMarkdown));
-  if (!record?.verdict && !readiness.ready) {
+  if (!record?.verdict && !artifactAlreadyReady && !readiness.ready) {
     throw new Error("The selected plan is not ready for implementation");
   }
 
