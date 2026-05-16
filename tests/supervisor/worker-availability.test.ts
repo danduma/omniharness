@@ -139,6 +139,72 @@ describe("selectSpawnableWorkerType", () => {
     });
   });
 
+  it("detects claude login from the macOS Keychain when auth status lies", async () => {
+    mockExecFileSync.mockImplementation((command: string, args: string[]) => {
+      if (command === "claude" && args[0] === "auth" && args[1] === "status") {
+        return Buffer.from(JSON.stringify({ loggedIn: false, authMethod: "none" }));
+      }
+      if (command === "security" && args[0] === "find-generic-password" && args[2] === "Claude Code-credentials") {
+        return Buffer.from("keychain: ...\nattributes: ...\n");
+      }
+      throw new Error("not found");
+    });
+
+    const { getWorkerAuthenticationInfo } = await import("@/server/supervisor/worker-availability");
+
+    expect(getWorkerAuthenticationInfo("claude", {
+      env: { HOME: "/Users/tester", PATH: "/usr/bin:/bin" },
+      homeDir: "/Users/tester",
+      fileExists: () => false,
+      platform: "darwin",
+    })).toMatchObject({
+      status: "authenticated",
+      method: "session_file",
+    });
+  });
+
+  it("detects claude login from the legacy credentials file", async () => {
+    mockExecFileSync.mockImplementation((command: string, args: string[]) => {
+      if (command === "claude" && args[0] === "auth" && args[1] === "status") {
+        return Buffer.from(JSON.stringify({ loggedIn: false, authMethod: "none" }));
+      }
+      throw new Error("not found");
+    });
+
+    const { getWorkerAuthenticationInfo } = await import("@/server/supervisor/worker-availability");
+
+    expect(getWorkerAuthenticationInfo("claude", {
+      env: {},
+      homeDir: "/Users/tester",
+      fileExists: (filePath) => filePath === "/Users/tester/.claude/.credentials.json",
+      platform: "linux",
+    })).toMatchObject({
+      status: "authenticated",
+      method: "session_file",
+    });
+  });
+
+  it("reports claude as not authenticated when no credentials exist anywhere", async () => {
+    mockExecFileSync.mockImplementation((command: string, args: string[]) => {
+      if (command === "claude" && args[0] === "auth" && args[1] === "status") {
+        return Buffer.from(JSON.stringify({ loggedIn: false, authMethod: "none" }));
+      }
+      throw new Error("not found");
+    });
+
+    const { getWorkerAuthenticationInfo } = await import("@/server/supervisor/worker-availability");
+
+    expect(getWorkerAuthenticationInfo("claude", {
+      env: {},
+      homeDir: "/Users/tester",
+      fileExists: () => false,
+      platform: "darwin",
+    })).toMatchObject({
+      status: "not_authenticated",
+      method: "missing",
+    });
+  });
+
   it("accepts gemini when the CLI is available even without GEMINI_API_KEY", async () => {
     mockExecFileSync.mockImplementation((command: string, args: string[]) => {
       if (args[0] === "gemini") {
@@ -238,6 +304,56 @@ describe("selectSpawnableWorkerType", () => {
       status: "usage_only",
       usedTokens: 425,
       source: "opencode stats",
+    });
+  });
+
+  it("treats quota-blocked types as not spawnable when passed in options", async () => {
+    mockExecFileSync.mockImplementation((command: string, args: string[]) => {
+      if (args[0] === "codex-acp" || args[0] === "claude-agent-acp") {
+        return Buffer.from(`/usr/local/bin/${args[0]}\n`);
+      }
+      if (command === "codex" && args[0] === "login" && args[1] === "status") {
+        return Buffer.from("Logged in using ChatGPT\n");
+      }
+      if (command === "claude" && args[0] === "auth" && args[1] === "status") {
+        return Buffer.from(JSON.stringify({ loggedIn: true }));
+      }
+      throw new Error("not found");
+    });
+
+    const { isSpawnableWorkerType } = await import("@/server/supervisor/worker-availability");
+
+    expect(isSpawnableWorkerType("codex", { quotaBlocked: new Set(["codex"]) })).toMatchObject({
+      ok: false,
+      type: "codex",
+    });
+    expect(isSpawnableWorkerType("codex", { quotaBlocked: new Set() })).toMatchObject({
+      ok: true,
+      type: "codex",
+    });
+  });
+
+  it("selectSpawnableWorkerType honours the quotaBlocked set and walks the allowed list", async () => {
+    mockExecFileSync.mockImplementation((command: string, args: string[]) => {
+      if (args[0] === "codex-acp" || args[0] === "claude-agent-acp") {
+        return Buffer.from(`/usr/local/bin/${args[0]}\n`);
+      }
+      if (command === "codex" && args[0] === "login" && args[1] === "status") {
+        return Buffer.from("Logged in using ChatGPT\n");
+      }
+      if (command === "claude" && args[0] === "auth" && args[1] === "status") {
+        return Buffer.from(JSON.stringify({ loggedIn: true }));
+      }
+      throw new Error("not found");
+    });
+
+    const { selectSpawnableWorkerType } = await import("@/server/supervisor/worker-availability");
+
+    expect(selectSpawnableWorkerType("codex", {}, ["codex", "claude"], {
+      quotaBlocked: new Set(["codex"]),
+    })).toMatchObject({
+      type: "claude",
+      requestedType: "codex",
     });
   });
 });

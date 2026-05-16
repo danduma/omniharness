@@ -103,4 +103,58 @@ describe("named-events ring buffer", () => {
     }
     expect(__getRingForTests().length).toBe(capacity);
   });
+
+  it("buffers and replays worker failover events", () => {
+    emitNamedEvent({
+      kind: "worker.failover_started",
+      runId: "r1",
+      outgoingWorkerId: "w1",
+      outgoingType: "codex",
+      reason: "quota_exhausted",
+    });
+    emitNamedEvent({
+      kind: "worker.handoff_emitted",
+      runId: "r1",
+      outgoingWorkerId: "w1",
+      source: "worker",
+    });
+    emitNamedEvent({
+      kind: "worker.failover_completed",
+      runId: "r1",
+      outgoingWorkerId: "w1",
+      newWorkerId: "w2",
+      newType: "claude",
+    });
+
+    const result = getNamedEventsSince(0);
+    expect(result.events.map((entry) => entry.event.kind)).toEqual([
+      "worker.failover_started",
+      "worker.handoff_emitted",
+      "worker.failover_completed",
+    ]);
+  });
+
+  it("buffers worker.failover_failed and the matching error.surfaced code", () => {
+    emitNamedEvent({
+      kind: "worker.failover_failed",
+      runId: "r1",
+      outgoingWorkerId: "w1",
+      stage: "spawn",
+      reason: "no replacement available",
+    });
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "worker.failover.failed",
+      message: "Worker failover failed.",
+      surface: "banner",
+      runId: "r1",
+      workerId: "w1",
+    });
+
+    const result = getNamedEventsSince(0);
+    expect(result.events.map((entry) => entry.event.kind)).toEqual([
+      "worker.failover_failed",
+      "error.surfaced",
+    ]);
+  });
 });

@@ -9,7 +9,7 @@ import { db } from "@/server/db";
 import { clarifications, executionEvents, messages as dbMessages, runs, settings, supervisorInterventions, workers } from "@/server/db/schema";
 import { buildMastraModelConfig, getSupervisorModelConfig, validateSupervisorModelConfig } from "@/server/supervisor/model-config";
 import { SUPERVISOR_SYSTEM_PROMPT } from "@/server/supervisor/prompt";
-import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
+import { hydrateRuntimeEnvFromSettings, readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { buildSupervisorTools } from "@/server/supervisor/tools";
 import { buildSupervisorTurnContext } from "@/server/supervisor/context";
 import { buildSupervisorModelMessages } from "@/server/supervisor/context-window";
@@ -18,10 +18,12 @@ import { retrySupervisorRequest } from "@/server/supervisor/retry";
 import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
 import { handleSupervisorQuotaExhaustion, handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import { selectSpawnableWorkerType } from "@/server/supervisor/worker-availability";
+import { attemptWorkerFailover, loadPendingFailoverContext } from "@/server/supervisor/worker-failover";
 import { parseAllowedWorkerTypes, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
 import { persistRunFailure } from "@/server/runs/failures";
 import { isActiveImplementationRun } from "@/server/runs/status";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
+import { appendLifecycleEntry, appendSupervisorInputOnDelivery } from "@/server/workers/stream-writer";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
 import { normalizeWorkerStatus, workerTurnRecheckDelayMs } from "@/server/supervisor/worker-completion";
@@ -356,7 +358,7 @@ async function pauseForPreflightConfirmation(args: {
     title: args.title,
     purpose: args.purpose,
   });
-  await insertRunMessage(args.runId, "supervisor", question, "clarification");
+  await insertRunMessage(args.runId, "supervisor", question, "implementation_confirmation");
   return true;
 }
 
@@ -625,6 +627,12 @@ async function reserveWorkerRow(args: {
     updatedAt: new Date(),
   });
   emitNamedEvent({ kind: "worker.spawned", runId: args.runId, workerId, workerType: args.workerType });
+  await appendLifecycleEntry({
+    runId: args.runId,
+    workerId,
+    text: `Worker spawned (${args.workerType})`,
+    raw: { eventType: "worker.spawned", workerType: args.workerType },
+  });
   notifyEventStreamSubscribers();
 
   return workerId;
@@ -708,6 +716,7 @@ async function resumeWorkerFromSavedSessionForSupervisor(runId: string, workerId
   }
 
   const mode = normalizeBridgeWorkerMode(worker.bridgeSessionMode);
+  const { env: envParams } = await readRuntimeEnvFromSettings();
   let resumedWorker: bridge.AgentRecord;
   try {
     resumedWorker = await bridge.spawnAgent({
@@ -715,6 +724,7 @@ async function resumeWorkerFromSavedSessionForSupervisor(runId: string, workerId
       cwd: worker.cwd,
       name: worker.id,
       ...(mode ? { mode } : {}),
+      env: envParams,
       ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
       ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
       resumeSessionId: sessionId,
@@ -900,6 +910,31 @@ export class Supervisor {
       updatedAt: new Date(),
     }).where(eq(runs.id, this.runId));
 
+    // Observer-driven failover: if an incident is flagged
+    // failover_pending we owe a failover attempt before doing anything
+    // else this tick.
+    const pendingFailover = await loadPendingFailoverContext(this.runId);
+    if (pendingFailover) {
+      const failoverRun = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+      const failoverAllowed = parseAllowedWorkerTypes(failoverRun?.allowedWorkerTypes);
+      if (failoverAllowed.length >= 2) {
+        const result = await attemptWorkerFailover({
+          runId: this.runId,
+          outgoingWorkerId: pendingFailover.worker.id,
+          outgoingWorkerType: pendingFailover.worker.type as typeof failoverAllowed[number],
+          quotaText: pendingFailover.rawText,
+          originalPrompt: pendingFailover.worker.initialPrompt ?? "",
+          allowedTypes: failoverAllowed,
+          env: envParams,
+          cwd: pendingFailover.worker.cwd,
+          title: pendingFailover.worker.title ?? "",
+        });
+        if (result.state !== "failed_over") {
+          return { state: "paused" };
+        }
+      }
+    }
+
     await drainQueuedImplementationMessages(this.runId);
 
     const pendingClarifications = await db.select().from(clarifications).where(eq(clarifications.runId, this.runId));
@@ -1039,6 +1074,49 @@ export class Supervisor {
           } catch (error) {
             const quotaInfo = extractQuotaResetInfo(error, { provider: workerType.type });
             if (quotaInfo.isQuotaError) {
+              emitNamedEvent({
+                kind: "worker.status",
+                runId: this.runId,
+                workerId,
+                prev: "starting",
+                next: "cred-exhausted",
+              });
+              emitNamedEvent({
+                kind: "error.surfaced",
+                code: "worker.spawn.failed",
+                message: `Worker ${workerType.type} hit quota on spawn.`,
+                surface: "log",
+                runId: this.runId,
+                workerId,
+                cause: {
+                  name: error instanceof Error ? error.name : "Error",
+                  message: quotaInfo.rawText.slice(0, 2_000),
+                },
+              });
+              if (allowedWorkerTypes.length >= 2) {
+                const failover = await attemptWorkerFailover({
+                  runId: this.runId,
+                  outgoingWorkerId: workerId,
+                  outgoingWorkerType: workerType.type,
+                  quotaText: quotaInfo.rawText,
+                  originalPrompt: prompt,
+                  allowedTypes: allowedWorkerTypes,
+                  env: envParams,
+                  cwd,
+                  title,
+                });
+                if (failover.state === "failed_over") {
+                  return {
+                    state: "wait",
+                    delayMs: WORKER_TURN_DEFAULT_RECHECK_DELAY_MS,
+                  };
+                }
+                const parked = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+                if (parked?.status === "quota_waiting") {
+                  return { state: "paused" };
+                }
+                return { state: "paused" };
+              }
               const quotaResult = await handleWorkerQuotaExhaustion({
                 runId: this.runId,
                 workerId,
@@ -1096,6 +1174,17 @@ export class Supervisor {
           let response: Awaited<ReturnType<typeof bridge.askAgent>>;
           try {
             response = await bridge.askAgent(workerId, prompt);
+            // Append supervisor_input on delivery (the prompt reached
+            // the worker). The busy-fallback branch below does not
+            // append — the prompt is re-delivered later via
+            // deferBusyWorkerPrompt; the append happens on that
+            // eventual delivery.
+            await appendSupervisorInputOnDelivery({
+              runId: this.runId,
+              workerId,
+              text: prompt,
+              deliveredAt: new Date(),
+            });
             if (!await this.loadActiveRun()) {
               await this.cleanupWorkerAfterInactiveRun(workerId, spawnedWorker);
               return { state: "completed" };
@@ -1113,6 +1202,26 @@ export class Supervisor {
 
             const quotaInfo = extractQuotaResetInfo(error, { provider: workerType.type });
             if (quotaInfo.isQuotaError) {
+              if (allowedWorkerTypes.length >= 2) {
+                const failover = await attemptWorkerFailover({
+                  runId: this.runId,
+                  outgoingWorkerId: workerId,
+                  outgoingWorkerType: workerType.type,
+                  quotaText: quotaInfo.rawText,
+                  originalPrompt: prompt,
+                  allowedTypes: allowedWorkerTypes,
+                  env: envParams,
+                  cwd,
+                  title,
+                });
+                if (failover.state === "failed_over") {
+                  return {
+                    state: "wait",
+                    delayMs: WORKER_TURN_DEFAULT_RECHECK_DELAY_MS,
+                  };
+                }
+                return { state: "paused" };
+              }
               const quotaResult = await handleWorkerQuotaExhaustion({
                 runId: this.runId,
                 workerId,
@@ -1171,6 +1280,32 @@ export class Supervisor {
 
             const quotaInfo = extractQuotaResetInfo(error);
             if (quotaInfo.isQuotaError) {
+              const continueRun = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+              const continueAllowedTypes = parseAllowedWorkerTypes(continueRun?.allowedWorkerTypes);
+              const continueWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+              const continueWorkerType = (continueWorker?.type ?? continueAllowedTypes[0] ?? "codex") as typeof continueAllowedTypes[number];
+              const continueCwd = continueWorker?.cwd ?? "";
+              const continueTitle = continueWorker?.title ?? "";
+              if (continueAllowedTypes.length >= 2) {
+                const failover = await attemptWorkerFailover({
+                  runId: this.runId,
+                  outgoingWorkerId: workerId,
+                  outgoingWorkerType: continueWorkerType,
+                  quotaText: quotaInfo.rawText,
+                  originalPrompt: prompt,
+                  allowedTypes: continueAllowedTypes,
+                  env: envParams,
+                  cwd: continueCwd,
+                  title: continueTitle,
+                });
+                if (failover.state === "failed_over") {
+                  return {
+                    state: "wait",
+                    delayMs: WORKER_TURN_DEFAULT_RECHECK_DELAY_MS,
+                  };
+                }
+                return { state: "paused" };
+              }
               const quotaResult = await handleWorkerQuotaExhaustion({
                 runId: this.runId,
                 workerId,
@@ -1193,6 +1328,15 @@ export class Supervisor {
             await this.cleanupWorkerAfterInactiveRun(workerId);
             return { state: "completed" };
           }
+          // Supervisor follow-up reached the worker (askAgent resolved
+          // above). Append before persisting the response so the
+          // transcript ordering is supervisor_input → bridge entries.
+          await appendSupervisorInputOnDelivery({
+            runId: this.runId,
+            workerId,
+            text: prompt,
+            deliveredAt: new Date(),
+          });
           await persistWorkerOutput(workerId, response.response);
 
           await db.update(workers).set({
@@ -1278,8 +1422,11 @@ export class Supervisor {
           return { state: "wait", delayMs: 1_000 };
         }
 
-        case "ask_user": {
+        case "ask_user":
+        case "confirm_ready_to_implement": {
           const question = asString(action.args.question, "question");
+          const isImplementationConfirmation = action.name === "confirm_ready_to_implement";
+          const messageKind = isImplementationConfirmation ? "implementation_confirmation" : "clarification";
           const now = new Date();
           await db.insert(clarifications).values({
             id: randomUUID(),
@@ -1291,10 +1438,12 @@ export class Supervisor {
             updatedAt: now,
           });
           await db.update(runs).set({ status: "awaiting_user", updatedAt: now }).where(eq(runs.id, this.runId));
-          await insertExecutionEvent(this.runId, "clarification_requested", {
-            summary: question,
-          });
-          await insertRunMessage(this.runId, "supervisor", question, "clarification");
+          await insertExecutionEvent(
+            this.runId,
+            isImplementationConfirmation ? "implementation_confirmation_requested" : "clarification_requested",
+            { summary: question },
+          );
+          await insertRunMessage(this.runId, "supervisor", question, messageKind);
           return { state: "paused" };
         }
 

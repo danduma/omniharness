@@ -18,6 +18,7 @@ export type RecoveryPolicy = {
   quotaResetGraceMs: number;
   maxQuotaWaitMs: number;
   allowQuotaWaitWithoutParsedReset: boolean;
+  maxHandoffWaitMs: number;
 };
 
 export type RecoveryPolicyDecision =
@@ -42,6 +43,7 @@ export const DEFAULT_RECOVERY_POLICY: RecoveryPolicy = {
   quotaResetGraceMs: 1_000,
   maxQuotaWaitMs: 24 * 60 * 60_000,
   allowQuotaWaitWithoutParsedReset: false,
+  maxHandoffWaitMs: 60_000,
 };
 
 function asBoolean(value: unknown, fallback: boolean) {
@@ -70,6 +72,7 @@ export function normalizeRecoveryPolicy(value: unknown): RecoveryPolicy {
     quotaResetGraceMs: asPositiveInteger(record.quotaResetGraceMs, DEFAULT_RECOVERY_POLICY.quotaResetGraceMs),
     maxQuotaWaitMs: asPositiveInteger(record.maxQuotaWaitMs, DEFAULT_RECOVERY_POLICY.maxQuotaWaitMs),
     allowQuotaWaitWithoutParsedReset: asBoolean(record.allowQuotaWaitWithoutParsedReset, DEFAULT_RECOVERY_POLICY.allowQuotaWaitWithoutParsedReset),
+    maxHandoffWaitMs: asPositiveInteger(record.maxHandoffWaitMs, DEFAULT_RECOVERY_POLICY.maxHandoffWaitMs),
   };
 }
 

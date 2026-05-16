@@ -10,9 +10,13 @@ import { isActiveImplementationRun } from "@/server/runs/status";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { extractQuotaResetInfo, parseQuotaResetText } from "@/server/quota/reset-parser";
 import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
+import { markIncidentForFailover } from "@/server/supervisor/worker-failover";
+import { parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
 import { isLongWorkerCompletionText, normalizeWorkerStatus } from "@/server/supervisor/worker-completion";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
+import { appendLifecycleEntry } from "@/server/workers/stream-writer";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
+import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent, type SupervisorStopReason } from "@/server/events/named-events";
 import { notifyRunLifecycleEventBestEffort } from "@/server/notifications/triggers";
@@ -659,6 +663,7 @@ async function reviveWorkerFromSavedSession(args: {
   const sessionMode = args.sessionMode ?? args.worker.bridgeSessionMode;
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
+  const { env: envParams } = await readRuntimeEnvFromSettings();
 
   let resumedWorker: bridge.AgentRecord;
   try {
@@ -667,6 +672,7 @@ async function reviveWorkerFromSavedSession(args: {
       cwd: args.worker.cwd,
       name: args.worker.id,
       ...(workerMode ? { mode: workerMode } : {}),
+      env: envParams,
       ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
       ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
       resumeSessionId: sessionId,
@@ -959,7 +965,11 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
           now: new Date(now),
         });
         stopRunObserver(runId, { reason: "quota_exhausted" });
-        if (quotaResult.state === "needs_recovery") {
+        const allowedTypes = parseAllowedWorkerTypes(latestRun.allowedWorkerTypes);
+        if (allowedTypes.length >= 2) {
+          await markIncidentForFailover({ runId, workerId: worker.id });
+          wakeSupervisor(runId, 0);
+        } else if (quotaResult.state === "needs_recovery") {
           wakeSupervisor(runId, 0);
         }
         return;
@@ -993,12 +1003,24 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
           prev: prevStatus,
           next: nextStatus,
         });
+        await appendLifecycleEntry({
+          runId,
+          workerId: worker.id,
+          text: `Worker status: ${prevStatus} → ${nextStatus}`,
+          raw: { eventType: "worker.status", prev: prevStatus, next: nextStatus },
+        });
         if (isTerminalWorkerStatus(nextStatus)) {
           emitNamedEvent({
             kind: "worker.terminal",
             runId,
             workerId: worker.id,
             status: nextStatus,
+          });
+          await appendLifecycleEntry({
+            runId,
+            workerId: worker.id,
+            text: `Worker reached terminal status: ${nextStatus}`,
+            raw: { eventType: "worker.terminal", status: nextStatus },
           });
         }
       }

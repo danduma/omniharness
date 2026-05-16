@@ -3,20 +3,19 @@ import { resolvePlanningReviewWorkerType } from "@/server/planning/review-agent-
 import * as workerAvailability from "@/server/supervisor/worker-availability";
 import type { SupportedWorkerType } from "@/server/supervisor/worker-types";
 
+const makeEmptyChain = () => {
+  const chain: Record<string, unknown> = {};
+  chain.from = vi.fn(() => chain);
+  chain.where = vi.fn(() => chain);
+  chain.innerJoin = vi.fn(() => chain);
+  chain.limit = vi.fn(() => chain);
+  chain.then = (resolve: (value: unknown) => unknown) => resolve([]);
+  return chain;
+};
+
 vi.mock("@/server/db", () => ({
   db: {
-    select: vi.fn(() => ({
-      from: vi.fn(() => ({
-        where: vi.fn(() => ({
-          limit: vi.fn(() => [])
-        })),
-        innerJoin: vi.fn(() => ({
-          where: vi.fn(() => ({
-            limit: vi.fn(() => [])
-          }))
-        }))
-      }))
-    }))
+    select: vi.fn(() => makeEmptyChain()),
   }
 }));
 

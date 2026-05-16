@@ -29,7 +29,11 @@ export type SurfacedErrorCode =
   | "conversation.delete.failed"
   | "recovery.gave_up"
   | "worker.spawn.failed"
+  | "worker.failover.failed"
   | "internal";
+
+export type FailoverStage = "selection" | "handoff" | "spawn";
+export type HandoffSource = "worker" | "synthetic";
 
 export type ErrorSurface = "toast" | "banner" | "log";
 
@@ -38,7 +42,39 @@ export type WorkerEvent =
   | { kind: "worker.status"; runId: string; workerId: string; prev: string; next: string }
   | { kind: "worker.terminal"; runId: string; workerId: string; status: string }
   | { kind: "worker.reattached"; runId: string; workerId: string }
-  | { kind: "worker.recreated"; runId: string; workerId: string };
+  | { kind: "worker.recreated"; runId: string; workerId: string }
+  // Wake-up frame for the unified worker conversation stream. Carries
+  // only (workerId, seq); clients fetch the entry via
+  // GET /api/workers/:workerId/entries?afterSeq=. See
+  // docs/architecture/worker-conversation-stream.md.
+  | { kind: "worker.entry_appended"; runId: string; workerId: string; seq: number }
+  | {
+      kind: "worker.failover_started";
+      runId: string;
+      outgoingWorkerId: string;
+      outgoingType: string;
+      reason: string;
+    }
+  | {
+      kind: "worker.handoff_emitted";
+      runId: string;
+      outgoingWorkerId: string;
+      source: HandoffSource;
+    }
+  | {
+      kind: "worker.failover_completed";
+      runId: string;
+      outgoingWorkerId: string;
+      newWorkerId: string;
+      newType: string;
+    }
+  | {
+      kind: "worker.failover_failed";
+      runId: string;
+      outgoingWorkerId: string;
+      stage: FailoverStage;
+      reason: string;
+    };
 
 export type SupervisorStopReason =
   | "run_terminated"

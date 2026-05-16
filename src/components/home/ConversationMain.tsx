@@ -1,7 +1,7 @@
 import type React from "react";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo } from "react";
-import { ArrowDown, Blocks, Check, ChevronDown, CirclePlay, CircleStop, FolderGit2, GitBranch, Pencil, RotateCcw, Route } from "lucide-react";
+import { ArrowDown, ArrowLeftRight, Blocks, Check, ChevronDown, CirclePlay, CircleStop, FolderGit2, GitBranch, Pencil, RotateCcw, Route } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -30,6 +30,7 @@ import type { ProjectFileReference } from "@/lib/project-file-links";
 import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "@/app/home/GitWorkspaceManager";
 import { preflightConfirmationActionsManager } from "@/app/home/PreflightConfirmationActionsManager";
 import { type PlanningReviewAgentSelection } from "@/server/planning/review-preferences";
+import { WORKER_TYPE_LABELS, type SupportedWorkerType } from "@/server/supervisor/worker-types";
 import { ErrorNotice } from "./ErrorNotice";
 import { RecoveryIncidentInspector } from "./RecoveryIncidentInspector";
 import { RunRecoveryNotice } from "./RunRecoveryNotice";
@@ -61,12 +62,10 @@ function suggestCheckoutPath(repoRoot: string | undefined, branchName: string) {
 }
 
 function isPreflightConfirmationMessage(message: MessageRecord) {
-  return message.role === "supervisor"
-    && message.kind === "clarification"
-    && message.content.startsWith("Before I start implementation, please confirm this is the intended job:");
+  return message.role === "supervisor" && message.kind === "implementation_confirmation";
 }
 
-const PREFLIGHT_CONFIRMATION_APPROVED_RESPONSE = "Yes, continue";
+const PREFLIGHT_CONFIRMATION_APPROVED_RESPONSE = "Yes, implement it";
 
 interface ConversationExecutionStatusProps {
   liveExecutionStatus: { label: string; detail: string; tone: "error" | "warning" | "muted" | "active" };
@@ -256,6 +255,14 @@ function renderSupervisorActivityIcon(item: Extract<ConversationTimelineItem, { 
     return <Route className="h-3.5 w-3.5" aria-hidden="true" strokeWidth={1.8} />;
   }
 
+  if (
+    eventType === "worker_failover_started"
+    || eventType === "worker_failover_completed"
+    || eventType === "worker_handoff_emitted"
+  ) {
+    return <ArrowLeftRight className="h-3.5 w-3.5" aria-hidden="true" strokeWidth={1.8} />;
+  }
+
   return null;
 }
 
@@ -386,6 +393,7 @@ interface ConversationMainProps {
   toggleDirectMessageExpansion: (messageId: string) => void;
   primaryConversationAgent: AgentSnapshot | null;
   isHydratingConversations: boolean;
+  isSelectedConversationLoaded: boolean;
   promotePlanningConversation: {
     isPending: boolean;
     mutate: (payload: { runId: string; planPath: string | null }) => void;
@@ -428,6 +436,41 @@ interface ConversationMainProps {
   emptyComposer: React.ReactNode;
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
+}
+
+function FailoverChip({ events }: { events: ExecutionEventRecord[] }) {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i]!;
+    if (event.eventType !== "worker_failover_completed") continue;
+    let outgoingType: string | null = null;
+    let newType: string | null = null;
+    try {
+      const details = event.details ? JSON.parse(event.details) : null;
+      if (details && typeof details === "object") {
+        const record = details as Record<string, unknown>;
+        outgoingType = typeof record.outgoingType === "string" ? record.outgoingType : null;
+        newType = typeof record.newType === "string" ? record.newType : null;
+      }
+    } catch {
+      outgoingType = null;
+      newType = null;
+    }
+    if (!outgoingType || !newType) return null;
+    const outgoingLabel = WORKER_TYPE_LABELS[outgoingType as SupportedWorkerType] ?? outgoingType;
+    const newLabel = WORKER_TYPE_LABELS[newType as SupportedWorkerType] ?? newType;
+    return (
+      <div className="flex">
+        <span
+          className="inline-flex items-center gap-1.5 rounded-full border border-amber-200/40 bg-amber-100/30 px-3 py-1 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200"
+          aria-label="Worker failover"
+        >
+          <ArrowLeftRight className="h-3 w-3" aria-hidden="true" strokeWidth={1.8} />
+          {t("conversation.chip.switchedWorkers", { outgoing: outgoingLabel, incoming: newLabel })}
+        </span>
+      </div>
+    );
+  }
+  return null;
 }
 
 function LatestRecoveryAction({
@@ -485,6 +528,7 @@ export function ConversationMain({
   toggleDirectMessageExpansion,
   primaryConversationAgent,
   isHydratingConversations,
+  isSelectedConversationLoaded,
   promotePlanningConversation,
   onStartReview,
   reviewRuns = [],
@@ -670,26 +714,40 @@ export function ConversationMain({
               />
             </div>
           ) : null}
-          <DirectControlTerminalColumn>
-            <Terminal
-              agent={primaryConversationAgent}
-              userMessages={directConversationMessages}
-              getUserMessageActions={getUserMessageActions}
-              editingUserMessageId={editingMessageId}
-              editingUserMessageValue={editingMessageValue}
-              isEditingUserMessageSaving={recoverRun.isPending}
-              onEditingUserMessageValueChange={setEditingMessageValue}
-              onCancelEditingUserMessage={handleCancelEditingMessage}
-              onSaveEditedUserMessage={handleSaveEditedMessage}
-              variant="native"
-              textSizeScope="conversation"
-              className="min-h-[32rem]"
-              showPendingAssistantIndicator={showDirectControlWorkingIndicator}
-              isLoading={isHydratingConversations}
-              projectRoot={projectRoot}
-              onOpenProjectFile={onOpenProjectFile}
-            />
-          </DirectControlTerminalColumn>
+          {!isSelectedConversationLoaded ? (
+            <div
+              className="flex flex-col items-center justify-center gap-3 pt-24 text-sm text-muted-foreground sm:pt-32"
+              role="status"
+              aria-live="polite"
+            >
+              <div
+                className="h-8 w-8 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground"
+                aria-hidden="true"
+              />
+              <p>Loading conversation…</p>
+            </div>
+          ) : (
+            <DirectControlTerminalColumn>
+              <Terminal
+                agent={primaryConversationAgent}
+                userMessages={directConversationMessages}
+                getUserMessageActions={getUserMessageActions}
+                editingUserMessageId={editingMessageId}
+                editingUserMessageValue={editingMessageValue}
+                isEditingUserMessageSaving={recoverRun.isPending}
+                onEditingUserMessageValueChange={setEditingMessageValue}
+                onCancelEditingUserMessage={handleCancelEditingMessage}
+                onSaveEditedUserMessage={handleSaveEditedMessage}
+                variant="native"
+                textSizeScope="conversation"
+                className="min-h-[32rem]"
+                showPendingAssistantIndicator={showDirectControlWorkingIndicator}
+                isLoading={isHydratingConversations}
+                projectRoot={projectRoot}
+                onOpenProjectFile={onOpenProjectFile}
+              />
+            </DirectControlTerminalColumn>
+          )}
         </div>
       ) : (
         <div className="omni-conversation-text-scale mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 pb-24 sm:gap-6 sm:p-6 sm:pb-20">
@@ -700,7 +758,20 @@ export function ConversationMain({
               onResume={handleResumeRunRecovery}
             />
           ) : null}
-          {conversationTimelineItems.length > 0 ? (
+          {isImplementationConversation ? <FailoverChip events={executionEvents} /> : null}
+          {!isSelectedConversationLoaded ? (
+            <div
+              className="flex flex-col items-center justify-center gap-3 pt-24 text-sm text-muted-foreground sm:pt-32"
+              role="status"
+              aria-live="polite"
+            >
+              <div
+                className="h-8 w-8 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground"
+                aria-hidden="true"
+              />
+              <p>Loading conversation…</p>
+            </div>
+          ) : conversationTimelineItems.length > 0 ? (
             conversationTimelineItems.map((item: ConversationTimelineItem) => {
               if (item.type === "activity") {
                 return <SupervisorActivityMessage key={item.id} item={item} />;

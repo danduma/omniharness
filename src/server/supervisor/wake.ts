@@ -7,6 +7,8 @@ import { isActiveImplementationRun } from "@/server/runs/status";
 import { Supervisor } from "@/server/supervisor";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { resumeQuotaExhaustedWorkers } from "@/server/quota/worker-resume";
+import { clearResolvedQuotaIncidents } from "@/server/quota/type-blocking";
+import { isRunPendingFailover } from "@/server/supervisor/worker-failover";
 import { stopRunObserver } from "./observer";
 import { acquireSupervisorWakeLease, clearSupervisorWakeLease, releaseSupervisorWakeLease } from "./lease";
 import {
@@ -104,8 +106,14 @@ export async function executeSupervisorWake(runId: string) {
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
   if (run?.status === "quota_waiting" && !dueDurableWake) {
     if (await hasFutureDurableSupervisorWake(runId)) {
-      await releaseSupervisorWakeLease(runId, leaseId);
-      return;
+      // Bypass the quota-wait short-circuit when a failover is pending,
+      // so the observer-detected mid-run quota can be picked up on the
+      // very next supervisor tick instead of waiting for the reset.
+      const failoverPending = await isRunPendingFailover(runId);
+      if (!failoverPending) {
+        await releaseSupervisorWakeLease(runId, leaseId);
+        return;
+      }
     }
   }
 
@@ -115,6 +123,13 @@ export async function executeSupervisorWake(runId: string) {
     return;
   }
 
+  if (dueDurableWake?.reason === "quota_wait") {
+    // Sweep any stale quota incidents whose reset has elapsed — covers
+    // failover-success runs whose runs.status never transitioned to
+    // quota_waiting and which therefore wouldn't be touched by the
+    // resumeQuotaExhaustedWorkers path below.
+    await clearResolvedQuotaIncidents(runId);
+  }
   if (run.status === "quota_waiting" && dueDurableWake) {
     await db.update(runs).set({
       status: "running",

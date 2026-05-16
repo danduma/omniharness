@@ -1,45 +1,13 @@
-import { db } from "@/server/db";
-import { workers, recoveryIncidents } from "@/server/db/schema";
-import { eq, and, or } from "drizzle-orm";
 import {
   SUPPORTED_WORKER_TYPES,
   type SupportedWorkerType,
   normalizeWorkerType,
 } from "@/server/supervisor/worker-types";
 import { isSpawnableWorkerType } from "@/server/supervisor/worker-availability";
+import { isWorkerTypeQuotaBlocked } from "@/server/quota/type-blocking";
 import { type PlanningReviewAgentSelection } from "./review-preferences";
 
-export async function isWorkerTypeQuotaBlocked(type: SupportedWorkerType): Promise<boolean> {
-  // Check for any worker of this type marked as cred-exhausted.
-  const exhaustedWorkers = await db.select()
-    .from(workers)
-    .where(and(
-      eq(workers.type, type),
-      eq(workers.status, "cred-exhausted")
-    ))
-    .limit(1);
-  
-  if (exhaustedWorkers.length > 0) return true;
-
-  // Check for active quota incidents for this worker type.
-  const quotaIncidents = await db.select()
-    .from(recoveryIncidents)
-    .innerJoin(workers, eq(recoveryIncidents.workerId, workers.id))
-    .where(and(
-      eq(workers.type, type),
-      eq(recoveryIncidents.kind, "quota_exhausted"),
-      or(
-        eq(recoveryIncidents.status, "open"),
-        eq(recoveryIncidents.status, "waiting"),
-        eq(recoveryIncidents.status, "quota_waiting")
-      )
-    ))
-    .limit(1);
-
-  if (quotaIncidents.length > 0) return true;
-
-  return false;
-}
+export { isWorkerTypeQuotaBlocked };
 
 export async function resolvePlanningReviewWorkerType(args: {
   agentSelection: PlanningReviewAgentSelection;

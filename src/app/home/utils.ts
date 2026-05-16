@@ -352,6 +352,9 @@ const INLINE_CONVERSATION_EVENT_TYPES = new Set([
   "clarification_requested",
   "worker_cancelled",
   "worker_error",
+  "worker_failover_started",
+  "worker_handoff_emitted",
+  "worker_failover_completed",
   "worker_permission_approved",
   "worker_permission_denied",
   "worker_permission_requested",
@@ -975,6 +978,30 @@ export function summarizeExecutionEvent(event: ExecutionEventRecord) {
 
   if (event.eventType === "worker_stopped") {
     return `${workerLabel} stopped`;
+  }
+
+  if (event.eventType === "worker_failover_started") {
+    const outgoingType = typeof details.outgoingType === "string" ? details.outgoingType : "";
+    const newType = typeof details.newType === "string" ? details.newType : "";
+    return t("events.failover.started", {
+      outgoing: outgoingType || workerLabel,
+      incoming: newType || "next worker",
+    });
+  }
+
+  if (event.eventType === "worker_handoff_emitted") {
+    const source = typeof details.source === "string" ? details.source : "";
+    const key = source === "synthetic" ? "events.failover.handoffSynthetic" : "events.failover.handoffEmitted";
+    return t(key, { outgoing: workerLabel });
+  }
+
+  if (event.eventType === "worker_failover_completed") {
+    const outgoingType = typeof details.outgoingType === "string" ? details.outgoingType : "";
+    const newType = typeof details.newType === "string" ? details.newType : "";
+    return t("events.failover.completed", {
+      outgoing: outgoingType || workerLabel,
+      incoming: newType || "next worker",
+    });
   }
 
   if (event.eventType === "clarification_requested") {

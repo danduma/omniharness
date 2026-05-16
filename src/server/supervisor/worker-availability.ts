@@ -39,7 +39,23 @@ type WorkerAuthenticationDetectionOptions = {
   homeDir?: string;
   fileExists?: (filePath: string) => boolean;
   commandRunner?: CommandRunner;
+  platform?: NodeJS.Platform;
 };
+
+function claudeKeychainCredentialsExist(commandRunner: CommandRunner, env: EnvLike) {
+  try {
+    commandRunner("security", ["find-generic-password", "-s", "Claude Code-credentials"], {
+      encoding: "utf8",
+      env: withManagedPath(env) as NodeJS.ProcessEnv,
+      timeout: 1_500,
+      maxBuffer: 64 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 type WorkerDetectionOptions = {
   env?: EnvLike;
@@ -276,6 +292,7 @@ export function getWorkerAuthenticationInfo(type: string, options: WorkerAuthent
   const homeDir = options.homeDir ?? env.HOME ?? homedir();
   const fileExists = options.fileExists ?? existsSync;
   const commandRunner = options.commandRunner ?? execFileSync;
+  const platform = options.platform ?? process.platform;
 
   if (!supportedType) {
     return {
@@ -339,6 +356,27 @@ export function getWorkerAuthenticationInfo(type: string, options: WorkerAuthent
         status: "authenticated",
         method: "status_command",
         message: "Claude Code reports an active login.",
+        setupCommand: "claude auth login",
+      };
+    }
+
+    // `claude auth status` can report loggedIn:false even when valid credentials
+    // exist on disk or in the macOS Keychain (Claude Code 2.x stores tokens
+    // there but the status command does not always read them back).
+    if (anyFileExists([join(homeDir, ".claude", ".credentials.json")], fileExists)) {
+      return {
+        status: "authenticated",
+        method: "session_file",
+        message: "Claude Code credentials file was detected.",
+        setupCommand: "claude auth login",
+      };
+    }
+
+    if (platform === "darwin" && claudeKeychainCredentialsExist(commandRunner, env)) {
+      return {
+        status: "authenticated",
+        method: "session_file",
+        message: "Claude Code credentials were found in the macOS Keychain.",
         setupCommand: "claude auth login",
       };
     }
@@ -420,7 +458,11 @@ export function getWorkerAuthenticationInfo(type: string, options: WorkerAuthent
   };
 }
 
-export function isSpawnableWorkerType(type: string, options: WorkerDetectionOptions = {}) {
+type SpawnabilityOptions = WorkerDetectionOptions & {
+  quotaBlocked?: ReadonlySet<SupportedWorkerType>;
+};
+
+export function isSpawnableWorkerType(type: string, options: SpawnabilityOptions = {}) {
   const normalized = normalizeWorkerType(type);
   if (!SUPPORTED_WORKER_TYPES.includes(normalized as SupportedWorkerType)) {
     return {
@@ -453,6 +495,14 @@ export function isSpawnableWorkerType(type: string, options: WorkerDetectionOpti
     };
   }
 
+  if (options.quotaBlocked?.has(supportedType)) {
+    return {
+      ok: false,
+      type: supportedType,
+      reason: `${supportedType} worker is blocked by an active quota incident.`,
+    };
+  }
+
   return {
     ok: true,
     type: supportedType,
@@ -474,18 +524,24 @@ export function getWorkerInstallationInfo(type: string, options: WorkerDetection
   };
 }
 
-export function selectSpawnableWorkerType(requestedType: string, env: EnvLike, allowedTypes: SupportedWorkerType[] = [...SUPPORTED_WORKER_TYPES]) {
+export function selectSpawnableWorkerType(
+  requestedType: string,
+  env: EnvLike,
+  allowedTypes: SupportedWorkerType[] = [...SUPPORTED_WORKER_TYPES],
+  options: { quotaBlocked?: ReadonlySet<SupportedWorkerType> } = {},
+) {
   const normalizedRequestedType = normalizeWorkerType(requestedType);
   const normalizedAllowedTypes = Array.from(new Set(
     allowedTypes.filter((type): type is SupportedWorkerType => SUPPORTED_WORKER_TYPES.includes(type)),
   ));
+  const quotaBlocked = options.quotaBlocked;
 
   if (!normalizedAllowedTypes.includes(normalizedRequestedType as SupportedWorkerType)) {
     const firstAllowed = normalizedAllowedTypes[0];
     if (!firstAllowed) {
       throw new Error("No allowed worker types are configured for this run.");
     }
-    const availability = isSpawnableWorkerType(firstAllowed, { env });
+    const availability = isSpawnableWorkerType(firstAllowed, { env, quotaBlocked });
     if (availability.ok) {
       return {
         type: availability.type,
@@ -495,7 +551,7 @@ export function selectSpawnableWorkerType(requestedType: string, env: EnvLike, a
     }
   }
 
-  const requested = isSpawnableWorkerType(normalizedRequestedType, { env });
+  const requested = isSpawnableWorkerType(normalizedRequestedType, { env, quotaBlocked });
   if (requested.ok && normalizedAllowedTypes.includes(requested.type)) {
     return {
       type: requested.type,
@@ -508,7 +564,7 @@ export function selectSpawnableWorkerType(requestedType: string, env: EnvLike, a
     if (candidate === normalizedRequestedType || !normalizedAllowedTypes.includes(candidate)) {
       continue;
     }
-    const availability = isSpawnableWorkerType(candidate, { env });
+    const availability = isSpawnableWorkerType(candidate, { env, quotaBlocked });
     if (availability.ok) {
       return {
         type: availability.type,
@@ -522,4 +578,22 @@ export function selectSpawnableWorkerType(requestedType: string, env: EnvLike, a
     `No spawnable worker is available. Requested "${requestedType}" failed because ${requested.reason} ` +
     `Checked allowed workers: ${normalizedAllowedTypes.join(", ")}.`,
   );
+}
+
+/**
+ * Async wrapper around selectSpawnableWorkerType that loads the current
+ * quota-blocked type set from the database before selecting. Used by
+ * failover and any "select a fresh worker" call site that wants to
+ * automatically skip types whose quota has not yet reset.
+ */
+export async function selectSpawnableWorkerTypeAsync(
+  requestedType: string,
+  env: EnvLike,
+  allowedTypes: SupportedWorkerType[] = [...SUPPORTED_WORKER_TYPES],
+  options: { now?: Date } = {},
+) {
+  const { quotaBlockedTypes } = await import("@/server/quota/type-blocking");
+  const blocked = await quotaBlockedTypes(allowedTypes, { now: options.now });
+  const blockedSet = new Set<SupportedWorkerType>(blocked.keys());
+  return selectSpawnableWorkerType(requestedType, env, allowedTypes, { quotaBlocked: blockedSet });
 }
