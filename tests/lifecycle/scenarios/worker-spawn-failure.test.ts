@@ -76,9 +76,9 @@ describe("lifecycle harness — worker spawn failure", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ mode: "planning", command: "this will fail to spawn" }),
     });
-    // The request resolves to 500 because the spawn rejected; the user
-    // gets an error response AND a typed event on the stream.
-    expect(res.status).toBe(500);
+    // Planning conversation creation returns immediately; spawn failures
+    // surface asynchronously through the named event stream.
+    expect(res.status).toBe(200);
 
     const surfaced = await client.waitFor("error.surfaced", {
       predicate: (frame) => (frame.payload as { code?: string } | null)?.code === "worker.spawn.failed",

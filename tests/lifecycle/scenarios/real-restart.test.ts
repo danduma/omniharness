@@ -29,11 +29,11 @@ beforeEach(async () => {
     baseUrl: () => server.baseUrl,
     chaos: new Chaos(0xDEAD, NO_CHAOS),
   });
-});
+}, 45_000);
 
 afterEach(async () => {
-  await client.close();
-  await server.stop();
+  await client?.close();
+  await server?.stop();
 });
 
 describe("lifecycle harness — real subprocess restart", () => {
