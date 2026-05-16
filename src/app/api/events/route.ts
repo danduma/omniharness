@@ -556,18 +556,14 @@ function selectCompactAgentOutputEntries(entries: LiveWorkerOutputEntry[]) {
 }
 
 function compactAgentSnapshot(agent: ReturnType<typeof buildLiveWorkerSnapshots>[number]) {
+  // Worker conversation content (outputEntries) is no longer carried
+  // on the /api/events snapshot. Clients fetch it via
+  // /api/workers/:workerId/entries through `WorkerEntriesManager`. The
+  // agents[] array stays for non-content metadata: state, the
+  // "thinking…" indicator, bridge-missing flag, last error.
   return {
     ...agent,
-    outputEntries: selectCompactAgentOutputEntries(agent.outputEntries ?? []).map((entry) => ({
-      id: entry.id,
-      type: entry.type,
-      text: truncateText(entry.text, AGENT_ENTRY_TEXT_LIMIT),
-      timestamp: entry.timestamp,
-      toolCallId: entry.toolCallId,
-      toolKind: entry.toolKind,
-      status: entry.status,
-      raw: compactAgentOutputEntryRaw(entry),
-    })),
+    outputEntries: [],
     renderedOutput: null,
     currentText: truncateText(agent.currentText, AGENT_TEXT_FIELD_LIMIT),
     lastText: truncateText(agent.lastText, AGENT_TEXT_FIELD_LIMIT),
@@ -598,88 +594,6 @@ function isStreamingAgentState(state: string | null | undefined) {
   return normalized === "starting" || normalized === "working" || normalized === "stuck";
 }
 
-function synthesizeStreamingWorkerMessages(
-  agents: ReturnType<typeof buildLiveWorkerSnapshots>,
-  workers: PersistedEventRecords["selectedAgentWorkers"],
-  persistedMessages: PersistedEventRecords["msgs"],
-) {
-  const workersById = new Map(workers.map((worker) => [worker.id, worker]));
-  const latestPersistedByWorker = new Map<string, number>();
-  for (const message of persistedMessages) {
-    if (message.role !== "worker" || !message.workerId) {
-      continue;
-    }
-    const createdAtMs = new Date(message.createdAt).getTime();
-    if (!Number.isFinite(createdAtMs)) {
-      continue;
-    }
-    const current = latestPersistedByWorker.get(message.workerId) ?? 0;
-    if (createdAtMs > current) {
-      latestPersistedByWorker.set(message.workerId, createdAtMs);
-    }
-  }
-
-  const synthesized: Array<{
-    id: string;
-    runId: string;
-    role: string;
-    kind: string;
-    content: string;
-    workerId: string;
-    attachmentsJson: string | null;
-    createdAt: Date;
-  }> = [];
-
-  for (const agent of agents) {
-    const worker = workersById.get(agent.name);
-    if (!worker || !isStreamingAgentState(agent.state)) {
-      continue;
-    }
-
-    const cutoffMs = latestPersistedByWorker.get(worker.id) ?? 0;
-    const entries = (agent.outputEntries ?? []).filter((entry) => {
-      if (entry.type !== "message" || typeof entry.text !== "string" || !entry.text.trim()) {
-        return false;
-      }
-      const entryMs = new Date(entry.timestamp).getTime();
-      return !Number.isFinite(entryMs) || entryMs > cutoffMs;
-    });
-    const liveText = (agent.currentText ?? "").trim();
-    if (entries.length === 0 && !liveText) {
-      continue;
-    }
-
-    const recentEntries = entries.slice(-3);
-    const joined = recentEntries.map((entry) => truncateText(entry.text.trim(), AGENT_ENTRY_TEXT_LIMIT)).join("\n\n");
-    const rawContent = liveText
-      ? (joined ? `${joined}\n\n${liveText}` : liveText)
-      : joined;
-    const content = truncateText(rawContent, AGENT_TEXT_FIELD_LIMIT);
-    if (!content) {
-      continue;
-    }
-
-    const latestEntryMs = entries.reduce((latest, entry) => {
-      const value = new Date(entry.timestamp).getTime();
-      return Number.isFinite(value) && value > latest ? value : latest;
-    }, 0);
-    const createdAtMs = latestEntryMs || new Date(worker.updatedAt ?? Date.now()).getTime();
-
-    synthesized.push({
-      id: `streaming:${worker.id}`,
-      runId: worker.runId,
-      role: "worker",
-      kind: "streaming",
-      content,
-      workerId: worker.id,
-      attachmentsJson: null,
-      createdAt: new Date(createdAtMs),
-    });
-  }
-
-  return synthesized;
-}
-
 function buildEventPayload(
   records: PersistedEventRecords,
   agentsData: ReturnType<typeof buildLiveWorkerSnapshots>,
@@ -688,15 +602,13 @@ function buildEventPayload(
 ) {
   const runIds = selectedRunIds(options);
   const planIds = selectedPlanIds(records, runIds);
-  const streamingMessages = synthesizeStreamingWorkerMessages(agentsData, records.selectedAgentWorkers, records.msgs);
-  const mergedMessages = [...records.msgs, ...streamingMessages].sort((left, right) => {
-    const leftMs = new Date(left.createdAt).getTime();
-    const rightMs = new Date(right.createdAt).getTime();
-    return leftMs - rightMs;
-  });
-
+  // Worker conversation content now lives in the unified worker stream
+  // (per-worker JSONL, fetched via /api/workers/:workerId/entries). The
+  // previous `synthesizeStreamingWorkerMessages` path that fabricated
+  // pseudo-messages from `agent.outputEntries` is gone; clients render
+  // worker content via `WorkerEntriesManager` instead.
   return {
-    messages: mergedMessages.map(serializeMessageRecord),
+    messages: records.msgs.map(serializeMessageRecord),
     plans: records.allPlans,
     runs: records.allRuns,
     accounts: records.allAccounts,
@@ -724,6 +636,7 @@ function buildEventPayload(
     reviewFindings: filterSelectedRunScopedRecords(records.allReviewFindings, runIds)
       .map(compactReviewFinding),
     frontendErrors,
+    snapshotRunId: options.selectedRunId?.trim() || null,
   };
 }
 

@@ -5,6 +5,7 @@ import { db } from "@/server/db";
 import { executionEvents, messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
+import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import {
   markRecoveryIncidentFailed,
   markRecoveryIncidentNeedsUser,
@@ -102,6 +103,7 @@ async function resumeSavedWorkerSession(args: {
   }
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(args.worker.bridgeSessionMode, yoloModeEnabled);
+  const { env: envParams } = await readRuntimeEnvFromSettings();
 
   await markRecoveryIncidentRecovering({
     incidentId: args.incidentId,
@@ -125,6 +127,7 @@ async function resumeSavedWorkerSession(args: {
     cwd: args.worker.cwd,
     name: args.worker.id,
     ...(workerMode ? { mode: workerMode } : {}),
+    env: envParams,
     ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
     ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
     resumeSessionId: sessionId,

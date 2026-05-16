@@ -307,41 +307,33 @@ export function createNodeRestartSystem(config: RestartControlConfig): RestartSy
     },
     spawnDetached: async (command, args, options) => {
       const logFile = options?.logFile ?? config.logFile;
+      const cwd = options?.cwd ?? config.cwd;
       fs.mkdirSync(path.dirname(logFile), { recursive: true });
-      const logStream = fs.createWriteStream(logFile, { flags: "a" });
-      const child = spawn(command, args, {
-        cwd: options?.cwd ?? config.cwd,
+      const logFd = fs.openSync(logFile, "a");
+      try {
+        fs.writeSync(
+          logFd,
+          `[${formatLocalTimestamp()}] ----- spawn ${command} ${args.join(" ")} -----\n`,
+        );
+      } finally {
+        fs.closeSync(logFd);
+      }
+      const shellEscape = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+      const timestamper = path.join(config.cwd, "scripts", "_log-timestamp.mjs");
+      const pipeline =
+        `exec ${shellEscape(command)} ${args.map(shellEscape).join(" ")} 2>&1` +
+        ` | ${shellEscape(process.execPath)} ${shellEscape(timestamper)}` +
+        ` >> ${shellEscape(logFile)}`;
+      const child = spawn("sh", ["-c", pipeline], {
+        cwd,
         detached: true,
         env: options?.env ?? process.env,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: "ignore",
       });
       child.unref();
       if (!child.pid) {
-        logStream.end();
         throw new Error("Failed to spawn restart process.");
       }
-      const attachTimestampedStream = (stream: NodeJS.ReadableStream | null) => {
-        if (!stream) return;
-        let buffer = "";
-        const flushLine = (line: string) => {
-          logStream.write(`[${formatLocalTimestamp()}] ${line}\n`);
-        };
-        stream.on("data", (chunk: Buffer) => {
-          buffer += chunk.toString("utf8");
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-          for (const line of lines) flushLine(line);
-        });
-        stream.on("end", () => {
-          if (buffer.length > 0) {
-            flushLine(buffer);
-            buffer = "";
-          }
-        });
-      };
-      attachTimestampedStream(child.stdout);
-      attachTimestampedStream(child.stderr);
-      child.once("close", () => { logStream.end(); });
       return child.pid;
     },
     waitForExit: async (pids, timeoutMs = 8_000) => {

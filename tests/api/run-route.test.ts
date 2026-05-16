@@ -1028,8 +1028,10 @@ describe("POST /api/runs/[id]", () => {
     expect(storedWorkers.map((worker) => worker.status)).toContain("cancelled");
     expect(storedWorkers.some((worker) => worker.status === "working" && worker.id !== oldWorkerId)).toBe(true);
     expect(storedMessages.map((message) => message.id)).not.toContain(laterWorkerMessageId);
-    expect(storedMessages.at(-1)?.role).toBe("worker");
-    expect(storedMessages.at(-1)?.content).toBe("Rerun complete.");
+    // Worker response now lives in the unified worker stream — the
+    // last `messages` row is the user prompt that triggered the rerun.
+    expect(storedMessages.at(-1)?.role).toBe("user");
+    expect(storedMessages.at(-1)?.content).toBe("rerun this direct prompt");
     expect(fs.readFileSync(adHocAbsolutePath, "utf-8")).toContain("rerun this direct prompt");
   });
 
@@ -1152,7 +1154,9 @@ describe("POST /api/runs/[id]", () => {
     expect(updatedRun?.failedAt).toBeNull();
     expect(updatedWorker?.bridgeSessionId).toBe("resumed-session");
     expect(storedMessages.map((message) => message.id)).not.toContain(failureMessageId);
-    expect(storedMessages.at(-1)?.content).toBe("Recovered and continuing.");
+    // Worker response now lives in the unified worker stream — the
+    // last `messages` row is the user prompt that triggered the resume.
+    expect(storedMessages.at(-1)?.content).toBe("continue the walkthrough");
     expect(resumeEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
   });
 
@@ -1216,8 +1220,10 @@ describe("POST /api/runs/[id]", () => {
     const remainingMessages = await db.select().from(messages).where(eq(messages.runId, runId));
 
     expect(updatedMessage?.content).toBe("new prompt");
-    expect(remainingMessages.map((message) => message.id)).toEqual([userMessageId, expect.any(String)]);
-    expect(remainingMessages.at(-1)?.role).toBe("worker");
+    // Worker response now lives in the unified worker stream — only
+    // the user-checkpoint row remains in `messages` after the edit.
+    expect(remainingMessages.map((message) => message.id)).toEqual([userMessageId]);
+    expect(remainingMessages.at(-1)?.role).toBe("user");
     expect(fs.readFileSync(adHocAbsolutePath, "utf-8")).toContain("new prompt");
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
     expect(mockAskAgent).toHaveBeenCalledWith(expect.any(String), "new prompt");
@@ -1294,9 +1300,9 @@ describe("POST /api/runs/[id]", () => {
     expect(forkedRun?.preferredWorkerModel).toBe("gpt-5.4");
     expect(forkedRun?.preferredWorkerEffort).toBe("medium");
     expect(forkedRun?.allowedWorkerTypes).toBe(JSON.stringify(["codex", "opencode"]));
-    expect(forkedMessages.map((message) => message.role)).toEqual(["user", "worker"]);
+    // Worker response now lives in the unified worker stream.
+    expect(forkedMessages.map((message) => message.role)).toEqual(["user"]);
     expect(forkedMessages[0]?.content).toBe("forked prompt");
-    expect(forkedMessages.at(-1)?.content).toBe("Rerun complete.");
     expect(fs.readFileSync(getAppDataPath(forkedPlan!.path), "utf-8")).toContain("forked prompt");
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({

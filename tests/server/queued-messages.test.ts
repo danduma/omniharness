@@ -134,7 +134,9 @@ describe("queued conversation messages", () => {
       prompt: "Spawn sub-agents when the work can be split safely.",
     });
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
-    expect(storedMessages.map((message) => message.role)).toEqual(["user", "supervisor", "worker"]);
+    // Worker response now lives in the unified worker stream — only
+    // user + supervisor narration remain in the `messages` table.
+    expect(storedMessages.map((message) => message.role)).toEqual(["user", "supervisor"]);
     expect(storedMessages[1]?.content).toContain("sent that to worker 1");
   });
 
@@ -200,8 +202,8 @@ describe("queued conversation messages", () => {
     expect(drained).toBe(1);
     expect(mockAskAgent).toHaveBeenCalledWith(workerId, "Queued worker note");
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
-    expect(storedMessages.map((message) => message.role)).toEqual(["user", "worker"]);
-    expect(storedMessages[1]?.content).toBe("Worker received the queued note.");
+    // Worker response now lives in the unified worker stream.
+    expect(storedMessages.map((message) => message.role)).toEqual(["user"]);
   });
 
   it("keeps send-now worker queue entries pending when the worker is still busy", async () => {

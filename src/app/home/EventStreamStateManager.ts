@@ -1,220 +1,8 @@
-import { isWorkerActiveStatus } from "@/lib/conversation-workers";
-import type { AgentSnapshot, EventStreamState, MessageRecord } from "./types";
+import type { EventStreamState, MessageRecord } from "./types";
 import { EventStreamSnapshotCacheManager } from "./EventStreamSnapshotCacheManager";
-import { WorkerOutputLineCacheManager } from "./WorkerOutputLineCacheManager";
 
 type EventStreamStateListener = (state: EventStreamState) => void;
 type EventStreamStateAction = EventStreamState | ((current: EventStreamState) => EventStreamState);
-
-function hasRenderableAgentOutput(agent: AgentSnapshot | null | undefined) {
-  return Boolean(
-    agent?.currentText?.trim()
-    || agent?.displayText?.trim()
-    || agent?.lastText?.trim()
-    || agent?.outputLog?.trim()
-    || agent?.outputEntries?.some((entry) => entry.text.trim()),
-  );
-}
-
-function isPersistedOnlyAgent(agent: AgentSnapshot | null | undefined) {
-  return Boolean(agent?.bridgeMissing);
-}
-
-type AgentOutputEntry = NonNullable<AgentSnapshot["outputEntries"]>[number];
-
-function isOmittedOutputEntriesMarker(entry: AgentOutputEntry) {
-  return entry.id.startsWith("output-entries-omitted:");
-}
-
-function omittedOutputEntriesCount(entry: AgentOutputEntry) {
-  if (!isOmittedOutputEntriesMarker(entry)) {
-    return 0;
-  }
-
-  const match = entry.text.match(/^(\d+)\s+earlier output entries omitted from this live payload\./);
-  return match ? Number.parseInt(match[1], 10) || 0 : 0;
-}
-
-function withOmittedOutputEntriesCount(entry: AgentOutputEntry, omittedCount: number): AgentOutputEntry {
-  return {
-    ...entry,
-    text: `${omittedCount} earlier output entries omitted from this live payload. Open the worker detail again as it updates to see the current tail.`,
-  };
-}
-
-function outputEntryTimestampMs(entry: AgentOutputEntry) {
-  const value = new Date(entry.timestamp).getTime();
-  return Number.isFinite(value) ? value : 0;
-}
-
-function omittedOutputEntriesMarkerTailId(entry: AgentOutputEntry) {
-  if (!isOmittedOutputEntriesMarker(entry)) {
-    return null;
-  }
-
-  const markerParts = entry.id.split(":");
-  return markerParts.length >= 3 ? markerParts[2] || null : null;
-}
-
-function sortedOutputEntries(entries: Iterable<AgentOutputEntry>) {
-  return Array.from(entries).sort((a, b) => {
-    const timeDelta = outputEntryTimestampMs(a) - outputEntryTimestampMs(b);
-    if (timeDelta !== 0) {
-      return timeDelta;
-    }
-
-    const aTailId = omittedOutputEntriesMarkerTailId(a);
-    const bTailId = omittedOutputEntriesMarkerTailId(b);
-    if (aTailId === b.id) {
-      return -1;
-    }
-    if (bTailId === a.id) {
-      return 1;
-    }
-
-    return a.id.localeCompare(b.id);
-  });
-}
-
-function mergeOutputEntries(
-  currentEntries: AgentSnapshot["outputEntries"],
-  incomingEntries: AgentSnapshot["outputEntries"],
-  cachedEntries: Map<string, AgentOutputEntry>,
-) {
-  for (const entry of currentEntries ?? []) {
-    if (!isOmittedOutputEntriesMarker(entry)) {
-      cachedEntries.set(entry.id, entry);
-    }
-  }
-
-  for (const entry of incomingEntries ?? []) {
-    if (!isOmittedOutputEntriesMarker(entry)) {
-      cachedEntries.set(entry.id, entry);
-    }
-  }
-
-  if (!currentEntries?.length) {
-    return mergeCachedOutputEntriesWithIncomingMarkers(incomingEntries, cachedEntries);
-  }
-
-  if (!incomingEntries?.length) {
-    return sortedOutputEntries(cachedEntries.values());
-  }
-
-  return mergeCachedOutputEntriesWithIncomingMarkers(incomingEntries, cachedEntries);
-}
-
-function mergeCachedOutputEntriesWithIncomingMarkers(
-  incomingEntries: AgentSnapshot["outputEntries"],
-  cachedEntries: Map<string, AgentOutputEntry>,
-) {
-  const actualEntries = sortedOutputEntries(cachedEntries.values());
-  const incomingMarkers = (incomingEntries ?? []).filter(isOmittedOutputEntriesMarker);
-  if (incomingMarkers.length === 0) {
-    return actualEntries;
-  }
-
-  const latestMarker = incomingMarkers[incomingMarkers.length - 1];
-  const incomingActualCount = (incomingEntries ?? []).filter((entry) => !isOmittedOutputEntriesMarker(entry)).length;
-  const omittedCount = omittedOutputEntriesCount(latestMarker);
-  const impliedSnapshotEntryCount = incomingActualCount + omittedCount;
-  if (actualEntries.length >= impliedSnapshotEntryCount) {
-    return actualEntries;
-  }
-
-  const missingCount = Math.max(1, impliedSnapshotEntryCount - actualEntries.length);
-  const displayedMissingCount = omittedCount > 0 ? Math.min(omittedCount, missingCount) : missingCount;
-  return sortedOutputEntries([
-    ...actualEntries,
-    withOmittedOutputEntriesCount(latestMarker, displayedMissingCount),
-  ]);
-}
-
-function mergeAgentOutputHistory(
-  currentAgent: AgentSnapshot | undefined,
-  incomingAgent: AgentSnapshot,
-  cachedEntries: Map<string, AgentOutputEntry>,
-) {
-  if (!currentAgent) {
-    const mergedOutputEntries = mergeOutputEntries(undefined, incomingAgent.outputEntries, cachedEntries);
-    return mergedOutputEntries === incomingAgent.outputEntries ? incomingAgent : {
-      ...incomingAgent,
-      outputEntries: mergedOutputEntries,
-    };
-  }
-
-  const mergedOutputEntries = mergeOutputEntries(currentAgent.outputEntries, incomingAgent.outputEntries, cachedEntries);
-  if (mergedOutputEntries === incomingAgent.outputEntries) {
-    return incomingAgent;
-  }
-
-  return {
-    ...incomingAgent,
-    outputEntries: mergedOutputEntries,
-  };
-}
-
-function mergeAgentSnapshots(
-  current: EventStreamState,
-  incoming: EventStreamState,
-  outputEntriesByAgentName: Map<string, Map<string, AgentOutputEntry>>,
-) {
-  const currentAgentsByName = new Map((current.agents || []).map((agent) => [agent.name, agent]));
-  const incomingWorkersById = new Map((incoming.workers || []).map((worker) => [worker.id, worker]));
-  const incomingAgentNames = new Set((incoming.agents || []).map((agent) => agent.name));
-  let changed = false;
-
-  const agents = (incoming.agents || []).map((incomingAgent) => {
-    const currentAgent = currentAgentsByName.get(incomingAgent.name);
-    const incomingWorker = incomingWorkersById.get(incomingAgent.name);
-    const cachedEntries = outputEntriesByAgentName.get(incomingAgent.name) ?? new Map<string, AgentOutputEntry>();
-    outputEntriesByAgentName.set(incomingAgent.name, cachedEntries);
-    const incomingAgentWithHistory = mergeAgentOutputHistory(currentAgent, incomingAgent, cachedEntries);
-
-    if (incomingAgentWithHistory !== incomingAgent) {
-      changed = true;
-    }
-
-    if (
-      currentAgent
-      && isPersistedOnlyAgent(incomingAgentWithHistory)
-      && !isPersistedOnlyAgent(currentAgent)
-      && isWorkerActiveStatus(incomingWorker?.status ?? incomingAgentWithHistory.state)
-      && hasRenderableAgentOutput(currentAgent)
-    ) {
-      changed = true;
-      return {
-        ...incomingAgentWithHistory,
-        ...currentAgent,
-        state: currentAgent.state || incomingAgent.state,
-        outputEntries: incomingAgentWithHistory.outputEntries,
-        bridgeMissing: false,
-        bridgeLastError: incomingAgentWithHistory.bridgeLastError ?? currentAgent.bridgeLastError,
-        updatedAt: incomingAgentWithHistory.updatedAt ?? currentAgent.updatedAt,
-        runLastError: incomingAgentWithHistory.runLastError ?? currentAgent.runLastError,
-      };
-    }
-
-    return incomingAgentWithHistory;
-  });
-
-  for (const currentAgent of current.agents || []) {
-    const incomingWorker = incomingWorkersById.get(currentAgent.name);
-    if (
-      incomingAgentNames.has(currentAgent.name)
-      || !incomingWorker
-      || !isWorkerActiveStatus(incomingWorker.status)
-      || !hasRenderableAgentOutput(currentAgent)
-    ) {
-      continue;
-    }
-
-    agents.push(currentAgent);
-    changed = true;
-  }
-
-  return changed ? { ...incoming, agents } : incoming;
-}
 
 function messageTimestampMs(message: MessageRecord) {
   const value = new Date(message.createdAt).getTime();
@@ -259,6 +47,12 @@ function mergeScopedRuns(current: EventStreamState, incoming: EventStreamState) 
   return changed ? { ...incoming, runs: mergedRuns } : incoming;
 }
 
+/**
+ * Supervisor-conversation messages still flow through the `messages`
+ * table (worker-attributed messages moved to the unified worker
+ * stream). The merge keeps a stable list when an incoming snapshot
+ * doesn't include the supervisor narration we already have locally.
+ */
 function mergeScopedMessages(current: EventStreamState, incoming: EventStreamState) {
   const incomingMessages = incoming.messages ?? [];
   const incomingMessageIds = new Set(incomingMessages.map((message) => message.id));
@@ -287,42 +81,41 @@ function mergeScopedMessages(current: EventStreamState, incoming: EventStreamSta
   };
 }
 
+/**
+ * State manager for the global `/api/events` snapshot stream. Worker
+ * conversation content (bridge entries, user/supervisor inputs,
+ * lifecycle markers) is NOT managed here — it lives in
+ * `WorkerEntriesManager` and is fetched per-worker via
+ * `/api/workers/:workerId/entries`. This manager owns runs, plans,
+ * workers metadata, supervisor messages, planning artifacts, queued
+ * messages, recovery state, and review records.
+ */
 export class EventStreamStateManager {
   private state: EventStreamState;
   private readonly listeners = new Set<EventStreamStateListener>();
-  private readonly outputEntriesByAgentName = new Map<string, Map<string, AgentOutputEntry>>();
-  private readonly outputLineCache: WorkerOutputLineCacheManager;
   private readonly snapshotCache: EventStreamSnapshotCacheManager;
   private snapshotCacheScope: string | null;
 
   constructor(initialState: EventStreamState, options: {
-    outputLineCache?: WorkerOutputLineCacheManager;
     snapshotCache?: EventStreamSnapshotCacheManager;
     snapshotCacheScope?: string | null;
     deferCacheHydration?: boolean;
   } = {}) {
-    this.outputLineCache = options.outputLineCache ?? new WorkerOutputLineCacheManager();
     this.snapshotCache = options.snapshotCache ?? new EventStreamSnapshotCacheManager();
     this.snapshotCacheScope = options.snapshotCacheScope?.trim() || null;
     if (options.deferCacheHydration) {
       this.state = initialState;
-      this.rememberOutputEntries(initialState);
     } else {
-      const cachedInitialState = this.snapshotCache.hydrateState(initialState, this.snapshotCacheScope);
-      const hydratedInitialState = this.outputLineCache.hydrateState(cachedInitialState);
-      this.state = hydratedInitialState;
-      this.rememberOutputEntries(hydratedInitialState);
+      this.state = this.snapshotCache.hydrateState(initialState, this.snapshotCacheScope);
     }
   }
 
   hydrateFromCaches() {
     const cached = this.snapshotCache.hydrateState(this.state, this.snapshotCacheScope);
-    const hydrated = this.outputLineCache.hydrateState(cached);
-    if (hydrated === this.state) {
+    if (cached === this.state) {
       return;
     }
-    this.state = hydrated;
-    this.rememberOutputEntries(hydrated);
+    this.state = cached;
     for (const listener of this.listeners) {
       listener(this.state);
     }
@@ -345,37 +138,16 @@ export class EventStreamStateManager {
 
   update(action: EventStreamStateAction) {
     const incoming = typeof action === "function" ? action(this.state) : action;
-    this.rememberOutputEntries(incoming);
     const incomingWithRuns = mergeScopedRuns(this.state, incoming);
-    const incomingWithMessages = mergeScopedMessages(this.state, incomingWithRuns);
-    const mergedState = mergeAgentSnapshots(this.state, incomingWithMessages, this.outputEntriesByAgentName);
-    const nextState = this.outputLineCache.hydrateState(mergedState);
+    const nextState = mergeScopedMessages(this.state, incomingWithRuns);
 
     if (Object.is(nextState, this.state)) {
       return this.state;
     }
 
     this.state = nextState;
-    this.rememberOutputEntries(nextState);
     this.snapshotCache.rememberState(nextState, this.snapshotCacheScope);
     this.listeners.forEach((listener) => listener(this.state));
     return this.state;
-  }
-
-  private rememberOutputEntries(state: EventStreamState) {
-    for (const agent of state.agents ?? []) {
-      if (!agent.outputEntries?.length) {
-        continue;
-      }
-
-      const cachedEntries = this.outputEntriesByAgentName.get(agent.name) ?? new Map<string, AgentOutputEntry>();
-      for (const entry of agent.outputEntries) {
-        if (!isOmittedOutputEntriesMarker(entry)) {
-          cachedEntries.set(entry.id, entry);
-        }
-      }
-      this.outputEntriesByAgentName.set(agent.name, cachedEntries);
-    }
-    this.outputLineCache.rememberState(state);
   }
 }

@@ -30,7 +30,13 @@ describe("worker output entry persistence", () => {
     ];
 
     await writeWorkerOutputEntries("run-1", "worker-1", entries);
-    expect(await readWorkerOutputEntries("run-1", "worker-1")).toEqual(entries);
+    // The on-disk shape now carries a monotonic `seq` per (runId,
+    // workerId). The rest of the entry round-trips unchanged.
+    const persisted = await readWorkerOutputEntries("run-1", "worker-1");
+    expect(persisted).toEqual([
+      { ...entries[0], seq: 1 },
+      { ...entries[1], seq: 2 },
+    ]);
   });
 
   it("returns an empty array when no entries have been written", async () => {

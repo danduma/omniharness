@@ -48,13 +48,15 @@ describe("useConversationExecutionStatus", () => {
       queuedMessageCount: 0,
       activeConversationAgents: [],
       liveThoughts: [],
+      awaitingUserQuestionMessage: null,
+      isSelectedConversationLoaded: true,
     });
 
     expect(liveExecutionStatus).toMatchObject({
       label: "Working",
       tone: "active",
     });
-    expect(liveExecutionStatus.detail).toContain("The supervisor is still checking the run.");
+    expect(liveExecutionStatus.detail).toContain("Omni is still checking the run.");
   });
 
   it("shows cancelled implementation runs as user-stopped instead of thinking", () => {
@@ -72,6 +74,8 @@ describe("useConversationExecutionStatus", () => {
       queuedMessageCount: 0,
       activeConversationAgents: [],
       liveThoughts: [],
+      awaitingUserQuestionMessage: null,
+      isSelectedConversationLoaded: true,
     });
 
     expect(liveExecutionStatus).toMatchObject({
@@ -102,6 +106,8 @@ describe("useConversationExecutionStatus", () => {
       queuedMessageCount: 0,
       activeConversationAgents: [],
       liveThoughts: [],
+      awaitingUserQuestionMessage: null,
+      isSelectedConversationLoaded: true,
     });
 
     expect(liveExecutionStatus).toMatchObject({
@@ -147,6 +153,8 @@ describe("useConversationExecutionStatus", () => {
         snippet: "Old live output",
         isLive: true,
       }],
+      awaitingUserQuestionMessage: null,
+      isSelectedConversationLoaded: true,
     });
 
     expect(liveExecutionStatus).toMatchObject({
@@ -154,5 +162,87 @@ describe("useConversationExecutionStatus", () => {
       tone: "muted",
     });
     expect(liveExecutionStatus.detail).toContain("Final summary is ready.");
+  });
+
+  it("shows a loading state when awaiting_user but the supervisor question has not loaded yet", () => {
+    const { liveExecutionStatus } = useConversationExecutionStatus({
+      selectedRun: buildRun({ status: "awaiting_user" }),
+      latestExecutionEvent: null,
+      erroredAgent: null,
+      pendingPermissionAgent: null,
+      hasStuckWorker: false,
+      latestStuckEvent: null,
+      showRecoverableRunningState: false,
+      latestWaitEvent: null,
+      latestPromptDeferredEvent: null,
+      completionEvent: null,
+      queuedMessageCount: 0,
+      activeConversationAgents: [],
+      liveThoughts: [],
+      awaitingUserQuestionMessage: null,
+      isSelectedConversationLoaded: true,
+    });
+
+    expect(liveExecutionStatus).toMatchObject({
+      label: "Loading",
+      tone: "active",
+    });
+  });
+
+  it("shows the awaiting input banner once the supervisor question is visible", () => {
+    const { liveExecutionStatus } = useConversationExecutionStatus({
+      selectedRun: buildRun({ status: "awaiting_user" }),
+      latestExecutionEvent: null,
+      erroredAgent: null,
+      pendingPermissionAgent: null,
+      hasStuckWorker: false,
+      latestStuckEvent: null,
+      showRecoverableRunningState: false,
+      latestWaitEvent: null,
+      latestPromptDeferredEvent: null,
+      completionEvent: null,
+      queuedMessageCount: 0,
+      activeConversationAgents: [],
+      liveThoughts: [],
+      awaitingUserQuestionMessage: {
+        id: "msg-1",
+        runId: "run-1",
+        role: "supervisor",
+        kind: "clarification",
+        content: "What should I do next?",
+        createdAt: "2026-05-08T00:01:00.000Z",
+      },
+      isSelectedConversationLoaded: true,
+    });
+
+    expect(liveExecutionStatus).toMatchObject({
+      label: "Awaiting input",
+      tone: "warning",
+    });
+  });
+
+  it("shows a loading state when the selected conversation snapshot has not arrived", () => {
+    const { liveExecutionStatus } = useConversationExecutionStatus({
+      selectedRun: buildRun({ status: "running" }),
+      latestExecutionEvent: null,
+      erroredAgent: null,
+      pendingPermissionAgent: null,
+      hasStuckWorker: false,
+      latestStuckEvent: null,
+      showRecoverableRunningState: false,
+      latestWaitEvent: null,
+      latestPromptDeferredEvent: null,
+      completionEvent: null,
+      queuedMessageCount: 0,
+      activeConversationAgents: [],
+      liveThoughts: [],
+      awaitingUserQuestionMessage: null,
+      isSelectedConversationLoaded: false,
+    });
+
+    expect(liveExecutionStatus).toMatchObject({
+      label: "Loading",
+      tone: "active",
+    });
   });
 });

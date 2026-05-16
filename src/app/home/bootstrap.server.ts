@@ -16,6 +16,9 @@ export type HomeBootstrapPayload = {
     session: AuthSessionResponse | null;
     settings: SettingsResponse | null;
   };
+  features: {
+    unifiedWorkerStream: boolean;
+  };
 };
 
 type PageSearchParams = Record<string, string | string[] | undefined>;
@@ -85,6 +88,13 @@ export async function buildHomeBootstrap(searchParams: PageSearchParams = {}): P
     initialQueries: {
       session,
       settings,
+    },
+    features: {
+      // The unified worker stream is unconditionally enabled after the
+      // Phase 5 cutover. The boolean is kept on the bootstrap shape so
+      // older client/server pairs don't break during the rollout
+      // window; future cleanup may drop it entirely.
+      unifiedWorkerStream: true,
     },
   };
 }

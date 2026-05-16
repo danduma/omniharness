@@ -8,6 +8,7 @@ import { formatErrorMessage } from "@/server/runs/failures";
 import { markRecoveryIncidentResolved } from "@/server/runs/recovery-incidents";
 import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
+import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { extractQuotaResetInfo } from "./reset-parser";
 import { handleWorkerQuotaExhaustion, type QuotaRecoveryResult } from "./recovery";
 
@@ -123,6 +124,7 @@ export async function resumeQuotaExhaustedWorkers(args: {
 
   let resumedCount = 0;
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
+  const { env: envParams } = await readRuntimeEnvFromSettings();
   for (const incident of workerIncidents) {
     const worker = await db.select().from(workers).where(eq(workers.id, incident.workerId ?? "")).get();
     const sessionId = worker?.bridgeSessionId?.trim();
@@ -139,6 +141,7 @@ export async function resumeQuotaExhaustedWorkers(args: {
           cwd: worker.cwd,
           name: worker.id,
           ...(workerMode ? { mode: workerMode } : {}),
+          env: envParams,
           ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
           ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
           resumeSessionId: sessionId,

@@ -1,19 +1,26 @@
-import { drizzle } from 'drizzle-orm/better-sqlite3';
-import Database from 'better-sqlite3';
+import { drizzle } from 'drizzle-orm/libsql';
+import { createClient } from '@libsql/client';
 import * as schema from './schema';
 import { getAppDataPath } from '@/server/app-root';
 
 const dbPath = getAppDataPath('sqlite.db');
-const sqlite = new Database(dbPath);
-sqlite.pragma('journal_mode = WAL');
-sqlite.pragma('synchronous = NORMAL');
-sqlite.pragma('busy_timeout = 15000');
-sqlite.pragma('wal_autocheckpoint = 1000');
-sqlite.pragma('cache_size = -20000');
-sqlite.pragma('temp_store = MEMORY');
-sqlite.pragma('foreign_keys = ON');
+const client = createClient({ url: `file:${dbPath}` });
 
-sqlite.exec(`
+async function tableColumns(table: string): Promise<Set<string>> {
+  const result = await client.execute(`PRAGMA table_info(${table})`);
+  return new Set(result.rows.map((row) => String((row as Record<string, unknown>).name)));
+}
+
+async function initializeSchema() {
+await client.execute('PRAGMA journal_mode = WAL');
+await client.execute('PRAGMA synchronous = NORMAL');
+await client.execute('PRAGMA busy_timeout = 15000');
+await client.execute('PRAGMA wal_autocheckpoint = 1000');
+await client.execute('PRAGMA cache_size = -20000');
+await client.execute('PRAGMA temp_store = MEMORY');
+await client.execute('PRAGMA foreign_keys = ON');
+
+await client.executeMultiple(`
 CREATE TABLE IF NOT EXISTS plans (
   id text PRIMARY KEY NOT NULL,
   path text NOT NULL,
@@ -341,7 +348,7 @@ CREATE TABLE IF NOT EXISTS planning_review_findings (
 );
 `);
 
-sqlite.exec(`
+await client.executeMultiple(`
 CREATE INDEX IF NOT EXISTS messages_run_created_idx ON messages(run_id, created_at);
 CREATE INDEX IF NOT EXISTS workers_run_idx ON workers(run_id);
 CREATE INDEX IF NOT EXISTS plan_items_plan_idx ON plan_items(plan_id);
@@ -361,166 +368,163 @@ CREATE INDEX IF NOT EXISTS notification_subscriptions_revoked_idx ON notificatio
 
 // Legacy cleanup: validation is now performed by supervisor tool use and checker workers,
 // not persisted heuristic rows inferred from plan prose.
-sqlite.exec("DROP TABLE IF EXISTS validation_runs;");
+await client.execute("DROP TABLE IF EXISTS validation_runs;");
 
-const runColumns = sqlite.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>;
-const runColumnNames = new Set(runColumns.map((column) => column.name));
+const runColumnNames = await tableColumns("runs");
 
 if (!runColumnNames.has("project_path")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN project_path text;");
+  await client.execute("ALTER TABLE runs ADD COLUMN project_path text;");
 }
 
 if (!runColumnNames.has("mode")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN mode text NOT NULL DEFAULT 'implementation';");
+  await client.execute("ALTER TABLE runs ADD COLUMN mode text NOT NULL DEFAULT 'implementation';");
 }
 
 if (!runColumnNames.has("title")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN title text;");
+  await client.execute("ALTER TABLE runs ADD COLUMN title text;");
 }
 
 if (!runColumnNames.has("preferred_worker_type")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN preferred_worker_type text;");
+  await client.execute("ALTER TABLE runs ADD COLUMN preferred_worker_type text;");
 }
 
 if (!runColumnNames.has("preferred_worker_model")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN preferred_worker_model text;");
+  await client.execute("ALTER TABLE runs ADD COLUMN preferred_worker_model text;");
 }
 
 if (!runColumnNames.has("preferred_worker_effort")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN preferred_worker_effort text;");
+  await client.execute("ALTER TABLE runs ADD COLUMN preferred_worker_effort text;");
 }
 
 if (!runColumnNames.has("allowed_worker_types")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN allowed_worker_types text;");
+  await client.execute("ALTER TABLE runs ADD COLUMN allowed_worker_types text;");
 }
 
 if (!runColumnNames.has("spec_path")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN spec_path text;");
+  await client.execute("ALTER TABLE runs ADD COLUMN spec_path text;");
 }
 
 if (!runColumnNames.has("artifact_plan_path")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN artifact_plan_path text;");
+  await client.execute("ALTER TABLE runs ADD COLUMN artifact_plan_path text;");
 }
 
 if (!runColumnNames.has("planner_artifacts_json")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN planner_artifacts_json text;");
+  await client.execute("ALTER TABLE runs ADD COLUMN planner_artifacts_json text;");
 }
 
 if (!runColumnNames.has("planner_readiness_verdict_json")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN planner_readiness_verdict_json text;");
+  await client.execute("ALTER TABLE runs ADD COLUMN planner_readiness_verdict_json text;");
 }
 
 if (!runColumnNames.has("parent_run_id")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN parent_run_id text;");
+  await client.execute("ALTER TABLE runs ADD COLUMN parent_run_id text;");
 }
 
 if (!runColumnNames.has("forked_from_message_id")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN forked_from_message_id text;");
+  await client.execute("ALTER TABLE runs ADD COLUMN forked_from_message_id text;");
 }
 
 if (!runColumnNames.has("auto_commit_milestones")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN auto_commit_milestones integer NOT NULL DEFAULT 0;");
+  await client.execute("ALTER TABLE runs ADD COLUMN auto_commit_milestones integer NOT NULL DEFAULT 0;");
 }
 
 if (!runColumnNames.has("push_on_commit")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN push_on_commit integer NOT NULL DEFAULT 0;");
+  await client.execute("ALTER TABLE runs ADD COLUMN push_on_commit integer NOT NULL DEFAULT 0;");
 }
 
 if (!runColumnNames.has("git_baseline_json")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN git_baseline_json text;");
+  await client.execute("ALTER TABLE runs ADD COLUMN git_baseline_json text;");
 }
 
 if (!runColumnNames.has("git_workspace_json")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN git_workspace_json text;");
+  await client.execute("ALTER TABLE runs ADD COLUMN git_workspace_json text;");
 }
 
 if (!runColumnNames.has("completion_commit_sha")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN completion_commit_sha text;");
+  await client.execute("ALTER TABLE runs ADD COLUMN completion_commit_sha text;");
 }
 
 if (!runColumnNames.has("failed_at")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN failed_at integer;");
+  await client.execute("ALTER TABLE runs ADD COLUMN failed_at integer;");
 }
 
 if (!runColumnNames.has("last_error")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN last_error text;");
+  await client.execute("ALTER TABLE runs ADD COLUMN last_error text;");
 }
 
 if (!runColumnNames.has("archived_at")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN archived_at integer;");
+  await client.execute("ALTER TABLE runs ADD COLUMN archived_at integer;");
 }
 
 if (!runColumnNames.has("memory_metadata_revision")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN memory_metadata_revision integer NOT NULL DEFAULT 0;");
+  await client.execute("ALTER TABLE runs ADD COLUMN memory_metadata_revision integer NOT NULL DEFAULT 0;");
 }
 
 if (!runColumnNames.has("last_memory_consolidation_at")) {
-  sqlite.exec("ALTER TABLE runs ADD COLUMN last_memory_consolidation_at integer;");
+  await client.execute("ALTER TABLE runs ADD COLUMN last_memory_consolidation_at integer;");
 }
 
-const messageColumns = sqlite.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>;
-const messageColumnNames = new Set(messageColumns.map((column) => column.name));
+const messageColumnNames = await tableColumns("messages");
 
-const workerColumns = sqlite.prepare("PRAGMA table_info(workers)").all() as Array<{ name: string }>;
-const workerColumnNames = new Set(workerColumns.map((column) => column.name));
+const workerColumnNames = await tableColumns("workers");
 
 if (!workerColumnNames.has("output_log")) {
-  sqlite.exec("ALTER TABLE workers ADD COLUMN output_log text NOT NULL DEFAULT '';");
+  await client.execute("ALTER TABLE workers ADD COLUMN output_log text NOT NULL DEFAULT '';");
 }
 
 if (!workerColumnNames.has("worker_number")) {
-  sqlite.exec("ALTER TABLE workers ADD COLUMN worker_number integer;");
+  await client.execute("ALTER TABLE workers ADD COLUMN worker_number integer;");
 }
 
 if (!workerColumnNames.has("title")) {
-  sqlite.exec("ALTER TABLE workers ADD COLUMN title text NOT NULL DEFAULT '';");
+  await client.execute("ALTER TABLE workers ADD COLUMN title text NOT NULL DEFAULT '';");
 }
 
 if (!workerColumnNames.has("initial_prompt")) {
-  sqlite.exec("ALTER TABLE workers ADD COLUMN initial_prompt text NOT NULL DEFAULT '';");
+  await client.execute("ALTER TABLE workers ADD COLUMN initial_prompt text NOT NULL DEFAULT '';");
 }
 
 if (!workerColumnNames.has("output_entries_json")) {
-  sqlite.exec("ALTER TABLE workers ADD COLUMN output_entries_json text NOT NULL DEFAULT '';");
+  await client.execute("ALTER TABLE workers ADD COLUMN output_entries_json text NOT NULL DEFAULT '';");
 }
 
 if (!workerColumnNames.has("current_text")) {
-  sqlite.exec("ALTER TABLE workers ADD COLUMN current_text text NOT NULL DEFAULT '';");
+  await client.execute("ALTER TABLE workers ADD COLUMN current_text text NOT NULL DEFAULT '';");
 }
 
 if (!workerColumnNames.has("last_text")) {
-  sqlite.exec("ALTER TABLE workers ADD COLUMN last_text text NOT NULL DEFAULT '';");
+  await client.execute("ALTER TABLE workers ADD COLUMN last_text text NOT NULL DEFAULT '';");
 }
 
 if (!workerColumnNames.has("bridge_session_id")) {
-  sqlite.exec("ALTER TABLE workers ADD COLUMN bridge_session_id text;");
+  await client.execute("ALTER TABLE workers ADD COLUMN bridge_session_id text;");
 }
 
 if (!workerColumnNames.has("bridge_session_mode")) {
-  sqlite.exec("ALTER TABLE workers ADD COLUMN bridge_session_mode text;");
+  await client.execute("ALTER TABLE workers ADD COLUMN bridge_session_mode text;");
 }
 
 if (!workerColumnNames.has("active_work_started_at")) {
-  sqlite.exec("ALTER TABLE workers ADD COLUMN active_work_started_at integer;");
+  await client.execute("ALTER TABLE workers ADD COLUMN active_work_started_at integer;");
 }
 
 if (!workerColumnNames.has("active_work_duration_ms")) {
-  sqlite.exec("ALTER TABLE workers ADD COLUMN active_work_duration_ms integer NOT NULL DEFAULT 0;");
-  sqlite.exec(`
+  await client.execute("ALTER TABLE workers ADD COLUMN active_work_duration_ms integer NOT NULL DEFAULT 0;");
+  await client.execute(`
     UPDATE workers
     SET active_work_duration_ms = MAX(0, updated_at - created_at) * 1000
     WHERE active_work_duration_ms = 0;
   `);
 }
 
-sqlite.exec(`
+await client.execute(`
   UPDATE workers
   SET active_work_started_at = updated_at
   WHERE active_work_started_at IS NULL
     AND lower(substr(status, 1, instr(status || ':', ':') - 1)) = 'working';
 `);
 
-sqlite.exec(`
+await client.executeMultiple(`
 CREATE TRIGGER IF NOT EXISTS workers_work_timer_insert
 AFTER INSERT ON workers
 WHEN lower(substr(NEW.status, 1, instr(NEW.status || ':', ':') - 1)) = 'working'
@@ -556,19 +560,29 @@ END;
 `);
 
 if (!messageColumnNames.has("kind")) {
-  sqlite.exec("ALTER TABLE messages ADD COLUMN kind text;");
+  await client.execute("ALTER TABLE messages ADD COLUMN kind text;");
 }
 
 if (!messageColumnNames.has("superseded_at")) {
-  sqlite.exec("ALTER TABLE messages ADD COLUMN superseded_at integer;");
+  await client.execute("ALTER TABLE messages ADD COLUMN superseded_at integer;");
 }
 
 if (!messageColumnNames.has("edited_from_message_id")) {
-  sqlite.exec("ALTER TABLE messages ADD COLUMN edited_from_message_id text;");
+  await client.execute("ALTER TABLE messages ADD COLUMN edited_from_message_id text;");
 }
 
 if (!messageColumnNames.has("attachments_json")) {
-  sqlite.exec("ALTER TABLE messages ADD COLUMN attachments_json text;");
+  await client.execute("ALTER TABLE messages ADD COLUMN attachments_json text;");
+}
 }
 
-export const db = drizzle(sqlite, { schema });
+const schemaInitStart = Date.now();
+export const dbReady = initializeSchema().then(() => {
+  console.log(`[db] schema ready in ${Date.now() - schemaInitStart}ms`);
+});
+dbReady.catch((error) => {
+  console.error("Failed to initialize database schema:", error);
+  process.exit(1);
+});
+
+export const db = drizzle(client, { schema });

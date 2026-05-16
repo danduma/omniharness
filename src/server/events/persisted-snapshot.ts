@@ -296,5 +296,6 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
       ? deriveRecoveryState(allRecoveryIncidents)
       : null,
     frontendErrors: [],
+    snapshotRunId: selectedRunId ?? null,
   };
 }

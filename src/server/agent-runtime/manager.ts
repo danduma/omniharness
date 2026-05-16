@@ -8,6 +8,7 @@ import { basename, dirname, join } from "path";
 import { Readable, Writable } from "stream";
 import * as acp from "@agentclientprotocol/sdk";
 import { applyCodexBridgeEnv, buildCodexConfigArgs, shouldSetRequestedMode } from "./codex";
+import { applyCredentialProfileEnv, resolveCredentialProfile } from "./external-credentials";
 import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
 import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, withCodexStandardTooling, withManagedPath } from "./tool-env";
 import {
@@ -698,6 +699,7 @@ export class AgentRuntimeManager {
       effectiveModel: record.effectiveModel,
       requestedEffort: record.requestedEffort,
       effectiveEffort: record.effectiveEffort,
+      credentialProfile: record.credentialProfile,
       sessionMode: record.sessionMode,
       contextUsage: record.contextUsage,
       lastError: record.lastError,
@@ -806,6 +808,14 @@ export class AgentRuntimeManager {
       ...(configuredAgent?.env || {}),
       ...(input.env || {}),
     }, cwd);
+    const credentialProfile = await resolveCredentialProfile({
+      type,
+      cwd,
+      env: finalEnv,
+      requestedProfile: input.credentialProfile,
+      configuredProfile: configuredAgent?.credentialProfile,
+    });
+    applyCredentialProfileEnv(finalEnv, credentialProfile);
 
     if (type === "codex") {
       Object.assign(finalEnv, withCodexStandardTooling(finalEnv));
@@ -921,6 +931,7 @@ export class AgentRuntimeManager {
       effectiveModel: requestedModel,
       requestedEffort,
       effectiveEffort: null,
+      credentialProfile: credentialProfile.status,
       sessionMode: requestedMode || null,
       contextUsage: null,
       lastText: "",

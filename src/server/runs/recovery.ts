@@ -27,7 +27,9 @@ import { buildPlannerSystemPrompt } from "@/server/prompts";
 import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/supervisor/worker-types";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
+import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
+import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { isRecoverableAgentMissingError } from "./recovery-state";
 import { createBranchWorktree } from "@/server/git/workspaces";
@@ -173,6 +175,7 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string) 
   const now = new Date();
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(undefined, yoloModeEnabled);
+  const { env: envParams } = await readRuntimeEnvFromSettings();
 
   await db.insert(workers).values({
     id: workerId,
@@ -195,10 +198,17 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string) 
     cwd,
     name: workerId,
     ...(workerMode ? { mode: workerMode } : {}),
+    env: envParams,
     model: run.preferredWorkerModel?.trim() || undefined,
     effort: run.preferredWorkerEffort?.trim().toLowerCase() || undefined,
   });
   const response = await askAgent(workerId, buildDirectWorkerPrompt(run.mode, content, cwd));
+  await appendUserInputOnDelivery({
+    runId: run.id,
+    workerId,
+    text: content,
+    deliveredAt: new Date(),
+  });
   let snapshot: AgentRecord | null = null;
   try {
     snapshot = await getAgent(workerId);
@@ -234,15 +244,7 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string) 
     updatedAt: new Date(),
   }).where(eq(workers.id, workerId));
 
-  await db.insert(messages).values({
-    id: randomUUID(),
-    runId: run.id,
-    role: "worker",
-    kind: run.mode,
-    content: response.response,
-    workerId,
-    createdAt: new Date(),
-  });
+  // Worker response now lives in the unified worker stream.
 }
 
 function isAgentAlreadyExistsError(error: unknown, workerId: string) {
@@ -278,6 +280,7 @@ async function resumeDirectRunFromSavedSession(
   const sessionMode = worker.bridgeSessionMode?.trim();
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
+  const { env: envParams } = await readRuntimeEnvFromSettings();
   let resumedWorker: AgentRecord;
   try {
     resumedWorker = await spawnAgent({
@@ -285,6 +288,7 @@ async function resumeDirectRunFromSavedSession(
       cwd: worker.cwd,
       name: worker.id,
       ...(workerMode ? { mode: workerMode } : {}),
+      env: envParams,
       ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
       ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
       resumeSessionId: sessionId,
@@ -326,6 +330,12 @@ async function resumeDirectRunFromSavedSession(
   }).where(eq(runs.id, run.id));
 
   const response = await askAgent(worker.id, buildDirectWorkerPrompt(run.mode, content, worker.cwd));
+  await appendUserInputOnDelivery({
+    runId: run.id,
+    workerId: worker.id,
+    text: content,
+    deliveredAt: new Date(),
+  });
   let snapshot: AgentRecord | null = null;
   try {
     snapshot = await getAgent(worker.id);
@@ -339,15 +349,7 @@ async function resumeDirectRunFromSavedSession(
     status: snapshot?.state ?? response.state,
     updatedAt: completedAt,
   }).where(eq(workers.id, worker.id));
-  await db.insert(messages).values({
-    id: randomUUID(),
-    runId: run.id,
-    role: "worker",
-    kind: run.mode,
-    content: response.response,
-    workerId: worker.id,
-    createdAt: completedAt,
-  });
+  // Worker response now lives in the unified worker stream.
 
   return { runId: run.id };
 }

@@ -59,6 +59,14 @@ export type AgentRecord = {
   effectiveModel: string | null;
   requestedEffort: string | null;
   effectiveEffort: string | null;
+  credentialProfile: {
+    name: string;
+    status: "loaded";
+    source: "file" | "command";
+    envKeys: string[];
+    unsetKeys: string[];
+    expiresAt: string | null;
+  } | null;
   sessionMode: string | null;
   contextUsage: {
     inputTokens: number | null;
@@ -85,6 +93,7 @@ export type AgentRuntimeConfig = {
     command?: string;
     args?: string[];
     env?: Record<string, string>;
+    credentialProfile?: string;
     mode?: string;
     skillRoots?: string[];
     mcpServers?: acp.McpServer[];
@@ -98,6 +107,7 @@ export type StartAgentInput = {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  credentialProfile?: string;
   mode?: string;
   model?: string;
   effort?: string;

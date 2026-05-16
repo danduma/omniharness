@@ -120,7 +120,9 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(response.status).toBe(200);
 
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
-    expect(storedMessages.map((message) => message.role)).toEqual(["user", "worker"]);
+    // Worker response now lives in the unified worker stream — only
+    // the user-role row is written to `messages` after delivery.
+    expect(storedMessages.map((message) => message.role)).toEqual(["user"]);
     expect(mockAskAgent).toHaveBeenCalledWith(workerId, "Can you revise the plan for direct mode?");
   });
 
@@ -674,8 +676,9 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(updatedRun?.lastError).toBeNull();
     expect(updatedWorker?.status).toBe("idle");
     expect(updatedWorker?.bridgeSessionId).toBe("resumed-session");
-    expect(storedMessages.map((message) => message.role)).toEqual(["user", "worker"]);
-    expect(storedMessages[1]?.content).toBe("Continuing from the restored session.");
+    // Worker response now lives in the unified worker stream — only
+    // the user-role row is written to `messages` after delivery.
+    expect(storedMessages.map((message) => message.role)).toEqual(["user"]);
     expect(resumeEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
   });
 
@@ -778,8 +781,9 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(updatedRun?.lastError).toBeNull();
     expect(updatedWorker?.status).toBe("idle");
     expect(updatedWorker?.bridgeSessionId).toBe("fresh-session");
-    expect(storedMessages.map((message) => message.role)).toEqual(["user", "worker"]);
-    expect(storedMessages[1]?.content).toBe("Fresh Gemini session response.");
+    // Worker response now lives in the unified worker stream — only
+    // the user-role row is written to `messages` after delivery.
+    expect(storedMessages.map((message) => message.role)).toEqual(["user"]);
   });
 
   it("routes direct follow-ups to the latest non-cancelled worker", async () => {
@@ -850,7 +854,9 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(mockAskAgent).toHaveBeenCalledWith(activeWorkerId, "you did it?");
     expect(mockAskAgent).not.toHaveBeenCalledWith(cancelledWorkerId, "you did it?");
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
-    expect(storedMessages.map((message) => message.role)).toEqual(["user", "worker"]);
+    // Worker response now lives in the unified worker stream — only
+    // the user-role row is written to `messages` after delivery.
+    expect(storedMessages.map((message) => message.role)).toEqual(["user"]);
   });
 
   it("keeps a direct worker cancelled when a late response arrives after stop", async () => {
@@ -902,6 +908,13 @@ describe("POST /api/conversations/[id]/messages", () => {
 
     const response = await POST(request, { params: Promise.resolve({ id: runId }) });
     expect(response.status).toBe(200);
+
+    // Fire-and-forget worker activation; wait until askAgent has actually been
+    // invoked before cancelling, otherwise the cancellation can race ahead of
+    // continueWorkerConversation's first DB read.
+    for (let i = 0; i < 50 && typeof resolveAsk !== "function"; i++) {
+      await delay(10);
+    }
 
     await db.update(workers).set({
       status: "cancelled",

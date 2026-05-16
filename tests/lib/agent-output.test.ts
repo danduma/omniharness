@@ -115,7 +115,7 @@ describe("agent output normalization", () => {
       kind: "tool_group",
       status: "failed",
       counts: {
-        readFiles: 0,
+        readFiles: 1,
         commands: 1,
         total: 2,
       },

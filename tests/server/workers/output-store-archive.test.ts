@@ -48,19 +48,22 @@ describe("workers/output-store compaction lifecycle", () => {
     const runId = uniqueId("run");
     const workerId = uniqueId("worker");
     await writeWorkerOutputEntries(runId, workerId, [
-      { type: "agent_message", text: "before" } as any,
+      { id: "e1", type: "agent_message", text: "before" } as any,
     ]);
     await compactRunOutputs(runId);
     expect(existsSync(`${workerOutputFilePathFor(runId, workerId)}.gz`)).toBe(true);
 
     await writeWorkerOutputEntries(runId, workerId, [
-      { type: "agent_message", text: "after-resume" } as any,
+      { id: "e2", type: "agent_message", text: "after-resume" } as any,
     ]);
     expect(existsSync(workerOutputFilePathFor(runId, workerId))).toBe(true);
     expect(existsSync(`${workerOutputFilePathFor(runId, workerId)}.gz`)).toBe(false);
 
+    // Append-only: the resumed worker continues the transcript rather
+    // than replacing it. The compacted history is auto-expanded so the
+    // new entry lands at the tail.
     const final = await readWorkerOutputEntries(runId, workerId);
-    expect(final.map((e) => (e as any).text)).toEqual(["after-resume"]);
+    expect(final.map((e) => (e as any).text)).toEqual(["before", "after-resume"]);
 
     await cleanupRun(runId);
   });

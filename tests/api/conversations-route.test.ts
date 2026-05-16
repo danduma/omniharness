@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { db } from "@/server/db";
 import { eq } from "drizzle-orm";
-import { executionEvents, messages, plans, runs, workerCounters, workers } from "@/server/db/schema";
+import { executionEvents, messages, plans, runs, settings, workerCounters, workers } from "@/server/db/schema";
 import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
 import { getAppRoot } from "@/server/app-root";
 import type { GitWorkspaceSnapshot, GitWorkspaceTarget } from "@/lib/git-workspace";
@@ -173,6 +173,7 @@ describe("POST /api/conversations", () => {
     await db.delete(workerCounters);
     await db.delete(runs);
     await db.delete(plans);
+    await db.delete(settings);
   });
 
   it("pins a new direct conversation to a selected git workspace target", async () => {
@@ -528,7 +529,9 @@ describe("POST /api/conversations", () => {
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
 
     expect(completedRun?.status).toBe("awaiting_user");
-    expect(storedMessages.some((message) => message.role === "worker" && message.content === "Let's shape the plan.")).toBe(true);
+    // Worker response now lives in the unified worker stream (per-worker
+    // JSONL), not the `messages` table.
+    expect(storedMessages.some((message) => message.role === "worker" && message.content === "Let's shape the plan.")).toBe(false);
   });
 
   it("does not mark a new planning conversation failed when the first planner turn is already busy", async () => {
@@ -585,8 +588,47 @@ describe("POST /api/conversations", () => {
 
     expect(createdRun?.mode).toBe("direct");
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    await waitFor(() => mockAskAgent.mock.calls.length, (count) => count > 0);
     expect(mockAskAgent).toHaveBeenCalledTimes(1);
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+  });
+
+  it("passes runtime credential settings into direct worker spawns", async () => {
+    await db.insert(settings).values([
+      {
+        key: "OMNIHARNESS_CREDENTIAL_COMMAND_CLAUDE",
+        value: "/Users/masterman/.local/bin/baton",
+        updatedAt: new Date(),
+      },
+      {
+        key: "OMNIHARNESS_CREDENTIAL_COMMAND_ARGS_CLAUDE",
+        value: "[\"credential-profile\"]",
+        updatedAt: new Date(),
+      },
+    ]);
+
+    const request = new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command: "Open a direct Claude session in this repo",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "claude",
+      }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    await waitFor(() => mockSpawnAgent.mock.calls.length, (count) => count > 0);
+
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      type: "claude",
+      cwd: "/workspace/app",
+      env: expect.objectContaining({
+        OMNIHARNESS_CREDENTIAL_COMMAND_CLAUDE: "/Users/masterman/.local/bin/baton",
+        OMNIHARNESS_CREDENTIAL_COMMAND_ARGS_CLAUDE: "[\"credential-profile\"]",
+      }),
+    }));
   });
 
   it("returns a direct conversation before worker spawn completes", async () => {
@@ -768,7 +810,8 @@ describe("POST /api/conversations", () => {
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
 
     expect(completedRun?.status).toBe("done");
-    expect(storedMessages.some((message) => message.role === "worker" && message.content === "Ready for the next prompt.")).toBe(true);
+    // Worker response now lives in the unified worker stream.
+    expect(storedMessages.some((message) => message.role === "worker" && message.content === "Ready for the next prompt.")).toBe(false);
   });
 
   it("persists direct worker session metadata before the first worker turn completes", async () => {

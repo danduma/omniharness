@@ -82,14 +82,18 @@ describe("buildSupervisorTools", () => {
     expect(spawnTool?.description).toContain("real user-facing path");
   });
 
-  it("describes ask_user as the preflight intent confirmation path", () => {
-    const askUserTool = buildSupervisorTools().ask_user;
+  it("routes preflight intent confirmation through confirm_ready_to_implement", () => {
+    const tools = buildSupervisorTools();
+    const askUserTool = tools.ask_user;
+    const confirmTool = tools.confirm_ready_to_implement;
 
-    expect(askUserTool?.description).toContain("preflight intent confirmation");
-    expect(askUserTool?.description).toContain("summarize the understood job");
     expect(askUserTool?.description).toContain("clarifying question");
-    expect(askUserTool?.description).toContain("specific outcomes");
-    expect(askUserTool?.description).toContain("not just the artifact title");
+    expect(askUserTool?.description).toContain("confirm_ready_to_implement");
+
+    expect(confirmTool).toBeTruthy();
+    expect(confirmTool?.description).toContain("preflight intent confirmation");
+    expect(confirmTool?.description).toContain("Yes, implement it");
+    expect(confirmTool?.description).toContain("No, let me clarify");
   });
 
   it("exposes an explicit supervisor-authored user message tool", () => {

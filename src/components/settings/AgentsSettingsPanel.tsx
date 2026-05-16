@@ -127,7 +127,7 @@ export function AgentsSettingsPanel({
         </label>
         <Select
           id="WORKER_DEFAULT_TYPE"
-          className="flex-1"
+          className="w-auto"
           value={defaultWorkerType}
           options={defaultWorkerOptions}
           onValueChange={setDefaultWorkerType}

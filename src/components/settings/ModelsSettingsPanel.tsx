@@ -2,7 +2,7 @@ import type React from "react";
 import type { LlmProfileTab } from "@/app/home/types";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import { Select } from "@/components/ui/select";
+import { Select, type SelectOption } from "@/components/ui/select";
 import { ModelProfileForm } from "./ModelProfileForm";
 
 interface ModelsSettingsPanelProps {
@@ -10,8 +10,11 @@ interface ModelsSettingsPanelProps {
   setActiveLlmProfileTab: React.Dispatch<React.SetStateAction<LlmProfileTab>>;
   settings: Record<string, string>;
   setSetting: (key: string, value: string) => void;
-  secretStates?: Record<string, { configured: boolean; updatedAt: string }>;
+  secretStates?: Record<string, { configured: boolean; updatedAt: string; preview?: string }>;
 }
+
+const CREDIT_STRATEGY_VALUES = ["swap_account", "fallback_api", "wait_for_reset", "cross_provider"] as const;
+type CreditStrategyValue = (typeof CREDIT_STRATEGY_VALUES)[number];
 
 export function ModelsSettingsPanel({
   activeLlmProfileTab,
@@ -21,12 +24,14 @@ export function ModelsSettingsPanel({
   secretStates,
 }: ModelsSettingsPanelProps) {
   useI18nSnapshot();
-  const creditStrategyOptions = [
-    { value: "swap_account", label: t("settings.models.creditStrategy.swapAccount") },
-    { value: "fallback_api", label: t("settings.models.creditStrategy.fallbackApi") },
-    { value: "wait_for_reset", label: t("settings.models.creditStrategy.waitForReset") },
-    { value: "cross_provider", label: t("settings.models.creditStrategy.crossProvider") },
-  ];
+  const creditStrategyOptions: SelectOption[] = CREDIT_STRATEGY_VALUES.map((value) => ({
+    value,
+    label: t(`settings.models.creditStrategy.${toCamel(value)}`),
+  }));
+  const currentStrategy = (CREDIT_STRATEGY_VALUES as readonly string[]).includes(settings.CREDIT_STRATEGY)
+    ? (settings.CREDIT_STRATEGY as CreditStrategyValue)
+    : "swap_account";
+  const strategyExplanation = t(`settings.models.creditStrategy.explanation.${toCamel(currentStrategy)}`);
 
   return (
     <div className="space-y-4">
@@ -70,17 +75,34 @@ export function ModelsSettingsPanel({
         />
       )}
 
-      <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/20 p-4">
-        <label className="text-xs font-semibold text-muted-foreground" htmlFor="CREDIT_STRATEGY">
-          {t("settings.models.creditStrategy.label")}
-        </label>
-        <Select
-          id="CREDIT_STRATEGY"
-          value={settings.CREDIT_STRATEGY || "swap_account"}
-          options={creditStrategyOptions}
-          onValueChange={(value) => setSetting("CREDIT_STRATEGY", value)}
-        />
+      <div className="rounded-xl border border-border/60 bg-muted/20 p-4">
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,16rem)_1fr] sm:items-start">
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-muted-foreground" htmlFor="CREDIT_STRATEGY">
+              {t("settings.models.creditStrategy.label")}
+            </label>
+            <Select
+              id="CREDIT_STRATEGY"
+              value={currentStrategy}
+              options={creditStrategyOptions}
+              onValueChange={(value) => setSetting("CREDIT_STRATEGY", value)}
+              className="w-full"
+              contentClassName="min-w-[16rem]"
+            />
+          </div>
+          <div
+            role="note"
+            aria-live="polite"
+            className="rounded-lg border border-border/50 bg-background/50 p-3 text-xs leading-relaxed text-muted-foreground sm:mt-[1.625rem]"
+          >
+            {strategyExplanation}
+          </div>
+        </div>
       </div>
     </div>
   );
+}
+
+function toCamel(value: string) {
+  return value.replace(/_([a-z])/g, (_, char: string) => char.toUpperCase());
 }

@@ -379,7 +379,7 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
   return renderShell(`
     <header>
       <h1>OmniHarness Restart</h1>
-      <span class="pill ${runtime.running ? "ok" : "warn"}">${runtime.running ? "running" : "stopped"}</span>
+      <span id="status-pill" class="pill ${runtime.running ? "ok" : "warn"}">${runtime.running ? "running" : "stopped"}</span>
     </header>
     ${status.restarted ? `<div class="notice">${status.mode === "prod" ? "Production" : "Development"} action accepted.</div>` : ""}
     ${status.stopped ? `<div class="notice warn">Stop signal accepted.</div>` : ""}
@@ -387,39 +387,42 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
     <div class="chrome">
       <div class="actions">
         <form method="post" action="/restart-current">
-          <button class="primary" type="submit" ${canRestartCurrent ? "" : "disabled"}>Restart Current</button>
+          <button id="btn-restart-current" class="primary" type="submit" ${canRestartCurrent ? "" : "disabled"}>Restart Current</button>
         </form>
         <form method="post" action="/start">
           <input type="hidden" name="mode" value="dev">
-          <button type="submit" ${devActive ? "disabled" : ""}>${devLabel}</button>
+          <button id="btn-start-dev" type="submit" ${devActive ? "disabled" : ""}>${devLabel}</button>
         </form>
         <form method="post" action="/start">
           <input type="hidden" name="mode" value="prod">
-          <button type="submit" ${prodActive ? "disabled" : ""}>${prodLabel}</button>
+          <button id="btn-start-prod" type="submit" ${prodActive ? "disabled" : ""}>${prodLabel}</button>
         </form>
         <form method="post" action="/stop">
-          <button class="danger" type="submit" ${runtime.running ? "" : "disabled"}>Stop</button>
+          <button id="btn-stop" class="danger" type="submit" ${runtime.running ? "" : "disabled"}>Stop</button>
         </form>
-        <a class="button" href="/">Refresh</a>
+        <a id="btn-refresh" class="button" href="/">Refresh</a>
         <a class="button" href="${appLink}">Open App</a>
         <a class="button" href="/status">JSON</a>
         <form method="post" action="/logout">
           <button class="danger" type="submit">Lock</button>
         </form>
-        <label class="auto-refresh" title="Reload this page on a timer">
-          <input id="auto-refresh-toggle" type="checkbox">
-          <span>Auto-refresh</span>
-          <input id="auto-refresh-seconds" type="number" min="1" step="1" value="5">
+        <span class="auto-refresh" title="Reload this page on a timer">
+          <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+            <input id="auto-refresh-toggle" type="checkbox">
+            <span>Auto-refresh</span>
+          </label>
+          <input id="auto-refresh-seconds" type="number" min="1" step="1" value="5" aria-label="Refresh interval in seconds">
           <span class="subtle">s</span>
-        </label>
+          <span id="auto-refresh-countdown" class="subtle" aria-live="polite"></span>
+        </span>
       </div>
       <dl class="details">
-        <div class="fact"><dt>Status</dt><dd>${runtime.running ? "Responding on managed ports" : "No managed process detected"}</dd></div>
-        <div class="fact"><dt>Mode</dt><dd>${escapeHtml(mode)}</dd></div>
-        <div class="fact"><dt>PID</dt><dd>${runtime.pid ?? "none"}</dd></div>
+        <div class="fact"><dt>Status</dt><dd id="dd-status">${runtime.running ? "Responding on managed ports" : "No managed process detected"}</dd></div>
+        <div class="fact"><dt>Mode</dt><dd id="dd-mode">${escapeHtml(mode)}</dd></div>
+        <div class="fact"><dt>PID</dt><dd id="dd-pid">${runtime.pid ?? "none"}</dd></div>
         <div class="fact"><dt>Ports</dt><dd>${config.managedPorts.join(", ")}</dd></div>
-        <div class="fact"><dt>Started</dt><dd>${escapeHtml(startedAt)}</dd></div>
-        <div class="fact"><dt>Command</dt><dd>${escapeHtml(command)}</dd></div>
+        <div class="fact"><dt>Started</dt><dd id="dd-started">${escapeHtml(startedAt)}</dd></div>
+        <div class="fact"><dt>Command</dt><dd id="dd-command">${escapeHtml(command)}</dd></div>
       </dl>
     </div>
     <div class="log-head">
@@ -464,7 +467,7 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
           logViewer.textContent = rawLog || "No restart-control logs yet.";
           return;
         }
-        const lines = rawLog.split("\n");
+        const lines = rawLog.split("\\n");
         let predicate;
         if (useRegex) {
           try {
@@ -482,7 +485,7 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
           predicate = (line) => line.toLowerCase().includes(needle);
         }
         const matched = lines.filter(predicate);
-        logViewer.textContent = matched.length ? matched.join("\n") : "No lines match the filter.";
+        logViewer.textContent = matched.length ? matched.join("\\n") : "No lines match the filter.";
         if (filterStatus) filterStatus.textContent = matched.length + " / " + lines.length + " lines";
       }
       if (filterInput && regexToggle) {
@@ -520,22 +523,113 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
           } catch (_) {}
         });
       }
-      if (logViewer && !filterInput?.value) {
+      function scrollLogToBottom() {
+        if (!logViewer) return;
+        if (filterInput && filterInput.value) return;
+        logViewer.scrollTop = logViewer.scrollHeight;
+      }
+      if (logViewer) {
         requestAnimationFrame(() => {
-          logViewer.scrollTop = logViewer.scrollHeight;
+          requestAnimationFrame(scrollLogToBottom);
+        });
+        window.addEventListener("load", scrollLogToBottom);
+      }
+      function setText(id, value) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const str = String(value);
+        if (el.textContent !== str) el.textContent = str;
+      }
+      function setDisabled(id, value) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (el.disabled !== value) el.disabled = value;
+      }
+      function setBtn(id, disabled, text) {
+        setDisabled(id, disabled);
+        if (typeof text === "string") setText(id, text);
+      }
+      function isLogAtBottom() {
+        if (!logViewer) return true;
+        return (logViewer.scrollHeight - logViewer.scrollTop - logViewer.clientHeight) < 8;
+      }
+      function patchFromStatus(d) {
+        if (!d || d.ok === false) return;
+        const pill = document.getElementById("status-pill");
+        if (pill) {
+          const wantText = d.running ? "running" : "stopped";
+          const wantClass = "pill " + (d.running ? "ok" : "warn");
+          if (pill.textContent !== wantText) pill.textContent = wantText;
+          if (pill.className !== wantClass) pill.className = wantClass;
+        }
+        const mode = d.mode || "unknown";
+        const startedAt = d.startedAt ? new Date(d.startedAt).toLocaleString() : "unknown";
+        const command = Array.isArray(d.command) && d.command.length ? d.command.join(" ") : "Not started by restart control";
+        setText("dd-status", d.running ? "Responding on managed ports" : "No managed process detected");
+        setText("dd-mode", mode);
+        setText("dd-pid", d.pid != null ? d.pid : "none");
+        setText("dd-started", startedAt);
+        setText("dd-command", command);
+        const canRestartCurrent = Boolean(d.running && d.mode);
+        const devActive = Boolean(d.running && d.mode === "dev");
+        const prodActive = Boolean(d.running && d.mode === "prod");
+        setBtn("btn-restart-current", !canRestartCurrent);
+        setBtn("btn-start-dev", devActive, devActive ? "Dev Running" : (d.running ? "Switch to Dev" : "Start Dev"));
+        setBtn("btn-start-prod", prodActive, prodActive ? "Prod Running" : (d.running ? "Switch to Prod" : "Start Prod"));
+        setBtn("btn-stop", !d.running);
+        if (typeof d.recentLog === "string" && d.recentLog !== window.__OMNIHARNESS_RAW_LOG__) {
+          const wasAtBottom = isLogAtBottom();
+          window.__OMNIHARNESS_RAW_LOG__ = d.recentLog;
+          if (typeof applyFilter === "function") applyFilter();
+          else if (logViewer) logViewer.textContent = d.recentLog || "No restart-control logs yet.";
+          if (wasAtBottom && (!filterInput || !filterInput.value)) {
+            requestAnimationFrame(() => { if (logViewer) logViewer.scrollTop = logViewer.scrollHeight; });
+          }
+        }
+      }
+      let refreshInFlight = false;
+      async function refreshContent() {
+        if (refreshInFlight) return;
+        refreshInFlight = true;
+        try {
+          const lines = (linesInput && linesInput.value)
+            ? Math.max(1, Math.min(${MAX_LOG_LINES}, parseInt(linesInput.value, 10) || ${DEFAULT_LOG_LINES}))
+            : ${logLines};
+          const res = await fetch("/status?lines=" + lines, {
+            credentials: "same-origin",
+            headers: { accept: "application/json" },
+            cache: "no-store",
+          });
+          if (res.status === 401) { window.location.reload(); return; }
+          if (!res.ok) return;
+          const data = await res.json();
+          patchFromStatus(data);
+        } catch (_) {
+          // ignore — try again on next tick
+        } finally {
+          refreshInFlight = false;
+        }
+      }
+      const refreshLink = document.getElementById("btn-refresh");
+      if (refreshLink) {
+        refreshLink.addEventListener("click", (e) => {
+          e.preventDefault();
+          refreshContent();
         });
       }
       (function () {
-        const STORAGE_KEY = "omniharness-restart-auto-refresh";
+        const STORAGE_KEY = "omniharness-restart-auto-refresh-v2";
         const toggle = document.getElementById("auto-refresh-toggle");
         const seconds = document.getElementById("auto-refresh-seconds");
+        const countdown = document.getElementById("auto-refresh-countdown");
         if (!toggle || !seconds) return;
         let stored = {};
         try { stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}") || {}; } catch (_) {}
         const initialSeconds = Math.max(1, Math.floor(Number(stored.seconds) || 5));
         seconds.value = String(initialSeconds);
         toggle.checked = Boolean(stored.enabled);
-        let timer = null;
+        let tickHandle = null;
+        let deadline = 0;
         function save() {
           try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify({
@@ -544,21 +638,48 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
             }));
           } catch (_) {}
         }
-        function schedule() {
-          if (timer) { clearTimeout(timer); timer = null; }
+        function renderCountdown() {
+          if (!countdown) return;
+          if (!toggle.checked) { countdown.textContent = ""; return; }
+          const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+          countdown.textContent = "next in " + remaining + "s";
+        }
+        function stop() {
+          if (tickHandle) { clearInterval(tickHandle); tickHandle = null; }
+          renderCountdown();
+        }
+        function start() {
+          stop();
           if (!toggle.checked) return;
           const value = Math.max(1, Math.floor(Number(seconds.value) || 1));
-          timer = setTimeout(() => { window.location.reload(); }, value * 1000);
+          deadline = Date.now() + value * 1000;
+          renderCountdown();
+          tickHandle = setInterval(async () => {
+            if (Date.now() >= deadline) {
+              await refreshContent();
+              if (!toggle.checked) { stop(); return; }
+              const next = Math.max(1, Math.floor(Number(seconds.value) || 1));
+              deadline = Date.now() + next * 1000;
+            }
+            renderCountdown();
+          }, 250);
         }
-        toggle.addEventListener("change", () => { save(); schedule(); });
+        function onToggleChange() { save(); start(); }
+        toggle.addEventListener("change", onToggleChange);
+        toggle.addEventListener("click", () => {
+          setTimeout(onToggleChange, 0);
+        });
         seconds.addEventListener("change", () => {
           const value = Math.max(1, Math.floor(Number(seconds.value) || 1));
           seconds.value = String(value);
           save();
-          schedule();
+          start();
         });
-        seconds.addEventListener("input", schedule);
-        schedule();
+        seconds.addEventListener("input", () => {
+          const raw = Number(seconds.value);
+          if (Number.isFinite(raw) && raw >= 1) start();
+        });
+        start();
       })();
     </script>`);
 }
@@ -629,7 +750,8 @@ const server = createServer((request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/status") {
-      sendJson(response, 200, { ok: true, ...(await controller.getStatus()) });
+      const logLines = parseLogLines(url.searchParams.get("lines"));
+      sendJson(response, 200, { ok: true, ...(await controller.getStatus({ logLines })) });
       return;
     }
 

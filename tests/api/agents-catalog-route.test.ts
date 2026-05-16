@@ -130,6 +130,55 @@ describe("GET /api/agents/catalog", () => {
     ]));
   });
 
+  it("uses runtime doctor availability when the web process cannot locally resolve worker binaries", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({
+        results: [
+          {
+            type: "claude",
+            status: "ok",
+            binary: true,
+            apiKey: null,
+            endpoint: true,
+          },
+        ],
+      }),
+    }));
+
+    mockGetWorkerInstallationInfo.mockImplementation((type: string) => ({
+      command: type === "claude" ? "claude-agent-acp" : type,
+      path: null,
+      dir: null,
+    }));
+    mockIsSpawnableWorkerType.mockImplementation((type: string) => (
+      type === "claude"
+        ? { ok: false, type, reason: "claude-agent-acp binary not found on PATH" }
+        : { ok: false, type, reason: `${type} unavailable` }
+    ));
+
+    const response = await GET(new NextRequest("http://localhost/api/agents/catalog"));
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    const claude = payload.workers.find((worker: { type: string }) => worker.type === "claude");
+
+    expect(claude?.availability).toMatchObject({
+      type: "claude",
+      status: "ok",
+      binary: true,
+      endpoint: true,
+      message: "Ready to spawn.",
+    });
+    expect(claude?.installation).toEqual({
+      command: "claude-agent-acp",
+      path: null,
+      dir: null,
+    });
+  });
+
   it("downgrades an installed worker when CLI authentication is missing", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,

@@ -240,6 +240,52 @@ curl http://127.0.0.1:7800/doctor
 
 The doctor response reports adapter availability, API key status, endpoint reachability, and tool diagnostics.
 
+## External Credential Profiles
+
+OmniHarness can apply a generic credential env overlay before spawning any ACP worker. Configure it in Settings -> Agents, set `OMNIHARNESS_CREDENTIAL_PROFILES_DIR` to a directory of profiles, or use the default `.omniharness/credential-profiles` under the OmniHarness root.
+
+Profiles are auto-discovered by worker type, so `.omniharness/credential-profiles/claude` applies to Claude workers. You can also set `OMNIHARNESS_CREDENTIAL_PROFILE_CLAUDE=runner` or pass `credentialProfile` to the runtime API.
+
+File-backed profile:
+
+```text
+.omniharness/credential-profiles/claude/
+  env/
+    ANTHROPIC_BASE_URL
+    ANTHROPIC_AUTH_TOKEN
+  unset
+  expires_at
+```
+
+`unset` is one environment variable per line. `expires_at` is optional and only used for status metadata. Secret values are applied to the child process but only key names are exposed in runtime status.
+
+Command-backed profile:
+
+```json
+{
+  "command": "/Users/you/.local/bin/baton",
+  "args": ["credential-profile"],
+  "timeoutMs": 5000
+}
+```
+
+Settings can also point a worker directly at a provider command without a profile folder. For Claude and Baton, set:
+
+```text
+OMNIHARNESS_CREDENTIAL_COMMAND_CLAUDE=/Users/you/.local/bin/baton
+OMNIHARNESS_CREDENTIAL_COMMAND_ARGS_CLAUDE=["credential-profile"]
+```
+
+The command must print JSON:
+
+```json
+{
+  "env": { "ANTHROPIC_BASE_URL": "https://api.example", "ANTHROPIC_AUTH_TOKEN": "..." },
+  "unset": ["ANTHROPIC_API_KEY"],
+  "expiresAt": "2026-06-14T04:23:48.000Z"
+}
+```
+
 ## Troubleshooting Setup
 
 - **`This repository is pnpm-only`:** run commands with `pnpm`, not `npm install` or `yarn`.

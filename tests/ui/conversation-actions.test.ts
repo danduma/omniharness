@@ -307,7 +307,7 @@ test("preflight implementation confirmations expose remembered quick actions", (
   expect(homeAppSource).toContain("preflightConfirmationActionsManager.hydrateFromBrowser()");
   expect(homeAppSource).toContain("sendConversationMessage.mutate({ runId: selectedRunId, content, attachments: [] })");
   expect(managerSource).toContain("omni.preflight-confirmation-actions.handled");
-  expect(localeSource).toContain('"conversation.preflightConfirmation.yes": "Yes, continue"');
+  expect(localeSource).toContain('"conversation.preflightConfirmation.yes": "Yes, implement it"');
   expect(localeSource).toContain('"conversation.preflightConfirmation.no": "No, let me clarify"');
 });
 

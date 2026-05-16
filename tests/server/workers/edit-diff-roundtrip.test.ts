@@ -177,4 +177,174 @@ describe("edit tool diff persistence round-trip", () => {
     expect(diffText).toContain("-stale = 1;");
     expect(diffText).toContain("+stale = 2;");
   });
+
+  it("preserves divergence for a single-line 4kB diff with the change buried in the middle", async () => {
+    // Bridge can emit Edit content as one giant line (think minified JS,
+    // base64 image, JSON dump). With prefix=0 and suffix=0 the old code
+    // short-circuited compressDiffContentPair and let the generic
+    // char-based head+tail truncator slice off the divergent middle —
+    // leaving oldText and newText byte-identical on disk.
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    cleanupRunIds.push(runId);
+
+    const filler = "x".repeat(2200);
+    const oldText = `${filler}<<OLD-MARKER>>${filler}`;
+    const newText = `${filler}<<NEW-MARKER>>${filler}`;
+    expect(oldText.length).toBeGreaterThan(4_000);
+    expect(oldText.split("\n").length).toBe(1);
+
+    const entry = {
+      id: randomUUID(),
+      type: "tool_call",
+      text: "Edit",
+      timestamp: new Date().toISOString(),
+      toolCallId: "edit-6",
+      toolKind: "edit",
+      status: "completed",
+      raw: {
+        content: [{ type: "diff", path: "minified.js", oldText, newText }],
+        kind: "edit",
+        status: "completed",
+        title: "Edit",
+        toolCallId: "edit-6",
+        sessionUpdate: "tool_call",
+      },
+    };
+
+    await writeWorkerOutputEntries(runId, workerId, [entry as never]);
+    const persisted = await readWorkerOutputEntries(runId, workerId);
+    const persistedContent = (persisted[0] as { raw: { content: Array<Record<string, unknown>> } })
+      .raw.content[0];
+    expect(
+      persistedContent.oldText,
+      "single-line 4kB diff with divergence in the middle: oldText and newText must still differ on disk",
+    ).not.toBe(persistedContent.newText);
+    expect(String(persistedContent.oldText)).toContain("OLD-MARKER");
+    expect(String(persistedContent.newText)).toContain("NEW-MARKER");
+  });
+
+  it("preserves divergence when one line in the middle of a 9-line file changes (6f659eeee333 shape)", async () => {
+    // Exact shape of the persisted entry on disk for session
+    // 6f659eeee333-worker-1: 9 lines, differing only at index 4. The
+    // generic truncateHistoryString would omit line 4 and produce
+    // byte-identical head+tail strings for old and new.
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    cleanupRunIds.push(runId);
+
+    const buildSide = (middle: string) => [
+      `"use client";`,
+      ``,
+      `import type React from "react";`,
+      `import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";`,
+      middle,
+      ``,
+      `function applyHomeBootstrap(bootstrap: HomeBootstrapPayload | null | undefined, notify = true) {`,
+      `  if (!bootstrap) return;`,
+      `}`,
+    ].join("\n");
+    const oldText = buildSide(`import { foo } from "./old";`);
+    const newText = buildSide(`import { bar } from "./new";`);
+
+    const entry = {
+      id: randomUUID(),
+      type: "tool_call",
+      text: "Edit",
+      timestamp: new Date().toISOString(),
+      toolCallId: "edit-5",
+      toolKind: "edit",
+      status: "completed",
+      raw: {
+        content: [{ type: "diff", path: "HomeApp.tsx", oldText, newText }],
+        kind: "edit",
+        status: "completed",
+        title: "Edit",
+        toolCallId: "edit-5",
+        sessionUpdate: "tool_call",
+      },
+    };
+
+    await writeWorkerOutputEntries(runId, workerId, [entry as never]);
+    const persisted = await readWorkerOutputEntries(runId, workerId);
+    const persistedContent = (persisted[0] as { raw: { content: Array<Record<string, unknown>> } })
+      .raw.content[0];
+    expect(
+      persistedContent.oldText,
+      "9-line file with a one-line middle change: oldText and newText must still differ on disk",
+    ).not.toBe(persistedContent.newText);
+    expect(String(persistedContent.oldText)).toContain(`old`);
+    expect(String(persistedContent.newText)).toContain(`new`);
+  });
+
+  it("preserves divergence when prefix and suffix lines are short but the body is enormous", async () => {
+    // Mirrors the actual failure on disk for session 6f659eeee333: short
+    // common prefix and suffix (so the old code took the early-null exit)
+    // and a multi-kB divergent body, which the generic truncator then
+    // collapsed to byte-identical head/tail strings.
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    cleanupRunIds.push(runId);
+
+    const divergentOld = Array.from({ length: 80 }, (_, i) => `old body ${i}: ${"a".repeat(40)}`).join("\n");
+    const divergentNew = Array.from({ length: 80 }, (_, i) => `new body ${i}: ${"b".repeat(40)}`).join("\n");
+    const oldText = `header\n${divergentOld}\nfooter`;
+    const newText = `header\n${divergentNew}\nfooter`;
+    expect(oldText.length).toBeGreaterThan(4_000);
+
+    const entry = {
+      id: randomUUID(),
+      type: "tool_call",
+      text: "Edit",
+      timestamp: new Date().toISOString(),
+      toolCallId: "edit-4",
+      toolKind: "edit",
+      status: "completed",
+      raw: {
+        content: [{ type: "diff", path: "HomeApp.tsx", oldText, newText }],
+        kind: "edit",
+        status: "completed",
+        title: "Edit",
+        toolCallId: "edit-4",
+        sessionUpdate: "tool_call",
+      },
+    };
+
+    await writeWorkerOutputEntries(runId, workerId, [entry as never]);
+
+    // First read must already have distinguishable oldText/newText.
+    const persistedOnce = await readWorkerOutputEntries(runId, workerId);
+    const onceContent = (persistedOnce[0] as { raw: { content: Array<Record<string, unknown>> } })
+      .raw.content[0];
+    expect(
+      onceContent.oldText,
+      "after one write the persisted oldText and newText must already differ",
+    ).not.toBe(onceContent.newText);
+
+    // Round-trip a second time. If the first write had silently collapsed
+    // both sides to byte-identical strings, the second write would then
+    // take the truncateHistoryString fallback and lock in the corruption.
+    await writeWorkerOutputEntries(runId, workerId, persistedOnce as never);
+    const persistedTwice = await readWorkerOutputEntries(runId, workerId);
+    const twiceContent = (persistedTwice[0] as { raw: { content: Array<Record<string, unknown>> } })
+      .raw.content[0];
+    expect(
+      twiceContent.oldText,
+      "second write must not collapse oldText and newText to identical strings",
+    ).not.toBe(twiceContent.newText);
+
+    const activity = buildAgentOutputActivity({
+      outputEntries: persistedTwice as never,
+      state: "done",
+      currentText: "",
+      lastText: "",
+      displayText: "",
+    });
+    const toolEntry = activity.find((item) => item.kind === "tool");
+    expect(toolEntry?.kind === "tool" ? toolEntry.outputPane?.kind : null).toBe("diff");
+    const diffText = toolEntry?.kind === "tool" ? toolEntry.outputPane?.text ?? "" : "";
+    // Both sides must contribute something to the diff — not just one.
+    expect(diffText).toMatch(/-/);
+    expect(diffText).toMatch(/\+/);
+  });
 });

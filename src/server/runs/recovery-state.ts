@@ -74,6 +74,7 @@ export type RecoveryQueuedMessageLike = {
 const TERMINAL_RUN_STATUSES = new Set(["done", "failed", "cancelled", "canceled"]);
 const ACTIVE_WORKER_STATUSES = new Set(["starting", "working", "idle", "stuck", "recovering"]);
 const STARTING_WORKER_GRACE_MS = 30_000;
+const ACTIVE_WORKER_GRACE_MS = 15_000;
 
 function normalizeStatus(value: string | null | undefined) {
   return (value ?? "").trim().toLowerCase().split(":")[0]?.trim() ?? "";
@@ -103,12 +104,19 @@ function isActivePersistedWorker(worker: RecoveryWorkerLike, nowMs: number) {
     return false;
   }
 
-  if (status !== "starting") {
-    return true;
+  const updatedAt = timestampMs(worker.updatedAt);
+  if (status === "starting") {
+    return updatedAt === null || nowMs - updatedAt >= STARTING_WORKER_GRACE_MS;
   }
 
-  const updatedAt = timestampMs(worker.updatedAt);
-  return updatedAt === null || nowMs - updatedAt >= STARTING_WORKER_GRACE_MS;
+  // Worker rows can flip to working/idle/recovering a beat before the bridge's
+  // liveAgents snapshot reflects them. Apply a short grace window so a freshly
+  // transitioned worker isn't classified as lost on the next reconcile tick.
+  if (updatedAt !== null && nowMs - updatedAt < ACTIVE_WORKER_GRACE_MS) {
+    return false;
+  }
+
+  return true;
 }
 
 function latestUserCheckpoint(messages: RecoveryMessageLike[]) {

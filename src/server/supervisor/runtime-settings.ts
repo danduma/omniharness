@@ -1,3 +1,5 @@
+import { db } from "@/server/db";
+import { settings } from "@/server/db/schema";
 import { decryptSettingValue, shouldEncryptSetting } from "@/server/settings/crypto";
 
 interface StoredSetting {
@@ -28,4 +30,9 @@ export function hydrateRuntimeEnvFromSettings(settings: StoredSetting[]) {
   }
 
   return { env, decryptionFailures };
+}
+
+export async function readRuntimeEnvFromSettings() {
+  const allSettings = await db.select().from(settings);
+  return hydrateRuntimeEnvFromSettings(allSettings);
 }

@@ -11,9 +11,11 @@ import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
+import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import { createQueuedConversationMessage, type BusyMessageAction } from "./queued-messages";
 import { serializeMessageRecord } from "./message-records";
+import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
@@ -75,11 +77,13 @@ async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRecord) {
   const sessionMode = worker.bridgeSessionMode?.trim();
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
+  const { env: envParams } = await readRuntimeEnvFromSettings();
   const spawnParams = {
     type: worker.type,
     cwd: worker.cwd,
     name: worker.id,
     ...(workerMode ? { mode: workerMode } : {}),
+    env: envParams,
     ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
     ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
   };
@@ -155,10 +159,14 @@ async function continueWorkerConversation({
   run,
   worker,
   content,
+  userInputText,
+  attachments,
 }: {
   run: RunRecord;
   worker: WorkerRecord;
   content: string;
+  userInputText: string;
+  attachments: ChatAttachment[];
 }) {
   try {
     const currentWorker = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
@@ -173,6 +181,24 @@ async function continueWorkerConversation({
     notifyEventStreamSubscribers();
 
     const response = await askDirectWorkerWithResume(run, worker, content);
+    // Append user_input on delivery — `askDirectWorkerWithResume` has
+    // resolved successfully, so the prompt definitely reached the
+    // worker. Ordering: this lands before persistWorkerSnapshot below,
+    // which is when bridge entries get written; the lifecycle test in
+    // the plan depends on user_input preceding tool_calls/messages.
+    const deliveredAt = new Date();
+    await appendUserInputOnDelivery({
+      runId: run.id,
+      workerId: worker.id,
+      text: userInputText,
+      deliveredAt,
+      attachments: attachments.map((attachment) => ({
+        id: attachment.id,
+        filename: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.size,
+      })),
+    });
     const workerAfterResponse = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
     if (isWorkerCancelled(workerAfterResponse)) {
       notifyEventStreamSubscribers();
@@ -195,16 +221,9 @@ async function continueWorkerConversation({
       updatedAt: new Date(),
     }).where(eq(workers.id, worker.id));
 
-    const workerMessageCreatedAt = new Date();
-    await db.insert(messages).values({
-      id: randomUUID(),
-      runId: run.id,
-      role: "worker",
-      kind: run.mode,
-      content: response.response,
-      workerId: worker.id,
-      createdAt: workerMessageCreatedAt,
-    });
+    // Worker response now lives in the unified worker stream — the
+    // bridge entries written by persistWorkerSnapshot above carry the
+    // response text. The legacy role:"worker" messages row is gone.
 
     if (run.mode === "planning") {
       const latestRun = await db.select().from(runs).where(eq(runs.id, run.id)).get();
@@ -391,7 +410,13 @@ export async function sendConversationMessage({
   if (run.mode === "direct") {
     if (busyAction === "steer") {
       try {
-        await continueWorkerConversation({ run, worker, content: workerContent });
+        await continueWorkerConversation({
+          run,
+          worker,
+          content: workerContent,
+          userInputText: trimmedContent,
+          attachments: normalizedAttachments,
+        });
       } catch (error) {
         if (isAgentBusyError(error)) {
           await db.delete(messages).where(eq(messages.id, userMessage.id));
@@ -418,7 +443,13 @@ export async function sendConversationMessage({
       };
     }
 
-    continueWorkerConversation({ run, worker, content: workerContent }).catch((error) => {
+    continueWorkerConversation({
+      run,
+      worker,
+      content: workerContent,
+      userInputText: trimmedContent,
+      attachments: normalizedAttachments,
+    }).catch((error) => {
       if (isAgentBusyError(error)) {
         return;
       }
@@ -433,7 +464,13 @@ export async function sendConversationMessage({
   }
 
   try {
-    await continueWorkerConversation({ run, worker, content: workerContent });
+    await continueWorkerConversation({
+      run,
+      worker,
+      content: workerContent,
+      userInputText: trimmedContent,
+      attachments: normalizedAttachments,
+    });
   } catch (error) {
     if (busyAction === "steer" && isAgentBusyError(error)) {
       await db.delete(messages).where(eq(messages.id, userMessage.id));

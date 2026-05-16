@@ -4,6 +4,12 @@ import { gzipSync, gunzipSync } from "node:zlib";
 import AdmZip from "adm-zip";
 import type { AgentRecord } from "@/server/bridge-client";
 import { getAppDataPath } from "@/server/app-root";
+import type {
+  WorkerEntry,
+  WorkerEntryAttachment,
+  WorkerEntryAuthorRole,
+  WorkerEntryType,
+} from "@/server/workers/entries-types";
 
 type OutputEntry = NonNullable<AgentRecord["outputEntries"]>[number];
 
@@ -116,50 +122,130 @@ function compressDiffContentPair(record: Record<string, unknown>): Record<string
     suffix += 1;
   }
 
-  if (prefix <= DIFF_CONTEXT_LINES && suffix <= DIFF_CONTEXT_LINES) {
-    return null;
-  }
+  // Always take this path when oldText !== newText. The previous shortcut
+  // that returned null for short prefix/suffix sent us into the generic
+  // truncateHistoryString fallback, which is a line-count head+tail
+  // truncator — when the divergent region sits in the middle of a long
+  // file it gets dropped and both sides collapse to byte-identical
+  // strings, erasing the diff signal.
 
   const droppedPrefix = Math.max(0, prefix - DIFF_CONTEXT_LINES);
   const droppedSuffix = Math.max(0, suffix - DIFF_CONTEXT_LINES);
   const keptPrefix = prefix - droppedPrefix;
   const keptSuffix = suffix - droppedSuffix;
 
-  function shrink(lines: string[]) {
-    const head = lines.slice(prefix - keptPrefix, prefix);
-    const tail = lines.slice(lines.length - suffix, lines.length - suffix + keptSuffix);
-    const middle = lines.slice(prefix, lines.length - suffix);
-    const segments: string[] = [];
-    if (droppedPrefix > 0) {
-      segments.push(`[${droppedPrefix} unchanged lines omitted]`);
+  const headLines = oldLines.slice(prefix - keptPrefix, prefix);
+  const tailLines = oldLines.slice(oldLines.length - suffix, oldLines.length - suffix + keptSuffix);
+  const oldMiddleLines = oldLines.slice(prefix, oldLines.length - suffix);
+  const newMiddleLines = newLines.slice(prefix, newLines.length - suffix);
+
+  const headPrefixMarker = droppedPrefix > 0 ? `[${droppedPrefix} unchanged lines omitted]` : null;
+  const tailSuffixMarker = droppedSuffix > 0 ? `[${droppedSuffix} unchanged lines omitted]` : null;
+  const before = [
+    ...(headPrefixMarker ? [headPrefixMarker] : []),
+    ...headLines,
+  ].join("\n");
+  const after = [
+    ...tailLines,
+    ...(tailSuffixMarker ? [tailSuffixMarker] : []),
+  ].join("\n");
+
+  const oldMiddle = oldMiddleLines.join("\n");
+  const newMiddle = newMiddleLines.join("\n");
+
+  const fixedOverhead = before.length + (before ? 1 : 0) + (after ? 1 : 0) + after.length;
+
+  // Character-level common prefix/suffix between the two middles. After
+  // line-level prefix/suffix have been stripped, the divergent region
+  // still often sits inside one long line (think: minified JS, JSON
+  // dumps, single-line edits). Treating the middle as opaque text and
+  // truncating its head+tail can chop the divergent slice out entirely
+  // and leave both sides byte-identical. Pin the truncation around the
+  // divergent slice itself.
+  const middleCommonLimit = Math.min(oldMiddle.length, newMiddle.length);
+  let middleCommonPrefix = 0;
+  while (
+    middleCommonPrefix < middleCommonLimit
+    && oldMiddle.charCodeAt(middleCommonPrefix) === newMiddle.charCodeAt(middleCommonPrefix)
+  ) {
+    middleCommonPrefix += 1;
+  }
+  let middleCommonSuffix = 0;
+  const maxMiddleSuffix = middleCommonLimit - middleCommonPrefix;
+  while (
+    middleCommonSuffix < maxMiddleSuffix
+    && oldMiddle.charCodeAt(oldMiddle.length - 1 - middleCommonSuffix)
+      === newMiddle.charCodeAt(newMiddle.length - 1 - middleCommonSuffix)
+  ) {
+    middleCommonSuffix += 1;
+  }
+
+  function shrink(middle: string) {
+    const middleBudget = Math.max(0, DIFF_SIDE_CHAR_LIMIT - fixedOverhead);
+    if (middle.length <= middleBudget) {
+      return joinParts([before, middle, after]);
     }
-    segments.push(...head, ...middle, ...tail);
-    if (droppedSuffix > 0) {
-      segments.push(`[${droppedSuffix} unchanged lines omitted]`);
+
+    const divergentStart = Math.max(0, middleCommonPrefix - 32);
+    const divergentEnd = Math.min(middle.length, middle.length - middleCommonSuffix + 32);
+    const divergent = middle.slice(divergentStart, divergentEnd);
+
+    if (divergent.length <= middleBudget) {
+      // Anchor the truncation on the divergent slice itself, with a
+      // little surrounding context. Both sides keep the bytes that
+      // actually differ, so the diff signal survives.
+      const surroundingBudget = middleBudget - divergent.length;
+      const leadingBudget = Math.floor(surroundingBudget / 2);
+      const trailingBudget = surroundingBudget - leadingBudget;
+      const leading = middle.slice(Math.max(0, divergentStart - leadingBudget), divergentStart);
+      const trailing = middle.slice(divergentEnd, divergentEnd + trailingBudget);
+      const leadingOmitted = divergentStart - leading.length;
+      const trailingOmitted = (middle.length - divergentEnd) - trailing.length;
+      const segments = [
+        leadingOmitted > 0 ? `[${leadingOmitted} characters omitted before divergent region]` : null,
+        leading + divergent + trailing,
+        trailingOmitted > 0 ? `[${trailingOmitted} characters omitted after divergent region]` : null,
+      ].filter((segment): segment is string => Boolean(segment));
+      return joinParts([before, segments.join("\n"), after]);
     }
-    const joined = segments.join("\n");
-    if (joined.length <= DIFF_SIDE_CHAR_LIMIT) {
-      return joined;
-    }
-    // The divergent middle is itself enormous. Truncate the divergent
-    // region with a char budget rather than line counts so the divergence
-    // signal survives — line-based truncation would collapse both sides
-    // back to identical head/tail again.
-    const headBudget = Math.floor(DIFF_SIDE_CHAR_LIMIT / 2);
-    const tailBudget = DIFF_SIDE_CHAR_LIMIT - headBudget;
-    return [
-      joined.slice(0, headBudget),
-      `[${joined.length - DIFF_SIDE_CHAR_LIMIT} characters omitted from diff side]`,
-      joined.slice(-tailBudget),
-    ].join("\n");
+
+    // The divergent slice itself outruns the budget. Keep its head and
+    // tail so both sides still differ — each half is taken from the same
+    // anchor offsets in old and new middles, so as long as those bytes
+    // disagree the two sides do too.
+    const half = Math.max(40, Math.floor(middleBudget / 2));
+    const headSlice = divergent.slice(0, half);
+    const tailSlice = divergent.slice(-half);
+    const omittedInside = divergent.length - headSlice.length - tailSlice.length;
+    return joinParts([
+      before,
+      [
+        divergentStart > 0
+          ? `[${divergentStart} characters omitted before divergent region]`
+          : null,
+        headSlice,
+        omittedInside > 0
+          ? `[${omittedInside} characters omitted from divergent region]`
+          : null,
+        tailSlice,
+        (middle.length - divergentEnd) > 0
+          ? `[${middle.length - divergentEnd} characters omitted after divergent region]`
+          : null,
+      ].filter((segment): segment is string => Boolean(segment)).join("\n"),
+      after,
+    ]);
   }
 
   return {
     ...record,
-    oldText: shrink(oldLines),
-    newText: shrink(newLines),
+    oldText: shrink(oldMiddle),
+    newText: shrink(newMiddle),
     __diffCompressed: true,
   };
+}
+
+function joinParts(parts: Array<string | null | undefined>) {
+  return parts.filter((part): part is string => typeof part === "string" && part.length > 0).join("\n");
 }
 
 function compactHistoryRawValue(value: unknown): unknown {
@@ -194,8 +280,15 @@ function compactHistoryRawValue(value: unknown): unknown {
   );
 }
 
-function compactEntryForHistory(entry: OutputEntry): OutputEntry {
-  const text = entry.type === "tool_call" || entry.type === "tool_call_update"
+type CompactableEntry = {
+  type?: string;
+  text?: string;
+  raw?: unknown;
+  [key: string]: unknown;
+};
+
+function compactEntryForHistory<T extends CompactableEntry>(entry: T): T {
+  const text = (entry.type === "tool_call" || entry.type === "tool_call_update") && typeof entry.text === "string"
     ? truncateHistoryString(entry.text)
     : entry.text;
   if (entry.raw === undefined && text === entry.text) {
@@ -208,125 +301,83 @@ function compactEntryForHistory(entry: OutputEntry): OutputEntry {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Per-worker write chain.
+//
+// The single writer-per-worker invariant is enforced in-process: every
+// mutating operation on `${runId}/${workerId}` files (append, expand,
+// compact, delete) acquires `writeChainByKey` for that key. If we ever
+// shard worker ownership across processes, the chain must be replaced
+// with a file lock — bridge entry deduplication assumes one writer.
+// ---------------------------------------------------------------------------
+
 const writeChainByKey = new Map<string, Promise<void>>();
 let tmpCounter = 0;
 
-export async function writeWorkerOutputEntries(
-  runId: string,
-  workerId: string,
-  entries: AgentRecord["outputEntries"],
-) {
-  if (!Array.isArray(entries) || entries.length === 0) {
-    return;
-  }
-  const key = `${runId}/${workerId}`;
+// Cache of the next-seq to assign per (runId, workerId). Filled lazily on
+// first append by reading the existing file tail. Cleared by compaction
+// only when there is no in-flight append (the chain guarantees this).
+const nextSeqByKey = new Map<string, number>();
+// Cache of bridge entry ids that have already been written, used to make
+// append-from-snapshot idempotent. Built lazily from the file on first
+// use and updated on every successful append.
+const seenIdsByKey = new Map<string, Set<string>>();
+
+function chainKey(runId: string, workerId: string) {
+  return `${runId}/${workerId}`;
+}
+
+function runOnChain<T>(runId: string, workerId: string, task: () => Promise<T>): Promise<T> {
+  const key = chainKey(runId, workerId);
   const previous = writeChainByKey.get(key) ?? Promise.resolve();
-  const next = previous.then(() => performWrite(runId, workerId, entries)).catch((error) => {
-    throw error;
-  });
-  // Keep the chain alive even if this write rejects, so callers stay serialized.
-  const tracked = next.catch(() => undefined);
+  const next = previous.then(() => task());
+  const tracked = next.then(() => undefined, () => undefined);
   writeChainByKey.set(key, tracked);
-  try {
-    await next;
-  } finally {
+  return next.finally(() => {
     if (writeChainByKey.get(key) === tracked) {
       writeChainByKey.delete(key);
     }
-  }
+  });
 }
 
-async function performWrite(
-  runId: string,
-  workerId: string,
-  entries: NonNullable<AgentRecord["outputEntries"]>,
-) {
-  const dir = runDir(runId);
-  await fs.mkdir(dir, { recursive: true });
-  const target = workerFilePath(runId, workerId);
-  // Worker is producing output again — expand a previously compacted file so
-  // we don't strand history when we overwrite with the new snapshot.
-  await expandWorkerOutputFile(runId, workerId);
-  tmpCounter = (tmpCounter + 1) >>> 0;
-  const tmp = `${target}.tmp-${process.pid}-${Date.now()}-${tmpCounter}`;
-  const body = entries.map((entry) => JSON.stringify(compactEntryForHistory(entry))).join("\n") + "\n";
-  try {
-    await fs.writeFile(tmp, body, "utf8");
-    await fs.rename(tmp, target);
-  } catch (error) {
-    fs.unlink(tmp).catch(() => undefined);
-    throw error;
-  }
+function clearChainCaches(runId: string, workerId: string) {
+  const key = chainKey(runId, workerId);
+  nextSeqByKey.delete(key);
+  seenIdsByKey.delete(key);
 }
 
-function parseLines(body: string): OutputEntry[] {
-  const out: OutputEntry[] = [];
-  for (const line of body.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === "object") {
-        out.push(parsed as OutputEntry);
-      }
-    } catch {
-      // skip malformed line
+async function ensureChainCaches(runId: string, workerId: string): Promise<{ nextSeq: number; seen: Set<string> }> {
+  const key = chainKey(runId, workerId);
+  let nextSeq = nextSeqByKey.get(key);
+  let seen = seenIdsByKey.get(key);
+  if (nextSeq !== undefined && seen !== undefined) {
+    return { nextSeq, seen };
+  }
+  const existing = await readAllPersistedEntries(runId, workerId);
+  let maxSeq = 0;
+  seen = new Set<string>();
+  for (const entry of existing) {
+    if (typeof entry.id === "string" && entry.id) {
+      seen.add(entry.id);
+    }
+    if (typeof entry.seq === "number" && Number.isFinite(entry.seq) && entry.seq > maxSeq) {
+      maxSeq = entry.seq;
     }
   }
-  return out;
+  nextSeq = maxSeq + 1;
+  nextSeqByKey.set(key, nextSeq);
+  seenIdsByKey.set(key, seen);
+  return { nextSeq, seen };
 }
 
-async function readFromCompressedFile(runId: string, workerId: string): Promise<OutputEntry[]> {
-  const compressed = workerCompressedFilePath(runId, workerId);
-  try {
-    const buf = await fs.readFile(compressed);
-    return parseLines(gunzipSync(buf).toString("utf8"));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
-    }
-    throw error;
-  }
-}
-
-async function readFromArchive(runId: string, workerId: string): Promise<OutputEntry[]> {
-  const archive = runArchivePath(runId);
-  if (!existsSync(archive)) {
-    return [];
-  }
-  try {
-    const zip = new AdmZip(archive);
-    const entry = zip.getEntry(`${runId}/${workerId}.jsonl`);
-    if (!entry) {
-      return [];
-    }
-    return parseLines(entry.getData().toString("utf8"));
-  } catch {
-    return [];
-  }
-}
-
-async function readLegacyDbEntries(workerId: string): Promise<OutputEntry[]> {
-  // Lazy import to avoid a circular dependency through @/server/db.
-  const { db } = await import("@/server/db");
-  const { workers } = await import("@/server/db/schema");
-  const { eq } = await import("drizzle-orm");
-  const row = await db
-    .select({ outputEntriesJson: workers.outputEntriesJson })
-    .from(workers)
-    .where(eq(workers.id, workerId))
-    .get();
-  return parseLegacyOutputEntriesJson(row?.outputEntriesJson);
-}
-
-export async function readWorkerOutputEntries(
-  runId: string,
-  workerId: string,
-): Promise<OutputEntry[]> {
+async function readAllPersistedEntries(runId: string, workerId: string): Promise<WorkerEntry[]> {
+  // Mirrors readWorkerOutputEntries's plaintext-first fallback chain but
+  // returns the raw on-disk shape (WorkerEntry-ish — seq may be absent on
+  // legacy lines; that's fine since the writer treats missing seq as 0).
   const filePath = workerFilePath(runId, workerId);
   try {
     const body = await fs.readFile(filePath, "utf8");
-    return parseLines(body);
+    return parseWorkerEntryLines(body);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       throw error;
@@ -341,6 +392,314 @@ export async function readWorkerOutputEntries(
     return archived;
   }
   return readLegacyDbEntries(workerId);
+}
+
+function isBridgeEntryType(type: string | undefined): boolean {
+  return type === "message" || type === "thought" || type === "tool_call"
+    || type === "tool_call_update" || type === "permission";
+}
+
+/**
+ * Append a single worker entry to the JSONL file. The writer assigns
+ * `seq` from the in-memory cursor (seeded from the file tail on first
+ * use). Acquires the per-worker chain so it cannot interleave with
+ * compaction/expand/delete.
+ *
+ * If `entry.id` is already present on disk (or in the seen-ids cache),
+ * the call is a no-op and the previously persisted entry is returned
+ * when discoverable; otherwise null is returned to indicate the entry
+ * was rejected as a duplicate.
+ */
+export async function appendWorkerEntry(
+  runId: string,
+  workerId: string,
+  entry: Omit<WorkerEntry, "seq">,
+): Promise<WorkerEntry> {
+  return runOnChain(runId, workerId, async () => {
+    const { nextSeq, seen } = await ensureChainCaches(runId, workerId);
+    if (entry.id && seen.has(entry.id)) {
+      // Already persisted; load it back so the caller has a stable
+      // record. Linear scan is fine: this is the dedup path and runs at
+      // append cadence, not read cadence.
+      const persisted = await readAllPersistedEntries(runId, workerId);
+      const match = persisted.find((line) => line.id === entry.id);
+      if (match && typeof match.seq === "number") {
+        return match;
+      }
+      // Legacy line without seq: assign one virtually based on file
+      // position. The writer doesn't advance nextSeq in this case.
+      return { ...(entry as WorkerEntry), seq: 0 };
+    }
+
+    const persistedEntry: WorkerEntry = {
+      ...(entry as WorkerEntry),
+      seq: nextSeq,
+    };
+    const compact = compactEntryForHistory(persistedEntry as unknown as CompactableEntry) as unknown as WorkerEntry;
+    const line = JSON.stringify(compact) + "\n";
+
+    const dir = runDir(runId);
+    await fs.mkdir(dir, { recursive: true });
+    // If a compaction race somehow stranded the plaintext file under .gz,
+    // expand it first so the append goes into the live transcript rather
+    // than starting a new empty file beside the gzip.
+    await expandWorkerOutputFileInternal(runId, workerId);
+
+    const target = workerFilePath(runId, workerId);
+    const newlineGuard = await needsLeadingNewline(target);
+    const handle = await fs.open(target, "a");
+    try {
+      await handle.appendFile(newlineGuard ? "\n" + line : line, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+
+    seen.add(entry.id);
+    nextSeqByKey.set(chainKey(runId, workerId), nextSeq + 1);
+    return compact;
+  });
+}
+
+/**
+ * Diff-and-append a batch of bridge-emitted output entries. Existing
+ * entries (by id) are skipped; new entries are appended in order with
+ * monotonically increasing seqs.
+ *
+ * Existing callers (`persistWorkerSnapshot`) get the same observable
+ * behavior as the old overwrite-on-snapshot path with no file rewrite.
+ */
+export async function writeWorkerOutputEntries(
+  runId: string,
+  workerId: string,
+  entries: AgentRecord["outputEntries"],
+) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return;
+  }
+
+  await runOnChain(runId, workerId, async () => {
+    const { seen } = await ensureChainCaches(runId, workerId);
+    const newEntries: OutputEntry[] = [];
+    for (const entry of entries) {
+      if (!entry) continue;
+      // Real bridge entries always carry an id; tooling/migration code that
+      // hands us synthetic snapshots may not. In that case, treat the entry
+      // as opaque and always append (no dedup possible).
+      const id = typeof entry.id === "string" && entry.id ? entry.id : null;
+      if (id) {
+        if (seen.has(id)) {
+          continue;
+        }
+      }
+      newEntries.push(entry);
+    }
+    if (newEntries.length === 0) {
+      return;
+    }
+
+    const dir = runDir(runId);
+    await fs.mkdir(dir, { recursive: true });
+    await expandWorkerOutputFileInternal(runId, workerId);
+
+    const key = chainKey(runId, workerId);
+    let nextSeq = nextSeqByKey.get(key);
+    if (nextSeq === undefined) {
+      // ensureChainCaches just populated it; refuse to silently lose entries.
+      throw new Error(`writeWorkerOutputEntries: missing nextSeq for ${key}`);
+    }
+
+    const target = workerFilePath(runId, workerId);
+    const newlineGuard = await needsLeadingNewline(target);
+
+    const lines: string[] = [];
+    for (const entry of newEntries) {
+      const id = typeof entry.id === "string" && entry.id ? entry.id : `synthetic-${nextSeq}`;
+      // Preserve input shape: spread the entry first, then layer on
+      // id/seq. Adding null placeholders for absent optional fields
+      // would change the on-disk shape callers expect to round-trip.
+      const promoted = {
+        ...(entry as unknown as Record<string, unknown>),
+        id,
+        seq: nextSeq,
+      };
+      const compact = compactEntryForHistory(promoted as unknown as CompactableEntry) as unknown as WorkerEntry;
+      lines.push(JSON.stringify(compact));
+      seen.add(id);
+      nextSeq += 1;
+    }
+    const body = lines.join("\n") + "\n";
+
+    const handle = await fs.open(target, "a");
+    try {
+      await handle.appendFile(newlineGuard ? "\n" + body : body, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    nextSeqByKey.set(key, nextSeq);
+  });
+}
+
+/**
+ * If the file ends with bytes that are not a newline (e.g. a previous
+ * append was truncated mid-line by a crash), the next append must start
+ * with a newline so the truncated line stays a separate broken line
+ * rather than being concatenated to our new JSON object. `parseLines`
+ * already tolerates malformed lines, so isolating the broken bytes is
+ * enough to recover.
+ */
+async function needsLeadingNewline(target: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(target);
+    if (stat.size === 0) {
+      return false;
+    }
+    const handle = await fs.open(target, "r");
+    try {
+      const buf = Buffer.alloc(1);
+      await handle.read(buf, 0, 1, stat.size - 1);
+      return buf[0] !== 0x0a;
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function parseWorkerEntryLines(body: string): WorkerEntry[] {
+  const out: WorkerEntry[] = [];
+  for (const line of body.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === "object") {
+        out.push(parsed as WorkerEntry);
+      }
+    } catch {
+      // skip malformed line (e.g. truncated last line after crash)
+    }
+  }
+  return out;
+}
+
+function parseLines(body: string): OutputEntry[] {
+  // Legacy alias for callers that work with the narrower bridge-only
+  // OutputEntry type. The on-disk schema is a superset; bridge consumers
+  // simply ignore the extra fields.
+  return parseWorkerEntryLines(body) as unknown as OutputEntry[];
+}
+
+async function readFromCompressedFile(runId: string, workerId: string): Promise<WorkerEntry[]> {
+  const compressed = workerCompressedFilePath(runId, workerId);
+  try {
+    const buf = await fs.readFile(compressed);
+    return parseWorkerEntryLines(gunzipSync(buf).toString("utf8"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function readFromArchive(runId: string, workerId: string): Promise<WorkerEntry[]> {
+  const archive = runArchivePath(runId);
+  if (!existsSync(archive)) {
+    return [];
+  }
+  try {
+    const zip = new AdmZip(archive);
+    const entry = zip.getEntry(`${runId}/${workerId}.jsonl`);
+    if (!entry) {
+      return [];
+    }
+    return parseWorkerEntryLines(entry.getData().toString("utf8"));
+  } catch {
+    return [];
+  }
+}
+
+async function readLegacyDbEntries(workerId: string): Promise<WorkerEntry[]> {
+  // Lazy import to avoid a circular dependency through @/server/db.
+  const { db } = await import("@/server/db");
+  const { workers } = await import("@/server/db/schema");
+  const { eq } = await import("drizzle-orm");
+  const row = await db
+    .select({ outputEntriesJson: workers.outputEntriesJson })
+    .from(workers)
+    .where(eq(workers.id, workerId))
+    .get();
+  return parseLegacyOutputEntriesJson(row?.outputEntriesJson) as unknown as WorkerEntry[];
+}
+
+/**
+ * Read all worker entries. Legacy entries without `seq` are assigned
+ * monotonic virtual seqs in file order in-memory only — the file is not
+ * rewritten on read. The first compaction sweep that touches the file
+ * will persist the assigned seqs.
+ */
+export async function readWorkerOutputEntries(
+  runId: string,
+  workerId: string,
+): Promise<OutputEntry[]> {
+  const entries = await readAllPersistedEntries(runId, workerId);
+  return backfillVirtualSeqs(entries) as unknown as OutputEntry[];
+}
+
+/**
+ * Read entries with seq strictly greater than `afterSeq`. Returns the
+ * latest persisted seq so the caller can advance its cursor even when
+ * the returned list is empty (e.g. a wake-up arrived but the on-disk
+ * tail hadn't actually changed yet).
+ */
+export async function readWorkerEntriesSince(
+  runId: string,
+  workerId: string,
+  afterSeq: number,
+): Promise<{ entries: WorkerEntry[]; latestSeq: number }> {
+  const raw = await readAllPersistedEntries(runId, workerId);
+  const withSeqs = backfillVirtualSeqs(raw);
+  let latestSeq = 0;
+  for (const entry of withSeqs) {
+    if (typeof entry.seq === "number" && entry.seq > latestSeq) {
+      latestSeq = entry.seq;
+    }
+  }
+  const filtered = afterSeq <= 0
+    ? withSeqs
+    : withSeqs.filter((entry) => typeof entry.seq === "number" && entry.seq > afterSeq);
+  return { entries: filtered, latestSeq };
+}
+
+function backfillVirtualSeqs(entries: WorkerEntry[]): WorkerEntry[] {
+  let maxSeenSeq = 0;
+  let anyMissing = false;
+  for (const entry of entries) {
+    if (typeof entry.seq === "number" && Number.isFinite(entry.seq)) {
+      if (entry.seq > maxSeenSeq) {
+        maxSeenSeq = entry.seq;
+      }
+    } else {
+      anyMissing = true;
+    }
+  }
+  if (!anyMissing) {
+    return entries;
+  }
+  let cursor = maxSeenSeq;
+  return entries.map((entry) => {
+    if (typeof entry.seq === "number" && Number.isFinite(entry.seq)) {
+      return entry;
+    }
+    cursor += 1;
+    return { ...entry, seq: cursor };
+  });
 }
 
 export function parseLegacyOutputEntriesJson(value: string | null | undefined): OutputEntry[] {
@@ -364,7 +723,7 @@ export function parseLegacyOutputEntriesJson(value: string | null | undefined): 
   }
 }
 
-async function compactWorkerOutputFile(runId: string, workerId: string): Promise<boolean> {
+async function compactWorkerOutputFileInternal(runId: string, workerId: string): Promise<boolean> {
   const source = workerFilePath(runId, workerId);
   let body: Buffer;
   try {
@@ -375,10 +734,16 @@ async function compactWorkerOutputFile(runId: string, workerId: string): Promise
     }
     throw error;
   }
+  // Rewrite the on-disk lines with their resolved seqs so legacy
+  // pre-seq entries pick up durable sequence numbers in the gzip.
+  const parsed = parseWorkerEntryLines(body.toString("utf8"));
+  const withSeqs = backfillVirtualSeqs(parsed);
+  const normalizedBody = Buffer.from(withSeqs.map((entry) => JSON.stringify(entry)).join("\n") + (withSeqs.length > 0 ? "\n" : ""), "utf8");
+
   const target = workerCompressedFilePath(runId, workerId);
   tmpCounter = (tmpCounter + 1) >>> 0;
   const tmp = `${target}.tmp-${process.pid}-${Date.now()}-${tmpCounter}`;
-  const compressed = gzipSync(body);
+  const compressed = gzipSync(normalizedBody);
   try {
     await fs.writeFile(tmp, compressed);
     await fs.rename(tmp, target);
@@ -387,10 +752,13 @@ async function compactWorkerOutputFile(runId: string, workerId: string): Promise
     throw error;
   }
   await fs.unlink(source).catch(() => undefined);
+  // Caches stay valid: compaction preserves seqs and ids; the file just
+  // moves from .jsonl to .gz. Caller holds the per-worker chain so no
+  // append is concurrent with this move.
   return true;
 }
 
-async function expandWorkerOutputFile(runId: string, workerId: string): Promise<boolean> {
+async function expandWorkerOutputFileInternal(runId: string, workerId: string): Promise<boolean> {
   const source = workerCompressedFilePath(runId, workerId);
   let body: Buffer;
   try {
@@ -413,7 +781,16 @@ async function expandWorkerOutputFile(runId: string, workerId: string): Promise<
     throw error;
   }
   await fs.unlink(source).catch(() => undefined);
+  // Caches stay valid: the bytes are the same, only the file shape changed.
   return true;
+}
+
+export async function compactWorkerOutputFile(runId: string, workerId: string): Promise<boolean> {
+  return runOnChain(runId, workerId, () => compactWorkerOutputFileInternal(runId, workerId));
+}
+
+export async function expandWorkerOutputFile(runId: string, workerId: string): Promise<boolean> {
+  return runOnChain(runId, workerId, () => expandWorkerOutputFileInternal(runId, workerId));
 }
 
 export async function compactRunOutputs(runId: string): Promise<{ compactedWorkerIds: string[] }> {
@@ -441,6 +818,11 @@ export async function compactRunOutputs(runId: string): Promise<{ compactedWorke
  * Per-worker gzip sweep. Compacts any plaintext `.jsonl` whose worker is in a
  * terminal status and whose file hasn't been touched for at least
  * `minAgeMs`. Idempotent — safe to call repeatedly.
+ *
+ * Acquires the per-worker write chain before touching each file. An
+ * earlier version of this sweep mutated files outside the chain, which
+ * could drop an append racing the rename; that latent loss bug is fixed
+ * here.
  */
 export async function compactStaleWorkerOutputs(options: {
   minAgeMs?: number;
@@ -528,17 +910,27 @@ export async function compactStaleWorkerOutputs(options: {
 }
 
 export async function deleteWorkerOutputFile(runId: string, workerId: string) {
-  for (const target of [workerFilePath(runId, workerId), workerCompressedFilePath(runId, workerId)]) {
-    try {
-      await fs.unlink(target);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
+  await runOnChain(runId, workerId, async () => {
+    for (const target of [workerFilePath(runId, workerId), workerCompressedFilePath(runId, workerId)]) {
+      try {
+        await fs.unlink(target);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
+        }
       }
     }
-  }
+    clearChainCaches(runId, workerId);
+  });
 }
 
 export function workerOutputFilePathFor(runId: string, workerId: string) {
   return workerFilePath(runId, workerId);
+}
+
+/** @internal — vitest only */
+export function __resetOutputStoreCachesForTests() {
+  writeChainByKey.clear();
+  nextSeqByKey.clear();
+  seenIdsByKey.clear();
 }

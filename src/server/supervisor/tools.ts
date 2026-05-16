@@ -156,9 +156,18 @@ export function buildSupervisorTools(options?: {
     ask_user: createTool({
       id: "ask_user",
       description:
-        "Pause the run for preflight intent confirmation, summarize the understood job as specific outcomes and not just the artifact title, or ask the user a clarifying question.",
+        "Ask the user a clarifying question that is NOT a checkpoint asking whether to begin or continue implementation. For preflight intent confirmation or any 'is the plan ready, shall I start implementing?' checkpoint, use confirm_ready_to_implement instead so the UI can render quick confirm/clarify buttons.",
       inputSchema: z.object({
         question: z.string(),
+      }),
+      execute: queuedToolResult,
+    }),
+    confirm_ready_to_implement: createTool({
+      id: "confirm_ready_to_implement",
+      description:
+        "Pause the run and ask the user whether implementation should begin. Use this for preflight intent confirmation, after presenting a plan summary, and any other 'shall I proceed to implement this?' checkpoint. The UI renders 'Yes, implement it' / 'No, let me clarify' buttons under this question, so the question text should be self-contained: summarize the understood outcomes and success conditions and explicitly invite the user to confirm or correct before implementation starts. Do not use ask_user for this case.",
+      inputSchema: z.object({
+        question: z.string().describe("The full confirmation prompt to show the user, including the outcome summary the user is being asked to confirm."),
       }),
       execute: queuedToolResult,
     }),

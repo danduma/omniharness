@@ -359,6 +359,8 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     erroredAgent,
     latestWaitEvent,
     latestPromptDeferredEvent,
+    awaitingUserQuestionMessage,
+    isSelectedConversationLoaded,
     latestStuckEvent,
     hasStuckWorker,
     showRecoverableRunningState,
@@ -661,6 +663,8 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     ).length,
     activeConversationAgents,
     liveThoughts,
+    awaitingUserQuestionMessage,
+    isSelectedConversationLoaded,
   });
 
   const appErrors = useAppErrors({
@@ -894,7 +898,10 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           expandedDirectMessageIds={expandedDirectMessageIds}
           toggleDirectMessageExpansion={actions.toggleDirectMessageExpansion}
           primaryConversationAgent={vm.primaryConversationAgent}
+          primaryConversationWorkerId={vm.primaryConversationAgent?.name ?? null}
+          unifiedWorkerStreamEnabled={bootstrap?.features?.unifiedWorkerStream ?? false}
           isHydratingConversations={isHydratingConversations}
+          isSelectedConversationLoaded={isSelectedConversationLoaded}
           promotePlanningConversation={promotePlanningConversation}
           onStartReview={(prefs) => {
             if (selectedRunId) {

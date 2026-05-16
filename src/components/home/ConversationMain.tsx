@@ -29,6 +29,7 @@ import { shallowEqualRecord, useManagerSelector, useManagerSnapshot } from "@/li
 import type { ProjectFileReference } from "@/lib/project-file-links";
 import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "@/app/home/GitWorkspaceManager";
 import { preflightConfirmationActionsManager } from "@/app/home/PreflightConfirmationActionsManager";
+import { useWorkerStream } from "@/app/home/WorkerEntriesManager";
 import { type PlanningReviewAgentSelection } from "@/server/planning/review-preferences";
 import { WORKER_TYPE_LABELS, type SupportedWorkerType } from "@/server/supervisor/worker-types";
 import { ErrorNotice } from "./ErrorNotice";
@@ -392,6 +393,8 @@ interface ConversationMainProps {
   expandedDirectMessageIds: Set<string>;
   toggleDirectMessageExpansion: (messageId: string) => void;
   primaryConversationAgent: AgentSnapshot | null;
+  primaryConversationWorkerId: string | null;
+  unifiedWorkerStreamEnabled: boolean;
   isHydratingConversations: boolean;
   isSelectedConversationLoaded: boolean;
   promotePlanningConversation: {
@@ -527,6 +530,8 @@ export function ConversationMain({
   expandedDirectMessageIds,
   toggleDirectMessageExpansion,
   primaryConversationAgent,
+  primaryConversationWorkerId,
+  unifiedWorkerStreamEnabled,
   isHydratingConversations,
   isSelectedConversationLoaded,
   promotePlanningConversation,
@@ -568,6 +573,14 @@ export function ConversationMain({
   useI18nSnapshot();
   const { hasOutputBelow } = useManagerSnapshot(conversationMainManager);
   const { handledMessageIds: handledPreflightConfirmationMessageIds } = useManagerSnapshot(preflightConfirmationActionsManager);
+  // Subscribe to the unified worker conversation stream for the
+  // direct-control worker. When the flag is enabled this drives the
+  // Terminal directly; otherwise the legacy `agent` + `userMessages`
+  // path renders. `null` workerId returns an empty state and skips
+  // the fetch.
+  const directWorkerStream = useWorkerStream(
+    unifiedWorkerStreamEnabled ? primaryConversationWorkerId : null,
+  );
   const forkWorkspaceSelector = useMemo(() => {
     return (state: ReturnType<typeof gitWorkspaceManager.getSnapshot>) => {
       const dialog = state.activeDialog?.kind === "fork_message_worktree" || state.activeDialog?.kind === "fork_session_worktree"
@@ -714,7 +727,11 @@ export function ConversationMain({
               />
             </div>
           ) : null}
-          {!isSelectedConversationLoaded ? (
+          {!isSelectedConversationLoaded || (
+            unifiedWorkerStreamEnabled
+              && primaryConversationWorkerId
+              && !directWorkerStream.isLoaded
+          ) ? (
             <div
               className="flex flex-col items-center justify-center gap-3 pt-24 text-sm text-muted-foreground sm:pt-32"
               role="status"
@@ -731,6 +748,11 @@ export function ConversationMain({
               <Terminal
                 agent={primaryConversationAgent}
                 userMessages={directConversationMessages}
+                entries={
+                  unifiedWorkerStreamEnabled && primaryConversationWorkerId
+                    ? directWorkerStream.entries
+                    : undefined
+                }
                 getUserMessageActions={getUserMessageActions}
                 editingUserMessageId={editingMessageId}
                 editingUserMessageValue={editingMessageValue}

@@ -1,0 +1,81 @@
+/* src/app/fx.css — Layer 1: Motion primitives */
+
+@keyframes fxFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes fxFadeUp {
+  from { opacity: 0; transform: translateY(var(--fx-y, 8px)); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fxFadeDown {
+  from { opacity: 0; transform: translateY(calc(-1 * var(--fx-y, 8px))); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fxFadeRight {
+  from { opacity: 0; transform: translateX(calc(-1 * var(--fx-x, 8px))); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes fxFadeLeft {
+  from { opacity: 0; transform: translateX(var(--fx-x, 8px)); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes fxPopIn {
+  from { opacity: 0; transform: translateY(var(--fx-y, 0px)) scale(var(--fx-scale-from, 0.94)); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes fxSlideUp {
+  from { opacity: 0; transform: translateY(var(--fx-y, 20px)) scale(var(--fx-scale-from, 1)); max-height: 0; }
+  to   { opacity: 1; transform: translateY(0) scale(1); max-height: var(--fx-max-h, 800px); }
+}
+@keyframes fxExpand {
+  from { opacity: 0; max-height: 0; }
+  to   { opacity: 1; max-height: var(--fx-max-h, 800px); }
+}
+@keyframes fxZoomOut {
+  from { transform: scale(var(--fx-zoom-from, 1.5)); }
+  to   { transform: scale(1); }
+}
+@keyframes fxZoomIn {
+  from { transform: scale(1); }
+  to   { transform: scale(var(--fx-zoom-to, 1.5)); }
+}
+@keyframes fxPulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 var(--fx-pulse-color, transparent); }
+  50%      { transform: scale(var(--fx-pulse-scale, 0.9)); box-shadow: 0 0 0 6px var(--fx-pulse-color, currentColor); }
+}
+
+/* Layer 2 — Composition triggers (utility classes) */
+
+/* PLAY ONCE — fires when its owning scene becomes active. */
+[data-walkthrough-scene][data-active="true"] .fxPlay {
+  animation:
+    var(--fx-effect, fxFadeUp)
+    var(--fx-duration, 380ms)
+    var(--fx-easing, cubic-bezier(0.34, 1.4, 0.6, 1))
+    var(--fx-at, 0s)
+    var(--fx-fill, both);
+}
+
+/* STAGGER — delay = base + index * stagger. */
+[data-walkthrough-scene][data-active="true"] .fxStagger {
+  animation:
+    var(--fx-effect, fxFadeUp)
+    var(--fx-duration, 320ms)
+    var(--fx-easing, ease-out)
+    var(--fx-fill, both);
+  animation-delay: calc(var(--fx-at, 0s) + var(--row-i, 0) * var(--fx-stagger, 0.18s));
+}
+
+/* WORDS — constant per-word rate = total duration / word count. */
+[data-walkthrough-scene][data-active="true"] .fxWord {
+  animation:
+    var(--fx-effect, fxFadeIn)
+    var(--fx-word-duration, 140ms)
+    var(--fx-easing, ease-out)
+    var(--fx-fill, both);
+  animation-delay: calc(
+    var(--fx-at, 0s) +
+    var(--word-i, 0) * calc(var(--fx-duration, 2.6s) / var(--word-count, 1))
+  );
+}

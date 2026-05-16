@@ -3,6 +3,9 @@ export async function register() {
     return;
   }
 
+  const { dbReady } = await import("@/server/db");
+  await dbReady;
+
   const { ensureSupervisorRuntimeStarted } = await import(
     "@/server/supervisor/runtime-watchdog"
   );

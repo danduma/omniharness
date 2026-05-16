@@ -313,6 +313,28 @@ Every reported bug should land at one of these four answers. If the answer is
 
 ---
 
+## Worker conversation content vs. lifecycle events
+
+These two surfaces are distinct and must stay distinct.
+
+- **Lifecycle events** (`worker.spawned`, `worker.status`,
+  `worker.terminal`, `recovery.*`, etc.) live in the ring buffer and on
+  the SSE stream. They are typed in `src/server/events/named-events.ts`
+  and emitted via `emitNamedEvent`. Their purpose is observability:
+  what decision did the server make.
+- **Worker conversation content** (what the worker said, what tools
+  it called, what the user typed, what the supervisor steered) lives
+  in the unified worker stream — one append-only JSONL per worker. The
+  canonical content cursor is `entry.seq`, not the global SSE id. SSE
+  emits a `worker.entry_appended` named event carrying only `{
+  workerId, seq }`; the entry body is fetched via
+  `GET /api/workers/:workerId/entries?afterSeq=`. See
+  `docs/architecture/worker-conversation-stream.md`.
+
+Two cursors deliberately: the global SSE id covers liveness/resync;
+`entry.seq` covers content. SSE frames are wake-up hints, never the
+authority on content.
+
 ## Open follow-ups
 
 - Backfill named events at every existing decision site (see implementation

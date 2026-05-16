@@ -13,6 +13,7 @@ import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 import { ModelsSettingsPanel } from "./ModelsSettingsPanel";
+import { CredentialsSettingsPanel } from "./CredentialsSettingsPanel";
 import { AgentsSettingsPanel } from "./AgentsSettingsPanel";
 import { RuntimeSettingsPanel } from "./RuntimeSettingsPanel";
 import { ProjectMemorySettingsPanel } from "./ProjectMemorySettingsPanel";
@@ -21,6 +22,7 @@ import { parseBooleanSetting } from "@/app/home/utils";
 const SETTINGS_TABS: Array<{ value: SettingsTab; labelKey: string }> = [
   { value: "general", labelKey: "settings.tabs.general" },
   { value: "models", labelKey: "settings.tabs.models" },
+  { value: "credentials", labelKey: "settings.tabs.credentials" },
   { value: "agents", labelKey: "settings.tabs.agents" },
   { value: "runtime", labelKey: "settings.tabs.runtime" },
   { value: "memory", labelKey: "settings.tabs.memory" },
@@ -36,7 +38,7 @@ interface SettingsDialogProps {
   settingsDraft: SettingsDraftState;
   setSetting: (key: string, value: string) => void;
   discardSettingsDraft: () => void;
-  secretStates?: Record<string, { configured: boolean; updatedAt: string }>;
+  secretStates?: Record<string, { configured: boolean; updatedAt: string; preview?: string }>;
   settingsWorkers: WorkerAvailability[];
   workerCatalogQuery: {
     isError: boolean;
@@ -137,6 +139,12 @@ export function SettingsDialog({
                 settings={settingsDraft.draft}
                 setSetting={setSetting}
                 secretStates={secretStates}
+              />
+            ) : null}
+            {activeSettingsTab === "credentials" ? (
+              <CredentialsSettingsPanel
+                settings={settingsDraft.draft}
+                setSetting={setSetting}
               />
             ) : null}
             {activeSettingsTab === "agents" ? (

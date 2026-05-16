@@ -372,8 +372,9 @@ export function useHomeViewModel({
     return buildDirectTerminalUserMessages({
       messages: (filteredMessages || []) as MessageRecord[],
       agent: primaryConversationAgent,
+      workers: selectedRunWorkers,
     });
-  }, [filteredMessages, isDirectConversation, primaryConversationAgent]);
+  }, [filteredMessages, isDirectConversation, primaryConversationAgent, selectedRunWorkers]);
 
   const pendingPermissionAgent = activeConversationAgents.find((agent) => (agent.pendingPermissions?.length ?? 0) > 0) ?? null;
 
@@ -388,6 +389,24 @@ export function useHomeViewModel({
 
   const latestWaitEvent = selectedRunExecutionEvents.find((event) => event.eventType === "supervisor_wait") ?? null;
   const latestPromptDeferredEvent = selectedRunExecutionEvents.find((event) => event.eventType === "worker_prompt_deferred") ?? null;
+
+  const isSelectedConversationLoaded = !selectedRunId || state.snapshotRunId === selectedRunId;
+
+  const awaitingUserQuestionMessage = useMemo(() => {
+    if (selectedRun?.status !== "awaiting_user") {
+      return null;
+    }
+    const messages = (selectedRunMessages || []) as MessageRecord[];
+    const latestUserAt = messages
+      .filter((m) => m.role === "user")
+      .reduce((max, m) => Math.max(max, new Date(m.createdAt).getTime()), 0);
+    const candidates = messages
+      .filter((m) => m.role === "supervisor"
+        && (m.kind === "clarification" || m.kind === "implementation_confirmation")
+        && new Date(m.createdAt).getTime() >= latestUserAt)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return candidates[0] ?? null;
+  }, [selectedRun?.status, selectedRunMessages]);
   const latestStuckEvent = getLatestUnresolvedWorkerStuckEvent(selectedRunExecutionEvents);
 
   const hasStuckWorker = conversationWorkerGroups.active.some((worker) => worker.status === "stuck")
@@ -490,6 +509,8 @@ export function useHomeViewModel({
     erroredAgent,
     latestWaitEvent,
     latestPromptDeferredEvent,
+    awaitingUserQuestionMessage,
+    isSelectedConversationLoaded,
     latestStuckEvent,
     hasStuckWorker,
     hasActiveWorker,

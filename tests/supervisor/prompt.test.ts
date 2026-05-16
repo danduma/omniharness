@@ -48,7 +48,7 @@ describe("SUPERVISOR_SYSTEM_PROMPT", () => {
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("before the first worker_spawn");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("extract the user's intent from the plan");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("summarize what you understand the job to be");
-    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("ask_user");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("confirm_ready_to_implement");
   });
 
   it("requires preflight to summarize why-level outcomes instead of the artifact title", () => {

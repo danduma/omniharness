@@ -15,6 +15,7 @@ import {
   type TerminalTextSizeLevel,
 } from "@/app/home/AppearancePreferencesManager";
 import { buildAgentOutputActivity, formatActivityStatus, type AgentActivityItem, type AgentOutputEntry, type AgentToolGroupCounts } from "@/lib/agent-output";
+import type { WorkerEntry } from "@/server/workers/entries-types";
 import { formatBytes, type ChatAttachment } from "@/lib/chat-attachments";
 import { parseProjectFileReference, type ProjectFileReference } from "@/lib/project-file-links";
 import { cn } from "@/lib/utils";
@@ -24,6 +25,14 @@ import { t, useI18nSnapshot } from "@/lib/i18n";
 interface TerminalProps {
   agent?: AgentTerminalPayload | null;
   userMessages?: TerminalUserMessage[];
+  /**
+   * Unified worker conversation stream entries. When provided, the
+   * Terminal renders directly from these and ignores `agent` /
+   * `userMessages`. Phase 4 of the unified stream rollout flips
+   * ConversationMain to pass this prop. See
+   * docs/architecture/worker-conversation-stream.md.
+   */
+  entries?: WorkerEntry[];
   getUserMessageActions?: (message: TerminalUserMessage) => TerminalUserMessageAction[];
   editingUserMessageId?: string | null;
   editingUserMessageValue?: string;
@@ -1318,6 +1327,7 @@ function ActivityRow({
 export function Terminal({
   agent,
   userMessages = [],
+  entries,
   getUserMessageActions,
   editingUserMessageId = null,
   editingUserMessageValue = "",
@@ -1349,22 +1359,59 @@ export function Terminal({
   const { conversationTextSize, terminalTextSize } = useManagerSnapshot(appearancePreferencesManager);
 
   const activity = useMemo(() => {
+    // When the unified worker stream provides `entries`, the legacy
+    // `agent` / `userMessages` props are ignored. Split the entries by
+    // type and route them through the same renderers — bridge-typed
+    // entries feed `buildAgentOutputActivity`, server-produced
+    // user_input/supervisor_input entries become user-message
+    // activity items, and lifecycle/system entries fall through to
+    // the agent activity builder as plain messages.
+    const usingUnifiedStream = Array.isArray(entries);
+    const bridgeEntries = usingUnifiedStream
+      ? (entries ?? [])
+        .filter((entry) => (
+          entry.type === "message"
+          || entry.type === "thought"
+          || entry.type === "tool_call"
+          || entry.type === "tool_call_update"
+          || entry.type === "permission"
+        ))
+        .map((entry) => entry as unknown as AgentOutputEntry)
+      : agent?.outputEntries;
     const agentActivity = buildAgentOutputActivity({
-      outputEntries: agent?.outputEntries,
-      state: agent?.state,
-      currentText: agent?.currentText,
-      lastText: agent?.lastText,
-      displayText: agent?.displayText,
+      outputEntries: bridgeEntries,
+      state: usingUnifiedStream ? "idle" : agent?.state,
+      currentText: usingUnifiedStream ? "" : agent?.currentText,
+      lastText: usingUnifiedStream ? "" : agent?.lastText,
+      displayText: usingUnifiedStream ? "" : agent?.displayText,
     });
-    const userActivity: TerminalActivityItem[] = userMessages.map((message) => ({
-      id: `user:${message.id}`,
-      kind: "user_message",
-      messageId: message.id,
-      text: message.content,
-      timestamp: message.createdAt,
-      attachments: message.attachments ?? [],
-      actions: getUserMessageActions?.(message) ?? [],
-    }));
+    const userActivity: TerminalActivityItem[] = usingUnifiedStream
+      ? (entries ?? [])
+        .filter((entry) => entry.type === "user_input" || entry.type === "supervisor_input")
+        .map((entry) => ({
+          id: `user:${entry.id}`,
+          kind: "user_message" as const,
+          messageId: entry.id,
+          text: entry.text,
+          timestamp: entry.timestamp,
+          attachments: (entry.attachments ?? []).map((attachment) => ({
+            id: attachment.id,
+            kind: attachment.mimeType.startsWith("image/") ? "image" as const : "file" as const,
+            name: attachment.filename,
+            mimeType: attachment.mimeType,
+            size: attachment.sizeBytes,
+          })),
+          actions: [],
+        }))
+      : userMessages.map((message) => ({
+        id: `user:${message.id}`,
+        kind: "user_message",
+        messageId: message.id,
+        text: message.content,
+        timestamp: message.createdAt,
+        attachments: message.attachments ?? [],
+        actions: getUserMessageActions?.(message) ?? [],
+      }));
     const latestActivityTimestamp = [...userActivity, ...agentActivity]
       .map((item) => activityTimestampMs(item.timestamp))
       .reduce((latest, timestamp) => Math.max(latest, timestamp), 0);
@@ -1383,7 +1430,7 @@ export function Terminal({
       }
       return activityKindOrder(a) - activityKindOrder(b) || a.id.localeCompare(b.id);
     });
-  }, [agent, getUserMessageActions, showPendingAssistantIndicator, userMessages]);
+  }, [agent, entries, getUserMessageActions, showPendingAssistantIndicator, userMessages]);
   const filteredActivity = useMemo(
     () => activityFilter ? activity.filter(activityFilter) : activity,
     [activity, activityFilter],

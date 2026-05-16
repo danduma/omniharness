@@ -250,7 +250,7 @@ export type WorkerCatalogResponse = {
 };
 export type SettingsResponse = {
   values: Record<string, string>;
-  secrets?: Record<string, { configured: boolean; updatedAt: string }>;
+  secrets?: Record<string, { configured: boolean; updatedAt: string; preview?: string }>;
   diagnostics?: AppErrorDescriptor[];
 };
 export type AuthSessionRecord = {
@@ -292,8 +292,9 @@ export type EventStreamState = {
   reviewRounds?: PlanningReviewRoundRecord[];
   reviewFindings?: PlanningReviewFindingRecord[];
   frontendErrors?: AppErrorDescriptor[];
+  snapshotRunId?: string | null;
 };
-export type SettingsTab = "general" | "models" | "agents" | "runtime" | "memory";
+export type SettingsTab = "general" | "models" | "credentials" | "agents" | "runtime" | "memory";
 
 export type SidebarRun = {
   id: string;

@@ -96,6 +96,12 @@ process.stdin.on('data', (chunk) => {
         codexManagedConfigPath: process.env.CODEX_MANAGED_CONFIG_PATH || null,
         applyPatchPath,
         path: process.env.PATH || null,
+        selectedEnv: {
+          ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || null,
+          ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN || null,
+          ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL || null,
+          CUSTOM_EXTERNAL_CREDENTIAL: process.env.CUSTOM_EXTERNAL_CREDENTIAL || null,
+        },
       });
       write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
     }
@@ -705,6 +711,193 @@ exec /bin/sh "$@"
     expect(stopResponse.status).toBe(200);
     expect(readdirSync(join(projectDir, ".agents", "skills")).some((entry) => entry.includes("reviewer"))).toBe(false);
   }, 120_000);
+
+  it("applies file-backed external credential profiles before spawning workers", async () => {
+    const projectDir = createTempDir("omni-runtime-credential-project-");
+    const binDir = createTempDir("omni-runtime-credential-bin-");
+    const profilesDir = createTempDir("omni-runtime-credential-profiles-");
+    const claudeProfileDir = join(profilesDir, "claude");
+    const envDir = join(claudeProfileDir, "env");
+    mkdirSync(envDir, { recursive: true });
+    writeFileSync(join(envDir, "ANTHROPIC_BASE_URL"), "https://runner.example.test\n");
+    writeFileSync(join(envDir, "ANTHROPIC_AUTH_TOKEN"), "runner-token\n");
+    writeFileSync(join(claudeProfileDir, "unset"), "ANTHROPIC_API_KEY\n");
+    writeFileSync(join(claudeProfileDir, "expires_at"), "2026-06-14T04:23:48.000Z\n");
+    const requestLog = join(projectDir, "requests.jsonl");
+    const fakeAgent = createExecutable(binDir, "fake-acp-agent", fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        OMNIHARNESS_CREDENTIAL_PROFILES_DIR: profilesDir,
+        ANTHROPIC_API_KEY: "should-be-removed",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "claude",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "credential-worker",
+        env: { FAKE_ACP_REQUEST_LOG: requestLog },
+      }),
+    });
+
+    expect(spawnResponse.status).toBe(201);
+    const spawned = await spawnResponse.json();
+    expect(spawned.credentialProfile).toMatchObject({
+      name: "claude",
+      status: "loaded",
+      envKeys: ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"],
+      unsetKeys: ["ANTHROPIC_API_KEY"],
+      expiresAt: "2026-06-14T04:23:48.000Z",
+    });
+    expect(JSON.stringify(spawned)).not.toContain("runner-token");
+
+    const requests = readFileSync(requestLog, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(requests[0].selectedEnv).toEqual({
+      ANTHROPIC_API_KEY: null,
+      ANTHROPIC_AUTH_TOKEN: "runner-token",
+      ANTHROPIC_BASE_URL: "https://runner.example.test",
+      CUSTOM_EXTERNAL_CREDENTIAL: null,
+    });
+  });
+
+  it("applies command-backed external credential profiles without exposing secret values", async () => {
+    const projectDir = createTempDir("omni-runtime-command-credential-project-");
+    const binDir = createTempDir("omni-runtime-command-credential-bin-");
+    const profilesDir = createTempDir("omni-runtime-command-credential-profiles-");
+    const customProfileDir = join(profilesDir, "custom-worker");
+    mkdirSync(customProfileDir, { recursive: true });
+    const provider = createExecutable(binDir, "credential-provider", `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({
+  env: {
+    CUSTOM_EXTERNAL_CREDENTIAL: "from-provider",
+    ANTHROPIC_AUTH_TOKEN: "provider-secret"
+  },
+  unset: ["ANTHROPIC_API_KEY"],
+  expiresAt: "2026-07-01T00:00:00.000Z"
+}));
+`);
+    writeFileSync(join(customProfileDir, "profile.json"), JSON.stringify({
+      command: provider,
+      timeoutMs: 1000,
+    }));
+    const requestLog = join(projectDir, "requests.jsonl");
+    const fakeAgent = createExecutable(binDir, "fake-acp-agent", fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        OMNIHARNESS_CREDENTIAL_PROFILES_DIR: profilesDir,
+        ANTHROPIC_API_KEY: "should-be-removed",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "command-credential-worker",
+        credentialProfile: "custom-worker",
+        env: { FAKE_ACP_REQUEST_LOG: requestLog },
+      }),
+    });
+
+    expect(spawnResponse.status).toBe(201);
+    const spawned = await spawnResponse.json();
+    expect(spawned.credentialProfile).toMatchObject({
+      name: "custom-worker",
+      status: "loaded",
+      source: "command",
+      envKeys: ["ANTHROPIC_AUTH_TOKEN", "CUSTOM_EXTERNAL_CREDENTIAL"],
+      unsetKeys: ["ANTHROPIC_API_KEY"],
+      expiresAt: "2026-07-01T00:00:00.000Z",
+    });
+    expect(JSON.stringify(spawned)).not.toContain("provider-secret");
+    expect(JSON.stringify(spawned)).not.toContain("from-provider");
+
+    const requests = readFileSync(requestLog, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(requests[0].selectedEnv).toMatchObject({
+      ANTHROPIC_API_KEY: null,
+      ANTHROPIC_AUTH_TOKEN: "provider-secret",
+      CUSTOM_EXTERNAL_CREDENTIAL: "from-provider",
+    });
+  });
+
+  it("applies settings-backed credential commands before folder profiles", async () => {
+    const projectDir = createTempDir("omni-runtime-settings-credential-project-");
+    const binDir = createTempDir("omni-runtime-settings-credential-bin-");
+    const provider = createExecutable(binDir, "credential-provider", `#!/usr/bin/env node
+if (process.argv[2] !== "credential-profile") process.exit(42);
+process.stdout.write(JSON.stringify({
+  env: {
+    ANTHROPIC_AUTH_TOKEN: "settings-secret",
+    ANTHROPIC_BASE_URL: "https://settings.example.test"
+  },
+  unset: ["ANTHROPIC_API_KEY"],
+  expiresAt: "2026-08-01T00:00:00.000Z"
+}));
+`);
+    const requestLog = join(projectDir, "requests.jsonl");
+    const fakeAgent = createExecutable(binDir, "fake-acp-agent", fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        OMNIHARNESS_CREDENTIAL_COMMAND_CLAUDE: provider,
+        OMNIHARNESS_CREDENTIAL_COMMAND_ARGS_CLAUDE: JSON.stringify(["credential-profile"]),
+        ANTHROPIC_API_KEY: "should-be-removed",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "claude",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "settings-credential-worker",
+        env: { FAKE_ACP_REQUEST_LOG: requestLog },
+      }),
+    });
+
+    expect(spawnResponse.status).toBe(201);
+    const spawned = await spawnResponse.json();
+    expect(spawned.credentialProfile).toMatchObject({
+      name: "claude",
+      status: "loaded",
+      source: "command",
+      envKeys: ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"],
+      unsetKeys: ["ANTHROPIC_API_KEY"],
+      expiresAt: "2026-08-01T00:00:00.000Z",
+    });
+    expect(JSON.stringify(spawned)).not.toContain("settings-secret");
+
+    const requests = readFileSync(requestLog, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(requests[0].selectedEnv).toEqual({
+      ANTHROPIC_API_KEY: null,
+      ANTHROPIC_AUTH_TOKEN: "settings-secret",
+      ANTHROPIC_BASE_URL: "https://settings.example.test",
+      CUSTOM_EXTERNAL_CREDENTIAL: null,
+    });
+  });
 
   it("streams ask progress before the final worker response", async () => {
     const projectDir = createTempDir("omni-runtime-stream-project-");

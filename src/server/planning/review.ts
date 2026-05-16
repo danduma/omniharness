@@ -29,6 +29,7 @@ import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent } from "@/server/events/named-events";
+import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 
 const processBootTime = new Date();
 
@@ -287,11 +288,13 @@ async function orchestratePlanningReview(reviewRunId: string) {
       emitNamedEvent({ kind: "worker.spawned", runId: run.id, workerId: reviewerName, workerType });
       notifyEventStreamSubscribers();
 
+      const { env: envParams } = await readRuntimeEnvFromSettings();
       const reviewerAgent = await spawnAgent({
         type: workerType,
         cwd: reviewerCwd,
         name: reviewerName,
         mode: "slim",
+        env: envParams,
       });
 
       await db.update(workers).set({
@@ -361,6 +364,7 @@ async function orchestratePlanningReview(reviewRunId: string) {
             type: plannerWorker.type,
             cwd: plannerWorker.cwd,
             name: plannerName,
+            env: envParams,
           };
           const savedSessionId = plannerWorker.bridgeSessionId?.trim() || null;
           let resumed = false;

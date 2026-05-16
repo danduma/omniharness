@@ -283,7 +283,7 @@ export function BranchWorkspaceButton({ projectPath, disabled = false, themeMode
           )}
           <span className="min-w-0 truncate">{label}</span>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" side="top" className="w-[min(92vw,24rem)] p-2">
+        <DropdownMenuContent align="start" side="top" className="w-auto min-w-[14rem] max-w-[min(92vw,24rem)] p-2">
           <DropdownMenuGroup>
             <DropdownMenuLabel>{t("git.workspace.menu.current")}</DropdownMenuLabel>
             <div className="px-1.5 pb-2 text-xs text-muted-foreground">
@@ -320,8 +320,9 @@ export function BranchWorkspaceButton({ projectPath, disabled = false, themeMode
             <DropdownMenuLabel>{t("git.workspace.menu.branches")}</DropdownMenuLabel>
             {localBranches.length ? localBranches.map((branch) => {
               const checked = branch.name === snapshot?.branchName;
-              const checkoutDisabled = !canCheckoutBranch(branch);
-              const createDisabled = !canCreateBranchWorktree(branch);
+              const canCheckout = canCheckoutBranch(branch);
+              const canCreate = canCreateBranchWorktree(branch);
+              const showActions = canCheckout || canCreate;
               return (
                 <div key={branch.fullName} className="grid gap-1 rounded-md px-1.5 py-1.5 text-sm">
                   <div className="flex min-w-0 items-center gap-1.5">
@@ -333,26 +334,30 @@ export function BranchWorkspaceButton({ projectPath, disabled = false, themeMode
                       </span>
                     ) : null}
                   </div>
-                  <div className="flex flex-wrap gap-1 pl-5">
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="ghost"
-                      disabled={checkoutDisabled}
-                      onClick={() => projectPath && gitWorkspaceManager.requestCheckout(projectPath, branch.name)}
-                    >
-                      {t("git.workspace.action.checkoutBranch")}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="ghost"
-                      disabled={createDisabled}
-                      onClick={() => projectPath && gitWorkspaceManager.requestCreateWorktree(projectPath, branch.name)}
-                    >
-                      {t("git.workspace.action.createWorktreeForBranch")}
-                    </Button>
-                  </div>
+                  {showActions ? (
+                    <div className="flex flex-wrap gap-1 pl-5">
+                      {canCheckout ? (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="ghost"
+                          onClick={() => projectPath && gitWorkspaceManager.requestCheckout(projectPath, branch.name)}
+                        >
+                          {t("git.workspace.action.checkoutBranch")}
+                        </Button>
+                      ) : null}
+                      {canCreate ? (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="ghost"
+                          onClick={() => projectPath && gitWorkspaceManager.requestCreateWorktree(projectPath, branch.name)}
+                        >
+                          {t("git.workspace.action.createWorktreeForBranch")}
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               );
             }) : (

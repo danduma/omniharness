@@ -94,6 +94,24 @@ describe("classifyRunRecoveryState", () => {
     });
   });
 
+  it("keeps freshly transitioned active workers out of recovery during grace window", () => {
+    const state = classifyRunRecoveryState({
+      run,
+      workers: [{
+        id: "worker-1",
+        runId: run.id,
+        status: "working",
+        bridgeSessionId: "session-1",
+        updatedAt: new Date(55_000),
+      }],
+      liveAgents: [],
+      messages: [userMessage],
+      nowMs: 60_000,
+    });
+
+    expect(state.kind).toBe("healthy");
+  });
+
   it("keeps fresh starting workers out of recovery", () => {
     const state = classifyRunRecoveryState({
       run,

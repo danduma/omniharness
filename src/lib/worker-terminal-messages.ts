@@ -91,9 +91,11 @@ export function buildWorkerTerminalUserMessages({
 
 export function buildDirectTerminalUserMessages({
   messages,
+  workers,
 }: {
   messages: MessageRecord[];
   agent?: AgentSnapshot | null;
+  workers?: ConversationWorkerRecord[];
 }): WorkerTerminalUserMessage[] {
   const userMessages = messages
     .filter((message) => message.role === "user")
@@ -103,6 +105,29 @@ export function buildDirectTerminalUserMessages({
       createdAt: message.createdAt,
       attachments: message.attachments,
     }));
+
+  // Fallback: the messages row carrying the opening prompt is sometimes
+  // missing on older / recovered direct conversations. Surface the worker's
+  // persisted initialPrompt so the terminal still shows what the user asked
+  // for instead of rendering only the agent's reply.
+  if (userMessages.length === 0 && workers && workers.length > 0) {
+    const primary = workers
+      .filter((worker) => worker.initialPrompt?.trim())
+      .sort((a, b) => {
+        const aTime = timestampMs(a.createdAt) ?? 0;
+        const bTime = timestampMs(b.createdAt) ?? 0;
+        return aTime - bTime;
+      })[0];
+
+    if (primary && primary.initialPrompt) {
+      userMessages.push({
+        id: `${primary.id}:initial-prompt`,
+        content: primary.initialPrompt,
+        createdAt: primary.createdAt,
+        attachments: [],
+      });
+    }
+  }
 
   return userMessages.sort(compareTerminalUserMessages);
 }

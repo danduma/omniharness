@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import "./fx.css";
 import { Providers } from "./providers";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { BugDropBootstrap } from "@/components/BugDropBootstrap";

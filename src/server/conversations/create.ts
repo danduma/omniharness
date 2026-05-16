@@ -14,6 +14,7 @@ import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { createRunId } from "@/server/runs/ids";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
+import { appendLifecycleEntry, appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
@@ -28,6 +29,7 @@ import {
 import { captureGitBaseline } from "@/server/git/auto-commit";
 import { serializeMessageRecord } from "./message-records";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
+import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
 import { createBranchWorktree, validateWorkspaceTarget } from "@/server/git/workspaces";
 import { setProjectGitWorkspaceDefaultTarget } from "@/server/projects/config";
@@ -231,6 +233,8 @@ async function runInitialWorkerTurn(args: {
   agent: AgentRecord;
   mode: "direct" | "planning";
   command: string;
+  initialUserText: string;
+  initialAttachments: ChatAttachment[];
 }) {
   try {
     await db.update(workers).set({
@@ -250,6 +254,22 @@ async function runInitialWorkerTurn(args: {
     notifyEventStreamSubscribers();
 
     const response = await askAgent(args.workerId, buildInitialWorkerPrompt(args.mode, args.command, args.cwd));
+    // Append user_input on delivery. `askAgent` resolved, so the prompt
+    // reached the worker; this must land before `persistWorkerSnapshot`
+    // below so the transcript starts with user_input → bridge entries.
+    const deliveredAt = new Date();
+    await appendUserInputOnDelivery({
+      runId: args.runId,
+      workerId: args.workerId,
+      text: args.initialUserText,
+      deliveredAt,
+      attachments: args.initialAttachments.map((attachment) => ({
+        id: attachment.id,
+        filename: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.size,
+      })),
+    });
     let snapshot: AgentRecord | null = null;
     try {
       snapshot = await getAgent(args.workerId);
@@ -286,15 +306,9 @@ async function runInitialWorkerTurn(args: {
       updatedAt: new Date(),
     }).where(eq(workers.id, args.workerId));
 
-    await db.insert(dbMessages).values({
-      id: randomUUID(),
-      runId: args.runId,
-      role: "worker",
-      kind: args.mode,
-      content: response.response,
-      workerId: args.workerId,
-      createdAt: new Date(),
-    });
+    // Worker response now lives in the unified worker stream via the
+    // bridge entries written by persistWorkerSnapshot above. The
+    // legacy role:"worker" messages row is no longer written.
 
     if (args.mode === "planning") {
       const latestRun = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
@@ -351,13 +365,17 @@ async function startDirectWorkerConversation(args: {
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
   command: string;
+  initialUserText: string;
+  initialAttachments: ChatAttachment[];
 }) {
   try {
+    const { env: envParams } = await readRuntimeEnvFromSettings();
     const agent = await spawnAgent({
       type: args.workerType,
       cwd: args.cwd,
       name: args.workerId,
       ...(args.mode ? { mode: args.mode } : {}),
+      env: envParams,
       model: args.preferredWorkerModel?.trim() || undefined,
       effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
     });
@@ -370,6 +388,8 @@ async function startDirectWorkerConversation(args: {
       agent,
       mode: "direct",
       command: args.command,
+      initialUserText: args.initialUserText,
+      initialAttachments: args.initialAttachments,
     });
   } catch (error) {
     if (isAgentBusyError(error)) {
@@ -508,6 +528,7 @@ export async function createConversation(args: {
       const workerType = preferredWorkerType || allowedWorkerTypes[0] || "codex";
       const yoloModeEnabled = await readWorkerYoloModeEnabled();
       const workerMode = resolveWorkerLaunchMode(undefined, yoloModeEnabled);
+      const { env: envParams } = await readRuntimeEnvFromSettings();
 
       await db.insert(workers).values({
         id: workerId,
@@ -520,10 +541,21 @@ export async function createConversation(args: {
         outputEntriesJson: "[]",
         currentText: "",
         lastText: "",
+        // Durable copy of the user's opening prompt so the terminal can still
+        // render it if the messages row is ever lost (recovery, retry, manual
+        // edit). The messages table was being treated as the single source of
+        // truth, leaving direct conversations with no recoverable transcript.
+        initialPrompt: command,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
       emitNamedEvent({ kind: "worker.spawned", runId, workerId, workerType });
+      await appendLifecycleEntry({
+        runId,
+        workerId,
+        text: `Worker spawned (${workerType})`,
+        raw: { eventType: "worker.spawned", workerType },
+      });
 
       const response = await buildCreatedConversationResponse({ planId, runId, messageId: initialMessageId, mode });
 
@@ -537,6 +569,8 @@ export async function createConversation(args: {
           preferredWorkerModel: args.preferredWorkerModel,
           preferredWorkerEffort: args.preferredWorkerEffort,
           command: workerPrompt,
+          initialUserText: command,
+          initialAttachments: attachments,
         }).catch((error) => {
           console.error("Initial direct conversation worker failed:", error);
         });
@@ -554,6 +588,7 @@ export async function createConversation(args: {
               cwd,
               name: workerId,
               ...(workerMode ? { mode: workerMode } : {}),
+              env: envParams,
               model: args.preferredWorkerModel?.trim() || undefined,
               effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
             });
@@ -581,6 +616,8 @@ export async function createConversation(args: {
               agent,
               mode,
               command: workerPrompt,
+              initialUserText: command,
+              initialAttachments: attachments,
             });
           } catch (error) {
             if (isAgentBusyError(error)) {

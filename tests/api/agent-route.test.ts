@@ -298,6 +298,7 @@ describe("GET /api/agents/[name]", () => {
       outputEntries: [
         {
           id: "message-1",
+          seq: 1,
           type: "message",
           text: "Finished the task.",
           timestamp: new Date(0).toISOString(),

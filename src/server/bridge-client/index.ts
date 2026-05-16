@@ -15,6 +15,14 @@ export interface AgentRecord {
   effectiveModel?: string | null;
   requestedEffort?: string | null;
   effectiveEffort?: string | null;
+  credentialProfile?: {
+    name: string;
+    status: "loaded";
+    source: "file" | "command";
+    envKeys: string[];
+    unsetKeys: string[];
+    expiresAt: string | null;
+  } | null;
   sessionMode?: string | null;
   lastError?: string | null;
   contextUsage?: {
@@ -437,6 +445,7 @@ export async function spawnAgent(params: {
   name: string;
   mode?: string;
   env?: Record<string, string>;
+  credentialProfile?: string;
   model?: string;
   effort?: string;
   skillRoots?: string[];

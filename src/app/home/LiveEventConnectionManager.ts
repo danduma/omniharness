@@ -1,5 +1,6 @@
 import { type AppErrorDescriptor, normalizeAppError, requestJson as defaultRequestJson } from "@/lib/app-errors";
 import type { EventStreamState } from "./types";
+import { workerEntriesManager } from "./WorkerEntriesManager";
 
 const SNAPSHOT_FALLBACK_INTERVAL_MS = 15_000;
 const SNAPSHOT_FALLBACK_COOLDOWN_MS = 1_000;
@@ -101,6 +102,16 @@ export class LiveEventConnectionManager {
     this.eventSource.addEventListener("update_error", (event) => {
       this.handleUpdateErrorEvent(event);
     });
+    // Worker conversation stream wake-ups. The frame carries only
+    // { workerId, seq } — the entry payload is always refetched via
+    // /api/workers/:workerId/entries?afterSeq=. See
+    // docs/architecture/worker-conversation-stream.md.
+    this.eventSource.addEventListener("worker.entry_appended", (event) => {
+      this.handleWorkerEntryAppended(event);
+    });
+    this.eventSource.addEventListener("stream.resync_required", () => {
+      workerEntriesManager.onStreamResync();
+    });
     this.eventSource.onopen = () => {
       this.stopFallbackPolling();
     };
@@ -132,6 +143,21 @@ export class LiveEventConnectionManager {
         action: "Process live updates",
         suggestion: "Inspect the events route response payload and server logs, then refresh the page after fixing the malformed data.",
       });
+    }
+  }
+
+  private handleWorkerEntryAppended(event: MessageEvent) {
+    try {
+      const data = JSON.parse(event.data) as { workerId?: unknown; seq?: unknown };
+      const workerId = typeof data.workerId === "string" ? data.workerId : null;
+      const seq = typeof data.seq === "number" ? data.seq : null;
+      if (!workerId || seq == null) {
+        return;
+      }
+      workerEntriesManager.onWakeUp({ workerId, seq });
+    } catch {
+      // Malformed frames are ignored — the next valid frame (or the
+      // periodic snapshot poll) will re-sync any missed entries.
     }
   }
 

@@ -250,7 +250,7 @@ describe("Supervisor worker spawn flow", () => {
     const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
     expect(persistedMessages.map((message) => message.role)).toEqual(["user", "supervisor"]);
     expect(persistedMessages[1]).toMatchObject({
-      kind: "clarification",
+      kind: "implementation_confirmation",
     });
     expect(persistedMessages[1]?.content).toContain("Before I start implementation");
     expect(persistedMessages[1]?.content).toContain("Reply with confirmation or corrections");

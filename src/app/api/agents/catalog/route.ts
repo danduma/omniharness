@@ -188,6 +188,23 @@ export async function GET(req: NextRequest) {
               };
             }
 
+            if (doctorAvailability?.status === "ok" && doctorAvailability.binary) {
+              if (authentication.status === "not_authenticated") {
+                return {
+                  ...doctorAvailability,
+                  status: "warning" as const,
+                  apiKey: false,
+                  message: authentication.message,
+                };
+              }
+
+              return {
+                ...doctorAvailability,
+                apiKey: authentication.status === "authenticated" ? true : doctorAvailability.apiKey,
+                message: doctorAvailability.message || "Ready to spawn.",
+              };
+            }
+
             return doctorAvailability ?? {
               type,
               status: "warning",

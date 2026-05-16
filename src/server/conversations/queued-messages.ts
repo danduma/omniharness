@@ -9,6 +9,7 @@ import { recordSupervisorIntervention } from "@/server/supervisor/interventions"
 import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
 import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import { serializeMessageRecord } from "./message-records";
+import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 
 export type BusyMessageAction = "queue" | "steer";
 export type QueuedConversationMessageStatus = "pending" | "delivering" | "delivered" | "cancelled" | "failed";
@@ -185,22 +186,32 @@ async function deliverQueuedWorkerSteering(args: {
   messageId: string;
   userMessageId?: string | null;
   content: string;
+  userText: string;
+  attachments: ChatAttachment[];
 }) {
   const response = await askAgent(args.worker.id, args.content);
   const deliveredAt = new Date();
+  // Append user_input on delivery — use the literal user text
+  // (record.content), not the bridge-augmented content with attachment
+  // context appended.
+  await appendUserInputOnDelivery({
+    runId: args.run.id,
+    workerId: args.worker.id,
+    text: args.userText,
+    deliveredAt,
+    attachments: args.attachments.map((attachment) => ({
+      id: attachment.id,
+      filename: attachment.name,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.size,
+    })),
+  });
   await db.update(workers).set({
     status: response.state,
     updatedAt: deliveredAt,
   }).where(eq(workers.id, args.worker.id));
-  await db.insert(messages).values({
-    id: randomUUID(),
-    runId: args.run.id,
-    role: "worker",
-    kind: args.run.mode,
-    content: response.response,
-    workerId: args.worker.id,
-    createdAt: deliveredAt,
-  });
+  // Worker response now lives in the unified worker stream; the
+  // legacy role:"worker" messages row is no longer written.
   await db.update(queuedConversationMessages).set({
     status: "delivered",
     lastError: null,
@@ -221,6 +232,8 @@ async function continueQueuedWorkerSteering(args: {
   messageId: string;
   userMessageId?: string | null;
   content: string;
+  userText: string;
+  attachments: ChatAttachment[];
 }) {
   try {
     await deliverQueuedWorkerSteering(args);
@@ -396,6 +409,8 @@ export async function sendQueuedConversationMessageNow({
     messageId,
     userMessageId: userMessage.id,
     content: workerContent,
+    userText: record.content,
+    attachments: normalizedAttachments,
   }).catch((error) => {
     console.error("Queued message immediate steering failed:", error);
   });
@@ -487,6 +502,18 @@ export async function drainQueuedImplementationMessages(runId: string) {
         });
         const response = await askAgent(worker.id, workerContent);
         const deliveredAt = new Date();
+        await appendUserInputOnDelivery({
+          runId,
+          workerId: worker.id,
+          text: record.content,
+          deliveredAt,
+          attachments: normalizedAttachments.map((attachment) => ({
+            id: attachment.id,
+            filename: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.size,
+          })),
+        });
         await db.insert(messages).values({
           id: randomUUID(),
           runId,
@@ -509,15 +536,7 @@ export async function drainQueuedImplementationMessages(runId: string) {
           status: response.state,
           updatedAt: deliveredAt,
         }).where(eq(workers.id, worker.id));
-        await db.insert(messages).values({
-          id: randomUUID(),
-          runId,
-          role: "worker",
-          kind: "implementation",
-          content: response.response,
-          workerId: worker.id,
-          createdAt: deliveredAt,
-        });
+        // Worker response now lives in the unified worker stream.
         await db.update(queuedConversationMessages).set({
           targetWorkerId: worker.id,
           status: "delivered",
@@ -639,19 +658,23 @@ export async function drainQueuedWorkerMessages({
       }).where(eq(workers.id, workerId));
       const response = await askAgent(workerId, workerContent);
       const deliveredAt = new Date();
+      await appendUserInputOnDelivery({
+        runId,
+        workerId,
+        text: record.content,
+        deliveredAt,
+        attachments: normalizedAttachments.map((attachment) => ({
+          id: attachment.id,
+          filename: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.size,
+        })),
+      });
       await db.update(workers).set({
         status: response.state,
         updatedAt: deliveredAt,
       }).where(eq(workers.id, workerId));
-      await db.insert(messages).values({
-        id: randomUUID(),
-        runId,
-        role: "worker",
-        kind: run.mode,
-        content: response.response,
-        workerId,
-        createdAt: deliveredAt,
-      });
+      // Worker response now lives in the unified worker stream.
       await db.update(queuedConversationMessages).set({
         status: "delivered",
         lastError: null,

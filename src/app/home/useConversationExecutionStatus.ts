@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { t } from "@/lib/i18n";
-import type { AgentSnapshot, ExecutionEventRecord, RunRecord } from "./types";
+import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, RunRecord } from "./types";
 import { getRunDurationLabel, parseExecutionEventDetails, summarizeExecutionEvent } from "./utils";
 
 interface UseConversationExecutionStatusProps {
@@ -17,6 +17,8 @@ interface UseConversationExecutionStatusProps {
   queuedMessageCount: number;
   activeConversationAgents: AgentSnapshot[];
   liveThoughts: Array<{ agentName: string; text: string; snippet: string; isLive: boolean }>;
+  awaitingUserQuestionMessage: MessageRecord | null;
+  isSelectedConversationLoaded: boolean;
 }
 
 export function useConversationExecutionStatus({
@@ -33,9 +35,19 @@ export function useConversationExecutionStatus({
   queuedMessageCount,
   activeConversationAgents,
   liveThoughts,
+  awaitingUserQuestionMessage,
+  isSelectedConversationLoaded,
 }: UseConversationExecutionStatusProps) {
   const liveExecutionStatus = useMemo(() => {
     const durationLabel = getRunDurationLabel(selectedRun, completionEvent?.createdAt);
+
+    if (selectedRun && !isSelectedConversationLoaded) {
+      return {
+        label: "Loading",
+        detail: "Loading the latest conversation state…",
+        tone: "active" as const,
+      };
+    }
 
     if (selectedRun?.status === "failed") {
       return {
@@ -65,9 +77,16 @@ export function useConversationExecutionStatus({
     }
 
     if (selectedRun?.status === "awaiting_user") {
+      if (!awaitingUserQuestionMessage) {
+        return {
+          label: "Loading",
+          detail: "Loading Omni's question…",
+          tone: "active" as const,
+        };
+      }
       return {
         label: "Awaiting input",
-        detail: "The supervisor asked for clarification before continuing.",
+        detail: "Omni asked for clarification before continuing.",
         tone: "warning" as const,
       };
     }
@@ -159,9 +178,9 @@ export function useConversationExecutionStatus({
 
     return {
       label: "Working",
-      detail: [durationLabel, latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "The supervisor is still checking the run."].filter(Boolean).join(". "),
+      detail: [durationLabel, latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "Omni is still checking the run."].filter(Boolean).join(". "),
       tone: "active" as const,
     };
-  }, [activeConversationAgents, completionEvent, erroredAgent, hasStuckWorker, latestExecutionEvent, latestPromptDeferredEvent, latestStuckEvent, latestWaitEvent, liveThoughts, pendingPermissionAgent, queuedMessageCount, selectedRun, showRecoverableRunningState]);
+  }, [activeConversationAgents, awaitingUserQuestionMessage, completionEvent, erroredAgent, hasStuckWorker, isSelectedConversationLoaded, latestExecutionEvent, latestPromptDeferredEvent, latestStuckEvent, latestWaitEvent, liveThoughts, pendingPermissionAgent, queuedMessageCount, selectedRun, showRecoverableRunningState]);
   return { liveExecutionStatus };
 }

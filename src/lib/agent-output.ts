@@ -831,15 +831,14 @@ function countToolGroup(tools: AgentToolActivity[]): AgentToolGroupCounts {
 
   for (const tool of tools) {
     if (tool.actionKind === "edit") {
-      if (tool.targetPath) {
-        editedFiles.add(tool.targetPath);
-      }
+      // Dedupe by target path when we have one, otherwise count each tool
+      // call separately. Previously a missing targetPath silently dropped
+      // the edit from the summary entirely.
+      editedFiles.add(tool.targetPath || `:${tool.id}`);
       continue;
     }
     if (tool.actionKind === "read") {
-      if (tool.targetPath) {
-        readFiles.add(tool.targetPath);
-      }
+      readFiles.add(tool.targetPath || `:${tool.id}`);
       continue;
     }
     if (tool.actionKind === "search") {

@@ -28,6 +28,7 @@ vi.mock("@/server/supervisor/start", () => ({
 }));
 
 import { GET } from "@/app/api/events/route";
+import { GET as GET_WORKER_ENTRIES } from "@/app/api/workers/[workerId]/entries/route";
 
 const LOAD_BUDGET_MS = 5_000;
 
@@ -141,6 +142,22 @@ async function loadSnapshot(runId: string) {
   return { payload, elapsedMs: Date.now() - start };
 }
 
+async function loadWorkerEntries(workerId: string) {
+  // Post-Phase-5: worker conversation content moved off /api/events
+  // onto the per-worker stream endpoint. The "stuck loading" regression
+  // we guard against is now: can the client get entries from
+  // /api/workers/:workerId/entries promptly.
+  const response = await GET_WORKER_ENTRIES(
+    new NextRequest(`http://localhost/api/workers/${workerId}/entries?afterSeq=0`),
+    { params: Promise.resolve({ workerId }) },
+  );
+  const payload = (await response.json()) as {
+    entries: Array<{ id: string; seq: number; type: string; text: string }>;
+    latestSeq: number;
+  };
+  return payload;
+}
+
 describe("conversation load coverage", () => {
   const originalFetch = global.fetch;
   const fixtures: Fixture[] = [];
@@ -215,18 +232,18 @@ describe("conversation load coverage", () => {
         `agent snapshot missing for worker ${fixture.workerId} (${fixture.title}) — Terminal would render "Loading session" forever`,
       ).toBeTruthy();
 
-      const outputEntries = agent?.outputEntries ?? [];
+      const workerEntries = await loadWorkerEntries(fixture.workerId);
       expect(
-        outputEntries.length,
-        `agent ${fixture.workerId} returned with zero outputEntries despite ${fixture.entries.length} persisted on disk — this is the stuck-loading regression`,
+        workerEntries.entries.length,
+        `worker ${fixture.workerId} returned with zero entries despite ${fixture.entries.length} persisted on disk — this is the stuck-loading regression`,
       ).toBeGreaterThanOrEqual(fixture.entries.length);
 
-      const messageTexts = outputEntries
+      const messageTexts = workerEntries.entries
         .filter((entry) => entry.type === "message")
         .map((entry) => entry.text);
       expect(
         messageTexts.some((text) => text.includes(`[${fixture.title.split(" ")[0]}]`)),
-        `agent ${fixture.workerId} outputEntries do not include the persisted message text for ${fixture.title}`,
+        `worker ${fixture.workerId} entries do not include the persisted message text for ${fixture.title}`,
       ).toBe(true);
     }
   });
@@ -249,7 +266,8 @@ describe("conversation load coverage", () => {
 
     const agent = payload.agents.find((candidate) => candidate.name === fixture.workerId);
     expect(agent, "compacted/gzipped worker output failed to surface in the snapshot").toBeTruthy();
-    expect((agent?.outputEntries ?? []).length).toBeGreaterThanOrEqual(fixture.entries.length);
+    const workerEntries = await loadWorkerEntries(fixture.workerId);
+    expect(workerEntries.entries.length).toBeGreaterThanOrEqual(fixture.entries.length);
   });
 
   it("a conversation with no persisted output still returns an agent shell (so the UI can render the empty state, not Loading session)", async () => {
