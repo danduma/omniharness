@@ -287,6 +287,7 @@ describe("executeSupervisorWake", () => {
       mode: "full-access",
       model: "gpt-5.5",
       effort: "medium",
+      env: {},
       resumeSessionId: "saved-session-1",
     });
     expect(mockAskAgent).toHaveBeenCalledWith(

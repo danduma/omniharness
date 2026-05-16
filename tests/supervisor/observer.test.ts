@@ -1698,6 +1698,7 @@ describe("deriveWorkerEvents", () => {
       mode: "full-access",
       model: "openai/gpt-5.4",
       effort: "high",
+      env: {},
       resumeSessionId: "session-123",
     });
 
@@ -1781,6 +1782,7 @@ describe("deriveWorkerEvents", () => {
       mode: "full-access",
       model: "openai/gpt-5.4",
       effort: "high",
+      env: {},
       resumeSessionId: "session-stopped",
     });
 

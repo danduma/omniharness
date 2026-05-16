@@ -323,6 +323,23 @@ export async function collectPlannerArtifacts(args: {
     if (!candidate || seenPaths.has(candidate.path)) {
       continue;
     }
+    if (handoff?.ready && input.source === "handoff" && candidate.kind === "plan") {
+      candidate.readiness = {
+        ready: true,
+        questions: [],
+        gaps: [],
+        structure: candidate.readiness?.structure ?? {
+          itemCount: 0,
+          hasAcceptanceCriteria: false,
+          hasGoalSection: false,
+          itemsMissingDetails: [],
+          itemsMissingVerify: [],
+          itemsWithEmptyVerify: [],
+          itemsWithVagueTitle: [],
+          itemsWithStubTitle: [],
+        },
+      };
+    }
 
     seenPaths.add(candidate.path);
     candidates.push(candidate);

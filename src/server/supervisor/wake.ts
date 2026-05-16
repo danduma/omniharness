@@ -123,7 +123,7 @@ export async function executeSupervisorWake(runId: string) {
     return;
   }
 
-  if (dueDurableWake?.reason === "quota_wait") {
+  if (dueDurableWake?.reason === "quota_wait" && run.status !== "quota_waiting") {
     // Sweep any stale quota incidents whose reset has elapsed — covers
     // failover-success runs whose runs.status never transitioned to
     // quota_waiting and which therefore wouldn't be touched by the

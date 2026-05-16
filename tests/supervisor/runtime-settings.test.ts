@@ -65,4 +65,19 @@ describe("hydrateRuntimeEnvFromSettings", () => {
 
     warnSpy.mockRestore();
   });
+
+  it("does not expose internal persisted settings as runtime environment variables", () => {
+    const result = hydrateRuntimeEnvFromSettings([
+      { key: "SUPERVISOR_WAKE_LEASE:run-1", value: "{\"leaseId\":\"lease-1\"}" },
+      { key: "settings.runtime.recovery", value: "true" },
+      { key: "OPENAI_API_KEY", value: "enc:v1:key" },
+    ]);
+
+    expect(result).toEqual({
+      env: {
+        OPENAI_API_KEY: "decrypted:key",
+      },
+      decryptionFailures: [],
+    });
+  });
 });

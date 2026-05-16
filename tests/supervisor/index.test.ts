@@ -78,6 +78,10 @@ vi.mock("@/server/supervisor/runtime-settings", () => ({
     env: { OPENAI_API_KEY: "key" },
     decryptionFailures: [],
   })),
+  readRuntimeEnvFromSettings: vi.fn(() => ({
+    env: { OPENAI_API_KEY: "key" },
+    decryptionFailures: [],
+  })),
 }));
 
 vi.mock("@/server/supervisor/context", () => ({
@@ -1738,6 +1742,7 @@ describe("Supervisor worker spawn flow", () => {
       mode: "full-access",
       model: "openai/gpt-5.4",
       effort: "high",
+      env: { OPENAI_API_KEY: "key" },
       resumeSessionId: "saved-session-1",
     });
     expect(mockAskAgent).toHaveBeenCalledTimes(2);

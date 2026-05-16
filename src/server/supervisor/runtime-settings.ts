@@ -11,11 +11,19 @@ export interface RuntimeSettingDecryptionFailure {
   key: string;
 }
 
+function isRuntimeEnvSettingKey(key: string) {
+  return /^[A-Z][A-Z0-9_]*$/.test(key);
+}
+
 export function hydrateRuntimeEnvFromSettings(settings: StoredSetting[]) {
   const env: Record<string, string> = {};
   const decryptionFailures: RuntimeSettingDecryptionFailure[] = [];
 
   for (const setting of settings) {
+    if (!isRuntimeEnvSettingKey(setting.key)) {
+      continue;
+    }
+
     if (!shouldEncryptSetting(setting.key)) {
       env[setting.key] = setting.value;
       continue;
