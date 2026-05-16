@@ -62,6 +62,8 @@ function initialState(workerId: string): WorkerStreamState {
   };
 }
 
+export const EMPTY_WORKER_STREAM_STATE: WorkerStreamState = initialState("__none__");
+
 export class WorkerEntriesManager {
   private readonly stateByWorker = new Map<string, WorkerStreamState>();
   private readonly listenersByWorker = new Map<string, Set<Listener>>();
@@ -264,9 +266,9 @@ export function useWorkerStream(workerId: string | null) {
       workerId ? workerEntriesManager.subscribe(workerId, listener) : () => {}
     ), [workerId]),
     useCallback(() => (
-      workerId ? workerEntriesManager.getState(workerId) : initialState("__none__")
+      workerId ? workerEntriesManager.getState(workerId) : EMPTY_WORKER_STREAM_STATE
     ), [workerId]),
-    () => initialState("__none__"),
+    () => EMPTY_WORKER_STREAM_STATE,
   );
   useEffect(() => {
     if (!workerId) {

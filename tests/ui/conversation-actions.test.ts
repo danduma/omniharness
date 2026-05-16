@@ -338,7 +338,7 @@ test("supervisor conversation messages render markdown", () => {
 });
 
 test("conversation error notices render below the thread content", () => {
-  const messagesIndex = pageSource.indexOf("{conversationTimelineItems.length > 0 ? (");
+  const messagesIndex = pageSource.indexOf("conversationTimelineItems.length > 0 ? (");
   const executionIndex = pageSource.indexOf("{isImplementationConversation && showConversationExecution ? (");
   const appErrorsIndex = pageSource.indexOf("{appErrors.length > 0 ? (", executionIndex);
   const failureNoticeIndex = pageSource.indexOf("{conversationFailure ? (", appErrorsIndex);

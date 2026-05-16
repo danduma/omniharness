@@ -37,7 +37,7 @@ test("settings dialog exposes General, Models, Agents, and Runtime tabs in order
   expect(settingsSource.indexOf('{ value: "general", labelKey: "settings.tabs.general" }')).toBeLessThan(settingsSource.indexOf('{ value: "models", labelKey: "settings.tabs.models" }'));
   expect(settingsSource.indexOf('{ value: "models", labelKey: "settings.tabs.models" }')).toBeLessThan(settingsSource.indexOf('{ value: "agents", labelKey: "settings.tabs.agents" }'));
   expect(settingsSource.indexOf('{ value: "agents", labelKey: "settings.tabs.agents" }')).toBeLessThan(settingsSource.indexOf('{ value: "runtime", labelKey: "settings.tabs.runtime" }'));
-  expect(settingsSource).toContain('export type SettingsTab = "general" | "models" | "agents" | "runtime"');
+  expect(settingsSource).toContain('export type SettingsTab = "general" | "models" | "credentials" | "agents" | "runtime" | "memory"');
   expect(settingsSource).not.toContain('activeSettingsTab === "llm"');
   expect(settingsSource).not.toContain('activeSettingsTab === "workers"');
 });

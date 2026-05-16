@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { WorkerEntry } from "@/server/workers/entries-types";
-import { WorkerEntriesManager } from "@/app/home/WorkerEntriesManager";
+import { EMPTY_WORKER_STREAM_STATE, WorkerEntriesManager } from "@/app/home/WorkerEntriesManager";
 
 function entry(seq: number, overrides: Partial<WorkerEntry> = {}): WorkerEntry {
   return {
@@ -25,6 +25,11 @@ function buildManager(responses: Array<{ entries: WorkerEntry[]; latestSeq: numb
 }
 
 describe("WorkerEntriesManager", () => {
+  it("reuses one empty stream snapshot for the no-worker subscription path", () => {
+    expect(EMPTY_WORKER_STREAM_STATE).toBe(EMPTY_WORKER_STREAM_STATE);
+    expect(EMPTY_WORKER_STREAM_STATE.workerId).toBe("__none__");
+  });
+
   it("ensureLoaded fills the entries prefix and marks loaded", async () => {
     const { manager } = buildManager([
       { entries: [entry(1), entry(2), entry(3)], latestSeq: 3 },

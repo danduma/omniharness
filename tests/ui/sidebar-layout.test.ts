@@ -168,8 +168,8 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('const CloseButtonIcon = closeButtonVariant === "back" ? ArrowLeft : PanelRightClose;');
   expect(pageSource).toContain('<PanelRightClose');
   expect(pageSource).toContain('<SideWindow');
-  expect(pageSource).toContain('workers={selectedRunId && isImplementationConversation ? selectedRunWorkersForDisplay : []}');
-  expect(pageSource).toContain('agents={selectedRunId && isImplementationConversation ? conversationAgents : []}');
+  expect(pageSource).toContain('workers={selectedRunId ? selectedRunWorkersForDisplay : []}');
+  expect(pageSource).toContain('agents={selectedRunId ? conversationAgents : []}');
   expect(pageSource).toContain('workersSidebarManager');
   expect(pageSource).toContain('activeTab: "active"');
   expect(pageSource).toContain("Active ({workerGroups.active.length})");
@@ -257,7 +257,8 @@ test("workspace side window owns workers and file tabs", () => {
   expect(sideWindowSource).toContain("sideWindowManager.selectTab(tab.id)");
   expect(sideWindowSource).toContain("tab.kind === \"file\"");
   expect(sideWindowSource).toContain("const hasConversationWorkers = workerGroups.active.length > 0 || workerGroups.finished.length > 0;");
-  expect(sideWindowSource).toContain('const visibleTabs = hasConversationWorkers ? tabs : tabs.filter((tab) => tab.kind !== "workers");');
+  expect(sideWindowSource).toContain('const filteredTabs = hasConversationWorkers ? tabs : tabs.filter((tab) => tab.kind !== "workers");');
+  expect(sideWindowSource).toContain('const visibleTabs = filteredTabs.length > 0 ? filteredTabs : tabs;');
   expect(sideWindowSource).toContain("const activeTab = visibleTabs.find((tab) => tab.id === activeTabId) ?? visibleTabs[0] ?? null;");
   expect(sideWindowSource).toContain("{visibleTabs.map((tab) => (");
   expect(sideWindowSource).toContain(') : activeTab?.kind === "workers" ? (');
@@ -331,7 +332,7 @@ test("worker detail renders from streamed agent state instead of per-worker poll
   expect(pageSource).not.toContain('refetchInterval: ["starting", "working", "stuck"].includes(normalizeWorkerStatus(worker.status)) ? 2000 : false');
   expect(pageSource).toContain('const liveAgentsById = new Map(');
   expect(pageSource).toContain('const candidateAgent = liveAgentsById.get(worker.id);');
-  expect(pageSource).toContain('const liveAgent = selectedRunIsTerminal && candidateAgent && isWorkerActiveStatus(candidateAgent.state)');
+  expect(pageSource).toContain('if ((selectedRunIsTerminal || selectedRunNeedsRecovery) && isWorkerActiveStatus(candidateAgent.state)) {');
 });
 
 test("conversation output only follows live worker updates when already near the bottom", () => {
@@ -584,7 +585,7 @@ test("direct conversations render the user transcript next to the worker surface
 
 test("settings entry opens the reorganized settings dialog", () => {
   expect(pageSource).toContain('activeSettingsTab: "general"');
-  expect(pageSource).toContain('export type SettingsTab = "general" | "models" | "agents" | "runtime"');
+  expect(pageSource).toContain('export type SettingsTab = "general" | "models" | "credentials" | "agents" | "runtime" | "memory"');
   expect(pageSource).toContain('import("@/components/home/SettingsDialog")');
   expect(pageSource).toContain("settingsDraftManager");
 });
