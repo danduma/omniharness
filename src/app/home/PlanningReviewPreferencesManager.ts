@@ -15,6 +15,7 @@ export type PlanningReviewPreferencesState = {
   rounds: number;
   isExpanded: boolean;
   isSaving: boolean;
+  isStarting: boolean;
 };
 
 const initialState: PlanningReviewPreferencesState = {
@@ -22,6 +23,7 @@ const initialState: PlanningReviewPreferencesState = {
   rounds: 1,
   isExpanded: false,
   isSaving: false,
+  isStarting: false,
 };
 
 export class PlanningReviewPreferencesManager extends StateManager<PlanningReviewPreferencesState> {
@@ -37,6 +39,10 @@ export class PlanningReviewPreferencesManager extends StateManager<PlanningRevie
 
   setExpanded(isExpanded: boolean) {
     this.setKey("isExpanded", isExpanded);
+  }
+
+  setStarting(isStarting: boolean) {
+    this.setKey("isStarting", isStarting);
   }
 
   async setAgentSelection(value: PlanningReviewAgentSelection) {

@@ -1,5 +1,5 @@
 import type React from "react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { Archive, Bug, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Trash2, TriangleAlert, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { requestBugDropOpen } from "@/components/BugDropBootstrap";
@@ -16,7 +16,20 @@ import type { ManualCommitAction } from "@/lib/commit-workflow";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { isArchivableRunStatus, normalizeRunStatus } from "@/lib/run-status";
 import { cn } from "@/lib/utils";
+import { StateManager } from "@/lib/state-manager";
 import type { SidebarGroup, SidebarRun } from "@/app/home/types";
+
+class ConversationSidebarHydrationManager extends StateManager<boolean> {
+  constructor() {
+    super(false);
+  }
+
+  markMounted() {
+    this.update(true);
+  }
+}
+
+const conversationSidebarHydrationManager = new ConversationSidebarHydrationManager();
 
 type ConversationVisualIconProps = {
   className?: string;
@@ -133,9 +146,13 @@ export function ConversationSidebar({
   onCollapse,
 }: ConversationSidebarProps) {
   useI18nSnapshot();
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(
+    useCallback((listener) => conversationSidebarHydrationManager.subscribe(listener), []),
+    useCallback(() => conversationSidebarHydrationManager.getSnapshot(), []),
+    () => conversationSidebarHydrationManager.getSnapshot(),
+  );
   useEffect(() => {
-    setMounted(true);
+    conversationSidebarHydrationManager.markMounted();
   }, []);
 
   if (!mounted) {

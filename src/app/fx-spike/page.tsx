@@ -1,13 +1,35 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { Fx, FxStagger, FxWords } from "../fx/Fx";
+import { StateManager } from "@/lib/state-manager";
+
+class FxSpikeManager extends StateManager<boolean> {
+  constructor() {
+    super(false);
+  }
+
+  setActive(active: boolean) {
+    this.update(active);
+  }
+
+  restart() {
+    this.setActive(false);
+    setTimeout(() => this.setActive(true), 100);
+  }
+}
+
+const fxSpikeManager = new FxSpikeManager();
 
 export default function FxSpikePage() {
-  const [active, setActive] = useState(false);
+  const active = useSyncExternalStore(
+    useCallback((listener) => fxSpikeManager.subscribe(listener), []),
+    useCallback(() => fxSpikeManager.getSnapshot(), []),
+    () => fxSpikeManager.getSnapshot(),
+  );
 
   useEffect(() => {
-    const timer = setTimeout(() => setActive(true), 500);
+    const timer = setTimeout(() => fxSpikeManager.setActive(true), 500);
     return () => clearTimeout(timer);
   }, []);
 
@@ -56,10 +78,7 @@ export default function FxSpikePage() {
       </section>
 
       <button 
-        onClick={() => {
-          setActive(false);
-          setTimeout(() => setActive(true), 100);
-        }}
+        onClick={() => fxSpikeManager.restart()}
         className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded transition-colors"
       >
         Restart Animations

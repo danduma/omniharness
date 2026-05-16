@@ -27,23 +27,22 @@ export function PlanningReviewControls({
   onStartReview,
 }: PlanningReviewControlsProps) {
   useI18nSnapshot();
-  const { agentSelection, rounds, isExpanded, isSaving } = useManagerSnapshot(planningReviewPreferencesManager);
-  const [isStarting, setIsStarting] = React.useState(false);
+  const { agentSelection, rounds, isExpanded, isSaving, isStarting } = useManagerSnapshot(planningReviewPreferencesManager);
 
   const agents: PlanningReviewAgentSelection[] = ["auto", "same", "codex", "claude", "gemini", "opencode"];
 
   React.useEffect(() => {
     if (isReviewing && isStarting) {
-      setIsStarting(false);
+      planningReviewPreferencesManager.setStarting(false);
     }
   }, [isReviewing, isStarting]);
 
   const handleStart = () => {
-    setIsStarting(true);
+    planningReviewPreferencesManager.setStarting(true);
     try {
       onStartReview({ agentSelection, rounds });
     } catch (error) {
-      setIsStarting(false);
+      planningReviewPreferencesManager.setStarting(false);
       throw error;
     }
   };

@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
 import { BootShell } from "@/components/BootShell";
 import { LoginShell } from "@/components/LoginShell";
@@ -51,6 +51,7 @@ import { useConversationActions } from "./useConversationActions";
 import { useHomeLayoutController } from "./useHomeLayoutController";
 import { ComposerContainer } from "./ComposerContainer";
 import { t } from "@/lib/i18n";
+import { StateManager } from "@/lib/state-manager";
 
 const FolderPickerDialog = dynamic(
   () => import("@/components/FolderPickerDialog").then((m) => m.FolderPickerDialog),
@@ -75,6 +76,30 @@ const SideWindow = dynamic(
 
 const ONBOARDING_SEEN_STORAGE_KEY = "omni.onboarding.seen";
 let appliedHomeBootstrapId: string | null = null;
+
+class AutoResumeExhaustionManager extends StateManager<Set<string>> {
+  constructor() {
+    super(new Set());
+  }
+
+  clear(runId: string) {
+    this.update((current) => {
+      if (!current.has(runId)) return current;
+      const next = new Set(current);
+      next.delete(runId);
+      return next;
+    });
+  }
+
+  mark(runId: string) {
+    this.update((current) => {
+      if (current.has(runId)) return current;
+      return new Set(current).add(runId);
+    });
+  }
+}
+
+const autoResumeExhaustionManager = new AutoResumeExhaustionManager();
 
 type HomeAppState = Omit<HomeUiState, "command" | "commandCursor" | "mentionIndex" | "attachments">;
 
@@ -116,10 +141,7 @@ function applyHomeBootstrap(bootstrap: HomeBootstrapPayload | null | undefined, 
 }
 
 export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null }) {
-  useState(() => {
-    applyHomeBootstrap(bootstrap, false);
-    return null;
-  });
+  applyHomeBootstrap(bootstrap, false);
   const initialEventState = bootstrap?.initialEventState ?? INITIAL_EVENT_STREAM_STATE;
   const initialSnapshotScope = bootstrap?.route.selectedRunId ?? null;
 
@@ -233,7 +255,11 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   const pendingSentConversationMessagesRef = useRef<Map<string, MessageRecord>>(new Map());
   const loadingWorkerHistoryIdsRef = useRef<Set<string>>(new Set());
   const autoResumeStateRef = useRef<Map<string, { failureKey: string; attempts: number; timerId: ReturnType<typeof setTimeout> | null }>>(new Map());
-  const [autoResumeExhaustedRunIds, setAutoResumeExhaustedRunIds] = useState<Set<string>>(new Set());
+  const autoResumeExhaustedRunIds = useSyncExternalStore(
+    useCallback((listener) => autoResumeExhaustionManager.subscribe(listener), []),
+    useCallback(() => autoResumeExhaustionManager.getSnapshot(), []),
+    () => autoResumeExhaustionManager.getSnapshot(),
+  );
 
   // Appearance
   const appearancePreferences = useManagerSnapshot(appearancePreferencesManager);
@@ -587,22 +613,13 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     if (!existing || existing.failureKey !== failureKey) {
       if (existing?.timerId) clearTimeout(existing.timerId);
       autoResumeStateRef.current.set(runId, { failureKey, attempts: 0, timerId: null });
-      if (autoResumeExhaustedRunIds.has(runId)) {
-        setAutoResumeExhaustedRunIds((prev) => {
-          if (!prev.has(runId)) return prev;
-          const next = new Set(prev);
-          next.delete(runId);
-          return next;
-        });
-      }
+      autoResumeExhaustionManager.clear(runId);
     }
 
     const state = autoResumeStateRef.current.get(runId)!;
     if (state.timerId) return; // retry already scheduled
     if (state.attempts >= MAX_AUTO_RESUME_ATTEMPTS) {
-      if (!autoResumeExhaustedRunIds.has(runId)) {
-        setAutoResumeExhaustedRunIds((prev) => new Set(prev).add(runId));
-      }
+      autoResumeExhaustionManager.mark(runId);
       return;
     }
 

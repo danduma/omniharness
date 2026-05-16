@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { ChevronDownIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,8 @@ import {
 } from "@/app/home/constants";
 import type { LlmFieldPrefix } from "@/app/home/types";
 import { t, useI18nSnapshot } from "@/lib/i18n";
+import { StateManager } from "@/lib/state-manager";
+import { shallowEqualRecord, useManagerSelector } from "@/lib/use-manager-snapshot";
 import { cn } from "@/lib/utils";
 
 interface ModelProfileFormProps {
@@ -31,6 +33,37 @@ interface ModelProfileFormProps {
 }
 
 const PROVIDER_VALUES = new Set<string>(LLM_PROVIDER_OPTIONS.map((option) => option.value));
+
+type ModelProfileUiState = Record<string, {
+  apiKeyEditing: boolean;
+  advancedOpen: boolean;
+}>;
+
+class ModelProfileUiManager extends StateManager<ModelProfileUiState> {
+  constructor() {
+    super({});
+  }
+
+  private getProfile(prefix: LlmFieldPrefix) {
+    return this.getSnapshot()[prefix] ?? { apiKeyEditing: false, advancedOpen: false };
+  }
+
+  setApiKeyEditing(prefix: LlmFieldPrefix, apiKeyEditing: boolean) {
+    this.update((current) => ({
+      ...current,
+      [prefix]: { ...this.getProfile(prefix), apiKeyEditing },
+    }));
+  }
+
+  setAdvancedOpen(prefix: LlmFieldPrefix, advancedOpen: boolean) {
+    this.update((current) => ({
+      ...current,
+      [prefix]: { ...this.getProfile(prefix), advancedOpen },
+    }));
+  }
+}
+
+const modelProfileUiManager = new ModelProfileUiManager();
 
 function isProvider(value: string): value is LlmProviderId {
   return PROVIDER_VALUES.has(value);
@@ -60,12 +93,15 @@ export function ModelProfileForm({
   const apiKeyConfigured = apiKeySecret?.configured ?? false;
   const apiKeyPreview = apiKeySecret?.preview ?? "";
   const apiKeyDraftValue = settings[apiKeyKey] || "";
-  const [apiKeyEditing, setApiKeyEditing] = useState(false);
+  const { apiKeyEditing, advancedOpen } = useManagerSelector(
+    modelProfileUiManager,
+    (state) => state[prefix] ?? { apiKeyEditing: false, advancedOpen: false },
+    shallowEqualRecord,
+  );
   const showEditMode = apiKeyEditing || !apiKeyConfigured || apiKeyDraftValue.length > 0;
   useEffect(() => {
-    if (!apiKeyConfigured) setApiKeyEditing(false);
-  }, [apiKeyConfigured]);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+    if (!apiKeyConfigured) modelProfileUiManager.setApiKeyEditing(prefix, false);
+  }, [apiKeyConfigured, prefix]);
 
   const catalog = LLM_PROVIDER_MODEL_CATALOG[provider] ?? [];
   const modelOptions: SelectOption[] = useMemo(() => {
@@ -151,7 +187,7 @@ export function ModelProfileForm({
                 onChange={(event) => setSetting(apiKeyKey, event.target.value)}
                 onBlur={() => {
                   if (apiKeyConfigured && apiKeyDraftValue.length === 0) {
-                    setApiKeyEditing(false);
+                    modelProfileUiManager.setApiKeyEditing(prefix, false);
                   }
                 }}
                 spellCheck={false}
@@ -169,7 +205,7 @@ export function ModelProfileForm({
                   className="h-8 px-2 text-[11px]"
                   onClick={() => {
                     setSetting(apiKeyKey, "");
-                    setApiKeyEditing(false);
+                    modelProfileUiManager.setApiKeyEditing(prefix, false);
                   }}
                 >
                   {t("common.cancel")}
@@ -194,7 +230,7 @@ export function ModelProfileForm({
                 size="sm"
                 className="h-8 px-2 text-[11px]"
                 onClick={() => {
-                  setApiKeyEditing(true);
+                  modelProfileUiManager.setApiKeyEditing(prefix, true);
                   requestAnimationFrame(() => {
                     const el = document.getElementById(apiKeyKey) as HTMLInputElement | null;
                     el?.focus();
@@ -208,7 +244,7 @@ export function ModelProfileForm({
         </Field>
       </div>
 
-      <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="border-t border-border/60 pt-3">
+      <Collapsible open={advancedOpen} onOpenChange={(open) => modelProfileUiManager.setAdvancedOpen(prefix, open)} className="border-t border-border/60 pt-3">
         <CollapsibleTrigger
           className={cn(
             "flex w-full items-center justify-between gap-2 rounded-md text-left text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground",

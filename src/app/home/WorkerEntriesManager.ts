@@ -18,7 +18,7 @@
  * via `GET /api/workers/:workerId/entries?afterSeq=`. The frame is a
  * wake-up hint; we never trust it as the entry payload.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import type { WorkerEntry } from "@/server/workers/entries-types";
 import { requestJson as defaultRequestJson } from "@/lib/app-errors";
 
@@ -259,17 +259,20 @@ export const workerEntriesManager = new WorkerEntriesManager();
  * fetch.
  */
 export function useWorkerStream(workerId: string | null) {
-  const [state, setState] = useState<WorkerStreamState>(() =>
-    workerId ? workerEntriesManager.getState(workerId) : initialState("__none__"),
+  const state = useSyncExternalStore(
+    useCallback((listener) => (
+      workerId ? workerEntriesManager.subscribe(workerId, listener) : () => {}
+    ), [workerId]),
+    useCallback(() => (
+      workerId ? workerEntriesManager.getState(workerId) : initialState("__none__")
+    ), [workerId]),
+    () => initialState("__none__"),
   );
   useEffect(() => {
     if (!workerId) {
       return;
     }
-    setState(workerEntriesManager.getState(workerId));
-    const unsubscribe = workerEntriesManager.subscribe(workerId, setState);
     void workerEntriesManager.ensureLoaded(workerId);
-    return unsubscribe;
   }, [workerId]);
   return {
     state,
