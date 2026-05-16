@@ -465,7 +465,7 @@ function FailoverChip({ events }: { events: ExecutionEventRecord[] }) {
       <div className="flex">
         <span
           className="inline-flex items-center gap-1.5 rounded-full border border-amber-200/40 bg-amber-100/30 px-3 py-1 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200"
-          aria-label="Worker failover"
+          aria-label={t("conversation.chip.switchedWorkersAria")}
         >
           <ArrowLeftRight className="h-3 w-3" aria-hidden="true" strokeWidth={1.8} />
           {t("conversation.chip.switchedWorkers", { outgoing: outgoingLabel, incoming: newLabel })}
@@ -741,7 +741,7 @@ export function ConversationMain({
                 className="h-8 w-8 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground"
                 aria-hidden="true"
               />
-              <p>Loading conversation…</p>
+              <p>{t("conversation.loading")}</p>
             </div>
           ) : (
             <DirectControlTerminalColumn>
@@ -791,7 +791,7 @@ export function ConversationMain({
                 className="h-8 w-8 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground"
                 aria-hidden="true"
               />
-              <p>Loading conversation…</p>
+              <p>{t("conversation.loading")}</p>
             </div>
           ) : conversationTimelineItems.length > 0 ? (
             conversationTimelineItems.map((item: ConversationTimelineItem) => {

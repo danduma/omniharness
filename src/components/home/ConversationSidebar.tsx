@@ -264,7 +264,7 @@ export function ConversationSidebar({
                       isHydratingConversations ? (
                         <div className="flex items-center gap-2 py-1 pl-8 text-xs text-muted-foreground/70">
                           <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                          <span>Loading conversations...</span>
+                          <span>{t("conversation.sidebar.loadingConversations")}</span>
                         </div>
                       ) : (
                         <div className="py-1 pl-8 text-xs italic text-muted-foreground/60">No conversations</div>

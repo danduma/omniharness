@@ -223,10 +223,27 @@ test("user input image attachments keep visible attachment metadata in history",
 test("direct-control terminal user messages render attachment metadata", () => {
   expect(terminalSource).toContain('attachments?: ChatAttachment[]');
   expect(terminalSource).toContain('attachments: message.attachments ?? []');
+  expect(terminalSource).toContain('actions: entry.type === "user_input" ? getUserMessageActions?.({');
+  expect(terminalSource).toContain('id: entry.id,');
+  expect(terminalSource).toContain('content: entry.text,');
+  expect(terminalSource).toContain('createdAt: entry.timestamp,');
   expect(terminalSource).toContain('activity.attachments.length > 0');
   expect(terminalSource).toContain('attachmentImagePreviewManager.open({ url, name: attachment.name, size: attachment.size })');
   expect(terminalSource).toContain('title={`Preview ${attachment.name}`}');
   expect(terminalSource).toContain('{formatBytes(attachment.size)}');
+});
+
+test("conversation loading states use i18n resources", () => {
+  const conversationMainSource = readSource("src/components/home/ConversationMain.tsx");
+  const sidebarSource = readSource("src/components/home/ConversationSidebar.tsx");
+  const localeSource = readSource("shared/locales/en.json");
+
+  expect(conversationMainSource).toContain('t("conversation.loading")');
+  expect(conversationMainSource).not.toContain("Loading conversation…");
+  expect(sidebarSource).toContain('t("conversation.sidebar.loadingConversations")');
+  expect(sidebarSource).not.toContain("Loading conversations...");
+  expect(localeSource).toContain('"conversation.loading": "Loading conversation..."');
+  expect(localeSource).toContain('"conversation.sidebar.loadingConversations": "Loading conversations..."');
 });
 
 test("attachment image previews use a global full-screen dialog", () => {

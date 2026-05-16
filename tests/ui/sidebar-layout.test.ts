@@ -656,7 +656,7 @@ test("project groups show a loading indicator while conversations are still hydr
   expect(pageSource).toContain("hasReceivedInitialEventStreamPayload: false");
   expect(pageSource).toContain("const isHydratingConversations = appUnlocked && !hasReceivedInitialEventStreamPayload;");
   expect(pageSource).toContain("isHydratingConversations={isHydratingConversations}");
-  expect(pageSource).toContain("Loading conversations...");
+  expect(pageSource).toContain('t("conversation.sidebar.loadingConversations")');
 });
 
 test("project group collapsed state survives page reloads", () => {

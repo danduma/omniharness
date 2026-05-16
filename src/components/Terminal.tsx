@@ -1388,21 +1388,30 @@ export function Terminal({
     const userActivity: TerminalActivityItem[] = usingUnifiedStream
       ? (entries ?? [])
         .filter((entry) => entry.type === "user_input" || entry.type === "supervisor_input")
-        .map((entry) => ({
-          id: `user:${entry.id}`,
-          kind: "user_message" as const,
-          messageId: entry.id,
-          text: entry.text,
-          timestamp: entry.timestamp,
-          attachments: (entry.attachments ?? []).map((attachment) => ({
+        .map((entry) => {
+          const attachments = (entry.attachments ?? []).map((attachment) => ({
             id: attachment.id,
             kind: attachment.mimeType.startsWith("image/") ? "image" as const : "file" as const,
             name: attachment.filename,
             mimeType: attachment.mimeType,
             size: attachment.sizeBytes,
-          })),
-          actions: [],
-        }))
+          }));
+
+          return {
+            id: `user:${entry.id}`,
+            kind: "user_message" as const,
+            messageId: entry.id,
+            text: entry.text,
+            timestamp: entry.timestamp,
+            attachments,
+            actions: entry.type === "user_input" ? getUserMessageActions?.({
+              id: entry.id,
+              content: entry.text,
+              createdAt: entry.timestamp,
+              attachments,
+            }) ?? [] : [],
+          };
+        })
       : userMessages.map((message) => ({
         id: `user:${message.id}`,
         kind: "user_message",

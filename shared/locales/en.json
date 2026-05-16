@@ -327,6 +327,7 @@
   "queued.message.sendNowAria": "Send queued message now",
   "queued.message.cancelAria": "Cancel queued message",
   "workers.sidebar.collapseAria": "Collapse workers sidebar",
+  "conversation.loading": "Loading conversation...",
   "conversation.message.copyAria": "Copy message",
   "conversation.message.action.resumeFromHere": "Resume from here",
   "conversation.message.action.retryFromHere": "Retry from here",
@@ -340,6 +341,7 @@
   "folder.picker.select": "Select Current Folder",
   "side.window.collapseAria": "Collapse workspace side window",
   "conversation.sidebar.collapseAria": "Collapse conversations sidebar",
+  "conversation.sidebar.loadingConversations": "Loading conversations...",
   "common.back": "Back",
   "file.picker.searchPlaceholder": "Search files...",
   "models.picker.searchPlaceholder": "Search models",
@@ -413,6 +415,7 @@
   "events.failover.completed": "Switched workers: {outgoing} → {incoming}.",
   "events.failover.failed": "Worker failover failed: {reason}",
   "conversation.chip.switchedWorkers": "Switched workers: {outgoing} → {incoming}",
+  "conversation.chip.switchedWorkersAria": "Worker failover",
   "settings.agents.failover.title": "Quota failover",
   "settings.agents.failover.help": "When the current worker exhausts its quota mid-run, Omni hands off to the next allowed worker."
 }

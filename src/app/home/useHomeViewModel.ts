@@ -437,7 +437,7 @@ export function useHomeViewModel({
     || selectedRun?.status === "awaiting_user"
     || selectedRun?.status === "failed";
 
-  const showConversationExecution = shouldShowConversationExecutionPanel({
+  const showConversationExecution = isSelectedConversationLoaded && shouldShowConversationExecutionPanel({
     selectedRun,
     isConversationThinking,
     executionEventCount: conversationTimelineActivityCount,
