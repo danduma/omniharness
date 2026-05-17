@@ -17,6 +17,7 @@ import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachm
 import { createQueuedConversationMessage, type BusyMessageAction } from "./queued-messages";
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
+import { runWorkerTurn } from "./worker-turn-gate";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
@@ -459,14 +460,14 @@ export async function sendConversationMessage({
   if (run.mode === "direct") {
     if (busyAction === "steer") {
       try {
-        await continueWorkerConversation({
+        await runWorkerTurn(worker.id, () => continueWorkerConversation({
           run,
           worker,
           content: workerContent,
           userInputText: trimmedContent,
           userInputId: userMessage.id,
           attachments: normalizedAttachments,
-        });
+        }));
       } catch (error) {
         if (isAgentBusyError(error)) {
           await db.delete(messages).where(eq(messages.id, userMessage.id));
@@ -493,7 +494,7 @@ export async function sendConversationMessage({
       };
     }
 
-    continueWorkerConversation({
+    runWorkerTurn(worker.id, () => continueWorkerConversation({
       run,
       worker,
       content: workerContent,
@@ -501,7 +502,7 @@ export async function sendConversationMessage({
       userInputId: userMessage.id,
       attachments: normalizedAttachments,
       appendUserInputBeforeAsk: true,
-    }).catch((error) => {
+    })).catch((error) => {
       if (isAgentBusyError(error)) {
         return;
       }
@@ -516,14 +517,14 @@ export async function sendConversationMessage({
   }
 
   try {
-    await continueWorkerConversation({
+    await runWorkerTurn(worker.id, () => continueWorkerConversation({
       run,
       worker,
       content: workerContent,
       userInputText: trimmedContent,
       userInputId: userMessage.id,
       attachments: normalizedAttachments,
-    });
+    }));
   } catch (error) {
     if (busyAction === "steer" && isAgentBusyError(error)) {
       await db.delete(messages).where(eq(messages.id, userMessage.id));

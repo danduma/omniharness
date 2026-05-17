@@ -28,6 +28,7 @@ import {
 } from "@/lib/commit-workflow";
 import { captureGitBaseline } from "@/server/git/auto-commit";
 import { serializeMessageRecord } from "./message-records";
+import { runWorkerTurn } from "./worker-turn-gate";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
@@ -360,7 +361,7 @@ async function startDirectWorkerConversation(args: {
       effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
     });
 
-    await runInitialWorkerTurn({
+    await runWorkerTurn(args.workerId, () => runInitialWorkerTurn({
       runId: args.runId,
       workerId: args.workerId,
       workerType: args.workerType,
@@ -368,7 +369,7 @@ async function startDirectWorkerConversation(args: {
       agent,
       mode: "direct",
       command: args.command,
-    });
+    }));
   } catch (error) {
     if (isAgentBusyError(error)) {
       return;
@@ -601,7 +602,7 @@ export async function createConversation(args: {
           }
 
           try {
-            await runInitialWorkerTurn({
+            await runWorkerTurn(workerId, () => runInitialWorkerTurn({
               runId,
               workerId,
               workerType,
@@ -609,7 +610,7 @@ export async function createConversation(args: {
               agent,
               mode,
               command: workerPrompt,
-            });
+            }));
           } catch (error) {
             if (isAgentBusyError(error)) {
               return;
