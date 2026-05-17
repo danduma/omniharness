@@ -272,4 +272,23 @@ describe("writeWorkerOutputEntries (diff-and-append)", () => {
       await cleanupRun(runId);
     }
   });
+
+  it("deduplicates repeated ids inside a single bridge snapshot", async () => {
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    try {
+      await writeWorkerOutputEntries(runId, workerId, [
+        { id: "dup", type: "message", text: "one", timestamp: "2026-01-01T00:00:00.000Z" } as any,
+        { id: "dup", type: "message", text: "one replayed", timestamp: "2026-01-01T00:00:01.000Z" } as any,
+        { id: "next", type: "message", text: "two", timestamp: "2026-01-01T00:00:02.000Z" } as any,
+      ]);
+      const all = await readWorkerOutputEntries(runId, workerId);
+      expect(all.map((e) => ({ id: (e as any).id, text: (e as any).text, seq: (e as any).seq }))).toEqual([
+        { id: "dup", text: "one", seq: 1 },
+        { id: "next", text: "two", seq: 2 },
+      ]);
+    } finally {
+      await cleanupRun(runId);
+    }
+  });
 });

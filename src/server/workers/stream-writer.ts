@@ -11,11 +11,12 @@
  *      entries endpoint — the SSE frame is a wake-up hint, not a content
  *      carrier.
  *
- * Append-on-delivery semantics: callers MUST invoke these only after
- * `askAgent` (or the equivalent delivery primitive) has resolved
- * successfully. The JSONL is a transcript of what the worker actually
- * received, not of what the user attempted. See the plan's
- * "Write-acceptance semantics" section for the rationale.
+ * Append-on-delivery semantics: ordinary follow-up callers MUST invoke
+ * these only after `askAgent` (or the equivalent delivery primitive)
+ * has resolved successfully. Initial direct/planning prompts are the
+ * exception: the conversation has already accepted the message, and the
+ * prompt must anchor the worker stream before bridge progress snapshots
+ * can append output while the first ask is still in flight.
  */
 import { randomUUID } from "node:crypto";
 import { emitNamedEvent } from "@/server/events/named-events";

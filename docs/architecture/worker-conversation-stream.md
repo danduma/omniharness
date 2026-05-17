@@ -85,7 +85,8 @@ appended on durable acceptance:
 
 | State        | Trigger                                              | Stream action                                                                              |
 |--------------|------------------------------------------------------|--------------------------------------------------------------------------------------------|
-| `accepted`   | Server has validated the request                     | nothing yet                                                                                |
+| `accepted`   | Server has validated a direct/planning prompt that the UI will render immediately | **append first**, then write any `messages` mirror row; the stream is the display authority |
+| `accepted`   | Server has validated a request that is not worker-stream-backed | nothing yet                                                                                |
 | `queued`     | Inserted into `queuedConversationMessages`           | nothing yet                                                                                |
 | `delivered`  | `askAgent()` returned OR `queued_message_delivered`  | **append** `user_input` / `supervisor_input` with `timestamp = deliveredAt`                |
 | `failed`     | Validation error, busy retry, etc.                   | nothing — caller's responsibility to retry; `queuedConversationMessages` carries pending UI |
@@ -94,6 +95,12 @@ The JSONL is a transcript of what was **delivered to the worker**, not
 of what the user attempted. "Pending / queued" UI state comes from
 `queuedConversationMessages` (which already existed), not from the
 stream.
+
+For worker-backed direct/planning conversations, the JSONL stream is the
+primary transcript. A `messages` row for the same user input is only a DB
+mirror/index and must never get ahead of the stream. If an existing user
+message row has no matching `user_input` entry, the server refuses the
+next message instead of inserting another row.
 
 ## One writer, one reader
 

@@ -17,6 +17,10 @@ import {
   workerCounters,
   workers,
 } from "@/server/db/schema";
+import {
+  __resetOutputStoreCachesForTests,
+  readWorkerOutputEntries,
+} from "@/server/workers/output-store";
 
 const { mockAskAgent, mockGetAgent, mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
   mockAskAgent: vi.fn().mockResolvedValue({
@@ -55,12 +59,29 @@ function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitFor<T>(read: () => T | Promise<T>, predicate: (value: T) => boolean, timeoutMs = 1_000) {
+  const startedAt = Date.now();
+  let latest = await read();
+
+  while (!predicate(latest)) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(`Timed out waiting for expected state. Last value: ${JSON.stringify(latest)}`);
+    }
+
+    await delay(10);
+    latest = await read();
+  }
+
+  return latest;
+}
+
 describe("POST /api/conversations/[id]/messages", () => {
   beforeEach(async () => {
     mockAskAgent.mockClear();
     mockGetAgent.mockClear();
     mockSpawnAgent.mockClear();
     mockStartSupervisorRun.mockClear();
+    __resetOutputStoreCachesForTests();
     await db.delete(supervisorInterventions);
     await db.delete(workerAssignments);
     await db.delete(executionEvents);
@@ -586,6 +607,137 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(systemErrors.filter((message) => message.kind === "error")).toHaveLength(0);
   });
 
+  it("shows a direct fire-and-forget follow-up in the worker stream before the bridge turn finishes", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+    const content = "Add max thinking effort too.";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "Still working.",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    let resolveAsk!: (value: { response: string; state: string }) => void;
+    mockAskAgent.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveAsk = resolve;
+    }));
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+
+    const entries = await waitFor(
+      () => readWorkerOutputEntries(runId, workerId),
+      (items) => items.some((entry) => entry.id === payload.message.id && entry.type === "user_input"),
+    );
+    const userInput = entries.find((entry) => entry.id === payload.message.id);
+    expect(userInput).toMatchObject({
+      type: "user_input",
+      text: content,
+    });
+    resolveAsk({ response: "Done.", state: "idle" });
+    await waitFor(
+      () => db.select().from(workers).where(eq(workers.id, workerId)).get(),
+      (worker) => worker?.status === "idle",
+    );
+  });
+
+  it("refuses to insert a direct follow-up while a previous user message is missing from the worker stream", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const missingMessageId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(messages).values({
+      id: missingMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "This was inserted before the stream caught up.",
+      createdAt: now,
+    });
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "Do not accept this yet." }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(409);
+    const payload = await response.json();
+    expect(payload.error.message).toContain("Previous message is still being persisted");
+
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    expect(storedMessages.map((message) => message.id)).toEqual([missingMessageId]);
+    expect(mockAskAgent).not.toHaveBeenCalled();
+    expect(await readWorkerOutputEntries(runId, workerId)).toEqual([]);
+  });
+
   it("automatically resumes a missing direct worker before sending a follow-up", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -653,7 +805,10 @@ describe("POST /api/conversations/[id]/messages", () => {
     const response = await POST(request, { params: Promise.resolve({ id: runId }) });
     expect(response.status).toBe(200);
 
-    await delay(20);
+    await waitFor(
+      () => Promise.resolve(mockSpawnAgent.mock.calls),
+      (calls) => calls.some((call) => call[0]?.name === workerId),
+    );
 
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
       name: workerId,
@@ -752,7 +907,10 @@ describe("POST /api/conversations/[id]/messages", () => {
     const response = await POST(request, { params: Promise.resolve({ id: runId }) });
     expect(response.status).toBe(200);
 
-    await delay(20);
+    await waitFor(
+      () => Promise.resolve(mockSpawnAgent.mock.calls),
+      (calls) => calls.some((call) => call[0]?.name === workerId),
+    );
 
     expect(mockSpawnAgent).toHaveBeenNthCalledWith(1, expect.objectContaining({
       name: workerId,

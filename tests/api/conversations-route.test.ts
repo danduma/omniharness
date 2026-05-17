@@ -6,6 +6,11 @@ import { executionEvents, messages, plans, runs, settings, workerCounters, worke
 import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
 import { getAppRoot } from "@/server/app-root";
 import type { GitWorkspaceSnapshot, GitWorkspaceTarget } from "@/lib/git-workspace";
+import {
+  __resetOutputStoreCachesForTests,
+  readWorkerOutputEntries,
+  writeWorkerOutputEntries,
+} from "@/server/workers/output-store";
 
 const {
   mockStartSupervisorRun,
@@ -166,6 +171,7 @@ describe("POST /api/conversations", () => {
     mockNotifyEventStreamSubscribers.mockClear();
     mockValidateWorkspaceTarget.mockReset();
     mockCreateBranchWorktree.mockReset();
+    __resetOutputStoreCachesForTests();
 
     await db.delete(executionEvents);
     await db.delete(messages);
@@ -174,6 +180,71 @@ describe("POST /api/conversations", () => {
     await db.delete(runs);
     await db.delete(plans);
     await db.delete(settings);
+  });
+
+  it("writes the direct initial prompt before bridge activity emitted during askAgent", async () => {
+    const command = "Investigate why the CLI is hiding a new model.";
+    mockAskAgent.mockImplementationOnce(async (workerId: string) => {
+      const runId = workerId.replace(/-worker-\d+$/, "");
+      await writeWorkerOutputEntries(runId, workerId, [
+        {
+          id: "bridge-during-initial-ask",
+          type: "message",
+          text: "Checking the CLI model catalog.",
+          timestamp: new Date(0).toISOString(),
+        },
+      ]);
+      return {
+        response: "Checking the CLI model catalog.",
+        state: "idle",
+      };
+    });
+    mockGetAgent.mockResolvedValueOnce({
+      name: "worker-1",
+      type: "codex",
+      state: "idle",
+      cwd: "/workspace/app",
+      lastText: "Checking the CLI model catalog.",
+      currentText: "",
+      renderedOutput: "",
+      outputEntries: [
+        {
+          id: "bridge-during-initial-ask",
+          type: "message",
+          text: "Checking the CLI model catalog.",
+          timestamp: new Date(0).toISOString(),
+        },
+      ],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command,
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    const workerId = `${payload.runId}-worker-1`;
+    const entries = await waitFor(
+      () => readWorkerOutputEntries(payload.runId, workerId),
+      (items) => items.some((entry) => entry.type === "user_input")
+        && items.some((entry) => entry.id === "bridge-during-initial-ask"),
+    );
+
+    const userIndex = entries.findIndex((entry) => entry.type === "user_input");
+    const bridgeIndex = entries.findIndex((entry) => entry.id === "bridge-during-initial-ask");
+    expect(userIndex).toBeGreaterThan(-1);
+    expect(bridgeIndex).toBeGreaterThan(-1);
+    expect(userIndex).toBe(0);
+    expect(userIndex).toBeLessThan(bridgeIndex);
+    expect(entries[userIndex]?.text).toBe(command);
   });
 
   it("pins a new direct conversation to a selected git workspace target", async () => {
@@ -619,6 +690,7 @@ describe("POST /api/conversations", () => {
 
     const response = await POST(request);
     expect(response.status).toBe(200);
+    const payload = await response.json();
     await waitFor(() => mockSpawnAgent.mock.calls.length, (count) => count > 0);
 
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
@@ -629,6 +701,10 @@ describe("POST /api/conversations", () => {
         OMNIHARNESS_CREDENTIAL_COMMAND_ARGS_CLAUDE: "[\"credential-profile\"]",
       }),
     }));
+    await waitFor(
+      () => db.select().from(runs).where(eq(runs.id, payload.runId)).get(),
+      (run) => run?.status === "done",
+    );
   });
 
   it("returns a direct conversation before worker spawn completes", async () => {

@@ -1,7 +1,9 @@
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import type { AgentRecord } from "@/server/bridge-client";
 import { db } from "@/server/db";
-import { workers } from "@/server/db/schema";
+import { messages, runs, workers } from "@/server/db/schema";
+import { parseChatAttachmentsJson } from "@/lib/chat-attachments";
+import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import {
   parseLegacyOutputEntriesJson,
   readWorkerOutputEntries,
@@ -35,6 +37,46 @@ export function serializeWorkerOutputEntries(
   }
 }
 
+async function seedInitialDirectUserPrompt(worker: typeof workers.$inferSelect) {
+  const initialPrompt = worker.initialPrompt.trim();
+  if (!initialPrompt) {
+    return;
+  }
+
+  const run = await db.select({ mode: runs.mode }).from(runs).where(eq(runs.id, worker.runId)).get();
+  if (run?.mode !== "direct") {
+    return;
+  }
+
+  const userMessages = await db
+    .select()
+    .from(messages)
+    .where(eq(messages.runId, worker.runId))
+    .orderBy(asc(messages.createdAt));
+  const initialMessage = userMessages.find((message) => (
+    message.role === "user"
+    && message.content.trim() === initialPrompt
+  ));
+  if (!initialMessage) {
+    return;
+  }
+
+  const attachments = parseChatAttachmentsJson(initialMessage.attachmentsJson);
+  await appendUserInputOnDelivery({
+    id: initialMessage.id,
+    runId: worker.runId,
+    workerId: worker.id,
+    text: initialMessage.content,
+    deliveredAt: initialMessage.createdAt,
+    attachments: attachments.map((attachment) => ({
+      id: attachment.id,
+      filename: attachment.name,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.size,
+    })),
+  });
+}
+
 export async function persistWorkerSnapshot(
   workerId: string,
   snapshot: PersistableWorkerSnapshot,
@@ -45,6 +87,7 @@ export async function persistWorkerSnapshot(
   }
 
   if (Array.isArray(snapshot.outputEntries) && snapshot.outputEntries.length > 0) {
+    await seedInitialDirectUserPrompt(worker);
     await writeWorkerOutputEntries(worker.runId, workerId, snapshot.outputEntries);
   }
   await db.update(workers).set({

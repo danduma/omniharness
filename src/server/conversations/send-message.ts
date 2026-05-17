@@ -8,6 +8,7 @@ import { resumeRunAfterClarification } from "@/server/clarifications/loop";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
+import { readWorkerOutputEntries } from "@/server/workers/output-store";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
@@ -66,6 +67,31 @@ async function selectConversationWorker(runId: string) {
   const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
   const sortedWorkers = [...runWorkers].sort(compareWorkersForFollowUp);
   return sortedWorkers.find((worker) => !isWorkerCancelled(worker)) ?? sortedWorkers[0] ?? null;
+}
+
+async function assertWorkerUserMessagesInStream(runId: string, workerId: string) {
+  const [storedUserMessages, entries] = await Promise.all([
+    db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.runId, runId), eq(messages.role, "user")))
+      .orderBy(asc(messages.createdAt)),
+    readWorkerOutputEntries(runId, workerId),
+  ]);
+  const streamUserInputIds = new Set(
+    entries
+      .filter((entry) => entry.type === "user_input")
+      .map((entry) => entry.id),
+  );
+  const missing = storedUserMessages.find((message) => !streamUserInputIds.has(message.id));
+  if (!missing) {
+    return;
+  }
+
+  throw Object.assign(
+    new Error("Previous message is still being persisted to the worker stream. Please wait for it to appear before sending another message."),
+    { status: 409 },
+  );
 }
 
 async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRecord) {
@@ -162,6 +188,7 @@ async function continueWorkerConversation({
   userInputText,
   userInputId,
   attachments,
+  appendUserInputBeforeAsk = false,
 }: {
   run: RunRecord;
   worker: WorkerRecord;
@@ -169,6 +196,7 @@ async function continueWorkerConversation({
   userInputText: string;
   userInputId?: string;
   attachments: ChatAttachment[];
+  appendUserInputBeforeAsk?: boolean;
 }) {
   try {
     const currentWorker = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
@@ -182,26 +210,38 @@ async function continueWorkerConversation({
     }).where(eq(workers.id, worker.id));
     notifyEventStreamSubscribers();
 
+    let userInputAppended = false;
+    const appendDeliveredUserInput = async (deliveredAt: Date) => {
+      await appendUserInputOnDelivery({
+        id: userInputId,
+        runId: run.id,
+        workerId: worker.id,
+        text: userInputText,
+        deliveredAt,
+        attachments: attachments.map((attachment) => ({
+          id: attachment.id,
+          filename: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.size,
+        })),
+      });
+      userInputAppended = true;
+    };
+
+    if (appendUserInputBeforeAsk) {
+      await appendDeliveredUserInput(new Date());
+      notifyEventStreamSubscribers();
+    }
+
     const response = await askDirectWorkerWithResume(run, worker, content);
-    // Append user_input on delivery — `askDirectWorkerWithResume` has
-    // resolved successfully, so the prompt definitely reached the
-    // worker. Ordering: this lands before persistWorkerSnapshot below,
-    // which is when bridge entries get written; the lifecycle test in
-    // the plan depends on user_input preceding tool_calls/messages.
-    const deliveredAt = new Date();
-    await appendUserInputOnDelivery({
-      id: userInputId,
-      runId: run.id,
-      workerId: worker.id,
-      text: userInputText,
-      deliveredAt,
-      attachments: attachments.map((attachment) => ({
-        id: attachment.id,
-        filename: attachment.name,
-        mimeType: attachment.mimeType,
-        sizeBytes: attachment.size,
-      })),
-    });
+    if (!userInputAppended) {
+      // Append user_input on delivery — `askDirectWorkerWithResume` has
+      // resolved successfully, so the prompt definitely reached the
+      // worker. Direct fire-and-forget follow-ups opt into pre-ask
+      // appending above because the HTTP response returns immediately
+      // while the bridge turn is still in flight.
+      await appendDeliveredUserInput(new Date());
+    }
     const workerAfterResponse = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
     if (isWorkerCancelled(workerAfterResponse)) {
       notifyEventStreamSubscribers();
@@ -318,6 +358,9 @@ export async function sendConversationMessage({
     if (!worker) {
       throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
     }
+    if (run.mode === "direct" || run.mode === "planning") {
+      await assertWorkerUserMessagesInStream(runId, worker.id);
+    }
 
     const queuedMessage = await createQueuedConversationMessage({
       runId,
@@ -377,6 +420,9 @@ export async function sendConversationMessage({
   const worker = await selectConversationWorker(runId);
   if (!worker) {
     throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
+  }
+  if (run.mode === "direct" || run.mode === "planning") {
+    await assertWorkerUserMessagesInStream(runId, worker.id);
   }
 
   if (busyAction === "steer" && ["starting", "working", "stuck"].includes(worker.status.trim().toLowerCase().split(":")[0] ?? "")) {
@@ -454,6 +500,7 @@ export async function sendConversationMessage({
       userInputText: trimmedContent,
       userInputId: userMessage.id,
       attachments: normalizedAttachments,
+      appendUserInputBeforeAsk: true,
     }).catch((error) => {
       if (isAgentBusyError(error)) {
         return;

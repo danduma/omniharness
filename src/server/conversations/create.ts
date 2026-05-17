@@ -233,9 +233,6 @@ async function runInitialWorkerTurn(args: {
   agent: AgentRecord;
   mode: "direct" | "planning";
   command: string;
-  initialUserText: string;
-  initialUserMessageId: string;
-  initialAttachments: ChatAttachment[];
 }) {
   try {
     await db.update(workers).set({
@@ -255,23 +252,6 @@ async function runInitialWorkerTurn(args: {
     notifyEventStreamSubscribers();
 
     const response = await askAgent(args.workerId, buildInitialWorkerPrompt(args.mode, args.command, args.cwd));
-    // Append user_input on delivery. `askAgent` resolved, so the prompt
-    // reached the worker; this must land before `persistWorkerSnapshot`
-    // below so the transcript starts with user_input → bridge entries.
-    const deliveredAt = new Date();
-    await appendUserInputOnDelivery({
-      id: args.initialUserMessageId,
-      runId: args.runId,
-      workerId: args.workerId,
-      text: args.initialUserText,
-      deliveredAt,
-      attachments: args.initialAttachments.map((attachment) => ({
-        id: attachment.id,
-        filename: attachment.name,
-        mimeType: attachment.mimeType,
-        sizeBytes: attachment.size,
-      })),
-    });
     let snapshot: AgentRecord | null = null;
     try {
       snapshot = await getAgent(args.workerId);
@@ -367,9 +347,6 @@ async function startDirectWorkerConversation(args: {
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
   command: string;
-  initialUserText: string;
-  initialUserMessageId: string;
-  initialAttachments: ChatAttachment[];
 }) {
   try {
     const { env: envParams } = await readRuntimeEnvFromSettings();
@@ -391,9 +368,6 @@ async function startDirectWorkerConversation(args: {
       agent,
       mode: "direct",
       command: args.command,
-      initialUserText: args.initialUserText,
-      initialUserMessageId: args.initialUserMessageId,
-      initialAttachments: args.initialAttachments,
     });
   } catch (error) {
     if (isAgentBusyError(error)) {
@@ -513,18 +487,20 @@ export async function createConversation(args: {
     }
 
     const initialMessageId = randomUUID();
-    await db.insert(dbMessages).values({
+    const initialMessageCreatedAt = new Date();
+    const initialMessage = {
       id: initialMessageId,
       runId,
       role: "user",
       kind: "checkpoint",
       content: command,
       attachmentsJson,
-      createdAt: new Date(),
-    });
-    notifyEventStreamSubscribers();
+      createdAt: initialMessageCreatedAt,
+    };
 
     if (mode === "implementation") {
+      await db.insert(dbMessages).values(initialMessage);
+      notifyEventStreamSubscribers();
       startSupervisorRun(runId);
     } else {
       const { workerId, workerNumber } = await allocateWorkerIdentity(runId);
@@ -553,6 +529,21 @@ export async function createConversation(args: {
         createdAt: new Date(),
         updatedAt: new Date(),
       });
+      await appendUserInputOnDelivery({
+        id: initialMessageId,
+        runId,
+        workerId,
+        text: command,
+        deliveredAt: initialMessageCreatedAt,
+        attachments: attachments.map((attachment) => ({
+          id: attachment.id,
+          filename: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.size,
+        })),
+      });
+      await db.insert(dbMessages).values(initialMessage);
+      notifyEventStreamSubscribers();
       emitNamedEvent({ kind: "worker.spawned", runId, workerId, workerType });
       await appendLifecycleEntry({
         runId,
@@ -573,9 +564,6 @@ export async function createConversation(args: {
           preferredWorkerModel: args.preferredWorkerModel,
           preferredWorkerEffort: args.preferredWorkerEffort,
           command: workerPrompt,
-          initialUserText: command,
-          initialUserMessageId: initialMessageId,
-          initialAttachments: attachments,
         }).catch((error) => {
           console.error("Initial direct conversation worker failed:", error);
         });
@@ -621,9 +609,6 @@ export async function createConversation(args: {
               agent,
               mode,
               command: workerPrompt,
-              initialUserText: command,
-              initialUserMessageId: initialMessageId,
-              initialAttachments: attachments,
             });
           } catch (error) {
             if (isAgentBusyError(error)) {

@@ -951,6 +951,7 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
   const permissionDetailByRequestId = new Map<number, string>();
   const permissionIndexByRequestId = new Map<number, number>();
   const outputEntries = Array.isArray(snapshot.outputEntries) ? snapshot.outputEntries : [];
+  const seenOutputEntryIds = new Set<string>();
   let openThinking: MutableThinkingActivity | null = null;
 
   const finishOpenThinking = (endTimestamp: string) => {
@@ -966,6 +967,12 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
   for (const entry of outputEntries) {
     if (!entry || typeof entry !== "object") {
       continue;
+    }
+    if (entry.id) {
+      if (seenOutputEntryIds.has(entry.id)) {
+        continue;
+      }
+      seenOutputEntryIds.add(entry.id);
     }
 
     if (entry.type === "thought") {

@@ -2,6 +2,34 @@ import { describe, expect, it } from "vitest";
 import { buildAgentOutputActivity, extractLatestPlainTextTurn } from "@/lib/agent-output";
 
 describe("agent output normalization", () => {
+  it("deduplicates repeated bridge entries before rendering activity", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        {
+          id: "34ab93a5-fa74-40e3-8af9-26a19301a1bb",
+          type: "message",
+          text: "First copy",
+          timestamp: "2026-05-17T00:00:00.000Z",
+        },
+        {
+          id: "34ab93a5-fa74-40e3-8af9-26a19301a1bb",
+          type: "message",
+          text: "Replay copy",
+          timestamp: "2026-05-17T00:00:01.000Z",
+        },
+      ],
+    });
+
+    expect(activity).toEqual([
+      {
+        id: "34ab93a5-fa74-40e3-8af9-26a19301a1bb",
+        kind: "message",
+        text: "First copy",
+        timestamp: "2026-05-17T00:00:00.000Z",
+      },
+    ]);
+  });
+
   it("groups consecutive tool activities between assistant messages", () => {
     const activity = buildAgentOutputActivity({
       outputEntries: [

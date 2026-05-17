@@ -474,6 +474,7 @@ export async function writeWorkerOutputEntries(
   await runOnChain(runId, workerId, async () => {
     const { seen } = await ensureChainCaches(runId, workerId);
     const newEntries: OutputEntry[] = [];
+    const acceptedIds = new Set<string>();
     for (const entry of entries) {
       if (!entry) continue;
       // Real bridge entries always carry an id; tooling/migration code that
@@ -481,9 +482,10 @@ export async function writeWorkerOutputEntries(
       // as opaque and always append (no dedup possible).
       const id = typeof entry.id === "string" && entry.id ? entry.id : null;
       if (id) {
-        if (seen.has(id)) {
+        if (seen.has(id) || acceptedIds.has(id)) {
           continue;
         }
+        acceptedIds.add(id);
       }
       newEntries.push(entry);
     }
