@@ -675,6 +675,92 @@ describe("POST /api/conversations/[id]/messages", () => {
     );
   });
 
+  it("serializes rapid direct follow-ups before sending them to the worker", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    let activeAsks = 0;
+    let maxActiveAsks = 0;
+    mockAskAgent.mockImplementation(async () => {
+      activeAsks += 1;
+      maxActiveAsks = Math.max(maxActiveAsks, activeAsks);
+      await delay(40);
+      activeAsks -= 1;
+      return { response: "Done.", state: "idle" };
+    });
+
+    const first = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "First rapid note" }),
+    });
+    const second = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "Second rapid note" }),
+    });
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      POST(first, { params: Promise.resolve({ id: runId }) }),
+      POST(second, { params: Promise.resolve({ id: runId }) }),
+    ]);
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+
+    await waitFor(
+      () => Promise.resolve(mockAskAgent.mock.calls.length),
+      (callCount) => callCount === 2,
+    );
+    await waitFor(
+      () => db.select().from(workers).where(eq(workers.id, workerId)).get(),
+      (worker) => worker?.status === "idle" && activeAsks === 0,
+    );
+
+    expect(maxActiveAsks).toBe(1);
+    expect(mockAskAgent.mock.calls.map((call) => call[1])).toEqual([
+      "First rapid note",
+      "Second rapid note",
+    ]);
+
+    const entries = await readWorkerOutputEntries(runId, workerId);
+    expect(entries.filter((entry) => entry.type === "user_input").map((entry) => entry.text)).toEqual([
+      "First rapid note",
+      "Second rapid note",
+    ]);
+  });
+
   it("refuses to insert a direct follow-up while a previous user message is missing from the worker stream", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
