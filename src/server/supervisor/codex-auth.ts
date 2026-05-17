@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import lockfile from "proper-lockfile";
 
 export const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 
@@ -36,16 +35,33 @@ export function getCodexAuthPath(): string {
   return path.join(home, ".codex", "auth.json");
 }
 
-function parseJwt(token: string): any {
+function parseJwt(token: string): Record<string, unknown> | null {
   try {
     const base64Url = token.split(".")[1];
     if (!base64Url) return null;
     const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
     const jsonPayload = Buffer.from(base64, "base64").toString("utf8");
-    return JSON.parse(jsonPayload);
-  } catch (e) {
+    const parsed = JSON.parse(jsonPayload);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
     return null;
   }
+}
+
+function asRecord(value: unknown) {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function asString(value: unknown) {
+  return typeof value === "string" ? value : null;
+}
+
+function asNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 export function readCodexCredentialsSync(): CodexCredentials | null {
@@ -79,11 +95,17 @@ export function readCodexCredentialsSync(): CodexCredentials | null {
       return null;
     }
 
-    // Extract info from tokens
-    const email = accessPayload["https://api.openai.com/profile"]?.email || idPayload?.email || "";
-    const planType = accessPayload["https://api.openai.com/auth"]?.chatgpt_plan_type || idPayload?.["https://api.openai.com/auth"]?.chatgpt_plan_type || "free";
-    const expiresAt = accessPayload.exp;
-    const subscriptionActiveUntil = idPayload?.["https://api.openai.com/auth"]?.chatgpt_subscription_active_until || null;
+    const accessProfile = asRecord(accessPayload["https://api.openai.com/profile"]);
+    const accessAuth = asRecord(accessPayload["https://api.openai.com/auth"]);
+    const idAuth = idPayload ? asRecord(idPayload["https://api.openai.com/auth"]) : null;
+    const expiresAt = asNumber(accessPayload.exp);
+    if (expiresAt === null) {
+      return null;
+    }
+
+    const email = asString(accessProfile?.email) ?? asString(idPayload?.email) ?? "";
+    const planType = asString(accessAuth?.chatgpt_plan_type) ?? asString(idAuth?.chatgpt_plan_type) ?? "free";
+    const subscriptionActiveUntil = asString(idAuth?.chatgpt_subscription_active_until);
 
     return {
       accessToken,
@@ -96,7 +118,7 @@ export function readCodexCredentialsSync(): CodexCredentials | null {
       subscriptionActiveUntil,
       lastRefresh: last_refresh || null,
     };
-  } catch (e) {
+  } catch {
     return null;
   }
 }
@@ -108,6 +130,11 @@ export async function readCodexCredentials(): Promise<CodexCredentials | null> {
 export function isCodexCredentialsExpired(creds: CodexCredentials, skewSeconds = 60): boolean {
   const now = Math.floor(Date.now() / 1000);
   return creds.expiresAt < now + skewSeconds;
+}
+
+async function lockCodexAuthFile(authPath: string) {
+  const lockfile = await import("proper-lockfile");
+  return lockfile.lock(authPath, { retries: 5 });
 }
 
 export async function refreshCodexCredentialsDirectly(creds: CodexCredentials): Promise<CodexCredentials> {
@@ -146,7 +173,7 @@ export async function refreshCodexCredentialsDirectly(creds: CodexCredentials): 
 
     // Lock the file for writing
     if (fs.existsSync(authPath)) {
-      release = await lockfile.lock(authPath, { retries: 5 });
+      release = await lockCodexAuthFile(authPath);
     }
 
     const content = fs.existsSync(authPath) ? fs.readFileSync(authPath, "utf8") : "{}";
