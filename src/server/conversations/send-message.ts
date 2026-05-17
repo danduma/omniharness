@@ -17,7 +17,7 @@ import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachm
 import { createQueuedConversationMessage, type BusyMessageAction } from "./queued-messages";
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
-import { runWorkerTurn } from "./worker-turn-gate";
+import { runConversationMutation, runWorkerTurn } from "./worker-turn-gate";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
@@ -81,7 +81,7 @@ async function assertWorkerUserMessagesInStream(runId: string, workerId: string)
   ]);
   const streamUserInputIds = new Set(
     entries
-      .filter((entry) => entry.type === "user_input")
+      .filter((entry) => (entry as { type?: string }).type === "user_input")
       .map((entry) => entry.id),
   );
   const missing = storedUserMessages.find((message) => !streamUserInputIds.has(message.id));
@@ -190,6 +190,7 @@ async function continueWorkerConversation({
   userInputId,
   attachments,
   appendUserInputBeforeAsk = false,
+  onUserInputAppended,
 }: {
   run: RunRecord;
   worker: WorkerRecord;
@@ -198,10 +199,12 @@ async function continueWorkerConversation({
   userInputId?: string;
   attachments: ChatAttachment[];
   appendUserInputBeforeAsk?: boolean;
+  onUserInputAppended?: () => void;
 }) {
   try {
     const currentWorker = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
     if (isWorkerCancelled(currentWorker)) {
+      onUserInputAppended?.();
       return;
     }
 
@@ -227,6 +230,7 @@ async function continueWorkerConversation({
         })),
       });
       userInputAppended = true;
+      onUserInputAppended?.();
     };
 
     if (appendUserInputBeforeAsk) {
@@ -249,7 +253,7 @@ async function continueWorkerConversation({
       return;
     }
 
-    const snapshot = await getAgent(worker.id).catch(() => null);
+    const snapshot = await Promise.resolve(getAgent(worker.id)).catch(() => null);
     if (snapshot) {
       await persistWorkerSnapshot(worker.id, snapshot);
     }
@@ -315,17 +319,23 @@ async function continueWorkerConversation({
   }
 }
 
-export async function sendConversationMessage({
-  runId,
-  content,
-  attachments = [],
-  busyAction = null,
-}: {
+type SendConversationMessageArgs = {
   runId: string;
   content: string;
   attachments?: ChatAttachment[];
   busyAction?: BusyMessageAction | null;
-}) {
+};
+
+export async function sendConversationMessage(args: SendConversationMessageArgs) {
+  return runConversationMutation(args.runId, () => sendConversationMessageUnlocked(args));
+}
+
+async function sendConversationMessageUnlocked({
+  runId,
+  content,
+  attachments = [],
+  busyAction = null,
+}: SendConversationMessageArgs) {
   const trimmedContent = content.trim();
   const normalizedAttachments = normalizeChatAttachments(attachments);
   const attachmentsJson = serializeChatAttachments(normalizedAttachments);
@@ -494,7 +504,13 @@ export async function sendConversationMessage({
       };
     }
 
-    runWorkerTurn(worker.id, () => continueWorkerConversation({
+    let markUserInputAppended!: () => void;
+    let markUserInputFailed!: (error: unknown) => void;
+    const userInputAppend = new Promise<void>((resolve, reject) => {
+      markUserInputAppended = resolve;
+      markUserInputFailed = reject;
+    });
+    const turn = runWorkerTurn(worker.id, () => continueWorkerConversation({
       run,
       worker,
       content: workerContent,
@@ -502,13 +518,17 @@ export async function sendConversationMessage({
       userInputId: userMessage.id,
       attachments: normalizedAttachments,
       appendUserInputBeforeAsk: true,
-    })).catch((error) => {
+      onUserInputAppended: markUserInputAppended,
+    }));
+    turn.catch((error) => {
+      markUserInputFailed(error);
       if (isAgentBusyError(error)) {
         return;
       }
 
       console.error("Direct conversation follow-up failed:", error);
     });
+    await userInputAppend;
 
     return {
       ok: true,

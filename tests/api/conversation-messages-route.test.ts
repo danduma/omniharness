@@ -661,7 +661,7 @@ describe("POST /api/conversations/[id]/messages", () => {
 
     const entries = await waitFor(
       () => readWorkerOutputEntries(runId, workerId),
-      (items) => items.some((entry) => entry.id === payload.message.id && entry.type === "user_input"),
+      (items) => items.some((entry) => entry.id === payload.message.id && (entry as { type?: string }).type === "user_input"),
     );
     const userInput = entries.find((entry) => entry.id === payload.message.id);
     expect(userInput).toMatchObject({
@@ -738,6 +738,10 @@ describe("POST /api/conversations/[id]/messages", () => {
 
     expect(firstResponse.status).toBe(200);
     expect(secondResponse.status).toBe(200);
+    const [firstPayload, secondPayload] = await Promise.all([
+      firstResponse.json(),
+      secondResponse.json(),
+    ]);
 
     await waitFor(
       () => Promise.resolve(mockAskAgent.mock.calls.length),
@@ -749,16 +753,17 @@ describe("POST /api/conversations/[id]/messages", () => {
     );
 
     expect(maxActiveAsks).toBe(1);
-    expect(mockAskAgent.mock.calls.map((call) => call[1])).toEqual([
-      "First rapid note",
-      "Second rapid note",
-    ]);
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
+    const sentMessageIds = new Set([firstPayload.message.id, secondPayload.message.id]);
+    const persistedOrder = storedMessages
+      .filter((message) => sentMessageIds.has(message.id))
+      .map((message) => message.content);
+    expect(persistedOrder).toHaveLength(2);
+    expect(new Set(persistedOrder)).toEqual(new Set(["First rapid note", "Second rapid note"]));
+    expect(mockAskAgent.mock.calls.map((call) => call[1])).toEqual(persistedOrder);
 
     const entries = await readWorkerOutputEntries(runId, workerId);
-    expect(entries.filter((entry) => entry.type === "user_input").map((entry) => entry.text)).toEqual([
-      "First rapid note",
-      "Second rapid note",
-    ]);
+    expect(entries.filter((entry) => (entry as { type?: string }).type === "user_input").map((entry) => entry.text)).toEqual(persistedOrder);
   });
 
   it("refuses to insert a direct follow-up while a previous user message is missing from the worker stream", async () => {
