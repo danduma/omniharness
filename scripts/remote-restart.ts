@@ -265,6 +265,17 @@ function renderShell(body: string) {
       text-align: right;
     }
     .auto-refresh input[type="checkbox"] { width: auto; margin: 0; }
+    .live-dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      box-shadow: 0 0 0 0 transparent;
+      transition: background 200ms, box-shadow 200ms;
+    }
+    .live-dot.live-on { background: var(--ok); box-shadow: 0 0 8px 0 rgba(115, 199, 183, 0.6); }
+    .live-dot.live-off { background: var(--danger); }
+    .live-dot.live-pending { background: var(--accent); }
     .notice {
       padding: 8px 16px;
       border-bottom: 1px solid var(--line);
@@ -411,7 +422,7 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
         <form method="post" action="/logout">
           <button class="danger" type="submit">Lock</button>
         </form>
-        <span class="auto-refresh" title="Reload this page on a timer">
+        <span class="auto-refresh" title="Poll the daemon on a timer">
           <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
             <input id="auto-refresh-toggle" type="checkbox">
             <span>Auto-refresh</span>
@@ -419,6 +430,7 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
           <input id="auto-refresh-seconds" type="number" min="1" step="1" value="5" aria-label="Refresh interval in seconds">
           <span class="subtle">s</span>
           <span id="auto-refresh-countdown" class="subtle" aria-live="polite"></span>
+          <span id="auto-refresh-status" class="subtle" aria-live="polite" style="margin-left:8px;"></span>
         </span>
       </div>
       <dl class="details">
@@ -462,9 +474,12 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
       const linesInput = document.getElementById("log-lines");
       const FILTER_KEY = "omniharness-restart-log-filter";
       const LINES_KEY = "omniharness-restart-log-lines";
-      const rawLog = typeof window.__OMNIHARNESS_RAW_LOG__ === "string" ? window.__OMNIHARNESS_RAW_LOG__ : "";
+      function getRawLog() {
+        return typeof window.__OMNIHARNESS_RAW_LOG__ === "string" ? window.__OMNIHARNESS_RAW_LOG__ : "";
+      }
       function applyFilter() {
         if (!logViewer) return;
+        const rawLog = getRawLog();
         const query = filterInput ? filterInput.value : "";
         const useRegex = regexToggle ? regexToggle.checked : false;
         if (filterStatus) { filterStatus.textContent = ""; filterStatus.classList.remove("warn"); }
@@ -593,6 +608,12 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
         }
       }
       let refreshInFlight = false;
+      function setLastRefresh(text, isError) {
+        const el = document.getElementById("auto-refresh-status");
+        if (!el) return;
+        el.textContent = text;
+        el.style.color = isError ? "var(--danger)" : "var(--muted)";
+      }
       async function refreshContent() {
         if (refreshInFlight) return;
         refreshInFlight = true;
@@ -600,17 +621,23 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
           const lines = (linesInput && linesInput.value)
             ? Math.max(1, Math.min(${MAX_LOG_LINES}, parseInt(linesInput.value, 10) || ${DEFAULT_LOG_LINES}))
             : ${logLines};
-          const res = await fetch("/status?lines=" + lines + "&_=" + Date.now(), {
+          const t0 = Date.now();
+          const res = await fetch("/status?lines=" + lines + "&_=" + t0, {
             credentials: "same-origin",
             headers: { accept: "application/json", "cache-control": "no-cache" },
             cache: "no-store",
           });
           if (res.status === 401) { window.location.reload(); return; }
-          if (!res.ok) return;
+          if (!res.ok) { setLastRefresh("HTTP " + res.status, true); return; }
           const data = await res.json();
           patchFromStatus(data);
-        } catch (_) {
-          // ignore — try again on next tick
+          const now = new Date();
+          const hh = String(now.getHours()).padStart(2,"0");
+          const mm = String(now.getMinutes()).padStart(2,"0");
+          const ss = String(now.getSeconds()).padStart(2,"0");
+          setLastRefresh("synced " + hh + ":" + mm + ":" + ss + " (" + (Date.now() - t0) + "ms)", false);
+        } catch (e) {
+          setLastRefresh("error: " + (e && e.message ? e.message : "fetch failed"), true);
         } finally {
           refreshInFlight = false;
         }
@@ -671,9 +698,7 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
         }
         function onToggleChange() { save(); start(); }
         toggle.addEventListener("change", onToggleChange);
-        toggle.addEventListener("click", () => {
-          setTimeout(onToggleChange, 0);
-        });
+        toggle.addEventListener("click", () => { setTimeout(onToggleChange, 0); });
         seconds.addEventListener("change", () => {
           const value = Math.max(1, Math.floor(Number(seconds.value) || 1));
           seconds.value = String(value);
