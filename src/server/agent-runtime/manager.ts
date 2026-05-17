@@ -324,6 +324,74 @@ function describeUnknownError(error: unknown) {
   }
 }
 
+let closedPipeConsoleSuppressionDepth = 0;
+let originalConsoleError: typeof console.error | null = null;
+
+function collectErrorCodes(value: unknown, seen = new Set<unknown>()): string[] {
+  if (typeof value !== "object" || value === null || seen.has(value)) {
+    return [];
+  }
+  seen.add(value);
+  const record = value as { code?: unknown; cause?: unknown };
+  return [
+    typeof record.code === "string" ? record.code : null,
+    ...collectErrorCodes(record.cause, seen),
+  ].filter((code): code is string => Boolean(code));
+}
+
+function isClosedPipeAcpWriteConsoleError(args: unknown[]) {
+  if (args[0] !== "ACP write error:") {
+    return false;
+  }
+  const codes = new Set(collectErrorCodes(args[1]));
+  return codes.has("EPIPE")
+    || codes.has("ABORT_ERR")
+    || codes.has("ERR_STREAM_PREMATURE_CLOSE")
+    || codes.has("ERR_STREAM_DESTROYED");
+}
+
+async function suppressClosedPipeAcpWriteConsoleError<T>(operation: () => Promise<T>): Promise<T> {
+  if (!originalConsoleError) {
+    originalConsoleError = console.error;
+    console.error = (...args: unknown[]) => {
+      if (closedPipeConsoleSuppressionDepth > 0 && isClosedPipeAcpWriteConsoleError(args)) {
+        return;
+      }
+      originalConsoleError?.(...args);
+    };
+  }
+
+  closedPipeConsoleSuppressionDepth += 1;
+  try {
+    return await operation();
+  } finally {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    closedPipeConsoleSuppressionDepth -= 1;
+    if (closedPipeConsoleSuppressionDepth === 0 && originalConsoleError) {
+      console.error = originalConsoleError;
+      originalConsoleError = null;
+    }
+  }
+}
+
+function childExitDetail(record: AgentRecord) {
+  if (record.child.exitCode === null && record.child.signalCode === null) {
+    return null;
+  }
+  return `exit code=${record.child.exitCode} signal=${record.child.signalCode}`;
+}
+
+function assertAgentCanReceiveRequest(record: AgentRecord) {
+  const exitDetail = childExitDetail(record);
+  if (exitDetail || record.state === "stopped") {
+    const detail = record.lastError || exitDetail;
+    throw new RuntimeHttpError(
+      409,
+      `Agent is not running: ${record.name}${detail ? ` (${detail})` : ""}`,
+    );
+  }
+}
+
 function isInitializeMethodNotFound(error: unknown) {
   if (typeof error !== "object" || error === null) {
     return false;
@@ -754,6 +822,34 @@ export class AgentRuntimeManager {
     return record.outputArchive.readPage(options);
   }
 
+  private async runAgentRequest<T>(record: AgentRecord, request: () => Promise<T>): Promise<T> {
+    assertAgentCanReceiveRequest(record);
+    return await new Promise<T>((resolve, reject) => {
+      const rejectForExit = (code: number | null, signal: NodeJS.Signals | null) => {
+        const message = `Agent is not running: ${record.name} (exit code=${code} signal=${signal})`;
+        record.state = "stopped";
+        record.lastError = record.lastError ?? `exit code=${code} signal=${signal}`;
+        record.updatedAt = nowIso();
+        reject(new RuntimeHttpError(409, message));
+      };
+      const rejectForError = (error: Error) => {
+        const message = `Agent process error: ${error.message}`;
+        record.state = "error";
+        record.lastError = message;
+        record.updatedAt = nowIso();
+        reject(new RuntimeHttpError(500, message));
+      };
+      const cleanup = () => {
+        record.child.off("exit", rejectForExit);
+        record.child.off("error", rejectForError);
+      };
+
+      record.child.once("exit", rejectForExit);
+      record.child.once("error", rejectForError);
+      suppressClosedPipeAcpWriteConsoleError(request).then(resolve, reject).finally(cleanup);
+    });
+  }
+
   async startAgent(input: StartAgentInput) {
     const type = input.type?.trim() || "opencode";
     const name = input.name?.trim();
@@ -999,6 +1095,7 @@ export class AgentRuntimeManager {
     if (!record) {
       throw new RuntimeHttpError(404, `Agent not found: ${name}`);
     }
+    assertAgentCanReceiveRequest(record);
     if (record.state === "working") {
       throw new RuntimeHttpError(409, `Agent is busy: ${name}`);
     }
@@ -1016,7 +1113,7 @@ export class AgentRuntimeManager {
         prompt: [{ type: "text", text: prompt }],
       } as Parameters<acp.ClientSideConnection["prompt"]>[0];
       const response = await retrySupervisorRequest(
-        () => record.connection.prompt(promptParams),
+        () => this.runAgentRequest(record, () => record.connection.prompt(promptParams)),
         {
           maxDelayMs: WORKER_CONNECTION_RESET_MAX_BACKOFF_MS,
           retryIndefinitelyWhen: isRecoverableConnectionSupervisorError,
@@ -1035,7 +1132,7 @@ export class AgentRuntimeManager {
         response: record.lastText,
       };
     } catch (error) {
-      record.state = "error";
+      record.state = error instanceof RuntimeHttpError && error.statusCode === 409 ? "stopped" : "error";
       record.lastError = describeUnknownError(error);
       record.updatedAt = nowIso();
       throw error;
@@ -1049,8 +1146,9 @@ export class AgentRuntimeManager {
     if (!record) {
       throw new RuntimeHttpError(404, "not_found");
     }
+    assertAgentCanReceiveRequest(record);
     const cancelParams = { sessionId: record.sessionId } as Parameters<acp.ClientSideConnection["cancel"]>[0];
-    await record.connection.cancel(cancelParams);
+    await this.runAgentRequest(record, () => record.connection.cancel(cancelParams));
     const cancelledPermissions = this.cancelAllPendingPermissions(record);
     record.updatedAt = nowIso();
     if (record.state === "working") {
@@ -1113,8 +1211,9 @@ export class AgentRuntimeManager {
     if (!record) {
       throw new RuntimeHttpError(404, "not_found");
     }
+    assertAgentCanReceiveRequest(record);
     const setModeParams = { sessionId: record.sessionId, modeId: mode } as Parameters<acp.ClientSideConnection["setSessionMode"]>[0];
-    await record.connection.setSessionMode(setModeParams);
+    await this.runAgentRequest(record, () => record.connection.setSessionMode(setModeParams));
     record.sessionMode = mode;
     record.updatedAt = nowIso();
     return { ok: true, name: record.name, mode };
@@ -1198,7 +1297,7 @@ export class AgentRuntimeManager {
         },
       } as Parameters<acp.ClientSideConnection["initialize"]>[0];
       const init = await Promise.race([
-        connection.initialize(initializeParams),
+        suppressClosedPipeAcpWriteConsoleError(() => connection.initialize(initializeParams)),
         processFailure,
       ]);
       const sessionSetupParams = {
@@ -1208,7 +1307,10 @@ export class AgentRuntimeManager {
       } as Parameters<acp.ClientSideConnection["newSession"]>[0];
       const session = input.resumeSessionId
         ? await this.resumeOrLoadSession(connection, input.resumeSessionId, sessionSetupParams, processFailure)
-        : await Promise.race([connection.newSession(sessionSetupParams), processFailure]);
+        : await Promise.race([
+          suppressClosedPipeAcpWriteConsoleError(() => connection.newSession(sessionSetupParams)),
+          processFailure,
+        ]);
       return { child, connection, init, session };
     } catch (error) {
       child.kill("SIGTERM");
@@ -1225,7 +1327,7 @@ export class AgentRuntimeManager {
     try {
       const resumeParams = { sessionId } as Parameters<acp.ClientSideConnection["unstable_resumeSession"]>[0];
       return await Promise.race([
-        connection.unstable_resumeSession(resumeParams),
+        suppressClosedPipeAcpWriteConsoleError(() => connection.unstable_resumeSession(resumeParams)),
         spawnError,
       ]);
     } catch {
@@ -1234,7 +1336,7 @@ export class AgentRuntimeManager {
         ...sessionSetupParams,
       } as Parameters<acp.ClientSideConnection["loadSession"]>[0];
       return await Promise.race([
-        connection.loadSession(loadParams),
+        suppressClosedPipeAcpWriteConsoleError(() => connection.loadSession(loadParams)),
         spawnError,
       ]);
     }

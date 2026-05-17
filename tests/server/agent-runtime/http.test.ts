@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -53,6 +53,7 @@ async function closeServer(server: Server) {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const server of servers.splice(0)) {
     await closeServer(server);
   }
@@ -194,6 +195,55 @@ process.stdin.on('data', (chunk) => {
           usage: { inputTokens: 150, outputTokens: 100, totalTokens: 250 },
         },
       });
+    }
+  }
+});
+`;
+
+const fakeExitAfterSessionAgentScript = `#!/usr/bin/env node
+process.stdin.setEncoding('utf8');
+let buffer = '';
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + '\\n');
+}
+
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\\r?\\n/g);
+  buffer = lines.pop() ?? '';
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === 'initialize') {
+      write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+    }
+    if (message.method === 'session/new') {
+      write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-exited' } });
+      setTimeout(() => process.exit(0), 5);
+    }
+  }
+});
+`;
+
+const fakeExitAfterInitializeAgentScript = `#!/usr/bin/env node
+process.stdin.setEncoding('utf8');
+let buffer = '';
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + '\\n');
+}
+
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\\r?\\n/g);
+  buffer = lines.pop() ?? '';
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === 'initialize') {
+      write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+      setTimeout(() => process.exit(0), 5);
     }
   }
 });
@@ -1274,6 +1324,97 @@ process.stdout.write(JSON.stringify({
     expect(agentJson.lastError).toBeNull();
     expect(agentJson.stderrBuffer).toEqual(expect.arrayContaining([stderrLine]));
   }, 30_000);
+
+  it("refuses prompts for stopped ACP agents without writing to the closed pipe", async () => {
+    const projectDir = createTempDir("omni-runtime-stopped-project-");
+    const binDir = createTempDir("omni-runtime-stopped-bin-");
+    const fakeAgent = createExecutable(binDir, "fake-exit-acp-agent", fakeExitAfterSessionAgentScript);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "stopped-worker",
+      }),
+    });
+    expect(spawnResponse.status).toBe(201);
+
+    await waitFor(
+      async () => {
+        const response = await fetch(`${baseUrl}/agents/stopped-worker`);
+        return response.json() as Promise<{ state: string; lastError: string | null }>;
+      },
+      (agent) => agent.state === "stopped",
+    );
+
+    const askResponse = await fetch(`${baseUrl}/agents/stopped-worker/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "hello after exit" }),
+      signal: AbortSignal.timeout(1_000),
+    });
+
+    expect(askResponse.status).toBe(409);
+    await expect(askResponse.json()).resolves.toMatchObject({
+      error: expect.stringContaining("Agent is not running: stopped-worker"),
+    });
+    expect(consoleErrorSpy).not.toHaveBeenCalledWith(
+      "ACP write error:",
+      expect.anything(),
+    );
+    consoleErrorSpy.mockRestore();
+  }, 15_000);
+
+  it("fails saved-session resume promptly when the ACP process exits during startup", async () => {
+    const projectDir = createTempDir("omni-runtime-resume-exit-project-");
+    const binDir = createTempDir("omni-runtime-resume-exit-bin-");
+    const fakeAgent = createExecutable(binDir, "fake-exit-before-resume-acp-agent", fakeExitAfterInitializeAgentScript);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "resume-exit-worker",
+        resumeSessionId: "missing-session",
+      }),
+      signal: AbortSignal.timeout(1_000),
+    });
+
+    expect(spawnResponse.status).toBe(400);
+    await expect(spawnResponse.json()).resolves.toMatchObject({
+      error: expect.stringContaining("agent process exited before ACP startup completed"),
+    });
+    expect(consoleErrorSpy).not.toHaveBeenCalledWith(
+      "ACP write error:",
+      expect.anything(),
+    );
+  }, 15_000);
 
   it("keeps a worker prompt alive across ECONNRESET failures", async () => {
     const projectDir = createTempDir("omni-runtime-reset-project-");
