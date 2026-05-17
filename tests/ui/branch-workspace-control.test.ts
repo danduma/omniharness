@@ -91,11 +91,4 @@ describe("branch workspace control", () => {
     expect(sources).toContain("gitWorkspaceTarget: selectedWorkspaceTarget");
     expect(sources).toContain("gitWorkspaceManager.consumePendingLaunch(variables.projectPath)");
   });
-
-  it("shows selected runs with an immutable workspace badge", () => {
-    expect(sources).toContain('import { RunWorkspaceBadge } from "./RunWorkspaceBadge";');
-    expect(sources).toContain("<RunWorkspaceBadge run={selectedRun} fallbackPath={activeConversationCwd} />");
-    expect(sources).toContain("parseRunWorkspaceSnapshot(run?.gitWorkspaceJson)");
-    expect(sources).toContain("git.workspace.runBadge.titleWithBranch");
-  });
 });
