@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -24,25 +24,22 @@ export function FolderPickerDialog({
   useI18nSnapshot();
   const { currentPath, search } = useManagerSnapshot(folderPickerManager);
 
-  const { data, error, refetch } = useQuery({
+  const { data, error } = useQuery({
     queryKey: ["fs", currentPath],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const url = currentPath ? `/api/fs?path=${encodeURIComponent(currentPath)}` : "/api/fs";
       return requestJson<{
         current: string;
         parent: string;
         directories: Array<{ name: string; path: string }>;
-      }>(url, undefined, {
+      }>(url, { signal }, {
         source: "Filesystem",
         action: "Browse directories",
       });
     },
     enabled: open,
+    staleTime: 30_000,
   });
-
-  useEffect(() => {
-    if (open) refetch();
-  }, [open, currentPath, refetch]);
 
   const directories = useMemo(() => {
     const items = data?.directories ?? [];
@@ -72,14 +69,17 @@ export function FolderPickerDialog({
             className="h-9"
           />
           <div className="text-[11px] text-muted-foreground">
-            {directories.length} folder{directories.length === 1 ? "" : "s"} shown
+            {t(
+              directories.length === 1 ? "folder.picker.count.one" : "folder.picker.count.other",
+              { count: directories.length },
+            )}
           </div>
         </DialogHeader>
         
         <ScrollArea className="min-h-0 flex-1 p-2">
           {error ? (
             <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm">
-              <div className="font-semibold text-destructive">Browse directories</div>
+              <div className="font-semibold text-destructive">{t("folder.picker.errorTitle")}</div>
               <div className="mt-1 text-xs text-foreground">{normalizeAppError(error).message}</div>
             </div>
           ) : null}
