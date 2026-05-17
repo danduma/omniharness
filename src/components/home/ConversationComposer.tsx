@@ -1,13 +1,14 @@
 import Image from "next/image";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type React from "react";
-import { ArrowUp, FileText, LoaderCircle, Plus, Square, X } from "lucide-react";
+import { ArrowUp, FileText, LoaderCircle, Plus, SlidersHorizontal, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ComposerModelPicker } from "@/components/composer/ComposerModelPicker";
 import { ComposerSelect } from "@/components/composer/ComposerSelect";
 import { ConversationModePicker, type ConversationModeOption } from "@/components/ConversationModePicker";
 import { QueuedMessageDrawer } from "./QueuedMessageDrawer";
 import { BranchWorkspaceButton } from "./BranchWorkspaceButton";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { EFFORT_OPTIONS } from "@/app/home/constants";
 import { resolveBusyMessageActionForSubmitAction, type BusyComposerBehavior, type BusyMessageAction } from "@/app/home/busy-message-behavior";
 import { getComposerSubmitShortcutLabel, isAppleComposerShortcutPlatform, shouldSubmitComposerKeyDown, shouldUseAlternateComposerSubmitKeyDown } from "@/app/home/composer-keyboard";
@@ -112,6 +113,7 @@ export function ConversationComposer({
   const trimmedCommand = command.trim();
   const hasAttachments = attachments.length > 0;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
   const isStopButtonVisible = composerBehavior.buttonKind === "stop";
   const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;
   const isStopButtonBusy = isStopButtonVisible && isStopConversationPending;
@@ -403,7 +405,8 @@ export function ConversationComposer({
             />
           ) : null}
 
-          <div className="ml-auto flex min-w-0 items-center justify-end gap-1 sm:gap-2">
+          {/* Desktop selectors — hidden on mobile */}
+          <div className="ml-auto hidden min-w-0 items-center justify-end gap-1 sm:flex sm:gap-2">
             {shouldLockDirectWorker ? (
               <div className={cn(
                 "w-max min-w-0 max-w-[8.5rem] shrink truncate rounded-full border px-2 py-1 text-xs font-semibold sm:px-3",
@@ -439,6 +442,23 @@ export function ConversationComposer({
             />
           </div>
 
+          {/* Mobile settings button — hidden on desktop */}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => setMobileSettingsOpen(true)}
+            className={cn(
+              "ml-auto h-8 w-8 shrink-0 rounded-full sm:hidden",
+              themeMode === "night"
+                ? "text-muted-foreground hover:bg-background/45 hover:text-foreground"
+                : "text-[#959595] hover:bg-black/[0.04] hover:text-[#666666] dark:text-muted-foreground dark:hover:bg-background/45 dark:hover:text-foreground",
+            )}
+            aria-label="Composer settings"
+          >
+            <SlidersHorizontal className="h-[18px] w-[18px]" />
+          </Button>
+
           <Button
             type="submit"
             size="icon"
@@ -464,6 +484,53 @@ export function ConversationComposer({
       </div>
       </div>
     </form>
+
+      {/* Mobile settings sheet */}
+      <Sheet open={mobileSettingsOpen} onOpenChange={setMobileSettingsOpen}>
+        <SheetContent side="bottom" className="px-4 pb-8 pt-0">
+          <SheetHeader className="pb-2">
+            <SheetTitle>{t("conversation.composer.settings.title")}</SheetTitle>
+          </SheetHeader>
+          <div className="flex flex-col gap-5">
+            {shouldLockDirectWorker ? (
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">{t("conversation.composer.settings.agent")}</span>
+                <span className="text-sm text-muted-foreground">{lockedDirectWorkerLabel}</span>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">{t("conversation.composer.settings.agent")}</span>
+                <ComposerSelect
+                  ariaLabel="CLI harness"
+                  value={selectedCliAgent}
+                  options={composerWorkerOptions}
+                  onChange={setSelectedCliAgent}
+                  themeMode={themeMode}
+                />
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">{t("conversation.composer.settings.model")}</span>
+              <ComposerModelPicker
+                value={selectedModel}
+                options={activeWorkerModelOptions}
+                onChange={setSelectedModel}
+                themeMode={themeMode}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">{t("conversation.composer.settings.effort")}</span>
+              <ComposerSelect
+                ariaLabel="Worker effort"
+                value={selectedEffort}
+                options={EFFORT_OPTIONS.map((effort) => ({ value: effort, label: effort }))}
+                onChange={setSelectedEffort}
+                themeMode={themeMode}
+              />
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
   </div>
   );
 }
