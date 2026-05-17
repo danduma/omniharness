@@ -23,7 +23,7 @@ import { extractLatestPlainTextTurn } from "@/lib/agent-output";
 import { shouldShowPlanningTerminalActivity } from "@/lib/planning-output";
 import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, NoticeDescriptor, RunRecord, PlanningReviewRunRecord, PlanningReviewRoundRecord, PlanningReviewFindingRecord } from "@/app/home/types";
 import type { RecoveryIncidentRecord, RunRecoveryState } from "@/app/home/types";
-import { formatExecutionTimestamp, getExecutionEventDetailRows, summarizeExecutionEvent, type ConversationTimelineItem } from "@/app/home/utils";
+import { formatExecutionTimestamp, formatExecutionEventType, getExecutionEventDetailRows, summarizeExecutionEvent, type ConversationTimelineItem } from "@/app/home/utils";
 import { cn } from "@/lib/utils";
 import { shallowEqualRecord, useManagerSelector, useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { ProjectFileReference } from "@/lib/project-file-links";
@@ -162,7 +162,7 @@ function ConversationExecutionPanel({
                     <div key={event.id} className="rounded-md bg-background/55 p-2">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="break-words text-xs font-medium text-foreground">{event.eventType}</p>
+                          <p className="break-words text-xs font-medium text-foreground">{formatExecutionEventType(event.eventType)}</p>
                           <p className="mt-0.5 break-words text-[11px] leading-relaxed text-muted-foreground">
                             {summarizeExecutionEvent(event)}
                           </p>

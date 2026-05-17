@@ -77,7 +77,13 @@ export class WorkerEntriesManager {
   }
 
   getState(workerId: string): WorkerStreamState {
-    return this.stateByWorker.get(workerId) ?? initialState(workerId);
+    const existing = this.stateByWorker.get(workerId);
+    if (existing) {
+      return existing;
+    }
+    const next = initialState(workerId);
+    this.stateByWorker.set(workerId, next);
+    return next;
   }
 
   isLoaded(workerId: string): boolean {

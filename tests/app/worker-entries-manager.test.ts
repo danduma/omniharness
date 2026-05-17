@@ -30,6 +30,13 @@ describe("WorkerEntriesManager", () => {
     expect(EMPTY_WORKER_STREAM_STATE.workerId).toBe("__none__");
   });
 
+  it("caches the initial per-worker snapshot for useSyncExternalStore", () => {
+    const { manager } = buildManager([]);
+    expect(manager.getState("w1")).toBe(manager.getState("w1"));
+    expect(manager.getState("w2")).toBe(manager.getState("w2"));
+    expect(manager.getState("w1")).not.toBe(manager.getState("w2"));
+  });
+
   it("ensureLoaded fills the entries prefix and marks loaded", async () => {
     const { manager } = buildManager([
       { entries: [entry(1), entry(2), entry(3)], latestSeq: 3 },

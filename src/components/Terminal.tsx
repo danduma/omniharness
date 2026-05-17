@@ -101,6 +101,7 @@ export type TerminalActivityItem = AgentActivityItem | {
   kind: "pending_assistant";
   timestamp: string;
 };
+type TerminalActivityItemWithOrder = TerminalActivityItem & { streamSeq?: number };
 export type TerminalActivityKind = TerminalActivityItem["kind"];
 
 const TOOL_OUTPUT_PREVIEW_LINES = 3;
@@ -244,6 +245,22 @@ function activityKindOrder(activity: TerminalActivityItem) {
     default:
       return 6;
   }
+}
+
+function activityStreamSeq(
+  activity: TerminalActivityItemWithOrder,
+  seqByActivityId: Map<string, number>,
+): number | null {
+  if (typeof activity.streamSeq === "number") {
+    return activity.streamSeq;
+  }
+  if (activity.kind === "tool_group") {
+    const seqs = activity.tools
+      .map((tool) => seqByActivityId.get(tool.id))
+      .filter((seq): seq is number => typeof seq === "number");
+    return seqs.length > 0 ? Math.min(...seqs) : null;
+  }
+  return seqByActivityId.get(activity.id) ?? null;
 }
 
 function isTerminalToolStatus(status: string) {
@@ -1378,14 +1395,31 @@ export function Terminal({
         ))
         .map((entry) => entry as unknown as AgentOutputEntry)
       : agent?.outputEntries;
-    const agentActivity = buildAgentOutputActivity({
+    const seqByActivityId = new Map<string, number>();
+    if (usingUnifiedStream) {
+      for (const entry of entries ?? []) {
+        if (typeof entry.seq !== "number") {
+          continue;
+        }
+        seqByActivityId.set(entry.id, entry.seq);
+        if (entry.toolCallId) {
+          const previousSeq = seqByActivityId.get(entry.toolCallId) ?? entry.seq;
+          seqByActivityId.set(entry.toolCallId, Math.min(previousSeq, entry.seq));
+        }
+      }
+    }
+    const agentActivity: TerminalActivityItemWithOrder[] = buildAgentOutputActivity({
       outputEntries: bridgeEntries,
       state: usingUnifiedStream ? "idle" : agent?.state,
       currentText: usingUnifiedStream ? "" : agent?.currentText,
       lastText: usingUnifiedStream ? "" : agent?.lastText,
       displayText: usingUnifiedStream ? "" : agent?.displayText,
-    });
-    const userActivity: TerminalActivityItem[] = usingUnifiedStream
+    }).map((item) => (
+      usingUnifiedStream
+        ? { ...item, streamSeq: activityStreamSeq(item, seqByActivityId) ?? undefined }
+        : item
+    ));
+    const userActivity: TerminalActivityItemWithOrder[] = usingUnifiedStream
       ? (entries ?? [])
         .filter((entry) => entry.type === "user_input" || entry.type === "supervisor_input")
         .map((entry) => {
@@ -1404,6 +1438,7 @@ export function Terminal({
             text: entry.text,
             timestamp: entry.timestamp,
             attachments,
+            streamSeq: entry.seq,
             actions: entry.type === "user_input" ? getUserMessageActions?.({
               id: entry.id,
               content: entry.text,
@@ -1433,6 +1468,13 @@ export function Terminal({
       : [];
 
     return [...userActivity, ...agentActivity, ...pendingAssistantActivity].sort((a, b) => {
+      if (usingUnifiedStream) {
+        const leftSeq = activityStreamSeq(a, seqByActivityId);
+        const rightSeq = activityStreamSeq(b, seqByActivityId);
+        if (leftSeq !== null || rightSeq !== null) {
+          return (leftSeq ?? Number.MAX_SAFE_INTEGER) - (rightSeq ?? Number.MAX_SAFE_INTEGER);
+        }
+      }
       const timeDelta = activityTimestampMs(a.timestamp) - activityTimestampMs(b.timestamp);
       if (timeDelta !== 0) {
         return timeDelta;

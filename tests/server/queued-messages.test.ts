@@ -206,6 +206,44 @@ describe("queued conversation messages", () => {
     expect(storedMessages.map((message) => message.role)).toEqual(["user"]);
   });
 
+  it("keeps direct worker queue messages out of the conversation until delivery succeeds", async () => {
+    const runId = await createRun("direct");
+    const workerId = randomUUID();
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "Still working",
+      lastText: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await createQueuedConversationMessage({
+      runId,
+      targetWorkerId: workerId,
+      action: "queue",
+      content: "Please handle this once free.",
+      attachments: [],
+    });
+    mockAskAgent.mockRejectedValueOnce(new Error(`Ask failed: Agent is busy: ${workerId}`));
+
+    const drained = await drainQueuedWorkerMessages({ runId, workerId });
+
+    expect(drained).toBe(0);
+    const storedQueued = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId)).get();
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    expect(storedQueued).toMatchObject({
+      status: "pending",
+      lastError: `Ask failed: Agent is busy: ${workerId}`,
+    });
+    expect(storedQueued?.deliveredAt).toBeNull();
+    expect(storedMessages).toHaveLength(0);
+  });
+
   it("keeps send-now worker queue entries pending when the worker is still busy", async () => {
     const runId = await createRun("direct");
     const workerId = randomUUID();

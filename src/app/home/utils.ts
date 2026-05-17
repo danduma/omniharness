@@ -325,6 +325,7 @@ const RUN_LOG_ONLY_EVENT_TYPES = new Set([
   "supervisor_context_compacted",
   "supervisor_file_read",
   "supervisor_repo_inspected",
+  "supervisor_turn_stopped",
   "supervisor_wait",
   "worker_idle",
   "worker_mode_changed",
@@ -671,6 +672,13 @@ export function formatExecutionWorkerLabel(workerId: string | null | undefined) 
   return match ? `worker-${match[1]}` : normalized;
 }
 
+export function formatExecutionEventType(eventType: string) {
+  if (eventType === "supervisor_turn_stopped") {
+    return "Turn pause";
+  }
+  return eventType.replace(/[._]/g, " ");
+}
+
 function formatConversationWorkerLabel(workerId: string | null | undefined) {
   const normalized = workerId?.trim();
   if (!normalized) {
@@ -866,6 +874,10 @@ export function summarizeExecutionEvent(event: ExecutionEventRecord) {
   if (event.eventType === "supervisor_file_read") {
     const readPath = extractSupervisorReadPath(details, summary);
     return readPath ? `Read ${readPath}` : "Read file";
+  }
+
+  if (event.eventType === "supervisor_turn_stopped") {
+    return summary || "Pausing to stabilize conversation";
   }
 
   if (event.eventType === "supervisor_wait") {

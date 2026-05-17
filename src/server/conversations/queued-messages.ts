@@ -633,11 +633,6 @@ export async function drainQueuedWorkerMessages({
     const workerContent = appendAttachmentContext(record.content, normalizedAttachments);
     const startedAt = new Date();
 
-    await db.update(queuedConversationMessages).set({
-      status: "delivering",
-      updatedAt: startedAt,
-      lastError: null,
-    }).where(eq(queuedConversationMessages.id, record.id));
     const userMessage = {
       id: randomUUID(),
       runId,
@@ -647,7 +642,11 @@ export async function drainQueuedWorkerMessages({
       attachmentsJson: record.attachmentsJson,
       createdAt: startedAt,
     };
-    await db.insert(messages).values(userMessage);
+    await db.update(queuedConversationMessages).set({
+      status: "delivering",
+      updatedAt: startedAt,
+      lastError: null,
+    }).where(eq(queuedConversationMessages.id, record.id));
     await db.update(runs).set({
       status: run.mode === "planning" ? "working" : "running",
       failedAt: null,
@@ -675,6 +674,7 @@ export async function drainQueuedWorkerMessages({
           sizeBytes: attachment.size,
         })),
       });
+      await db.insert(messages).values(userMessage);
       await db.update(workers).set({
         status: response.state,
         updatedAt: deliveredAt,

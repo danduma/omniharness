@@ -1,15 +1,12 @@
 import { promises as fs, existsSync } from "node:fs";
 import path from "node:path";
-import { gzipSync, gunzipSync } from "node:zlib";
+import { brotliDecompressSync, gzipSync, gunzipSync } from "node:zlib";
 import AdmZip from "adm-zip";
 import type { AgentRecord } from "@/server/bridge-client";
 import { getAppDataPath } from "@/server/app-root";
 import { emitNamedEvent } from "@/server/events/named-events";
 import type {
   WorkerEntry,
-  WorkerEntryAttachment,
-  WorkerEntryAuthorRole,
-  WorkerEntryType,
 } from "@/server/workers/entries-types";
 
 type OutputEntry = NonNullable<AgentRecord["outputEntries"]>[number];
@@ -395,11 +392,6 @@ async function readAllPersistedEntries(runId: string, workerId: string): Promise
   return readLegacyDbEntries(workerId);
 }
 
-function isBridgeEntryType(type: string | undefined): boolean {
-  return type === "message" || type === "thought" || type === "tool_call"
-    || type === "tool_call_update" || type === "permission";
-}
-
 /**
  * Append a single worker entry to the JSONL file. The writer assigns
  * `seq` from the in-memory cursor (seeded from the file tail on first
@@ -558,7 +550,7 @@ export async function writeWorkerOutputEntries(
  * If the file ends with bytes that are not a newline (e.g. a previous
  * append was truncated mid-line by a crash), the next append must start
  * with a newline so the truncated line stays a separate broken line
- * rather than being concatenated to our new JSON object. `parseLines`
+ * rather than being concatenated to our new JSON object. `parseWorkerEntryLines`
  * already tolerates malformed lines, so isolating the broken bytes is
  * enough to recover.
  */
@@ -599,13 +591,6 @@ function parseWorkerEntryLines(body: string): WorkerEntry[] {
     }
   }
   return out;
-}
-
-function parseLines(body: string): OutputEntry[] {
-  // Legacy alias for callers that work with the narrower bridge-only
-  // OutputEntry type. The on-disk schema is a superset; bridge consumers
-  // simply ignore the extra fields.
-  return parseWorkerEntryLines(body) as unknown as OutputEntry[];
 }
 
 async function readFromCompressedFile(runId: string, workerId: string): Promise<WorkerEntry[]> {
@@ -712,8 +697,6 @@ export function parseLegacyOutputEntriesJson(value: string | null | undefined): 
   try {
     if (trimmed.startsWith(COMPRESSED_LEGACY_PREFIX)) {
       // Decompress synchronously using zlib for the one-shot migration path.
-      // We require this lazily to keep the hot path free of zlib import cost.
-      const { brotliDecompressSync } = require("node:zlib") as typeof import("node:zlib");
       const decoded = brotliDecompressSync(Buffer.from(trimmed.slice(COMPRESSED_LEGACY_PREFIX.length), "base64")).toString("utf8");
       const parsed = JSON.parse(decoded);
       return Array.isArray(parsed) ? parsed as OutputEntry[] : [];
