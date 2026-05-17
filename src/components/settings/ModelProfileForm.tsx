@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from "react";
-import { ChevronDownIcon } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ChevronDownIcon, CheckCircle2, AlertCircle, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, type SelectOption } from "@/components/ui/select";
@@ -30,6 +30,14 @@ interface ModelProfileFormProps {
   settings: Record<string, string>;
   setSetting: (key: string, value: string) => void;
   secretStates?: Record<string, { configured: boolean; updatedAt: string; preview?: string }>;
+}
+
+interface CodexStatus {
+  available: boolean;
+  email?: string;
+  planType?: string;
+  expiresAt?: number;
+  lastRefresh?: string;
 }
 
 const PROVIDER_VALUES = new Set<string>(LLM_PROVIDER_OPTIONS.map((option) => option.value));
@@ -77,6 +85,7 @@ export function ModelProfileForm({
   secretStates,
 }: ModelProfileFormProps) {
   useI18nSnapshot();
+  const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
   const providerKey = `${prefix}_PROVIDER`;
   const modelKey = `${prefix}_MODEL`;
   const baseUrlKey = `${prefix}_BASE_URL`;
@@ -99,9 +108,19 @@ export function ModelProfileForm({
     shallowEqualRecord,
   );
   const showEditMode = apiKeyEditing || !apiKeyConfigured || apiKeyDraftValue.length > 0;
+
   useEffect(() => {
     if (!apiKeyConfigured) modelProfileUiManager.setApiKeyEditing(prefix, false);
   }, [apiKeyConfigured, prefix]);
+
+  useEffect(() => {
+    if (prefix === "SUPERVISOR_LLM") {
+      fetch("/api/codex-auth/status")
+        .then((res) => res.json())
+        .then(setCodexStatus)
+        .catch(() => setCodexStatus({ available: false }));
+    }
+  }, [prefix]);
 
   const catalog = LLM_PROVIDER_MODEL_CATALOG[provider] ?? [];
   const modelOptions: SelectOption[] = useMemo(() => {
@@ -134,9 +153,66 @@ export function ModelProfileForm({
     label: t(`settings.models.thinkingEffort.${option.value}`),
   }));
   const isCustomEndpoint = provider === "openai-compatible";
+  const isCodex = provider === "codex";
 
   return (
     <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
+      {prefix === "SUPERVISOR_LLM" && (
+        <div className="mb-4 space-y-3 rounded-lg border border-border/60 bg-background/50 p-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="text-sm font-semibold">{t("settings.models.codex.title")}</div>
+              {codexStatus?.available ? (
+                <div className="flex items-center gap-1 text-[10px] font-medium text-emerald-500">
+                  <CheckCircle2 className="size-3" />
+                  <span>Available</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground">
+                  <AlertCircle className="size-3" />
+                  <span>Not available</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {codexStatus?.available ? (
+            <div className="space-y-2">
+              <div className="text-xs text-muted-foreground">
+                <div className="flex justify-between">
+                  <span>{codexStatus.email}</span>
+                  <span>{t("settings.models.codex.planTier", { tier: codexStatus.planType || "free" })}</span>
+                </div>
+                {codexStatus.lastRefresh && (
+                  <div className="mt-1">
+                    {t("settings.models.codex.lastRefresh", { at: new Date(codexStatus.lastRefresh).toLocaleString() })}
+                  </div>
+                )}
+              </div>
+              <Button
+                type="button"
+                variant={isCodex ? "outline" : "default"}
+                size="sm"
+                className="h-8 w-full text-xs"
+                onClick={() => handleProviderChange(isCodex ? "gemini" : "codex")}
+              >
+                {isCodex ? t("settings.models.codex.stopUsing") : t("settings.models.codex.useForSupervisor")}
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="text-xs text-muted-foreground">
+                {t("settings.models.codex.runLoginHint")}
+              </div>
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <ExternalLink className="size-3" />
+                <span>{t("settings.models.codex.runLogoutHint")}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="space-y-1">
         <div className="text-sm font-semibold">{title}</div>
       </div>
@@ -145,7 +221,10 @@ export function ModelProfileForm({
           <Select
             id={providerKey}
             value={provider}
-            options={LLM_PROVIDER_OPTIONS as readonly SelectOption[]}
+            options={LLM_PROVIDER_OPTIONS.map(opt => ({
+              ...opt,
+              label: opt.value === "codex" ? t("settings.models.provider.codex") : opt.label
+            })) as readonly SelectOption[]}
             onValueChange={handleProviderChange}
           />
         </Field>
@@ -175,6 +254,7 @@ export function ModelProfileForm({
             onChange={(event) => setSetting(baseUrlKey, event.target.value)}
             placeholder={isCustomEndpoint ? t("settings.models.requiredBaseUrl") : t("settings.models.optionalBaseUrl")}
             className="h-8 bg-background text-xs"
+            disabled={isCodex}
           />
         </Field>
         <Field htmlFor={apiKeyKey} label={t("settings.models.apiKey")}>
@@ -196,6 +276,7 @@ export function ModelProfileForm({
                   ? t("settings.models.credentialReplaceHint")
                   : t("settings.models.providerCredential")}
                 className="h-8 flex-1 bg-background text-xs"
+                disabled={isCodex}
               />
               {apiKeyConfigured ? (
                 <Button
@@ -207,6 +288,7 @@ export function ModelProfileForm({
                     setSetting(apiKeyKey, "");
                     modelProfileUiManager.setApiKeyEditing(prefix, false);
                   }}
+                  disabled={isCodex}
                 >
                   {t("common.cancel")}
                 </Button>
@@ -223,6 +305,7 @@ export function ModelProfileForm({
                 spellCheck={false}
                 autoComplete="off"
                 className="h-8 flex-1 bg-background/60 font-mono text-xs text-muted-foreground"
+                disabled={isCodex}
               />
               <Button
                 type="button"
@@ -236,6 +319,7 @@ export function ModelProfileForm({
                     el?.focus();
                   });
                 }}
+                disabled={isCodex}
               >
                 {t("settings.models.replaceCredential")}
               </Button>

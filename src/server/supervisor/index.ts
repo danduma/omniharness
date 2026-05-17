@@ -954,6 +954,29 @@ export class Supervisor {
       try {
         toolCalls = await this.requestToolCalls(llmConfig, turnStep, { memoryEnabled });
       } catch (error) {
+        if (error instanceof CodexAuthMissingError) {
+          emitNamedEvent({
+            kind: "error.surfaced",
+            code: "codex_auth_missing",
+            message: "Codex subscription is not available. Run `codex login` in your terminal.",
+            surface: "banner",
+            runId: this.runId,
+          });
+          throw error;
+        }
+
+        if (error instanceof CodexAuthRefreshFailedError) {
+          emitNamedEvent({
+            kind: "error.surfaced",
+            code: "codex_auth_refresh_failed",
+            message: "Failed to refresh Codex subscription. Run `codex login` to re-authenticate.",
+            surface: "banner",
+            runId: this.runId,
+            cause: { name: error.name, message: error.message },
+          });
+          throw error;
+        }
+
         const quotaInfo = extractQuotaResetInfo(error, { provider: llmConfig.provider });
         if (!quotaInfo.isQuotaError) {
           throw error;
@@ -1004,7 +1027,7 @@ export class Supervisor {
       if (evidenceKey) {
         if (evidenceActionsSeen.has(evidenceKey)) {
           await insertExecutionEvent(this.runId, "supervisor_turn_stopped", {
-            summary: `Stopped supervisor turn after repeated evidence request: ${action.name}.`,
+            summary: `Pausing to stabilize conversation after repeated tool requests: ${action.name}.`,
             actionName: action.name,
             evidenceKey,
           });
@@ -1012,7 +1035,6 @@ export class Supervisor {
         }
         evidenceActionsSeen.add(evidenceKey);
       }
-
       switch (action.name) {
         case "worker_spawn": {
           const requestedType = asString(action.args.type, "type");

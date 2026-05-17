@@ -158,6 +158,7 @@ export const LLM_PROVIDER_OPTIONS = [
   { value: "gemini", label: "Gemini" },
   { value: "anthropic", label: "Anthropic" },
   { value: "openai", label: "OpenAI" },
+  { value: "codex", label: "Codex (ChatGPT subscription)" },
   { value: "openrouter", label: "OpenRouter" },
   { value: "openai-compatible", label: "OpenAI-Compatible" },
 ] as const;
@@ -183,6 +184,11 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
     { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
   ],
+  codex: [
+    { value: "gpt-5.4", label: "GPT-5.4" },
+    { value: "gpt-5.5", label: "GPT-5.5" },
+    { value: "o3-mini", label: "o3-mini" },
+  ],
   openrouter: [
     { value: "anthropic/claude-opus-4-7", label: "Claude Opus 4.7" },
     { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
@@ -196,6 +202,7 @@ export const LLM_DEFAULT_MODEL: Record<LlmProviderId, string> = {
   gemini: "gemini-3.1-pro-preview",
   anthropic: "claude-opus-4-7",
   openai: "gpt-5.5",
+  codex: "gpt-5.4",
   openrouter: "anthropic/claude-opus-4-7",
   "openai-compatible": "",
 };

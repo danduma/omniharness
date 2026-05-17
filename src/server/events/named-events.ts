@@ -30,6 +30,9 @@ export type SurfacedErrorCode =
   | "recovery.gave_up"
   | "worker.spawn.failed"
   | "worker.failover.failed"
+  | "codex_auth_missing"
+  | "codex_auth_refresh_failed"
+  | "codex_auth_unavailable"
   | "internal";
 
 export type FailoverStage = "selection" | "handoff" | "spawn";

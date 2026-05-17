@@ -1,5 +1,7 @@
 import { getSettingsKeyPath } from "@/server/settings/crypto";
 import type { RuntimeSettingDecryptionFailure } from "@/server/supervisor/runtime-settings";
+import { readCodexCredentialsSync, ensureFreshCodexCredentials, CodexAuthMissingError, CodexAuthRefreshFailedError } from "./codex-auth";
+import { createOpenAI } from "@ai-sdk/openai";
 
 const DEFAULT_PROVIDER = "gemini";
 const DEFAULT_MODEL = "gemini-3.1-pro-preview";
@@ -17,6 +19,7 @@ interface ModelConfig {
 }
 
 function fallbackApiKey(provider: string, env: EnvLike) {
+  if (provider === "codex") return undefined;
   switch (provider) {
     case "gemini":
       return env.GEMINI_API_KEY?.trim();
@@ -54,13 +57,20 @@ function formatSettingChoices(settingNames: string[]) {
   return `${settingNames.slice(0, -1).join(", ")}, or ${settingNames.at(-1)}`;
 }
 
+function hasUsableCredentials(cfg: ModelConfig) {
+  if (cfg.provider === "codex") {
+    return !!readCodexCredentialsSync();
+  }
+  return !!cfg.apiKey;
+}
+
 export function getSupervisorModelConfig(env: EnvLike, source?: "primary" | "fallback") {
   const primaryProvider = env.SUPERVISOR_LLM_PROVIDER?.trim() || DEFAULT_PROVIDER;
   const fallbackProvider = env.SUPERVISOR_FALLBACK_LLM_PROVIDER?.trim() || DEFAULT_FALLBACK_PROVIDER;
 
   const primaryConfig: ModelConfig = {
     provider: primaryProvider,
-    model: env.SUPERVISOR_LLM_MODEL?.trim() || DEFAULT_MODEL,
+    model: env.SUPERVISOR_LLM_MODEL?.trim() || (primaryProvider === "codex" ? "gpt-5.4" : DEFAULT_MODEL),
     apiKey: env.SUPERVISOR_LLM_API_KEY?.trim() || fallbackApiKey(primaryProvider, env),
     baseURL: env.SUPERVISOR_LLM_BASE_URL?.trim() || undefined,
     source: "primary",
@@ -81,13 +91,21 @@ export function getSupervisorModelConfig(env: EnvLike, source?: "primary" | "fal
     return fallbackConfig;
   }
 
-  return primaryConfig.apiKey ? primaryConfig : fallbackConfig.apiKey ? fallbackConfig : primaryConfig;
+  return hasUsableCredentials(primaryConfig) ? primaryConfig : hasUsableCredentials(fallbackConfig) ? fallbackConfig : primaryConfig;
 }
 
 export function validateSupervisorModelConfig(
   config: ReturnType<typeof getSupervisorModelConfig>,
   decryptionFailures: RuntimeSettingDecryptionFailure[],
 ) {
+  if (config.provider === "codex") {
+    const creds = readCodexCredentialsSync();
+    if (!creds) {
+      throw new CodexAuthMissingError();
+    }
+    return config;
+  }
+
   if (config.apiKey) {
     return config;
   }
@@ -120,6 +138,26 @@ function toMastraProvider(provider: string) {
 }
 
 export function buildMastraModelConfig(config: ReturnType<typeof getSupervisorModelConfig>) {
+  if (config.provider === "codex") {
+    const provider = createOpenAI({
+      baseURL: "https://chatgpt.com/backend-api/codex",
+      fetch: async (url, options) => {
+        const creds = await ensureFreshCodexCredentials();
+        const headers = new Headers(options?.headers);
+        headers.set("Authorization", `Bearer ${creds.accessToken}`);
+        headers.set("chatgpt-account-id", creds.accountId);
+        headers.set("OpenAI-Beta", "responses=experimental");
+
+        return fetch(url, {
+          ...options,
+          headers,
+        });
+      },
+    });
+
+    return provider.responses(config.model);
+  }
+
   const id = `${toMastraProvider(config.provider)}/${config.model}` as `${string}/${string}`;
 
   return {
