@@ -55,7 +55,7 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('{ value: "claude", label: "Claude Code" }');
   expect(pageSource).toContain("const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {");
   expect(pageSource).toContain('workerModels?: Partial<WorkerModelCatalog>');
-  expect(pageSource).toContain('const EFFORT_OPTIONS = ["Low", "Medium", "High"]');
+  expect(pageSource).toContain('const EFFORT_OPTIONS = ["Low", "Medium", "High", "Extra High", "Max"]');
   expect(pageSource).toContain('bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary/[0.45]');
   expect(pageSource).toContain('placeholder:text-[#c4c4c2]');
 });

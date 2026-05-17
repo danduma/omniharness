@@ -78,6 +78,8 @@
   "settings.models.thinkingEffort.low": "Low",
   "settings.models.thinkingEffort.medium": "Medium",
   "settings.models.thinkingEffort.high": "High",
+  "settings.models.thinkingEffort.xhigh": "Extra High",
+  "settings.models.thinkingEffort.max": "Max",
   "settings.models.temperature": "Temperature",
   "settings.models.temperaturePlaceholder": "Provider default",
   "settings.models.maxOutputTokens": "Max output tokens",

@@ -132,16 +132,17 @@ Generally, lower cost models are fine for writing code with clear specs, but pla
 
 ## Frontier models, in decreasing order of capability
 - gpt-5.4 (extra-high, high, medium)
-- claude-opus-4-6 (xhigh, high, medium)
+- claude-opus-4-7 (max, xhigh, high, medium)
+- claude-opus-4-6 (max, xhigh, high, medium)
 - gpt-5.3-codex
 - gemini-3.1-pro-preview (high effort, medium effort)
 
 ## Lower cost models
 - gpt-5.4-mini (high, medium)
-- claude-sonnet-4-6 (xhigh, high, medium)
+- claude-sonnet-4-6 (max, xhigh, high, medium)
 
 ## Debugging: harnesses, in decreasing order of capability
-- Claude Code (claude-opus-4-6, claude-sonnet-4-6)
+- Claude Code (claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-6)
 - Codex (gpt-5.4, gpt-5.3-codex)
 - Gemini (gemini-3.1-pro-preview)
 

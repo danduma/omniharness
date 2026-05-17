@@ -131,6 +131,7 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
     { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
   ],
   claude: [
+    { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
     { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
     { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
     { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
@@ -147,7 +148,7 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
     { value: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4" },
   ],
 };
-export const EFFORT_OPTIONS = ["Low", "Medium", "High"];
+export const EFFORT_OPTIONS = ["Low", "Medium", "High", "Extra High", "Max"];
 export const COMPOSER_WORKER_STORAGE_KEY = "omni-composer-worker";
 export const COMPOSER_MODEL_STORAGE_KEY = "omni-composer-model";
 export const COMPOSER_EFFORT_STORAGE_KEY = "omni-composer-effort";
@@ -212,4 +213,6 @@ export const LLM_THINKING_EFFORT_OPTIONS = [
   { value: "low", label: "Low" },
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
+  { value: "xhigh", label: "Extra High" },
+  { value: "max", label: "Max" },
 ] as const;
