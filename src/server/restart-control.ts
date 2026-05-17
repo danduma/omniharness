@@ -320,8 +320,13 @@ export function createNodeRestartSystem(config: RestartControlConfig): RestartSy
       }
       const shellEscape = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
       const timestamper = path.join(config.cwd, "scripts", "_log-timestamp.mjs");
+      // Run the child under a PTY (via `script -q`) so it sees stdout as a TTY
+      // and stays line-buffered. Without this, Node-based dev servers switch to
+      // 16KB block-buffering when stdout is a pipe and the log appears frozen
+      // until enough output accumulates to force a flush.
+      const innerCmd = `${shellEscape(command)} ${args.map(shellEscape).join(" ")}`;
       const pipeline =
-        `exec ${shellEscape(command)} ${args.map(shellEscape).join(" ")} 2>&1` +
+        `exec script -q /dev/null sh -c ${shellEscape(`exec ${innerCmd} 2>&1`)}` +
         ` | ${shellEscape(process.execPath)} ${shellEscape(timestamper)}` +
         ` >> ${shellEscape(logFile)}`;
       const child = spawn("sh", ["-c", pipeline], {

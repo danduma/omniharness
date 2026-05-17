@@ -33,6 +33,28 @@ test("dev web recovery detects missing Next app route artifacts under this repo"
   });
 });
 
+test("dev web recovery detects missing Next app path manifests under this repo", () => {
+  const repoRoot = process.cwd();
+  const missingFile = path.join(repoRoot, ".next/server/app/api/events/[__metadata_id__]/route/app-paths-manifest.json");
+  const line = `[Error: ENOENT: no such file or directory, open '${missingFile}']`;
+
+  expect(detectNextDevRouteEnoent(line, repoRoot)).toEqual({
+    artifactDir: path.dirname(missingFile),
+    routeFile: missingFile,
+  });
+});
+
+test("dev web recovery detects missing Next pages build manifests under this repo", () => {
+  const repoRoot = process.cwd();
+  const missingFile = path.join(repoRoot, ".next/server/pages/_app/build-manifest.json");
+  const line = ` ⨯ [Error: ENOENT: no such file or directory, open '${missingFile}']`;
+
+  expect(detectNextDevRouteEnoent(line, repoRoot)).toEqual({
+    artifactDir: path.dirname(missingFile),
+    routeFile: missingFile,
+  });
+});
+
 test("dev web recovery ignores missing route artifacts outside this repo", () => {
   const line = "[Error: ENOENT: no such file or directory, open '/tmp/other/.next/server/app/api/settings/route.js']";
 

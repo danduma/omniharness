@@ -52,7 +52,12 @@ function jsonForScript(value: unknown) {
 }
 
 function sendJson(response: ServerResponse, statusCode: number, body: Record<string, unknown>) {
-  response.writeHead(statusCode, { "content-type": "application/json; charset=utf-8" });
+  response.writeHead(statusCode, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store, no-cache, must-revalidate, max-age=0",
+    "pragma": "no-cache",
+    "expires": "0",
+  });
   response.end(`${JSON.stringify(body)}\n`);
 }
 
@@ -595,9 +600,9 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
           const lines = (linesInput && linesInput.value)
             ? Math.max(1, Math.min(${MAX_LOG_LINES}, parseInt(linesInput.value, 10) || ${DEFAULT_LOG_LINES}))
             : ${logLines};
-          const res = await fetch("/status?lines=" + lines, {
+          const res = await fetch("/status?lines=" + lines + "&_=" + Date.now(), {
             credentials: "same-origin",
-            headers: { accept: "application/json" },
+            headers: { accept: "application/json", "cache-control": "no-cache" },
             cache: "no-store",
           });
           if (res.status === 401) { window.location.reload(); return; }
