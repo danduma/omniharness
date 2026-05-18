@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { OmniHarnessMark } from "@/components/OmniHarnessMark";
 import { CliBrandIcon } from "@/components/cli-brand-icons";
-import { PRODUCT_NAME } from "@/app/home/constants";
+import { PRODUCT_NAME, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "@/app/home/constants";
 import { getRunLatestMessageTimestamp, isRunUnread } from "@/lib/conversation-state";
 import { getConversationVisualKind, type ConversationVisualKind } from "@/lib/conversation-visuals";
 import type { ManualCommitAction } from "@/lib/commit-workflow";
@@ -87,7 +87,9 @@ export interface ConversationSidebarProps {
   messages: Array<{ runId: string; role?: string | null; kind?: string | null; content?: string | null; createdAt: string }> | undefined;
   readMarkers: Record<string, string>;
   collapsedProjectPaths: Set<string>;
+  visibleProjectSessionCounts: Record<string, number>;
   onProjectOpenChange: (projectPath: string, open: boolean) => void;
+  onShowMoreProjectSessions: (projectPath: string) => void;
   setShowSettings: React.Dispatch<React.SetStateAction<boolean>>;
   openOnboarding: () => void;
   openFolderPicker: () => void;
@@ -121,7 +123,9 @@ export function ConversationSidebar({
   messages,
   readMarkers,
   collapsedProjectPaths,
+  visibleProjectSessionCounts,
   onProjectOpenChange,
+  onShowMoreProjectSessions,
   setShowSettings,
   openOnboarding,
   openFolderPicker,
@@ -220,6 +224,10 @@ export function ConversationSidebar({
           {filteredProjects.length > 0 ? (
             filteredProjects.map((group) => {
               const projectOpen = !collapsedProjectPaths.has(group.path);
+              const visibleSessionCount = visibleProjectSessionCounts[group.path] ?? PROJECT_SESSION_DISPLAY_BATCH_SIZE;
+              const visibleRuns = group.runs.slice(0, visibleSessionCount);
+              const hiddenSessionCount = Math.max(0, group.runs.length - visibleRuns.length);
+              const nextSessionBatchCount = Math.min(PROJECT_SESSION_DISPLAY_BATCH_SIZE, hiddenSessionCount);
 
               return (
               <Collapsible
@@ -287,7 +295,7 @@ export function ConversationSidebar({
                         <div className="py-1 pl-8 text-xs italic text-muted-foreground/60">No conversations</div>
                       )
                     ) : null}
-                    {group.runs.map((run) => {
+                    {visibleRuns.map((run) => {
                       const visualKind = getConversationVisualKind(run, messages ?? []);
                       const isCommitConversation = visualKind === "commit";
                       const canArchiveConversation = isArchivableRunStatus(run.status);
@@ -451,6 +459,23 @@ export function ConversationSidebar({
                       </div>
                       );
                     })}
+                    {hiddenSessionCount > 0 ? (
+                      <button
+                        type="button"
+                        className="ml-7 mt-1 inline-flex h-7 items-center rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label={t("conversation.sidebar.showMoreSessions", {
+                          count: nextSessionBatchCount,
+                          project: group.name,
+                        })}
+                        title={t("conversation.sidebar.showMoreSessions", {
+                          count: nextSessionBatchCount,
+                          project: group.name,
+                        })}
+                        onClick={() => onShowMoreProjectSessions(group.path)}
+                      >
+                        {t("conversation.sidebar.moreSessions")}
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               </Collapsible>

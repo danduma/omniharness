@@ -10,7 +10,7 @@ import {
   serializeBooleanSetting,
   type ManualCommitAction,
 } from "@/lib/commit-workflow";
-import { homeUiSetters } from "./HomeUiStateManager";
+import { homeUiSetters, homeUiStateManager } from "./HomeUiStateManager";
 import { sideWindowManager } from "./SideWindowManager";
 import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "./GitWorkspaceManager";
 import { shouldOpenMobileSideWindow } from "./side-window-viewport";
@@ -67,6 +67,7 @@ export function useConversationActions({
     setEditingMessageValue,
     setExpandedDirectMessageIds,
     setCollapsedProjectPaths,
+    revealMoreProjectSessions,
     setRightSidebarOpen,
     setMobileWorkersOpen,
     setApiKeys,
@@ -298,6 +299,7 @@ export function useConversationActions({
   }, [currentProjectScope, setMobileWorkersOpen, setRightSidebarOpen]);
 
   const handleProjectOpenChange = (projectPath: string, open: boolean) => {
+    homeUiStateManager.resetProjectSessionDisplayLimit(projectPath);
     setCollapsedProjectPaths((current) => {
       const next = new Set(current);
       if (open) {
@@ -307,6 +309,10 @@ export function useConversationActions({
       }
       return next;
     });
+  };
+
+  const handleShowMoreProjectSessions = (projectPath: string) => {
+    revealMoreProjectSessions(projectPath);
   };
 
   const toggleDirectMessageExpansion = (messageId: string) => {
@@ -351,6 +357,7 @@ export function useConversationActions({
     handleEditQueuedMessage,
     handleOpenProjectFile,
     handleProjectOpenChange,
+    handleShowMoreProjectSessions,
     toggleDirectMessageExpansion,
   };
 }

@@ -40,7 +40,9 @@ interface HomeHeaderProps {
   messages: MessageRecord[];
   readMarkers: Record<string, string>;
   collapsedProjectPaths: Set<string>;
+  visibleProjectSessionCounts: Record<string, number>;
   onProjectOpenChange: (projectPath: string, open: boolean) => void;
+  onShowMoreProjectSessions: (projectPath: string) => void;
   setShowSettings: Dispatch<SetStateAction<boolean>>;
   openOnboarding: () => void;
   openFolderPicker: () => void;
@@ -107,7 +109,9 @@ export function HomeHeader({
   messages,
   readMarkers,
   collapsedProjectPaths,
+  visibleProjectSessionCounts,
   onProjectOpenChange,
+  onShowMoreProjectSessions,
   setShowSettings,
   openOnboarding,
   openFolderPicker,
@@ -258,7 +262,9 @@ export function HomeHeader({
               messages={messages}
               readMarkers={readMarkers}
               collapsedProjectPaths={collapsedProjectPaths}
+              visibleProjectSessionCounts={visibleProjectSessionCounts}
               onProjectOpenChange={onProjectOpenChange}
+              onShowMoreProjectSessions={onShowMoreProjectSessions}
               setShowSettings={setShowSettings}
               openOnboarding={openOnboarding}
               openFolderPicker={openFolderPicker}
