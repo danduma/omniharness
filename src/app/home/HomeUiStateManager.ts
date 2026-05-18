@@ -1,7 +1,7 @@
 import { chatAttachmentKindFromMimeType, type PendingChatAttachment } from "@/lib/chat-attachments";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { StateManager, type StateUpdate } from "@/lib/state-manager";
-import { DEFAULT_CONVERSATION_SIDEBAR_WIDTH, DEFAULT_SERVER_SETTINGS, DEFAULT_WORKERS_SIDEBAR_WIDTH } from "./constants";
+import { DEFAULT_CONVERSATION_SIDEBAR_WIDTH, DEFAULT_SERVER_SETTINGS, DEFAULT_WORKERS_SIDEBAR_WIDTH, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "./constants";
 import type { ComposerWorkerOption, ConversationModeOption, EventStreamState, LlmProfileTab, MessageRecord, SettingsTab } from "./types";
 import type { CreatedConversationSnapshot } from "./utils";
 
@@ -66,6 +66,7 @@ export type HomeUiState = {
   mentionIndex: number;
   readMarkers: Record<string, string>;
   collapsedProjectPaths: Set<string>;
+  visibleProjectSessionCounts: Record<string, number>;
   renamingRunId: string | null;
   renameValue: string;
   renameSource: RenameSource | null;
@@ -114,6 +115,7 @@ const initialHomeUiState: HomeUiState = {
   mentionIndex: 0,
   readMarkers: {},
   collapsedProjectPaths: new Set(),
+  visibleProjectSessionCounts: {},
   renamingRunId: null,
   renameValue: "",
   renameSource: null,
@@ -245,6 +247,25 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
     });
   }
 
+  revealMoreProjectSessions(projectPath: string) {
+    this.setKey("visibleProjectSessionCounts", (current) => ({
+      ...current,
+      [projectPath]: (current[projectPath] ?? PROJECT_SESSION_DISPLAY_BATCH_SIZE) + PROJECT_SESSION_DISPLAY_BATCH_SIZE,
+    }));
+  }
+
+  resetProjectSessionDisplayLimit(projectPath: string) {
+    this.setKey("visibleProjectSessionCounts", (current) => {
+      if (!(projectPath in current)) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[projectPath];
+      return next;
+    });
+  }
+
   createSetter<TKey extends keyof HomeUiState>(key: TKey) {
     return (value: StateUpdate<HomeUiState[TKey]>) => {
       this.setKey(key, value);
@@ -279,6 +300,9 @@ export const homeUiSetters = {
   setMentionIndex: homeUiStateManager.createSetter("mentionIndex"),
   setReadMarkers: homeUiStateManager.createSetter("readMarkers"),
   setCollapsedProjectPaths: homeUiStateManager.createSetter("collapsedProjectPaths"),
+  setVisibleProjectSessionCounts: homeUiStateManager.createSetter("visibleProjectSessionCounts"),
+  revealMoreProjectSessions: (projectPath: string) => homeUiStateManager.revealMoreProjectSessions(projectPath),
+  resetProjectSessionDisplayLimit: (projectPath: string) => homeUiStateManager.resetProjectSessionDisplayLimit(projectPath),
   setRenamingRunId: homeUiStateManager.createSetter("renamingRunId"),
   setRenameValue: homeUiStateManager.createSetter("renameValue"),
   setRenameSource: homeUiStateManager.createSetter("renameSource"),

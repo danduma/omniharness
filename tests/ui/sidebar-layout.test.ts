@@ -692,6 +692,22 @@ test("project group collapsed state survives page reloads", () => {
   expect(pageSource).toContain('projectOpen && "rotate-180"');
 });
 
+test("project groups reveal sessions ten at a time and reset on project toggles", () => {
+  expect(pageSource).toContain("export const PROJECT_SESSION_DISPLAY_BATCH_SIZE = 10;");
+  expect(pageSource).toContain("visibleProjectSessionCounts: {}");
+  expect(pageSource).toContain("revealMoreProjectSessions(projectPath: string)");
+  expect(pageSource).toContain("resetProjectSessionDisplayLimit(projectPath: string)");
+  expect(pageSource).toContain("setVisibleProjectSessionCounts: homeUiStateManager.createSetter(\"visibleProjectSessionCounts\")");
+  expect(pageSource).toContain("const visibleSessionCount = visibleProjectSessionCounts[group.path] ?? PROJECT_SESSION_DISPLAY_BATCH_SIZE;");
+  expect(pageSource).toContain("const visibleRuns = group.runs.slice(0, visibleSessionCount);");
+  expect(pageSource).toContain("const hiddenSessionCount = Math.max(0, group.runs.length - visibleRuns.length);");
+  expect(pageSource).toContain("visibleRuns.map((run) => {");
+  expect(pageSource).toContain('t("conversation.sidebar.moreSessions")');
+  expect(pageSource).toContain("onShowMoreProjectSessions(group.path)");
+  expect(pageSource).toContain("homeUiStateManager.resetProjectSessionDisplayLimit(projectPath);");
+  expect(pageSource).not.toContain("omni-visible-project-sessions");
+});
+
 test("failed runs surface recovery UI in the header and conversation feed", () => {
   expect(pageSource).toContain('selectedRun?.status === "failed"');
   expect(pageSource).toContain("Resume worker");
