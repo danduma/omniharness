@@ -310,6 +310,14 @@ export function ConversationSidebar({
                       <div
                         key={run.id}
                         onClick={() => selectRun(run.id)}
+                        onDoubleClick={(event) => {
+                          const target = event.target;
+                          if (target instanceof Element && target.closest("button,input,textarea,select,a")) {
+                            return;
+                          }
+                          event.preventDefault();
+                          startRenamingRun(run);
+                        }}
                         className={cn(
                           "group flex min-w-0 cursor-pointer overflow-hidden rounded-xl py-1.5 pl-2.5 pr-2 text-sm transition-colors",
                           selectedRunId === run.id

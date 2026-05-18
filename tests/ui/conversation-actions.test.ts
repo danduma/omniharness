@@ -38,6 +38,17 @@ test("conversation rows expose rename and delete actions", () => {
   expect(pageSource).toContain('requestJson(`/api/runs/${runId}`');
 });
 
+test("double clicking a conversation row starts sidebar renaming for that row", () => {
+  const sidebarSource = readSource("src/components/home/ConversationSidebar.tsx");
+  const rowIndex = sidebarSource.indexOf("key={run.id}");
+  const doubleClickIndex = sidebarSource.indexOf("onDoubleClick={(event) => {", rowIndex);
+  const renameIndex = sidebarSource.indexOf("startRenamingRun(run);", doubleClickIndex);
+
+  expect(rowIndex).toBeGreaterThanOrEqual(0);
+  expect(doubleClickIndex).toBeGreaterThan(rowIndex);
+  expect(renameIndex).toBeGreaterThan(doubleClickIndex);
+});
+
 test("conversation rows expose archive in the overflow menu and commit rows expose an inline archive icon", () => {
   const sidebarSource = readSource("src/components/home/ConversationSidebar.tsx");
 
