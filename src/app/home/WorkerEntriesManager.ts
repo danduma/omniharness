@@ -51,13 +51,22 @@ function defaultFetchEndpoint(workerId: string, afterSeq: number) {
   return `/api/workers/${encodeURIComponent(workerId)}/entries?afterSeq=${afterSeq}`;
 }
 
-function initialState(workerId: string): WorkerStreamState {
+function latestSeq(entries: WorkerEntry[]) {
+  return entries.reduce((latest, entry) => (
+    typeof entry.seq === "number" && Number.isFinite(entry.seq)
+      ? Math.max(latest, entry.seq)
+      : latest
+  ), 0);
+}
+
+function initialState(workerId: string, entries: WorkerEntry[] = []): WorkerStreamState {
+  const latest = latestSeq(entries);
   return {
     workerId,
-    entries: [],
-    latestContiguousSeq: 0,
-    latestKnownSeq: 0,
-    status: "idle",
+    entries,
+    latestContiguousSeq: latest,
+    latestKnownSeq: latest,
+    status: entries.length > 0 ? "loaded" : "idle",
     lastError: null,
   };
 }
@@ -76,12 +85,21 @@ export class WorkerEntriesManager {
     this.fetchEndpoint = options.fetchEndpoint ?? defaultFetchEndpoint;
   }
 
-  getState(workerId: string): WorkerStreamState {
+  getState(workerId: string, initialEntries: WorkerEntry[] = []): WorkerStreamState {
     const existing = this.stateByWorker.get(workerId);
     if (existing) {
+      if (
+        initialEntries.length > 0
+        && existing.latestContiguousSeq === 0
+        && existing.entries.length === 0
+      ) {
+        const hydrated = initialState(workerId, initialEntries);
+        this.stateByWorker.set(workerId, hydrated);
+        return hydrated;
+      }
       return existing;
     }
-    const next = initialState(workerId);
+    const next = initialState(workerId, initialEntries);
     this.stateByWorker.set(workerId, next);
     return next;
   }
@@ -266,14 +284,14 @@ export const workerEntriesManager = new WorkerEntriesManager();
  * `workerId === null` returns a stable empty state and skips the
  * fetch.
  */
-export function useWorkerStream(workerId: string | null) {
+export function useWorkerStream(workerId: string | null, initialEntries: WorkerEntry[] = []) {
   const state = useSyncExternalStore(
     useCallback((listener) => (
       workerId ? workerEntriesManager.subscribe(workerId, listener) : () => {}
     ), [workerId]),
     useCallback(() => (
-      workerId ? workerEntriesManager.getState(workerId) : EMPTY_WORKER_STREAM_STATE
-    ), [workerId]),
+      workerId ? workerEntriesManager.getState(workerId, initialEntries) : EMPTY_WORKER_STREAM_STATE
+    ), [initialEntries, workerId]),
     () => EMPTY_WORKER_STREAM_STATE,
   );
   useEffect(() => {

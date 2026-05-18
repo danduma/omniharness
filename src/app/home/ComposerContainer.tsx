@@ -2,7 +2,9 @@
 
 import type React from "react";
 import { useEffect, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { ConversationComposer } from "@/components/home/ConversationComposer";
+import { requestJson } from "@/lib/app-errors";
 import type { PendingChatAttachment } from "@/lib/chat-attachments";
 import type { ProjectFileReference } from "@/lib/project-file-links";
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
@@ -16,6 +18,7 @@ import { homeUiSetters, homeUiStateManager, type HomeUiState } from "./HomeUiSta
 import type {
   ComposerWorkerOption,
   ConversationModeOption,
+  ProjectFilesResponse,
   QueuedConversationMessageRecord,
   WorkerModelOption,
 } from "./types";
@@ -112,17 +115,32 @@ export function ComposerContainer({
   );
 
   const activeMention = getActiveMentionQuery(command, commandCursor);
+  const projectFilesQuery = useQuery<ProjectFilesResponse>({
+    queryKey: ["project-files", currentProjectScope],
+    queryFn: async () => requestJson<ProjectFilesResponse>(
+      `/api/fs/files?root=${encodeURIComponent(currentProjectScope || "")}`,
+      undefined,
+      {
+        source: "Filesystem",
+        action: "Load project files",
+      },
+    ),
+    enabled: Boolean(activeMention && currentProjectScope),
+    staleTime: 60_000,
+  });
+  const availableProjectFiles = projectFilesQuery.data?.files ?? projectFiles;
+  const projectFilesReady = projectFilesIsFetched || projectFilesQuery.isFetched;
 
   const filteredProjectFiles = useMemo(() => {
     if (!activeMention) return [];
     const needle = activeMention.query.toLowerCase();
-    return projectFiles
+    return availableProjectFiles
       .filter((f) => needle.length === 0 || f.toLowerCase().includes(needle))
       .slice(0, 12);
-  }, [activeMention, projectFiles]);
+  }, [activeMention, availableProjectFiles]);
 
   const showMentionPicker = Boolean(
-    activeMention && currentProjectScope && (filteredProjectFiles.length > 0 || projectFilesIsFetched),
+    activeMention && currentProjectScope && (filteredProjectFiles.length > 0 || projectFilesReady),
   );
 
   const composerBehavior = resolveBusyComposerBehavior({

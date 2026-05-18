@@ -6,7 +6,8 @@ import { withManagedPath } from "@/server/agent-runtime/tool-env";
 import { SUPPORTED_WORKER_TYPES, type SupportedWorkerType, normalizeWorkerType } from "./worker-types";
 
 type EnvLike = Record<string, string | undefined>;
-type CommandRunner = typeof execFileSync;
+export type WorkerCommandRunner = typeof execFileSync;
+export type WorkerCommandResolver = (command: string, env: EnvLike) => string | null;
 
 const WORKER_BINARY_COMMANDS: Record<SupportedWorkerType, string> = {
   codex: "codex-acp",
@@ -38,15 +39,15 @@ type WorkerAuthenticationDetectionOptions = {
   env?: EnvLike;
   homeDir?: string;
   fileExists?: (filePath: string) => boolean;
-  commandRunner?: CommandRunner;
+  commandRunner?: WorkerCommandRunner;
   platform?: NodeJS.Platform;
 };
 
-function claudeKeychainCredentialsExist(commandRunner: CommandRunner, env: EnvLike) {
+function claudeKeychainCredentialsExist(commandRunner: WorkerCommandRunner, env: EnvLike) {
   try {
     commandRunner("security", ["find-generic-password", "-s", "Claude Code-credentials"], {
       encoding: "utf8",
-      env: withManagedPath(env) as NodeJS.ProcessEnv,
+      env: withManagedPath(env, undefined, { loginShellPathMode: "cached" }) as NodeJS.ProcessEnv,
       timeout: 1_500,
       maxBuffer: 64 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
@@ -59,13 +60,18 @@ function claudeKeychainCredentialsExist(commandRunner: CommandRunner, env: EnvLi
 
 type WorkerDetectionOptions = {
   env?: EnvLike;
+  commandResolver?: WorkerCommandResolver;
 };
 
-function resolveCommandPath(command: string, env: EnvLike = process.env) {
+function resolveCommandPath(command: string, env: EnvLike = process.env, commandResolver?: WorkerCommandResolver) {
+  if (commandResolver) {
+    return commandResolver(command, env);
+  }
+
   try {
     return String(execFileSync("which", [command], {
       encoding: "utf8",
-      env: withManagedPath(env) as NodeJS.ProcessEnv,
+      env: withManagedPath(env, undefined, { loginShellPathMode: "cached" }) as NodeJS.ProcessEnv,
       timeout: 1_500,
       maxBuffer: 64 * 1024,
     })).trim() || null;
@@ -74,8 +80,8 @@ function resolveCommandPath(command: string, env: EnvLike = process.env) {
   }
 }
 
-function workerBinaryAvailable(type: SupportedWorkerType, env: EnvLike = process.env) {
-  return resolveCommandPath(WORKER_BINARY_COMMANDS[type], env) !== null;
+function workerBinaryAvailable(type: SupportedWorkerType, env: EnvLike = process.env, commandResolver?: WorkerCommandResolver) {
+  return resolveCommandPath(WORKER_BINARY_COMMANDS[type], env, commandResolver) !== null;
 }
 
 function workerHasApiKey(type: SupportedWorkerType) {
@@ -111,11 +117,11 @@ function anyFileExists(paths: string[], fileExists: (filePath: string) => boolea
   });
 }
 
-function runAuthStatusCommand(commandRunner: CommandRunner, command: string, args: string[], env: EnvLike) {
+function runAuthStatusCommand(commandRunner: WorkerCommandRunner, command: string, args: string[], env: EnvLike) {
   try {
     return String(commandRunner(command, args, {
       encoding: "utf8",
-      env: withManagedPath(env) as NodeJS.ProcessEnv,
+      env: withManagedPath(env, undefined, { loginShellPathMode: "cached" }) as NodeJS.ProcessEnv,
       timeout: 1_500,
       maxBuffer: 64 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
@@ -205,11 +211,11 @@ export function parseWorkerTokenQuotaOutput(output: string | null | undefined, s
   };
 }
 
-function runQuotaCommand(commandRunner: CommandRunner, command: string, args: string[], env: EnvLike) {
+function runQuotaCommand(commandRunner: WorkerCommandRunner, command: string, args: string[], env: EnvLike) {
   try {
     return String(commandRunner(command, args, {
       encoding: "utf8",
-      env: withManagedPath(env) as NodeJS.ProcessEnv,
+      env: withManagedPath(env, undefined, { loginShellPathMode: "cached" }) as NodeJS.ProcessEnv,
       timeout: 2_500,
       maxBuffer: 256 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
@@ -219,7 +225,7 @@ function runQuotaCommand(commandRunner: CommandRunner, command: string, args: st
   }
 }
 
-export function getWorkerTokenQuotaInfo(type: string, options: { commandRunner?: CommandRunner; env?: EnvLike } = {}): WorkerTokenQuotaInfo {
+export function getWorkerTokenQuotaInfo(type: string, options: { commandRunner?: WorkerCommandRunner; env?: EnvLike } = {}): WorkerTokenQuotaInfo {
   const normalized = normalizeWorkerType(type);
   const supportedType = SUPPORTED_WORKER_TYPES.includes(normalized as SupportedWorkerType)
     ? normalized as SupportedWorkerType
@@ -475,7 +481,7 @@ export function isSpawnableWorkerType(type: string, options: SpawnabilityOptions
   const supportedType = normalized as SupportedWorkerType;
   const env = options.env ?? process.env;
 
-  if (!workerBinaryAvailable(supportedType, env)) {
+  if (!workerBinaryAvailable(supportedType, env, options.commandResolver)) {
     const reason =
       supportedType === "codex"
         ? "codex ACP adapter is not installed."
@@ -515,7 +521,7 @@ export function getWorkerInstallationInfo(type: string, options: WorkerDetection
     ? normalized as SupportedWorkerType
     : null;
   const command = supportedType ? WORKER_BINARY_COMMANDS[supportedType] : normalized;
-  const path = resolveCommandPath(command, options.env ?? process.env);
+  const path = resolveCommandPath(command, options.env ?? process.env, options.commandResolver);
 
   return {
     command,

@@ -3,8 +3,10 @@ import { eq } from "drizzle-orm";
 import { BRIDGE_URL } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
+import { resolveCommand, withManagedPath } from "@/server/agent-runtime/tool-env";
 import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { getWorkerAuthenticationInfo, getWorkerInstallationInfo, getWorkerTokenQuotaInfo, isSpawnableWorkerType } from "@/server/supervisor/worker-availability";
+import type { WorkerCommandResolver, WorkerCommandRunner } from "@/server/supervisor/worker-availability";
 import { SUPPORTED_WORKER_TYPES, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
 import { buildAppError, errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
@@ -26,6 +28,15 @@ interface RuntimeDoctorSnapshot {
 
 const WORKER_MODEL_CATALOG_CACHE_KEY = "__WORKER_MODEL_CATALOG_CACHE";
 const RUNTIME_DOCTOR_TIMEOUT_MS = 2_000;
+
+const frontendCatalogCommandRunner: WorkerCommandRunner = () => {
+  throw new Error("Frontend catalog requests skip blocking CLI probes.");
+};
+
+const frontendCatalogCommandResolver: WorkerCommandResolver = (command, env) => {
+  const managedEnv = withManagedPath(env, undefined, { loginShellPathMode: "cached" });
+  return resolveCommand(command, { env: managedEnv });
+};
 
 const workerModelCatalogManager = new WorkerModelCatalogManager({
   loadCachedCatalog: async () => {
@@ -154,17 +165,27 @@ export async function GET(req: NextRequest) {
       workerModels: workerModelSnapshot.catalog,
       workerModelsRefreshing: workerModelSnapshot.refreshing,
       workers: SUPPORTED_WORKER_TYPES.map((type) => {
-        const installation = getWorkerInstallationInfo(type, { env: workerDetectionEnv });
-        const authentication = getWorkerAuthenticationInfo(type, { env: workerDetectionEnv });
+        const detectionOptions = {
+          env: workerDetectionEnv,
+          commandResolver: frontendCatalogCommandResolver,
+        };
+        const installation = getWorkerInstallationInfo(type, detectionOptions);
+        const authentication = getWorkerAuthenticationInfo(type, {
+          env: workerDetectionEnv,
+          commandRunner: frontendCatalogCommandRunner,
+        });
         return {
           type,
           label: WORKER_TYPE_LABELS[type],
           installation,
           authentication,
-          tokenQuota: getWorkerTokenQuotaInfo(type, { env: workerDetectionEnv }),
+          tokenQuota: getWorkerTokenQuotaInfo(type, {
+            env: workerDetectionEnv,
+            commandRunner: frontendCatalogCommandRunner,
+          }),
           availability: (() => {
             const doctorAvailability = byType.get(type);
-            const localAvailability = isSpawnableWorkerType(type, { env: workerDetectionEnv });
+            const localAvailability = isSpawnableWorkerType(type, detectionOptions);
 
             if (localAvailability.ok) {
               if (authentication.status === "not_authenticated") {

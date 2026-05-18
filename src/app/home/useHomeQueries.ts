@@ -12,13 +12,28 @@ import type { AuthSessionResponse, ProjectFilesResponse, SettingsResponse, Worke
 export interface UseHomeQueriesParams {
   currentProjectScope: string | null;
   bootstrapId?: string | null;
+  loadProjectFiles?: boolean;
+  loadWorkerCatalog?: boolean;
   initialQueries?: {
     session?: AuthSessionResponse | null;
     settings?: SettingsResponse | null;
   };
 }
 
-export function useHomeQueries({ currentProjectScope, bootstrapId, initialQueries }: UseHomeQueriesParams) {
+export function shouldEnableWorkerCatalogQuery(args: {
+  appUnlocked: boolean;
+  loadWorkerCatalog: boolean;
+}) {
+  return args.appUnlocked && args.loadWorkerCatalog;
+}
+
+export function useHomeQueries({
+  currentProjectScope,
+  bootstrapId,
+  loadProjectFiles = false,
+  loadWorkerCatalog = false,
+  initialQueries,
+}: UseHomeQueriesParams) {
   const { setApiKeys, setSettingsDiagnostics } = homeUiSetters;
   const queryClient = useQueryClient();
   const primedBootstrapIdRef = useRef<string | null>(null);
@@ -74,8 +89,9 @@ export function useHomeQueries({ currentProjectScope, bootstrapId, initialQuerie
 
   const workerCatalogQuery = useQuery<WorkerCatalogResponse & { diagnostics?: AppErrorDescriptor[] }>({
     queryKey: ["worker-catalog"],
-    staleTime: 60_000,
-    enabled: appUnlocked,
+    staleTime: 5 * 60_000,
+    enabled: shouldEnableWorkerCatalogQuery({ appUnlocked, loadWorkerCatalog }),
+    refetchOnWindowFocus: false,
     refetchInterval: (query) => query.state.data?.workerModelsRefreshing ? 2_000 : false,
     queryFn: async () => requestJson<WorkerCatalogResponse & { diagnostics?: AppErrorDescriptor[] }>(
       "/api/agents/catalog",
@@ -111,7 +127,7 @@ export function useHomeQueries({ currentProjectScope, bootstrapId, initialQuerie
         action: "Load project files",
       },
     ),
-    enabled: Boolean(currentProjectScope),
+    enabled: Boolean(loadProjectFiles && currentProjectScope),
     staleTime: 60_000,
   });
 

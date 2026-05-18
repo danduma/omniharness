@@ -2,6 +2,7 @@ import type { AppErrorDescriptor } from "@/lib/app-errors";
 import type { ConversationModeOption } from "@/components/ConversationModePicker";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { ChatAttachment } from "@/lib/chat-attachments";
+import type { WorkerEntry } from "@/server/workers/entries-types";
 import type { BusyMessageAction } from "./busy-message-behavior";
 
 export type { ConversationModeOption };
@@ -293,6 +294,8 @@ export type EventStreamState = {
   reviewFindings?: PlanningReviewFindingRecord[];
   frontendErrors?: AppErrorDescriptor[];
   snapshotRunId?: string | null;
+  snapshotChecksum?: string;
+  workerEntries?: Record<string, WorkerEntry[]>;
 };
 export type SettingsTab = "general" | "models" | "credentials" | "agents" | "runtime" | "memory";
 

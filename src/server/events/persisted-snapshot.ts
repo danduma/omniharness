@@ -17,8 +17,10 @@ import { serializeMessageRecord } from "@/server/conversations/message-records";
 import { isTerminalRunStatus } from "@/lib/run-status";
 import type { EventStreamState } from "@/app/home/types";
 import { normalizeChatAttachments } from "@/lib/chat-attachments";
+import { readWorkerEntriesSince } from "@/server/workers/output-store";
 import type { BusyMessageAction } from "@/app/home/busy-message-behavior";
 import type { ConversationModeOption } from "@/components/ConversationModePicker";
+import { withEventPayloadChecksum } from "@/server/events/payload-checksum";
 
 const EXECUTION_EVENT_LIMIT = 100;
 const WORKER_INITIAL_PROMPT_PREVIEW_LIMIT = 1_000;
@@ -86,6 +88,20 @@ type CompactWorkerRecord = Pick<
   typeof workers.$inferSelect,
   "id" | "runId" | "type" | "status" | "workerNumber" | "title" | "initialPrompt" | "createdAt" | "updatedAt"
 >;
+
+const WORKER_SNAPSHOT_COLUMNS = {
+  id: workers.id,
+  runId: workers.runId,
+  type: workers.type,
+  status: workers.status,
+  workerNumber: workers.workerNumber,
+  title: workers.title,
+  initialPrompt: workers.initialPrompt,
+  activeWorkStartedAt: workers.activeWorkStartedAt,
+  activeWorkDurationMs: workers.activeWorkDurationMs,
+  createdAt: workers.createdAt,
+  updatedAt: workers.updatedAt,
+};
 
 function compactWorkerRecord(worker: CompactWorkerRecord) {
   return {
@@ -236,19 +252,9 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
       ? db.select().from(messages).where(inArray(messages.runId, transcriptRunIds)).orderBy(asc(messages.createdAt))
       : [],
     db.select().from(accounts),
-    db.select({
-      id: workers.id,
-      runId: workers.runId,
-      type: workers.type,
-      status: workers.status,
-      workerNumber: workers.workerNumber,
-      title: workers.title,
-      initialPrompt: workers.initialPrompt,
-      activeWorkStartedAt: workers.activeWorkStartedAt,
-      activeWorkDurationMs: workers.activeWorkDurationMs,
-      createdAt: workers.createdAt,
-      updatedAt: workers.updatedAt,
-    }).from(workers),
+    selectedRunId
+      ? db.select(WORKER_SNAPSHOT_COLUMNS).from(workers).where(eq(workers.runId, selectedRunId))
+      : db.select(WORKER_SNAPSHOT_COLUMNS).from(workers),
     selectedPlanId
       ? db.select().from(planItems).where(eq(planItems.planId, selectedPlanId))
       : [],
@@ -276,8 +282,20 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
         .limit(20)
       : [],
   ]);
+  const selectedWorkerEntries = selectedRunId
+    ? Object.fromEntries(
+      await Promise.all(
+        allWorkers
+          .filter((worker) => worker.runId === selectedRunId)
+          .map(async (worker) => {
+            const { entries } = await readWorkerEntriesSince(selectedRunId, worker.id, 0);
+            return [worker.id, entries] as const;
+          }),
+      ),
+    )
+    : {};
 
-  return {
+  return withEventPayloadChecksum({
     messages: msgs.map(serializeMessageRecord).filter((message): message is NonNullable<typeof message> => Boolean(message)),
     plans: allPlans,
     runs: allRuns.map(serializeRunRecord),
@@ -297,5 +315,6 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
       : null,
     frontendErrors: [],
     snapshotRunId: selectedRunId ?? null,
-  };
+    workerEntries: selectedWorkerEntries,
+  });
 }

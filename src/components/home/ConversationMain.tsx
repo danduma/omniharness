@@ -30,8 +30,10 @@ import type { ProjectFileReference } from "@/lib/project-file-links";
 import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "@/app/home/GitWorkspaceManager";
 import { preflightConfirmationActionsManager } from "@/app/home/PreflightConfirmationActionsManager";
 import { useWorkerStream } from "@/app/home/WorkerEntriesManager";
+import { shouldShowDirectWorkerStreamInitialLoading } from "@/app/home/direct-worker-stream-loading";
 import { type PlanningReviewAgentSelection } from "@/server/planning/review-preferences";
 import { WORKER_TYPE_LABELS, type SupportedWorkerType } from "@/server/supervisor/worker-types";
+import type { WorkerEntry } from "@/server/workers/entries-types";
 import { ErrorNotice } from "./ErrorNotice";
 import { RecoveryIncidentInspector } from "./RecoveryIncidentInspector";
 import { RunRecoveryNotice } from "./RunRecoveryNotice";
@@ -394,6 +396,7 @@ interface ConversationMainProps {
   toggleDirectMessageExpansion: (messageId: string) => void;
   primaryConversationAgent: AgentSnapshot | null;
   primaryConversationWorkerId: string | null;
+  initialWorkerEntries?: Record<string, WorkerEntry[]> | undefined;
   unifiedWorkerStreamEnabled: boolean;
   isHydratingConversations: boolean;
   isSelectedConversationLoaded: boolean;
@@ -531,6 +534,7 @@ export function ConversationMain({
   toggleDirectMessageExpansion,
   primaryConversationAgent,
   primaryConversationWorkerId,
+  initialWorkerEntries = {},
   unifiedWorkerStreamEnabled,
   isHydratingConversations,
   isSelectedConversationLoaded,
@@ -580,7 +584,13 @@ export function ConversationMain({
   // the fetch.
   const directWorkerStream = useWorkerStream(
     unifiedWorkerStreamEnabled ? primaryConversationWorkerId : null,
+    primaryConversationWorkerId ? initialWorkerEntries[primaryConversationWorkerId] ?? [] : [],
   );
+  const isDirectWorkerStreamInitialLoad = shouldShowDirectWorkerStreamInitialLoading({
+    unifiedWorkerStreamEnabled,
+    primaryConversationWorkerId,
+    streamState: directWorkerStream.state,
+  });
   const forkWorkspaceSelector = useMemo(() => {
     return (state: ReturnType<typeof gitWorkspaceManager.getSnapshot>) => {
       const dialog = state.activeDialog?.kind === "fork_message_worktree" || state.activeDialog?.kind === "fork_session_worktree"
@@ -706,11 +716,7 @@ export function ConversationMain({
     {selectedRunId ? (
       isDirectConversation ? (
         <div className="mx-auto flex h-full w-full max-w-6xl flex-col gap-4 p-4 pb-24 sm:p-6 sm:pb-20">
-          {!isSelectedConversationLoaded || (
-            unifiedWorkerStreamEnabled
-              && primaryConversationWorkerId
-              && !directWorkerStream.isLoaded
-          ) ? (
+          {!isSelectedConversationLoaded ? (
             <div
               className="flex flex-col items-center justify-center gap-3 pt-24 text-sm text-muted-foreground sm:pt-32"
               role="status"
@@ -743,7 +749,7 @@ export function ConversationMain({
                 textSizeScope="conversation"
                 className="min-h-[32rem]"
                 showPendingAssistantIndicator={showDirectControlWorkingIndicator}
-                isLoading={isHydratingConversations}
+                isLoading={isHydratingConversations || isDirectWorkerStreamInitialLoad}
                 projectRoot={projectRoot}
                 onOpenProjectFile={onOpenProjectFile}
               />

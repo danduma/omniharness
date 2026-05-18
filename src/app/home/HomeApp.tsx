@@ -234,6 +234,13 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   useEffect(() => {
     stateManager.hydrateFromCaches();
   }, [stateManager]);
+  useEffect(() => {
+    if (selectedRunId) {
+      stateManager.hydrateFromCacheScope(selectedRunId);
+    } else {
+      stateManager.setSnapshotCacheScope(null);
+    }
+  }, [selectedRunId, stateManager]);
   const state = useSyncExternalStore(
     useCallback((listener) => stateManager.subscribe(listener), [stateManager]),
     useCallback(() => stateManager.getSnapshot(), [stateManager]),
@@ -245,6 +252,10 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
       stateManager.update(action);
     },
     [selectedRunId, stateManager],
+  );
+  const getSnapshotChecksum = useCallback(
+    () => stateManager.getSnapshot().snapshotChecksum ?? null,
+    [stateManager],
   );
 
   // Refs
@@ -319,6 +330,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     runs: (state.runs || []) as import("./types").RunRecord[],
     explicitProjects,
   });
+  const shouldLoadWorkerCatalog = showOnboarding || (showSettings && activeSettingsTab === "agents");
 
   // Queries
   const {
@@ -333,6 +345,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   } = useHomeQueries({
     currentProjectScope,
     bootstrapId: bootstrap?.id,
+    loadWorkerCatalog: shouldLoadWorkerCatalog,
     initialQueries: bootstrap?.initialQueries,
   });
 
@@ -532,6 +545,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     themeMode,
     setThemeMode,
     filterEventStreamState,
+    getSnapshotChecksum,
   });
 
   const isHydratingConversations = appUnlocked && !hasReceivedInitialEventStreamPayload;
@@ -916,6 +930,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           toggleDirectMessageExpansion={actions.toggleDirectMessageExpansion}
           primaryConversationAgent={vm.primaryConversationAgent}
           primaryConversationWorkerId={vm.primaryConversationAgent?.name ?? null}
+          initialWorkerEntries={state.workerEntries}
           unifiedWorkerStreamEnabled={bootstrap?.features?.unifiedWorkerStream ?? false}
           isHydratingConversations={isHydratingConversations}
           isSelectedConversationLoaded={isSelectedConversationLoaded}

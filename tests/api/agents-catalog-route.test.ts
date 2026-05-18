@@ -128,6 +128,22 @@ describe("GET /api/agents/catalog", () => {
     expect(payload.workerModels.claude).toEqual(expect.arrayContaining([
       { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
     ]));
+    expect(mockGetWorkerInstallationInfo).toHaveBeenCalledWith(
+      "codex",
+      expect.objectContaining({ commandResolver: expect.any(Function) }),
+    );
+    expect(mockIsSpawnableWorkerType).toHaveBeenCalledWith(
+      "codex",
+      expect.objectContaining({ commandResolver: expect.any(Function) }),
+    );
+    expect(mockGetWorkerAuthenticationInfo).toHaveBeenCalledWith(
+      "codex",
+      expect.objectContaining({ commandRunner: expect.any(Function) }),
+    );
+    expect(mockGetWorkerTokenQuotaInfo).toHaveBeenCalledWith(
+      "codex",
+      expect.objectContaining({ commandRunner: expect.any(Function) }),
+    );
   });
 
   it("uses runtime doctor availability when the web process cannot locally resolve worker binaries", async () => {

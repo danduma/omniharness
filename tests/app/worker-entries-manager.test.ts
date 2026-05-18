@@ -37,6 +37,21 @@ describe("WorkerEntriesManager", () => {
     expect(manager.getState("w1")).not.toBe(manager.getState("w2"));
   });
 
+  it("hydrates a worker stream from bootstrap entries without an initial request", async () => {
+    const { manager, requestJson } = buildManager([
+      { entries: [entry(2)], latestSeq: 2 },
+    ]);
+    const state = manager.getState("w1", [entry(1), entry(2)]);
+
+    expect(state.entries.map((e) => e.seq)).toEqual([1, 2]);
+    expect(state.status).toBe("loaded");
+    expect(state.latestContiguousSeq).toBe(2);
+    expect(manager.isLoaded("w1")).toBe(true);
+
+    await manager.ensureLoaded("w1");
+    expect(requestJson).not.toHaveBeenCalled();
+  });
+
   it("ensureLoaded fills the entries prefix and marks loaded", async () => {
     const { manager } = buildManager([
       { entries: [entry(1), entry(2), entry(3)], latestSeq: 3 },
