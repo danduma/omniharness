@@ -7,6 +7,7 @@ import type { AgentSnapshot, ComposerWorkerOption, MessageRecord, RunRecord, Wor
 import { parseWorkerType, resolveComposerEffortLabel, resolveComposerModelValue } from "./utils";
 
 const CONVERSATION_BOTTOM_THRESHOLD_PX = 8;
+const CONVERSATION_MEANINGFUL_OVERFLOW_PX = 112;
 const SCROLL_AREA_VIEWPORT_SELECTOR = '[data-slot="scroll-area-viewport"], [data-radix-scroll-area-viewport]';
 
 export function shouldConversationFollowLatest(
@@ -18,7 +19,14 @@ export function shouldConversationFollowLatest(
 export function shouldConversationShowOutputBelow(
   metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
 ) {
-  return !shouldConversationFollowLatest(metrics);
+  return metrics.scrollHeight - metrics.clientHeight > CONVERSATION_MEANINGFUL_OVERFLOW_PX
+    && !shouldConversationFollowLatest(metrics);
+}
+
+export function hasMeaningfulConversationOverflow(
+  metrics: Pick<HTMLDivElement, "clientHeight" | "scrollHeight">,
+) {
+  return metrics.scrollHeight - metrics.clientHeight > CONVERSATION_MEANINGFUL_OVERFLOW_PX;
 }
 
 export function shouldConversationKeepFollowingLatest(
@@ -162,12 +170,16 @@ export function useRunSelectionEffects({
       return;
     }
 
-    viewport.scrollTo({
-      top: viewport.scrollHeight,
-      behavior: runChanged ? "auto" : "smooth",
-    });
+    if (hasMeaningfulConversationOverflow(viewport)) {
+      viewport.scrollTo({
+        top: viewport.scrollHeight,
+        behavior: runChanged ? "auto" : "smooth",
+      });
+      previousScrollTopRef.current = viewport.scrollHeight;
+    } else {
+      previousScrollTopRef.current = viewport.scrollTop;
+    }
     shouldFollowLatestRef.current = true;
-    previousScrollTopRef.current = viewport.scrollHeight;
   }, [scrollRef, outputVersion, selectedRunId]);
 
   useEffect(() => {

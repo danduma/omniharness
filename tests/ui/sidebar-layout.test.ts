@@ -3,6 +3,7 @@ import path from "path";
 import { test, expect } from "vitest";
 import {
   getConversationOutputVersion,
+  hasMeaningfulConversationOverflow,
   shouldConversationFollowLatest,
   shouldConversationKeepFollowingLatest,
   shouldConversationShowOutputBelow,
@@ -343,7 +344,9 @@ test("worker detail renders from streamed agent state instead of per-worker poll
 
 test("conversation output only follows live worker updates when already near the bottom", () => {
   expect(pageSource).toContain("const CONVERSATION_BOTTOM_THRESHOLD_PX = 8");
+  expect(pageSource).toContain("const CONVERSATION_MEANINGFUL_OVERFLOW_PX = 112");
   expect(pageSource).toContain('behavior: runChanged ? "auto" : "smooth"');
+  expect(pageSource).toContain("if (hasMeaningfulConversationOverflow(viewport)) {");
   expect(pageSource).toContain("const outputVersion = getConversationOutputVersion(selectedRunId, state.messages, state.agents);");
   expect(pageSource).toContain("if (!runChanged && !outputChanged) {");
   expect(pageSource).toContain("}, [scrollRef, outputVersion, selectedRunId]);");
@@ -389,6 +392,17 @@ test("conversation output only follows live worker updates when already near the
     clientHeight: 300,
     scrollHeight: 1000,
   })).toBe(true);
+
+  expect(hasMeaningfulConversationOverflow({
+    clientHeight: 900,
+    scrollHeight: 990,
+  })).toBe(false);
+
+  expect(shouldConversationShowOutputBelow({
+    scrollTop: 0,
+    clientHeight: 900,
+    scrollHeight: 990,
+  })).toBe(false);
 
   expect(
     shouldConversationShowOutputBelow({
