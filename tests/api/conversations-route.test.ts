@@ -528,6 +528,7 @@ describe("POST /api/conversations", () => {
     expect(createdRun?.projectPath).toBe("/workspace/app");
     expect(createdWorkers).toHaveLength(1);
     expect(createdWorkers[0]?.cwd).toBe("/workspace/app");
+    await waitFor(() => mockAskAgent.mock.calls.length, (count) => count > 0);
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
       type: "codex",
       cwd: "/workspace/app",

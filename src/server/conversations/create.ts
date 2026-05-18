@@ -515,7 +515,6 @@ export async function createConversation(args: {
       const workerType = preferredWorkerType || allowedWorkerTypes[0] || "codex";
       const yoloModeEnabled = await readWorkerYoloModeEnabled();
       const workerMode = resolveWorkerLaunchMode(undefined, yoloModeEnabled);
-      const { env: envParams } = await readRuntimeEnvFromSettings();
 
       await db.insert(workers).values({
         id: workerId,
@@ -583,6 +582,7 @@ export async function createConversation(args: {
         void (async () => {
           let agent;
           try {
+            const { env: envParams } = await readRuntimeEnvFromSettings();
             agent = await spawnAgent({
               type: workerType,
               cwd,
