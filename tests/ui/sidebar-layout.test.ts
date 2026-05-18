@@ -125,7 +125,13 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(workersSidebarSource).toContain('supervisorInterventions={supervisorInterventions}');
   expect(workersSidebarSource).toContain("buildWorkerTerminalUserMessages");
   expect(workerCardSource).toContain("<Terminal");
-  expect(workerCardSource).toContain("hasMoreHistory={hasOmittedWorkerHistory(agent)}");
+  expect(workerCardSource).toContain('import { useWorkerStream } from "@/app/home/WorkerEntriesManager";');
+  expect(workerCardSource).toContain("const workerStream = useWorkerStream(workerId);");
+  expect(workerCardSource).toContain("const unifiedTerminalEntries = useMemo");
+  expect(workerCardSource).toContain("const processEntries = useMemo");
+  expect(workerCardSource).toContain("entries={unifiedTerminalEntries}");
+  expect(workerCardSource).toContain("hasMoreHistory={hasMoreHistory}");
+  expect(workerCardSource).toContain("hasOmittedWorkerStreamHistory(unifiedTerminalEntries)");
   expect(workerCardSource).toContain('entry.id === "output-archive-marker"');
   expect(workerCardSource).toContain("onRequestMoreHistory={onLoadWorkerHistory}");
   expect(workerCardSource).toContain("deriveVisibleWorkerTerminalProcesses");

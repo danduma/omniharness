@@ -129,6 +129,11 @@ export function ConversationComposer({
       : composerBehavior.submitAction === "send_steer"
         ? sendButtonAriaLabel
         : t(`${composerBehavior.ariaLabelKey}Title`);
+  const selectedHarnessLabel = shouldLockDirectWorker
+    ? lockedDirectWorkerLabel
+    : composerWorkerOptions.find((option) => option.value === selectedCliAgent)?.label ?? selectedCliAgent;
+  const selectedModelLabel = activeWorkerModelOptions.find((option) => option.value === selectedModel)?.label ?? selectedModel;
+  const mobileSettingsSummary = `${selectedHarnessLabel} · ${selectedModelLabel}`;
   const composerPlaceholder = selectedRunId
     ? selectedConversationMode === "planning"
       ? t("conversation.composer.placeholder.planning")
@@ -313,8 +318,8 @@ export function ConversationComposer({
           disabled={isComposerSubmitting}
           rows={1}
           className={cn(
-            "w-full resize-none bg-transparent text-[15px] leading-6 outline-none",
-            hasAttachments ? "min-h-[112px]" : "min-h-[72px]",
+            "omni-composer-input w-full resize-none bg-transparent text-[15px] outline-none",
+            hasAttachments ? "min-h-[152px] sm:min-h-[112px]" : "min-h-[112px] sm:min-h-[72px]",
             themeMode === "night"
               ? "text-foreground placeholder:text-muted-foreground/80"
               : "text-[#454545] placeholder:text-[#c4c4c2] dark:text-foreground dark:placeholder:text-muted-foreground/80",
@@ -446,17 +451,24 @@ export function ConversationComposer({
           <Button
             type="button"
             variant="ghost"
-            size="icon"
             onClick={() => setMobileSettingsOpen(true)}
             className={cn(
-              "ml-auto h-8 w-8 shrink-0 rounded-full sm:hidden",
+              "ml-auto flex h-8 min-w-0 max-w-[min(13rem,48vw)] shrink items-center gap-1.5 rounded-full px-2 text-xs font-medium sm:hidden",
               themeMode === "night"
                 ? "text-muted-foreground hover:bg-background/45 hover:text-foreground"
                 : "text-[#959595] hover:bg-black/[0.04] hover:text-[#666666] dark:text-muted-foreground dark:hover:bg-background/45 dark:hover:text-foreground",
             )}
-            aria-label="Composer settings"
+            aria-label={t("conversation.composer.settings.title")}
+            title={mobileSettingsSummary}
           >
             <SlidersHorizontal className="h-[18px] w-[18px]" />
+            <span className="min-w-0 truncate">
+              {selectedHarnessLabel}
+            </span>
+            <span className="shrink-0 text-muted-foreground/55" aria-hidden="true">·</span>
+            <span className="min-w-0 truncate">
+              {selectedModelLabel}
+            </span>
           </Button>
 
           <Button

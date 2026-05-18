@@ -5,11 +5,14 @@ import { AlertTriangle, Bot, ChevronDown, Clock, Cpu, Hash, Maximize2, Minimize2
 import { Terminal, TerminalTextSizeControl, type AgentTerminalPayload, type TerminalUserMessage } from "@/components/Terminal";
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useWorkerStream } from "@/app/home/WorkerEntriesManager";
 import { workerCardManager } from "@/components/component-state-managers";
 import { sideWindowManager } from "@/app/home/SideWindowManager";
+import type { AgentOutputEntry } from "@/lib/agent-output";
 import { isWorkerActiveStatus } from "@/lib/conversation-workers";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import type { WorkerEntry } from "@/server/workers/entries-types";
 import {
   deriveVisibleWorkerTerminalProcesses,
   type WorkerTerminalProcess,
@@ -157,6 +160,31 @@ function hasOmittedWorkerHistory(agent: WorkerCardAgent) {
     entry.id === "output-archive-marker"
     || entry.id.startsWith("output-entries-omitted:")
   )));
+}
+
+function hasOmittedWorkerStreamHistory(entries: WorkerEntry[] | undefined) {
+  return Boolean(entries?.some((entry) => (
+    entry.id === "output-archive-marker"
+    || entry.id.startsWith("output-entries-omitted:")
+  )));
+}
+
+function isWorkerCardBridgeEntry(entry: WorkerEntry): entry is WorkerEntry & AgentOutputEntry {
+  return (
+    entry.type === "message"
+    || entry.type === "thought"
+    || entry.type === "tool_call"
+    || entry.type === "tool_call_update"
+    || entry.type === "permission"
+  );
+}
+
+function isWorkerCardTerminalEntry(entry: WorkerEntry) {
+  return (
+    isWorkerCardBridgeEntry(entry)
+    || entry.type === "user_input"
+    || entry.type === "supervisor_input"
+  );
 }
 
 function WorkerExpandedFooter({
@@ -392,16 +420,28 @@ export function WorkerCard({
   stoppingTerminalProcessId,
 }: WorkerCardProps) {
   const { openByWorkerId } = useManagerSnapshot(workerCardManager);
+  const workerStream = useWorkerStream(workerId);
   const open = isFocused || (openByWorkerId[workerId] ?? defaultOpen);
   const promptPreviewText = promptPreview?.trim() ?? "";
   const stateLabel = formatWorkerStateLabel(agent.state);
   const showPromptPreview = promptPreviewText.length > 0;
   const showStopWorker = Boolean(onStopWorker) && isWorkerActiveStatus(agent.state);
   const shouldFillAvailable = fillAvailable && open;
-  const terminalProcesses = useMemo(() => deriveVisibleWorkerTerminalProcesses(agent.outputEntries, agent.state), [agent.outputEntries, agent.state]);
+  const unifiedTerminalEntries = useMemo(() => (
+    workerStream.entries.some(isWorkerCardTerminalEntry) ? workerStream.entries : undefined
+  ), [workerStream.entries]);
+  const processEntries = useMemo(() => (
+    unifiedTerminalEntries
+      ? unifiedTerminalEntries.filter(isWorkerCardBridgeEntry)
+      : agent.outputEntries
+  ), [agent.outputEntries, unifiedTerminalEntries]);
+  const terminalProcesses = useMemo(() => deriveVisibleWorkerTerminalProcesses(processEntries, agent.state), [agent.state, processEntries]);
   const hasActiveTerminalProcesses = terminalProcesses.some((process) => process.active);
   const showHeaderStopWorker = showStopWorker && !hasActiveTerminalProcesses;
   const showWorkerError = shouldShowWorkerError(agent);
+  const hasMoreHistory = unifiedTerminalEntries
+    ? hasOmittedWorkerStreamHistory(unifiedTerminalEntries)
+    : hasOmittedWorkerHistory(agent);
   const showFocusControl = canFocus && Boolean(onToggleFocus);
 
   const workerNumberLabel = useMemo(() => {
@@ -600,9 +640,10 @@ export function WorkerCard({
               <Terminal
                 agent={agent}
                 userMessages={userMessages}
+                entries={unifiedTerminalEntries}
                 projectRoot={projectRoot}
                 onOpenProjectFile={(file) => sideWindowManager.openFile(file)}
-                hasMoreHistory={hasOmittedWorkerHistory(agent)}
+                hasMoreHistory={hasMoreHistory}
                 onRequestMoreHistory={onLoadWorkerHistory}
                 showTextSizeControl={false}
               />

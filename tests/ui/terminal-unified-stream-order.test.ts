@@ -67,3 +67,118 @@ test("unified stream displays the initial user message before lifecycle and thin
   expect(text.indexOf("Convert the crowded mobile bottom bar into a menu")).toBeLessThan(text.indexOf("Agent activity started"));
   expect(text.indexOf("Convert the crowded mobile bottom bar into a menu")).toBeLessThan(text.indexOf("Thinking"));
 });
+
+test("unified stream falls back to direct user messages when stale entries lack user_input", () => {
+  Object.assign(globalThis, { React });
+
+  const entries: WorkerEntry[] = [
+    {
+      id: "worker-spawned",
+      seq: 1,
+      type: "lifecycle",
+      text: "Worker spawned (gemini)",
+      timestamp: "2026-05-17T00:44:20.200Z",
+      authorRole: "system",
+    },
+    {
+      id: "agent-activity",
+      seq: 2,
+      type: "message",
+      text: "Looking for the top bar branch label.",
+      timestamp: "2026-05-17T00:45:03.708Z",
+    },
+  ];
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries,
+    allowUserMessageFallback: true,
+    userMessages: [{
+      id: "opening-message",
+      content: "stop showing the branch in the top bar!!",
+      createdAt: "2026-05-17T00:44:20.000Z",
+      attachments: [],
+    }],
+    showTextSizeControl: false,
+  }));
+  const text = html.replace(/<[^>]+>/g, "");
+
+  expect(text.indexOf("stop showing the branch in the top bar!!")).toBe(0);
+  expect(text.indexOf("stop showing the branch in the top bar!!")).toBeLessThan(text.indexOf("Looking for the top bar branch label."));
+});
+
+test("unified stream waits for entries before showing fallback user messages", () => {
+  Object.assign(globalThis, { React });
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries: [],
+    userMessages: [
+      {
+        id: "first-user-message",
+        content: "first prompt",
+        createdAt: "2026-05-17T00:43:48.044Z",
+        attachments: [],
+      },
+      {
+        id: "second-user-message",
+        content: "second prompt",
+        createdAt: "2026-05-17T01:08:20.000Z",
+        attachments: [],
+      },
+    ],
+    isLoading: true,
+    showTextSizeControl: false,
+  }));
+  const text = html.replace(/<[^>]+>/g, "");
+
+  expect(text).not.toContain("first prompt");
+  expect(text).not.toContain("second prompt");
+  expect(text).toContain("Loading session");
+});
+
+test("unified stream waits until loaded before showing fallback user messages", () => {
+  Object.assign(globalThis, { React });
+
+  const entries: WorkerEntry[] = [
+    {
+      id: "first-user-message",
+      seq: 1,
+      type: "user_input",
+      text: "first prompt",
+      timestamp: "2026-05-17T00:43:48.044Z",
+      authorRole: "user",
+      attachments: [],
+    },
+    {
+      id: "middle-agent-message",
+      seq: 2,
+      type: "message",
+      text: "middle agent work",
+      timestamp: "2026-05-17T00:43:50.000Z",
+    },
+  ];
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries,
+    userMessages: [
+      {
+        id: "first-user-message",
+        content: "first prompt",
+        createdAt: "2026-05-17T00:43:48.044Z",
+        attachments: [],
+      },
+      {
+        id: "second-user-message",
+        content: "second prompt",
+        createdAt: "2026-05-17T01:08:20.000Z",
+        attachments: [],
+      },
+    ],
+    isLoading: true,
+    showTextSizeControl: false,
+  }));
+  const text = html.replace(/<[^>]+>/g, "");
+
+  expect(text).toContain("first prompt");
+  expect(text).toContain("middle agent work");
+  expect(text).not.toContain("second prompt");
+});

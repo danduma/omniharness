@@ -223,10 +223,10 @@ test("user input image attachments keep visible attachment metadata in history",
 test("direct-control terminal user messages render attachment metadata", () => {
   expect(terminalSource).toContain('attachments?: ChatAttachment[]');
   expect(terminalSource).toContain('attachments: message.attachments ?? []');
-  expect(terminalSource).toContain('actions: entry.type === "user_input" ? getUserMessageActions?.({');
-  expect(terminalSource).toContain('id: entry.id,');
-  expect(terminalSource).toContain('content: entry.text,');
-  expect(terminalSource).toContain('createdAt: entry.timestamp,');
+  expect(terminalSource).toContain('actions: entry.entry.type === "user_input" ? getUserMessageActions?.({');
+  expect(terminalSource).toContain('id: entry.entry.id,');
+  expect(terminalSource).toContain('content: entry.entry.text,');
+  expect(terminalSource).toContain('createdAt: entry.entry.timestamp,');
   expect(terminalSource).toContain('activity.attachments.length > 0');
   expect(terminalSource).toContain('attachmentImagePreviewManager.open({ url, name: attachment.name, size: attachment.size })');
   expect(terminalSource).toContain('title={`Preview ${attachment.name}`}');
@@ -244,6 +244,19 @@ test("conversation loading states use i18n resources", () => {
   expect(sidebarSource).not.toContain("Loading conversations...");
   expect(localeSource).toContain('"conversation.loading": "Loading conversation..."');
   expect(localeSource).toContain('"conversation.sidebar.loadingConversations": "Loading conversations..."');
+});
+
+test("direct conversations keep the terminal mounted during worker stream refreshes", () => {
+  const conversationMainSource = readSource("src/components/home/ConversationMain.tsx");
+  const loadingGateStart = conversationMainSource.indexOf("{!isSelectedConversationLoaded ? (");
+  const terminalStart = conversationMainSource.indexOf("<DirectControlTerminalColumn>", loadingGateStart);
+  const loadingGate = conversationMainSource.slice(loadingGateStart, terminalStart);
+
+  expect(loadingGateStart).toBeGreaterThanOrEqual(0);
+  expect(terminalStart).toBeGreaterThan(loadingGateStart);
+  expect(loadingGate).not.toContain("directWorkerStream.isLoaded");
+  expect(conversationMainSource).toContain("shouldShowDirectWorkerStreamInitialLoading({");
+  expect(conversationMainSource).toContain("isLoading={isHydratingConversations || isDirectWorkerStreamInitialLoad}");
 });
 
 test("attachment image previews use a global full-screen dialog", () => {

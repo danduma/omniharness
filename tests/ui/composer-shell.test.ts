@@ -27,6 +27,7 @@ const composerModelPickerSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/composer/ComposerModelPicker.tsx"),
   "utf8"
 );
+const globalsSource = fs.readFileSync(path.resolve(process.cwd(), "src/app/globals.css"), "utf8");
 
 test("composer uses a filled textarea shell with inline cli agent, model, and effort controls", () => {
   expect(pageSource).toContain('selectedCliAgent: "auto"');
@@ -36,8 +37,10 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('rounded-[2rem] border border-[#dededd] bg-[#fdfdfc]');
   expect(pageSource).toContain('focus-within:border-[#d2d2d0] focus-within:bg-[#fdfdfc]');
   expect(pageSource).toContain("px-4 pb-0 pt-3");
-  expect(pageSource).toContain('"w-full resize-none bg-transparent text-[15px] leading-6 outline-none"');
-  expect(pageSource).toContain('hasAttachments ? "min-h-[112px]" : "min-h-[72px]"');
+  expect(pageSource).toContain('"omni-composer-input w-full resize-none bg-transparent text-[15px] outline-none"');
+  expect(pageSource).toContain('hasAttachments ? "min-h-[152px] sm:min-h-[112px]" : "min-h-[112px] sm:min-h-[72px]"');
+  expect(globalsSource).toContain(".omni-composer-input");
+  expect(globalsSource).toContain("line-height: 20px;");
   expect(pageSource).toContain("rows={1}");
   expect(composerSelectSource).toContain("<select");
   expect(composerSelectSource).toContain("<ChevronDownIcon");
@@ -135,7 +138,14 @@ test("composer mention picker anchors above the typing shell on mobile", () => {
 
 test("composer controls stay on one mobile row while keeping readable label widths", () => {
   expect(pageSource).toContain('className="mt-0 flex items-center gap-1 pb-2 sm:gap-2"');
-  expect(pageSource).toContain('className="ml-auto flex min-w-0 items-center justify-end gap-1 sm:gap-2"');
+  expect(pageSource).toContain('className="ml-auto hidden min-w-0 items-center justify-end gap-1 sm:flex sm:gap-2"');
+  expect(pageSource).toContain('"ml-auto flex h-8 min-w-0 max-w-[min(13rem,48vw)] shrink items-center gap-1.5 rounded-full px-2 text-xs font-medium sm:hidden"');
+  expect(pageSource).toContain("const selectedHarnessLabel = shouldLockDirectWorker");
+  expect(pageSource).toContain("const selectedModelLabel = activeWorkerModelOptions.find");
+  expect(pageSource).toContain("const mobileSettingsSummary = `${selectedHarnessLabel} · ${selectedModelLabel}`;");
+  expect(pageSource).toContain("title={mobileSettingsSummary}");
+  expect(pageSource).toContain("{selectedHarnessLabel}");
+  expect(pageSource).toContain("{selectedModelLabel}");
   expect(pageSource).toContain('"h-8 w-8 shrink-0 rounded-full transition-all"');
   expect(pageSource).not.toContain('className="mt-0 flex flex-wrap items-center gap-x-1 gap-y-1 pb-2 sm:flex-nowrap sm:gap-2"');
   expect(pageSource).not.toContain('className="order-3 flex min-w-0 basis-full items-center justify-end gap-1 sm:order-none sm:basis-auto sm:flex-1 sm:gap-2"');

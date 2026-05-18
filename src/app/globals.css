@@ -426,4 +426,14 @@
   .omni-app-text-scale .omni-conversation-text-scale .leading-relaxed {
     line-height: var(--omni-conversation-line-height);
   }
+
+  .omni-composer-input {
+    line-height: 20px;
+  }
+
+  @media (min-width: 640px) {
+    .omni-composer-input {
+      line-height: 24px;
+    }
+  }
 }

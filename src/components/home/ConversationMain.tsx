@@ -738,6 +738,7 @@ export function ConversationMain({
                     ? directWorkerStream.entries
                     : undefined
                 }
+                allowUserMessageFallback={directWorkerStream.isLoaded}
                 getUserMessageActions={getUserMessageActions}
                 editingUserMessageId={editingMessageId}
                 editingUserMessageValue={editingMessageValue}

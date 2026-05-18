@@ -33,6 +33,7 @@ interface TerminalProps {
    * docs/architecture/worker-conversation-stream.md.
    */
   entries?: WorkerEntry[];
+  allowUserMessageFallback?: boolean;
   getUserMessageActions?: (message: TerminalUserMessage) => TerminalUserMessageAction[];
   editingUserMessageId?: string | null;
   editingUserMessageValue?: string;
@@ -225,6 +226,24 @@ function scrollTerminalToBottom(container: HTMLDivElement) {
 function activityTimestampMs(timestamp: string) {
   const value = new Date(timestamp).getTime();
   return Number.isFinite(value) ? value : 0;
+}
+
+function inferFallbackUserMessageSeq(createdAt: string, entries: WorkerEntry[]) {
+  const messageTime = activityTimestampMs(createdAt);
+  if (entries.length === 0) {
+    return undefined;
+  }
+
+  const orderedEntries = entries
+    .filter((entry) => typeof entry.seq === "number")
+    .sort((left, right) => left.seq - right.seq);
+  const nextEntry = orderedEntries.find((entry) => activityTimestampMs(entry.timestamp) >= messageTime);
+  if (nextEntry) {
+    return nextEntry.seq - 0.001;
+  }
+
+  const latestSeq = orderedEntries.at(-1)?.seq;
+  return typeof latestSeq === "number" ? latestSeq + 0.001 : undefined;
 }
 
 function activityKindOrder(activity: TerminalActivityItem) {
@@ -1345,6 +1364,7 @@ export function Terminal({
   agent,
   userMessages = [],
   entries,
+  allowUserMessageFallback = false,
   getUserMessageActions,
   editingUserMessageId = null,
   editingUserMessageValue = "",
@@ -1419,11 +1439,32 @@ export function Terminal({
         ? { ...item, streamSeq: activityStreamSeq(item, seqByActivityId) ?? undefined }
         : item
     ));
+    const canPlaceFallbackUserMessages = usingUnifiedStream && allowUserMessageFallback && (entries?.length ?? 0) > 0;
     const userActivity: TerminalActivityItemWithOrder[] = usingUnifiedStream
-      ? (entries ?? [])
-        .filter((entry) => entry.type === "user_input" || entry.type === "supervisor_input")
+      ? [
+        ...(entries ?? [])
+          .filter((entry) => entry.type === "user_input" || entry.type === "supervisor_input")
+          .map((entry) => ({ source: "stream" as const, entry })),
+        ...(canPlaceFallbackUserMessages ? userMessages : [])
+          .filter((message) => !(entries ?? []).some((entry) => entry.type === "user_input" && entry.id === message.id))
+          .map((message) => ({ source: "fallback" as const, message })),
+      ]
         .map((entry) => {
-          const attachments = (entry.attachments ?? []).map((attachment) => ({
+          if (entry.source === "fallback") {
+            const messageSeq = inferFallbackUserMessageSeq(entry.message.createdAt, entries ?? []);
+            return {
+              id: `user:${entry.message.id}`,
+              kind: "user_message" as const,
+              messageId: entry.message.id,
+              text: entry.message.content,
+              timestamp: entry.message.createdAt,
+              attachments: entry.message.attachments ?? [],
+              streamSeq: messageSeq,
+              actions: getUserMessageActions?.(entry.message) ?? [],
+            };
+          }
+
+          const attachments = (entry.entry.attachments ?? []).map((attachment) => ({
             id: attachment.id,
             kind: attachment.mimeType.startsWith("image/") ? "image" as const : "file" as const,
             name: attachment.filename,
@@ -1432,17 +1473,17 @@ export function Terminal({
           }));
 
           return {
-            id: `user:${entry.id}`,
+            id: `user:${entry.entry.id}`,
             kind: "user_message" as const,
-            messageId: entry.id,
-            text: entry.text,
-            timestamp: entry.timestamp,
+            messageId: entry.entry.id,
+            text: entry.entry.text,
+            timestamp: entry.entry.timestamp,
             attachments,
-            streamSeq: entry.seq,
-            actions: entry.type === "user_input" ? getUserMessageActions?.({
-              id: entry.id,
-              content: entry.text,
-              createdAt: entry.timestamp,
+            streamSeq: entry.entry.seq,
+            actions: entry.entry.type === "user_input" ? getUserMessageActions?.({
+              id: entry.entry.id,
+              content: entry.entry.text,
+              createdAt: entry.entry.timestamp,
               attachments,
             }) ?? [] : [],
           };
@@ -1481,7 +1522,7 @@ export function Terminal({
       }
       return activityKindOrder(a) - activityKindOrder(b) || a.id.localeCompare(b.id);
     });
-  }, [agent, entries, getUserMessageActions, showPendingAssistantIndicator, userMessages]);
+  }, [agent, allowUserMessageFallback, entries, getUserMessageActions, showPendingAssistantIndicator, userMessages]);
   const filteredActivity = useMemo(
     () => activityFilter ? activity.filter(activityFilter) : activity,
     [activity, activityFilter],
