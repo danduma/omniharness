@@ -465,6 +465,25 @@ describe("home utils", () => {
     expect(latestStuckEvent).toBeNull();
   });
 
+  it("does not treat a worker as stuck after the run completed", () => {
+    const latestStuckEvent = getLatestUnresolvedWorkerStuckEvent([
+      buildExecutionEvent({
+        id: "run-completed-after-stuck",
+        eventType: "run_completed",
+        createdAt: "2026-05-04T14:35:00.000Z",
+      }),
+      buildExecutionEvent({
+        id: "stuck-before-run-completed",
+        workerId: "worker-3",
+        eventType: "worker_stuck",
+        details: JSON.stringify({ summary: "worker-3 appears stuck" }),
+        createdAt: "2026-05-04T14:30:08.000Z",
+      }),
+    ]);
+
+    expect(latestStuckEvent).toBeNull();
+  });
+
   it("classifies actionable events as inline feed signals with summaries", () => {
     const actionableEvents = [
       "worker_spawn_blocked",

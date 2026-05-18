@@ -13,6 +13,11 @@ const STUCK_RESOLVING_EVENT_TYPES = new Set([
   "worker_session_missing",
 ]);
 
+const RUN_TERMINAL_EVENT_TYPES = new Set([
+  "run_completed",
+  "run_failed",
+]);
+
 function eventTimeMs(event: WorkerStatusEvent) {
   if (event.createdAt instanceof Date) {
     return event.createdAt.getTime();
@@ -37,10 +42,15 @@ function workerKey(event: WorkerStatusEvent) {
 
 export function filterResolvedWorkerStuckEvents<T extends WorkerStatusEvent>(events: readonly T[]): T[] {
   const latestResolvingEventByWorker = new Map<string, number>();
+  let latestTerminalRunEventMs = Number.NEGATIVE_INFINITY;
 
   for (const event of events) {
-    const worker = workerKey(event);
     const timeMs = eventTimeMs(event);
+    if (Number.isFinite(timeMs) && RUN_TERMINAL_EVENT_TYPES.has(event.eventType)) {
+      latestTerminalRunEventMs = Math.max(latestTerminalRunEventMs, timeMs);
+    }
+
+    const worker = workerKey(event);
     if (!worker || !Number.isFinite(timeMs) || !STUCK_RESOLVING_EVENT_TYPES.has(event.eventType)) {
       continue;
     }
@@ -60,6 +70,10 @@ export function filterResolvedWorkerStuckEvents<T extends WorkerStatusEvent>(eve
     const timeMs = eventTimeMs(event);
     if (!worker || !Number.isFinite(timeMs)) {
       return true;
+    }
+
+    if (latestTerminalRunEventMs > timeMs) {
+      return false;
     }
 
     const latestResolvingEventMs = latestResolvingEventByWorker.get(worker);
