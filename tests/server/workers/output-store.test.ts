@@ -13,6 +13,9 @@ import {
   writeWorkerOutputEntries,
 } from "@/server/workers/output-store";
 
+type BridgeEntry = NonNullable<Parameters<typeof writeWorkerOutputEntries>[2]>[number];
+type PersistedEntryShape = { id: string; text: string; seq: number };
+
 function uniqueId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -193,6 +196,31 @@ describe("readWorkerEntriesSince", () => {
       await cleanupRun(runId);
     }
   });
+
+  it("normalizes an already-corrupted stream with duplicate persisted ids", async () => {
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    try {
+      const dir = path.dirname(workerOutputFilePathFor(runId, workerId));
+      await fs.mkdir(dir, { recursive: true });
+      const filePath = workerOutputFilePathFor(runId, workerId);
+      const duplicate = { id: "dup", type: "message", text: "one", seq: 1, timestamp: "2026-01-01T00:00:00.000Z" };
+      await fs.writeFile(filePath, [
+        JSON.stringify(duplicate),
+        JSON.stringify(duplicate),
+        JSON.stringify({ id: "next", type: "message", text: "two", seq: 2, timestamp: "2026-01-01T00:00:01.000Z" }),
+      ].join("\n") + "\n", "utf8");
+
+      const result = await readWorkerEntriesSince(runId, workerId, 0);
+      expect(result.entries.map((entry) => ({ id: entry.id, text: entry.text, seq: entry.seq }))).toEqual([
+        { id: "dup", text: "one", seq: 1 },
+        { id: "next", text: "two", seq: 2 },
+      ]);
+      expect(result.latestSeq).toBe(2);
+    } finally {
+      await cleanupRun(runId);
+    }
+  });
 });
 
 describe("compaction interaction with appends", () => {
@@ -273,19 +301,89 @@ describe("writeWorkerOutputEntries (diff-and-append)", () => {
     }
   });
 
-  it("deduplicates repeated ids inside a single bridge snapshot", async () => {
+  it("deduplicates exact repeated entries inside a single bridge snapshot", async () => {
     const runId = uniqueId("run");
     const workerId = uniqueId("worker");
     try {
       await writeWorkerOutputEntries(runId, workerId, [
         { id: "dup", type: "message", text: "one", timestamp: "2026-01-01T00:00:00.000Z" } as any,
-        { id: "dup", type: "message", text: "one replayed", timestamp: "2026-01-01T00:00:01.000Z" } as any,
+        { id: "dup", type: "message", text: "one", timestamp: "2026-01-01T00:00:00.000Z" } as any,
         { id: "next", type: "message", text: "two", timestamp: "2026-01-01T00:00:02.000Z" } as any,
       ]);
       const all = await readWorkerOutputEntries(runId, workerId);
       expect(all.map((e) => ({ id: (e as any).id, text: (e as any).text, seq: (e as any).seq }))).toEqual([
         { id: "dup", text: "one", seq: 1 },
         { id: "next", text: "two", seq: 2 },
+      ]);
+    } finally {
+      await cleanupRun(runId);
+    }
+  });
+
+  it("appends changed bridge message revisions so streaming prose can expand", async () => {
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    try {
+      await writeWorkerOutputEntries(runId, workerId, [
+        { id: "msg", type: "message", text: "One", timestamp: "2026-01-01T00:00:00.000Z" } satisfies BridgeEntry,
+      ]);
+      await writeWorkerOutputEntries(runId, workerId, [
+        { id: "msg", type: "message", text: "One more useful detail arrived after the first token.", timestamp: "2026-01-01T00:00:01.000Z" } satisfies BridgeEntry,
+      ]);
+
+      const all = await readWorkerOutputEntries(runId, workerId);
+      expect(all.map((e) => {
+        const entry = e as PersistedEntryShape;
+        return { id: entry.id, text: entry.text, seq: entry.seq };
+      })).toEqual([
+        { id: "msg", text: "One", seq: 1 },
+        { id: "msg", text: "One more useful detail arrived after the first token.", seq: 2 },
+      ]);
+
+      const events = getNamedEventsSince(0).events
+        .map((entry) => entry.event)
+        .filter((event) => event.kind === "worker.entry_appended");
+      expect(events.map((event) => event.seq)).toEqual([1, 2]);
+    } finally {
+      await cleanupRun(runId);
+    }
+  });
+
+  it("refreshes from disk before appending when another writer beat the local cache", async () => {
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    try {
+      await writeWorkerOutputEntries(runId, workerId, [
+        { id: "a", type: "message", text: "one", timestamp: "2026-01-01T00:00:00.000Z" } satisfies BridgeEntry,
+        { id: "b", type: "message", text: "two", timestamp: "2026-01-01T00:00:01.000Z" } satisfies BridgeEntry,
+      ]);
+
+      const filePath = workerOutputFilePathFor(runId, workerId);
+      await fs.appendFile(filePath, JSON.stringify({
+        id: "c",
+        type: "message",
+        text: "three",
+        seq: 3,
+        timestamp: "2026-01-01T00:00:02.000Z",
+      }) + "\n", "utf8");
+
+      await writeWorkerOutputEntries(runId, workerId, [
+        { id: "a", type: "message", text: "one", timestamp: "2026-01-01T00:00:00.000Z" } satisfies BridgeEntry,
+        { id: "b", type: "message", text: "two", timestamp: "2026-01-01T00:00:01.000Z" } satisfies BridgeEntry,
+        { id: "c", type: "message", text: "three replayed", timestamp: "2026-01-01T00:00:02.000Z" } satisfies BridgeEntry,
+        { id: "d", type: "message", text: "four", timestamp: "2026-01-01T00:00:03.000Z" } satisfies BridgeEntry,
+      ]);
+
+      const raw = (await fs.readFile(filePath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(raw.map((entry) => ({ id: entry.id, text: entry.text, seq: entry.seq }))).toEqual([
+        { id: "a", text: "one", seq: 1 },
+        { id: "b", text: "two", seq: 2 },
+        { id: "c", text: "three", seq: 3 },
+        { id: "c", text: "three replayed", seq: 4 },
+        { id: "d", text: "four", seq: 5 },
       ]);
     } finally {
       await cleanupRun(runId);

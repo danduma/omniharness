@@ -91,6 +91,7 @@ type AgentOutputSnapshot = {
 type MutableToolActivity = Extract<AgentActivityItem, { kind: "tool" }>;
 type MutableThinkingActivity = Extract<AgentActivityItem, { kind: "thinking" }>;
 type MutablePermissionActivity = Extract<AgentActivityItem, { kind: "permission" }>;
+type MutableMessageActivity = Extract<AgentActivityItem, { kind: "message" }>;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
@@ -200,6 +201,10 @@ function stringifyUnknown(value: unknown): string | null {
   } catch {
     return String(value);
   }
+}
+
+function outputEntryFingerprint(entry: AgentOutputEntry): string {
+  return JSON.stringify(entry);
 }
 
 function stringifyToolRawOutput(value: unknown): string | null {
@@ -948,10 +953,11 @@ export function formatActivityStatus(status: string): string {
 export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentActivityItem[] {
   const items: AgentActivityItem[] = [];
   const toolIndexById = new Map<string, number>();
+  const messageIndexById = new Map<string, number>();
   const permissionDetailByRequestId = new Map<number, string>();
   const permissionIndexByRequestId = new Map<number, number>();
   const outputEntries = Array.isArray(snapshot.outputEntries) ? snapshot.outputEntries : [];
-  const seenOutputEntryIds = new Set<string>();
+  const seenOutputEntryFingerprints = new Set<string>();
   let openThinking: MutableThinkingActivity | null = null;
 
   const finishOpenThinking = (endTimestamp: string) => {
@@ -968,12 +974,11 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
     if (!entry || typeof entry !== "object") {
       continue;
     }
-    if (entry.id) {
-      if (seenOutputEntryIds.has(entry.id)) {
-        continue;
-      }
-      seenOutputEntryIds.add(entry.id);
+    const fingerprint = outputEntryFingerprint(entry);
+    if (seenOutputEntryFingerprints.has(fingerprint)) {
+      continue;
     }
+    seenOutputEntryFingerprints.add(fingerprint);
 
     if (entry.type === "thought") {
       const text = normalizeMultilineText(entry.text || "").trim();
@@ -1005,6 +1010,17 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
       if (isOmittedOutputEntriesMarker(entry)) {
         continue;
       }
+      const existingIndex = messageIndexById.get(entry.id);
+      if (existingIndex != null) {
+        const existing = items[existingIndex];
+        if (existing?.kind === "message") {
+          const messageActivity = existing as MutableMessageActivity;
+          messageActivity.text = text;
+          messageActivity.live = undefined;
+          continue;
+        }
+      }
+      messageIndexById.set(entry.id, items.length);
       items.push({
         id: entry.id,
         kind: "message",

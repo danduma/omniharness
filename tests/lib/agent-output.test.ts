@@ -2,32 +2,45 @@ import { describe, expect, it } from "vitest";
 import { buildAgentOutputActivity, extractLatestPlainTextTurn } from "@/lib/agent-output";
 
 describe("agent output normalization", () => {
-  it("deduplicates repeated bridge entries before rendering activity", () => {
+  it("renders the latest changed revision for repeated bridge message ids", () => {
     const activity = buildAgentOutputActivity({
       outputEntries: [
         {
           id: "34ab93a5-fa74-40e3-8af9-26a19301a1bb",
           type: "message",
-          text: "First copy",
+          text: "First",
           timestamp: "2026-05-17T00:00:00.000Z",
+        },
+        {
+          id: "tool-1",
+          type: "tool_call",
+          text: "Terminal",
+          timestamp: "2026-05-17T00:00:00.500Z",
+          toolCallId: "tool-1",
+          toolKind: "execute",
+          status: "completed",
+          raw: {
+            kind: "execute",
+            rawInput: { command: "date" },
+          },
         },
         {
           id: "34ab93a5-fa74-40e3-8af9-26a19301a1bb",
           type: "message",
-          text: "Replay copy",
+          text: "First message expanded after streaming completed.",
           timestamp: "2026-05-17T00:00:01.000Z",
         },
       ],
     });
 
-    expect(activity).toEqual([
-      {
-        id: "34ab93a5-fa74-40e3-8af9-26a19301a1bb",
-        kind: "message",
-        text: "First copy",
-        timestamp: "2026-05-17T00:00:00.000Z",
-      },
-    ]);
+    expect(activity).toHaveLength(2);
+    expect(activity[0]).toEqual({
+      id: "34ab93a5-fa74-40e3-8af9-26a19301a1bb",
+      kind: "message",
+      text: "First message expanded after streaming completed.",
+      timestamp: "2026-05-17T00:00:00.000Z",
+    });
+    expect(activity[1]).toMatchObject({ kind: "tool", id: "tool-1" });
   });
 
   it("groups consecutive tool activities between assistant messages", () => {

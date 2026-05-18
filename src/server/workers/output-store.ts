@@ -2,6 +2,7 @@ import { promises as fs, existsSync } from "node:fs";
 import path from "node:path";
 import { brotliDecompressSync, gzipSync, gunzipSync } from "node:zlib";
 import AdmZip from "adm-zip";
+import * as lockfile from "proper-lockfile";
 import type { AgentRecord } from "@/server/bridge-client";
 import { getAppDataPath } from "@/server/app-root";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -302,11 +303,11 @@ function compactEntryForHistory<T extends CompactableEntry>(entry: T): T {
 // ---------------------------------------------------------------------------
 // Per-worker write chain.
 //
-// The single writer-per-worker invariant is enforced in-process: every
-// mutating operation on `${runId}/${workerId}` files (append, expand,
-// compact, delete) acquires `writeChainByKey` for that key. If we ever
-// shard worker ownership across processes, the chain must be replaced
-// with a file lock — bridge entry deduplication assumes one writer.
+// Mutating operations on `${runId}/${workerId}` files acquire both an
+// in-process chain and an OS-visible lock. The chain keeps local callers
+// ordered; the file lock covers Next/server module instances and dev
+// process boundaries. Bridge entry deduplication depends on this because
+// every writer must re-read the current transcript before assigning seqs.
 // ---------------------------------------------------------------------------
 
 const writeChainByKey = new Map<string, Promise<void>>();
@@ -344,28 +345,53 @@ function clearChainCaches(runId: string, workerId: string) {
   seenIdsByKey.delete(key);
 }
 
-async function ensureChainCaches(runId: string, workerId: string): Promise<{ nextSeq: number; seen: Set<string> }> {
-  const key = chainKey(runId, workerId);
-  let nextSeq = nextSeqByKey.get(key);
-  let seen = seenIdsByKey.get(key);
-  if (nextSeq !== undefined && seen !== undefined) {
-    return { nextSeq, seen };
+async function withWorkerFileLock<T>(
+  runId: string,
+  workerId: string,
+  task: () => Promise<T>,
+): Promise<T> {
+  const dir = runDir(runId);
+  await fs.mkdir(dir, { recursive: true });
+  const target = workerFilePath(runId, workerId);
+  // proper-lockfile requires an existing target when realpath resolution is
+  // enabled. Appending an empty string with `a` is an atomic touch.
+  await fs.writeFile(target, "", { flag: "a" });
+  const release = await lockfile.lock(target, {
+    stale: 30_000,
+    update: 5_000,
+    retries: {
+      retries: 20,
+      factor: 1.2,
+      minTimeout: 25,
+      maxTimeout: 250,
+    },
+  });
+  try {
+    return await task();
+  } finally {
+    await release();
   }
-  const existing = backfillVirtualSeqs(await readAllPersistedEntries(runId, workerId));
+}
+
+async function refreshChainCaches(runId: string, workerId: string): Promise<{ nextSeq: number; seen: Set<string>; fingerprints: Map<string, string> }> {
+  const key = chainKey(runId, workerId);
+  const existing = await readCanonicalPersistedEntries(runId, workerId);
   let maxSeq = 0;
-  seen = new Set<string>();
+  const seen = new Set<string>();
+  const fingerprints = new Map<string, string>();
   for (const entry of existing) {
     if (typeof entry.id === "string" && entry.id) {
       seen.add(entry.id);
+      fingerprints.set(entry.id, workerEntryFingerprint(entry));
     }
     if (typeof entry.seq === "number" && Number.isFinite(entry.seq) && entry.seq > maxSeq) {
       maxSeq = entry.seq;
     }
   }
-  nextSeq = maxSeq + 1;
+  const nextSeq = maxSeq + 1;
   nextSeqByKey.set(key, nextSeq);
   seenIdsByKey.set(key, seen);
-  return { nextSeq, seen };
+  return { nextSeq, seen, fingerprints };
 }
 
 async function readAllPersistedEntries(runId: string, workerId: string): Promise<WorkerEntry[]> {
@@ -375,7 +401,10 @@ async function readAllPersistedEntries(runId: string, workerId: string): Promise
   const filePath = workerFilePath(runId, workerId);
   try {
     const body = await fs.readFile(filePath, "utf8");
-    return parseWorkerEntryLines(body);
+    const parsed = parseWorkerEntryLines(body);
+    if (body.trim() || parsed.length > 0) {
+      return parsed;
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       throw error;
@@ -409,55 +438,59 @@ export async function appendWorkerEntry(
   entry: Omit<WorkerEntry, "seq">,
 ): Promise<WorkerEntry> {
   return runOnChain(runId, workerId, async () => {
-    const { nextSeq, seen } = await ensureChainCaches(runId, workerId);
-    if (entry.id && seen.has(entry.id)) {
-      // Already persisted; load it back so the caller has a stable
-      // record. Linear scan is fine: this is the dedup path and runs at
-      // append cadence, not read cadence.
-      const persisted = await readAllPersistedEntries(runId, workerId);
-      const match = persisted.find((line) => line.id === entry.id);
-      if (match && typeof match.seq === "number") {
-        return match;
+    return withWorkerFileLock(runId, workerId, async () => {
+      // If a compaction race somehow stranded the plaintext file under .gz,
+      // expand it first so cache refresh sees the live transcript rather
+      // than the lock-created empty placeholder.
+      await expandWorkerOutputFileInternal(runId, workerId);
+
+      const { nextSeq, seen } = await refreshChainCaches(runId, workerId);
+      if (entry.id && seen.has(entry.id)) {
+        // Already persisted; load it back so the caller has a stable
+        // record. Linear scan is fine: this is the dedup path and runs at
+        // append cadence, not read cadence.
+        const persisted = await readCanonicalPersistedEntries(runId, workerId);
+        const match = persisted.find((line) => line.id === entry.id);
+        if (match && typeof match.seq === "number") {
+          return match;
+        }
+        // Legacy line without seq: assign one virtually based on file
+        // position. The writer doesn't advance nextSeq in this case.
+        return { ...(entry as WorkerEntry), seq: 0 };
       }
-      // Legacy line without seq: assign one virtually based on file
-      // position. The writer doesn't advance nextSeq in this case.
-      return { ...(entry as WorkerEntry), seq: 0 };
-    }
 
-    const persistedEntry: WorkerEntry = {
-      ...(entry as WorkerEntry),
-      seq: nextSeq,
-    };
-    const compact = compactEntryForHistory(persistedEntry as unknown as CompactableEntry) as unknown as WorkerEntry;
-    const line = JSON.stringify(compact) + "\n";
+      const persistedEntry: WorkerEntry = {
+        ...(entry as WorkerEntry),
+        seq: nextSeq,
+      };
+      const compact = compactEntryForHistory(persistedEntry as unknown as CompactableEntry) as unknown as WorkerEntry;
+      const line = JSON.stringify(compact) + "\n";
 
-    const dir = runDir(runId);
-    await fs.mkdir(dir, { recursive: true });
-    // If a compaction race somehow stranded the plaintext file under .gz,
-    // expand it first so the append goes into the live transcript rather
-    // than starting a new empty file beside the gzip.
-    await expandWorkerOutputFileInternal(runId, workerId);
+      const target = workerFilePath(runId, workerId);
+      const newlineGuard = await needsLeadingNewline(target);
+      const handle = await fs.open(target, "a");
+      try {
+        await handle.appendFile(newlineGuard ? "\n" + line : line, "utf8");
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
 
-    const target = workerFilePath(runId, workerId);
-    const newlineGuard = await needsLeadingNewline(target);
-    const handle = await fs.open(target, "a");
-    try {
-      await handle.appendFile(newlineGuard ? "\n" + line : line, "utf8");
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-
-    seen.add(entry.id);
-    nextSeqByKey.set(chainKey(runId, workerId), nextSeq + 1);
-    return compact;
+      if (entry.id) {
+        seen.add(entry.id);
+      }
+      nextSeqByKey.set(chainKey(runId, workerId), nextSeq + 1);
+      return compact;
+    });
   });
 }
 
 /**
- * Diff-and-append a batch of bridge-emitted output entries. Existing
- * entries (by id) are skipped; new entries are appended in order with
- * monotonically increasing seqs.
+ * Diff-and-append a batch of bridge-emitted output entries. Exact
+ * replays are skipped, but changed records with the same bridge id are
+ * appended as revisions. Streaming assistant prose can arrive first as
+ * "One" and later as the complete paragraph; the append-only stream must
+ * publish that later revision with a fresh seq so clients repaint.
  *
  * Existing callers (`persistWorkerSnapshot`) get the same observable
  * behavior as the old overwrite-on-snapshot path with no file rewrite.
@@ -472,79 +505,83 @@ export async function writeWorkerOutputEntries(
   }
 
   await runOnChain(runId, workerId, async () => {
-    const { seen } = await ensureChainCaches(runId, workerId);
-    const newEntries: OutputEntry[] = [];
-    const acceptedIds = new Set<string>();
-    for (const entry of entries) {
-      if (!entry) continue;
-      // Real bridge entries always carry an id; tooling/migration code that
-      // hands us synthetic snapshots may not. In that case, treat the entry
-      // as opaque and always append (no dedup possible).
-      const id = typeof entry.id === "string" && entry.id ? entry.id : null;
-      if (id) {
-        if (seen.has(id) || acceptedIds.has(id)) {
-          continue;
+    await withWorkerFileLock(runId, workerId, async () => {
+      await expandWorkerOutputFileInternal(runId, workerId);
+
+      const { fingerprints } = await refreshChainCaches(runId, workerId);
+      const newEntries: OutputEntry[] = [];
+      const acceptedFingerprintsById = new Map<string, string>();
+      for (const entry of entries) {
+        if (!entry) continue;
+        // Real bridge entries always carry an id; tooling/migration code that
+        // hands us synthetic snapshots may not. In that case, treat the entry
+        // as opaque and always append (no dedup possible).
+        const id = typeof entry.id === "string" && entry.id ? entry.id : null;
+        if (id) {
+          const fingerprint = bridgeOutputEntryFingerprint(entry);
+          if (
+            fingerprints.get(id) === fingerprint
+            || acceptedFingerprintsById.get(id) === fingerprint
+          ) {
+            continue;
+          }
+          acceptedFingerprintsById.set(id, fingerprint);
         }
-        acceptedIds.add(id);
+        newEntries.push(entry);
       }
-      newEntries.push(entry);
-    }
-    if (newEntries.length === 0) {
-      return;
-    }
-
-    const dir = runDir(runId);
-    await fs.mkdir(dir, { recursive: true });
-    await expandWorkerOutputFileInternal(runId, workerId);
-
-    const key = chainKey(runId, workerId);
-    let nextSeq = nextSeqByKey.get(key);
-    if (nextSeq === undefined) {
-      // ensureChainCaches just populated it; refuse to silently lose entries.
-      throw new Error(`writeWorkerOutputEntries: missing nextSeq for ${key}`);
-    }
-
-    const target = workerFilePath(runId, workerId);
-    const newlineGuard = await needsLeadingNewline(target);
-
-    const lines: string[] = [];
-    const appendedEntries: WorkerEntry[] = [];
-    for (const entry of newEntries) {
-      const id = typeof entry.id === "string" && entry.id ? entry.id : `synthetic-${nextSeq}`;
-      // Preserve input shape: spread the entry first, then layer on
-      // id/seq. Adding null placeholders for absent optional fields
-      // would change the on-disk shape callers expect to round-trip.
-      const promoted = {
-        ...(entry as unknown as Record<string, unknown>),
-        id,
-        seq: nextSeq,
-      };
-      const compact = compactEntryForHistory(promoted as unknown as CompactableEntry) as unknown as WorkerEntry;
-      lines.push(JSON.stringify(compact));
-      appendedEntries.push(compact);
-      seen.add(id);
-      nextSeq += 1;
-    }
-    const body = lines.join("\n") + "\n";
-
-    const handle = await fs.open(target, "a");
-    try {
-      await handle.appendFile(newlineGuard ? "\n" + body : body, "utf8");
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    nextSeqByKey.set(key, nextSeq);
-    for (const entry of appendedEntries) {
-      if (typeof entry.seq === "number" && Number.isFinite(entry.seq) && entry.seq > 0) {
-        emitNamedEvent({
-          kind: "worker.entry_appended",
-          runId,
-          workerId,
-          seq: entry.seq,
-        });
+      if (newEntries.length === 0) {
+        return;
       }
-    }
+
+      const key = chainKey(runId, workerId);
+      let nextSeq = nextSeqByKey.get(key);
+      if (nextSeq === undefined) {
+        // refreshChainCaches just populated it; refuse to silently lose entries.
+        throw new Error(`writeWorkerOutputEntries: missing nextSeq for ${key}`);
+      }
+
+      const target = workerFilePath(runId, workerId);
+      const newlineGuard = await needsLeadingNewline(target);
+
+      const lines: string[] = [];
+      const appendedEntries: WorkerEntry[] = [];
+      for (const entry of newEntries) {
+        const id = typeof entry.id === "string" && entry.id ? entry.id : `synthetic-${nextSeq}`;
+        // Preserve input shape: spread the entry first, then layer on
+        // id/seq. Adding null placeholders for absent optional fields
+        // would change the on-disk shape callers expect to round-trip.
+        const promoted = {
+          ...(entry as unknown as Record<string, unknown>),
+          id,
+          seq: nextSeq,
+        };
+        const compact = compactEntryForHistory(promoted as unknown as CompactableEntry) as unknown as WorkerEntry;
+        lines.push(JSON.stringify(compact));
+        appendedEntries.push(compact);
+        fingerprints.set(id, workerEntryFingerprint(compact));
+        nextSeq += 1;
+      }
+      const body = lines.join("\n") + "\n";
+
+      const handle = await fs.open(target, "a");
+      try {
+        await handle.appendFile(newlineGuard ? "\n" + body : body, "utf8");
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      nextSeqByKey.set(key, nextSeq);
+      for (const entry of appendedEntries) {
+        if (typeof entry.seq === "number" && Number.isFinite(entry.seq) && entry.seq > 0) {
+          emitNamedEvent({
+            kind: "worker.entry_appended",
+            runId,
+            workerId,
+            seq: entry.seq,
+          });
+        }
+      }
+    });
   });
 }
 
@@ -648,8 +685,8 @@ export async function readWorkerOutputEntries(
   runId: string,
   workerId: string,
 ): Promise<OutputEntry[]> {
-  const entries = await readAllPersistedEntries(runId, workerId);
-  return backfillVirtualSeqs(entries) as unknown as OutputEntry[];
+  const entries = await readCanonicalPersistedEntries(runId, workerId);
+  return entries as unknown as OutputEntry[];
 }
 
 /**
@@ -663,8 +700,7 @@ export async function readWorkerEntriesSince(
   workerId: string,
   afterSeq: number,
 ): Promise<{ entries: WorkerEntry[]; latestSeq: number }> {
-  const raw = await readAllPersistedEntries(runId, workerId);
-  const withSeqs = backfillVirtualSeqs(raw);
+  const withSeqs = await readCanonicalPersistedEntries(runId, workerId);
   let latestSeq = 0;
   for (const entry of withSeqs) {
     if (typeof entry.seq === "number" && entry.seq > latestSeq) {
@@ -677,15 +713,60 @@ export async function readWorkerEntriesSince(
   return { entries: filtered, latestSeq };
 }
 
-function backfillVirtualSeqs(entries: WorkerEntry[]): WorkerEntry[] {
-  let anyMissing = false;
+async function readCanonicalPersistedEntries(runId: string, workerId: string): Promise<WorkerEntry[]> {
+  return normalizePersistedEntries(await readAllPersistedEntries(runId, workerId));
+}
+
+function normalizePersistedEntries(entries: WorkerEntry[]): WorkerEntry[] {
+  const deduped = dedupePersistedEntries(entries);
+  return normalizeWorkerEntrySeqs(deduped);
+}
+
+function workerEntryFingerprint(entry: unknown): string {
+  if (!isPlainRecord(entry)) {
+    return JSON.stringify(entry);
+  }
+  const { seq: _seq, ...rest } = entry;
+  return JSON.stringify(rest);
+}
+
+function bridgeOutputEntryFingerprint(entry: OutputEntry): string {
+  const compact = compactEntryForHistory({
+    ...(entry as unknown as Record<string, unknown>),
+    seq: 0,
+  } as unknown as CompactableEntry);
+  return workerEntryFingerprint(compact);
+}
+
+function dedupePersistedEntries(entries: WorkerEntry[]): WorkerEntry[] {
+  const seenFingerprints = new Set<string>();
+  const out: WorkerEntry[] = [];
   for (const entry of entries) {
-    if (typeof entry.seq !== "number" || !Number.isFinite(entry.seq)) {
-      anyMissing = true;
+    const fingerprint = workerEntryFingerprint(entry);
+    if (seenFingerprints.has(fingerprint)) {
+      continue;
+    }
+    seenFingerprints.add(fingerprint);
+    out.push(entry);
+  }
+  return out;
+}
+
+function normalizeWorkerEntrySeqs(entries: WorkerEntry[]): WorkerEntry[] {
+  let previousSeq = 0;
+  let needsRewrite = false;
+  for (const entry of entries) {
+    if (
+      typeof entry.seq !== "number"
+      || !Number.isFinite(entry.seq)
+      || entry.seq <= previousSeq
+    ) {
+      needsRewrite = true;
       break;
     }
+    previousSeq = entry.seq;
   }
-  if (!anyMissing) {
+  if (!needsRewrite) {
     return entries;
   }
   return entries.map((entry, index) => ({ ...entry, seq: index + 1 }));
@@ -724,7 +805,7 @@ async function compactWorkerOutputFileInternal(runId: string, workerId: string):
   // Rewrite the on-disk lines with their resolved seqs so legacy
   // pre-seq entries pick up durable sequence numbers in the gzip.
   const parsed = parseWorkerEntryLines(body.toString("utf8"));
-  const withSeqs = backfillVirtualSeqs(parsed);
+  const withSeqs = normalizePersistedEntries(parsed);
   const normalizedBody = Buffer.from(withSeqs.map((entry) => JSON.stringify(entry)).join("\n") + (withSeqs.length > 0 ? "\n" : ""), "utf8");
 
   const target = workerCompressedFilePath(runId, workerId);
@@ -773,11 +854,17 @@ async function expandWorkerOutputFileInternal(runId: string, workerId: string): 
 }
 
 export async function compactWorkerOutputFile(runId: string, workerId: string): Promise<boolean> {
-  return runOnChain(runId, workerId, () => compactWorkerOutputFileInternal(runId, workerId));
+  return runOnChain(runId, workerId, async () => {
+    if (!existsSync(workerFilePath(runId, workerId))) {
+      return false;
+    }
+    return withWorkerFileLock(runId, workerId, () => compactWorkerOutputFileInternal(runId, workerId));
+  });
 }
 
 export async function expandWorkerOutputFile(runId: string, workerId: string): Promise<boolean> {
-  return runOnChain(runId, workerId, () => expandWorkerOutputFileInternal(runId, workerId));
+  return runOnChain(runId, workerId, () =>
+    withWorkerFileLock(runId, workerId, () => expandWorkerOutputFileInternal(runId, workerId)));
 }
 
 export async function compactRunOutputs(runId: string): Promise<{ compactedWorkerIds: string[] }> {
@@ -898,16 +985,18 @@ export async function compactStaleWorkerOutputs(options: {
 
 export async function deleteWorkerOutputFile(runId: string, workerId: string) {
   await runOnChain(runId, workerId, async () => {
-    for (const target of [workerFilePath(runId, workerId), workerCompressedFilePath(runId, workerId)]) {
-      try {
-        await fs.unlink(target);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-          throw error;
+    await withWorkerFileLock(runId, workerId, async () => {
+      for (const target of [workerFilePath(runId, workerId), workerCompressedFilePath(runId, workerId)]) {
+        try {
+          await fs.unlink(target);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+            throw error;
+          }
         }
       }
-    }
-    clearChainCaches(runId, workerId);
+      clearChainCaches(runId, workerId);
+    });
   });
 }
 
