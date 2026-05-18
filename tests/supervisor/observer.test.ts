@@ -1281,6 +1281,68 @@ describe("deriveWorkerEvents", () => {
     expect(wakeSupervisor).toHaveBeenCalledWith(runId, 0);
   });
 
+  it("does not mark an idle completed turn stuck when the bridge snapshot omits text already persisted for the worker", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+    const finalText = "All requested work is complete. Verification passed.";
+    const nowSpy = vi.spyOn(Date, "now");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: process.cwd(),
+      outputLog: "",
+      currentText: finalText,
+      lastText: finalText,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    mockGetAgent.mockResolvedValue({
+      state: "idle",
+      currentText: "",
+      lastText: "",
+      pendingPermissions: [],
+      stderrBuffer: [],
+      stopReason: "end_turn",
+    });
+
+    try {
+      nowSpy.mockReturnValue(0);
+      await pollRunWorkers(runId, wakeSupervisor);
+      nowSpy.mockReturnValue(5 * 60_000);
+      await pollRunWorkers(runId, wakeSupervisor);
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+
+    expect(persistedWorker?.status).toBe("idle");
+    expect(workerEvents.some((event) => event.eventType === "worker_stuck")).toBe(false);
+  });
+
   it("does not persist duplicate stuck events from overlapping observer polls", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

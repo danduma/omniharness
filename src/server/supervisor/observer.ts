@@ -247,6 +247,29 @@ function hasCompletedIdleTurn(snapshot: WorkerBridgeSnapshot) {
     && Boolean((snapshot.currentText || snapshot.lastText).trim());
 }
 
+function withPersistedCompletedTurnText(
+  snapshot: WorkerBridgeSnapshot,
+  worker: Pick<typeof workers.$inferSelect, "currentText" | "lastText">,
+) {
+  if (
+    normalizeWorkerStatus(snapshot.state) !== "idle"
+    || snapshot.stopReason !== "end_turn"
+    || (snapshot.currentText || snapshot.lastText).trim()
+  ) {
+    return snapshot;
+  }
+
+  const persistedText = (worker.lastText || worker.currentText).trim();
+  if (!persistedText) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    lastText: persistedText,
+  };
+}
+
 function resolvePersistedWorkerStatus(snapshot: WorkerBridgeSnapshot, events: DerivedWorkerEvent[]) {
   if (events.some((event) => event.type === "worker_stuck")) {
     return "stuck";
@@ -942,6 +965,7 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
         stopRunObserver(runId, { reason: "run_terminated" });
         return;
       }
+      snapshot = withPersistedCompletedTurnText(snapshot, worker);
 
       const key = stateKey(runId, worker.id);
       const previous = observerState.get(key);
