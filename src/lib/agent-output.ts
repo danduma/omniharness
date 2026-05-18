@@ -956,6 +956,7 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
   const messageIndexById = new Map<string, number>();
   const permissionDetailByRequestId = new Map<number, string>();
   const permissionIndexByRequestId = new Map<number, number>();
+  const thoughtLocationById = new Map<string, { activity: MutableThinkingActivity; index: number }>();
   const outputEntries = Array.isArray(snapshot.outputEntries) ? snapshot.outputEntries : [];
   const seenOutputEntryFingerprints = new Set<string>();
   let openThinking: MutableThinkingActivity | null = null;
@@ -986,8 +987,18 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
         continue;
       }
 
+      const existingThought = thoughtLocationById.get(entry.id);
+      if (existingThought) {
+        existingThought.activity.thoughts[existingThought.index] = text;
+        continue;
+      }
+
       if (openThinking) {
         openThinking.thoughts.push(text);
+        thoughtLocationById.set(entry.id, {
+          activity: openThinking,
+          index: openThinking.thoughts.length - 1,
+        });
       } else {
         openThinking = {
           id: entry.id,
@@ -997,19 +1008,20 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
           inProgress: true,
         };
         items.push(openThinking);
+        thoughtLocationById.set(entry.id, { activity: openThinking, index: 0 });
       }
       continue;
     }
 
     if (entry.type === "message") {
+      if (isOmittedOutputEntriesMarker(entry)) {
+        continue;
+      }
       const text = normalizeMultilineText(entry.text || "").trim();
       if (!text) {
         continue;
       }
       finishOpenThinking(entry.timestamp);
-      if (isOmittedOutputEntriesMarker(entry)) {
-        continue;
-      }
       const existingIndex = messageIndexById.get(entry.id);
       if (existingIndex != null) {
         const existing = items[existingIndex];

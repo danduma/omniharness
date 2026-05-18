@@ -816,6 +816,41 @@ describe("agent output normalization", () => {
     ]);
   });
 
+  it("renders the latest changed revision for repeated bridge thought ids", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        {
+          id: "thought-1",
+          type: "thought",
+          text: "Looking at the modified files.",
+          timestamp: "2026-05-18T05:59:49.000Z",
+        },
+        {
+          id: "output-archive-marker",
+          type: "message",
+          text: "2 older raw worker activity records are only in archived history, not in the current terminal output.",
+          timestamp: "2026-05-18T05:59:49.500Z",
+        },
+        {
+          id: "thought-1",
+          type: "thought",
+          text: "Looking at the modified files and grouping them into logical commits.",
+          timestamp: "2026-05-18T05:59:50.000Z",
+        },
+      ],
+    });
+
+    expect(activity).toEqual([
+      {
+        id: "thought-1",
+        kind: "thinking",
+        thoughts: ["Looking at the modified files and grouping them into logical commits."],
+        timestamp: "2026-05-18T05:59:49.000Z",
+        inProgress: true,
+      },
+    ]);
+  });
+
   it("marks trailing thoughts complete when the agent is done", () => {
     const activity = buildAgentOutputActivity({
       state: "done",
