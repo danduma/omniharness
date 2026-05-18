@@ -11,11 +11,17 @@ interface LiveEventConnectionManagerOptions {
   selectedRunId?: string | null;
   EventSourceConstructor?: typeof EventSource;
   requestJson?: JsonRequester;
+  getSnapshotChecksum?: () => string | null | undefined;
   applyUpdate: (state: EventStreamState) => void;
   reportError: (error: AppErrorDescriptor) => void;
   fallbackIntervalMs?: number;
   fallbackCooldownMs?: number;
 }
+
+type SnapshotPollResponse = EventStreamState | {
+  notModified: true;
+  snapshotChecksum?: string;
+};
 
 function encodeRunParam(selectedRunId: string | null | undefined, prefix: "?" | "&") {
   const runId = selectedRunId?.trim();
@@ -61,14 +67,20 @@ export function buildEventStreamUrl(selectedRunId?: string | null) {
   return runParam ? `/api/events${runParam}` : "/api/events";
 }
 
-export function buildPersistedSnapshotUrl(selectedRunId?: string | null) {
-  return `/api/events?snapshot=1&persisted=1${encodeRunParam(selectedRunId, "&")}`;
+export function buildPersistedSnapshotUrl(selectedRunId?: string | null, checksum?: string | null) {
+  const checksumParam = checksum?.trim() ? `&checksum=${encodeURIComponent(checksum.trim())}` : "";
+  return `/api/events?snapshot=1&persisted=1${encodeRunParam(selectedRunId, "&")}${checksumParam}`;
+}
+
+function isNotModifiedSnapshot(value: SnapshotPollResponse): value is Extract<SnapshotPollResponse, { notModified: true }> {
+  return typeof value === "object" && value !== null && "notModified" in value && value.notModified === true;
 }
 
 export class LiveEventConnectionManager {
   private readonly selectedRunId?: string | null;
   private readonly EventSourceConstructor: typeof EventSource;
   private readonly requestJson: JsonRequester;
+  private readonly getSnapshotChecksum?: () => string | null | undefined;
   private readonly applyUpdate: (state: EventStreamState) => void;
   private readonly reportError: (error: AppErrorDescriptor) => void;
   private readonly fallbackIntervalMs: number;
@@ -83,6 +95,7 @@ export class LiveEventConnectionManager {
     this.selectedRunId = options.selectedRunId;
     this.EventSourceConstructor = options.EventSourceConstructor ?? EventSource;
     this.requestJson = options.requestJson ?? defaultRequestJson;
+    this.getSnapshotChecksum = options.getSnapshotChecksum;
     this.applyUpdate = options.applyUpdate;
     this.reportError = options.reportError;
     this.fallbackIntervalMs = options.fallbackIntervalMs ?? SNAPSHOT_FALLBACK_INTERVAL_MS;
@@ -212,14 +225,17 @@ export class LiveEventConnectionManager {
     this.pollingSnapshot = true;
 
     try {
-      const data = await this.requestJson<EventStreamState>(
-        buildPersistedSnapshotUrl(this.selectedRunId),
+      const data = await this.requestJson<SnapshotPollResponse>(
+        buildPersistedSnapshotUrl(this.selectedRunId, this.getSnapshotChecksum?.()),
         undefined,
         {
           source: "Events",
           action: "Load live state snapshot",
         },
       );
+      if (isNotModifiedSnapshot(data)) {
+        return;
+      }
       if (this.active) {
         this.applyUpdate(data);
       }

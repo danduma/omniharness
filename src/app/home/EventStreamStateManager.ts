@@ -121,6 +121,20 @@ export class EventStreamStateManager {
     }
   }
 
+  hydrateFromCacheScope(scope: string | null | undefined) {
+    this.snapshotCacheScope = scope?.trim() || null;
+    const cached = this.snapshotCache.getCachedState(this.snapshotCacheScope);
+    if (!cached || Object.is(cached, this.state)) {
+      return false;
+    }
+
+    this.state = cached;
+    for (const listener of this.listeners) {
+      listener(this.state);
+    }
+    return true;
+  }
+
   getSnapshot() {
     return this.state;
   }

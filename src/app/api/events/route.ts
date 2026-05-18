@@ -16,6 +16,7 @@ import {
   getNamedEventsSince,
   recordSnapshotMarker,
 } from "@/server/events/named-events";
+import { withEventPayloadChecksum } from "@/server/events/payload-checksum";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { serializeMessageRecord } from "@/server/conversations/message-records";
 import { serializeQueuedConversationMessage } from "@/server/conversations/queued-messages";
@@ -607,7 +608,7 @@ function buildEventPayload(
   // previous `synthesizeStreamingWorkerMessages` path that fabricated
   // pseudo-messages from `agent.outputEntries` is gone; clients render
   // worker content via `WorkerEntriesManager` instead.
-  return {
+  return withEventPayloadChecksum({
     messages: records.msgs.map(serializeMessageRecord),
     plans: records.allPlans,
     runs: records.allRuns,
@@ -637,7 +638,7 @@ function buildEventPayload(
       .map(compactReviewFinding),
     frontendErrors,
     snapshotRunId: options.selectedRunId?.trim() || null,
-  };
+  });
 }
 
 async function buildPersistedEventPayload(options: EventPayloadOptions = {}) {
@@ -814,14 +815,22 @@ export async function GET(req: NextRequest) {
         await ensureSupervisorRuntimeStarted();
         return buildSharedRuntimeEnrichedEventPayload(eventPayloadOptions);
       })();
+    const requestedChecksum = req.nextUrl.searchParams.get("checksum")?.trim() || "";
 
     // Anchor the snapshot to the current cursor so a subsequent SSE
     // connection can pass `Last-Event-ID: <lastEventId>` (or
     // `?lastEventId=`) and receive only events newer than this body.
     // Exposed as a response header to avoid changing the JSON shape
     // that the UI consumes.
-    const response = NextResponse.json(payload);
+    const response = NextResponse.json(
+      requestedChecksum && requestedChecksum === payload.snapshotChecksum
+        ? { notModified: true, snapshotChecksum: payload.snapshotChecksum }
+        : payload,
+    );
     response.headers.set("x-omni-last-event-id", String(getEventCursor()));
+    if (payload.snapshotChecksum) {
+      response.headers.set("x-omni-snapshot-checksum", payload.snapshotChecksum);
+    }
     return response;
   }
 

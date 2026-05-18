@@ -65,6 +65,7 @@ interface UseHomeLifecycleProps {
   themeMode: "day" | "night";
   setThemeMode: React.Dispatch<React.SetStateAction<"day" | "night">>;
   filterEventStreamState?: (state: EventStreamState) => EventStreamState;
+  getSnapshotChecksum?: () => string | null | undefined;
 }
 
 function applyDocumentTheme(themeMode: "day" | "night") {
@@ -117,6 +118,7 @@ export function useHomeLifecycle({
   themeMode,
   setThemeMode,
   filterEventStreamState,
+  getSnapshotChecksum,
 }: UseHomeLifecycleProps) {
   const didMountThemeEffectRef = useRef(false);
   const didHydrateCollapsedProjectsRef = useRef(false);
@@ -150,6 +152,7 @@ export function useHomeLifecycle({
 
     const connectionManager = new LiveEventConnectionManager({
       selectedRunId,
+      getSnapshotChecksum,
       applyUpdate: applyEventStreamUpdate,
       reportError: (error) => {
         if (!isActive) {
@@ -167,6 +170,7 @@ export function useHomeLifecycle({
   }, [
     appUnlocked,
     filterEventStreamState,
+    getSnapshotChecksum,
     routeReady,
     selectedRunId,
     setHasReceivedInitialEventStreamPayload,

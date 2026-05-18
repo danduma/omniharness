@@ -91,12 +91,11 @@ export class EventStreamSnapshotCacheManager {
   }
 
   hydrateState(initialState: EventStreamState, scope: string | null | undefined = null) {
-    const snapshot = this.readEnvelope().snapshots[scopeKey(scope)];
-    if (!snapshot || !isEventStreamState(snapshot.state)) {
+    const cachedState = this.getCachedState(scope);
+    if (!cachedState) {
       return initialState;
     }
 
-    const cachedState = snapshot.state;
     return {
       ...cachedState,
       ...initialState,
@@ -112,6 +111,18 @@ export class EventStreamSnapshotCacheManager {
       supervisorInterventions: preferInitialArray(initialState.supervisorInterventions, cachedState.supervisorInterventions),
       queuedMessages: preferInitialArray(initialState.queuedMessages, cachedState.queuedMessages),
       recoveryIncidents: preferInitialArray(initialState.recoveryIncidents, cachedState.recoveryIncidents),
+      frontendErrors: [],
+    };
+  }
+
+  getCachedState(scope: string | null | undefined = null): EventStreamState | null {
+    const snapshot = this.readEnvelope().snapshots[scopeKey(scope)];
+    if (!snapshot || !isEventStreamState(snapshot.state)) {
+      return null;
+    }
+
+    return {
+      ...snapshot.state,
       frontendErrors: [],
     };
   }

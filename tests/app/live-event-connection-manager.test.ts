@@ -185,4 +185,37 @@ describe("LiveEventConnectionManager", () => {
     manager.stop();
     vi.useRealTimers();
   });
+
+  it("sends the cached snapshot checksum and skips unchanged snapshot payloads", async () => {
+    vi.useFakeTimers();
+    MockEventSource.instances = [];
+    const applyUpdate = vi.fn();
+    const requestJson = vi.fn().mockResolvedValue({
+      notModified: true,
+      snapshotChecksum: "sha256:cached",
+    });
+    const manager = new LiveEventConnectionManager({
+      selectedRunId: "run-1",
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestJson,
+      getSnapshotChecksum: () => "sha256:cached",
+      applyUpdate,
+      reportError: vi.fn(),
+      fallbackCooldownMs: 0,
+    });
+
+    manager.start();
+    await vi.runAllTicks();
+    await Promise.resolve();
+
+    expect(requestJson).toHaveBeenCalledWith(
+      "/api/events?snapshot=1&persisted=1&runId=run-1&checksum=sha256%3Acached",
+      undefined,
+      expect.objectContaining({ action: "Load live state snapshot" }),
+    );
+    expect(applyUpdate).not.toHaveBeenCalled();
+
+    manager.stop();
+    vi.useRealTimers();
+  });
 });
