@@ -127,6 +127,8 @@
   "commit.status.pushCreated": "Auto-commit pushed: {commit}",
   "commit.status.pushFailed": "Auto-commit push failed: {reason}",
   "conversation.sidebar.otherSessions": "Autres sessions",
+  "conversation.sidebar.moreSessions": "plus...",
+  "conversation.sidebar.showMoreSessions": "Afficher {count} sessions de plus dans {project}",
   "conversation.sidebar.status.completedAttention": "Terminée avec des messages non lus",
   "conversation.sidebar.status.awaitingUser": "En attente de votre réponse",
   "conversation.preflightConfirmation.yes": "Oui, continuer",

@@ -127,6 +127,8 @@
   "commit.status.pushCreated": "Auto-commit pushed: {commit}",
   "commit.status.pushFailed": "Auto-commit push failed: {reason}",
   "conversation.sidebar.otherSessions": "기타 세션",
+  "conversation.sidebar.moreSessions": "더 보기...",
+  "conversation.sidebar.showMoreSessions": "{project}에서 세션 {count}개 더 보기",
   "conversation.sidebar.status.completedAttention": "읽지 않은 메시지가 있는 완료됨",
   "conversation.sidebar.status.awaitingUser": "입력을 기다리는 중",
   "conversation.preflightConfirmation.yes": "예, 계속",

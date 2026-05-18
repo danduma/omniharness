@@ -127,6 +127,8 @@
   "commit.status.pushCreated": "Auto-commit pushed: {commit}",
   "commit.status.pushFailed": "Auto-commit push failed: {reason}",
   "conversation.sidebar.otherSessions": "其他会话",
+  "conversation.sidebar.moreSessions": "更多...",
+  "conversation.sidebar.showMoreSessions": "在 {project} 中再显示 {count} 个会话",
   "conversation.sidebar.status.completedAttention": "已完成且有未读消息",
   "conversation.sidebar.status.awaitingUser": "正在等待你的输入",
   "conversation.preflightConfirmation.yes": "是，继续",

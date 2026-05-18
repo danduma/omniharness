@@ -157,6 +157,8 @@
   "commit.status.pushCreated": "Auto-commit pushed: {commit}",
   "commit.status.pushFailed": "Auto-commit push failed: {reason}",
   "conversation.sidebar.otherSessions": "Other sessions",
+  "conversation.sidebar.moreSessions": "more...",
+  "conversation.sidebar.showMoreSessions": "Show {count} more sessions in {project}",
   "conversation.sidebar.status.completedAttention": "Finished with unread messages",
   "conversation.sidebar.status.awaitingUser": "Waiting for your input",
   "conversation.preflightConfirmation.yes": "Yes, implement it",

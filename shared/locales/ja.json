@@ -127,6 +127,8 @@
   "commit.status.pushCreated": "Auto-commit pushed: {commit}",
   "commit.status.pushFailed": "Auto-commit push failed: {reason}",
   "conversation.sidebar.otherSessions": "その他のセッション",
+  "conversation.sidebar.moreSessions": "さらに...",
+  "conversation.sidebar.showMoreSessions": "{project} のセッションをさらに {count} 件表示",
   "conversation.sidebar.status.completedAttention": "未読メッセージがある完了済み",
   "conversation.sidebar.status.awaitingUser": "入力を待っています",
   "conversation.preflightConfirmation.yes": "はい、続行",
