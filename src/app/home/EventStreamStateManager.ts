@@ -81,6 +81,23 @@ function mergeScopedMessages(current: EventStreamState, incoming: EventStreamSta
   };
 }
 
+function mergeScopedCachedState(current: EventStreamState, cached: EventStreamState): EventStreamState {
+  const currentRuns = current.runs ?? [];
+  const currentPlans = current.plans ?? [];
+  const currentAccounts = current.accounts ?? [];
+  const currentPlanIds = new Set(currentRuns.map((run) => run.planId));
+
+  return {
+    ...cached,
+    runs: currentRuns.length > 0 ? currentRuns : cached.runs ?? [],
+    plans: currentPlans.length > 0
+      ? currentPlans
+      : (cached.plans ?? []).filter((plan) => currentPlanIds.size === 0 || currentPlanIds.has(plan.id)),
+    accounts: currentAccounts.length > 0 ? currentAccounts : cached.accounts ?? [],
+    frontendErrors: [],
+  };
+}
+
 /**
  * State manager for the global `/api/events` snapshot stream. Worker
  * conversation content (bridge entries, user/supervisor inputs,
@@ -128,7 +145,7 @@ export class EventStreamStateManager {
       return false;
     }
 
-    this.state = cached;
+    this.state = mergeScopedCachedState(this.state, cached);
     for (const listener of this.listeners) {
       listener(this.state);
     }

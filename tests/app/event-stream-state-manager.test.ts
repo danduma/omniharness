@@ -37,6 +37,49 @@ function state(runId: string, message: string, checksum: string): EventStreamSta
   };
 }
 
+function run(id: string): EventStreamState["runs"][number] {
+  return {
+    id,
+    planId: `${id}-plan`,
+    status: "done",
+    createdAt: new Date(0).toISOString(),
+    projectPath: null,
+    title: id,
+    mode: "direct",
+  };
+}
+
+function multiRunState(args: {
+  runs: string[];
+  messageRunId: string;
+  message: string;
+  checksum: string;
+}): EventStreamState {
+  return {
+    messages: [{
+      id: `${args.messageRunId}-message`,
+      runId: args.messageRunId,
+      role: "user",
+      content: args.message,
+      createdAt: new Date(0).toISOString(),
+      kind: "checkpoint",
+      attachments: [],
+    }],
+    plans: args.runs.map((id) => ({ id: `${id}-plan`, path: `${id}.md` })),
+    runs: args.runs.map(run),
+    accounts: [],
+    agents: [],
+    workers: [],
+    planItems: [],
+    clarifications: [],
+    executionEvents: [],
+    supervisorInterventions: [],
+    frontendErrors: [],
+    snapshotRunId: args.messageRunId,
+    snapshotChecksum: args.checksum,
+  };
+}
+
 function memoryStorage() {
   const values = new Map<string, string>();
   return {
@@ -67,6 +110,40 @@ describe("EventStreamStateManager", () => {
     expect(hydrated).toBe(true);
     expect(manager.getSnapshot().snapshotRunId).toBe("run-b");
     expect(manager.getSnapshot().snapshotChecksum).toBe("sha256:b");
+    expect(manager.getSnapshot().messages.map((message) => message.content)).toEqual(["cached second conversation"]);
+  });
+
+  it("does not resurrect deleted runs from stale scoped frontend caches", () => {
+    const cache = new EventStreamSnapshotCacheManager({ storage: memoryStorage() });
+    cache.rememberState(
+      multiRunState({
+        runs: ["run-a", "run-b", "deleted-run"],
+        messageRunId: "run-b",
+        message: "cached second conversation",
+        checksum: "sha256:stale-b",
+      }),
+      "run-b",
+    );
+
+    const manager = new EventStreamStateManager(
+      multiRunState({
+        runs: ["run-a", "run-b"],
+        messageRunId: "run-a",
+        message: "current first conversation",
+        checksum: "sha256:current",
+      }),
+      {
+        snapshotCache: cache,
+        snapshotCacheScope: "run-a",
+        deferCacheHydration: true,
+      },
+    );
+
+    const hydrated = manager.hydrateFromCacheScope("run-b");
+
+    expect(hydrated).toBe(true);
+    expect(manager.getSnapshot().runs.map((item) => item.id)).toEqual(["run-a", "run-b"]);
+    expect(manager.getSnapshot().plans.map((item) => item.id)).toEqual(["run-a-plan", "run-b-plan"]);
     expect(manager.getSnapshot().messages.map((message) => message.content)).toEqual(["cached second conversation"]);
   });
 });
