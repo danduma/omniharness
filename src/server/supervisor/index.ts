@@ -8,6 +8,7 @@ import * as bridge from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { clarifications, executionEvents, messages as dbMessages, runs, settings, supervisorInterventions, workers } from "@/server/db/schema";
 import { buildMastraModelConfig, getSupervisorModelConfig, validateSupervisorModelConfig } from "@/server/supervisor/model-config";
+import { CodexAuthMissingError, CodexAuthRefreshFailedError } from "@/server/supervisor/codex-auth";
 import { SUPERVISOR_SYSTEM_PROMPT } from "@/server/supervisor/prompt";
 import { hydrateRuntimeEnvFromSettings, readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { buildSupervisorTools } from "@/server/supervisor/tools";

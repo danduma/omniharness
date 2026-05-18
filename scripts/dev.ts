@@ -21,6 +21,7 @@ process.env.OMNIHARNESS_DEV_PROXY_TARGET ||= `http://127.0.0.1:${webPort}`;
 const bridgeUrl = resolveBridgeUrl(process.env);
 const bridgeDir = resolveBridgeDir(repoRoot, process.env);
 const bridgeLockPath = resolveBridgeLockPath(repoRoot);
+const BRIDGE_READY_TIMEOUT_MS = 90_000;
 const webCommand = serverMode === "production"
   ? ["pnpm", ["exec", "next", "start", "-H", webHost, "-p", webPort]] as const
   : ["pnpm", ["run", "dev:web", "--hostname", webHost, "--port", webPort]] as const;
@@ -262,7 +263,7 @@ async function ensureManagedBridge() {
     console.log(
       `[${logLabel}] Another OmniHarness process (${lockResult.owner?.pid}) is starting the agent runtime. Waiting for ${bridgeUrl}...`,
     );
-    await waitForBridgeReady(30_000);
+    await waitForBridgeReady(BRIDGE_READY_TIMEOUT_MS);
     return;
   }
 
@@ -287,7 +288,7 @@ async function ensureManagedBridge() {
       }
     });
 
-    await waitForBridgeReady(30_000);
+    await waitForBridgeReady(BRIDGE_READY_TIMEOUT_MS);
   } catch (error) {
     releaseBridgeLock(bridgeLockPath, process.pid);
     ownsBridgeLock = false;

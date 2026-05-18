@@ -489,15 +489,17 @@ export async function askAgent(name: string, prompt: string) {
         } catch {
           // ignore malformed/non-json bodies and fall back to status text
         }
-        throw Object.assign(new Error(`Ask failed: ${detail}`), { status: res.status });
+        throw Object.assign(new Error(`Ask failed: ${detail}`), {
+          status: res.status,
+          retryable: isAgentBusyError(detail) ? false : undefined,
+        });
       }
       return readAskStream(res);
     }, {
       maxDelayMs: BRIDGE_CONNECTION_RESET_MAX_BACKOFF_MS,
       operationLabel: `Ask /agents/${name}/ask`,
       retryIndefinitelyWhen: (error) =>
-        isAgentBusyError(error) ||
-        (isRecoverableConnectionSupervisorError(error) && !isBridgeConnectionRefused(error)),
+        isRecoverableConnectionSupervisorError(error) && !isBridgeConnectionRefused(error),
     });
   } catch (error) {
     if (isBridgeConnectionRefused(error)) {

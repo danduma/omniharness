@@ -105,6 +105,23 @@ describe("bridge client", () => {
     expect(mockNotifyEventStreamSubscribers).toHaveBeenCalledTimes(3);
   });
 
+  it("does not retry a busy worker ask so callers can defer the prompt", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "Agent is busy: worker-1" }), {
+        status: 409,
+        statusText: "Conflict",
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { askAgent } = await import("@/server/bridge-client");
+
+    await expect(askAgent("worker-1", "hello")).rejects.toThrow(/^Ask failed: Agent is busy: worker-1$/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
   it("preserves structured bridge error messages instead of collapsing them to status text", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ error: "claude-code binary not found on PATH." }), {
