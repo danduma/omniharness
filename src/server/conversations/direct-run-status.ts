@@ -119,3 +119,15 @@ export async function updateDirectRunStatusFromWorkerOutput(args: WorkerOutputSo
 
   return nextStatus;
 }
+
+export async function updateDirectRunAwaitingUserInputIfRequested(args: WorkerOutputSource & {
+  runId: string;
+  workerId?: string | null;
+}) {
+  if (!directWorkerOutputRequestsUserInput(args)) {
+    return false;
+  }
+
+  await updateDirectRunStatusFromWorkerOutput(args);
+  return true;
+}

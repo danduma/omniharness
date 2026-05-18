@@ -18,7 +18,7 @@ import { createQueuedConversationMessage, type BusyMessageAction } from "./queue
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import { runConversationMutation, runWorkerTurn } from "./worker-turn-gate";
-import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
+import { updateDirectRunAwaitingUserInputIfRequested } from "./direct-run-status";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
@@ -286,7 +286,7 @@ async function continueWorkerConversation({
         });
       }
     } else if (run.mode === "direct") {
-      await updateDirectRunStatusFromWorkerOutput({
+      await updateDirectRunAwaitingUserInputIfRequested({
         runId: run.id,
         workerId: worker.id,
         responseText: response.response,

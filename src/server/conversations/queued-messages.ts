@@ -11,7 +11,7 @@ import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachm
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import { runWorkerTurn } from "./worker-turn-gate";
-import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
+import { updateDirectRunAwaitingUserInputIfRequested } from "./direct-run-status";
 
 export type BusyMessageAction = "queue" | "steer";
 export type QueuedConversationMessageStatus = "pending" | "delivering" | "delivered" | "cancelled" | "failed";
@@ -215,7 +215,7 @@ async function deliverQueuedWorkerSteering(args: {
       updatedAt: deliveredAt,
     }).where(eq(workers.id, args.worker.id));
     if (args.run.mode === "direct") {
-      await updateDirectRunStatusFromWorkerOutput({
+      await updateDirectRunAwaitingUserInputIfRequested({
         runId: args.run.id,
         workerId: args.worker.id,
         responseText: response.response,
@@ -552,13 +552,6 @@ export async function drainQueuedImplementationMessages(runId: string) {
             status: response.state,
             updatedAt: deliveredAt,
           }).where(eq(workers.id, worker.id));
-          if (run.mode === "direct") {
-            await updateDirectRunStatusFromWorkerOutput({
-              runId,
-              workerId: worker.id,
-              responseText: response.response,
-            });
-          }
           // Worker response now lives in the unified worker stream.
           await db.update(queuedConversationMessages).set({
             targetWorkerId: worker.id,
@@ -702,7 +695,7 @@ export async function drainQueuedWorkerMessages({
           updatedAt: deliveredAt,
         }).where(eq(workers.id, workerId));
         if (run.mode === "direct") {
-          await updateDirectRunStatusFromWorkerOutput({
+          await updateDirectRunAwaitingUserInputIfRequested({
             runId,
             workerId,
             responseText: response.response,
