@@ -35,6 +35,7 @@ import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget,
 import { createBranchWorktree, validateWorkspaceTarget } from "@/server/git/workspaces";
 import { setProjectGitWorkspaceDefaultTarget } from "@/server/projects/config";
 import { pendingOrphanWorktreeError } from "@/server/git/orphan-recovery";
+import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
 
 
 function buildInitialWorkerPrompt(mode: ConversationMode, command: string, projectRoot: string) {
@@ -305,10 +306,15 @@ async function runInitialWorkerTurn(args: {
         });
       }
     } else {
-      await db.update(runs).set({
-        status: "done",
-        updatedAt: new Date(),
-      }).where(eq(runs.id, args.runId));
+      await updateDirectRunStatusFromWorkerOutput({
+        runId: args.runId,
+        workerId: args.workerId,
+        responseText: response.response,
+        renderedOutput: snapshot?.renderedOutput,
+        currentText: snapshot?.currentText,
+        lastText: snapshot?.lastText,
+        outputEntries: snapshot?.outputEntries,
+      });
     }
 
     notifyEventStreamSubscribers();

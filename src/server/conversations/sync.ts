@@ -10,6 +10,10 @@ import { isRecoverableConnectionSupervisorError, isTransientSupervisorError } fr
 import { readWorkerOutputEntries, writeWorkerOutputEntries } from "@/server/workers/output-store";
 import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
 import { drainQueuedWorkerMessages } from "./queued-messages";
+import {
+  resolveDirectRunStatusFromWorkerOutput,
+  updateDirectRunStatusFromWorkerOutput,
+} from "./direct-run-status";
 
 const MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC = "Worker is idle with no recorded output, and the bridge no longer has a live session for it.";
 
@@ -38,9 +42,13 @@ async function hasPersistedWorkerOutput(worker: typeof workers.$inferSelect) {
   });
 }
 
-function resolveSyncedRunState(agent: ReturnType<typeof normalizeAgentRecord>) {
+function resolveSyncedRunState(run: typeof runs.$inferSelect, agent: ReturnType<typeof normalizeAgentRecord>) {
   if (agent.state === "error") {
     return "failed";
+  }
+
+  if (run.mode === "direct" && resolveDirectRunStatusFromWorkerOutput(agent) === "awaiting_user") {
+    return "awaiting_user";
   }
 
   if (
@@ -53,11 +61,15 @@ function resolveSyncedRunState(agent: ReturnType<typeof normalizeAgentRecord>) {
   return "running";
 }
 
-async function resolvePersistedRunState(worker: typeof workers.$inferSelect) {
+async function resolvePersistedRunState(run: typeof runs.$inferSelect, worker: typeof workers.$inferSelect) {
   const status = worker.status.trim().toLowerCase().split(":")[0]?.trim() ?? "";
 
   if (status === "error") {
     return "failed";
+  }
+
+  if (run.mode === "direct" && resolveDirectRunStatusFromWorkerOutput(worker) === "awaiting_user") {
+    return "awaiting_user";
   }
 
   if (
@@ -287,7 +299,7 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       updatedAt: new Date(),
     }).where(eq(workers.id, worker.id));
 
-    const nextRunState = resolveSyncedRunState(agent);
+    const nextRunState = resolveSyncedRunState(run, agent);
 
     if (run.mode === "planning") {
       const result = await refreshPlanningArtifactsForRun({
@@ -305,12 +317,23 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       continue;
     }
 
-    await db.update(runs).set({
-      status: nextRunState,
-      lastError: nextRunState === "failed" ? agent.lastError || run.lastError : null,
-      failedAt: nextRunState === "failed" ? run.failedAt : null,
-      updatedAt: new Date(),
-    }).where(eq(runs.id, run.id));
+    if (nextRunState === "awaiting_user") {
+      await updateDirectRunStatusFromWorkerOutput({
+        runId: run.id,
+        workerId: worker.id,
+        renderedOutput: agent.renderedOutput,
+        currentText: agent.currentText,
+        lastText: agent.lastText,
+        outputEntries: agent.outputEntries,
+      });
+    } else {
+      await db.update(runs).set({
+        status: nextRunState,
+        lastError: nextRunState === "failed" ? agent.lastError || run.lastError : null,
+        failedAt: nextRunState === "failed" ? run.failedAt : null,
+        updatedAt: new Date(),
+      }).where(eq(runs.id, run.id));
+    }
     if (staleBusyFailure && nextRunState !== "failed") {
       await clearMatchingRunFailureMessage(run);
     }
@@ -355,7 +378,7 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       continue;
     }
 
-    const nextRunState = await resolvePersistedRunState(worker);
+    const nextRunState = await resolvePersistedRunState(run, worker);
     if (run.mode === "planning") {
       await refreshPlanningArtifactsForRun({
         run,
@@ -372,9 +395,20 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       continue;
     }
 
-    await db.update(runs).set({
-      status: nextRunState,
-      updatedAt: new Date(),
-    }).where(eq(runs.id, run.id));
+    if (nextRunState === "awaiting_user") {
+      await updateDirectRunStatusFromWorkerOutput({
+        runId: run.id,
+        workerId: worker.id,
+        outputLog: worker.outputLog,
+        currentText: worker.currentText,
+        lastText: worker.lastText,
+        outputEntriesJson: worker.outputEntriesJson,
+      });
+    } else {
+      await db.update(runs).set({
+        status: nextRunState,
+        updatedAt: new Date(),
+      }).where(eq(runs.id, run.id));
+    }
   }
 }

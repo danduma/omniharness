@@ -104,6 +104,7 @@ export type RecoveryEvent =
   | { kind: "recovery.resolved"; runId: string; incidentId: string };
 
 export type ConversationEvent =
+  | { kind: "conversation.awaiting_user"; runId: string; workerId?: string; reason: "worker_requested_input" }
   | { kind: "conversation.deleted"; runId: string }
   | { kind: "conversation.delete_failed"; runId: string; blockingTable: string | null };
 
