@@ -890,6 +890,64 @@ describe("POST /api/conversations", () => {
     expect(storedMessages.some((message) => message.role === "worker" && message.content === "Ready for the next prompt.")).toBe(false);
   });
 
+  it("marks a direct conversation awaiting user input when the initial worker turn asks a blocking question", async () => {
+    const workerQuestion = [
+      "Before merging, I need to flag something: the working tree has uncommitted changes.",
+      "",
+      "Should I:",
+      "",
+      "1. Commit them first, then merge into master?",
+      "2. Stash them, merge, then restore?",
+      "3. Just merge what's committed?",
+      "",
+      "Which approach do you want?",
+    ].join("\n");
+    mockAskAgent.mockResolvedValueOnce({
+      response: workerQuestion,
+      state: "idle",
+    });
+    mockGetAgent.mockResolvedValueOnce({
+      name: "worker-1",
+      type: "claude",
+      state: "idle",
+      cwd: "/workspace/app",
+      lastText: workerQuestion,
+      currentText: "",
+      renderedOutput: "",
+      outputEntries: [
+        {
+          id: "entry-question",
+          type: "message",
+          text: workerQuestion,
+          timestamp: new Date(0).toISOString(),
+        },
+      ],
+      stderrBuffer: [],
+      stopReason: "end_turn",
+    });
+
+    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command: "join this branch into master and then delete it",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "claude",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    const completedRun = await waitFor(
+      () => db.select().from(runs).where(eq(runs.id, payload.runId)).get(),
+      (run) => run?.status === "awaiting_user",
+    );
+    const createdWorkers = await db.select().from(workers).where(eq(workers.runId, payload.runId));
+
+    expect(completedRun?.status).toBe("awaiting_user");
+    expect(createdWorkers[0]?.status).toBe("idle");
+  });
+
   it("persists direct worker session metadata before the first worker turn completes", async () => {
     const resolveAskRef: Array<(value: { response: string; state: string }) => void> = [];
     mockSpawnAgent.mockResolvedValueOnce({

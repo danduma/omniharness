@@ -211,4 +211,54 @@ describe("syncConversationSessions", () => {
       resumeSessionId: "active-session",
     }));
   });
+
+  it("keeps an idle direct worker question in awaiting_user instead of completing the run", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+    const workerQuestion = [
+      "Before merging, I need your decision.",
+      "Should I commit, stash, or merge only committed changes?",
+      "Which approach do you want?",
+    ].join("\n");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Merge and delete branch",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "idle",
+      cwd: process.cwd(),
+      outputLog: workerQuestion,
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: workerQuestion,
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await syncConversationSessions([], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+
+    expect(run?.status).toBe("awaiting_user");
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
 });
