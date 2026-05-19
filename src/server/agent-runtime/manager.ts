@@ -619,7 +619,8 @@ class RuntimeClient implements acp.Client {
     if (update.sessionUpdate === "agent_thought_chunk") {
       const content = asRecord(update.content);
       const text = content?.type === "text" && typeof content.text === "string" ? content.text : "";
-      if (text) {
+      const isCwdThought = text.startsWith("[current working directory");
+      if (text && !isCwdThought) {
         appendMessageChunk(record, text, "thought");
       }
       return;
