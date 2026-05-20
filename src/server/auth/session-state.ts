@@ -5,7 +5,7 @@ import {
   isAutomationAuthBypassEnabled,
   isAuthEnabled,
 } from "@/server/auth/config";
-import { getSessionFromTokenValue, listActiveSessions, type ActiveAuthSession } from "@/server/auth/session";
+import type { ActiveAuthSession } from "@/server/auth/session";
 import type { AuthSessionResponse, AuthSessionRecord } from "@/app/home/types";
 
 function serializeSession(session: ActiveAuthSession): AuthSessionRecord {
@@ -75,7 +75,20 @@ export async function buildAuthSessionState(args: {
     };
   }
 
-  const session = await getSessionFromTokenValue(getCookieValue(args.headers.get("cookie"), AUTH_SESSION_COOKIE));
+  const cookie = getCookieValue(args.headers.get("cookie"), AUTH_SESSION_COOKIE);
+  if (!cookie) {
+    return {
+      enabled: true,
+      authenticated: false,
+      currentSession: null,
+      sessions: [],
+      configurationError: null,
+      publicOrigin,
+    };
+  }
+
+  const { getSessionFromTokenValue, listActiveSessions } = await import("@/server/auth/session");
+  const session = await getSessionFromTokenValue(cookie);
   if (!session) {
     return {
       enabled: true,

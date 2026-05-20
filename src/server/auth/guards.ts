@@ -1,7 +1,55 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildAppError } from "@/server/api-errors";
 import { AUTH_SESSION_COOKIE, getAuthConfigurationError, isAuthEnabled, isAutomationAuthBypassEnabled } from "@/server/auth/config";
-import { getSessionFromRequest } from "@/server/auth/session";
+import type { ActiveAuthSession } from "@/server/auth/session";
+
+const API_SESSION_CACHE_TTL_MS = 10_000;
+const API_SESSION_CACHE_MAX_ENTRIES = 128;
+
+type ApiSessionCacheEntry = {
+  session: ActiveAuthSession;
+  expiresAtMs: number;
+};
+
+const processAuthGuards = process as NodeJS.Process & {
+  __omniHarnessApiSessionCache?: Map<string, ApiSessionCacheEntry>;
+};
+
+function apiSessionCache() {
+  return processAuthGuards.__omniHarnessApiSessionCache ??= new Map();
+}
+
+function pruneExpiredApiSessions(now: number) {
+  const cache = apiSessionCache();
+  for (const [cookie, entry] of cache) {
+    if (entry.expiresAtMs <= now) {
+      cache.delete(cookie);
+    }
+  }
+  return cache;
+}
+
+function setCachedApiSession(cookie: string, session: ActiveAuthSession) {
+  const now = Date.now();
+  const cache = pruneExpiredApiSessions(now);
+  cache.delete(cookie);
+  cache.set(cookie, {
+    session,
+    expiresAtMs: now + API_SESSION_CACHE_TTL_MS,
+  });
+
+  while (cache.size > API_SESSION_CACHE_MAX_ENTRIES) {
+    const oldestCookie = cache.keys().next().value;
+    if (!oldestCookie) {
+      break;
+    }
+    cache.delete(oldestCookie);
+  }
+}
+
+export function __resetApiSessionCacheForTests() {
+  processAuthGuards.__omniHarnessApiSessionCache?.clear();
+}
 
 function jsonError(status: number, source: string, action: string, message: string) {
   return NextResponse.json({
@@ -80,13 +128,29 @@ export async function requireApiSession(
     };
   }
 
-  const session = await getSessionFromRequest(request);
-  if (!session) {
+  const cookie = request.cookies.get(AUTH_SESSION_COOKIE)?.value ?? null;
+  if (!cookie) {
     return {
       session: null,
       response: jsonError(401, options.source ?? "Auth", options.action, "Authentication required."),
     };
   }
 
+  const cached = apiSessionCache().get(cookie);
+  if (cached && cached.expiresAtMs > Date.now()) {
+    return { session: cached.session, response: null };
+  }
+
+  const { getSessionFromRequest } = await import("@/server/auth/session");
+  const session = await getSessionFromRequest(request);
+  if (!session) {
+    apiSessionCache().delete(cookie);
+    return {
+      session: null,
+      response: jsonError(401, options.source ?? "Auth", options.action, "Authentication required."),
+    };
+  }
+
+  setCachedApiSession(cookie, session);
   return { session, response: null };
 }
