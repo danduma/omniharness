@@ -25,6 +25,7 @@ import type {
   WorkerEntry,
   WorkerEntryAttachment,
   WorkerEntryAuthorRole,
+  WorkerEntryChannel,
 } from "@/server/workers/entries-types";
 
 export type AppendUserInputArgs = {
@@ -61,6 +62,30 @@ export type AppendSystemNoteArgs = {
   raw?: unknown;
 };
 
+export type AppendSessionInputArgs = AppendUserInputArgs & {
+  channel?: WorkerEntryChannel;
+};
+
+export type AppendProcessOutputArgs = {
+  runId: string;
+  workerId: string;
+  text: string;
+  channel: Extract<WorkerEntryChannel, "stdout" | "stderr">;
+  timestamp?: Date;
+};
+
+export type AppendAssistantMessageArgs = {
+  runId: string;
+  workerId: string;
+  text: string;
+  timestamp?: Date;
+  raw?: unknown;
+};
+
+export type AppendSessionLifecycleArgs = AppendLifecycleArgs & {
+  channel?: WorkerEntryChannel;
+};
+
 function persistAndAnnounce(args: {
   runId: string;
   workerId: string;
@@ -90,7 +115,60 @@ export async function appendUserInputOnDelivery(args: AppendUserInputArgs): Prom
       text: args.text,
       timestamp: args.deliveredAt.toISOString(),
       authorRole: args.authorRole ?? "user",
+      channel: "stdin",
       attachments: args.attachments,
+    },
+  });
+}
+
+export async function appendSessionInputEntry(args: AppendSessionInputArgs): Promise<void> {
+  await persistAndAnnounce({
+    runId: args.runId,
+    workerId: args.workerId,
+    entry: {
+      id: args.id ?? randomUUID(),
+      type: "user_input",
+      text: args.text,
+      timestamp: args.deliveredAt.toISOString(),
+      authorRole: args.authorRole ?? "user",
+      channel: args.channel ?? "stdin",
+      attachments: args.attachments,
+    },
+  });
+}
+
+export async function appendProcessOutputEntry(args: AppendProcessOutputArgs): Promise<void> {
+  await persistAndAnnounce({
+    runId: args.runId,
+    workerId: args.workerId,
+    entry: {
+      id: randomUUID(),
+      type: "message",
+      text: args.text,
+      timestamp: (args.timestamp ?? new Date()).toISOString(),
+      authorRole: "system",
+      channel: args.channel,
+      raw: { source: "process", channel: args.channel },
+    },
+  });
+}
+
+export async function appendAssistantMessageEntry(args: AppendAssistantMessageArgs): Promise<void> {
+  const text = args.text.trim();
+  if (!text) {
+    return;
+  }
+  await persistAndAnnounce({
+    runId: args.runId,
+    workerId: args.workerId,
+    entry: {
+      id: randomUUID(),
+      type: "message",
+      text,
+      timestamp: (args.timestamp ?? new Date()).toISOString(),
+      authorRole: "assistant",
+      channel: "agent",
+      raw: args.raw,
     },
   });
 }
@@ -119,6 +197,23 @@ export async function appendLifecycleEntry(args: AppendLifecycleArgs): Promise<v
       text: args.text,
       timestamp: (args.timestamp ?? new Date()).toISOString(),
       authorRole: "system",
+      channel: "system",
+      raw: args.raw,
+    },
+  });
+}
+
+export async function appendSessionLifecycleEntry(args: AppendSessionLifecycleArgs): Promise<void> {
+  await persistAndAnnounce({
+    runId: args.runId,
+    workerId: args.workerId,
+    entry: {
+      id: randomUUID(),
+      type: "lifecycle",
+      text: args.text,
+      timestamp: (args.timestamp ?? new Date()).toISOString(),
+      authorRole: "system",
+      channel: args.channel ?? "system",
       raw: args.raw,
     },
   });
@@ -134,6 +229,7 @@ export async function appendSystemNote(args: AppendSystemNoteArgs): Promise<void
       text: args.text,
       timestamp: new Date().toISOString(),
       authorRole: "system",
+      channel: "system",
       raw: args.raw,
     },
   });

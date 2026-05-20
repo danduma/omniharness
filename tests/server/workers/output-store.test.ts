@@ -4,10 +4,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { getAppDataPath } from "@/server/app-root";
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 import {
+  __getOutputStoreCacheStatsForTests,
   __resetOutputStoreCachesForTests,
   appendWorkerEntry,
   compactWorkerOutputFile,
   readWorkerEntriesSince,
+  readWorkerLatestSeq,
   readWorkerOutputEntries,
   workerOutputFilePathFor,
   writeWorkerOutputEntries,
@@ -148,6 +150,31 @@ describe("readWorkerEntriesSince", () => {
     }
   });
 
+  it("serves incremental reads from the JSONL tail", async () => {
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    try {
+      const dir = path.dirname(workerOutputFilePathFor(runId, workerId));
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(workerOutputFilePathFor(runId, workerId), Array.from({ length: 2_000 }, (_, i) => (
+        JSON.stringify({
+          id: `e-${i}`,
+          seq: i + 1,
+          type: "message",
+          text: `m${i}`,
+          timestamp: new Date(1700000000000 + i).toISOString(),
+        })
+      )).join("\n") + "\n", "utf8");
+
+      const tail = await readWorkerEntriesSince(runId, workerId, 1_995);
+
+      expect(tail.entries.map((entry) => entry.seq)).toEqual([1996, 1997, 1998, 1999, 2000]);
+      expect(tail.latestSeq).toBe(2000);
+    } finally {
+      await cleanupRun(runId);
+    }
+  });
+
   it("backfills virtual seqs on a legacy file with no seq fields", async () => {
     const runId = uniqueId("run");
     const workerId = uniqueId("worker");
@@ -217,6 +244,41 @@ describe("readWorkerEntriesSince", () => {
         { id: "next", text: "two", seq: 2 },
       ]);
       expect(result.latestSeq).toBe(2);
+    } finally {
+      await cleanupRun(runId);
+    }
+  });
+});
+
+describe("readWorkerLatestSeq", () => {
+  it("reads the latest seq from the JSONL tail without returning entries", async () => {
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        await appendWorkerEntry(runId, workerId, {
+          id: `e-${i}`, type: "message", text: `m${i}`, timestamp: new Date(1700000000000 + i).toISOString(),
+        });
+      }
+
+      await expect(readWorkerLatestSeq(runId, workerId)).resolves.toBe(5);
+    } finally {
+      await cleanupRun(runId);
+    }
+  });
+
+  it("falls back for legacy files without seq fields", async () => {
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    try {
+      const dir = path.dirname(workerOutputFilePathFor(runId, workerId));
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(workerOutputFilePathFor(runId, workerId), [
+        JSON.stringify({ type: "message", text: "legacy-1", timestamp: "2026-01-01T00:00:00.000Z" }),
+        JSON.stringify({ type: "message", text: "legacy-2", timestamp: "2026-01-01T00:00:01.000Z" }),
+      ].join("\n") + "\n", "utf8");
+
+      await expect(readWorkerLatestSeq(runId, workerId)).resolves.toBe(2);
     } finally {
       await cleanupRun(runId);
     }
@@ -301,6 +363,24 @@ describe("writeWorkerOutputEntries (diff-and-append)", () => {
     }
   });
 
+  it("does not rebuild the full worker transcript cache on every streaming append", async () => {
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        await writeWorkerOutputEntries(runId, workerId, [
+          { id: `entry-${i}`, type: "message", text: `chunk ${i}`, timestamp: new Date(1700000000000 + i).toISOString() } as any,
+        ]);
+      }
+
+      const stats = __getOutputStoreCacheStatsForTests();
+      expect(stats.workerCacheCount).toBe(1);
+      expect(stats.diskRefreshCount).toBe(1);
+    } finally {
+      await cleanupRun(runId);
+    }
+  });
+
   it("deduplicates exact repeated entries inside a single bridge snapshot", async () => {
     const runId = uniqueId("run");
     const workerId = uniqueId("worker");
@@ -357,6 +437,7 @@ describe("writeWorkerOutputEntries (diff-and-append)", () => {
         { id: "a", type: "message", text: "one", timestamp: "2026-01-01T00:00:00.000Z" } satisfies BridgeEntry,
         { id: "b", type: "message", text: "two", timestamp: "2026-01-01T00:00:01.000Z" } satisfies BridgeEntry,
       ]);
+      expect(__getOutputStoreCacheStatsForTests().diskRefreshCount).toBe(1);
 
       const filePath = workerOutputFilePathFor(runId, workerId);
       await fs.appendFile(filePath, JSON.stringify({
@@ -373,6 +454,7 @@ describe("writeWorkerOutputEntries (diff-and-append)", () => {
         { id: "c", type: "message", text: "three replayed", timestamp: "2026-01-01T00:00:02.000Z" } satisfies BridgeEntry,
         { id: "d", type: "message", text: "four", timestamp: "2026-01-01T00:00:03.000Z" } satisfies BridgeEntry,
       ]);
+      expect(__getOutputStoreCacheStatsForTests().diskRefreshCount).toBe(2);
 
       const raw = (await fs.readFile(filePath, "utf8"))
         .trim()

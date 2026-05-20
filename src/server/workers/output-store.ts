@@ -1,8 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { promises as fs, existsSync } from "node:fs";
 import path from "node:path";
 import { brotliDecompressSync, gzipSync, gunzipSync } from "node:zlib";
 import AdmZip from "adm-zip";
-import * as lockfile from "proper-lockfile";
 import type { AgentRecord } from "@/server/bridge-client";
 import { getAppDataPath } from "@/server/app-root";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -18,6 +18,12 @@ const RAW_HISTORY_LINE_LIMIT = 8;
 const RAW_HISTORY_HEAD_LINES = 4;
 const RAW_HISTORY_TAIL_LINES = 4;
 const RAW_HISTORY_CHAR_LIMIT = 4_000;
+const WORKER_FILE_LOCK_STALE_MS = 30_000;
+const WORKER_FILE_LOCK_UPDATE_MS = 5_000;
+const WORKER_FILE_LOCK_RETRIES = 20;
+const WORKER_FILE_LOCK_MIN_TIMEOUT_MS = 25;
+const WORKER_FILE_LOCK_MAX_TIMEOUT_MS = 250;
+const WORKER_FILE_LOCK_FACTOR = 1.2;
 
 const TERMINAL_WORKER_STATUSES = new Set([
   "completed",
@@ -41,6 +47,10 @@ function runDir(runId: string) {
 
 function workerFilePath(runId: string, workerId: string) {
   return path.join(runDir(runId), `${workerId}.jsonl`);
+}
+
+function workerFileLockPath(runId: string, workerId: string) {
+  return `${workerFilePath(runId, workerId)}.lock`;
 }
 
 function workerCompressedFilePath(runId: string, workerId: string) {
@@ -314,13 +324,17 @@ const writeChainByKey = new Map<string, Promise<void>>();
 let tmpCounter = 0;
 
 // Cache of the next-seq to assign per (runId, workerId). Filled lazily on
-// first append by reading the existing file tail. Cleared by compaction
-// only when there is no in-flight append (the chain guarantees this).
+// first append by reading existing entries. Kept valid by comparing file
+// stat before each chained write so normal streaming appends do not parse
+// the whole transcript every tick.
 const nextSeqByKey = new Map<string, number>();
 // Cache of bridge entry ids that have already been written, used to make
 // append-from-snapshot idempotent. Built lazily from the file on first
 // use and updated on every successful append.
 const seenIdsByKey = new Map<string, Set<string>>();
+const fingerprintsByKey = new Map<string, Map<string, string>>();
+const fileStateByKey = new Map<string, { size: number; mtimeMs: number }>();
+let chainCacheDiskRefreshesForTests = 0;
 
 function chainKey(runId: string, workerId: string) {
   return `${runId}/${workerId}`;
@@ -343,6 +357,108 @@ function clearChainCaches(runId: string, workerId: string) {
   const key = chainKey(runId, workerId);
   nextSeqByKey.delete(key);
   seenIdsByKey.delete(key);
+  fingerprintsByKey.delete(key);
+  fileStateByKey.delete(key);
+}
+
+function workerFileLockDelay(attempt: number) {
+  const delay = WORKER_FILE_LOCK_MIN_TIMEOUT_MS * (WORKER_FILE_LOCK_FACTOR ** attempt);
+  return Math.min(Math.round(delay), WORKER_FILE_LOCK_MAX_TIMEOUT_MS);
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function isWorkerFileLockStale(lockPath: string) {
+  try {
+    const stat = await fs.stat(lockPath);
+    return stat.mtimeMs < Date.now() - WORKER_FILE_LOCK_STALE_MS;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function acquireWorkerFileLock(runId: string, workerId: string): Promise<() => Promise<void>> {
+  const lockPath = workerFileLockPath(runId, workerId);
+  const ownerPath = path.join(lockPath, "owner.json");
+  const ownerToken = randomUUID();
+  const owner = JSON.stringify({
+    token: ownerToken,
+    pid: process.pid,
+    createdAt: new Date().toISOString(),
+  });
+
+  for (let attempt = 0; attempt <= WORKER_FILE_LOCK_RETRIES; attempt += 1) {
+    try {
+      await fs.mkdir(lockPath);
+      try {
+        await fs.writeFile(ownerPath, owner, "utf8");
+      } catch (error) {
+        await fs.rm(lockPath, { recursive: true, force: true });
+        throw error;
+      }
+
+      let released = false;
+      const refresh = async () => {
+        if (released) {
+          return;
+        }
+        const now = new Date();
+        await fs.utimes(lockPath, now, now);
+        await fs.utimes(ownerPath, now, now);
+      };
+      const interval = setInterval(() => {
+        void refresh().catch(() => {});
+      }, WORKER_FILE_LOCK_UPDATE_MS);
+      interval.unref?.();
+
+      return async () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        clearInterval(interval);
+        try {
+          const currentOwner = await fs.readFile(ownerPath, "utf8");
+          if (currentOwner !== owner) {
+            return;
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            return;
+          }
+          throw error;
+        }
+        await fs.rm(lockPath, { recursive: true, force: true });
+      };
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST") {
+        throw error;
+      }
+
+      if (await isWorkerFileLockStale(lockPath)) {
+        await fs.rm(lockPath, { recursive: true, force: true });
+        continue;
+      }
+
+      if (attempt === WORKER_FILE_LOCK_RETRIES) {
+        throw Object.assign(new Error(`Timed out waiting for worker output lock: ${lockPath}`), {
+          code: "ELOCKED",
+        });
+      }
+
+      await sleep(workerFileLockDelay(attempt));
+    }
+  }
+
+  throw Object.assign(new Error(`Timed out waiting for worker output lock: ${lockPath}`), {
+    code: "ELOCKED",
+  });
 }
 
 async function withWorkerFileLock<T>(
@@ -353,19 +469,9 @@ async function withWorkerFileLock<T>(
   const dir = runDir(runId);
   await fs.mkdir(dir, { recursive: true });
   const target = workerFilePath(runId, workerId);
-  // proper-lockfile requires an existing target when realpath resolution is
-  // enabled. Appending an empty string with `a` is an atomic touch.
+  // Appending an empty string with `a` is an atomic touch.
   await fs.writeFile(target, "", { flag: "a" });
-  const release = await lockfile.lock(target, {
-    stale: 30_000,
-    update: 5_000,
-    retries: {
-      retries: 20,
-      factor: 1.2,
-      minTimeout: 25,
-      maxTimeout: 250,
-    },
-  });
+  const release = await acquireWorkerFileLock(runId, workerId);
   try {
     return await task();
   } finally {
@@ -373,8 +479,41 @@ async function withWorkerFileLock<T>(
   }
 }
 
+async function readWorkerFileState(runId: string, workerId: string) {
+  try {
+    const stat = await fs.stat(workerFilePath(runId, workerId));
+    return { size: stat.size, mtimeMs: stat.mtimeMs };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { size: 0, mtimeMs: 0 };
+    }
+    throw error;
+  }
+}
+
 async function refreshChainCaches(runId: string, workerId: string): Promise<{ nextSeq: number; seen: Set<string>; fingerprints: Map<string, string> }> {
   const key = chainKey(runId, workerId);
+  const currentFileState = await readWorkerFileState(runId, workerId);
+  const cachedNextSeq = nextSeqByKey.get(key);
+  const cachedSeen = seenIdsByKey.get(key);
+  const cachedFingerprints = fingerprintsByKey.get(key);
+  const cachedFileState = fileStateByKey.get(key);
+  if (
+    cachedNextSeq !== undefined
+    && cachedSeen
+    && cachedFingerprints
+    && cachedFileState
+    && cachedFileState.size === currentFileState.size
+    && cachedFileState.mtimeMs === currentFileState.mtimeMs
+  ) {
+    return {
+      nextSeq: cachedNextSeq,
+      seen: cachedSeen,
+      fingerprints: cachedFingerprints,
+    };
+  }
+
+  chainCacheDiskRefreshesForTests += 1;
   const existing = await readCanonicalPersistedEntries(runId, workerId);
   let maxSeq = 0;
   const seen = new Set<string>();
@@ -391,7 +530,13 @@ async function refreshChainCaches(runId: string, workerId: string): Promise<{ ne
   const nextSeq = maxSeq + 1;
   nextSeqByKey.set(key, nextSeq);
   seenIdsByKey.set(key, seen);
+  fingerprintsByKey.set(key, fingerprints);
+  fileStateByKey.set(key, await readWorkerFileState(runId, workerId));
   return { nextSeq, seen, fingerprints };
+}
+
+async function rememberWorkerFileState(runId: string, workerId: string) {
+  fileStateByKey.set(chainKey(runId, workerId), await readWorkerFileState(runId, workerId));
 }
 
 async function readAllPersistedEntries(runId: string, workerId: string): Promise<WorkerEntry[]> {
@@ -444,7 +589,7 @@ export async function appendWorkerEntry(
       // than the lock-created empty placeholder.
       await expandWorkerOutputFileInternal(runId, workerId);
 
-      const { nextSeq, seen } = await refreshChainCaches(runId, workerId);
+      const { nextSeq, seen, fingerprints } = await refreshChainCaches(runId, workerId);
       if (entry.id && seen.has(entry.id)) {
         // Already persisted; load it back so the caller has a stable
         // record. Linear scan is fine: this is the dedup path and runs at
@@ -478,8 +623,10 @@ export async function appendWorkerEntry(
 
       if (entry.id) {
         seen.add(entry.id);
+        fingerprints.set(entry.id, workerEntryFingerprint(compact));
       }
       nextSeqByKey.set(chainKey(runId, workerId), nextSeq + 1);
+      await rememberWorkerFileState(runId, workerId);
       return compact;
     });
   });
@@ -571,6 +718,7 @@ export async function writeWorkerOutputEntries(
         await handle.close();
       }
       nextSeqByKey.set(key, nextSeq);
+      await rememberWorkerFileState(runId, workerId);
       for (const entry of appendedEntries) {
         if (typeof entry.seq === "number" && Number.isFinite(entry.seq) && entry.seq > 0) {
           emitNamedEvent({
@@ -700,6 +848,13 @@ export async function readWorkerEntriesSince(
   workerId: string,
   afterSeq: number,
 ): Promise<{ entries: WorkerEntry[]; latestSeq: number }> {
+  if (afterSeq > 0) {
+    const fromJsonlTail = await readWorkerEntriesSinceJsonlTail(runId, workerId, afterSeq);
+    if (fromJsonlTail) {
+      return fromJsonlTail;
+    }
+  }
+
   const withSeqs = await readCanonicalPersistedEntries(runId, workerId);
   let latestSeq = 0;
   for (const entry of withSeqs) {
@@ -711,6 +866,178 @@ export async function readWorkerEntriesSince(
     ? withSeqs
     : withSeqs.filter((entry) => typeof entry.seq === "number" && entry.seq > afterSeq);
   return { entries: filtered, latestSeq };
+}
+
+async function readWorkerEntriesSinceJsonlTail(
+  runId: string,
+  workerId: string,
+  afterSeq: number,
+): Promise<{ entries: WorkerEntry[]; latestSeq: number } | null> {
+  const filePath = workerFilePath(runId, workerId);
+  let size = 0;
+  try {
+    size = (await fs.stat(filePath)).size;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  if (size <= 0) {
+    return null;
+  }
+
+  const maxBytes = Math.min(size, 1024 * 1024);
+  const chunkSize = Math.min(maxBytes, 64 * 1024);
+  const handle = await fs.open(filePath, "r");
+  try {
+    let offset = size;
+    let tail = "";
+    while (offset > 0 && Buffer.byteLength(tail, "utf8") < maxBytes) {
+      const readSize = Math.min(chunkSize, offset);
+      offset -= readSize;
+      const buffer = Buffer.alloc(readSize);
+      await handle.read(buffer, 0, readSize, offset);
+      tail = buffer.toString("utf8") + tail;
+
+      const parsed = entriesSinceInJsonlText(tail, offset === 0, afterSeq);
+      if (parsed.complete) {
+        return {
+          entries: parsed.entries,
+          latestSeq: parsed.latestSeq,
+        };
+      }
+    }
+    return null;
+  } finally {
+    await handle.close();
+  }
+}
+
+function entriesSinceInJsonlText(text: string, includesFileStart: boolean, afterSeq: number) {
+  const lines = text.split("\n");
+  const firstLineIndex = includesFileStart ? 0 : 1;
+  const entries: WorkerEntry[] = [];
+  let latestSeq = 0;
+
+  for (let index = lines.length - 1; index >= firstLineIndex; index -= 1) {
+    const trimmed = lines[index]?.trim();
+    if (!trimmed) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(trimmed) as WorkerEntry;
+      const seq = typeof parsed.seq === "number" && Number.isFinite(parsed.seq)
+        ? Math.floor(parsed.seq)
+        : 0;
+      if (seq <= 0) {
+        return { complete: false, entries: [], latestSeq: 0 };
+      }
+      latestSeq = Math.max(latestSeq, seq);
+      if (seq <= afterSeq) {
+        entries.reverse();
+        return { complete: true, entries, latestSeq };
+      }
+      entries.push(parsed);
+    } catch {
+      // Last line can be truncated after a crash. Older malformed lines
+      // are unusual; if we cannot prove the cursor boundary, fall back.
+      if (index !== lines.length - 1) {
+        return { complete: false, entries: [], latestSeq: 0 };
+      }
+    }
+  }
+
+  if (includesFileStart) {
+    entries.reverse();
+    return { complete: true, entries, latestSeq };
+  }
+  return { complete: false, entries: [], latestSeq: 0 };
+}
+
+/**
+ * Return the latest durable worker-entry sequence number without loading
+ * the whole transcript in the common JSONL case. Snapshot/bootstrap routes
+ * only need this cursor hint; full content is fetched via
+ * `readWorkerEntriesSince`.
+ */
+export async function readWorkerLatestSeq(
+  runId: string,
+  workerId: string,
+): Promise<number> {
+  const filePath = workerFilePath(runId, workerId);
+  try {
+    const stat = await fs.stat(filePath);
+    if (stat.size > 0) {
+      const seq = await readLatestSeqFromJsonlTail(filePath, stat.size);
+      if (seq !== null) {
+        return seq;
+      }
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  const entries = await readCanonicalPersistedEntries(runId, workerId);
+  let latestSeq = 0;
+  for (const entry of entries) {
+    if (typeof entry.seq === "number" && Number.isFinite(entry.seq) && entry.seq > latestSeq) {
+      latestSeq = entry.seq;
+    }
+  }
+  return latestSeq;
+}
+
+async function readLatestSeqFromJsonlTail(filePath: string, size: number): Promise<number | null> {
+  const maxBytes = Math.min(size, 1024 * 1024);
+  const chunkSize = Math.min(maxBytes, 64 * 1024);
+  const handle = await fs.open(filePath, "r");
+  try {
+    let offset = size;
+    let tail = "";
+    while (offset > 0 && Buffer.byteLength(tail, "utf8") < maxBytes) {
+      const readSize = Math.min(chunkSize, offset);
+      offset -= readSize;
+      const buffer = Buffer.alloc(readSize);
+      await handle.read(buffer, 0, readSize, offset);
+      tail = buffer.toString("utf8") + tail;
+
+      const seq = latestSeqInJsonlText(tail, offset === 0);
+      if (seq !== null) {
+        return seq;
+      }
+    }
+    return null;
+  } finally {
+    await handle.close();
+  }
+}
+
+function latestSeqInJsonlText(text: string, includesFileStart: boolean): number | null {
+  const lines = text.split("\n");
+  const firstLineIndex = includesFileStart ? 0 : 1;
+  for (let index = lines.length - 1; index >= firstLineIndex; index -= 1) {
+    const trimmed = lines[index]?.trim();
+    if (!trimmed) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(trimmed) as { seq?: unknown };
+      const seq = typeof parsed.seq === "number" && Number.isFinite(parsed.seq)
+        ? Math.floor(parsed.seq)
+        : 0;
+      if (seq > 0) {
+        return seq;
+      }
+      return null;
+    } catch {
+      // The last line may be a partial write after a crash. Keep walking
+      // backward for the latest complete entry.
+    }
+  }
+  return null;
 }
 
 async function readCanonicalPersistedEntries(runId: string, workerId: string): Promise<WorkerEntry[]> {
@@ -1009,4 +1336,15 @@ export function __resetOutputStoreCachesForTests() {
   writeChainByKey.clear();
   nextSeqByKey.clear();
   seenIdsByKey.clear();
+  fingerprintsByKey.clear();
+  fileStateByKey.clear();
+  chainCacheDiskRefreshesForTests = 0;
+}
+
+/** @internal — vitest only */
+export function __getOutputStoreCacheStatsForTests() {
+  return {
+    workerCacheCount: nextSeqByKey.size,
+    diskRefreshCount: chainCacheDiskRefreshesForTests,
+  };
 }

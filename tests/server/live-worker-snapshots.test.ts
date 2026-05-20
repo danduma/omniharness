@@ -2,6 +2,65 @@ import { describe, expect, it } from "vitest";
 import { buildLiveWorkerSnapshot } from "@/server/workers/live-snapshots";
 
 describe("buildLiveWorkerSnapshot", () => {
+  it("drops stale bridge permission requests from completed runs", () => {
+    const snapshot = buildLiveWorkerSnapshot({
+      agent: {
+        name: "worker-done",
+        type: "claude",
+        cwd: "/repo",
+        state: "idle",
+        currentText: "",
+        lastText: "Done.",
+        outputEntries: [],
+        pendingPermissions: [
+          {
+            requestId: 7,
+            requestedAt: new Date(0).toISOString(),
+            options: [{ optionId: "allow", kind: "allow", name: "Allow" }],
+          },
+        ],
+      },
+      worker: {
+        id: "worker-done",
+        runId: "run-done",
+        type: "claude",
+        status: "idle",
+        cwd: "/repo",
+        outputLog: "Earlier permission request.",
+        outputEntries: [],
+        currentText: "",
+        lastText: "Done.",
+        bridgeSessionId: "session-done",
+        bridgeSessionMode: "full-access",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      run: {
+        id: "run-done",
+        planId: "plan-done",
+        mode: "direct",
+        projectPath: "/repo",
+        title: "Completed direct run",
+        preferredWorkerType: "claude",
+        preferredWorkerModel: "claude-sonnet",
+        preferredWorkerEffort: "medium",
+        allowedWorkerTypes: "claude",
+        specPath: null,
+        artifactPlanPath: null,
+        plannerArtifactsJson: null,
+        parentRunId: null,
+        forkedFromMessageId: null,
+        status: "done",
+        failedAt: null,
+        lastError: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+
+    expect(snapshot?.pendingPermissions).toEqual([]);
+  });
+
   it("merges bridge output with persisted run metadata for steady-state rendering", () => {
     const snapshot = buildLiveWorkerSnapshot({
       agent: {

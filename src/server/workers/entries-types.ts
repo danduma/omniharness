@@ -11,7 +11,8 @@
  * writer never constructs a `WorkerEntry` for a bridge entry.
  */
 
-export type WorkerEntryAuthorRole = "user" | "supervisor" | "system";
+export type WorkerEntryAuthorRole = "user" | "assistant" | "supervisor" | "system";
+export type WorkerEntryChannel = "stdout" | "stderr" | "stdin" | "system" | "agent";
 
 export type WorkerEntryAttachment = {
   id: string;
@@ -49,6 +50,7 @@ export interface WorkerEntry {
   status?: string | null;
   raw?: unknown;
   authorRole?: WorkerEntryAuthorRole;
+  channel?: WorkerEntryChannel;
   attachments?: WorkerEntryAttachment[];
 }
 

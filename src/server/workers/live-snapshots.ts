@@ -136,6 +136,16 @@ function isFailedRun(run: PersistedRunRecord | null) {
   return (run?.status ?? "").trim().toLowerCase() === "failed";
 }
 
+function isTerminalRun(run: PersistedRunRecord | null) {
+  const status = (run?.status ?? "").trim().toLowerCase();
+  return status === "done"
+    || status === "failed"
+    || status === "cancelled"
+    || status === "canceled"
+    || status === "promoting"
+    || status === "promoted";
+}
+
 function shouldSurfaceBridgeLastError(agent: AgentRecord) {
   if (!agent.lastError) {
     return false;
@@ -188,6 +198,7 @@ export function buildLiveWorkerSnapshot(args: {
 
     return {
       ...normalizedAgent,
+      pendingPermissions: isTerminalRun(run) ? [] : normalizedAgent.pendingPermissions,
       type: normalizedAgent.type || worker?.type || "",
       cwd: normalizedAgent.cwd || worker?.cwd || "",
       sessionId: normalizedAgent.sessionId ?? worker?.bridgeSessionId ?? null,
