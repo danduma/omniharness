@@ -4,7 +4,7 @@ import { readCodexCredentialsSync, ensureFreshCodexCredentials, CodexAuthMissing
 import { createOpenAI } from "@ai-sdk/openai";
 
 const DEFAULT_PROVIDER = "gemini";
-const DEFAULT_MODEL = "gemini-3.1-pro-preview";
+const DEFAULT_MODEL = "gemini-3.5-flash";
 const DEFAULT_FALLBACK_PROVIDER = "openai";
 const DEFAULT_FALLBACK_MODEL = "gpt-5.4-mini";
 

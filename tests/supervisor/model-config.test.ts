@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { buildMastraModelConfig, getSupervisorModelConfig, validateSupervisorModelConfig } from "@/server/supervisor/model-config";
 
 describe("supervisor model config", () => {
-  it("defaults to Gemini with the requested preview model", () => {
+  it("defaults to Gemini with the current Flash model", () => {
     const config = getSupervisorModelConfig({});
 
     expect(config).toEqual({
       provider: "gemini",
-      model: "gemini-3.1-pro-preview",
+      model: "gemini-3.5-flash",
       apiKey: undefined,
       baseURL: undefined,
       source: "primary",
@@ -38,7 +38,7 @@ describe("supervisor model config", () => {
 
     expect(config).toEqual({
       provider: "gemini",
-      model: "gemini-3.1-pro-preview",
+      model: "gemini-3.5-flash",
       apiKey: "gemini-key",
       baseURL: undefined,
       source: "primary",
@@ -122,12 +122,12 @@ describe("supervisor model config", () => {
   it("maps supervisor config to Mastra model config", () => {
     expect(buildMastraModelConfig({
       provider: "gemini",
-      model: "gemini-3.1-pro-preview",
+      model: "gemini-3.5-flash",
       apiKey: "gemini-key",
       baseURL: "https://gemini.example.com",
       source: "primary",
     })).toEqual({
-      id: "google/gemini-3.1-pro-preview",
+      id: "google/gemini-3.5-flash",
       apiKey: "gemini-key",
       url: "https://gemini.example.com",
     });

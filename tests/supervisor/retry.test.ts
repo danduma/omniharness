@@ -27,6 +27,13 @@ describe("isTransientSupervisorError", () => {
     expect(isTransientSupervisorError(new Error("Cannot connect to API: connect ETIMEDOUT api.example.com"))).toBe(true);
   });
 
+  it("treats worker output lock contention as transient", () => {
+    expect(isTransientSupervisorError(Object.assign(new Error("Timed out waiting for worker output lock: /tmp/worker.jsonl.lock"), {
+      code: "ELOCKED",
+    }))).toBe(true);
+    expect(isTransientSupervisorError(new Error("Lock file is already being held"))).toBe(true);
+  });
+
   it("identifies wrapped connection failures for unlimited connection recovery", () => {
     const reset = new TypeError(
       "fetch failed",

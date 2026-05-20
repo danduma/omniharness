@@ -70,7 +70,7 @@ export function getDefaultWorkersSidebarWidth(viewportWidth?: number | null) {
 
 export const DEFAULT_SERVER_SETTINGS: Record<string, string> = {
   SUPERVISOR_LLM_PROVIDER: "gemini",
-  SUPERVISOR_LLM_MODEL: "gemini-3.1-pro-preview",
+  SUPERVISOR_LLM_MODEL: "gemini-3.5-flash",
   SUPERVISOR_LLM_BASE_URL: "",
   SUPERVISOR_LLM_API_KEY: "",
   SUPERVISOR_LLM_THINKING_EFFORT: "medium",
@@ -139,7 +139,7 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
   ],
   gemini: [
     { value: "gemini-3", label: "Gemini 3" },
-    { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
+    { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
   ],
   opencode: [
     { value: "openai/gpt-5.5", label: "GPT-5.5" },
@@ -169,7 +169,7 @@ export type LlmProviderId = (typeof LLM_PROVIDER_OPTIONS)[number]["value"];
 
 export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: string; label: string }>> = {
   gemini: [
-    { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
+    { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
     { value: "gemini-3", label: "Gemini 3" },
     { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
     { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
@@ -195,13 +195,13 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
     { value: "anthropic/claude-opus-4-7", label: "Claude Opus 4.7" },
     { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
     { value: "openai/gpt-5.5", label: "GPT-5.5" },
-    { value: "google/gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
+    { value: "google/gemini-3.5-flash", label: "Gemini 3.5 Flash" },
   ],
   "openai-compatible": [],
 };
 
 export const LLM_DEFAULT_MODEL: Record<LlmProviderId, string> = {
-  gemini: "gemini-3.1-pro-preview",
+  gemini: "gemini-3.5-flash",
   anthropic: "claude-opus-4-7",
   openai: "gpt-5.5",
   codex: "gpt-5.4",

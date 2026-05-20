@@ -17,13 +17,13 @@ describe("hydrateRuntimeEnvFromSettings", () => {
   it("decrypts stored secret settings before exposing them to runtime code", () => {
     const result = hydrateRuntimeEnvFromSettings([
       { key: "GEMINI_API_KEY", value: "enc:v1:secret-value" },
-      { key: "SUPERVISOR_LLM_MODEL", value: "gemini-3.1-pro-preview" },
+      { key: "SUPERVISOR_LLM_MODEL", value: "gemini-3.5-flash" },
     ]);
 
     expect(result).toEqual({
       env: {
         GEMINI_API_KEY: "decrypted:secret-value",
-        SUPERVISOR_LLM_MODEL: "gemini-3.1-pro-preview",
+        SUPERVISOR_LLM_MODEL: "gemini-3.5-flash",
       },
       decryptionFailures: [],
     });
@@ -34,12 +34,12 @@ describe("hydrateRuntimeEnvFromSettings", () => {
 
     const result = hydrateRuntimeEnvFromSettings([
       { key: "GEMINI_API_KEY", value: "enc:v1:broken" },
-      { key: "SUPERVISOR_LLM_MODEL", value: "gemini-3.1-pro-preview" },
+      { key: "SUPERVISOR_LLM_MODEL", value: "gemini-3.5-flash" },
     ]);
 
     expect(result).toEqual({
       env: {
-        SUPERVISOR_LLM_MODEL: "gemini-3.1-pro-preview",
+        SUPERVISOR_LLM_MODEL: "gemini-3.5-flash",
       },
       decryptionFailures: [{ key: "GEMINI_API_KEY" }],
     });

@@ -42,7 +42,7 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
   ],
   gemini: [
     { value: "gemini-3", label: "Gemini 3" },
-    { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
+    { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
   ],
   opencode: [
     { value: "openai/gpt-5.5", label: "GPT-5.5" },
@@ -51,6 +51,10 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
     { value: "openai/gpt-5.3-codex", label: "GPT-5.3 Codex" },
     { value: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4" },
   ],
+};
+
+const DEPRECATED_WORKER_MODELS: Partial<Record<SupportedWorkerType, Set<string>>> = {
+  gemini: new Set(["gemini-3.5-flash"]),
 };
 
 async function defaultRunCommand(command: string, args: string[]) {
@@ -134,7 +138,7 @@ function normalizeCachedCatalog(catalog: Partial<WorkerModelCatalog> | null | un
       }
 
       const value = typeof model.value === "string" ? model.value.trim() : "";
-      if (!value) {
+      if (!value || DEPRECATED_WORKER_MODELS[type]?.has(value)) {
         return [];
       }
 

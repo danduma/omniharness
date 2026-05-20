@@ -926,6 +926,70 @@ describe("deriveWorkerEvents", () => {
     expect(workerEvents).toEqual([]);
   });
 
+  it("polls a stale starting worker that already has a bridge session", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+    const staleTimestamp = new Date(Date.now() - 60_000);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: staleTimestamp,
+      updatedAt: staleTimestamp,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: staleTimestamp,
+      updatedAt: staleTimestamp,
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "gemini",
+      status: "starting",
+      cwd: process.cwd(),
+      outputLog: "",
+      bridgeSessionId: "session-started",
+      bridgeSessionMode: "full-access",
+      createdAt: staleTimestamp,
+      updatedAt: staleTimestamp,
+    });
+
+    mockGetAgent.mockResolvedValue({
+      state: "working",
+      sessionId: "session-started",
+      sessionMode: "full-access",
+      currentText: "editing files",
+      lastText: "",
+      pendingPermissions: [],
+      outputEntries: [{
+        id: "entry-1",
+        type: "message",
+        text: "editing files",
+        timestamp: new Date().toISOString(),
+      }],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    await pollRunWorkers(runId, wakeSupervisor);
+
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const entries = await readWorkerOutputEntries(runId, workerId);
+
+    expect(mockGetAgent).toHaveBeenCalledWith(workerId, { retryIndefinitely: false });
+    expect(persistedWorker?.status).toBe("working");
+    expect(persistedWorker?.currentText).toBe("editing files");
+    expect(entries.some((entry) => entry.text === "editing files")).toBe(true);
+  });
+
   it("fails the run when worker stderr reports a fatal bridge pipe error", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -1972,6 +2036,99 @@ describe("deriveWorkerEvents", () => {
     expect(persistedWorker?.bridgeSessionId).toBeNull();
     expect(workerEvents.some((event) => event.eventType === "worker_resume_failed")).toBe(true);
     expect(wakeSupervisor).not.toHaveBeenCalled();
+  });
+
+  it("does not fail an implementation run when a superseded worker resume fails", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const staleWorkerId = `${runId}-worker-1`;
+    const replacementWorkerId = `${runId}-worker-2`;
+    const wakeSupervisor = vi.fn();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values([
+      {
+        id: staleWorkerId,
+        runId,
+        type: "gemini",
+        status: "working",
+        cwd: process.cwd(),
+        outputLog: "",
+        bridgeSessionId: "stale-session",
+        bridgeSessionMode: "full-access",
+        title: "Implement the plan",
+        initialPrompt: "Implement the plan",
+        workerNumber: 1,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      },
+      {
+        id: replacementWorkerId,
+        runId,
+        type: "gemini",
+        status: "idle",
+        cwd: process.cwd(),
+        outputLog: "",
+        bridgeSessionId: "replacement-session",
+        bridgeSessionMode: "full-access",
+        title: "Implement the plan",
+        initialPrompt: "Implement the plan",
+        workerNumber: 2,
+        currentText: "Waiting for workspace access.",
+        lastText: "Waiting for workspace access.",
+        createdAt: new Date(1),
+        updatedAt: new Date(1),
+      },
+    ]);
+
+    mockGetAgent.mockImplementation(async (workerId: string) => {
+      if (workerId === staleWorkerId) {
+        throw new Error("Get agent failed: 404 not_found");
+      }
+      return {
+        name: replacementWorkerId,
+        type: "gemini",
+        cwd: process.cwd(),
+        state: "idle",
+        sessionId: "replacement-session",
+        sessionMode: "full-access",
+        currentText: "",
+        lastText: "Waiting for workspace access.",
+        pendingPermissions: [],
+        outputEntries: [],
+        stderrBuffer: [],
+        stopReason: "end_turn",
+      };
+    });
+    vi.mocked(mockSpawnAgent).mockRejectedValue(new Error("Spawn failed: invalid session identifier."));
+
+    await pollRunWorkers(runId, wakeSupervisor);
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const staleEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, staleWorkerId));
+
+    expect(persistedRun?.status).toBe("running");
+    expect(persistedRun?.lastError).toBeNull();
+    expect(staleEvents.some((event) => event.eventType === "worker_resume_failed")).toBe(false);
+    expect(staleEvents.some((event) => event.eventType === "worker_superseded_ignored")).toBe(true);
+    expect(mockGetAgent).toHaveBeenCalledWith(replacementWorkerId, { retryIndefinitely: false });
+    expect(vi.mocked(mockSpawnAgent)).not.toHaveBeenCalled();
   });
 
   it("marks a worker cancelled when its saved bridge session is gone instead of failing the run", async () => {

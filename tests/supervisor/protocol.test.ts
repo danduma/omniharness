@@ -89,6 +89,8 @@ describe("buildSupervisorTools", () => {
 
     expect(askUserTool?.description).toContain("clarifying question");
     expect(askUserTool?.description).toContain("confirm_ready_to_implement");
+    expect(askUserTool?.description).toContain("Never use this to ask the user to fill in the preflight five-field checklist");
+    expect(askUserTool?.description).toContain("ask only for truly missing facts");
 
     expect(confirmTool).toBeTruthy();
     expect(confirmTool?.description).toContain("preflight intent confirmation");

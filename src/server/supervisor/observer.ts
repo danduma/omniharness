@@ -25,6 +25,7 @@ import { deriveWorkerTerminalProcesses } from "@/lib/worker-terminal-processes";
 const OBSERVER_INTERVAL_MS = 5_000;
 const IDLE_THRESHOLD_MS = 30_000;
 const STUCK_THRESHOLD_MS = 5 * 60_000;
+const STARTING_WORKER_POLL_GRACE_MS = 15_000;
 const DUPLICATE_WORKER_EVENT_WINDOW_MS = 5 * 60_000;
 const WORKER_TURN_COMPLETED_EVENT_TYPE = "worker_turn_completed";
 const WORKER_TURN_COMPLETION_RESET_EVENT_TYPES = [
@@ -84,12 +85,71 @@ function isTerminalWorkerStatus(status: string) {
   return TERMINAL_WORKER_STATUSES.has(status.toLowerCase());
 }
 
+function shouldPollStartingWorker(worker: typeof workers.$inferSelect, now: number) {
+  if (!worker.bridgeSessionId) {
+    return false;
+  }
+
+  const updatedAtMs = worker.updatedAt instanceof Date
+    ? worker.updatedAt.getTime()
+    : new Date(worker.updatedAt).getTime();
+  if (!Number.isFinite(updatedAtMs)) {
+    return true;
+  }
+
+  return now - updatedAtMs >= STARTING_WORKER_POLL_GRACE_MS;
+}
+
+function workerCreatedAtMs(worker: typeof workers.$inferSelect) {
+  const time = worker.createdAt instanceof Date
+    ? worker.createdAt.getTime()
+    : new Date(worker.createdAt).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function isNewerWorker(candidate: typeof workers.$inferSelect, worker: typeof workers.$inferSelect) {
+  const candidateNumber = candidate.workerNumber ?? 0;
+  const workerNumber = worker.workerNumber ?? 0;
+  if (candidateNumber !== workerNumber) {
+    return candidateNumber > workerNumber;
+  }
+
+  const createdAtDiff = workerCreatedAtMs(candidate) - workerCreatedAtMs(worker);
+  if (createdAtDiff !== 0) {
+    return createdAtDiff > 0;
+  }
+
+  return candidate.id > worker.id;
+}
+
+function isSupersedingWorkerStatus(status: string | null | undefined) {
+  return !["cancelled", "canceled", "error", "failed", "lost"].includes(normalizeWorkerStatus(status));
+}
+
+function findSupersedingImplementationWorker(args: {
+  run: typeof runs.$inferSelect;
+  worker: typeof workers.$inferSelect;
+  runWorkers: Array<typeof workers.$inferSelect>;
+}) {
+  if (args.run.mode !== "implementation") {
+    return null;
+  }
+
+  return args.runWorkers.find((candidate) => (
+    candidate.id !== args.worker.id
+    && candidate.title === args.worker.title
+    && isSupersedingWorkerStatus(candidate.status)
+    && isNewerWorker(candidate, args.worker)
+  )) ?? null;
+}
+
 const observerIntervals = new Map<string, ReturnType<typeof setInterval>>();
 const observerPollsInFlight = new Map<string, number>();
 const observerGenerations = new Map<string, number>();
 const observerState = new Map<string, WorkerObserverState>();
 const recentWorkerEventKeys = new Map<string, number>();
 const TYPE_DEDUPED_WORKER_EVENT_TYPES = new Set([
+  "worker_superseded_ignored",
   "worker_error",
   "worker_idle",
   "worker_session_missing",
@@ -664,7 +724,8 @@ function isMissingAgentError(error: unknown) {
   return message.includes("404")
     || message.includes("not_found")
     || message.includes("agent not found")
-    || message.includes("session not found");
+    || message.includes("session not found")
+    || message.includes("invalid session identifier");
 }
 
 function isAgentAlreadyExistsError(error: unknown, workerId: string) {
@@ -786,7 +847,18 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
       continue;
     }
 
-    if (normalizeWorkerStatus(worker.status) === "starting") {
+    const supersedingWorker = findSupersedingImplementationWorker({ run, worker, runWorkers });
+    if (supersedingWorker) {
+      await insertExecutionEvent(runId, worker.id, "worker_superseded_ignored", {
+        summary: `Skipping ${worker.id} because newer implementation worker ${supersedingWorker.id} superseded it.`,
+        supersededByWorkerId: supersedingWorker.id,
+        workerStatus: worker.status,
+        supersedingWorkerStatus: supersedingWorker.status,
+      });
+      continue;
+    }
+
+    if (normalizeWorkerStatus(worker.status) === "starting" && !shouldPollStartingWorker(worker, now)) {
       continue;
     }
 
@@ -1067,10 +1139,16 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
         stopRunObserver(runId, { reason: "run_terminated" });
         return;
       }
+      const retryable = isTransientSupervisorError(error);
       await insertExecutionEvent(runId, worker.id, "worker_observer_failed", {
         summary: `Observer failed while processing ${worker.id}`,
         reason: formatErrorMessage(error),
+        retryable,
       });
+      if (retryable) {
+        notifyEventStreamSubscribers();
+        continue;
+      }
       stopRunObserver(runId, { reason: "run_failed" });
       await persistRunFailure(runId, error);
       return;

@@ -89,6 +89,7 @@ export function buildSupervisorTools(options?: {
         `Spawn a new external coding worker. Use multiple workers when the work can be split into independent, non-overlapping tasks that can safely run in parallel. ` +
         `Use one main worker when the next step is tightly coupled or would create duplicate/conflicting edits. ` +
         `Use independent validator workers to check mocked paths, fake controls, placeholder implementations, and whether the real user-facing path works. ` +
+        `If a validator finds gaps, use worker_continue on the original implementation worker with interventionType "completion_gap" when possible instead of spawning a fresh implementer. ` +
         `Only use these worker types for this run: ${allowedWorkerTypes.join(", ")}.` +
         (preferredWorkerType ? ` Prefer ${preferredWorkerType} first when it is suitable, then follow the allowed worker order for fallbacks.` : ""),
       inputSchema: z.object({
@@ -156,7 +157,7 @@ export function buildSupervisorTools(options?: {
     ask_user: createTool({
       id: "ask_user",
       description:
-        "Ask the user a clarifying question that is NOT a checkpoint asking whether to begin or continue implementation. For preflight intent confirmation or any 'is the plan ready, shall I start implementing?' checkpoint, use confirm_ready_to_implement instead so the UI can render quick confirm/clarify buttons.",
+        "Ask the user a clarifying question that is NOT a checkpoint asking whether to begin or continue implementation. For preflight intent confirmation or any 'is the plan ready, shall I start implementing?' checkpoint, use confirm_ready_to_implement instead so the UI can render quick confirm/clarify buttons. Never use this to ask the user to fill in the preflight five-field checklist; extract those fields from the plan/spec yourself and ask only for truly missing facts.",
       inputSchema: z.object({
         question: z.string(),
       }),

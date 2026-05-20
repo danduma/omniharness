@@ -33,12 +33,14 @@ describe("SUPERVISOR_SYSTEM_PROMPT", () => {
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("validator/checker CLI worker");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("mocked path");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("fake control");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("interventionType \"completion_gap\"");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("structured validation rows");
   });
 
   it("forbids duplicate main implementers unless work is explicitly separated", () => {
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Worker allocation");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Do not spawn two workers for the same files");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("separate role from implementation workers");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("independent, non-overlapping slices");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("explicit ownership");
   });
@@ -57,6 +59,13 @@ describe("SUPERVISOR_SYSTEM_PROMPT", () => {
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("success conditions");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Do not ask the user to confirm");
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("implement this spec");
+  });
+
+  it("forbids bouncing the five-field preflight scaffold back to the user", () => {
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("private extraction checklist");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("not a questionnaire for the user");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Do not send the whole five-field scaffold back to the user");
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("ask only the specific missing fact");
   });
 
   it("requires reading referenced files before asking the user to summarize them", () => {

@@ -39,7 +39,7 @@ describe("worker model catalog", () => {
     ]));
     expect(catalog.gemini).toEqual([
       { value: "gemini-3", label: "Gemini 3" },
-      { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
+      { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
     ]);
   });
 
@@ -100,5 +100,24 @@ describe("worker model catalog", () => {
       { value: "gpt-5.6", label: "GPT-5.6" },
     ]));
     expect(saveCachedCatalog).toHaveBeenCalledWith(refreshedCatalog);
+  });
+
+  it("filters deprecated Gemini models from cached catalogs", async () => {
+    const manager = new WorkerModelCatalogManager({
+      loadCachedCatalog: async () => ({
+        gemini: [
+          { value: "gemini-3.5-flash", label: "Gemini 3.1 Pro Preview" },
+          { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+        ],
+      }),
+      runCommand: async () => "",
+    });
+
+    const snapshot = await manager.getCatalogSnapshot();
+
+    expect(snapshot.catalog.gemini).toEqual([
+      { value: "gemini-3", label: "Gemini 3" },
+      { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+    ]);
   });
 });
