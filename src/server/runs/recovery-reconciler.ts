@@ -4,8 +4,11 @@ import { spawnAgent, type AgentRecord } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { executionEvents, messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { normalizeRunStatus } from "@/server/runs/status";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
+import { resolveDirectRunStatusFromWorkerOutput } from "@/server/conversations/direct-run-status";
+import { writeWorkerOutputEntries } from "@/server/workers/output-store";
 import {
   markRecoveryIncidentFailed,
   markRecoveryIncidentNeedsUser,
@@ -91,6 +94,29 @@ async function markNeedsUser(args: {
   });
 }
 
+async function recordRecoveryPausedForUser(args: {
+  runId: string;
+  workerId?: string | null;
+  state: RecoveryState;
+  source?: string;
+}) {
+  const existing = await db.select().from(executionEvents).where(eq(executionEvents.runId, args.runId));
+  const alreadyRecorded = existing.some((event) => (
+    event.eventType === "recovery_paused_for_user"
+    && event.workerId === (args.workerId ?? null)
+  ));
+  if (alreadyRecorded) {
+    return;
+  }
+
+  await insertRecoveryExecutionEvent(args.runId, args.workerId, "recovery_paused_for_user", {
+    summary: "Skipped automatic recovery because the run is awaiting user input.",
+    source: args.source ?? "reconciler",
+    recoveryState: args.state.kind,
+    recommendedAction: args.state.recommendedAction,
+  });
+}
+
 async function resumeSavedWorkerSession(args: {
   run: typeof runs.$inferSelect;
   worker: typeof workers.$inferSelect;
@@ -132,15 +158,29 @@ async function resumeSavedWorkerSession(args: {
     ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
     resumeSessionId: sessionId,
   }) as AgentRecord;
+  const nextRunStatus = args.run.mode === "direct"
+    ? resolveDirectRunStatusFromWorkerOutput({
+      renderedOutput: resumed.renderedOutput,
+      currentText: resumed.currentText,
+      lastText: resumed.lastText,
+      outputEntries: resumed.outputEntries,
+    })
+    : "running";
+
+  if (resumed.outputEntries) {
+    await writeWorkerOutputEntries(args.run.id, args.worker.id, resumed.outputEntries);
+  }
 
   await db.update(workers).set({
     status: resumed.state,
+    currentText: resumed.currentText,
+    lastText: resumed.lastText,
     bridgeSessionId: resumed.sessionId ?? sessionId,
     bridgeSessionMode: resumed.sessionMode ?? args.worker.bridgeSessionMode ?? null,
     updatedAt: new Date(),
   }).where(eq(workers.id, args.worker.id));
   await db.update(runs).set({
-    status: "running",
+    status: nextRunStatus,
     failedAt: null,
     lastError: null,
     updatedAt: new Date(),
@@ -221,6 +261,17 @@ export async function reconcileRunRecovery(args: {
 
   if (state.kind === "needs_recovery" && run.status === "needs_recovery" && !args.force) {
     return { action: "needs_user" as const, runId: run.id, recoveryState: state };
+  }
+
+  if (run.mode === "implementation" && normalizeRunStatus(run.status) === "awaiting_user") {
+    await recordRecoveryPausedForUser({
+      runId: run.id,
+      workerId: state.workerId,
+      state,
+      source: args.source,
+    });
+    notifyEventStreamSubscribers();
+    return { action: "none" as const, runId: run.id, recoveryState: state };
   }
 
   const incident = await openRecoveryIncident({

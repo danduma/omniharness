@@ -158,6 +158,29 @@ describe("reconcileRunRecovery", () => {
     expect(incident?.status).toBe("resolved");
   });
 
+  it("does not auto-resume a missing implementation worker while awaiting user input", async () => {
+    const { runId, workerId } = await createImplementationRun();
+    await db.update(runs).set({
+      status: "awaiting_user",
+    }).where(eq(runs.id, runId));
+    await db.update(workers).set({
+      bridgeSessionId: "session-paused-1",
+    }).where(eq(workers.id, workerId));
+
+    const result = await reconcileRunRecovery({ runId, liveAgents: [], source: "conversation-sync" });
+
+    expect(result.action).toBe("none");
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(run?.status).toBe("awaiting_user");
+    expect(worker?.status).toBe("working");
+    expect(incident).toBeUndefined();
+    expect(events.some((event) => event.eventType === "recovery_paused_for_user")).toBe(true);
+  });
+
   it("restarts implementation runs when a saved session is rejected by the bridge", async () => {
     const { runId, workerId } = await createImplementationRun();
     await db.update(workers).set({
@@ -219,7 +242,7 @@ describe("reconcileRunRecovery", () => {
     const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
-    expect(run?.status).toBe("running");
+    expect(run?.status).toBe("done");
     expect(run?.lastError).toBeNull();
     expect(worker?.status).toBe("idle");
     expect(worker?.bridgeSessionId).toBe("session-direct-2");

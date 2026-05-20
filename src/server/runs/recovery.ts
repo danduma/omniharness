@@ -28,6 +28,7 @@ import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/superviso
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
+import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -217,6 +218,12 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string, 
   } catch {
     // The bridge may have already dropped a failed direct worker; the ask response still determines the visible state.
   }
+  await appendAskResponseFallbackEntry({
+    runId: run.id,
+    workerId,
+    responseText: response.response,
+    snapshot,
+  });
 
   if (!hasVisibleWorkerOutput(response.response, snapshot)) {
     const failureMessage = buildEmptyWorkerOutputMessage(snapshot, response.state);
@@ -345,6 +352,12 @@ async function resumeDirectRunFromSavedSession(
   } catch {
     // The restored worker response is enough to update the conversation.
   }
+  await appendAskResponseFallbackEntry({
+    runId: run.id,
+    workerId: worker.id,
+    responseText: response.response,
+    snapshot,
+  });
 
   const completedAt = new Date();
   await db.update(workers).set({
