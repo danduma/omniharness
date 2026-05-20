@@ -1,8 +1,9 @@
 import { randomUUID } from "crypto";
 import { and, asc, eq } from "drizzle-orm";
-import { askAgent, getAgent, spawnAgent } from "@/server/bridge-client";
+import { askAgent, cancelAgent, getAgent, spawnAgent } from "@/server/bridge-client";
 import { db } from "@/server/db";
-import { clarifications, executionEvents, messages, runs, workers } from "@/server/db/schema";
+import { clarifications, messages, runs, workers } from "@/server/db/schema";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { answerClarification } from "@/server/clarifications/store";
 import { resumeRunAfterClarification } from "@/server/clarifications/loop";
 import { startSupervisorRun } from "@/server/supervisor/start";
@@ -19,18 +20,27 @@ import { normalizeWorkerType, SUPPORTED_WORKER_TYPES, type SupportedWorkerType }
 import { createQueuedConversationMessage, type BusyMessageAction } from "./queued-messages";
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
-import { runConversationMutation, runWorkerTurn } from "./worker-turn-gate";
+import { runConversationMutation, runWorkerTurn, trackConversationBackgroundTask } from "./worker-turn-gate";
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
+import { isManualStopCommand } from "@/app/home/busy-message-behavior";
+import { emitNamedEvent } from "@/server/events/named-events";
+import { cancelSupervisorWake } from "@/server/supervisor/wake";
+import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
+import { stopRunObserver } from "@/server/supervisor/observer";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
+
+function isDirectRunMode(mode: string | null | undefined) {
+  return mode === "direct" || mode === "commit";
+}
 
 function isAgentBusyError(error: unknown) {
   return /\bagent is busy\b/i.test(formatErrorMessage(error));
 }
 
 function isAgentNotFoundError(error: unknown) {
-  return /\b(agent not found|not_found|session not found|invalid session identifier|404)\b/i.test(formatErrorMessage(error));
+  return /\b(agent not found|not_found|session not found|invalid session identifier|failed to load resumed session data from file|404)\b/i.test(formatErrorMessage(error));
 }
 
 function isAgentAlreadyExistsError(error: unknown, workerId: string) {
@@ -45,6 +55,14 @@ function normalizeWorkerStatus(status: string | null | undefined) {
 function isWorkerCancelled(worker: WorkerRecord | null | undefined) {
   const status = normalizeWorkerStatus(worker?.status);
   return status === "cancelled" || status === "canceled";
+}
+
+function isStoppableRunStatus(status: string | null | undefined) {
+  return ["running", "working", "stuck", "needs_recovery"].includes(normalizeWorkerStatus(status));
+}
+
+function isStoppableWorkerStatus(status: string | null | undefined) {
+  return ["starting", "working", "idle", "stuck"].includes(normalizeWorkerStatus(status));
 }
 
 function workerCreatedAtMs(worker: WorkerRecord) {
@@ -79,7 +97,7 @@ async function assertWorkerUserMessagesInStream(runId: string, workerId: string)
       .select()
       .from(messages)
       .where(and(eq(messages.runId, runId), eq(messages.role, "user")))
-      .orderBy(asc(messages.createdAt)),
+      .orderBy(asc(messages.createdAt), asc(messages.id)),
     readWorkerOutputEntries(runId, workerId),
   ]);
   const streamUserInputIds = new Set(
@@ -118,6 +136,7 @@ async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRecord) {
     ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
   };
   let resumedWorker;
+  let recreatedFromMissingSession = false;
   try {
     resumedWorker = await spawnAgent({
       ...spawnParams,
@@ -130,30 +149,39 @@ async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRecord) {
       await db.update(workers).set({
         status: "starting",
         bridgeSessionId: null,
+        bridgeSessionMode: null,
         updatedAt: new Date(),
       }).where(eq(workers.id, worker.id));
       resumedWorker = await spawnAgent(spawnParams);
+      recreatedFromMissingSession = true;
     } else {
       throw error;
     }
   }
 
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  await recordExecutionEvent({
     runId: run.id,
     workerId: worker.id,
     planItemId: null,
-    eventType: "worker_session_resumed",
-    details: JSON.stringify({
-      summary: `Resumed ${worker.id} from saved session`,
-      sessionId,
-    }),
-    createdAt: new Date(),
+    eventType: recreatedFromMissingSession ? "worker_session_recreated" : "worker_session_resumed",
+    details: {
+      summary: recreatedFromMissingSession
+        ? `Started a fresh runtime worker for ${worker.id} after its saved session was rejected.`
+        : `Resumed ${worker.id} from saved session`,
+      ...(recreatedFromMissingSession
+        ? { rejectedSessionId: sessionId, newSessionId: resumedWorker.sessionId ?? null }
+        : { sessionId }),
+    },
+  });
+  emitNamedEvent({
+    kind: recreatedFromMissingSession ? "worker.recreated" : "worker.reattached",
+    runId: run.id,
+    workerId: worker.id,
   });
 
   await db.update(workers).set({
     status: resumedWorker.state,
-    bridgeSessionId: resumedWorker.sessionId ?? sessionId,
+    bridgeSessionId: resumedWorker.sessionId ?? (recreatedFromMissingSession ? null : sessionId),
     bridgeSessionMode: resumedWorker.sessionMode ?? sessionMode ?? null,
     updatedAt: new Date(),
   }).where(eq(workers.id, worker.id));
@@ -293,7 +321,7 @@ async function continueWorkerConversation({
           responseText: response.response,
         });
       }
-    } else if (run.mode === "direct") {
+    } else if (isDirectRunMode(run.mode)) {
       await updateDirectRunStatusFromWorkerOutput({
         runId: run.id,
         workerId: worker.id,
@@ -333,7 +361,9 @@ async function continueWorkerConversation({
       status: "error",
       updatedAt: new Date(),
     }).where(eq(workers.id, worker.id));
-    await persistRunFailure(run.id, error);
+    await persistRunFailure(run.id, error, {
+      surface: { code: "conversation.continue.failed", workerId: worker.id },
+    });
     throw error;
   }
 }
@@ -420,20 +450,19 @@ async function applyWorkerPreferenceForMessage(args: {
     allowedWorkerTypes: JSON.stringify(nextAllowedWorkerTypes),
     updatedAt: now,
   }).where(eq(runs.id, args.run.id));
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  await recordExecutionEvent({
     runId: args.run.id,
     workerId: null,
     planItemId: null,
     eventType: "worker_selection_changed",
-    details: JSON.stringify({
+    details: {
       summary: `Changed preferred worker selection to ${nextWorkerType}.`,
       preferredWorkerType: nextWorkerType,
       preferredWorkerModel: nextPreferredWorkerModel,
       preferredWorkerEffort: nextPreferredWorkerEffort,
       allowedWorkerTypes: nextAllowedWorkerTypes,
       source: explicitWorkerType ? "composer_selection" : "message_text",
-    }),
+    },
     createdAt: now,
   });
 
@@ -444,6 +473,140 @@ async function applyWorkerPreferenceForMessage(args: {
     preferredWorkerEffort: nextPreferredWorkerEffort,
     allowedWorkerTypes: JSON.stringify(nextAllowedWorkerTypes),
     updatedAt: now,
+  };
+}
+
+async function stopConversationFromManualStopCommand(run: RunRecord) {
+  if (!isStoppableRunStatus(run.status)) {
+    return {
+      ok: true as const,
+      stopped: false as const,
+      ignored: true as const,
+      runId: run.id,
+      workerId: null,
+      runCancelled: false,
+      reason: "not_stoppable" as const,
+    };
+  }
+
+  if (run.mode === "implementation") {
+    cancelSupervisorWake(run.id);
+    stopRunObserver(run.id);
+    await clearSupervisorWakeLease(run.id);
+    const runWorkers = await db.select().from(workers).where(eq(workers.runId, run.id));
+    const activeWorkers = runWorkers.filter((worker) => isStoppableWorkerStatus(worker.status));
+    for (const worker of activeWorkers) {
+      void cancelAgent(worker.id).catch(() => undefined);
+      await db.update(workers).set({
+        status: "cancelled",
+        updatedAt: new Date(),
+      }).where(eq(workers.id, worker.id));
+      emitNamedEvent({
+        kind: "worker.status",
+        runId: run.id,
+        workerId: worker.id,
+        prev: worker.status,
+        next: "cancelled",
+      });
+      emitNamedEvent({
+        kind: "worker.terminal",
+        runId: run.id,
+        workerId: worker.id,
+        status: "cancelled",
+      });
+    }
+
+    const now = new Date();
+    await db.update(runs).set({
+      status: "cancelled",
+      updatedAt: now,
+    }).where(eq(runs.id, run.id));
+    await recordExecutionEvent({
+      runId: run.id,
+      workerId: null,
+      planItemId: null,
+      eventType: "supervisor_stopped",
+      details: {
+        summary: "Stopped supervisor from exact stop command.",
+        reason: "User sent an exact stop command.",
+        userInitiated: true,
+        cancelledWorkerIds: activeWorkers.map((worker) => worker.id),
+        source: "manual_stop_message",
+      },
+      createdAt: now,
+    });
+    notifyEventStreamSubscribers();
+    return {
+      ok: true as const,
+      stopped: true as const,
+      runId: run.id,
+      workerId: null,
+      runCancelled: true,
+    };
+  }
+
+  const worker = await selectConversationWorker(run.id);
+  if (!worker || !isStoppableWorkerStatus(worker.status)) {
+    return {
+      ok: true as const,
+      stopped: false as const,
+      ignored: true as const,
+      runId: run.id,
+      workerId: worker?.id ?? null,
+      runCancelled: false,
+      reason: "not_stoppable" as const,
+    };
+  }
+
+  void cancelAgent(worker.id).catch(() => undefined);
+  const now = new Date();
+  await db.update(workers).set({
+    status: "cancelled",
+    updatedAt: now,
+  }).where(eq(workers.id, worker.id));
+  emitNamedEvent({
+    kind: "worker.status",
+    runId: run.id,
+    workerId: worker.id,
+    prev: worker.status,
+    next: "cancelled",
+  });
+  emitNamedEvent({
+    kind: "worker.terminal",
+    runId: run.id,
+    workerId: worker.id,
+    status: "cancelled",
+  });
+
+  const remainingWorkers = await db.select().from(workers).where(eq(workers.runId, run.id));
+  const hasActiveWorker = remainingWorkers.some((candidate) => isStoppableWorkerStatus(candidate.status));
+  if (!hasActiveWorker) {
+    await db.update(runs).set({
+      status: "cancelled",
+      updatedAt: now,
+    }).where(eq(runs.id, run.id));
+  }
+
+  await recordExecutionEvent({
+    runId: run.id,
+    workerId: worker.id,
+    planItemId: null,
+    eventType: "worker_cancelled",
+    details: {
+      summary: `Stopped ${worker.id}`,
+      reason: "User sent an exact stop command.",
+      runCancelled: !hasActiveWorker,
+      source: "manual_stop_message",
+    },
+    createdAt: now,
+  });
+  notifyEventStreamSubscribers();
+  return {
+    ok: true as const,
+    stopped: true as const,
+    runId: run.id,
+    workerId: worker.id,
+    runCancelled: !hasActiveWorker,
   };
 }
 
@@ -472,6 +635,10 @@ async function sendConversationMessageUnlocked({
   let run = await db.select().from(runs).where(eq(runs.id, runId)).get();
   if (!run) {
     throw Object.assign(new Error("Conversation not found"), { status: 404 });
+  }
+  if (normalizedAttachments.length === 0 && isManualStopCommand(trimmedContent)) {
+    const stopped = await stopConversationFromManualStopCommand(run);
+    return stopped;
   }
   run = await applyWorkerPreferenceForMessage({
     run,
@@ -502,7 +669,7 @@ async function sendConversationMessageUnlocked({
     if (!worker) {
       throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
     }
-    if (run.mode === "direct" || run.mode === "planning") {
+    if (isDirectRunMode(run.mode) || run.mode === "planning") {
       await assertWorkerUserMessagesInStream(runId, worker.id);
     }
 
@@ -521,7 +688,7 @@ async function sendConversationMessageUnlocked({
       .select()
       .from(clarifications)
       .where(and(eq(clarifications.runId, runId), eq(clarifications.status, "pending")))
-      .orderBy(asc(clarifications.createdAt))
+      .orderBy(asc(clarifications.createdAt), asc(clarifications.id))
       .get();
     const createdAt = new Date();
     const message = {
@@ -565,7 +732,7 @@ async function sendConversationMessageUnlocked({
   if (!worker) {
     throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
   }
-  if (run.mode === "direct" || run.mode === "planning") {
+  if (isDirectRunMode(run.mode) || run.mode === "planning") {
     await assertWorkerUserMessagesInStream(runId, worker.id);
   }
 
@@ -600,7 +767,7 @@ async function sendConversationMessageUnlocked({
   }).where(eq(runs.id, runId));
   notifyEventStreamSubscribers();
 
-  if (run.mode === "direct") {
+  if (isDirectRunMode(run.mode)) {
     // Append user_input to the stream immediately so the UI reflects the
     // message instantly, without waiting for the worker's turn chain.
     await appendUserInputOnDelivery({
@@ -658,7 +825,7 @@ async function sendConversationMessageUnlocked({
 
     // Direct follow-up follows the same "append-immediately" path. The
     // turn runs in the background.
-    const turn = runWorkerTurn(worker.id, () => continueWorkerConversation({
+    const turn = trackConversationBackgroundTask(runWorkerTurn(worker.id, () => continueWorkerConversation({
       run,
       worker,
       content: workerContent,
@@ -667,7 +834,7 @@ async function sendConversationMessageUnlocked({
       attachments: normalizedAttachments,
       // Already appended above.
       appendUserInputBeforeAsk: false,
-    }));
+    })));
     turn.catch((error) => {
       if (isAgentBusyError(error)) {
         return;

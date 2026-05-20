@@ -1,9 +1,9 @@
-import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { executionEvents, runs } from "@/server/db/schema";
+import { runs } from "@/server/db/schema";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent } from "@/server/events/named-events";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
 
 type OutputEntryLike = {
   type?: string | null;
@@ -95,7 +95,7 @@ export async function updateDirectRunStatusFromWorkerOutput(args: WorkerOutputSo
   workerId?: string | null;
 }) {
   const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
-  if (!run || run.mode !== "direct") {
+  if (!run || (run.mode !== "direct" && run.mode !== "commit")) {
     return null;
   }
 
@@ -115,13 +115,12 @@ export async function updateDirectRunStatusFromWorkerOutput(args: WorkerOutputSo
       workerId: args.workerId ?? undefined,
       reason: "worker_requested_input",
     });
-    await db.insert(executionEvents).values({
-      id: randomUUID(),
+    await recordExecutionEvent({
       runId: args.runId,
       workerId: args.workerId ?? null,
       planItemId: null,
       eventType: "direct_worker_awaiting_user",
-      details: JSON.stringify({ reason: "worker_requested_input" }),
+      details: { reason: "worker_requested_input" },
       createdAt: now,
     });
   } else if (nextStatus !== run.status || run.failedAt || run.lastError) {

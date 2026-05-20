@@ -1,6 +1,7 @@
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { executionEvents, messages, runs, workers } from "@/server/db/schema";
+import { messages, runs, workers } from "@/server/db/schema";
+import { listExecutionEventsForRun } from "@/server/events/execution-event-store";
 import { createConversation } from "@/server/conversations/create";
 import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
 import { waitForEventStreamNotification } from "@/server/events/live-updates";
@@ -70,9 +71,9 @@ async function buildWorkerAgentMap(workerRecords: Array<typeof workers.$inferSel
 async function printRunUpdates(runId: string, state: WatchState, io: OmniCliIo) {
   const [run, runMessages, runWorkers, runEvents] = await Promise.all([
     db.select().from(runs).where(eq(runs.id, runId)).get(),
-    db.select().from(messages).where(eq(messages.runId, runId)).orderBy(asc(messages.createdAt)),
-    db.select().from(workers).where(eq(workers.runId, runId)).orderBy(asc(workers.createdAt)),
-    db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).orderBy(asc(executionEvents.createdAt)),
+    db.select().from(messages).where(eq(messages.runId, runId)).orderBy(asc(messages.createdAt), asc(messages.id)),
+    db.select().from(workers).where(eq(workers.runId, runId)).orderBy(asc(workers.createdAt), asc(workers.id)),
+    listExecutionEventsForRun(runId),
   ]);
   const agentByWorkerId = await buildWorkerAgentMap(runWorkers);
 

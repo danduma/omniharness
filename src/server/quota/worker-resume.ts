@@ -1,8 +1,9 @@
-import { randomUUID } from "crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { askAgent, spawnAgent, getAgent } from "@/server/bridge-client";
 import { db } from "@/server/db";
-import { executionEvents, recoveryIncidents, runs, workers } from "@/server/db/schema";
+import { recoveryIncidents, runs, workers } from "@/server/db/schema";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
+import { emitNamedEvent } from "@/server/events/named-events";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { formatErrorMessage } from "@/server/runs/failures";
 import { markRecoveryIncidentResolved } from "@/server/runs/recovery-incidents";
@@ -57,19 +58,18 @@ async function insertWorkerSessionResumedEvent(args: {
   sessionId: string;
   incidentId: string;
 }) {
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  emitNamedEvent({ kind: "worker.reattached", runId: args.runId, workerId: args.workerId });
+  await recordExecutionEvent({
     runId: args.runId,
     workerId: args.workerId,
     planItemId: null,
     eventType: "worker_session_resumed",
-    details: JSON.stringify({
+    details: {
       summary: `Resumed ${args.workerId} from saved session after quota reset.`,
       sessionId: args.sessionId,
       incidentId: args.incidentId,
       reason: "quota_wait",
-    }),
-    createdAt: new Date(),
+    },
   });
 }
 
@@ -93,17 +93,16 @@ async function promptResumedQuotaWorker(args: {
     outputLog: appendWorkerOutput(latestWorker?.outputLog ?? args.worker.outputLog, response.response),
     updatedAt: new Date(),
   }).where(eq(workers.id, args.worker.id));
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  await recordExecutionEvent({
     runId: args.runId,
     workerId: args.worker.id,
     planItemId: null,
     eventType: "worker_prompted",
-    details: JSON.stringify({
+    details: {
       summary: `Sent quota recovery follow-up to ${args.worker.id}`,
       prompt,
       reason: "quota_wait",
-    }),
+    },
     createdAt: new Date(),
   });
   notifyEventStreamSubscribers();

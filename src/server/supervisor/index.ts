@@ -3,10 +3,11 @@ import { spawnSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { Agent } from "@mastra/core/agent";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import * as bridge from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { clarifications, executionEvents, messages as dbMessages, runs, settings, supervisorInterventions, workers } from "@/server/db/schema";
+import { listExecutionEventsForRun, recordExecutionEvent } from "@/server/events/execution-event-store";
 import { buildMastraModelConfig, getSupervisorModelConfig, validateSupervisorModelConfig } from "@/server/supervisor/model-config";
 import { CodexAuthMissingError, CodexAuthRefreshFailedError } from "@/server/supervisor/codex-auth";
 import { SUPERVISOR_SYSTEM_PROMPT } from "@/server/supervisor/prompt";
@@ -207,7 +208,8 @@ function isMissingAgentError(error: unknown) {
     || message.includes("not_found")
     || message.includes("agent not found")
     || message.includes("session not found")
-    || message.includes("invalid session identifier");
+    || message.includes("invalid session identifier")
+    || message.includes("failed to load resumed session data from file");
 }
 
 function formatSupervisorError(error: unknown) {
@@ -284,11 +286,16 @@ function extractPlanSummaryLines(markdown: string | null | undefined) {
   return lines.filter(Boolean);
 }
 
+function compareByCreatedAtThenId<T extends { createdAt: Date; id: string }>(a: T, b: T) {
+  const timeDiff = a.createdAt.getTime() - b.createdAt.getTime();
+  return timeDiff || a.id.localeCompare(b.id);
+}
+
 async function getLatestSupervisorReadFileContent(runId: string) {
-  const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+  const events = (await listExecutionEventsForRun(runId)).slice().reverse();
   const latestRead = events
     .filter((event) => event.eventType === "supervisor_file_read")
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+    .sort((a, b) => compareByCreatedAtThenId(b, a))[0];
 
   if (!latestRead?.details) {
     return null;
@@ -364,6 +371,10 @@ async function persistAwaitingUserQuestion(args: {
       createdAt: now,
     });
     await tx.update(runs).set({ status: "awaiting_user", updatedAt: now }).where(eq(runs.id, args.runId));
+    // Legacy-format insert: this runs inside a SQLite transaction so we
+    // can't safely interleave the artifact-stream append. Readers
+    // tolerate `artifact_seq IS NULL` by falling back to the legacy
+    // `details` column (see execution-event-store.ts).
     await tx.insert(executionEvents).values({
       id: randomUUID(),
       runId: args.runId,
@@ -586,14 +597,12 @@ async function insertExecutionEvent(
   details: Record<string, unknown>,
   workerId?: string | null,
 ) {
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  await recordExecutionEvent({
     runId,
     workerId: workerId ?? null,
     planItemId: null,
     eventType,
-    details: JSON.stringify(details),
-    createdAt: new Date(),
+    details,
   });
   await notifyRunLifecycleEventBestEffort({ runId, eventType, details });
   notifyEventStreamSubscribers();
@@ -864,6 +873,7 @@ async function resumeWorkerFromSavedSessionForSupervisor(runId: string, workerId
     ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
   };
   let resumedWorker: bridge.AgentRecord;
+  let recreatedFromMissingSession = false;
   try {
     resumedWorker = await bridge.spawnAgent({
       ...spawnParams,
@@ -885,6 +895,7 @@ async function resumeWorkerFromSavedSessionForSupervisor(runId: string, workerId
         updatedAt: new Date(),
       }).where(eq(workers.id, worker.id));
       resumedWorker = await bridge.spawnAgent(spawnParams);
+      recreatedFromMissingSession = true;
     } else {
       throw error;
     }
@@ -892,15 +903,26 @@ async function resumeWorkerFromSavedSessionForSupervisor(runId: string, workerId
 
   await db.update(workers).set({
     status: resumedWorker.state,
-    bridgeSessionId: resumedWorker.sessionId ?? sessionId,
+    bridgeSessionId: resumedWorker.sessionId ?? (recreatedFromMissingSession ? null : sessionId),
     bridgeSessionMode: resumedWorker.sessionMode ?? worker.bridgeSessionMode ?? null,
     updatedAt: new Date(),
   }).where(eq(workers.id, worker.id));
-  await insertExecutionEvent(runId, "worker_session_resumed", {
-    summary: `Resumed ${worker.id} from saved session before supervisor follow-up.`,
-    sessionId,
-    reason: "supervisor_continue_missing_agent",
-  }, worker.id);
+  if (recreatedFromMissingSession) {
+    emitNamedEvent({ kind: "worker.recreated", runId, workerId: worker.id });
+    await insertExecutionEvent(runId, "worker_session_recreated", {
+      summary: `Started a fresh runtime worker for ${worker.id} after its saved session was rejected.`,
+      rejectedSessionId: sessionId,
+      newSessionId: resumedWorker.sessionId ?? null,
+      reason: "supervisor_continue_missing_agent",
+    }, worker.id);
+  } else {
+    emitNamedEvent({ kind: "worker.reattached", runId, workerId: worker.id });
+    await insertExecutionEvent(runId, "worker_session_resumed", {
+      summary: `Resumed ${worker.id} from saved session before supervisor follow-up.`,
+      sessionId,
+      reason: "supervisor_continue_missing_agent",
+    }, worker.id);
+  }
   return true;
 }
 
@@ -944,7 +966,8 @@ export class Supervisor {
     validateSupervisorModelConfig(llmConfig, decryptionFailures);
 
     const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
-    const globalMemoryEnabled = parseBooleanSettingValue(settingValues.get(SUPERVISOR_MEMORY_ENABLED_SETTING), true);
+    const memorySetting = settingValues.get(SUPERVISOR_MEMORY_ENABLED_SETTING);
+    const globalMemoryEnabled = parseBooleanSettingValue(typeof memorySetting === "string" ? memorySetting : null, true);
     const projectMemoryEnabled = run?.projectPath ? isProjectMemoryEnabled(run.projectPath) : false;
     const memoryEnabled = globalMemoryEnabled && projectMemoryEnabled;
 
@@ -953,7 +976,12 @@ export class Supervisor {
       fallbackLlmConfig: getSupervisorModelConfig(process.env, "fallback"),
       envParams,
       creditStrategy: settingValues.get(CREDIT_STRATEGY_SETTING) ?? "swap_account",
-      yoloModeEnabled: parseBooleanSettingValue(settingValues.get(WORKER_YOLO_MODE_SETTING), true),
+      yoloModeEnabled: parseBooleanSettingValue(
+        typeof settingValues.get(WORKER_YOLO_MODE_SETTING) === "string"
+          ? settingValues.get(WORKER_YOLO_MODE_SETTING) as string
+          : null,
+        true,
+      ),
       memoryEnabled,
     };
   }
@@ -1388,7 +1416,7 @@ export class Supervisor {
             deliveredAt: new Date(),
           });
 
-          let response: Awaited<ReturnType<typeof bridge.askAgent>>;
+          let response: Awaited<ReturnType<typeof bridge.askAgent>> | null = null;
           try {
             response = await bridge.askAgent(workerId, prompt);
             const postAskHalt = await this.haltResultIfRunCannotContinue();
@@ -1440,16 +1468,39 @@ export class Supervisor {
                 : { state: "paused" };
             }
 
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            await db.update(workers).set({
-              status: "error",
-              updatedAt: new Date(),
-            }).where(eq(workers.id, workerId));
-            await insertExecutionEvent(this.runId, "worker_prompt_failed", {
-              summary: `Initial prompt failed for ${workerId}`,
-              error: errorMessage,
-            }, workerId);
-            throw error;
+            if (isMissingAgentError(error) && await resumeWorkerFromSavedSessionForSupervisor(this.runId, workerId)) {
+              response = await bridge.askAgent(workerId, prompt);
+            }
+
+            if (response) {
+              const postRetryAskHalt = await this.haltResultIfRunCannotContinue();
+              if (postRetryAskHalt) {
+                await this.cleanupWorkerAfterInactiveRun(workerId);
+                return postRetryAskHalt;
+              }
+              await persistWorkerOutput(workerId, response.response);
+
+              await db.update(workers).set({
+                status: purpose ? `${response.state}: ${purpose}` : response.state,
+                updatedAt: new Date(),
+              }).where(eq(workers.id, workerId));
+            }
+
+            if (!response) {
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              await db.update(workers).set({
+                status: "error",
+                updatedAt: new Date(),
+              }).where(eq(workers.id, workerId));
+              await insertExecutionEvent(this.runId, "worker_prompt_failed", {
+                summary: `Initial prompt failed for ${workerId}`,
+                error: errorMessage,
+              }, workerId);
+              throw error;
+            }
+          }
+          if (!response) {
+            throw new Error(`Initial prompt did not produce a response for ${workerId}`);
           }
 
           return {
@@ -1902,7 +1953,9 @@ export class Supervisor {
             }
           }
           await insertExecutionEvent(this.runId, "run_failed", { reason });
-          await persistRunFailure(this.runId, reason);
+          await persistRunFailure(this.runId, reason, {
+            surface: { code: "supervisor.gave_up" },
+          });
           return { state: "failed" };
         }
 

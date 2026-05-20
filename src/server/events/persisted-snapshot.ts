@@ -3,7 +3,6 @@ import { db } from "@/server/db";
 import {
   accounts,
   clarifications,
-  executionEvents,
   messages,
   planItems,
   plans,
@@ -15,13 +14,14 @@ import {
   supervisorInterventions,
   workers,
 } from "@/server/db/schema";
+import { listExecutionEventsForSnapshot } from "@/server/events/execution-event-store";
 import { serializeMessageRecord } from "@/server/conversations/message-records";
 import { isTerminalRunStatus } from "@/lib/run-status";
 import type { EventStreamState } from "@/app/home/types";
 import { normalizeChatAttachments } from "@/lib/chat-attachments";
 import { readWorkerLatestSeq } from "@/server/workers/output-store";
 import type { BusyMessageAction } from "@/app/home/busy-message-behavior";
-import type { ConversationModeOption } from "@/components/ConversationModePicker";
+import type { RunMode } from "@/app/home/types";
 import { withEventPayloadChecksum } from "@/server/events/payload-checksum";
 import { buildAwaitingUserQuestionInvariantErrors } from "@/server/events/lifecycle-invariants";
 import { serializeSessionRecord } from "@/server/session-providers/session-records";
@@ -126,7 +126,7 @@ function serializeRunRecord(run: typeof runs.$inferSelect) {
   return {
     ...run,
     sessionType: run.sessionType === "process" ? "process" as const : "omni" as const,
-    mode: run.mode as ConversationModeOption | null,
+    mode: run.mode as RunMode | null,
     createdAt: run.createdAt.toISOString(),
     updatedAt: run.updatedAt?.toISOString() ?? null,
     failedAt: run.failedAt?.toISOString() ?? null,
@@ -134,7 +134,7 @@ function serializeRunRecord(run: typeof runs.$inferSelect) {
   };
 }
 
-function compactExecutionEvent(event: typeof executionEvents.$inferSelect) {
+function compactExecutionEvent(event: Awaited<ReturnType<typeof listExecutionEventsForSnapshot>>[number]) {
   return {
     ...event,
     details: compactExecutionEventDetails(event.details),
@@ -236,13 +236,6 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
     : [];
 
   const runIds = selectedRunId ? new Set([selectedRunId]) : null;
-  const planIds = runIds ? new Set(allRuns.filter((run) => runIds.has(run.id)).map((run) => run.planId)) : null;
-  const selectedRunScoped = <T extends { runId: string }>(records: T[]) => (
-    runIds ? records.filter((record) => runIds.has(record.runId)) : []
-  );
-  const selectedPlanScoped = <T extends { planId: string }>(records: T[]) => (
-    planIds ? records.filter((record) => planIds.has(record.planId)) : []
-  );
 
   const [
     msgs,
@@ -271,7 +264,7 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
       ? db.select().from(clarifications).where(eq(clarifications.runId, selectedRunId)).orderBy(desc(clarifications.createdAt), desc(clarifications.id))
       : [],
     selectedRunId
-      ? db.select().from(executionEvents).where(eq(executionEvents.runId, selectedRunId)).orderBy(desc(executionEvents.createdAt), desc(executionEvents.id)).limit(EXECUTION_EVENT_LIMIT)
+      ? listExecutionEventsForSnapshot(selectedRunId, EXECUTION_EVENT_LIMIT)
       : [],
     selectedRunId
       ? db.select().from(supervisorInterventions).where(eq(supervisorInterventions.runId, selectedRunId)).orderBy(desc(supervisorInterventions.createdAt), desc(supervisorInterventions.id))
@@ -293,7 +286,9 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
     db.select().from(processSessions),
     db.select().from(conversationReadMarkers).where(allRuns.length > 0 ? inArray(conversationReadMarkers.runId, allRuns.map((run) => run.id)) : eq(conversationReadMarkers.runId, "__none__")),
   ]);
-  const processSessionsByRunId = new Map(allProcessSessions.map((session) => [session.runId, session]));
+  const processSessionsByRunId = new Map<string, typeof allProcessSessions[number]>(
+    allProcessSessions.map((session) => [session.runId, session]),
+  );
   const workersByRunId = new Map<string, typeof allWorkers[number]>();
   for (const worker of allWorkers) {
     if (!workersByRunId.has(worker.runId)) {
@@ -338,14 +333,14 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
     accounts: allAccounts,
     agents: [],
     workers: allWorkers.map(compactWorkerRecord),
-    planItems: selectedPlanScoped(allPlanItems),
-    clarifications: selectedRunScoped(allClarifications),
-    executionEvents: selectedRunScoped(allExecutionEvents).slice(0, EXECUTION_EVENT_LIMIT).map(compactExecutionEvent),
-    supervisorInterventions: selectedRunScoped(allSupervisorInterventions).map(compactSupervisorIntervention),
-    queuedMessages: selectedRunScoped(allQueuedMessages)
+    planItems: allPlanItems,
+    clarifications: allClarifications,
+    executionEvents: allExecutionEvents.slice(0, EXECUTION_EVENT_LIMIT).map(compactExecutionEvent),
+    supervisorInterventions: allSupervisorInterventions.map(compactSupervisorIntervention),
+    queuedMessages: allQueuedMessages
       .filter((message) => message.status === "pending" || message.status === "delivering")
       .map(serializeQueuedConversationMessage),
-    recoveryIncidents: selectedRunScoped(allRecoveryIncidents).map(compactRecoveryIncident),
+    recoveryIncidents: allRecoveryIncidents.map(compactRecoveryIncident),
     recoveryState: runIds && !isTerminalRunStatus(selectedRun?.status)
       ? deriveRecoveryState(allRecoveryIncidents)
       : null,

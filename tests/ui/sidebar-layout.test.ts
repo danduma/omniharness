@@ -135,7 +135,11 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(workerCardSource).toContain("hasMoreHistory={hasMoreHistory}");
   expect(workerCardSource).toContain("hasOmittedWorkerStreamHistory(unifiedTerminalEntries)");
   expect(workerCardSource).toContain('entry.id === "output-archive-marker"');
-  expect(workerCardSource).toContain("onRequestMoreHistory={onLoadWorkerHistory}");
+  // WorkerCard now routes scroll-up through a local handler that
+  // prefers the unified worker stream's loadOlder, falling back to
+  // the legacy onLoadWorkerHistory prop for bridge-history hydration.
+  expect(workerCardSource).toContain("onRequestMoreHistory={handleRequestMoreHistory}");
+  expect(workerCardSource).toContain("onLoadWorkerHistory?.()");
   expect(workerCardSource).toContain("deriveVisibleWorkerTerminalProcesses");
   expect(workerCardSource).toContain("function shouldShowWorkerError(agent: WorkerCardAgent)");
   expect(workerCardSource).toContain('if (isWorkerActiveStatus(agent.state)) {');
@@ -673,7 +677,7 @@ test("command input uses mode-aware helper placeholders instead of echoing the s
 });
 
 test("send button swaps to a spinner while a command submission is pending", () => {
-  expect(pageSource).toContain("const isComposerSubmitting = isStartingCurrentProjectConversation || sendConversationMessage.isPending || sendQueuedMessageNow.isPending || promotePlanningConversation.isPending || isStopConversationPending;");
+  expect(pageSource).toContain("const isComposerSubmitting = isStartingCurrentProjectConversation || isSendingSelectedConversationMessage || isSendingSelectedQueuedMessage || isPromotePlanningPendingForSelectedRun || isStopConversationPending;");
   expect(pageSource).toContain("const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;");
   expect(pageSource).toContain("const isStopButtonBusy = isStopButtonVisible && isStopConversationPending;");
   expect(pageSource).toContain('disabled={isSubmitButtonDisabled}');

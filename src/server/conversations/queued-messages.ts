@@ -2,7 +2,8 @@ import { randomUUID } from "crypto";
 import { asc, desc, eq } from "drizzle-orm";
 import { askAgent, getAgent } from "@/server/bridge-client";
 import { db } from "@/server/db";
-import { executionEvents, messages, queuedConversationMessages, runs, supervisorInterventions, workers } from "@/server/db/schema";
+import { messages, queuedConversationMessages, runs, supervisorInterventions, workers } from "@/server/db/schema";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
@@ -11,16 +12,39 @@ import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachm
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
+import { readWorkerOutputEntries } from "@/server/workers/output-store";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { runWorkerTurn } from "./worker-turn-gate";
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
-
-export type BusyMessageAction = "queue" | "steer";
-export type QueuedConversationMessageStatus = "pending" | "delivering" | "delivered" | "cancelled" | "failed";
+import { persistRunFailure } from "@/server/runs/failures";
+import {
+  serializeQueuedConversationMessage,
+  type BusyMessageAction,
+  type QueuedConversationMessageStatus,
+} from "./queued-message-records";
+export type { BusyMessageAction, QueuedConversationMessageStatus } from "./queued-message-records";
 
 type QueuedConversationMessageRecord = typeof queuedConversationMessages.$inferSelect;
 type WorkerAskResponse = Awaited<ReturnType<typeof askAgent>>;
+type WorkerSnapshot = Awaited<ReturnType<typeof getAgent>>;
 type WorkerResponseRun = Pick<typeof runs.$inferSelect, "id" | "mode">;
+
+class EmptyQueuedWorkerOutputError extends Error {
+  constructor(
+    readonly runId: string,
+    readonly workerId: string,
+    readonly responseState: string,
+    readonly stopReason?: string | null,
+  ) {
+    const suffix = stopReason?.trim()
+      ? `Stop reason: ${stopReason.trim()}.`
+      : `Final state: ${responseState || "unknown"}.`;
+    super(`Agent stopped without producing output. ${suffix}`);
+    this.name = "EmptyQueuedWorkerOutputError";
+  }
+}
+
+const lastQueuedMessageCreatedAtByRun = new Map<string, number>();
 
 export function parseBusyMessageAction(value: unknown): BusyMessageAction | null {
   return value === "queue" || value === "steer" ? value : null;
@@ -33,6 +57,33 @@ function isAgentBusyError(error: unknown) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function timestampMs(value: Date | string | number | null | undefined) {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+  const parsed = new Date(value ?? 0).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function nextQueuedMessageCreatedAt(runId: string) {
+  const latest = await db
+    .select({ createdAt: queuedConversationMessages.createdAt })
+    .from(queuedConversationMessages)
+    .where(eq(queuedConversationMessages.runId, runId))
+    .orderBy(desc(queuedConversationMessages.createdAt), desc(queuedConversationMessages.id))
+    .get();
+  const previousMs = Math.max(
+    timestampMs(latest?.createdAt),
+    lastQueuedMessageCreatedAtByRun.get(runId) ?? 0,
+  );
+  // Drizzle's SQLite timestamp mode stores integer seconds in this schema,
+  // so use a one-second logical tick to preserve FIFO order through DB reads
+  // that sort only by createdAt.
+  const nextMs = Math.max(Date.now(), previousMs + 1_000);
+  lastQueuedMessageCreatedAtByRun.set(runId, nextMs);
+  return new Date(nextMs);
 }
 
 async function queuedMessageStatus(messageId: string) {
@@ -48,12 +99,62 @@ function isAgentNotFoundError(error: unknown) {
   return /\bagent not found\b/i.test(errorMessage(error));
 }
 
+function isEmptyQueuedWorkerOutputError(error: unknown): error is EmptyQueuedWorkerOutputError {
+  return error instanceof EmptyQueuedWorkerOutputError;
+}
+
+function workerStreamHasOutputAfterInput(
+  entries: Awaited<ReturnType<typeof readWorkerOutputEntries>>,
+  userInputEntryId: string,
+) {
+  const inputEntry = entries.find((entry) => entry.id === userInputEntryId);
+  if (!inputEntry) {
+    return false;
+  }
+
+  return entries.some((entry) => (
+    entry.seq > inputEntry.seq
+    && entry.type !== "user_input"
+    && entry.text.trim().length > 0
+  ));
+}
+
+async function assertQueuedDeliveryProducedOutput({
+  runId,
+  workerId,
+  userInputEntryId,
+  response,
+  snapshot,
+}: {
+  runId: string;
+  workerId: string;
+  userInputEntryId: string;
+  response: WorkerAskResponse;
+  snapshot: WorkerSnapshot | null;
+}) {
+  if (response.response.trim()) {
+    return;
+  }
+
+  const entries = await readWorkerOutputEntries(runId, workerId);
+  if (workerStreamHasOutputAfterInput(entries, userInputEntryId)) {
+    return;
+  }
+
+  throw new EmptyQueuedWorkerOutputError(
+    runId,
+    workerId,
+    response.state,
+    snapshot?.stopReason,
+  );
+}
+
 async function getLatestRunWorker(runId: string, excludedWorkerId?: string | null) {
   const records = await db
     .select()
     .from(workers)
     .where(eq(workers.runId, runId))
-    .orderBy(desc(workers.createdAt));
+    .orderBy(desc(workers.createdAt), desc(workers.id));
 
   return records.find((worker) => worker.id !== excludedWorkerId) ?? null;
 }
@@ -94,11 +195,13 @@ async function persistDeliveredWorkerResponse({
   workerId,
   response,
   deliveredAt,
+  userInputEntryId,
 }: {
   run: WorkerResponseRun;
   workerId: string;
   response: WorkerAskResponse;
   deliveredAt: Date;
+  userInputEntryId: string;
 }) {
   const snapshot = await Promise.resolve(getAgent(workerId)).catch(() => null);
   if (snapshot) {
@@ -110,13 +213,20 @@ async function persistDeliveredWorkerResponse({
     responseText: response.response,
     snapshot,
   });
+  await assertQueuedDeliveryProducedOutput({
+    runId: run.id,
+    workerId,
+    userInputEntryId,
+    response,
+    snapshot,
+  });
 
   await db.update(workers).set({
     status: snapshot?.state ?? response.state,
     updatedAt: deliveredAt,
   }).where(eq(workers.id, workerId));
 
-  if (run.mode === "direct") {
+  if (run.mode === "direct" || run.mode === "commit") {
     await updateDirectRunStatusFromWorkerOutput({
       runId: run.id,
       workerId,
@@ -135,30 +245,12 @@ async function insertQueueExecutionEvent(
   details: Record<string, unknown>,
   workerId?: string | null,
 ) {
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  await recordExecutionEvent({
     runId,
     workerId: workerId ?? null,
     eventType,
-    details: JSON.stringify(details),
-    createdAt: new Date(),
+    details,
   });
-}
-
-export function serializeQueuedConversationMessage(record: QueuedConversationMessageRecord) {
-  return {
-    id: record.id,
-    runId: record.runId,
-    targetWorkerId: record.targetWorkerId,
-    action: record.action as BusyMessageAction,
-    content: record.content,
-    status: record.status as QueuedConversationMessageStatus,
-    lastError: record.lastError,
-    attachments: normalizeChatAttachments(record.attachmentsJson ? JSON.parse(record.attachmentsJson) : []),
-    createdAt: record.createdAt.toISOString(),
-    updatedAt: record.updatedAt.toISOString(),
-    deliveredAt: record.deliveredAt?.toISOString() ?? null,
-  };
 }
 
 export async function listPendingQueuedConversationMessages(runId: string) {
@@ -166,7 +258,7 @@ export async function listPendingQueuedConversationMessages(runId: string) {
     .select()
     .from(queuedConversationMessages)
     .where(eq(queuedConversationMessages.runId, runId))
-    .orderBy(asc(queuedConversationMessages.createdAt));
+    .orderBy(asc(queuedConversationMessages.createdAt), asc(queuedConversationMessages.id));
 
   return records
     .filter((record) => record.status === "pending" || record.status === "delivering")
@@ -192,7 +284,7 @@ export async function createQueuedConversationMessage({
     throw Object.assign(new Error("Message content or attachment is required"), { status: 400 });
   }
 
-  const now = new Date();
+  const now = await nextQueuedMessageCreatedAt(runId);
   const record = {
     id: randomUUID(),
     runId,
@@ -309,6 +401,7 @@ async function deliverQueuedWorkerSteering(args: {
       workerId: args.worker.id,
       response,
       deliveredAt,
+      userInputEntryId: args.userMessageId ?? args.messageId,
     });
     // Worker response now lives in the unified worker stream; the
     // legacy role:"worker" messages row is no longer written.
@@ -369,6 +462,18 @@ async function continueQueuedWorkerSteering(args: {
       lastError: errorMessage(error),
       updatedAt: failedAt,
     }).where(eq(queuedConversationMessages.id, args.messageId));
+    if (isEmptyQueuedWorkerOutputError(error)) {
+      await db.update(workers).set({
+        status: "error",
+        outputLog: error.message,
+        updatedAt: failedAt,
+      }).where(eq(workers.id, args.worker.id));
+      if (args.run.mode === "direct" || args.run.mode === "commit") {
+        await persistRunFailure(args.run.id, error, {
+          surface: { code: "worker.idle.empty_output", workerId: args.worker.id },
+        });
+      }
+    }
     if (isAgentBusyError(error) && args.userMessageId) {
       await db.delete(messages).where(eq(messages.id, args.userMessageId));
     }
@@ -571,7 +676,7 @@ async function pendingQueueRecords(runId: string, workerId?: string | null) {
     .select()
     .from(queuedConversationMessages)
     .where(eq(queuedConversationMessages.runId, runId))
-    .orderBy(asc(queuedConversationMessages.createdAt));
+    .orderBy(asc(queuedConversationMessages.createdAt), asc(queuedConversationMessages.id));
 
   return records.filter((record) => {
     if (record.status !== "pending") {
@@ -647,7 +752,7 @@ export async function drainQueuedImplementationMessages(runId: string) {
             kind: "checkpoint" as const,
             content: record.content,
             attachmentsJson: record.attachmentsJson,
-            createdAt: now,
+            createdAt: record.createdAt,
           };
           await appendUserInputOnDelivery({
             id: userMessage.id,
@@ -677,6 +782,7 @@ export async function drainQueuedImplementationMessages(runId: string) {
             workerId: worker.id,
             response,
             deliveredAt,
+            userInputEntryId: userMessage.id,
           });
           // Worker response now lives in the unified worker stream.
           await db.update(queuedConversationMessages).set({
@@ -725,7 +831,7 @@ export async function drainQueuedImplementationMessages(runId: string) {
       kind: "checkpoint" as const,
       content: record.content,
       attachmentsJson: record.attachmentsJson,
-      createdAt: now,
+      createdAt: record.createdAt,
     });
 
     await db.update(queuedConversationMessages).set({
@@ -821,6 +927,7 @@ export async function drainQueuedWorkerMessages({
           workerId,
           response,
           deliveredAt,
+          userInputEntryId: userMessage.id,
         });
         // Worker response now lives in the unified worker stream.
         await db.update(queuedConversationMessages).set({

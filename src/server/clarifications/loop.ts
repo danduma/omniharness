@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { db } from "../db";
-import { clarifications, runs, executionEvents } from "../db/schema";
+import { clarifications, runs } from "../db/schema";
 import { eq, and } from "drizzle-orm";
 import { resumeSupervisorRun } from "../supervisor/resume";
 import { notifyRunLifecycleEventBestEffort } from "@/server/notifications/triggers";
@@ -19,13 +20,12 @@ export async function pauseForClarifications(runId: string, questions: string[])
     });
   }
 
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  await recordExecutionEvent({
     runId,
     workerId: null,
     planItemId: null,
     eventType: "clarifications_requested",
-    details: JSON.stringify({ count: questions.length }),
+    details: { count: questions.length },
     createdAt: now,
   });
   await notifyRunLifecycleEventBestEffort({
@@ -46,13 +46,12 @@ export async function resumeRunAfterClarification(runId: string) {
   const now = new Date();
   const nextStatus = pending.length > 0 ? "awaiting_user" : "running";
 
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  await recordExecutionEvent({
     runId,
     workerId: null,
     planItemId: null,
     eventType: "clarification_resolved",
-    details: JSON.stringify({ remainingPending: pending.length }),
+    details: { remainingPending: pending.length },
     createdAt: now,
   });
 

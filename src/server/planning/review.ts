@@ -7,6 +7,7 @@ import {
   planningReviewRounds,
   planningReviewFindings,
 } from "@/server/db/schema";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { eq, and, desc } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import fs from "fs";
@@ -34,6 +35,26 @@ import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings
 const processBootTime = new Date();
 
 const ORPHAN_STALE_MS = 10 * 60 * 1000;
+
+function isRecoverablePlannerAgentMissingError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b(agent not found|not_found|session not found|invalid session identifier|failed to load resumed session data from file|404)\b/i.test(message);
+}
+
+async function insertPlannerSessionEvent(args: {
+  runId: string;
+  workerId: string;
+  eventType: "worker_session_resumed" | "worker_session_recreated";
+  details: Record<string, unknown>;
+}) {
+  await recordExecutionEvent({
+    runId: args.runId,
+    workerId: args.workerId,
+    planItemId: null,
+    eventType: args.eventType,
+    details: args.details,
+  });
+}
 
 async function reconcileOrphanedReviewsForRun(runId: string) {
   const orphans = await db
@@ -254,7 +275,7 @@ async function orchestratePlanningReview(reviewRunId: string) {
 
       const userMessages = await db.select().from(messages)
         .where(and(eq(messages.runId, run.id), eq(messages.role, "user")))
-        .orderBy(desc(messages.createdAt));
+        .orderBy(desc(messages.createdAt), desc(messages.id));
       const userIntent = userMessages.map(m => m.content).join("\n\n");
 
       const prompt = buildReviewerPrompt({
@@ -359,7 +380,10 @@ async function orchestratePlanningReview(reviewRunId: string) {
         const plannerName = plannerWorker.id;
         try {
           await getAgent(plannerName);
-        } catch {
+        } catch (error) {
+          if (!isRecoverablePlannerAgentMissingError(error)) {
+            throw error;
+          }
           const spawnParams = {
             type: plannerWorker.type,
             cwd: plannerWorker.cwd,
@@ -376,12 +400,22 @@ async function orchestratePlanningReview(reviewRunId: string) {
                 bridgeSessionMode: agent.sessionMode ?? plannerWorker.bridgeSessionMode ?? null,
                 updatedAt: new Date(),
               }).where(eq(workers.id, plannerName));
+              await insertPlannerSessionEvent({
+                runId: run.id,
+                workerId: plannerName,
+                eventType: "worker_session_resumed",
+                details: {
+                  summary: `Resumed ${plannerName} from saved session before planning revision.`,
+                  sessionId: savedSessionId,
+                  reason: "planning_review_revision",
+                },
+              });
               resumed = true;
             } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
-              if (!/\b(agent not found|not_found|session not found|invalid session identifier|404)\b/i.test(message)) {
+              if (!isRecoverablePlannerAgentMissingError(error)) {
                 throw error;
               }
+              const message = error instanceof Error ? error.message : String(error);
               console.warn("[planning/review] planner session no longer resumable; starting a fresh session", {
                 plannerName,
                 savedSessionId,
@@ -400,6 +434,17 @@ async function orchestratePlanningReview(reviewRunId: string) {
               bridgeSessionMode: agent.sessionMode ?? null,
               updatedAt: new Date(),
             }).where(eq(workers.id, plannerName));
+            await insertPlannerSessionEvent({
+              runId: run.id,
+              workerId: plannerName,
+              eventType: "worker_session_recreated",
+              details: {
+                summary: `Started a fresh runtime worker for ${plannerName} during planning revision.`,
+                rejectedSessionId: savedSessionId,
+                newSessionId: agent.sessionId ?? null,
+                reason: "planning_review_revision",
+              },
+            });
             emitNamedEvent({
               kind: "worker.recreated",
               runId: run.id,

@@ -1,7 +1,8 @@
 import { asc, desc, eq } from "drizzle-orm";
 import * as acp from "@agentclientprotocol/sdk";
 import { db } from "@/server/db";
-import { executionEvents, messages, runs, workers } from "@/server/db/schema";
+import { messages, runs, workers } from "@/server/db/schema";
+import { listExecutionEventsForRun } from "@/server/events/execution-event-store";
 import { createConversation } from "@/server/conversations/create";
 import { sendConversationMessage } from "@/server/conversations/send-message";
 import { waitForEventStreamNotification } from "@/server/events/live-updates";
@@ -64,8 +65,9 @@ function normalizeRunMode(value: string): ConversationMode {
 }
 
 function modeState(currentModeId: ConversationMode): acp.SessionModeState {
+  const visibleModeId = currentModeId === "commit" ? "direct" : currentModeId;
   return {
-    currentModeId,
+    currentModeId: visibleModeId,
     availableModes: OMNI_ACP_MODES,
   };
 }
@@ -139,9 +141,9 @@ async function emitCurrentRunState(args: WaitForTurnArgs) {
 
   const [run, runMessages, workerRecords, runEvents] = await Promise.all([
     db.select().from(runs).where(eq(runs.id, args.runId)).get(),
-    db.select().from(messages).where(eq(messages.runId, args.runId)).orderBy(asc(messages.createdAt)),
-    db.select().from(workers).where(eq(workers.runId, args.runId)).orderBy(asc(workers.createdAt)),
-    db.select().from(executionEvents).where(eq(executionEvents.runId, args.runId)).orderBy(asc(executionEvents.createdAt)),
+    db.select().from(messages).where(eq(messages.runId, args.runId)).orderBy(asc(messages.createdAt), asc(messages.id)),
+    db.select().from(workers).where(eq(workers.runId, args.runId)).orderBy(asc(workers.createdAt), asc(workers.id)),
+    listExecutionEventsForRun(args.runId),
   ]);
 
   for (const message of runMessages) {
@@ -269,7 +271,7 @@ export class OmniHarnessAcpAgent implements acp.Agent {
     const offset = params.cursor ? Number.parseInt(params.cursor, 10) : 0;
     const safeOffset = Number.isFinite(offset) && offset > 0 ? offset : 0;
     const pageSize = 50;
-    const allRuns = await db.select().from(runs).orderBy(desc(runs.updatedAt));
+    const allRuns = await db.select().from(runs).orderBy(desc(runs.updatedAt), desc(runs.id));
     const cwd = params.cwd?.trim() || null;
     const filteredRuns = cwd
       ? allRuns.filter((run) => (run.projectPath || process.cwd()) === cwd)
@@ -432,7 +434,7 @@ export class OmniHarnessAcpAgent implements acp.Agent {
       .select()
       .from(messages)
       .where(eq(messages.runId, state.runId || sessionId))
-      .orderBy(asc(messages.createdAt));
+      .orderBy(asc(messages.createdAt), asc(messages.id));
 
     for (const message of runMessages) {
       state.seenMessageIds.add(message.id);

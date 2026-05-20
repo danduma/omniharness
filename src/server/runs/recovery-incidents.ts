@@ -1,7 +1,8 @@
 import { randomUUID } from "crypto";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
-import { executionEvents, recoveryIncidents } from "@/server/db/schema";
+import { recoveryIncidents } from "@/server/db/schema";
 import { emitNamedEvent } from "@/server/events/named-events";
 
 export type RecoveryIncidentKind = "worker_lost" | "session_missing" | "queue_blocked" | "stale_running" | "quota_exhausted";
@@ -33,14 +34,12 @@ async function insertRecoveryEvent(
   eventType: string,
   details: Record<string, unknown>,
 ) {
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  await recordExecutionEvent({
     runId,
     workerId: workerId ?? null,
     planItemId: null,
     eventType,
-    details: JSON.stringify(details),
-    createdAt: new Date(),
+    details,
   });
 }
 

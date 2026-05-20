@@ -1,7 +1,7 @@
-import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { executionEvents, runs, workers } from "@/server/db/schema";
+import { runs, workers } from "@/server/db/schema";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { openRecoveryIncident, markRecoveryIncidentNeedsUser } from "@/server/runs/recovery-incidents";
 import { getRecoveryPolicy } from "@/server/runs/recovery-policy";
 import { scheduleDurableSupervisorWakeAt } from "@/server/supervisor/wake-schedule";
@@ -29,13 +29,12 @@ async function insertQuotaEvent(
   details: Record<string, unknown>,
   now: Date,
 ) {
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  await recordExecutionEvent({
     runId,
     workerId,
     planItemId: null,
     eventType,
-    details: JSON.stringify(details),
+    details,
     createdAt: now,
   });
 }

@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
 import { executionEvents, runs, workers } from "@/server/db/schema";
@@ -24,7 +24,7 @@ const wakeDeadlines = new Map<string, number>();
 const inFlight = new Set<string>();
 const LEASE_BLOCKED_RETRY_MS = 1_000;
 const COMPLETION_EVENT_TYPES = new Set(["worker_turn_completed"]);
-const COMPLETION_RESET_EVENT_TYPES = new Set(["worker_prompted", "worker_spawned", "worker_session_resumed"]);
+const COMPLETION_RESET_EVENT_TYPES = new Set(["worker_prompted", "worker_spawned", "worker_session_resumed", "worker_session_recreated"]);
 const ACTIVE_WORKER_STATUS_PATTERN = /\b(working|stuck|starting|pending|busy|running)\b/i;
 
 function scheduleDurableWakeBackup(runId: string, nextDeadline: number, delayMs: number) {
@@ -38,6 +38,14 @@ function scheduleDurableWakeBackup(runId: string, nextDeadline: number, delayMs:
     reason: "supervisor_wait",
     source: "volatile-wake-backup",
     details: { delayMs },
+  }).catch((error) => {
+    emitNamedEvent({
+      kind: "supervisor.durable_wake_schedule_failed",
+      runId,
+      reason: "supervisor_wait",
+      source: "volatile-wake-backup",
+      error: error instanceof Error ? error.message : String(error),
+    });
   });
 }
 
@@ -73,16 +81,19 @@ async function recoverCompletionBlockedByOrphanedLease(runId: string) {
   }
 
   await clearSupervisorWakeLease(runId);
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  emitNamedEvent({
+    kind: "supervisor.wake_lease_recovered",
+    runId,
+    reason: "orphaned_completion",
+  });
+  await recordExecutionEvent({
     runId,
     eventType: "supervisor_wake_lease_recovered",
-    details: JSON.stringify({
+    details: {
       summary: "Cleared an orphaned supervisor wake lease after all workers were idle with completion evidence.",
       latestWorkerEventType: latestWorkerEvent.eventType,
       latestWorkerEventId: latestWorkerEvent.id,
-    }),
-    createdAt: new Date(),
+    },
   });
   return true;
 }
@@ -188,7 +199,9 @@ export async function executeSupervisorWake(runId: string) {
       return;
     }
     stopRunObserver(runId);
-    await persistRunFailure(runId, error);
+    await persistRunFailure(runId, error, {
+      surface: { code: "supervisor.wake.failed" },
+    });
   } finally {
     inFlight.delete(runId);
     await releaseSupervisorWakeLease(runId, leaseId);

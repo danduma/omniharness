@@ -1,5 +1,6 @@
 import { db } from "@/server/db";
-import { messages, plans, runs, accounts, workers, planItems, clarifications, executionEvents, supervisorInterventions, queuedConversationMessages, recoveryIncidents, planningReviewRuns, planningReviewRounds, planningReviewFindings, processSessions, conversationReadMarkers } from "@/server/db/schema";
+import { messages, plans, runs, accounts, workers, planItems, clarifications, supervisorInterventions, queuedConversationMessages, recoveryIncidents, planningReviewRuns, planningReviewRounds, planningReviewFindings, processSessions, conversationReadMarkers } from "@/server/db/schema";
+import { listExecutionEventsForSnapshot } from "@/server/events/execution-event-store";
 import { BRIDGE_URL } from "@/server/bridge-client";
 import { isTerminalRunStatus } from "@/lib/run-status";
 import { buildAppError, type AppErrorPayload } from "@/server/api-errors";
@@ -129,7 +130,7 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}, prob
       ? db.select().from(clarifications).where(eq(clarifications.runId, selectedRunId)).orderBy(desc(clarifications.createdAt), desc(clarifications.id))
       : [],
     selectedRunId
-      ? db.select().from(executionEvents).where(eq(executionEvents.runId, selectedRunId)).orderBy(desc(executionEvents.createdAt), desc(executionEvents.id)).limit(EXECUTION_EVENT_LIMIT)
+      ? listExecutionEventsForSnapshot(selectedRunId, EXECUTION_EVENT_LIMIT)
       : [],
     selectedRunId
       ? db.select().from(supervisorInterventions).where(eq(supervisorInterventions.runId, selectedRunId)).orderBy(desc(supervisorInterventions.createdAt), desc(supervisorInterventions.id))

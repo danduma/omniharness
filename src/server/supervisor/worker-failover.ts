@@ -1,8 +1,8 @@
-import { randomUUID } from "crypto";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { and, desc, eq } from "drizzle-orm";
 import * as bridge from "@/server/bridge-client";
 import { db } from "@/server/db";
-import { executionEvents, recoveryIncidents, workers } from "@/server/db/schema";
+import { recoveryIncidents, workers } from "@/server/db/schema";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { buildSyntheticHandoff, requestWorkerHandoff } from "@/server/handoff/request";
@@ -28,6 +28,12 @@ import {
 import { runs } from "@/server/db/schema";
 
 export type FailoverEnv = Record<string, string | undefined>;
+
+function compactEnv(env: FailoverEnv): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+}
 
 export type AttemptWorkerFailoverArgs = {
   runId: string;
@@ -149,14 +155,12 @@ async function recordFailoverEvent(args: {
   type: string;
   details: Record<string, unknown>;
 }) {
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  await recordExecutionEvent({
     runId: args.runId,
     workerId: args.workerId,
     planItemId: null,
     eventType: args.type,
-    details: JSON.stringify(args.details),
-    createdAt: new Date(),
+    details: args.details,
   });
 }
 
@@ -329,7 +333,7 @@ export async function attemptWorkerFailover(
         type: currentType,
         cwd: args.cwd,
         name: newWorkerId,
-        env: args.env,
+        env: compactEnv(args.env),
       });
       await db.update(workers).set({
         bridgeSessionId: spawned.sessionId ?? null,

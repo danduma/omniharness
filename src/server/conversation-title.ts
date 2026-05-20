@@ -1,9 +1,9 @@
 import { Agent } from "@mastra/core/agent";
 import { z } from "zod";
 import { db } from "@/server/db";
-import { executionEvents, runs, settings } from "@/server/db/schema";
+import { runs, settings } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
-import { randomUUID } from "crypto";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { CONVERSATION_TITLE_SYSTEM_PROMPT } from "@/server/prompts";
 import { formatErrorMessage } from "@/server/runs/failures";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
@@ -84,17 +84,15 @@ export async function queueConversationTitleGeneration(args: { runId: string; co
     .where(eq(runs.id, args.runId));
 
   if (result.error) {
-    await db.insert(executionEvents).values({
-      id: randomUUID(),
+    await recordExecutionEvent({
       runId: args.runId,
       workerId: null,
       planItemId: null,
       eventType: "conversation_title_generation_failed",
-      details: JSON.stringify({
+      details: {
         summary: "Conversation title generation failed; using fallback title.",
         error: result.error,
-      }),
-      createdAt: new Date(),
+      },
     });
   }
 

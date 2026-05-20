@@ -489,6 +489,103 @@ describe("queued conversation messages", () => {
     expect(storedRun).toMatchObject({ status: "done" });
   });
 
+  it("does not mark send-now queued steering delivered when the worker produces no post-input output", async () => {
+    const runId = await createRun("direct");
+    const workerId = randomUUID();
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const previousTimestamp = new Date(Date.now() - 60_000).toISOString();
+    await writeWorkerOutputEntries(runId, workerId, [
+      {
+        id: "previous-answer",
+        type: "message",
+        text: "Previous answer before the queued message.",
+        timestamp: previousTimestamp,
+      },
+    ]);
+    const queued = await createQueuedConversationMessage({
+      runId,
+      targetWorkerId: workerId,
+      action: "queue",
+      content: "Why did the goal force-send do nothing?",
+      attachments: [],
+    });
+    mockAskAgent.mockResolvedValueOnce({
+      response: "",
+      state: "idle",
+    });
+    mockGetAgent.mockResolvedValueOnce({
+      name: workerId,
+      type: "codex",
+      cwd: "/workspace/app",
+      state: "idle",
+      outputEntries: [
+        {
+          id: "previous-answer",
+          type: "message",
+          text: "Previous answer before the queued message.",
+          timestamp: previousTimestamp,
+        },
+      ],
+      renderedOutput: "Previous answer before the queued message.",
+      lastText: "",
+      currentText: "",
+      stderrBuffer: [],
+      stopReason: "end_turn",
+    });
+
+    await sendQueuedConversationMessageNow({ runId, messageId: queued.id });
+
+    const storedQueued = await waitFor(
+      async () => db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queued.id)).get(),
+      (record) => record?.status === "failed",
+    );
+    // The catch block updates the queue first and emits the failure
+    // event last. With the artifact-storage adapter inserting a fresh
+    // `artifact_streams` row before each event, the catch path has
+    // several awaits between queue-update and event-emit. Wait for the
+    // event itself so the assertions see the final state.
+    const events = await waitFor(
+      async () => db.select().from(executionEvents).where(eq(executionEvents.runId, runId)),
+      (rows) => rows.some((event) => event.eventType === "queued_message_failed"),
+    );
+    const storedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const storedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const entries = await readWorkerOutputEntries(runId, workerId);
+
+    expect(storedQueued?.lastError).toContain("stopped without producing output");
+    expect(storedQueued?.deliveredAt).toBeNull();
+    expect(storedRun).toMatchObject({
+      status: "failed",
+      lastError: expect.stringContaining("stopped without producing output"),
+    });
+    expect(storedWorker).toMatchObject({
+      status: "error",
+      outputLog: expect.stringContaining("stopped without producing output"),
+    });
+    expect(events.some((event) => event.eventType === "queued_message_failed")).toBe(true);
+    expect(events.some((event) => event.eventType === "queued_message_delivered")).toBe(false);
+    expect(entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: queued.id,
+        type: "user_input",
+        text: "Why did the goal force-send do nothing?",
+      }),
+    ]));
+    expect(entries.filter((entry) => entry.type === "message")).toHaveLength(1);
+  });
+
   it("does not resurrect a cancelled send-now delivery when the background bridge call finishes", async () => {
     const runId = await createRun("direct");
     const workerId = randomUUID();

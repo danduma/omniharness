@@ -1,7 +1,8 @@
 import { desc, eq } from "drizzle-orm";
 import * as bridge from "@/server/bridge-client";
 import { db } from "@/server/db";
-import { executionEvents, messages, workers } from "@/server/db/schema";
+import { messages, workers } from "@/server/db/schema";
+import { listExecutionEventsForWorker } from "@/server/events/execution-event-store";
 import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
 import { normalizeWorkerType, type SupportedWorkerType } from "@/server/supervisor/worker-types";
 import { parseHandoffReply, type HandoffReport } from "./parser";
@@ -104,16 +105,12 @@ export async function buildSyntheticHandoff(args: {
   const worker = await db.select().from(workers).where(eq(workers.id, args.workerId)).get();
   const workerType = normalizeWorkerType(worker?.type ?? "codex") as SupportedWorkerType;
 
-  const recentEvents = await db.select()
-    .from(executionEvents)
-    .where(eq(executionEvents.workerId, args.workerId))
-    .orderBy(desc(executionEvents.createdAt))
-    .limit(10);
+  const recentEvents = await listExecutionEventsForWorker(args.workerId, 10);
 
   const recentWorkerMessage = await db.select()
     .from(messages)
     .where(eq(messages.workerId, args.workerId))
-    .orderBy(desc(messages.createdAt))
+    .orderBy(desc(messages.createdAt), desc(messages.id))
     .limit(1)
     .get();
 

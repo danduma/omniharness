@@ -69,5 +69,14 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# Per-run worker output entries (managed by src/server/workers/output-store.ts)
+# Per-run worker output entries — legacy global path
+# (managed by src/server/workers/output-store.ts, kept as
+# read-only/migration-source after append-only artifact migration).
 run-data/
+
+# Project-local append-only artifact streams (any nested project
+# checkout that omniharness drives). Ignores per-run artifact data
+# under .omniharness/run-data/ specifically; intentional source-
+# controlled files elsewhere under a .omniharness/ tree are not
+# affected.
+**/.omniharness/run-data/

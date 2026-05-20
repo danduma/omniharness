@@ -2,7 +2,8 @@ import { randomUUID } from "crypto";
 import fs from "fs";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { executionEvents, messages as dbMessages, plans, runs, settings, workers } from "@/server/db/schema";
+import { messages as dbMessages, plans, runs, settings, workers } from "@/server/db/schema";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { createAdHocPlan } from "@/server/runs/ad-hoc-plan";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { askAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
@@ -21,7 +22,6 @@ import { emitNamedEvent } from "@/server/events/named-events";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { getAppRoot } from "@/server/app-root";
 import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
-import { MANUAL_COMMIT_PROJECT_PROMPTS } from "@/lib/conversation-visuals";
 import {
   GIT_AUTO_COMMIT_MILESTONES_SETTING,
   GIT_PUSH_ON_COMMIT_SETTING,
@@ -29,7 +29,7 @@ import {
 } from "@/lib/commit-workflow";
 import { captureGitBaseline } from "@/server/git/auto-commit";
 import { serializeMessageRecord } from "./message-records";
-import { runWorkerTurn } from "./worker-turn-gate";
+import { runWorkerTurn, trackConversationBackgroundTask } from "./worker-turn-gate";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
@@ -77,8 +77,69 @@ function isAgentBusyError(error: unknown) {
   return /\bagent is busy\b/i.test(formatErrorMessage(error));
 }
 
+function toErrorCause(error: unknown) {
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message };
+  }
+
+  return { name: "Error", message: String(error) };
+}
+
+async function persistInitialWorkerSpawnFailure(args: {
+  runId: string;
+  workerId: string;
+  mode: "direct" | "planning" | "commit";
+  error: unknown;
+}) {
+  const cause = toErrorCause(args.error);
+  const failureMessage = formatErrorMessage(args.error);
+  const now = new Date();
+
+  await db.update(workers).set({
+    status: "error",
+    outputLog: failureMessage,
+    updatedAt: now,
+  }).where(eq(workers.id, args.workerId));
+
+  if (args.mode === "planning") {
+    const run = await db.select({ planId: runs.planId }).from(runs).where(eq(runs.id, args.runId)).get();
+    if (run?.planId) {
+      await db.update(plans).set({
+        status: "failed",
+        updatedAt: now,
+      }).where(eq(plans.id, run.planId));
+    }
+  }
+
+  await persistRunFailure(args.runId, args.error);
+  await appendLifecycleEntry({
+    runId: args.runId,
+    workerId: args.workerId,
+    text: `Worker spawn failed: ${failureMessage}`,
+    timestamp: now,
+    raw: { eventType: "worker.spawn_failed", mode: args.mode, reason: failureMessage },
+  });
+  emitNamedEvent({
+    kind: "worker.status",
+    runId: args.runId,
+    workerId: args.workerId,
+    prev: "starting",
+    next: "error",
+  });
+  emitNamedEvent({
+    kind: "error.surfaced",
+    code: "worker.spawn.failed",
+    message: `Failed to spawn worker for ${args.mode} conversation: ${cause.message}`,
+    surface: "toast",
+    runId: args.runId,
+    workerId: args.workerId,
+    cause,
+  });
+  notifyEventStreamSubscribers();
+}
+
 function getDefaultConversationTitle(mode: ConversationMode, command: string) {
-  if (mode === "direct" && MANUAL_COMMIT_PROJECT_PROMPTS.has(command)) {
+  if (mode === "commit") {
     return "Commit";
   }
 
@@ -86,7 +147,7 @@ function getDefaultConversationTitle(mode: ConversationMode, command: string) {
 }
 
 function shouldGenerateConversationTitle(mode: ConversationMode, command: string) {
-  return !(mode === "direct" && MANUAL_COMMIT_PROJECT_PROMPTS.has(command)) && Boolean(command.trim());
+  return mode !== "commit" && Boolean(command.trim());
 }
 
 async function readCommitWorkflowSettings() {
@@ -234,7 +295,7 @@ async function runInitialWorkerTurn(args: {
   workerType: string;
   cwd: string;
   agent: AgentRecord;
-  mode: "direct" | "planning";
+  mode: "direct" | "planning" | "commit";
   command: string;
 }) {
   try {
@@ -282,7 +343,9 @@ async function runInitialWorkerTurn(args: {
         updatedAt: new Date(),
       }).where(eq(workers.id, args.workerId));
 
-      await persistRunFailure(args.runId, new Error(failureMessage));
+      await persistRunFailure(args.runId, new Error(failureMessage), {
+        surface: { code: "worker.initial.empty_output", workerId: args.workerId },
+      });
       notifyEventStreamSubscribers();
       return;
     }
@@ -346,7 +409,9 @@ async function runInitialWorkerTurn(args: {
       status: "error",
       updatedAt: new Date(),
     }).where(eq(workers.id, args.workerId));
-    await persistRunFailure(args.runId, error);
+    await persistRunFailure(args.runId, error, {
+      surface: { code: "worker.initial.turn_failed", workerId: args.workerId },
+    });
     notifyEventStreamSubscribers();
     throw error;
   }
@@ -362,9 +427,10 @@ async function startDirectWorkerConversation(args: {
   preferredWorkerEffort?: string | null;
   command: string;
 }) {
+  let agent: AgentRecord;
   try {
     const { env: envParams } = await readRuntimeEnvFromSettings();
-    const agent = await spawnAgent({
+    agent = await spawnAgent({
       type: args.workerType,
       cwd: args.cwd,
       name: args.workerId,
@@ -373,7 +439,18 @@ async function startDirectWorkerConversation(args: {
       model: args.preferredWorkerModel?.trim() || undefined,
       effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
     });
+  } catch (error) {
+    await persistInitialWorkerSpawnFailure({
+      runId: args.runId,
+      workerId: args.workerId,
+      mode: "direct",
+      error,
+    });
+    console.error("Initial direct conversation worker spawn failed:", error);
+    return;
+  }
 
+  try {
     await runWorkerTurn(args.workerId, () => runInitialWorkerTurn({
       runId: args.runId,
       workerId: args.workerId,
@@ -394,7 +471,9 @@ async function startDirectWorkerConversation(args: {
       outputLog: failureMessage,
       updatedAt: new Date(),
     }).where(eq(workers.id, args.workerId));
-    await persistRunFailure(args.runId, error);
+    await persistRunFailure(args.runId, error, {
+      surface: { code: "worker.initial.turn_failed", workerId: args.workerId },
+    });
     notifyEventStreamSubscribers();
     console.error("Initial direct conversation worker failed:", error);
   }
@@ -486,11 +565,10 @@ export async function createConversation(args: {
     runCreated = true;
 
     if (resolvedWorkspace.runSnapshot) {
-      await db.insert(executionEvents).values({
-        id: randomUUID(),
+      await recordExecutionEvent({
         runId,
         eventType: "git_workspace_selected",
-        details: JSON.stringify({
+        details: {
           target: resolvedWorkspace.runSnapshot.target,
           headSha: resolvedWorkspace.runSnapshot.headSha,
           branchName: resolvedWorkspace.runSnapshot.branchName,
@@ -500,8 +578,7 @@ export async function createConversation(args: {
           aheadCount: resolvedWorkspace.runSnapshot.aheadCount,
           behindCount: resolvedWorkspace.runSnapshot.behindCount,
           warnings: resolvedWorkspace.runSnapshot.warnings,
-        }),
-        createdAt: new Date(),
+        },
       });
     }
 
@@ -572,8 +649,8 @@ export async function createConversation(args: {
 
       const response = await buildCreatedConversationResponse({ planId, runId, messageId: initialMessageId, mode });
 
-      if (mode === "direct") {
-        startDirectWorkerConversation({
+      if (mode === "direct" || mode === "commit") {
+        const initialDirectTurn = startDirectWorkerConversation({
           runId,
           workerId,
           workerType,
@@ -582,7 +659,8 @@ export async function createConversation(args: {
           preferredWorkerModel: args.preferredWorkerModel,
           preferredWorkerEffort: args.preferredWorkerEffort,
           command: workerPrompt,
-        }).catch((error) => {
+        });
+        trackConversationBackgroundTask(initialDirectTurn).catch((error) => {
           console.error("Initial direct conversation worker failed:", error);
         });
       } else {
@@ -591,7 +669,7 @@ export async function createConversation(args: {
         // failures surface via `error.surfaced` instead of the HTTP
         // response — the worker row already exists in `starting` and
         // `worker.spawned` has already fired, so observers can render.
-        void (async () => {
+        const initialPlanningTurn = (async () => {
           let agent;
           try {
             const { env: envParams } = await readRuntimeEnvFromSettings();
@@ -605,17 +683,13 @@ export async function createConversation(args: {
               effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
             });
           } catch (error) {
-            const cause = error instanceof Error ? error : new Error(String(error));
-            emitNamedEvent({
-              kind: "error.surfaced",
-              code: "worker.spawn.failed",
-              message: `Failed to spawn worker for ${mode} conversation: ${cause.message}`,
-              surface: "toast",
+            await persistInitialWorkerSpawnFailure({
               runId,
               workerId,
-              cause: { name: cause.name, message: cause.message },
+              mode,
+              error,
             });
-            console.error(`Spawn for ${mode} conversation failed:`, cause);
+            console.error(`Spawn for ${mode} conversation failed:`, error);
             return;
           }
 
@@ -636,6 +710,7 @@ export async function createConversation(args: {
             console.error(`Initial ${mode} conversation turn failed:`, error);
           }
         })();
+        void trackConversationBackgroundTask(initialPlanningTurn);
       }
 
       if (generateTitle) {

@@ -21,12 +21,14 @@ import {
   __resetOutputStoreCachesForTests,
   readWorkerOutputEntries,
 } from "@/server/workers/output-store";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 
-const { mockAskAgent, mockGetAgent, mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
+const { mockAskAgent, mockCancelAgent, mockGetAgent, mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
   mockAskAgent: vi.fn().mockResolvedValue({
     response: "Here is the next planning step.",
     state: "working",
   }),
+  mockCancelAgent: vi.fn().mockResolvedValue(undefined),
   mockGetAgent: vi.fn().mockResolvedValue(null),
   mockSpawnAgent: vi.fn().mockResolvedValue({
     name: "worker-1",
@@ -44,6 +46,7 @@ const { mockAskAgent, mockGetAgent, mockSpawnAgent, mockStartSupervisorRun } = v
 
 vi.mock("@/server/bridge-client", () => ({
   askAgent: mockAskAgent,
+  cancelAgent: mockCancelAgent,
   getAgent: mockGetAgent,
   spawnAgent: mockSpawnAgent,
 }));
@@ -82,6 +85,8 @@ describe("POST /api/conversations/[id]/messages", () => {
       response: "Here is the next planning step.",
       state: "working",
     });
+    mockCancelAgent.mockReset();
+    mockCancelAgent.mockResolvedValue(undefined);
     mockGetAgent.mockReset();
     mockGetAgent.mockResolvedValue(null);
     mockSpawnAgent.mockReset();
@@ -98,6 +103,7 @@ describe("POST /api/conversations/[id]/messages", () => {
     });
     mockStartSupervisorRun.mockReset();
     __resetOutputStoreCachesForTests();
+    __resetNamedEventsForTests();
     await db.delete(supervisorInterventions);
     await db.delete(workerAssignments);
     await db.delete(executionEvents);
@@ -161,6 +167,244 @@ describe("POST /api/conversations/[id]/messages", () => {
     // the user-role row is written to `messages` after delivery.
     expect(storedMessages.map((message) => message.role)).toEqual(["user"]);
     expect(mockAskAgent).toHaveBeenCalledWith(workerId, "Can you revise the plan for direct mode?");
+  });
+
+  it("treats exact manual stop text during active direct work as a stop action", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "running",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: " stop " }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload).toMatchObject({ ok: true, stopped: true, runId, workerId });
+
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    const storedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const storedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(storedMessages).toHaveLength(0);
+    expect(storedWorker?.status).toBe("cancelled");
+    expect(storedRun?.status).toBe("cancelled");
+    expect(events.some((event) => event.eventType === "worker_cancelled")).toBe(true);
+    expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
+    expect(mockAskAgent).not.toHaveBeenCalled();
+  });
+
+  it("treats exact manual stop as control-plane even when composer worker preferences are posted", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-preferred-worker-stop.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      preferredWorkerType: "claude",
+      preferredWorkerModel: "claude-opus-4-7",
+      preferredWorkerEffort: "high",
+      allowedWorkerTypes: JSON.stringify(["claude"]),
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "running",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        content: "stop",
+        preferredWorkerType: "claude",
+        preferredWorkerModel: "claude-opus-4-7",
+        preferredWorkerEffort: "high",
+        allowedWorkerTypes: ["claude"],
+      }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(storedMessages).toHaveLength(0);
+    expect(events.some((event) => event.eventType === "worker_selection_changed")).toBe(false);
+    expect(events.some((event) => event.eventType === "worker_cancelled")).toBe(true);
+    expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
+    expect(mockAskAgent).not.toHaveBeenCalled();
+  });
+
+  it("treats exact manual stop text after work already ended as control-plane no-op, not transcript", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-done.md",
+      status: "done",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "done",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "stop" }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload).toMatchObject({
+      ok: true,
+      stopped: false,
+      ignored: true,
+      runId,
+      workerId: null,
+      reason: "not_stoppable",
+    });
+
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    const storedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const storedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(storedMessages).toHaveLength(0);
+    expect(storedWorker?.status).toBe("idle");
+    expect(storedRun?.status).toBe("done");
+    expect(mockCancelAgent).not.toHaveBeenCalled();
+    expect(mockAskAgent).not.toHaveBeenCalled();
+  });
+
+  it("treats exact manual stop text during active implementation work as a supervisor stop", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "docs/superpowers/plans/implementation.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "running",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "/stop" }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload).toMatchObject({ ok: true, stopped: true, runId, workerId: null, runCancelled: true });
+
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    const storedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const storedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(storedMessages).toHaveLength(0);
+    expect(storedWorker?.status).toBe("cancelled");
+    expect(storedRun?.status).toBe("cancelled");
+    expect(events.some((event) => event.eventType === "supervisor_stopped")).toBe(true);
+    expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
+    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
   });
 
   it("blocks user messages when planning review is in progress", async () => {
@@ -1096,6 +1340,13 @@ describe("POST /api/conversations/[id]/messages", () => {
       effort: "high",
       resumeSessionId: "saved-session",
     }));
+    // Wait for the second askAgent call — the recovery + send flow has
+    // additional awaits since the artifact-storage migration so the
+    // second ask isn't synchronously after spawn.
+    await waitFor(
+      () => Promise.resolve(mockAskAgent.mock.calls),
+      (calls) => calls.length >= 2,
+    );
     expect(mockAskAgent).toHaveBeenNthCalledWith(1, workerId, "Please continue the demo work.");
     expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, "Please continue the demo work.");
 
@@ -1116,6 +1367,11 @@ describe("POST /api/conversations/[id]/messages", () => {
     // the user-role row is written to `messages` after delivery.
     expect(storedMessages.map((message) => message.role)).toEqual(["user"]);
     expect(resumeEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "worker.reattached",
+      runId,
+      workerId,
+    }));
   });
 
   it("starts a fresh direct worker when the saved Gemini session id is gone", async () => {
@@ -1219,6 +1475,7 @@ describe("POST /api/conversations/[id]/messages", () => {
     const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
+    const resumeEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
 
     expect(updatedRun?.status).toBe("done");
     expect(updatedRun?.lastError).toBeNull();
@@ -1227,6 +1484,12 @@ describe("POST /api/conversations/[id]/messages", () => {
     // Worker response now lives in the unified worker stream — only
     // the user-role row is written to `messages` after delivery.
     expect(storedMessages.map((message) => message.role)).toEqual(["user"]);
+    expect(resumeEvents.some((event) => event.eventType === "worker_session_recreated")).toBe(true);
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "worker.recreated",
+      runId,
+      workerId,
+    }));
   });
 
   it("routes direct follow-ups to the latest non-cancelled worker", async () => {

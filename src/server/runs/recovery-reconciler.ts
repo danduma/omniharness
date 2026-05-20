@@ -1,8 +1,9 @@
-import { randomUUID } from "crypto";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { asc, eq } from "drizzle-orm";
 import { spawnAgent, type AgentRecord } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { executionEvents, messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
+import { emitNamedEvent } from "@/server/events/named-events";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { normalizeRunStatus } from "@/server/runs/status";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
@@ -26,6 +27,10 @@ import {
 } from "./recovery-state";
 import { restartImplementationRunFromLatestCheckpoint, setRunNeedsRecovery } from "./recovery-actions";
 
+function isCorruptResumeFileError(value: string | null | undefined) {
+  return /failed to load resumed session data from file/i.test(value ?? "");
+}
+
 function incidentKindForState(state: RecoveryState): RecoveryIncidentKind {
   if (state.kind === "quota_waiting") {
     return "quota_exhausted";
@@ -48,14 +53,12 @@ async function insertRecoveryExecutionEvent(
   eventType: string,
   details: Record<string, unknown>,
 ) {
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  await recordExecutionEvent({
     runId,
     workerId: workerId ?? null,
     planItemId: null,
     eventType,
-    details: JSON.stringify(details),
-    createdAt: new Date(),
+    details,
   });
 }
 
@@ -67,8 +70,8 @@ async function loadRunRecoveryInputs(runId: string) {
 
   const [runWorkers, runMessages, runQueuedMessages] = await Promise.all([
     db.select().from(workers).where(eq(workers.runId, runId)),
-    db.select().from(messages).where(eq(messages.runId, runId)).orderBy(asc(messages.createdAt)),
-    db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId)).orderBy(asc(queuedConversationMessages.createdAt)),
+    db.select().from(messages).where(eq(messages.runId, runId)).orderBy(asc(messages.createdAt), asc(messages.id)),
+    db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId)).orderBy(asc(queuedConversationMessages.createdAt), asc(queuedConversationMessages.id)),
   ]);
 
   return { run, runWorkers, runMessages, runQueuedMessages };
@@ -148,17 +151,48 @@ async function resumeSavedWorkerSession(args: {
     updatedAt: new Date(),
   }).where(eq(workers.id, args.worker.id));
 
-  const resumed = await spawnAgent({
-    type: args.worker.type,
-    cwd: args.worker.cwd,
-    name: args.worker.id,
-    ...(workerMode ? { mode: workerMode } : {}),
-    env: envParams,
-    ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
-    ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
-    resumeSessionId: sessionId,
-  }) as AgentRecord;
-  const nextRunStatus = args.run.mode === "direct"
+  let resumed: AgentRecord;
+  let recreatedFromMissingSession = false;
+  try {
+    resumed = await spawnAgent({
+      type: args.worker.type,
+      cwd: args.worker.cwd,
+      name: args.worker.id,
+      ...(workerMode ? { mode: workerMode } : {}),
+      env: envParams,
+      ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
+      ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
+      resumeSessionId: sessionId,
+    }) as AgentRecord;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (!isCorruptResumeFileError(reason) || args.run.mode !== "implementation") {
+      throw error;
+    }
+
+    await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "worker_session_missing", {
+      summary: `Saved bridge session for ${args.worker.id} is no longer available`,
+      reason,
+      sessionId,
+    });
+    await db.update(workers).set({
+      status: "starting",
+      bridgeSessionId: null,
+      bridgeSessionMode: null,
+      updatedAt: new Date(),
+    }).where(eq(workers.id, args.worker.id));
+    resumed = await spawnAgent({
+      type: args.worker.type,
+      cwd: args.worker.cwd,
+      name: args.worker.id,
+      ...(workerMode ? { mode: workerMode } : {}),
+      env: envParams,
+      ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
+      ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
+    }) as AgentRecord;
+    recreatedFromMissingSession = true;
+  }
+  const nextRunStatus = args.run.mode === "direct" || args.run.mode === "commit"
     ? resolveDirectRunStatusFromWorkerOutput({
       renderedOutput: resumed.renderedOutput,
       currentText: resumed.currentText,
@@ -175,10 +209,23 @@ async function resumeSavedWorkerSession(args: {
     status: resumed.state,
     currentText: resumed.currentText,
     lastText: resumed.lastText,
-    bridgeSessionId: resumed.sessionId ?? sessionId,
+    bridgeSessionId: resumed.sessionId ?? (recreatedFromMissingSession ? null : sessionId),
     bridgeSessionMode: resumed.sessionMode ?? args.worker.bridgeSessionMode ?? null,
     updatedAt: new Date(),
   }).where(eq(workers.id, args.worker.id));
+  emitNamedEvent({
+    kind: recreatedFromMissingSession ? "worker.recreated" : "worker.reattached",
+    runId: args.run.id,
+    workerId: args.worker.id,
+  });
+  if (recreatedFromMissingSession) {
+    await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "worker_session_recreated", {
+      summary: `Started a fresh runtime worker for ${args.worker.id} after its saved session was rejected.`,
+      rejectedSessionId: sessionId,
+      newSessionId: resumed.sessionId ?? null,
+      reason: "recovery_resume_missing_agent",
+    });
+  }
   await db.update(runs).set({
     status: nextRunStatus,
     failedAt: null,

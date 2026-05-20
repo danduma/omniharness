@@ -133,9 +133,9 @@ test("user-initiated conversation sends reveal the appended turn", () => {
   expect(autoCommitScrollIndex).toBeLessThan(autoCommitProjectIndex);
 });
 
-test("project menus expose an auto commit action that starts a direct worker conversation", () => {
+test("project menus expose an auto commit action that starts a commit conversation", () => {
   expect(pageSource).toContain("AUTO_COMMIT_PROJECT_PROMPT");
-  expect(pageSource).toContain("mode: \"direct\"");
+  expect(pageSource).toContain("mode: \"commit\"");
   expect(pageSource).toContain("projectPath: payload.projectPath");
   expect(pageSource).toContain("autoCommitProject(group.path)");
   expect(pageSource).toContain("commit.menu.commitProjectNow");
@@ -265,7 +265,11 @@ test("conversation loading states use i18n resources", () => {
 
 test("direct conversations keep the terminal mounted during worker stream refreshes", () => {
   const conversationMainSource = readSource("src/components/home/ConversationMain.tsx");
-  const loadingGateStart = conversationMainSource.indexOf("{!isSelectedConversationLoaded ? (");
+  // The full-screen loading spinner gates on the snapshot preview
+  // being available; the Terminal stays mounted across worker stream
+  // refresh cycles and shows its own inline spinner via the
+  // `isDirectWorkerStreamLoading` prop.
+  const loadingGateStart = conversationMainSource.indexOf("{!isSelectedConversationPreviewAvailable ? (");
   const terminalStart = conversationMainSource.indexOf("<DirectControlTerminalColumn>", loadingGateStart);
   const loadingGate = conversationMainSource.slice(loadingGateStart, terminalStart);
 
@@ -405,8 +409,8 @@ test("direct control conversations show a tiny animated working indicator while 
   expect(pageSource).toContain("showDirectControlWorkingIndicator={showDirectControlWorkingIndicator}");
   expect(pageSource).toContain("showPendingAssistantIndicator={showDirectControlWorkingIndicator}");
   expect(pageSource).toContain("const hasBusyConversation = isSupervisorRunning || Boolean(stoppableConversationWorkerId);");
-  expect(pageSource).toContain('const directConversationIsRunning = selectedRun?.mode === "direct" && selectedRun.status === "running";');
-  expect(pageSource).toContain("const showDirectControlWorkingIndicator = isDirectConversation && (hasBusyConversation || directConversationIsRunning);");
+  expect(pageSource).toContain("const showDirectControlWorkingIndicator = shouldShowDirectControlPendingAssistant({");
+  expect(pageSource).toContain("workerStatuses: selectedRunWorkersForDisplay.map((worker) => worker.status)");
   expect(terminalSource).toContain("showPendingAssistantIndicator = false");
   expect(terminalSource).toContain("pendingAssistantActivity");
   expect(terminalSource).toContain("const TERMINAL_BOTTOM_THRESHOLD_PX = 1");
@@ -417,14 +421,23 @@ test("direct control conversations show a tiny animated working indicator while 
   expect(terminalSource).toContain("scrollAnchorKey = null");
   expect(terminalSource).toContain("const scrollAnchorChanged = previousScrollAnchorKeyRef.current !== scrollAnchorKey;");
   expect(terminalSource).toContain("|| (!shouldFollowLatestRef.current && !isFirstRenderedActivity)");
+  expect(terminalSource).toContain("shouldTerminalScrollToLatest");
   expect(terminalSource).toContain("shouldFollowLatestRef.current = true");
   expect(terminalSource).toContain("hasPositionedFirstActivityRef");
+  expect(terminalSource).not.toContain("if (!shouldTerminalScrollToLatest({ variant, isFirstRenderedActivity, latestActivityKind })) {\n      if (filteredActivity.length > 0) {\n        hasPositionedFirstActivityRef.current = true;");
   expect(terminalSource).toContain('const scrollBehavior: ScrollBehavior = isFirstRenderedActivity ? "auto" : "smooth";');
   expect(terminalSource).toContain('scrollTerminalToBottom(container, "auto")');
+  expect(terminalSource).not.toContain('requestAnimationFrame(() => {\n        scrollTerminalToBottom(container, "auto");');
   expect(terminalSource).toContain("inline-block animate-pulse text-foreground/80");
   expect(terminalSource).toContain("animationDuration:");
   expect(terminalSource).toContain("relative z-10 mt-3 flex w-full justify-start px-1");
   expect(terminalSource).toContain("animationDelay:");
+});
+
+test("direct control pending state does not reserve blank scrollable transcript height", () => {
+  const conversationMainSource = readSource("src/components/home/ConversationMain.tsx");
+
+  expect(conversationMainSource).not.toContain('className="min-h-[32rem]"');
 });
 
 test("starting a new conversation immediately selects the reserved session route", () => {
@@ -440,6 +453,15 @@ test("starting a new conversation immediately selects the reserved session route
   expect(pageSource).toContain("replaceBrowserConversationPath(context.previousSelectedRunId, context.previousDraftProjectPath);");
   expect(pageSource).toContain("export function createClientRunId()");
   expect(pageSource).toContain("&& (!selectedRunId || selectedRunId === runCommand.variables?.requestedRunId)");
+});
+
+test("mutation-created navigation is owner-guarded and keeps the route in sync", () => {
+  expect(pageSource).toContain("export function shouldSelectProjectMutationResult");
+  expect(pageSource).toContain("export function shouldSelectSourceRunMutationResult");
+  expect(pageSource).toContain("const ownsSelection = shouldSelectProjectMutationResult({");
+  expect(pageSource).toContain("resultRunId: data.runId");
+  expect(pageSource).toContain("replaceBrowserConversationPath(data.runId, null);");
+  expect(pageSource).toContain("sourceRunId: variables.runId");
 });
 
 test("frontend transport and mutation errors render as explicit notices", () => {

@@ -1,8 +1,8 @@
-import { randomUUID } from "crypto";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { eq } from "drizzle-orm";
 import { Agent } from "@mastra/core/agent";
 import { db } from "@/server/db";
-import { clarifications, executionEvents, messages as dbMessages, runs, settings, supervisorInterventions } from "@/server/db/schema";
+import { clarifications, messages as dbMessages, runs, settings, supervisorInterventions } from "@/server/db/schema";
 import { appendMemory, listMemory, readMemory, writeMemory } from "@/server/supervisor/memory-tools";
 import { buildMastraModelConfig, getSupervisorModelConfig, validateSupervisorModelConfig } from "@/server/supervisor/model-config";
 import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
@@ -221,18 +221,16 @@ async function loadEnv() {
 }
 
 async function recordSkipped(runId: string, trigger: ConsolidationTrigger, reason: string) {
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  await recordExecutionEvent({
     runId,
     workerId: null,
     planItemId: null,
     eventType: "supervisor_memory_consolidation_skipped",
-    details: JSON.stringify({
+    details: {
       summary: `Memory consolidation skipped (${reason}).`,
       trigger,
       reason,
-    }),
-    createdAt: new Date(),
+    },
   });
 }
 
@@ -242,21 +240,19 @@ async function recordConsolidated(runId: string, args: {
   provider: string;
   operations: ConsolidationOperation[];
 }) {
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  await recordExecutionEvent({
     runId,
     workerId: null,
     planItemId: null,
     eventType: "supervisor_memory_consolidated",
-    details: JSON.stringify({
+    details: {
       summary: `Consolidated project memory (${args.trigger}): ${args.operations.length} operation(s).`,
       trigger: args.trigger,
       model: args.model,
       provider: args.provider,
       operationCount: args.operations.length,
       operations: args.operations,
-    }),
-    createdAt: new Date(),
+    },
   });
 }
 
@@ -367,19 +363,17 @@ export async function consolidateProjectMemory(args: {
   try {
     plan = parseConsolidationPlan(rawOutput);
   } catch (error) {
-    await db.insert(executionEvents).values({
-      id: randomUUID(),
+    await recordExecutionEvent({
       runId: args.runId,
       workerId: null,
       planItemId: null,
       eventType: "supervisor_memory_consolidation_failed",
-      details: JSON.stringify({
+      details: {
         summary: "Memory consolidation produced unparseable output.",
         trigger: args.trigger,
         rawOutput: truncate(rawOutput, 4_000),
         error: error instanceof Error ? error.message : String(error),
-      }),
-      createdAt: new Date(),
+      },
     });
     await db.update(runs).set({
       lastMemoryConsolidationAt: new Date(),
@@ -406,19 +400,17 @@ export async function consolidateProjectMemory(args: {
       }
       applied += 1;
     } catch (operationError) {
-      await db.insert(executionEvents).values({
-        id: randomUUID(),
+      await recordExecutionEvent({
         runId: args.runId,
         workerId: null,
         planItemId: null,
         eventType: "supervisor_memory_consolidation_failed",
-        details: JSON.stringify({
+        details: {
           summary: `Memory consolidation operation failed for ${operation.path}.`,
           trigger: args.trigger,
           operation,
           error: operationError instanceof Error ? operationError.message : String(operationError),
-        }),
-        createdAt: new Date(),
+        },
       });
     }
   }

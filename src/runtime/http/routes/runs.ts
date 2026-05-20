@@ -25,7 +25,6 @@ import {
   workers,
   clarifications,
   planItems,
-  executionEvents,
   supervisorInterventions,
   queuedConversationMessages,
   recoveryIncidents,
@@ -38,6 +37,11 @@ import {
   planningReviewFindings,
   processSessions,
 } from "@/server/db/schema";
+import {
+  recordExecutionEvent,
+  deleteExecutionEventsForRun,
+  deleteExecutionEventsForPlanItem,
+} from "@/server/events/execution-event-store";
 import { normalizeSessionType } from "@/server/session-providers/capabilities";
 import { getSessionProvider } from "@/server/session-providers/registry";
 import { stopLiveProcessForDelete } from "@/server/session-providers/process-store";
@@ -170,14 +174,12 @@ async function insertExecutionEvent(
   details: Record<string, unknown>,
   workerId?: string | null,
 ) {
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  await recordExecutionEvent({
     runId,
     workerId: workerId ?? null,
     planItemId: null,
     eventType,
-    details: JSON.stringify(details),
-    createdAt: new Date(),
+    details,
   });
 }
 
@@ -676,7 +678,7 @@ export const handleRunDeleteRequest: OmniHttpHandler = async (request, context) 
 
     await db.delete(messages).where(eq(messages.runId, runId));
     await db.delete(clarifications).where(eq(clarifications.runId, runId));
-    await db.delete(executionEvents).where(eq(executionEvents.runId, runId));
+    await deleteExecutionEventsForRun(runId);
     await db.delete(supervisorInterventions).where(eq(supervisorInterventions.runId, runId));
     await db.delete(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId));
     await db.delete(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
@@ -692,7 +694,7 @@ export const handleRunDeleteRequest: OmniHttpHandler = async (request, context) 
     await db.delete(runs).where(eq(runs.id, runId));
 
     for (const planItemId of planItemIds) {
-      await db.delete(executionEvents).where(eq(executionEvents.planItemId, planItemId));
+      await deleteExecutionEventsForPlanItem(planItemId);
     }
 
     await db.delete(planItems).where(eq(planItems.planId, run.planId));

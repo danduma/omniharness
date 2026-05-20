@@ -423,14 +423,20 @@ describe("GET /api/events", () => {
   it("uses stable id tie-breakers for timestamp-ordered snapshot queries", async () => {
     const runtimeSource = fs.readFileSync(path.join(process.cwd(), "src/runtime/http/routes/events.ts"), "utf8");
     const persistedSource = fs.readFileSync(path.join(process.cwd(), "src/server/events/persisted-snapshot.ts"), "utf8");
+    // execution_events ordering moved into the artifact adapter when
+    // append-only artifact storage landed.
+    const executionEventStoreSource = fs.readFileSync(
+      path.join(process.cwd(), "src/server/events/execution-event-store.ts"),
+      "utf8",
+    );
 
     for (const source of [runtimeSource, persistedSource]) {
       expect(source).toContain("orderBy(desc(runs.createdAt), desc(runs.id))");
       expect(source).toContain("orderBy(asc(messages.createdAt), asc(messages.id))");
-      expect(source).toContain("orderBy(desc(executionEvents.createdAt), desc(executionEvents.id))");
       expect(source).toContain("orderBy(desc(queuedConversationMessages.createdAt), desc(queuedConversationMessages.id))");
       expect(source).toContain("orderBy(desc(recoveryIncidents.updatedAt), desc(recoveryIncidents.id))");
     }
+    expect(executionEventStoreSource).toContain("orderBy(desc(executionEvents.createdAt), desc(executionEvents.id))");
   });
 
   it.skip("serves persisted snapshots from sqlite without waiting for supervisor startup or bridge fetches", async () => {
@@ -1124,6 +1130,17 @@ describe("GET /api/events", () => {
     expect(payload.workerEntrySeqs[workerId]).toBe(2);
     expect(payload.workerEntries).toBeUndefined();
     expect(payload.agents.find((agent: { name: string; outputEntries: unknown[] }) => agent.name === workerId)?.outputEntries).toEqual([]);
+
+    const notModifiedResponse = await GET(new NextRequest(
+      `http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}&checksum=${encodeURIComponent(payload.snapshotChecksum)}`,
+    ));
+    const notModifiedPayload = await notModifiedResponse.json();
+
+    expect(notModifiedPayload).toEqual({
+      notModified: true,
+      snapshotChecksum: payload.snapshotChecksum,
+      workerEntrySeqs: { [workerId]: 2 },
+    });
   });
 
   it("surfaces an invariant error when an awaiting-user snapshot has no supervisor question", async () => {

@@ -264,7 +264,18 @@ export const executionEvents = sqliteTable('execution_events', {
   workerId: text('worker_id').references(() => workers.id),
   planItemId: text('plan_item_id').references(() => planItems.id),
   eventType: text('event_type').notNull(),
+  // Legacy full-body column. After artifact migration, new writes
+  // leave this null and large `details` live in the run-level
+  // execution-events artifact stream addressed by artifact_seq.
   details: text('details'),
+  // Append cursor pointing into the artifact stream. NULL = legacy row
+  // whose body still lives in `details`.
+  artifactSeq: integer('artifact_seq'),
+  // SHA-256 hex of the canonical-serialized payload, for stable
+  // dedupe/diagnostics without re-reading the artifact body.
+  detailsHash: text('details_hash'),
+  // Short preview (≤256 chars) safe to inline in hot snapshot lists.
+  detailsPreview: text('details_preview'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 
@@ -273,8 +284,14 @@ export const supervisorInterventions = sqliteTable('supervisor_interventions', {
   runId: text('run_id').references(() => runs.id).notNull(),
   workerId: text('worker_id').references(() => workers.id),
   interventionType: text('intervention_type').notNull(),
-  prompt: text('prompt').notNull(),
+  // Legacy body columns. After artifact migration, new writes leave
+  // these null and bodies live in the supervisor-interventions
+  // artifact stream addressed by artifact_seq.
+  prompt: text('prompt'),
   summary: text('summary'),
+  artifactSeq: integer('artifact_seq'),
+  promptHash: text('prompt_hash'),
+  summaryPreview: text('summary_preview'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 
@@ -318,8 +335,37 @@ export const planningReviewFindings = sqliteTable('planning_review_findings', {
   severity: text('severity').notNull(),
   category: text('category').notNull(),
   title: text('title').notNull(),
-  details: text('details').notNull(),
-  recommendation: text('recommendation').notNull(),
+  // Legacy body columns. After artifact migration, new writes leave
+  // these null and bodies live in the planning-review-findings
+  // artifact stream addressed by artifact_seq.
+  details: text('details'),
+  recommendation: text('recommendation'),
+  artifactSeq: integer('artifact_seq'),
+  detailsHash: text('details_hash'),
+  recommendationPreview: text('recommendation_preview'),
   sourcePath: text('source_path'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
+
+/**
+ * One row per (run_id, kind, owner_id) artifact stream. Records where
+ * the file lives on disk, the append cursor, last verified state, and
+ * error/compaction telemetry. owner_id is normalized via
+ * ARTIFACT_STREAM_OWNER_NONE so SQLite UNIQUE actually catches dupes.
+ */
+export const artifactStreams = sqliteTable('artifact_streams', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').notNull().references(() => runs.id),
+  projectPath: text('project_path'),
+  kind: text('kind').notNull(),
+  ownerId: text('owner_id').notNull(),
+  relativePath: text('relative_path').notNull(),
+  latestSeq: integer('latest_seq').notNull().default(0),
+  latestRecordId: text('latest_record_id'),
+  status: text('status').notNull().default('active'),
+  lastError: text('last_error'),
+  lastVerifiedAt: integer('last_verified_at', { mode: 'timestamp' }),
+  compactedAt: integer('compacted_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });

@@ -1,7 +1,7 @@
-import { randomUUID } from "crypto";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { executionEvents, runs } from "@/server/db/schema";
+import { runs } from "@/server/db/schema";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { autoCommitMilestone, parseGitBaselineJson, type AutoCommitResult } from "./auto-commit";
 
@@ -28,14 +28,12 @@ function buildCommitBody(run: RunRecord, summary: string) {
 }
 
 async function insertCommitEvent(runId: string, eventType: string, details: Record<string, unknown>) {
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  await recordExecutionEvent({
     runId,
     workerId: null,
     planItemId: null,
     eventType,
-    details: JSON.stringify(details),
-    createdAt: new Date(),
+    details,
   });
   notifyEventStreamSubscribers();
 }

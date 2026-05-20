@@ -1,5 +1,6 @@
 import { and, desc, eq, gt, inArray } from "drizzle-orm";
-import { randomUUID } from "crypto";
+import { recordExecutionEvent, listExecutionEventsForRun } from "@/server/events/execution-event-store";
+import { hashArtifactPayload } from "@/server/artifacts/stream-metadata";
 import path from "path";
 import * as bridge from "@/server/bridge-client";
 import { db } from "@/server/db";
@@ -32,6 +33,7 @@ const WORKER_TURN_COMPLETION_RESET_EVENT_TYPES = [
   "worker_prompted",
   "worker_spawned",
   "worker_session_resumed",
+  "worker_session_recreated",
 ];
 const WORKER_TURN_COMPLETION_RELATED_EVENT_TYPES = [
   WORKER_TURN_COMPLETED_EVENT_TYPE,
@@ -232,7 +234,11 @@ async function failRunForWorkerCwdMismatch(args: {
   notifyEventStreamSubscribers();
 
   stopRunObserver(args.runId, { reason: "cwd_mismatch" });
-  await persistRunFailure(args.runId, new Error(`${args.mismatch.summary} Worker: ${args.worker.id}. This is an OmniHarness runtime bug; stopping the run instead of retrying the worker.`));
+  await persistRunFailure(
+    args.runId,
+    new Error(`${args.mismatch.summary} Worker: ${args.worker.id}. This is an OmniHarness runtime bug; stopping the run instead of retrying the worker.`),
+    { surface: { code: "worker.environment_mismatch", workerId: args.worker.id } },
+  );
 }
 
 function normalizeSnapshot(snapshot: WorkerBridgeSnapshot | bridge.AgentRecord) {
@@ -633,7 +639,7 @@ async function hasExistingWorkerTurnCompletionForCurrentPrompt(runId: string, wo
     eq(executionEvents.runId, runId),
     eq(executionEvents.workerId, workerId),
     inArray(executionEvents.eventType, WORKER_TURN_COMPLETION_RELATED_EVENT_TYPES),
-  )).orderBy(desc(executionEvents.createdAt)).limit(25);
+  )).orderBy(desc(executionEvents.createdAt), desc(executionEvents.id)).limit(25);
 
   for (const event of latestRelatedEvents) {
     if (event.eventType === WORKER_TURN_COMPLETED_EVENT_TYPE) {
@@ -654,13 +660,14 @@ async function insertExecutionEvent(
   eventType: string,
   details: Record<string, unknown>,
 ) {
-  const serializedDetails = JSON.stringify(details);
   if (eventType === WORKER_TURN_COMPLETED_EVENT_TYPE) {
     const duplicate = await hasExistingWorkerTurnCompletionForCurrentPrompt(runId, workerId);
     if (duplicate) {
       return false;
     }
   }
+
+  const detailsHash = hashArtifactPayload(details);
 
   const dedupeScope = TYPE_DEDUPED_WORKER_EVENT_TYPES.has(eventType)
     ? "type"
@@ -671,7 +678,7 @@ async function insertExecutionEvent(
   if (dedupeScope) {
     const now = Date.now();
     const eventKey = dedupeScope === "exact"
-      ? `${runId}:${workerId}:${eventType}:${serializedDetails}`
+      ? `${runId}:${workerId}:${eventType}:${detailsHash}`
       : `${runId}:${workerId}:${eventType}`;
     const recentEventAt = recentWorkerEventKeys.get(eventKey);
     if (recentEventAt && now - recentEventAt < DUPLICATE_WORKER_EVENT_WINDOW_MS) {
@@ -685,7 +692,7 @@ async function insertExecutionEvent(
           eq(executionEvents.runId, runId),
           eq(executionEvents.workerId, workerId),
           eq(executionEvents.eventType, eventType),
-          eq(executionEvents.details, serializedDetails),
+          eq(executionEvents.detailsHash, detailsHash),
           gt(executionEvents.createdAt, new Date(now - DUPLICATE_WORKER_EVENT_WINDOW_MS)),
         )
         : and(
@@ -700,14 +707,12 @@ async function insertExecutionEvent(
     }
   }
 
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  await recordExecutionEvent({
     runId,
     workerId,
     planItemId: null,
     eventType,
-    details: serializedDetails,
-    createdAt: new Date(),
+    details,
   });
   await notifyRunLifecycleEventBestEffort({ runId, eventType, details });
   notifyEventStreamSubscribers();
@@ -725,7 +730,8 @@ function isMissingAgentError(error: unknown) {
     || message.includes("not_found")
     || message.includes("agent not found")
     || message.includes("session not found")
-    || message.includes("invalid session identifier");
+    || message.includes("invalid session identifier")
+    || message.includes("failed to load resumed session data from file");
 }
 
 function isAgentAlreadyExistsError(error: unknown, workerId: string) {
@@ -832,7 +838,15 @@ async function markWorkerResumeFailed(args: {
   notifyEventStreamSubscribers();
 }
 
-export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: string, delayMs?: number) => void) {
+function isObserverPollCurrent(runId: string, generation: number | undefined) {
+  return generation === undefined || observerPollsInFlight.get(runId) === generation;
+}
+
+export async function pollRunWorkers(
+  runId: string,
+  wakeSupervisor: (runId: string, delayMs?: number) => void,
+  options: { observerGeneration?: number } = {},
+) {
   const run = await loadActiveRun(runId);
   if (!run) {
     stopRunObserver(runId, { reason: "run_terminated" });
@@ -843,6 +857,10 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
   const now = Date.now();
 
   for (const worker of runWorkers) {
+    if (!isObserverPollCurrent(runId, options.observerGeneration)) {
+      return;
+    }
+
     if (worker.status === "cancelled") {
       continue;
     }
@@ -879,10 +897,16 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
     let snapshot: WorkerBridgeSnapshot;
     try {
       const rawSnapshot = await bridge.getAgent(worker.id, { retryIndefinitely: false });
+      if (!isObserverPollCurrent(runId, options.observerGeneration)) {
+        return;
+      }
       const normalized = normalizeSnapshot(rawSnapshot);
       snapshot = normalized.snapshot;
 
       const latestRun = await loadActiveRun(runId);
+      if (!isObserverPollCurrent(runId, options.observerGeneration)) {
+        return;
+      }
       if (!latestRun) {
         stopRunObserver(runId, { reason: "run_terminated" });
         return;
@@ -901,7 +925,9 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
           },
         });
         stopRunObserver(runId, { reason: "snapshot_invalid" });
-        await persistRunFailure(runId, error);
+        await persistRunFailure(runId, error, {
+          surface: { code: "worker.snapshot.invalid", workerId: worker.id },
+        });
         return;
       }
 
@@ -946,12 +972,17 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
               now,
             });
             stopRunObserver(runId, { reason: "run_failed" });
-            await persistRunFailure(runId, resumeError);
+            await persistRunFailure(runId, resumeError, {
+              surface: { code: "worker.resume.failed", workerId: worker.id },
+            });
             return;
           }
         }
       }
     } catch (error) {
+      if (!isObserverPollCurrent(runId, options.observerGeneration)) {
+        return;
+      }
       if (!await loadActiveRun(runId)) {
         stopRunObserver(runId, { reason: "run_terminated" });
         return;
@@ -1011,7 +1042,9 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
             now,
           });
           stopRunObserver(runId, { reason: "run_failed" });
-          await persistRunFailure(runId, resumeError);
+          await persistRunFailure(runId, resumeError, {
+            surface: { code: "worker.resume.failed", workerId: worker.id },
+          });
           return;
         }
       } else {
@@ -1026,13 +1059,18 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
           retryable,
         });
         stopRunObserver(runId, { reason: "run_failed" });
-        await persistRunFailure(runId, error);
+        await persistRunFailure(runId, error, {
+          surface: { code: "worker.poll.failed", workerId: worker.id },
+        });
         return;
       }
     }
 
     try {
       const latestRun = await loadActiveRun(runId);
+      if (!isObserverPollCurrent(runId, options.observerGeneration)) {
+        return;
+      }
       if (!latestRun) {
         stopRunObserver(runId, { reason: "run_terminated" });
         return;
@@ -1073,7 +1111,9 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
 
       if (fatalBridgeError) {
         stopRunObserver(runId, { reason: "fatal_bridge_error" });
-        await persistRunFailure(runId, new Error(fatalBridgeError));
+        await persistRunFailure(runId, new Error(fatalBridgeError), {
+          surface: { code: "worker.bridge.fatal_stderr", workerId: worker.id },
+        });
         return;
       }
 
@@ -1135,6 +1175,9 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
         }
       }
     } catch (error) {
+      if (!isObserverPollCurrent(runId, options.observerGeneration)) {
+        return;
+      }
       if (!await loadActiveRun(runId)) {
         stopRunObserver(runId, { reason: "run_terminated" });
         return;
@@ -1150,7 +1193,9 @@ export async function pollRunWorkers(runId: string, wakeSupervisor: (runId: stri
         continue;
       }
       stopRunObserver(runId, { reason: "run_failed" });
-      await persistRunFailure(runId, error);
+      await persistRunFailure(runId, error, {
+        surface: { code: "worker.observer.failed", workerId: worker.id },
+      });
       return;
     }
   }
@@ -1168,7 +1213,7 @@ export function startRunObserver(runId: string, wakeSupervisor: (runId: string, 
     }
 
     observerPollsInFlight.set(runId, generation);
-    void pollRunWorkers(runId, wakeSupervisor)
+    void pollRunWorkers(runId, wakeSupervisor, { observerGeneration: generation })
       .catch((error) => {
         console.error(`Run observer poll failed for ${runId}`, error);
       })
@@ -1220,5 +1265,5 @@ export function stopRunObserver(runId: string, options: { reason?: SupervisorSto
 }
 
 export async function latestRunWorkerEvents(runId: string) {
-  return db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).orderBy(desc(executionEvents.createdAt));
+  return (await listExecutionEventsForRun(runId)).slice().reverse();
 }

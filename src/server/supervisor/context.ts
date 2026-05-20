@@ -4,7 +4,8 @@ import path from "path";
 import * as bridge from "@/server/bridge-client";
 import { getAppDataPath } from "@/server/app-root";
 import { db } from "@/server/db";
-import { clarifications, executionEvents, messages, plans, runs, workers } from "@/server/db/schema";
+import { clarifications, messages, plans, runs, workers } from "@/server/db/schema";
+import { listExecutionEventsForRun } from "@/server/events/execution-event-store";
 import { appendAttachmentContext, parseChatAttachmentsJson } from "@/lib/chat-attachments";
 import { parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
 import { getMemoryRoot } from "@/server/supervisor/memory-paths";
@@ -12,6 +13,11 @@ import { listMemory } from "@/server/supervisor/memory-tools";
 
 function truncate(text: string, maxLength: number) {
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function compareByCreatedAtThenId<T extends { createdAt: Date; id: string }>(a: T, b: T) {
+  const timeDiff = a.createdAt.getTime() - b.createdAt.getTime();
+  return timeDiff || a.id.localeCompare(b.id);
 }
 
 export interface WorkerObservation {
@@ -226,7 +232,7 @@ export async function buildSupervisorTurnContext(
   const planPath = plan?.path ?? null;
   const planContent = readPlanContent(planPath);
   const allMessages = (await db.select().from(messages).where(eq(messages.runId, runId)))
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    .sort((a, b) => compareByCreatedAtThenId(a, b));
   const userMessages = allMessages.filter((message) => message.role === "user");
   const goal = userMessages.map((message) => appendAttachmentContext(
     message.content,
@@ -250,7 +256,7 @@ export async function buildSupervisorTurnContext(
     .filter((clarification) => clarification.status === "answered" && clarification.answer)
     .map((clarification) => ({ question: clarification.question, answer: clarification.answer ?? "" }));
   const runWorkers = (await db.select().from(workers).where(eq(workers.runId, runId)))
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    .sort((a, b) => compareByCreatedAtThenId(a, b));
 
   const activeWorkers: WorkerObservation[] = [];
   const now = Date.now();
@@ -286,7 +292,7 @@ export async function buildSupervisorTurnContext(
     });
   }
 
-  const allEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).orderBy(desc(executionEvents.createdAt));
+  const allEvents = (await listExecutionEventsForRun(runId)).slice().reverse();
   const compactedMemory =
     allEvents
       .filter((event) => event.eventType === "supervisor_context_compacted")

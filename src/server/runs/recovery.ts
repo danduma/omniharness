@@ -1,6 +1,6 @@
 import fs from "fs";
 import { randomUUID } from "crypto";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
   clarifications,
@@ -16,9 +16,10 @@ import {
   supervisorInterventions,
   workers,
 } from "@/server/db/schema";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { askAgent, cancelAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
 import { createAdHocPlan, rewriteAdHocPlan } from "@/server/runs/ad-hoc-plan";
-import { persistRunFailure } from "@/server/runs/failures";
+import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { createRunId } from "@/server/runs/ids";
 import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
 import { startSupervisorRun } from "@/server/supervisor/start";
@@ -91,10 +92,11 @@ function buildRunWorkspaceSnapshot(args: {
 }
 
 async function findLatestUserMessageId(runId: string) {
-  const runMessages = await db.select().from(messages).where(eq(messages.runId, runId));
-  const latestUserMessage = runMessages
-    .filter((message) => message.role === "user")
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+  const latestUserMessage = await db.select()
+    .from(messages)
+    .where(and(eq(messages.runId, runId), eq(messages.role, "user")))
+    .orderBy(desc(messages.createdAt), desc(messages.id))
+    .get();
   if (!latestUserMessage) {
     throw new Error("Fork source run has no user message to fork from");
   }
@@ -238,7 +240,9 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string, 
       updatedAt: new Date(),
     }).where(eq(workers.id, workerId));
 
-    await persistRunFailure(run.id, new Error(failureMessage));
+    await persistRunFailure(run.id, new Error(failureMessage), {
+      surface: { code: "recovery.run_failed", workerId },
+    });
     return;
   }
 
@@ -290,6 +294,7 @@ async function resumeDirectRunFromSavedSession(
   const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
   const { env: envParams } = await readRuntimeEnvFromSettings();
   let resumedWorker: AgentRecord;
+  let recreatedFromMissingSession = false;
   try {
     resumedWorker = await spawnAgent({
       type: worker.type,
@@ -302,29 +307,55 @@ async function resumeDirectRunFromSavedSession(
       resumeSessionId: sessionId,
     });
   } catch (error) {
-    if (!isAgentAlreadyExistsError(error, worker.id)) {
+    if (isAgentAlreadyExistsError(error, worker.id)) {
+      resumedWorker = await getAgent(worker.id);
+    } else if (isRecoverableAgentMissingError(formatErrorMessage(error))) {
+      await db.update(workers).set({
+        status: "starting",
+        bridgeSessionId: null,
+        bridgeSessionMode: null,
+        updatedAt: new Date(),
+      }).where(eq(workers.id, worker.id));
+      resumedWorker = await spawnAgent({
+        type: worker.type,
+        cwd: worker.cwd,
+        name: worker.id,
+        ...(workerMode ? { mode: workerMode } : {}),
+        env: envParams,
+        ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+        ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+      });
+      recreatedFromMissingSession = true;
+    } else {
       throw error;
     }
-    resumedWorker = await getAgent(worker.id);
   }
 
   const resumedAt = new Date();
-  await db.insert(executionEvents).values({
-    id: randomUUID(),
+  await recordExecutionEvent({
     runId: run.id,
     workerId: worker.id,
     planItemId: null,
-    eventType: "worker_session_resumed",
-    details: JSON.stringify({
-      summary: `Resumed ${worker.id} from saved session`,
-      sessionId,
-    }),
+    eventType: recreatedFromMissingSession ? "worker_session_recreated" : "worker_session_resumed",
+    details: {
+      summary: recreatedFromMissingSession
+        ? `Started a fresh runtime worker for ${worker.id} after its saved session was rejected.`
+        : `Resumed ${worker.id} from saved session`,
+      ...(recreatedFromMissingSession
+        ? { rejectedSessionId: sessionId, newSessionId: resumedWorker.sessionId ?? null }
+        : { sessionId }),
+    },
     createdAt: resumedAt,
+  });
+  emitNamedEvent({
+    kind: recreatedFromMissingSession ? "worker.recreated" : "worker.reattached",
+    runId: run.id,
+    workerId: worker.id,
   });
 
   await db.update(workers).set({
     status: "working",
-    bridgeSessionId: resumedWorker.sessionId ?? sessionId,
+    bridgeSessionId: resumedWorker.sessionId ?? (recreatedFromMissingSession ? null : sessionId),
     bridgeSessionMode: resumedWorker.sessionMode ?? sessionMode ?? null,
     updatedAt: resumedAt,
   }).where(eq(workers.id, worker.id));
@@ -483,7 +514,7 @@ export async function recoverRun(args: RecoverRunArgs) {
     return startImplementationRerun(run, plan, args, targetMessage, nextContent);
   }
 
-  if (run.mode !== "direct") {
+  if (run.mode !== "direct" && run.mode !== "commit") {
     throw new Error("Recovery actions are only available in direct control conversations");
   }
 
@@ -549,9 +580,14 @@ export async function recoverRun(args: RecoverRunArgs) {
       });
       forkedRunCreated = true;
 
-      const messagesToCopy = (await db.select().from(messages).where(eq(messages.runId, args.runId)))
-        .filter((message) => message.createdAt <= targetMessage.createdAt)
-        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      const messagesToCopy = (await db.select()
+        .from(messages)
+        .where(eq(messages.runId, args.runId))
+        .orderBy(asc(messages.createdAt), asc(messages.id)))
+        .filter((message) => (
+          message.createdAt.getTime() < targetMessage.createdAt.getTime()
+          || (message.createdAt.getTime() === targetMessage.createdAt.getTime() && message.id <= targetMessage.id)
+        ));
 
       let forkTargetMessageId: string | undefined;
       for (const message of messagesToCopy) {
@@ -570,11 +606,10 @@ export async function recoverRun(args: RecoverRunArgs) {
       }
 
       if (runWorkspaceSnapshot) {
-        await db.insert(executionEvents).values({
-          id: randomUUID(),
+        await recordExecutionEvent({
           runId: newRunId,
           eventType: "git_workspace_forked",
-          details: JSON.stringify({
+          details: {
             parentRunId: args.runId,
             forkedFromMessageId: args.targetMessageId,
             target: runWorkspaceSnapshot.target,
@@ -584,7 +619,7 @@ export async function recoverRun(args: RecoverRunArgs) {
             dirtyFileCount: runWorkspaceSnapshot.dirtyFileCount,
             conflictedFileCount: runWorkspaceSnapshot.conflictedFileCount,
             warnings: runWorkspaceSnapshot.warnings,
-          }),
+          },
           createdAt: now,
         });
       }

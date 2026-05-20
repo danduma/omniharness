@@ -4,6 +4,7 @@ import * as schema from './schema';
 import { getAppDataPath } from '@/server/app-root';
 
 const dbPath = getAppDataPath('sqlite.db');
+const DB_SCHEMA_VERSION = 2;
 type DbClient = ReturnType<typeof createClient>;
 
 async function tableColumns(client: DbClient, table: string): Promise<Set<string>> {
@@ -12,9 +13,20 @@ async function tableColumns(client: DbClient, table: string): Promise<Set<string
 }
 
 async function initializeSchema(client: DbClient) {
+await client.execute('PRAGMA busy_timeout = 15000');
+const versionResult = await client.execute('PRAGMA user_version');
+const currentSchemaVersion = Number((versionResult.rows[0] as Record<string, unknown> | undefined)?.user_version ?? 0);
+if (Number.isFinite(currentSchemaVersion) && currentSchemaVersion >= DB_SCHEMA_VERSION) {
+  await client.execute('PRAGMA synchronous = NORMAL');
+  await client.execute('PRAGMA wal_autocheckpoint = 1000');
+  await client.execute('PRAGMA cache_size = -20000');
+  await client.execute('PRAGMA temp_store = MEMORY');
+  await client.execute('PRAGMA foreign_keys = ON');
+  return;
+}
+
 await client.execute('PRAGMA journal_mode = WAL');
 await client.execute('PRAGMA synchronous = NORMAL');
-await client.execute('PRAGMA busy_timeout = 15000');
 await client.execute('PRAGMA wal_autocheckpoint = 1000');
 await client.execute('PRAGMA cache_size = -20000');
 await client.execute('PRAGMA temp_store = MEMORY');
@@ -370,35 +382,75 @@ CREATE TABLE IF NOT EXISTS planning_review_findings (
   severity text NOT NULL,
   category text NOT NULL,
   title text NOT NULL,
-  details text NOT NULL,
-  recommendation text NOT NULL,
+  details text,
+  recommendation text,
+  artifact_seq integer,
+  details_hash text,
+  recommendation_preview text,
   source_path text,
   created_at integer NOT NULL,
   FOREIGN KEY (review_run_id) REFERENCES planning_review_runs(id) ON UPDATE no action ON DELETE no action,
   FOREIGN KEY (round_id) REFERENCES planning_review_rounds(id) ON UPDATE no action ON DELETE no action,
   FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action
 );
+
+CREATE TABLE IF NOT EXISTS artifact_streams (
+  id text PRIMARY KEY NOT NULL,
+  run_id text NOT NULL,
+  project_path text,
+  kind text NOT NULL,
+  owner_id text NOT NULL,
+  relative_path text NOT NULL,
+  latest_seq integer NOT NULL DEFAULT 0,
+  latest_record_id text,
+  status text NOT NULL DEFAULT 'active',
+  last_error text,
+  last_verified_at integer,
+  compacted_at integer,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE CASCADE
+);
 `);
 
 await client.executeMultiple(`
 CREATE INDEX IF NOT EXISTS messages_run_created_idx ON messages(run_id, created_at);
+CREATE INDEX IF NOT EXISTS messages_run_created_id_idx ON messages(run_id, created_at, id);
 CREATE INDEX IF NOT EXISTS conversation_read_markers_last_read_idx ON conversation_read_markers(last_read_at);
 CREATE INDEX IF NOT EXISTS workers_run_idx ON workers(run_id);
+CREATE INDEX IF NOT EXISTS workers_run_created_id_idx ON workers(run_id, created_at, id);
+CREATE INDEX IF NOT EXISTS workers_created_id_idx ON workers(created_at, id);
 CREATE INDEX IF NOT EXISTS process_sessions_worker_idx ON process_sessions(worker_id);
 CREATE INDEX IF NOT EXISTS process_sessions_status_idx ON process_sessions(status);
 CREATE INDEX IF NOT EXISTS plan_items_plan_idx ON plan_items(plan_id);
 CREATE INDEX IF NOT EXISTS clarifications_run_created_idx ON clarifications(run_id, created_at);
+CREATE INDEX IF NOT EXISTS clarifications_run_created_id_desc_idx ON clarifications(run_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS execution_events_run_created_idx ON execution_events(run_id, created_at);
+CREATE INDEX IF NOT EXISTS execution_events_run_created_id_desc_idx ON execution_events(run_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS supervisor_interventions_run_created_idx ON supervisor_interventions(run_id, created_at);
+CREATE INDEX IF NOT EXISTS supervisor_interventions_run_created_id_desc_idx ON supervisor_interventions(run_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS planning_review_runs_run_idx ON planning_review_runs(run_id);
+CREATE INDEX IF NOT EXISTS planning_review_runs_run_created_id_desc_idx ON planning_review_runs(run_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS planning_review_rounds_run_idx ON planning_review_rounds(run_id);
+CREATE INDEX IF NOT EXISTS planning_review_rounds_run_round_number_idx ON planning_review_rounds(run_id, round_number);
 CREATE INDEX IF NOT EXISTS planning_review_findings_run_idx ON planning_review_findings(run_id);
+CREATE INDEX IF NOT EXISTS planning_review_findings_run_created_id_desc_idx ON planning_review_findings(run_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS queued_conversation_messages_run_status_created_idx ON queued_conversation_messages(run_id, status, created_at);
+CREATE INDEX IF NOT EXISTS queued_conversation_messages_run_status_created_id_desc_idx ON queued_conversation_messages(run_id, status, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS queued_conversation_messages_pending_run_created_id_desc_idx
+  ON queued_conversation_messages(run_id, created_at DESC, id DESC)
+  WHERE status IN ('pending', 'delivering');
 CREATE INDEX IF NOT EXISTS recovery_incidents_run_status_updated_idx ON recovery_incidents(run_id, status, updated_at);
+CREATE INDEX IF NOT EXISTS recovery_incidents_run_updated_id_desc_idx ON recovery_incidents(run_id, updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS supervisor_scheduled_wakes_wake_at_idx ON supervisor_scheduled_wakes(wake_at);
 CREATE INDEX IF NOT EXISTS runs_created_idx ON runs(created_at);
+CREATE INDEX IF NOT EXISTS runs_archived_created_id_desc_idx ON runs(archived_at, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS plans_created_idx ON plans(created_at);
+CREATE INDEX IF NOT EXISTS plans_created_id_desc_idx ON plans(created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS notification_subscriptions_revoked_idx ON notification_subscriptions(revoked_at);
+CREATE UNIQUE INDEX IF NOT EXISTS artifact_streams_identity_idx ON artifact_streams(run_id, kind, owner_id);
+CREATE INDEX IF NOT EXISTS artifact_streams_kind_updated_idx ON artifact_streams(kind, updated_at);
+CREATE INDEX IF NOT EXISTS artifact_streams_project_run_idx ON artifact_streams(project_path, run_id);
 `);
 
 // Legacy cleanup: validation is now performed by supervisor tool use and checker workers,
@@ -621,6 +673,129 @@ if (!messageColumnNames.has("edited_from_message_id")) {
 if (!messageColumnNames.has("attachments_json")) {
   await client.execute("ALTER TABLE messages ADD COLUMN attachments_json text;");
 }
+
+// ── v1 → v2: append-only artifact storage ──────────────────────────
+// Add the new metadata columns on each domain table that gains an
+// artifact stream. ALTER ADD COLUMN is safe with default NULL.
+const executionEventColumnNames = await tableColumns(client, "execution_events");
+if (!executionEventColumnNames.has("artifact_seq")) {
+  await client.execute("ALTER TABLE execution_events ADD COLUMN artifact_seq integer;");
+}
+if (!executionEventColumnNames.has("details_hash")) {
+  await client.execute("ALTER TABLE execution_events ADD COLUMN details_hash text;");
+}
+if (!executionEventColumnNames.has("details_preview")) {
+  await client.execute("ALTER TABLE execution_events ADD COLUMN details_preview text;");
+}
+
+const supervisorInterventionColumnNames = await tableColumns(client, "supervisor_interventions");
+if (!supervisorInterventionColumnNames.has("artifact_seq")) {
+  await client.execute("ALTER TABLE supervisor_interventions ADD COLUMN artifact_seq integer;");
+}
+if (!supervisorInterventionColumnNames.has("prompt_hash")) {
+  await client.execute("ALTER TABLE supervisor_interventions ADD COLUMN prompt_hash text;");
+}
+if (!supervisorInterventionColumnNames.has("summary_preview")) {
+  await client.execute("ALTER TABLE supervisor_interventions ADD COLUMN summary_preview text;");
+}
+
+const planningReviewFindingColumnNames = await tableColumns(client, "planning_review_findings");
+if (!planningReviewFindingColumnNames.has("artifact_seq")) {
+  await client.execute("ALTER TABLE planning_review_findings ADD COLUMN artifact_seq integer;");
+}
+if (!planningReviewFindingColumnNames.has("details_hash")) {
+  await client.execute("ALTER TABLE planning_review_findings ADD COLUMN details_hash text;");
+}
+if (!planningReviewFindingColumnNames.has("recommendation_preview")) {
+  await client.execute("ALTER TABLE planning_review_findings ADD COLUMN recommendation_preview text;");
+}
+
+// Relax NOT NULL on the body columns that are about to become
+// artifact-backed. SQLite doesn't support ALTER COLUMN, so we do the
+// canonical rebuild dance only when the existing column is NOT NULL.
+await relaxNotNullColumn(client, "supervisor_interventions", "prompt");
+await relaxNotNullColumn(client, "planning_review_findings", "details");
+await relaxNotNullColumn(client, "planning_review_findings", "recommendation");
+
+await client.execute(`PRAGMA user_version = ${DB_SCHEMA_VERSION}`);
+}
+
+interface SqliteColumnInfo {
+  name: string;
+  type: string;
+  notnull: number;
+  dflt_value: unknown;
+  pk: number;
+}
+
+async function getColumnInfo(client: DbClient, table: string): Promise<SqliteColumnInfo[]> {
+  const result = await client.execute(`PRAGMA table_info(${table})`);
+  return result.rows.map((row) => {
+    const r = row as Record<string, unknown>;
+    return {
+      name: String(r.name),
+      type: String(r.type ?? ""),
+      notnull: Number(r.notnull ?? 0),
+      dflt_value: r.dflt_value,
+      pk: Number(r.pk ?? 0),
+    };
+  });
+}
+
+/**
+ * Idempotently drop the NOT NULL constraint from a single column on a
+ * SQLite table. SQLite doesn't support ALTER COLUMN, so the canonical
+ * recipe is: create a copy with the desired shape, INSERT SELECT,
+ * drop the original, rename. A short-circuit returns immediately when
+ * the column is already nullable.
+ */
+async function relaxNotNullColumn(client: DbClient, table: string, column: string): Promise<void> {
+  const columns = await getColumnInfo(client, table);
+  const target = columns.find((c) => c.name === column);
+  if (!target) return;
+  if (target.notnull === 0) return;
+
+  // Build a fresh CREATE TABLE statement that matches the existing
+  // table column-for-column except the target loses its NOT NULL.
+  // Foreign keys are reproduced from PRAGMA foreign_key_list.
+  const fkResult = await client.execute(`PRAGMA foreign_key_list(${table})`);
+  const fks = fkResult.rows.map((row) => {
+    const r = row as Record<string, unknown>;
+    return {
+      from: String(r.from),
+      table: String(r.table),
+      to: String(r.to),
+    };
+  });
+  const colDefs = columns.map((col) => {
+    const isPk = col.pk > 0;
+    const wantsNotNull = isPk || (col.name !== column && col.notnull === 1);
+    const dflt = col.dflt_value !== null && col.dflt_value !== undefined
+      ? ` DEFAULT ${typeof col.dflt_value === "string" ? col.dflt_value : String(col.dflt_value)}`
+      : "";
+    return `  ${col.name} ${col.type || "text"}${wantsNotNull ? " NOT NULL" : ""}${dflt}${isPk ? " PRIMARY KEY" : ""}`;
+  });
+  const fkClauses = fks.map((fk) => (
+    `  FOREIGN KEY (${fk.from}) REFERENCES ${fk.table}(${fk.to}) ON UPDATE no action ON DELETE no action`
+  ));
+  const newTable = `${table}__rebuild_${Date.now()}`;
+  const columnList = columns.map((c) => c.name).join(", ");
+
+  await client.execute("PRAGMA foreign_keys = OFF");
+  try {
+    await client.executeMultiple(`
+BEGIN;
+CREATE TABLE ${newTable} (
+${[...colDefs, ...fkClauses].join(",\n")}
+);
+INSERT INTO ${newTable} (${columnList}) SELECT ${columnList} FROM ${table};
+DROP TABLE ${table};
+ALTER TABLE ${newTable} RENAME TO ${table};
+COMMIT;
+`);
+  } finally {
+    await client.execute("PRAGMA foreign_keys = ON");
+  }
 }
 
 function createDbState() {
