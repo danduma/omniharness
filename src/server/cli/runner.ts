@@ -5,6 +5,7 @@ import { createConversation } from "@/server/conversations/create";
 import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
 import { waitForEventStreamNotification } from "@/server/events/live-updates";
 import { getAgent, type AgentRecord } from "@/server/bridge-client";
+import { createOmniRuntime } from "@/runtime";
 import { OmniCliUsageError, omniCliUsage, parseOmniCliArgs, type OmniCliOptions } from "./options";
 
 type WritableStreamLike = Pick<NodeJS.WritableStream, "write">;
@@ -160,27 +161,40 @@ export async function runOmniCli(argv: string[], io: OmniCliIo = process) {
     throw error;
   }
 
-  await ensureSupervisorRuntimeStarted();
-  const created = await createConversation({
-    mode: options.mode,
-    command: options.command,
-    projectPath: options.projectPath,
-    preferredWorkerType: options.preferredWorkerType,
-    preferredWorkerModel: options.preferredWorkerModel,
-    preferredWorkerEffort: options.preferredWorkerEffort,
-    allowedWorkerTypes: options.allowedWorkerTypes,
+  const runtime = createOmniRuntime({
+    surface: "cli",
+    label: "Omni CLI",
+    hooks: {
+      onStart: ensureSupervisorRuntimeStarted,
+    },
   });
 
-  if (options.json) {
-    writeLine(io.stdout, JSON.stringify(created, null, 2));
-  } else {
-    writeLine(io.stdout, `Started ${created.mode} conversation ${created.runId}`);
-    writeLine(io.stdout, `Plan ${created.planId}`);
-  }
+  await runtime.start();
 
-  if (options.watch) {
-    await watchRun(created.runId, options, io);
-  }
+  try {
+    const created = await createConversation({
+      mode: options.mode,
+      command: options.command,
+      projectPath: options.projectPath,
+      preferredWorkerType: options.preferredWorkerType,
+      preferredWorkerModel: options.preferredWorkerModel,
+      preferredWorkerEffort: options.preferredWorkerEffort,
+      allowedWorkerTypes: options.allowedWorkerTypes,
+    });
 
-  return 0;
+    if (options.json) {
+      writeLine(io.stdout, JSON.stringify(created, null, 2));
+    } else {
+      writeLine(io.stdout, `Started ${created.mode} conversation ${created.runId}`);
+      writeLine(io.stdout, `Plan ${created.planId}`);
+    }
+
+    if (options.watch) {
+      await watchRun(created.runId, options, io);
+    }
+
+    return 0;
+  } finally {
+    await runtime.stop("shutdown");
+  }
 }

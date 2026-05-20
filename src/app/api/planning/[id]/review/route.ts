@@ -1,53 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
-import { errorResponse } from "@/server/api-errors";
-import { requireApiSession } from "@/server/auth/guards";
-import { startPlanningReview } from "@/server/planning/review";
-import { parsePlanningReviewPreferences } from "@/server/planning/review-preferences";
-import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { NextRequest } from "next/server";
+import { handlePlanningReviewRequest } from "@/runtime/http/routes/planning";
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  try {
-    const auth = await requireApiSession(req, {
-      source: "Planning",
-      action: "Review planning conversation",
-      enforceSameOrigin: true,
-    });
-    if (auth.response) {
-      return auth.response;
-    }
-
-    const { id } = await params;
-    const body = await req.json().catch(() => ({}));
-    
-    const prefs = parsePlanningReviewPreferences(body);
-    
-    const result = await startPlanningReview({
-      runId: id,
-      agentSelection: prefs.agentSelection,
-      rounds: prefs.rounds,
-    });
-    
-    notifyEventStreamSubscribers();
-
-    return NextResponse.json({ ok: true, ...result });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error("[planning/review] failed:", error);
-    const status = /not ready|no ready plan/i.test(message)
-      ? 400
-      : /not found/i.test(message)
-        ? 404
-        : /already in progress|already active/i.test(message)
-          ? 409
-          : 500;
-
-    return errorResponse(error, {
-      status,
-      source: "Planning",
-      action: "Review planning conversation",
-    });
-  }
+  const { id } = await params;
+  return handlePlanningReviewRequest(req, { surface: "web", params: { id } });
 }

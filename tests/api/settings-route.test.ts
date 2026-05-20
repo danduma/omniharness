@@ -71,7 +71,7 @@ describe("/api/settings", () => {
       method: "POST",
       body: JSON.stringify({
         TEST_SUPERVISOR_API_KEY: "top-secret-key",
-        TEST_SUPERVISOR_MODEL: "gemini-3.1-pro-preview",
+        TEST_SUPERVISOR_MODEL: "gemini-3.5-flash",
       }),
     });
 
@@ -83,14 +83,14 @@ describe("/api/settings", () => {
 
     expect(storedApiKey?.value).toBe(`encmock:${Buffer.from("top-secret-key", "utf8").toString("base64")}`);
     expect(storedApiKey?.value).not.toContain("top-secret-key");
-    expect(storedModel?.value).toBe("gemini-3.1-pro-preview");
+    expect(storedModel?.value).toBe("gemini-3.5-flash");
 
     const getResponse = await GET(await makeAuthenticatedRequest("http://localhost/api/settings"));
     expect(getResponse.status).toBe(200);
 
     const payload = await getResponse.json();
     expect(payload.values.TEST_SUPERVISOR_API_KEY).toBeUndefined();
-    expect(payload.values.TEST_SUPERVISOR_MODEL).toBe("gemini-3.1-pro-preview");
+    expect(payload.values.TEST_SUPERVISOR_MODEL).toBe("gemini-3.5-flash");
     expect(payload.secrets.TEST_SUPERVISOR_API_KEY).toEqual({
       configured: true,
       updatedAt: expect.any(String),
@@ -126,7 +126,7 @@ describe("/api/settings", () => {
   it("keeps internal cache settings out of the public settings payload", async () => {
     await db.insert(settings).values([
       { key: "__WORKER_MODEL_CATALOG_CACHE", value: "{\"catalog\":{}}", updatedAt: new Date() },
-      { key: "TEST_SUPERVISOR_MODEL", value: "gemini-3.1-pro-preview", updatedAt: new Date() },
+      { key: "TEST_SUPERVISOR_MODEL", value: "gemini-3.5-flash", updatedAt: new Date() },
     ]);
 
     const response = await GET(await makeAuthenticatedRequest("http://localhost/api/settings"));
@@ -135,7 +135,7 @@ describe("/api/settings", () => {
     const payload = await response.json();
     expect(payload.values.__WORKER_MODEL_CATALOG_CACHE).toBeUndefined();
     expect(payload.secrets.__WORKER_MODEL_CATALOG_CACHE).toBeUndefined();
-    expect(payload.values.TEST_SUPERVISOR_MODEL).toBe("gemini-3.1-pro-preview");
+    expect(payload.values.TEST_SUPERVISOR_MODEL).toBe("gemini-3.5-flash");
   });
 
   it("canonicalizes stale run and worker roots to the configured project root", async () => {

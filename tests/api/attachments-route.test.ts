@@ -4,7 +4,7 @@ import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 import { CHAT_ATTACHMENT_MAX_FILE_SIZE_BYTES } from "@/lib/chat-attachments";
-import { POST } from "@/app/api/attachments/route";
+import { GET, POST } from "@/app/api/attachments/route";
 
 let tempRoot: string | null = null;
 
@@ -49,6 +49,14 @@ describe("POST /api/attachments", () => {
       size: 3,
     });
     expect(payload.attachments[0].storagePath).toMatch(/^attachments\//);
+
+    const readResponse = await GET(new NextRequest(
+      `http://localhost/api/attachments?path=${encodeURIComponent(payload.attachments[0].storagePath)}&mimeType=${encodeURIComponent("text/plain")}`,
+    ));
+
+    expect(readResponse.status).toBe(200);
+    expect(readResponse.headers.get("content-type")).toBe("text/plain");
+    await expect(readResponse.text()).resolves.toBe("hello");
   });
 
   it("rejects empty uploads", async () => {

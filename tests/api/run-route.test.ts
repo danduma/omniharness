@@ -9,6 +9,7 @@ import { getAppDataPath } from "@/server/app-root";
 import {
   plans,
   runs,
+  conversationReadMarkers,
   messages,
   workers,
   clarifications,
@@ -154,6 +155,54 @@ describe("PATCH /api/runs/[id]", () => {
 });
 
 describe("POST /api/runs/[id]", () => {
+  it("persists a read marker from server-side conversation activity", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const createdAt = new Date("2026-05-20T10:00:00.000Z");
+    const messageAt = new Date("2026-05-20T10:05:00.000Z");
+    const completedAt = new Date("2026-05-20T10:10:00.000Z");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/mark-read.md",
+      status: "done",
+      createdAt,
+      updatedAt: completedAt,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Mark read",
+      status: "done",
+      createdAt,
+      updatedAt: completedAt,
+    });
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "user",
+      content: "hello",
+      createdAt: messageAt,
+    });
+
+    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "mark_read" }),
+    }), { params: Promise.resolve({ id: runId }) });
+    const payload = await response.json();
+
+    const marker = await db.select().from(conversationReadMarkers).where(eq(conversationReadMarkers.runId, runId)).get();
+
+    expect(response.status).toBe(200);
+    expect(payload).toMatchObject({
+      ok: true,
+      runId,
+      lastReadAt: "2026-05-20T10:10:00.000Z",
+    });
+    expect(marker?.lastReadAt).toEqual(completedAt);
+  });
+
   it("archives a conversation without deleting its persisted records", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

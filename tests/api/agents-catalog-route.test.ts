@@ -39,7 +39,7 @@ describe("GET /api/agents/catalog", () => {
           { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
         ],
         gemini: [
-          { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
+          { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
         ],
         opencode: [
           { value: "openai/gpt-5.4", label: "GPT-5.4" },

@@ -23,7 +23,7 @@ describe("POST /api/llm-models", () => {
 
     const payload = await response.json();
     expect(payload.models).toEqual([
-      { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
+      { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
     ]);
   });
 

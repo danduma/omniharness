@@ -1,19 +1,4 @@
-import { NextResponse } from "next/server";
-import { readCodexCredentialsSync } from "@/server/supervisor/codex-auth";
+import { adaptOmniHandlerToNext } from "@/runtime/http/adapters/next";
+import { handleCodexAuthStatusRequest } from "@/runtime/http/routes/codex-auth-status";
 
-export async function GET() {
-  const creds = readCodexCredentialsSync();
-  
-  if (!creds) {
-    return NextResponse.json({ available: false });
-  }
-
-  return NextResponse.json({
-    available: true,
-    email: creds.email,
-    planType: creds.planType,
-    expiresAt: creds.expiresAt,
-    subscriptionActiveUntil: creds.subscriptionActiveUntil,
-    lastRefresh: creds.lastRefresh,
-  });
-}
+export const GET = adaptOmniHandlerToNext(handleCodexAuthStatusRequest, { surface: "web" });

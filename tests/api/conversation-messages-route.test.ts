@@ -77,10 +77,26 @@ async function waitFor<T>(read: () => T | Promise<T>, predicate: (value: T) => b
 
 describe("POST /api/conversations/[id]/messages", () => {
   beforeEach(async () => {
-    mockAskAgent.mockClear();
-    mockGetAgent.mockClear();
-    mockSpawnAgent.mockClear();
-    mockStartSupervisorRun.mockClear();
+    mockAskAgent.mockReset();
+    mockAskAgent.mockResolvedValue({
+      response: "Here is the next planning step.",
+      state: "working",
+    });
+    mockGetAgent.mockReset();
+    mockGetAgent.mockResolvedValue(null);
+    mockSpawnAgent.mockReset();
+    mockSpawnAgent.mockResolvedValue({
+      name: "worker-1",
+      type: "claude",
+      cwd: "/workspace/app",
+      state: "idle",
+      sessionId: "resumed-session",
+      sessionMode: "direct",
+      outputEntries: [],
+      currentText: "",
+      lastText: "",
+    });
+    mockStartSupervisorRun.mockReset();
     __resetOutputStoreCachesForTests();
     await db.delete(supervisorInterventions);
     await db.delete(workerAssignments);
@@ -548,6 +564,116 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
   });
 
+  it("applies the selected composer worker before resuming from a clarification", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const clarificationId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "docs/superpowers/plans/implementation.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "awaiting_user",
+      preferredWorkerType: "codex",
+      preferredWorkerModel: "gpt-5.5",
+      preferredWorkerEffort: "high",
+      allowedWorkerTypes: JSON.stringify(["codex"]),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(clarifications).values({
+      id: clarificationId,
+      runId,
+      question: "Anything to change before I continue?",
+      answer: null,
+      status: "pending",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const response = await POST(new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        content: "Continue now.",
+        preferredWorkerType: "gemini",
+        preferredWorkerModel: "gemini-3.5-flash",
+        preferredWorkerEffort: "high",
+        allowedWorkerTypes: ["codex", "claude", "gemini", "opencode"],
+      }),
+    }), { params: Promise.resolve({ id: runId }) });
+
+    expect(response.status).toBe(200);
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const selectionEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(updatedRun).toMatchObject({
+      status: "running",
+      preferredWorkerType: "gemini",
+      preferredWorkerModel: "gemini-3.5-flash",
+      preferredWorkerEffort: "high",
+      allowedWorkerTypes: JSON.stringify(["codex", "claude", "gemini", "opencode"]),
+    });
+    expect(selectionEvent.some((event) => event.eventType === "worker_selection_changed")).toBe(true);
+    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
+  });
+
+  it("understands natural language worker switch requests before resuming", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const clarificationId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "docs/superpowers/plans/implementation.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "awaiting_user",
+      preferredWorkerType: "codex",
+      preferredWorkerModel: "gpt-5.5",
+      allowedWorkerTypes: JSON.stringify(["codex"]),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(clarifications).values({
+      id: clarificationId,
+      runId,
+      question: "Anything to change before I continue?",
+      answer: null,
+      status: "pending",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const response = await POST(new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "switch workers to gemini" }),
+    }), { params: Promise.resolve({ id: runId }) });
+
+    expect(response.status).toBe(200);
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const selectionEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(updatedRun?.preferredWorkerType).toBe("gemini");
+    expect(updatedRun?.preferredWorkerModel).toBeNull();
+    expect(JSON.parse(updatedRun?.allowedWorkerTypes ?? "[]")).toEqual(["codex", "claude", "gemini", "opencode"]);
+    expect(selectionEvent.some((event) => (
+      event.eventType === "worker_selection_changed"
+      && JSON.parse(event.details ?? "{}").source === "message_text"
+    ))).toBe(true);
+    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
+  });
+
   it("does not mark a direct conversation failed when the worker is already busy", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -645,10 +771,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       updatedAt: now,
     });
 
-    let resolveAsk!: (value: { response: string; state: string }) => void;
-    mockAskAgent.mockImplementationOnce(() => new Promise((resolve) => {
-      resolveAsk = resolve;
-    }));
+    mockAskAgent.mockImplementationOnce(() => new Promise(() => {}));
 
     const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
@@ -668,11 +791,74 @@ describe("POST /api/conversations/[id]/messages", () => {
       type: "user_input",
       text: content,
     });
-    resolveAsk({ response: "Done.", state: "idle" });
-    await waitFor(
-      () => db.select().from(workers).where(eq(workers.id, workerId)).get(),
-      (worker) => worker?.status === "idle",
+  });
+
+  it("marks a direct fire-and-forget follow-up done when the worker finishes normally", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "done",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "Previous response.",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "Previous response.",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockAskAgent.mockResolvedValueOnce({
+      response: "Finished the follow-up.",
+      state: "idle",
+    });
+    mockGetAgent.mockResolvedValueOnce({
+      name: workerId,
+      type: "codex",
+      cwd: "/workspace/app",
+      state: "idle",
+      sessionId: "direct-session",
+      sessionMode: "full-access",
+      outputEntries: [],
+      currentText: "",
+      lastText: "Finished the follow-up.",
+    });
+
+    const response = await POST(new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "One more normal follow-up." }),
+    }), { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    const updatedRun = await waitFor(
+      () => db.select().from(runs).where(eq(runs.id, runId)).get(),
+      (run) => run?.status === "done",
     );
+
+    expect(updatedRun?.status).toBe("done");
+    expect(updatedRun?.lastError).toBeNull();
   });
 
   it("serializes rapid direct follow-ups before sending them to the worker", async () => {
@@ -913,12 +1099,16 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(mockAskAgent).toHaveBeenNthCalledWith(1, workerId, "Please continue the demo work.");
     expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, "Please continue the demo work.");
 
+    await waitFor(
+      async () => db.select().from(runs).where(eq(runs.id, runId)).get(),
+      (record) => record?.status === "done",
+    );
     const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
     const resumeEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
 
-    expect(updatedRun?.status).toBe("running");
+    expect(updatedRun?.status).toBe("done");
     expect(updatedRun?.lastError).toBeNull();
     expect(updatedWorker?.status).toBe("idle");
     expect(updatedWorker?.bridgeSessionId).toBe("resumed-session");
@@ -1022,11 +1212,15 @@ describe("POST /api/conversations/[id]/messages", () => {
     }));
     expect(mockSpawnAgent.mock.calls[1]?.[0]).not.toHaveProperty("resumeSessionId");
 
+    await waitFor(
+      async () => db.select().from(runs).where(eq(runs.id, runId)).get(),
+      (record) => record?.status === "done",
+    );
     const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
 
-    expect(updatedRun?.status).toBe("running");
+    expect(updatedRun?.status).toBe("done");
     expect(updatedRun?.lastError).toBeNull();
     expect(updatedWorker?.status).toBe("idle");
     expect(updatedWorker?.bridgeSessionId).toBe("fresh-session");

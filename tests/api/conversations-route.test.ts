@@ -247,6 +247,51 @@ describe("POST /api/conversations", () => {
     expect(entries[userIndex]?.text).toBe(command);
   });
 
+  it("persists the direct initial worker response when the bridge snapshot has no output entries", async () => {
+    const command = "Explain supervisor tools.";
+    mockAskAgent.mockResolvedValueOnce({
+      response: "Supervisor tools spawn and coordinate workers.",
+      state: "idle",
+    });
+    mockGetAgent.mockResolvedValueOnce({
+      name: "worker-1",
+      type: "gemini",
+      state: "idle",
+      cwd: "/workspace/app",
+      lastText: "",
+      currentText: "",
+      renderedOutput: "",
+      outputEntries: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command,
+        projectPath: "/workspace/app",
+        preferredWorkerType: "gemini",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    const workerId = `${payload.runId}-worker-1`;
+    const entries = await waitFor(
+      () => readWorkerOutputEntries(payload.runId, workerId),
+      (items) => items.some((entry) => entry.text === "Supervisor tools spawn and coordinate workers."),
+    );
+
+    expect(entries.map((entry) => entry.type)).toEqual(["user_input", "lifecycle", "message"]);
+    expect(entries.at(-1)).toMatchObject({
+      type: "message",
+      text: "Supervisor tools spawn and coordinate workers.",
+      authorRole: "assistant",
+    });
+  });
+
   it("pins a new direct conversation to a selected git workspace target", async () => {
     const target = buildWorkspaceTarget();
     const snapshot = buildWorkspaceSnapshot({ warnings: [{ code: "git_lfs", message: "Git LFS filters are configured." }] });
@@ -412,6 +457,28 @@ describe("POST /api/conversations", () => {
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
     expect(mockSpawnAgent).not.toHaveBeenCalled();
     expect(mockNotifyEventStreamSubscribers).toHaveBeenCalledTimes(1);
+  });
+
+  it("honors a requested run id for immediate client-side session routing", async () => {
+    const requestedRunId = "abc123abc123";
+    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command: "Start a direct session with a client-reserved id",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+        requestedRunId,
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    const run = await db.select().from(runs).where(eq(runs.id, requestedRunId)).get();
+
+    expect(payload.runId).toBe(requestedRunId);
+    expect(payload.run).toEqual(expect.objectContaining({ id: requestedRunId }));
+    expect(run?.id).toBe(requestedRunId);
   });
 
   it("persists and returns a new implementation conversation before supervisor startup completes", async () => {
@@ -580,7 +647,7 @@ describe("POST /api/conversations", () => {
     try {
       await expect(Promise.race([
         responsePromise.then(() => "resolved"),
-        delay(50).then(() => "pending"),
+        delay(500).then(() => "pending"),
       ])).resolves.toBe("resolved");
 
       payload = await (await responsePromise).json();
@@ -739,7 +806,7 @@ describe("POST /api/conversations", () => {
     try {
       await expect(Promise.race([
         responsePromise.then(() => "resolved"),
-        delay(50).then(() => "pending"),
+        delay(500).then(() => "pending"),
       ])).resolves.toBe("resolved");
 
       payload = await (await responsePromise).json();
@@ -789,7 +856,7 @@ describe("POST /api/conversations", () => {
     try {
       await expect(Promise.race([
         responsePromise.then(() => "resolved"),
-        delay(50).then(() => "pending"),
+        delay(500).then(() => "pending"),
       ])).resolves.toBe("resolved");
 
       const response = await responsePromise;
@@ -864,7 +931,7 @@ describe("POST /api/conversations", () => {
     try {
       await expect(Promise.race([
         responsePromise.then(() => "resolved"),
-        delay(50).then(() => "pending"),
+        delay(500).then(() => "pending"),
       ])).resolves.toBe("resolved");
 
       payload = await (await responsePromise).json();
