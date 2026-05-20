@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, classifyExecutionEvent, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/app/home/utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/app/home/utils";
 import type { EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord, SupervisorInterventionRecord } from "@/app/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 
@@ -67,6 +67,17 @@ function buildWorker(overrides: Partial<ConversationWorkerRecord>): Conversation
 }
 
 describe("home utils", () => {
+  it("uses ids as deterministic tie-breakers for equal timestamps", () => {
+    const records = [
+      { id: "b", createdAt: "2026-04-27T00:00:10.000Z" },
+      { id: "a", createdAt: "2026-04-27T00:00:10.000Z" },
+      { id: "c", createdAt: "2026-04-27T00:00:11.000Z" },
+    ];
+
+    expect([...records].sort(compareOldestByCreatedAtThenId).map((record) => record.id)).toEqual(["a", "b", "c"]);
+    expect([...records].sort(compareNewestByCreatedAtThenId).map((record) => record.id)).toEqual(["c", "b", "a"]);
+  });
+
   it("includes the parent planning run in promoted implementation transcripts", () => {
     expect(getConversationTranscriptRunIds({
       selectedRunId: "implementation-run",
@@ -378,9 +389,7 @@ describe("home utils", () => {
       ],
     });
 
-    expect(timeline.map((item) => `${item.type}:${item.id}:${item.type === "activity" ? item.text : ""}`)).toEqual([
-      "activity:event-blocked:Blocked duplicate worker spawn because worker-1 is active.",
-    ]);
+    expect(timeline).toEqual([]);
   });
 
   it("keeps supervisor file reads out of the main conversation timeline", () => {
@@ -402,10 +411,12 @@ describe("home utils", () => {
   it("classifies routine supervisor and worker events away from the transcript", () => {
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_prompt_deferred" }))).toBe("dynamic_status");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_spawned" }))).toBe("inline_event");
-    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_stuck" }))).toBe("dynamic_status");
-    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_session_missing" }))).toBe("dynamic_status");
+    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_stuck" }))).toBe("run_log");
+    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_session_missing" }))).toBe("run_log");
+    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_spawn_blocked" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "run_failed" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "supervisor_file_read" }))).toBe("run_log");
+    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "supervisor_turn_stopped" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "supervisor_wait" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_prompted" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_output_changed" }))).toBe("run_log");
@@ -486,7 +497,6 @@ describe("home utils", () => {
 
   it("classifies actionable events as inline feed signals with summaries", () => {
     const actionableEvents = [
-      "worker_spawn_blocked",
       "worker_permission_requested",
       "worker_permission_approved",
       "worker_permission_denied",
@@ -522,6 +532,21 @@ describe("home utils", () => {
         retryable: false,
       }),
     }))).toBe(true);
+  });
+
+  it("keeps internal self-healing lifecycle breadcrumbs out of the visible run log", () => {
+    for (const eventType of [
+      "supervisor_turn_stopped",
+      "worker_spawn_blocked",
+      "worker_stuck",
+      "worker_session_missing",
+    ]) {
+      expect(shouldShowExecutionEventInRunLog(buildExecutionEvent({
+        eventType,
+        workerId: "worker-1",
+        details: JSON.stringify({ summary: `${eventType} summary` }),
+      }))).toBe(false);
+    }
   });
 
   it("keeps duplicate stuck worker events out of the main conversation timeline", () => {
@@ -827,7 +852,7 @@ describe("home utils", () => {
       }],
     }, pendingSnapshots, caughtUpAtMs + 10_000);
 
-    expect(pendingSnapshots.has("run-1")).toBe(false);
+    expect(pendingSnapshots.has("run-1")).toBe(true);
   });
 
   it("keeps a newly created conversation through late stale payloads after the server first includes it", () => {
@@ -873,6 +898,56 @@ describe("home utils", () => {
     }, pendingSnapshots);
 
     const lateStale = mergePendingCreatedConversationSnapshots(staleState, pendingSnapshots);
+
+    expect(lateStale.runs.map((run) => run.id)).toEqual(["run-1"]);
+    expect(pendingSnapshots.has("run-1")).toBe(true);
+  });
+
+  it("keeps a newly created conversation through stale payloads after a stable server-visible window", () => {
+    const pendingSnapshots = new Map([
+      ["run-1", {
+        plan: { id: "plan-1", path: "vibes/ad-hoc/new.md" },
+        run: buildRun({ id: "run-1", planId: "plan-1" }),
+        message: {
+          id: "message-1",
+          runId: "run-1",
+          role: "user",
+          kind: "checkpoint",
+          content: "Start this",
+          createdAt: "2026-04-27T00:01:00.000Z",
+        },
+      }],
+    ]);
+    const staleState: EventStreamState = {
+      messages: [],
+      plans: [],
+      runs: [],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+    };
+    const visibleState: EventStreamState = {
+      ...staleState,
+      plans: [{ id: "plan-1", path: "vibes/ad-hoc/new.md" }],
+      runs: [buildRun({ id: "run-1", planId: "plan-1" })],
+      messages: [{
+        id: "message-1",
+        runId: "run-1",
+        role: "user",
+        kind: "checkpoint",
+        content: "Start this",
+        createdAt: "2026-04-27T00:01:00.000Z",
+      }],
+    };
+
+    mergePendingCreatedConversationSnapshots(visibleState, pendingSnapshots, 1_000);
+    mergePendingCreatedConversationSnapshots(visibleState, pendingSnapshots, 11_000);
+
+    const lateStale = mergePendingCreatedConversationSnapshots(staleState, pendingSnapshots, 11_001);
 
     expect(lateStale.runs.map((run) => run.id)).toEqual(["run-1"]);
     expect(pendingSnapshots.has("run-1")).toBe(true);

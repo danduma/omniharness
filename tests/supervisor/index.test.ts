@@ -5,7 +5,8 @@ import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { clarifications, executionEvents, messages, planItems, plans, runs, settings, supervisorInterventions, workerCounters, workers } from "@/server/db/schema";
+import { clarifications, conversationReadMarkers, creditEvents, executionEvents, messages, planItems, planningReviewFindings, planningReviewRounds, planningReviewRuns, plans, processSessions, queuedConversationMessages, recoveryIncidents, runs, settings, supervisorInterventions, supervisorScheduledWakes, workerAssignments, workerCounters, workers } from "@/server/db/schema";
+import { readWorkerOutputEntries, writeWorkerOutputEntries } from "@/server/workers/output-store";
 
 const {
   mockAgentGenerate,
@@ -36,7 +37,7 @@ const {
   mockAgentConfigs: [] as unknown[],
   mockGetSupervisorModelConfig: vi.fn((_env?: unknown, sourcePreference?: "primary" | "fallback") => ({
     provider: sourcePreference === "fallback" ? "openai" : "gemini",
-    model: sourcePreference === "fallback" ? "gpt-5.4-mini" : "gemini-3.1-pro-preview",
+    model: sourcePreference === "fallback" ? "gpt-5.4-mini" : "gemini-3.5-flash",
     apiKey: "key",
     baseURL: undefined,
     source: sourcePreference === "fallback" ? "fallback" : "primary",
@@ -119,12 +120,22 @@ describe("Supervisor worker spawn flow", () => {
     vi.clearAllMocks();
     mockAgentConfigs.length = 0;
     vi.unstubAllEnvs();
+    await db.delete(planningReviewFindings);
+    await db.delete(planningReviewRounds);
+    await db.delete(planningReviewRuns);
+    await db.delete(supervisorScheduledWakes);
     await db.delete(supervisorInterventions);
     await db.delete(executionEvents);
+    await db.delete(workerAssignments);
     await db.delete(clarifications);
+    await db.delete(recoveryIncidents);
+    await db.delete(queuedConversationMessages);
     await db.delete(messages);
+    await db.delete(processSessions);
+    await db.delete(creditEvents);
     await db.delete(workers);
     await db.delete(workerCounters);
+    await db.delete(conversationReadMarkers);
     await db.delete(settings);
     await db.delete(runs);
     await db.delete(planItems);
@@ -167,7 +178,7 @@ describe("Supervisor worker spawn flow", () => {
     vi.spyOn(Date, "now").mockReturnValue(123456);
     mockGetSupervisorModelConfig.mockImplementation((_env, sourcePreference?: "primary" | "fallback") => ({
       provider: sourcePreference === "fallback" ? "openai" : "gemini",
-      model: sourcePreference === "fallback" ? "gpt-5.4-mini" : "gemini-3.1-pro-preview",
+      model: sourcePreference === "fallback" ? "gpt-5.4-mini" : "gemini-3.5-flash",
       apiKey: sourcePreference === "fallback" ? "fallback-key" : "primary-key",
       baseURL: undefined,
       source: sourcePreference === "fallback" ? "fallback" : "primary",
@@ -261,6 +272,7 @@ describe("Supervisor worker spawn flow", () => {
 
     const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
     expect(events.map((event) => event.eventType)).toContain("preflight_confirmation_required");
+    expect(mockNotifyEventStreamSubscribers).toHaveBeenCalledTimes(1);
   });
 
   it("rechecks immediately when a worker returns long final-looking output", async () => {
@@ -439,6 +451,53 @@ describe("Supervisor worker spawn flow", () => {
     });
     expect(event?.details).toContain("No intervention needed");
     expect(persistedMessages).toEqual([]);
+  });
+
+  it("persists supervisor clarification questions before sending one live update", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+    const question = "Which deployment target should I prioritize?";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-ask-user",
+      name: "ask_user",
+      args: { question },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "paused" });
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    const persistedEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+
+    expect(persistedRun?.status).toBe("awaiting_user");
+    expect(persistedMessages).toHaveLength(1);
+    expect(persistedMessages[0]).toMatchObject({
+      role: "supervisor",
+      kind: "clarification",
+      content: question,
+    });
+    expect(persistedEvents.map((event) => event.eventType)).toEqual(["clarification_requested"]);
+    expect(mockNotifyEventStreamSubscribers).toHaveBeenCalledTimes(1);
   });
 
   it("lets the supervisor send a generated user-visible message before ending its turn", async () => {
@@ -1088,6 +1147,62 @@ describe("Supervisor worker spawn flow", () => {
     }));
   });
 
+  it("anchors a supervisor-spawned worker prompt before streamed bridge output", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-streamed-spawn",
+      name: "worker_spawn",
+      args: {
+        type: "opencode",
+        cwd: "/tmp/project",
+        title: "Main implementation",
+        prompt: "Please implement the plan.",
+        purpose: "Implement the plan",
+      },
+    });
+    mockAskAgent.mockImplementationOnce(async () => {
+      await writeWorkerOutputEntries(runId, workerId, [{
+        id: "bridge-output-1",
+        type: "thought",
+        text: "streamed bridge output",
+        timestamp: new Date().toISOString(),
+      }]);
+      return { response: "done", state: "idle" };
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    const entries = await readWorkerOutputEntries(runId, workerId);
+    const supervisorInputIndex = entries.findIndex((entry) => entry.type === "supervisor_input");
+    const bridgeOutputIndex = entries.findIndex((entry) => entry.id === "bridge-output-1");
+
+    expect(supervisorInputIndex).toBeGreaterThanOrEqual(0);
+    expect(bridgeOutputIndex).toBeGreaterThanOrEqual(0);
+    expect(supervisorInputIndex).toBeLessThan(bridgeOutputIndex);
+  });
+
   it("blocks a second main implementation worker while another active main worker exists", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -1145,6 +1260,349 @@ describe("Supervisor worker spawn flow", () => {
     const event = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
     expect(event?.eventType).toBe("worker_spawn_blocked");
     expect(event?.details).toContain("already has active implementation worker");
+  });
+
+  it("does not block a new worker behind a completed idle implementation worker", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: `${runId}-worker-1`,
+      runId,
+      type: "opencode",
+      status: "idle",
+      cwd: "/tmp/project",
+      title: "Main implementation",
+      initialPrompt: "implement the plan",
+      outputLog: "",
+      lastText: "I have implemented the plan and verified the tests.",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-after-idle-complete",
+      name: "worker_spawn",
+      args: {
+        type: "opencode",
+        cwd: "/tmp/project",
+        title: "Main implementation retry",
+        prompt: "Continue implementing the plan from the completed worker output.",
+        purpose: "Implement the plan",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    expect(mockSpawnAgent).toHaveBeenCalled();
+    const allWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+    expect(allWorkers).toHaveLength(2);
+    const blockedEvent = await db.select().from(executionEvents).where(eq(executionEvents.eventType, "worker_spawn_blocked")).get();
+    expect(blockedEvent).toBeUndefined();
+  });
+
+  it("parks a final-looking active implementation worker before spawning a validator", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: `${runId}-worker-1`,
+      runId,
+      type: "opencode",
+      status: "working",
+      cwd: "/tmp/project",
+      title: "Main implementation",
+      initialPrompt: "implement the plan",
+      outputLog: "",
+      bridgeSessionId: "implementer-session",
+      bridgeSessionMode: "full-access",
+      currentText: "I implemented the plan and verified the full test matrix. ".repeat(20),
+      lastText: "I implemented the plan and verified the full test matrix. ".repeat(20),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-validator-after-completion",
+      name: "worker_spawn",
+      args: {
+        type: "opencode",
+        cwd: "/tmp/project",
+        title: "Validate completed implementation",
+        prompt: "Validate the implementation and report any regressions.",
+        purpose: "Validate the implementation of the plan.",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    expect(mockCancelAgent).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).toHaveBeenCalled();
+
+    const parkedWorker = await db.select().from(workers).where(eq(workers.id, `${runId}-worker-1`)).get();
+    expect(parkedWorker?.status).toBe("idle");
+    expect(parkedWorker?.bridgeSessionId).toBe("implementer-session");
+
+    const allWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+    expect(allWorkers).toHaveLength(2);
+    expect(allWorkers.find((worker) => worker.id === `${runId}-worker-1`)?.workerRole).toBeNull();
+    const validatorWorker = allWorkers.find((worker) => worker.id !== `${runId}-worker-1`);
+    expect(validatorWorker).toMatchObject({
+      workerRole: "validation",
+      allocationKey: "main",
+    });
+
+    const blockedEvent = await db.select().from(executionEvents).where(eq(executionEvents.eventType, "worker_spawn_blocked")).get();
+    expect(blockedEvent).toBeUndefined();
+
+    const parkedEvent = await db.select().from(executionEvents).where(eq(executionEvents.eventType, "worker_completed_parked")).get();
+    expect(parkedEvent?.workerId).toBe(`${runId}-worker-1`);
+  });
+
+  it("blocks validator spawn while the implementation worker is still actively working", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: `${runId}-worker-1`,
+      runId,
+      type: "opencode",
+      status: "working",
+      cwd: "/tmp/project",
+      workerRole: "implementation",
+      allocationKey: "main",
+      title: "Main implementation",
+      initialPrompt: "implement the plan",
+      outputLog: "",
+      currentText: "Still editing files.",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-validator-too-early",
+      name: "worker_spawn",
+      args: {
+        type: "opencode",
+        cwd: "/tmp/project",
+        title: "Validate implementation",
+        prompt: "Validate the implementation and report gaps.",
+        purpose: "Validate the implementation.",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    const event = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+    expect(event?.eventType).toBe("worker_spawn_blocked");
+    expect(event?.details).toContain('"requestedRole":"validation"');
+    expect(event?.details).toContain('"activeWorkerRole":"implementation"');
+  });
+
+  it("does not let an active validator block feedback to the original implementer", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values([
+      {
+        id: `${runId}-worker-1`,
+        runId,
+        type: "opencode",
+        status: "idle",
+        cwd: "/tmp/project",
+        workerRole: "implementation",
+        allocationKey: "main",
+        title: "Main implementation",
+        initialPrompt: "implement the plan",
+        outputLog: "",
+        bridgeSessionId: "implementer-session",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: `${runId}-worker-2`,
+        runId,
+        type: "opencode",
+        status: "working",
+        cwd: "/tmp/project",
+        workerRole: "validation",
+        allocationKey: "main",
+        title: "Validate implementation",
+        initialPrompt: "validate the plan",
+        outputLog: "",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-completion-gap",
+      name: "worker_continue",
+      args: {
+        workerId: `${runId}-worker-1`,
+        prompt: "Validator found missing error handling. Please fix that gap and rerun verification.",
+        interventionType: "completion_gap",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      `${runId}-worker-1`,
+      "Validator found missing error handling. Please fix that gap and rerun verification.",
+    );
+
+    const implementer = await db.select().from(workers).where(eq(workers.id, `${runId}-worker-1`)).get();
+    expect(implementer?.status).toBe("working");
+    const blockedEvent = await db.select().from(executionEvents).where(eq(executionEvents.eventType, "worker_spawn_blocked")).get();
+    expect(blockedEvent).toBeUndefined();
+  });
+
+  it("allows an independent implementation slice while the main implementation is active", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["opencode"]),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: `${runId}-worker-1`,
+      runId,
+      type: "opencode",
+      status: "working",
+      cwd: "/tmp/project",
+      workerRole: "implementation",
+      allocationKey: "main",
+      title: "Main implementation",
+      initialPrompt: "implement the plan",
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-independent-slice",
+      name: "worker_spawn",
+      args: {
+        type: "opencode",
+        cwd: "/tmp/project",
+        title: "Implement API module only",
+        prompt: "Implement the API module only. Do not touch UI files.",
+        purpose: "Implement one independent module slice.",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    expect(mockSpawnAgent).toHaveBeenCalled();
+    const allWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+    expect(allWorkers).toHaveLength(2);
+    const sliceWorker = allWorkers.find((worker) => worker.id !== `${runId}-worker-1`);
+    expect(sliceWorker).toMatchObject({
+      workerRole: "implementation",
+      allocationKey: "slice:implement-api-module-only",
+    });
+    const blockedEvent = await db.select().from(executionEvents).where(eq(executionEvents.eventType, "worker_spawn_blocked")).get();
+    expect(blockedEvent).toBeUndefined();
   });
 
   it("blocks a replacement main worker while a stopped main worker still has a resumable session", async () => {
@@ -1205,6 +1663,66 @@ describe("Supervisor worker spawn flow", () => {
     const event = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
     expect(event?.eventType).toBe("worker_spawn_blocked");
     expect(event?.details).toContain("resumable implementation worker");
+  });
+
+  it("blocks a duplicate main continuation worker even when the active worker prompt says to review current state", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      allowedWorkerTypes: JSON.stringify(["gemini"]),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: `${runId}-worker-1`,
+      runId,
+      type: "gemini",
+      status: "starting",
+      cwd: "/tmp/project",
+      title: "Implement music-driven rough cut refinement",
+      initialPrompt: "A previous worker was stopped, so please review the current state of the repository and continue the implementation from where it left off.",
+      outputLog: "",
+      bridgeSessionId: "session-active",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-duplicate-continuation",
+      name: "worker_spawn",
+      args: {
+        type: "gemini",
+        cwd: "/tmp/project",
+        title: "Implement music-driven rough cut refinement",
+        prompt: "Check the current state of the repository and continue the implementation.",
+        purpose: "Implement the music-driven rough cut refinement plan",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    const allWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+    expect(allWorkers).toHaveLength(1);
+    const event = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
+    expect(event?.eventType).toBe("worker_spawn_blocked");
+    expect(event?.details).toContain("already has active implementation worker");
   });
 
   it("blocks duplicate verification workers that are checking the same plan", async () => {
@@ -1384,7 +1902,7 @@ describe("Supervisor worker spawn flow", () => {
     expect(mockGetSupervisorModelConfig).toHaveBeenCalledWith(expect.any(Object));
     expect(mockGetSupervisorModelConfig).toHaveBeenCalledWith(expect.any(Object), "fallback");
     expect(mockAgentConfigs.map((config) => (config as { model?: { id?: string } }).model?.id)).toEqual([
-      "gemini/gemini-3.1-pro-preview",
+      "gemini/gemini-3.5-flash",
       "openai/gpt-5.4-mini",
     ]);
 
@@ -1668,6 +2186,79 @@ describe("Supervisor worker spawn flow", () => {
     });
   });
 
+  it("does not resume a worker follow-up after the run pauses for user input mid-turn", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = "worker-paused-by-user";
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "cancelled",
+      cwd: "/tmp/project",
+      title: "Main implementation",
+      initialPrompt: "implement the plan",
+      outputLog: "",
+      bridgeSessionId: "saved-session-paused",
+      bridgeSessionMode: "full-access",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockAgentGenerate.mockImplementationOnce(async () => {
+      await db.insert(clarifications).values({
+        id: randomUUID(),
+        runId,
+        question: "I paused the active workers after you stopped one. Is there anything you want to modify before I continue?",
+        answer: null,
+        status: "pending",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      await db.update(runs).set({ status: "awaiting_user", updatedAt: new Date() }).where(eq(runs.id, runId));
+      return { toolCalls: [{ payload: { toolCallId: "tool-continue", toolName: "worker_continue", args: {} } }] };
+    });
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-continue",
+      name: "worker_continue",
+      args: {
+        workerId,
+        prompt: "Please continue.",
+      },
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "paused" });
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+    expect(persistedRun?.status).toBe("awaiting_user");
+    expect(mockParseSupervisorToolCall).not.toHaveBeenCalled();
+    expect(mockAskAgent).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    expect(workerEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(false);
+    expect(workerEvents.some((event) => event.eventType === "worker_prompted")).toBe(false);
+  });
+
   it("resumes a saved worker session before retrying a follow-up to a missing worker", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -1750,6 +2341,87 @@ describe("Supervisor worker spawn flow", () => {
     const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, "worker-needs-resume"));
     expect(persistedWorker?.status).toBe("working");
     expect(workerEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
+    expect(workerEvents.some((event) => event.eventType === "worker_prompted")).toBe(true);
+  });
+
+  it("starts a fresh worker when the saved resume session no longer exists", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      preferredWorkerModel: "gemini-3",
+      preferredWorkerEffort: "high",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: "worker-missing-session",
+      runId,
+      type: "gemini",
+      status: "idle",
+      cwd: "/tmp/project",
+      title: "Main implementation",
+      initialPrompt: "implement the plan",
+      outputLog: "",
+      bridgeSessionId: "missing-session",
+      bridgeSessionMode: "full-access",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-continue-missing-session",
+      name: "worker_continue",
+      args: {
+        workerId: "worker-missing-session",
+        prompt: "Continue after the missing runtime session.",
+      },
+    });
+    mockAskAgent
+      .mockRejectedValueOnce(new Error("Ask failed: Agent not found: worker-missing-session"))
+      .mockResolvedValueOnce({ response: "Continuing in a fresh runtime worker", state: "working" });
+    mockSpawnAgent
+      .mockRejectedValueOnce(new Error('Spawn failed: failed to start gemini agent via gemini: {"code":-32603,"message":"Internal error","data":{"details":"Invalid session identifier \\"missing-session\\"."}}'))
+      .mockResolvedValueOnce({
+        name: "worker-missing-session",
+        type: "gemini",
+        cwd: "/tmp/project",
+        state: "idle",
+        sessionId: "fresh-session",
+        sessionMode: "full-access",
+        currentText: "",
+        lastText: "",
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
+    expect(mockSpawnAgent.mock.calls[0]?.[0]).toMatchObject({ resumeSessionId: "missing-session" });
+    expect(mockSpawnAgent.mock.calls[1]?.[0]).not.toHaveProperty("resumeSessionId");
+    expect(mockAskAgent).toHaveBeenCalledTimes(2);
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, "worker-missing-session")).get();
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, "worker-missing-session"));
+    expect(persistedWorker?.status).toBe("working");
+    expect(persistedWorker?.bridgeSessionId).toBe("fresh-session");
+    expect(workerEvents.some((event) => event.eventType === "worker_session_missing")).toBe(true);
     expect(workerEvents.some((event) => event.eventType === "worker_prompted")).toBe(true);
   });
 

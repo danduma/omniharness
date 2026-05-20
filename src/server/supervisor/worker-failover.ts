@@ -101,7 +101,7 @@ async function findOpenQuotaIncidentForWorker(runId: string, workerId: string) {
       eq(recoveryIncidents.workerId, workerId),
       eq(recoveryIncidents.kind, "quota_exhausted"),
     ))
-    .orderBy(desc(recoveryIncidents.updatedAt))
+    .orderBy(desc(recoveryIncidents.updatedAt), desc(recoveryIncidents.id))
     .limit(1);
   return rows[0] ?? null;
 }
@@ -189,6 +189,7 @@ export async function attemptWorkerFailover(
   }));
 
   let replacementSelection: Awaited<ReturnType<typeof selectSpawnableWorkerTypeAsync>> | null = null;
+  let replacementSelectionError: unknown = null;
   try {
     replacementSelection = await selectSpawnableWorkerTypeAsync(
       args.outgoingWorkerType,
@@ -196,7 +197,8 @@ export async function attemptWorkerFailover(
       allowedTypes,
       { now },
     );
-  } catch {
+  } catch (error) {
+    replacementSelectionError = error;
     // No spawnable worker — treat as "no_replacement" rather than a hard
     // failure: the run will be parked in quota_waiting like today.
   }
@@ -211,11 +213,39 @@ export async function attemptWorkerFailover(
       now,
     });
     void park;
+    const selectionFailureReason = replacementSelectionError instanceof Error
+      ? replacementSelectionError.message
+      : replacementSelectionError
+        ? String(replacementSelectionError)
+        : null;
+    if (selectionFailureReason) {
+      await recordFailoverEvent({
+        runId: args.runId,
+        workerId: args.outgoingWorkerId,
+        type: "worker_failover_failed",
+        details: {
+          summary: "Worker failover could not select a replacement worker.",
+          stage: "selection",
+          reason: selectionFailureReason,
+          allowedTypes,
+          outgoingWorkerType: args.outgoingWorkerType,
+        },
+      });
+      emitNamedEvent({
+        kind: "worker.failover_failed",
+        runId: args.runId,
+        outgoingWorkerId: args.outgoingWorkerId,
+        stage: "selection",
+        reason: truncate(selectionFailureReason),
+      });
+    }
     return {
       state: "no_replacement",
       reason: replacementSelection
         ? `No alternative worker is available (only ${args.outgoingWorkerType} allowed/spawnable).`
-        : `All allowed worker types are quota-blocked.`,
+        : selectionFailureReason
+          ? `Worker availability check failed: ${selectionFailureReason}`
+          : `All allowed worker types are quota-blocked.`,
     };
   }
 
@@ -284,7 +314,7 @@ export async function attemptWorkerFailover(
   let attempts = 0;
   let currentType: SupportedWorkerType = replacementType;
   let lastError: unknown = null;
-  let blockedNow = new Set<SupportedWorkerType>([args.outgoingWorkerType]);
+  const blockedNow = new Set<SupportedWorkerType>([args.outgoingWorkerType]);
   while (attempts < maxAttempts) {
     attempts += 1;
     const newWorkerId = await reserveReplacementWorkerRow({
@@ -307,13 +337,13 @@ export async function attemptWorkerFailover(
         updatedAt: new Date(),
       }).where(eq(workers.id, newWorkerId));
 
-      const response = await bridge.askAgent(newWorkerId, seed);
       await appendSupervisorInputOnDelivery({
         runId: args.runId,
         workerId: newWorkerId,
         text: seed,
         deliveredAt: new Date(),
       });
+      const response = await bridge.askAgent(newWorkerId, seed);
       let snapshot: Awaited<ReturnType<typeof bridge.getAgent>> | null = null;
       try {
         snapshot = await bridge.getAgent(newWorkerId);
@@ -527,7 +557,7 @@ export async function isRunPendingFailover(runId: string): Promise<boolean> {
       eq(recoveryIncidents.runId, runId),
       eq(recoveryIncidents.kind, "quota_exhausted"),
     ))
-    .orderBy(desc(recoveryIncidents.updatedAt))
+    .orderBy(desc(recoveryIncidents.updatedAt), desc(recoveryIncidents.id))
     .limit(5);
   for (const row of rows) {
     if (row.status === "resolved" || row.status === "failed") continue;
@@ -555,7 +585,7 @@ export async function loadPendingFailoverContext(runId: string) {
       eq(recoveryIncidents.runId, runId),
       eq(recoveryIncidents.kind, "quota_exhausted"),
     ))
-    .orderBy(desc(recoveryIncidents.updatedAt))
+    .orderBy(desc(recoveryIncidents.updatedAt), desc(recoveryIncidents.id))
     .limit(5);
   for (const row of rows) {
     if (row.status === "resolved" || row.status === "failed") continue;

@@ -157,4 +157,17 @@ describe("named-events ring buffer", () => {
       "error.surfaced",
     ]);
   });
+
+  it("buffers provider session events", () => {
+    emitNamedEvent({ kind: "session.created", runId: "r1", sessionType: "process", actorIds: ["w1"] });
+    emitNamedEvent({ kind: "session.status", runId: "r1", sessionType: "process", prev: "starting", next: "running" });
+    emitNamedEvent({ kind: "process.exited", runId: "r1", workerId: "w1", exitCode: 0, signal: null });
+
+    const result = getNamedEventsSince(0);
+    expect(result.events.map((entry) => entry.event.kind)).toEqual([
+      "session.created",
+      "session.status",
+      "process.exited",
+    ]);
+  });
 });

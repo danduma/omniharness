@@ -162,21 +162,10 @@ export function PairDeviceDialog({
       });
     } catch (pairError) {
       const message = pairError instanceof Error ? pairError.message : String(pairError);
-      pairDeviceManager.patch((current) => {
-        const currentPairing = current.pairing as PairCreateResponse | null;
-        return currentPairing && currentPairing.pairingId === draft.pairingId
-          ? {
-            error: message,
-            isLoading: false,
-            isActivating: false,
-          }
-          : {
-            error: message,
-            pairing: null,
-            qrDataUrl: null,
-            isLoading: false,
-            isActivating: false,
-          };
+      pairDeviceManager.patchIfCurrentPairing(draft.pairingId, {
+        error: message,
+        isLoading: false,
+        isActivating: false,
       });
     }
   }, [publicOrigin, selectedRunId]);
@@ -220,9 +209,13 @@ export function PairDeviceDialog({
           action: "Load pairing status",
         });
 
-        pairDeviceManager.setKey("pairingStatus", data.pairing.status);
+        pairDeviceManager.patchIfCurrentPairing(pairing.pairingId, {
+          pairingStatus: data.pairing.status,
+        });
       } catch (pollError) {
-        pairDeviceManager.setKey("error", pollError instanceof Error ? pollError.message : String(pollError));
+        pairDeviceManager.patchIfCurrentPairing(pairing.pairingId, {
+          error: pollError instanceof Error ? pollError.message : String(pollError),
+        });
       }
     }, 2000);
 

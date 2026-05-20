@@ -49,6 +49,38 @@ function run(id: string): EventStreamState["runs"][number] {
   };
 }
 
+function awaitingUserState(args: {
+  messages: EventStreamState["messages"];
+  checksum: string;
+  messageScope?: { runIds: string[]; complete: boolean };
+}): EventStreamState {
+  return {
+    messages: args.messages,
+    plans: [{ id: "plan-1", path: "plan.md" }],
+    runs: [{
+      id: "run-awaiting",
+      planId: "plan-1",
+      status: "awaiting_user",
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(1_000).toISOString(),
+      projectPath: null,
+      title: "Awaiting run",
+      mode: "implementation",
+    }],
+    accounts: [],
+    agents: [],
+    workers: [],
+    planItems: [],
+    clarifications: [],
+    executionEvents: [],
+    supervisorInterventions: [],
+    frontendErrors: [],
+    snapshotRunId: "run-awaiting",
+    snapshotChecksum: args.checksum,
+    ...(args.messageScope ? { messageScope: args.messageScope } : {}),
+  };
+}
+
 function multiRunState(args: {
   runs: string[];
   messageRunId: string;
@@ -94,6 +126,83 @@ function memoryStorage() {
 }
 
 describe("EventStreamStateManager", () => {
+  it("keeps supervisor confirmation messages when a partial live update only includes the user checkpoint", () => {
+    const userMessage: EventStreamState["messages"][number] = {
+      id: "user-message",
+      runId: "run-awaiting",
+      role: "user",
+      content: "Implement the plan.",
+      createdAt: new Date(0).toISOString(),
+      kind: "checkpoint",
+      attachments: [],
+    };
+    const supervisorMessage: EventStreamState["messages"][number] = {
+      id: "supervisor-confirmation",
+      runId: "run-awaiting",
+      role: "supervisor",
+      content: "Before I start implementation, please confirm this is the intended job.",
+      createdAt: new Date(1_000).toISOString(),
+      kind: "implementation_confirmation",
+      attachments: [],
+    };
+    const manager = new EventStreamStateManager(
+      awaitingUserState({
+        messages: [userMessage, supervisorMessage],
+        checksum: "sha256:with-confirmation",
+      }),
+      { deferCacheHydration: true },
+    );
+
+    manager.update(awaitingUserState({
+      messages: [userMessage],
+      checksum: "sha256:user-only-live-update",
+      messageScope: { runIds: ["run-awaiting"], complete: false },
+    }));
+
+    expect(manager.getSnapshot().messages.map((message) => message.id)).toEqual([
+      "user-message",
+      "supervisor-confirmation",
+    ]);
+  });
+
+  it("removes absent run messages when the incoming message scope is complete", () => {
+    const userMessage: EventStreamState["messages"][number] = {
+      id: "user-message",
+      runId: "run-awaiting",
+      role: "user",
+      content: "Implement the plan.",
+      createdAt: new Date(0).toISOString(),
+      kind: "checkpoint",
+      attachments: [],
+    };
+    const staleSupervisorMessage: EventStreamState["messages"][number] = {
+      id: "stale-supervisor-confirmation",
+      runId: "run-awaiting",
+      role: "supervisor",
+      content: "Before I start implementation, please confirm this is the intended job.",
+      createdAt: new Date(1_000).toISOString(),
+      kind: "implementation_confirmation",
+      attachments: [],
+    };
+    const manager = new EventStreamStateManager(
+      awaitingUserState({
+        messages: [userMessage, staleSupervisorMessage],
+        checksum: "sha256:with-stale-confirmation",
+      }),
+      { deferCacheHydration: true },
+    );
+
+    manager.update(awaitingUserState({
+      messages: [userMessage],
+      checksum: "sha256:complete-user-only-snapshot",
+      messageScope: { runIds: ["run-awaiting"], complete: true },
+    }));
+
+    expect(manager.getSnapshot().messages.map((message) => message.id)).toEqual([
+      "user-message",
+    ]);
+  });
+
   it("can switch to a selected conversation from the scoped frontend cache", () => {
     const cache = new EventStreamSnapshotCacheManager({ storage: memoryStorage() });
     cache.rememberState(state("run-a", "cached first conversation", "sha256:a"), "run-a");
@@ -111,6 +220,27 @@ describe("EventStreamStateManager", () => {
     expect(manager.getSnapshot().snapshotRunId).toBe("run-b");
     expect(manager.getSnapshot().snapshotChecksum).toBe("sha256:b");
     expect(manager.getSnapshot().messages.map((message) => message.content)).toEqual(["cached second conversation"]);
+  });
+
+  it("marks scoped frontend cache hydration as a preview instead of authoritative server state", () => {
+    const cache = new EventStreamSnapshotCacheManager({ storage: memoryStorage() });
+    cache.rememberState(state("run-b", "cached second conversation", "sha256:b"), "run-b");
+
+    const manager = new EventStreamStateManager(state("run-a", "current conversation", "sha256:a"), {
+      snapshotCache: cache,
+      snapshotCacheScope: "run-a",
+      deferCacheHydration: true,
+    });
+
+    manager.hydrateFromCacheScope("run-b");
+
+    expect(manager.getSnapshot().snapshotRunId).toBe("run-b");
+    expect(manager.getSnapshot().snapshotSource).toBe("cache");
+
+    manager.updateFromServer(state("run-b", "fresh server conversation", "sha256:fresh"));
+
+    expect(manager.getSnapshot().snapshotSource).toBe("server");
+    expect(manager.getSnapshot().messages.map((message) => message.content)).toEqual(["fresh server conversation"]);
   });
 
   it("does not resurrect deleted runs from stale scoped frontend caches", () => {

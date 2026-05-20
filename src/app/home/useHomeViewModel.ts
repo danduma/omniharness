@@ -13,10 +13,12 @@ import {
 } from "@/lib/conversation-workers";
 import { buildDirectTerminalUserMessages } from "@/lib/worker-terminal-messages";
 import { resolveProjectScope } from "@/lib/project-scope";
-import { buildConversationTimelineItems, filterPromotedPlanningTranscriptMessages, extractWorkerFailureDetail, getConversationTranscriptRunIds, getLatestUnresolvedWorkerStuckEvent, getWorkerModelOptions, parseProjectList, parseWorkerType, parseWorkerTypes, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought } from "./utils";
+import { buildConversationTimelineItems, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterPromotedPlanningTranscriptMessages, extractWorkerFailureDetail, getConversationTranscriptRunIds, getLatestUnresolvedWorkerStuckEvent, getWorkerModelOptions, parseProjectList, parseWorkerType, parseWorkerTypes, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought } from "./utils";
 import { COMPOSER_WORKER_OPTIONS, WORKER_OPTIONS } from "./constants";
 import type { AgentSnapshot, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, RunRecord, SupervisorInterventionRecord } from "./types";
 import type { WorkerCatalogResponse } from "./types";
+import { sessionStateManager } from "./SessionStateManager";
+import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 
 export interface UseHomeViewModelParams {
   state: EventStreamState;
@@ -49,6 +51,8 @@ export function useHomeViewModel({
   const explicitProjects = useMemo(() => parseProjectList(apiKeys.PROJECTS), [apiKeys.PROJECTS]);
 
   const selectedRun = selectedRunId ? runs.find((run) => run.id === selectedRunId) ?? null : null;
+  const sessionSnapshot = useManagerSnapshot(sessionStateManager);
+  const selectedSession = selectedRunId ? sessionSnapshot.sessionsByRunId[selectedRunId] ?? null : null;
   const selectedRunIsTerminal = isTerminalRunStatus(selectedRun?.status);
   const selectedRunNeedsRecovery = normalizeRunStatus(selectedRun?.status) === "needs_recovery";
 
@@ -82,7 +86,9 @@ export function useHomeViewModel({
   );
 
   const activeAllowedWorkerTypes = useMemo(() => {
-    const configured = selectedRun ? selectedRunAllowedWorkerTypes : configuredAllowedWorkerTypes;
+    const configured = selectedRun && selectedRunMode !== "implementation"
+      ? selectedRunAllowedWorkerTypes
+      : configuredAllowedWorkerTypes;
     if (availableWorkerTypes.length === 0) {
       return configured;
     }
@@ -90,7 +96,7 @@ export function useHomeViewModel({
     const availableSet = new Set(availableWorkerTypes);
     const filtered = configured.filter((type) => availableSet.has(type));
     return filtered.length > 0 ? filtered : [...availableWorkerTypes];
-  }, [availableWorkerTypes, configuredAllowedWorkerTypes, selectedRun, selectedRunAllowedWorkerTypes]);
+  }, [availableWorkerTypes, configuredAllowedWorkerTypes, selectedRun, selectedRunAllowedWorkerTypes, selectedRunMode]);
 
   const autoSelectedWorkerType = useMemo(() => {
     return activeAllowedWorkerTypes[0] ?? null;
@@ -244,12 +250,14 @@ export function useHomeViewModel({
       })?.id ?? null
     : null;
 
-  const isConversationStoppable = isSupervisorRunning || Boolean(busyConversationWorkerId);
+  const isConversationStoppable = selectedSession
+    ? selectedSession.capabilities.includes("stop")
+    : isSupervisorRunning || Boolean(busyConversationWorkerId);
 
   const latestUserCheckpoint = selectedRunId
     ? [...((selectedRunMessages || []) as MessageRecord[])]
         .filter((message) => message.role === "user")
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null
+        .sort(compareNewestByCreatedAtThenId)[0] ?? null
     : null;
 
   const liveThoughts = useMemo(() => {
@@ -284,13 +292,13 @@ export function useHomeViewModel({
     ((state.executionEvents || []) as ExecutionEventRecord[])
       .filter((event) => event.runId === selectedRunId)
       .filter(shouldShowExecutionEventInRunLog)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .sort(compareNewestByCreatedAtThenId)
   ), [selectedRunId, state.executionEvents]);
 
   const selectedRunSupervisorInterventions = useMemo(() => (
     ((state.supervisorInterventions || []) as SupervisorInterventionRecord[])
       .filter((intervention) => intervention.runId === selectedRunId)
-      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+      .sort(compareOldestByCreatedAtThenId)
   ), [selectedRunId, state.supervisorInterventions]);
 
   const latestExecutionEvent = selectedRunExecutionEvents[0] ?? null;
@@ -390,7 +398,10 @@ export function useHomeViewModel({
   const latestWaitEvent = selectedRunExecutionEvents.find((event) => event.eventType === "supervisor_wait") ?? null;
   const latestPromptDeferredEvent = selectedRunExecutionEvents.find((event) => event.eventType === "worker_prompt_deferred") ?? null;
 
-  const isSelectedConversationLoaded = !selectedRunId || state.snapshotRunId === selectedRunId;
+  const isSelectedConversationLoaded = !selectedRunId || (
+    state.snapshotRunId === selectedRunId
+    && state.snapshotSource === "server"
+  );
 
   const awaitingUserQuestionMessage = useMemo(() => {
     if (selectedRun?.status !== "awaiting_user") {
@@ -404,14 +415,17 @@ export function useHomeViewModel({
       .filter((m) => m.role === "supervisor"
         && (m.kind === "clarification" || m.kind === "implementation_confirmation")
         && new Date(m.createdAt).getTime() >= latestUserAt)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      .sort(compareNewestByCreatedAtThenId);
     return candidates[0] ?? null;
   }, [selectedRun?.status, selectedRunMessages]);
   const latestStuckEvent = getLatestUnresolvedWorkerStuckEvent(selectedRunExecutionEvents);
 
-  const hasStuckWorker = conversationWorkerGroups.active.some((worker) => worker.status === "stuck")
+  const canSurfaceWorkerRecovery = selectedRun?.status === "running";
+  const hasStuckWorker = canSurfaceWorkerRecovery && (
+    conversationWorkerGroups.active.some((worker) => worker.status === "stuck")
     || activeConversationAgents.some((agent) => agent.state === "stuck")
-    || Boolean(latestStuckEvent);
+    || Boolean(latestStuckEvent)
+  );
 
   const hasActiveWorker = activeConversationAgents.some((agent) => (
     isWorkerActiveStatus(agent.state)
@@ -463,6 +477,7 @@ export function useHomeViewModel({
     plans,
     explicitProjects,
     selectedRun,
+    selectedSession,
     selectedRunMode,
     isImplementationConversation,
     isPlanningConversation,

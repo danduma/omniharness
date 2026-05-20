@@ -9,9 +9,11 @@ type JsonRequester = typeof defaultRequestJson;
 
 interface LiveEventConnectionManagerOptions {
   selectedRunId?: string | null;
+  initialLastEventId?: string | number | null;
   EventSourceConstructor?: typeof EventSource;
   requestJson?: JsonRequester;
   getSnapshotChecksum?: () => string | null | undefined;
+  workerEntries?: Pick<typeof workerEntriesManager, "onKnownSeqs" | "onStreamResync" | "onWakeUp">;
   applyUpdate: (state: EventStreamState) => void;
   reportError: (error: AppErrorDescriptor) => void;
   fallbackIntervalMs?: number;
@@ -62,9 +64,15 @@ function isTransientConnectivityError(error: unknown) {
   );
 }
 
-export function buildEventStreamUrl(selectedRunId?: string | null) {
+function encodeLastEventIdParam(lastEventId: string | number | null | undefined, prefix: "?" | "&") {
+  const value = String(lastEventId ?? "").trim();
+  return value ? `${prefix}lastEventId=${encodeURIComponent(value)}` : "";
+}
+
+export function buildEventStreamUrl(selectedRunId?: string | null, lastEventId?: string | number | null) {
   const runParam = encodeRunParam(selectedRunId, "?");
-  return runParam ? `/api/events${runParam}` : "/api/events";
+  const lastEventIdParam = encodeLastEventIdParam(lastEventId, runParam ? "&" : "?");
+  return `/api/events${runParam}${lastEventIdParam}`;
 }
 
 export function buildPersistedSnapshotUrl(selectedRunId?: string | null, checksum?: string | null) {
@@ -78,9 +86,11 @@ function isNotModifiedSnapshot(value: SnapshotPollResponse): value is Extract<Sn
 
 export class LiveEventConnectionManager {
   private readonly selectedRunId?: string | null;
+  private readonly initialLastEventId?: string | number | null;
   private readonly EventSourceConstructor: typeof EventSource;
   private readonly requestJson: JsonRequester;
   private readonly getSnapshotChecksum?: () => string | null | undefined;
+  private readonly workerEntries: Pick<typeof workerEntriesManager, "onKnownSeqs" | "onStreamResync" | "onWakeUp">;
   private readonly applyUpdate: (state: EventStreamState) => void;
   private readonly reportError: (error: AppErrorDescriptor) => void;
   private readonly fallbackIntervalMs: number;
@@ -93,9 +103,11 @@ export class LiveEventConnectionManager {
 
   constructor(options: LiveEventConnectionManagerOptions) {
     this.selectedRunId = options.selectedRunId;
+    this.initialLastEventId = options.initialLastEventId;
     this.EventSourceConstructor = options.EventSourceConstructor ?? EventSource;
     this.requestJson = options.requestJson ?? defaultRequestJson;
     this.getSnapshotChecksum = options.getSnapshotChecksum;
+    this.workerEntries = options.workerEntries ?? workerEntriesManager;
     this.applyUpdate = options.applyUpdate;
     this.reportError = options.reportError;
     this.fallbackIntervalMs = options.fallbackIntervalMs ?? SNAPSHOT_FALLBACK_INTERVAL_MS;
@@ -108,7 +120,7 @@ export class LiveEventConnectionManager {
     }
 
     this.active = true;
-    this.eventSource = new this.EventSourceConstructor(buildEventStreamUrl(this.selectedRunId));
+    this.eventSource = new this.EventSourceConstructor(buildEventStreamUrl(this.selectedRunId, this.initialLastEventId));
     this.eventSource.addEventListener("update", (event) => {
       this.handleUpdateEvent(event);
     });
@@ -123,7 +135,7 @@ export class LiveEventConnectionManager {
       this.handleWorkerEntryAppended(event);
     });
     this.eventSource.addEventListener("stream.resync_required", () => {
-      workerEntriesManager.onStreamResync();
+      this.workerEntries.onStreamResync();
     });
     this.eventSource.onopen = () => {
       this.stopFallbackPolling();
@@ -149,6 +161,7 @@ export class LiveEventConnectionManager {
       const data = JSON.parse(event.data) as EventStreamState;
       this.stopFallbackPolling();
       this.applyUpdate(data);
+      this.workerEntries.onKnownSeqs(data.workerEntrySeqs);
     } catch {
       this.reportError({
         message: "The frontend received a malformed update payload from /api/events.",
@@ -167,7 +180,7 @@ export class LiveEventConnectionManager {
       if (!workerId || seq == null) {
         return;
       }
-      workerEntriesManager.onWakeUp({ workerId, seq });
+      this.workerEntries.onWakeUp({ workerId, seq });
     } catch {
       // Malformed frames are ignored — the next valid frame (or the
       // periodic snapshot poll) will re-sync any missed entries.
@@ -238,6 +251,7 @@ export class LiveEventConnectionManager {
       }
       if (this.active) {
         this.applyUpdate(data);
+        this.workerEntries.onKnownSeqs(data?.workerEntrySeqs);
       }
     } catch (error) {
       if (this.active) {

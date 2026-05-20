@@ -2,6 +2,7 @@
 
 import { StateManager } from "@/lib/state-manager";
 import type { QueuedConversationMessageRecord } from "./types";
+import { compareOldestByCreatedAtThenId } from "./utils";
 
 type BusyMessageQueueState = {
   queuedMessages: QueuedConversationMessageRecord[];
@@ -26,7 +27,7 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
     this.setKey("queuedMessages", (current) => {
       const existingIndex = current.findIndex((entry) => entry.id === message.id);
       if (existingIndex === -1) {
-        return [...current, message].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+        return [...current, message].sort(compareOldestByCreatedAtThenId);
       }
 
       const next = [...current];

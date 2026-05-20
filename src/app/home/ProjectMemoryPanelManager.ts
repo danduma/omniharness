@@ -68,6 +68,12 @@ interface FileResponse {
 }
 
 export class ProjectMemoryPanelManager extends StateManager<ProjectMemoryPanelState> {
+  private requestSeq = 0;
+  private activeListRequestId = 0;
+  private activeFileRequestId = 0;
+  private activeToggleRequestId = 0;
+  private activeSaveRequestId = 0;
+
   constructor() {
     super({ ...INITIAL_STATE });
   }
@@ -77,6 +83,10 @@ export class ProjectMemoryPanelManager extends StateManager<ProjectMemoryPanelSt
     if (current.projectPath === nextPath) {
       return;
     }
+    this.activeListRequestId = ++this.requestSeq;
+    this.activeFileRequestId = ++this.requestSeq;
+    this.activeToggleRequestId = ++this.requestSeq;
+    this.activeSaveRequestId = ++this.requestSeq;
     this.update({
       ...INITIAL_STATE,
       projectPath: nextPath,
@@ -89,12 +99,17 @@ export class ProjectMemoryPanelManager extends StateManager<ProjectMemoryPanelSt
       this.patch({ files: [] });
       return;
     }
+    const requestId = ++this.requestSeq;
+    this.activeListRequestId = requestId;
     this.patch({ loading: true, error: null });
     try {
       const data = await fetchJson<ListResponse>(
         `/api/projects/memory?projectPath=${encodeURIComponent(projectPath)}`,
       );
       const current = this.getSnapshot();
+      if (this.activeListRequestId !== requestId || current.projectPath !== projectPath) {
+        return;
+      }
       const nextSelected = current.selectedPath
         ?? (data.files.length > 0 ? data.files[0].path : null);
       this.patch({
@@ -104,6 +119,9 @@ export class ProjectMemoryPanelManager extends StateManager<ProjectMemoryPanelSt
         loading: false,
       });
     } catch (error) {
+      if (this.activeListRequestId !== requestId || this.getSnapshot().projectPath !== projectPath) {
+        return;
+      }
       this.patch({
         loading: false,
         error: error instanceof Error ? error.message : String(error),
@@ -122,6 +140,8 @@ export class ProjectMemoryPanelManager extends StateManager<ProjectMemoryPanelSt
       originalContent: "",
       saveStatus: "idle",
     });
+    this.activeFileRequestId = ++this.requestSeq;
+    this.activeSaveRequestId = ++this.requestSeq;
     if (path) {
       await this.loadFile();
     }
@@ -132,11 +152,21 @@ export class ProjectMemoryPanelManager extends StateManager<ProjectMemoryPanelSt
     if (!projectPath || !selectedPath) {
       return;
     }
+    const requestId = ++this.requestSeq;
+    this.activeFileRequestId = requestId;
     this.patch({ loading: true, error: null });
     try {
       const data = await fetchJson<FileResponse>(
         `/api/projects/memory?projectPath=${encodeURIComponent(projectPath)}&path=${encodeURIComponent(selectedPath)}`,
       );
+      const current = this.getSnapshot();
+      if (
+        this.activeFileRequestId !== requestId
+        || current.projectPath !== projectPath
+        || current.selectedPath !== selectedPath
+      ) {
+        return;
+      }
       this.patch({
         content: data.file.content,
         originalContent: data.file.content,
@@ -144,6 +174,14 @@ export class ProjectMemoryPanelManager extends StateManager<ProjectMemoryPanelSt
         loading: false,
       });
     } catch (error) {
+      const current = this.getSnapshot();
+      if (
+        this.activeFileRequestId !== requestId
+        || current.projectPath !== projectPath
+        || current.selectedPath !== selectedPath
+      ) {
+        return;
+      }
       this.patch({
         loading: false,
         error: error instanceof Error ? error.message : String(error),
@@ -160,14 +198,22 @@ export class ProjectMemoryPanelManager extends StateManager<ProjectMemoryPanelSt
     if (!projectPath) {
       return;
     }
+    const requestId = ++this.requestSeq;
+    this.activeToggleRequestId = requestId;
     this.patch({ error: null });
     try {
       await fetchJson("/api/projects/memory", {
         method: "POST",
         body: JSON.stringify({ projectPath, enabled: next }),
       });
+      if (this.activeToggleRequestId !== requestId || this.getSnapshot().projectPath !== projectPath) {
+        return;
+      }
       this.patch({ enabled: next });
     } catch (error) {
+      if (this.activeToggleRequestId !== requestId || this.getSnapshot().projectPath !== projectPath) {
+        return;
+      }
       this.patch({ error: error instanceof Error ? error.message : String(error) });
     }
   }
@@ -177,24 +223,48 @@ export class ProjectMemoryPanelManager extends StateManager<ProjectMemoryPanelSt
     if (!projectPath || !selectedPath) {
       return;
     }
+    const requestId = ++this.requestSeq;
+    this.activeSaveRequestId = requestId;
     this.patch({ saving: true, error: null });
     try {
       await fetchJson("/api/projects/memory", {
         method: "POST",
         body: JSON.stringify({ projectPath, path: selectedPath, content }),
       });
+      const current = this.getSnapshot();
+      if (
+        this.activeSaveRequestId !== requestId
+        || current.projectPath !== projectPath
+        || current.selectedPath !== selectedPath
+      ) {
+        return;
+      }
       this.patch({
         originalContent: content,
         saveStatus: "saved",
         saving: false,
       });
       window.setTimeout(() => {
-        if (this.getSnapshot().saveStatus === "saved") {
+        const latest = this.getSnapshot();
+        if (
+          this.activeSaveRequestId === requestId
+          && latest.projectPath === projectPath
+          && latest.selectedPath === selectedPath
+          && latest.saveStatus === "saved"
+        ) {
           this.patch({ saveStatus: "idle" });
         }
       }, 2000);
       await this.reloadList();
     } catch (error) {
+      const current = this.getSnapshot();
+      if (
+        this.activeSaveRequestId !== requestId
+        || current.projectPath !== projectPath
+        || current.selectedPath !== selectedPath
+      ) {
+        return;
+      }
       this.patch({
         saving: false,
         error: error instanceof Error ? error.message : String(error),

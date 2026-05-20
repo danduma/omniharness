@@ -39,6 +39,9 @@ export function removeRunFromHomeState(current: EventStreamState, runId: string)
     planItems: runToDelete
       ? (current.planItems || []).filter((item: PlanItemRecord) => item.planId !== runToDelete.planId)
       : current.planItems,
+    readMarkers: Object.fromEntries(
+      Object.entries(current.readMarkers ?? {}).filter(([candidateRunId]) => candidateRunId !== runId),
+    ),
   };
 }
 
@@ -184,8 +187,6 @@ export function appendCreatedConversationSnapshot(
   };
 }
 
-const PENDING_CREATED_CONVERSATION_STABLE_MS = 10_000;
-
 function isCreatedConversationSnapshotServerVisible(
   incomingState: EventStreamState,
   snapshot: CreatedConversationSnapshot,
@@ -213,12 +214,12 @@ export function mergePendingCreatedConversationSnapshots(
 
   let nextState = incomingState;
 
-  for (const [runId, snapshot] of Array.from(pendingSnapshots.entries())) {
+  for (const snapshot of Array.from(pendingSnapshots.values())) {
     if (isCreatedConversationSnapshotServerVisible(incomingState, snapshot)) {
+      // A stale in-flight SSE snapshot can still arrive after the server has
+      // caught up once, so keep the optimistic create snapshot around until an
+      // explicit delete/archive removes it from the pending map.
       snapshot.serverVisibleAtMs ??= nowMs;
-      if (nowMs - snapshot.serverVisibleAtMs >= PENDING_CREATED_CONVERSATION_STABLE_MS) {
-        pendingSnapshots.delete(runId);
-      }
       continue;
     }
 
@@ -338,10 +339,15 @@ const RUN_LOG_ONLY_EVENT_TYPES = new Set([
   "worker_turn_completed",
 ]);
 
+const INTERNAL_OPERATIONAL_EVENT_TYPES = new Set([
+  "supervisor_turn_stopped",
+  "worker_session_missing",
+  "worker_spawn_blocked",
+  "worker_stuck",
+]);
+
 const DYNAMIC_STATUS_EVENT_TYPES = new Set([
   "worker_prompt_deferred",
-  "worker_session_missing",
-  "worker_stuck",
 ]);
 
 const INLINE_CONVERSATION_EVENT_TYPES = new Set([
@@ -362,7 +368,6 @@ const INLINE_CONVERSATION_EVENT_TYPES = new Set([
   "worker_prompt_failed",
   "worker_environment_mismatch",
   "worker_spawned",
-  "worker_spawn_blocked",
 ]);
 
 const MESSAGE_MIRRORED_CONVERSATION_TIMELINE_EVENT_TYPES = new Set([
@@ -371,7 +376,6 @@ const MESSAGE_MIRRORED_CONVERSATION_TIMELINE_EVENT_TYPES = new Set([
   "worker_cancelled",
   "worker_permission_approved",
   "worker_permission_denied",
-  "worker_spawn_blocked",
   "worker_spawned",
 ]);
 
@@ -398,6 +402,10 @@ export function classifyExecutionEvent(event: ExecutionEventRecord): Conversatio
 }
 
 export function shouldShowExecutionEventInRunLog(event: ExecutionEventRecord) {
+  if (INTERNAL_OPERATIONAL_EVENT_TYPES.has(event.eventType)) {
+    return false;
+  }
+
   if (event.eventType !== "worker_poll_failed") {
     return true;
   }
@@ -421,6 +429,16 @@ export function shouldRenderMessageInMainConversation(message: MessageRecord) {
 function timestampMs(value: string) {
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : 0;
+}
+
+export function compareOldestByCreatedAtThenId<T extends { createdAt: string; id: string }>(a: T, b: T) {
+  const timeDelta = timestampMs(a.createdAt) - timestampMs(b.createdAt);
+  return timeDelta !== 0 ? timeDelta : a.id.localeCompare(b.id);
+}
+
+export function compareNewestByCreatedAtThenId<T extends { createdAt: string; id: string }>(a: T, b: T) {
+  const timeDelta = timestampMs(b.createdAt) - timestampMs(a.createdAt);
+  return timeDelta !== 0 ? timeDelta : b.id.localeCompare(a.id);
 }
 
 function hasNearbyMirroredMessage(event: ExecutionEventRecord, messages: MessageRecord[]) {
@@ -546,7 +564,7 @@ export function stripRunFailurePrefix(value: string | null | undefined) {
 export function extractWorkerFailureDetail(messages: MessageRecord[]) {
   const workerMessages = [...messages]
     .filter((message) => message.role === "worker")
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    .sort(compareNewestByCreatedAtThenId);
 
   for (const message of workerMessages) {
     const detailMatch = message.content.match(/"detail":"([^"]+)"/i);
@@ -877,7 +895,7 @@ export function summarizeExecutionEvent(event: ExecutionEventRecord) {
   }
 
   if (event.eventType === "supervisor_turn_stopped") {
-    return summary || "Pausing to stabilize conversation";
+    return summary || "Supervisor delayed a repeated tool request";
   }
 
   if (event.eventType === "supervisor_wait") {
@@ -1203,6 +1221,15 @@ export function buildConversationPath(selectedRunId: string | null, draftProject
 
   const query = params.toString();
   return query ? `/?${query}` : "/";
+}
+
+export function createClientRunId() {
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const bytes = crypto.getRandomValues(new Uint8Array(6));
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  return Math.random().toString(16).slice(2, 14).padEnd(12, "0");
 }
 
 export function resolveRepoName(projectPath: string | null): string {

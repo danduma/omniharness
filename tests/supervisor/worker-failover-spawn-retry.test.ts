@@ -42,12 +42,24 @@ describe("worker failover bounded retry across the allowed list", () => {
 
     const { db } = await import("@/server/db");
     const schema = await import("@/server/db/schema");
+    await db.delete(schema.planningReviewFindings);
+    await db.delete(schema.planningReviewRounds);
+    await db.delete(schema.planningReviewRuns);
     await db.delete(schema.executionEvents);
     await db.delete(schema.supervisorScheduledWakes);
+    await db.delete(schema.supervisorInterventions);
+    await db.delete(schema.workerAssignments);
+    await db.delete(schema.clarifications);
     await db.delete(schema.recoveryIncidents);
+    await db.delete(schema.queuedConversationMessages);
+    await db.delete(schema.messages);
+    await db.delete(schema.processSessions);
+    await db.delete(schema.creditEvents);
     await db.delete(schema.workers);
     await db.delete(schema.workerCounters);
+    await db.delete(schema.conversationReadMarkers);
     await db.delete(schema.runs);
+    await db.delete(schema.planItems);
     await db.delete(schema.plans);
     const { __resetNamedEventsForTests } = await import("@/server/events/named-events");
     __resetNamedEventsForTests();

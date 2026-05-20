@@ -2,7 +2,29 @@ import { randomUUID } from "crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, like } from "drizzle-orm";
 import { db } from "@/server/db";
-import { executionEvents, messages, plans, recoveryIncidents, runs, settings, supervisorInterventions, supervisorScheduledWakes, workers } from "@/server/db/schema";
+import {
+  clarifications,
+  conversationReadMarkers,
+  creditEvents,
+  executionEvents,
+  messages,
+  planItems,
+  planningReviewFindings,
+  planningReviewRounds,
+  planningReviewRuns,
+  processSessions,
+  queuedConversationMessages,
+  recoveryIncidents,
+  runs,
+  settings,
+  supervisorInterventions,
+  supervisorScheduledWakes,
+  workerAssignments,
+  workerCounters,
+  workers,
+  plans,
+} from "@/server/db/schema";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 import { resetDurableSupervisorWakeSchedulerForTests } from "@/server/supervisor/wake-schedule";
 
 const { mockAskAgent, mockGetAgent, mockSpawnAgent, mockSupervisorRun, mockStopRunObserver } = vi.hoisted(() => ({
@@ -41,14 +63,26 @@ describe("executeSupervisorWake", () => {
     mockSpawnAgent.mockReset();
     mockSupervisorRun.mockReset();
     mockStopRunObserver.mockReset();
+    __resetNamedEventsForTests();
     resetDurableSupervisorWakeSchedulerForTests();
+    await db.delete(planningReviewFindings);
+    await db.delete(planningReviewRounds);
+    await db.delete(planningReviewRuns);
     await db.delete(supervisorScheduledWakes);
     await db.delete(supervisorInterventions);
     await db.delete(executionEvents);
-    await db.delete(messages);
+    await db.delete(workerAssignments);
+    await db.delete(clarifications);
     await db.delete(recoveryIncidents);
+    await db.delete(queuedConversationMessages);
+    await db.delete(messages);
+    await db.delete(processSessions);
+    await db.delete(creditEvents);
     await db.delete(workers);
+    await db.delete(workerCounters);
+    await db.delete(conversationReadMarkers);
     await db.delete(runs);
+    await db.delete(planItems);
     await db.delete(plans);
     await db.delete(settings).where(like(settings.key, "SUPERVISOR_WAKE_LEASE:%"));
   });
@@ -96,6 +130,35 @@ describe("executeSupervisorWake", () => {
     expect(mockStopRunObserver).not.toHaveBeenCalled();
   });
 
+  it("does not execute the supervisor while an implementation run is awaiting user input", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/paused-run.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "awaiting_user",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await executeSupervisorWake(runId);
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(persistedRun?.status).toBe("awaiting_user");
+    expect(mockSupervisorRun).not.toHaveBeenCalled();
+    expect(mockStopRunObserver).toHaveBeenCalledWith(runId);
+  });
+
   it("retries a wake when an active persisted lease temporarily blocks acquisition", async () => {
     vi.useFakeTimers();
     const planId = randomUUID();
@@ -128,6 +191,9 @@ describe("executeSupervisorWake", () => {
     await executeSupervisorWake(runId);
 
     expect(mockSupervisorRun).not.toHaveBeenCalled();
+    const blockedEvents = getNamedEventsSince(0, { runId }).events.map((entry) => entry.event);
+    expect(blockedEvents).toContainEqual({ kind: "supervisor.wake_skipped", runId, reason: "lease_blocked" });
+    expect(blockedEvents).toContainEqual({ kind: "supervisor.wake_scheduled", runId, delayMs: 1_000, source: "lease_retry" });
 
     await db.delete(settings).where(eq(settings.key, `SUPERVISOR_WAKE_LEASE:${runId}`));
     await vi.advanceTimersByTimeAsync(1_000);

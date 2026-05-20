@@ -26,8 +26,10 @@ const darkThemeColor = "#0b0d10";
 
 interface UseHomeLifecycleProps {
   appUnlocked: boolean;
+  initialLastEventId?: string | number | null;
   setHasReceivedInitialEventStreamPayload: React.Dispatch<React.SetStateAction<boolean>>;
   setState: React.Dispatch<React.SetStateAction<EventStreamState>>;
+  applyServerEventStreamState?: React.Dispatch<React.SetStateAction<EventStreamState>>;
   setRuntimeErrors: React.Dispatch<React.SetStateAction<AppErrorDescriptor[]>>;
   routeReady: boolean;
   setRouteReady: React.Dispatch<React.SetStateAction<boolean>>;
@@ -46,8 +48,6 @@ interface UseHomeLifecycleProps {
   setSelectedCliAgent: React.Dispatch<React.SetStateAction<ComposerWorkerOption>>;
   setSelectedModel: React.Dispatch<React.SetStateAction<string>>;
   setSelectedEffort: React.Dispatch<React.SetStateAction<string>>;
-  setReadMarkers: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  readMarkers: Record<string, string>;
   collapsedProjectPaths: Set<string>;
   setCollapsedProjectPaths: React.Dispatch<React.SetStateAction<Set<string>>>;
   leftSidebarWidth: number;
@@ -79,8 +79,10 @@ function applyDocumentTheme(themeMode: "day" | "night") {
 
 export function useHomeLifecycle({
   appUnlocked,
+  initialLastEventId,
   setHasReceivedInitialEventStreamPayload,
   setState,
+  applyServerEventStreamState,
   setRuntimeErrors,
   routeReady,
   setRouteReady,
@@ -99,8 +101,6 @@ export function useHomeLifecycle({
   setSelectedCliAgent,
   setSelectedModel,
   setSelectedEffort,
-  setReadMarkers,
-  readMarkers,
   collapsedProjectPaths,
   setCollapsedProjectPaths,
   leftSidebarWidth,
@@ -141,7 +141,7 @@ export function useHomeLifecycle({
       }
 
       const nextState = filterEventStreamState?.(data) ?? data;
-      setState(nextState);
+      (applyServerEventStreamState ?? setState)(nextState);
       conversationNotificationManager.handleEventStreamState(nextState);
       setHasReceivedInitialEventStreamPayload(true);
       setRuntimeErrors((current) => mergeAppErrors(
@@ -152,6 +152,7 @@ export function useHomeLifecycle({
 
     const connectionManager = new LiveEventConnectionManager({
       selectedRunId,
+      initialLastEventId,
       getSnapshotChecksum,
       applyUpdate: applyEventStreamUpdate,
       reportError: (error) => {
@@ -169,8 +170,10 @@ export function useHomeLifecycle({
     };
   }, [
     appUnlocked,
+    initialLastEventId,
     filterEventStreamState,
     getSnapshotChecksum,
+    applyServerEventStreamState,
     routeReady,
     selectedRunId,
     setHasReceivedInitialEventStreamPayload,
@@ -267,26 +270,6 @@ export function useHomeLifecycle({
     }
 
     try {
-      const saved = window.localStorage.getItem("omni-read-markers");
-      if (saved) {
-        setReadMarkers(JSON.parse(saved));
-      }
-    } catch {
-      setRuntimeErrors((current) => mergeAppErrors(current, [{
-        message: "The saved read marker state in localStorage is malformed.",
-        source: "Frontend",
-        action: "Restore local conversation state",
-        suggestion: "Clear the omni-read-markers localStorage entry and reload the page if unread markers look wrong.",
-      }]));
-    }
-  }, [setReadMarkers, setRuntimeErrors]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    try {
       setCollapsedProjectPaths(parseCollapsedProjectPaths(window.localStorage.getItem("omni-collapsed-projects")));
     } catch {
       setRuntimeErrors((current) => mergeAppErrors(current, [{
@@ -355,22 +338,6 @@ export function useHomeLifecycle({
     setRightSidebarWidth(clampWorkersSidebarWidth(parsed, window.innerWidth));
     didHydrateWorkersSidebarWidthRef.current = true;
   }, [setRightSidebarWidth, setRuntimeErrors]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    try {
-      window.localStorage.setItem("omni-read-markers", JSON.stringify(readMarkers));
-    } catch {
-      setRuntimeErrors((current) => mergeAppErrors(current, [{
-        message: "Failed to persist read marker state to localStorage.",
-        source: "Frontend",
-        action: "Persist local conversation state",
-      }]));
-    }
-  }, [readMarkers, setRuntimeErrors]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !didHydrateConversationSidebarWidthRef.current) {

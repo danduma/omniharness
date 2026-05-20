@@ -3,7 +3,8 @@ import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
 import { executionEvents, runs, workers } from "@/server/db/schema";
 import { persistRunFailure } from "@/server/runs/failures";
-import { isActiveImplementationRun } from "@/server/runs/status";
+import { emitNamedEvent } from "@/server/events/named-events";
+import { isActiveImplementationRun, isRunnableImplementationRun } from "@/server/runs/status";
 import { Supervisor } from "@/server/supervisor";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { resumeQuotaExhaustedWorkers } from "@/server/quota/worker-resume";
@@ -61,7 +62,7 @@ async function recoverCompletionBlockedByOrphanedLease(runId: string) {
 
   const latestWorkerEvent = await db.select().from(executionEvents).where(
     inArray(executionEvents.workerId, runWorkers.map((worker) => worker.id)),
-  ).orderBy(desc(executionEvents.createdAt)).limit(1).get();
+  ).orderBy(desc(executionEvents.createdAt), desc(executionEvents.id)).limit(1).get();
 
   if (!latestWorkerEvent || COMPLETION_RESET_EVENT_TYPES.has(latestWorkerEvent.eventType)) {
     return false;
@@ -89,6 +90,7 @@ async function recoverCompletionBlockedByOrphanedLease(runId: string) {
 export async function executeSupervisorWake(runId: string) {
   clearWake(runId);
   if (inFlight.has(runId)) {
+    emitNamedEvent({ kind: "supervisor.wake_skipped", runId, reason: "in_flight" });
     return;
   }
 
@@ -98,11 +100,20 @@ export async function executeSupervisorWake(runId: string) {
       scheduleSupervisorWake(runId, 0);
       return;
     }
+    emitNamedEvent({ kind: "supervisor.wake_skipped", runId, reason: "lease_blocked" });
     scheduleSupervisorWake(runId, LEASE_BLOCKED_RETRY_MS);
     return;
   }
 
   const dueDurableWake = await claimDueDurableSupervisorWake(runId);
+  if (dueDurableWake) {
+    emitNamedEvent({
+      kind: "supervisor.durable_wake_claimed",
+      runId,
+      reason: dueDurableWake.reason,
+      source: dueDurableWake.source,
+    });
+  }
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
   if (run?.status === "quota_waiting" && !dueDurableWake) {
     if (await hasFutureDurableSupervisorWake(runId)) {
@@ -111,13 +122,15 @@ export async function executeSupervisorWake(runId: string) {
       // very next supervisor tick instead of waiting for the reset.
       const failoverPending = await isRunPendingFailover(runId);
       if (!failoverPending) {
+        emitNamedEvent({ kind: "supervisor.wake_skipped", runId, reason: "quota_wait_future_wake" });
         await releaseSupervisorWakeLease(runId, leaseId);
         return;
       }
     }
   }
 
-  if (!run || !isActiveImplementationRun(run)) {
+  if (!run || !isRunnableImplementationRun(run)) {
+    emitNamedEvent({ kind: "supervisor.wake_skipped", runId, reason: "run_not_runnable" });
     stopRunObserver(runId);
     await releaseSupervisorWakeLease(runId, leaseId);
     return;
@@ -185,15 +198,21 @@ export async function executeSupervisorWake(runId: string) {
 export function scheduleSupervisorWake(runId: string, delayMs = 0) {
   const nextDeadline = Date.now() + Math.max(0, delayMs);
   const currentDeadline = wakeDeadlines.get(runId);
-  if (currentDeadline !== undefined && currentDeadline <= nextDeadline) {
-    scheduleDurableWakeBackup(runId, currentDeadline, Math.max(0, currentDeadline - Date.now()));
-    return;
+    if (currentDeadline !== undefined && currentDeadline <= nextDeadline) {
+      scheduleDurableWakeBackup(runId, currentDeadline, Math.max(0, currentDeadline - Date.now()));
+      return;
   }
 
   scheduleDurableWakeBackup(runId, nextDeadline, delayMs);
 
   clearWake(runId);
   wakeDeadlines.set(runId, nextDeadline);
+  emitNamedEvent({
+    kind: "supervisor.wake_scheduled",
+    runId,
+    delayMs: Math.max(0, delayMs),
+    source: delayMs === LEASE_BLOCKED_RETRY_MS ? "lease_retry" : "volatile",
+  });
   wakeTimers.set(runId, setTimeout(() => {
     void executeSupervisorWake(runId);
   }, Math.max(0, delayMs)));

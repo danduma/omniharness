@@ -199,10 +199,23 @@ function omitKey<TValue>(record: Record<string, TValue | undefined>, key: string
 
 export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> {
   private readonly api: GitWorkspaceApiClient;
+  private requestSeq = 0;
+  private readonly activeStatusRequestsByProject = new Map<string, number>();
+  private readonly activeOperationsByProject = new Map<string, { id: number; operation: GitWorkspaceApiRequest["operation"] }>();
 
   constructor(api: GitWorkspaceApiClient = defaultGitWorkspaceApi) {
     super(INITIAL_STATE);
     this.api = api;
+  }
+
+  private nextRequestId() {
+    this.requestSeq += 1;
+    return this.requestSeq;
+  }
+
+  private currentPendingOperation() {
+    const pending = Array.from(this.activeOperationsByProject.values());
+    return pending[pending.length - 1]?.operation ?? null;
   }
 
   hydrateCachedProject(projectPath: string) {
@@ -225,12 +238,18 @@ export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> 
 
   async loadStatus(projectPath: string) {
     this.hydrateCachedProject(projectPath);
+    const requestId = this.nextRequestId();
+    this.activeStatusRequestsByProject.set(projectPath, requestId);
     this.patch((current) => ({
       loadingByProject: { ...current.loadingByProject, [projectPath]: true },
       lastError: null,
     }));
     try {
       const payload = await this.api({ operation: "status", projectPath });
+      if (this.activeStatusRequestsByProject.get(projectPath) !== requestId) {
+        return payload.snapshot ?? null;
+      }
+      this.activeStatusRequestsByProject.delete(projectPath);
       this.rememberCacheEntry(projectPath, payload.snapshot);
       this.patch((current) => ({
         snapshotsByProject: payload.snapshot
@@ -241,6 +260,10 @@ export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> 
       }));
       return payload.snapshot ?? null;
     } catch (error) {
+      if (this.activeStatusRequestsByProject.get(projectPath) !== requestId) {
+        throw error;
+      }
+      this.activeStatusRequestsByProject.delete(projectPath);
       this.patch((current) => ({
         loadingByProject: { ...current.loadingByProject, [projectPath]: false },
         lastError: toErrorState(error),
@@ -373,19 +396,29 @@ export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> 
     request: GitWorkspaceApiRequest,
     applyPayload: (payload: GitWorkspaceApiResponse) => Partial<GitWorkspaceManagerState>,
   ) {
-    this.patch({ pendingOperation: request.operation, lastError: null });
+    const requestId = this.nextRequestId();
+    this.activeOperationsByProject.set(request.projectPath, { id: requestId, operation: request.operation });
+    this.patch({ pendingOperation: this.currentPendingOperation(), lastError: null });
     try {
       const payload = await this.api(request);
+      if (this.activeOperationsByProject.get(request.projectPath)?.id !== requestId) {
+        return payload;
+      }
+      this.activeOperationsByProject.delete(request.projectPath);
       this.rememberCacheEntry(request.projectPath, payload.snapshot, payload.target);
       this.patch({
         ...applyPayload(payload),
-        pendingOperation: null,
+        pendingOperation: this.currentPendingOperation(),
         lastError: null,
       });
       return payload;
     } catch (error) {
+      if (this.activeOperationsByProject.get(request.projectPath)?.id !== requestId) {
+        throw error;
+      }
+      this.activeOperationsByProject.delete(request.projectPath);
       this.patch({
-        pendingOperation: null,
+        pendingOperation: this.currentPendingOperation(),
         lastError: toErrorState(error),
       });
       throw error;

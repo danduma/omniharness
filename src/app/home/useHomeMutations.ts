@@ -9,6 +9,7 @@ import { getManualCommitPrompt, getManualProjectCommitPrompt, type ManualCommitA
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
+import { shouldSelectRecoveredRunAfterSuccess } from "./auto-resume-selection";
 import { homeUiSetters, homeUiStateManager } from "./HomeUiStateManager";
 import { appearancePreferencesManager } from "./AppearancePreferencesManager";
 import { settingsDraftManager } from "./SettingsDraftManager";
@@ -18,6 +19,7 @@ import type { PlanningReviewAgentSelection } from "@/server/planning/review-pref
 import {
   appendCreatedConversationSnapshot,
   appendSentConversationMessageSnapshot,
+  buildConversationPath,
   buildInlineError,
   removeRunFromHomeState,
   resolveSelectedWorkerModel,
@@ -31,6 +33,7 @@ import type {
   ExecutionEventRecord,
   MessageRecord,
   RunRecord,
+  WorkerType,
 } from "./types";
 
 async function uploadPendingChatAttachments(attachments: PendingChatAttachment[]): Promise<ChatAttachment[]> {
@@ -74,6 +77,51 @@ function createOptimisticExecutionEvent(args: {
     details: JSON.stringify(args.details),
     createdAt: now,
   } satisfies ExecutionEventRecord;
+}
+
+function replaceBrowserConversationPath(selectedRunId: string | null, draftProjectPath: string | null) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const nextPath = buildConversationPath(selectedRunId, draftProjectPath);
+  const currentPath = `${window.location.pathname}${window.location.search}`;
+  if (currentPath !== nextPath) {
+    window.history.replaceState(window.history.state, "", nextPath);
+  }
+}
+
+export function ownsOptimisticRunSelection(args: {
+  requestedRunId: string;
+  currentSelectedRunId: string | null;
+}) {
+  return args.currentSelectedRunId === args.requestedRunId;
+}
+
+export function ownsSelectionFromMutationStart(args: {
+  selectedRunIdAtStart: string | null;
+  currentSelectedRunId: string | null;
+}) {
+  return args.currentSelectedRunId === args.selectedRunIdAtStart;
+}
+
+export function ownsConversationSideEffects(args: {
+  runId: string;
+  currentSelectedRunId: string | null;
+}) {
+  return args.currentSelectedRunId === args.runId;
+}
+
+export function shouldClearSubmittedComposer(args: {
+  submittedContent: string;
+  commandAtStart: string;
+  currentCommand: string;
+  attachmentsAtStart: PendingChatAttachment[];
+  currentAttachments: PendingChatAttachment[];
+}) {
+  return args.commandAtStart === args.submittedContent
+    && args.currentCommand === args.submittedContent
+    && args.currentAttachments === args.attachmentsAtStart;
 }
 
 function applyStopWorkerOptimisticUpdate(current: EventStreamState, runId: string, workerId: string) {
@@ -494,8 +542,15 @@ export function useHomeMutations({
     onError: (_error, _variables, context) => {
       if (context?.previousState) setState(context.previousState);
     },
-    onSuccess: (data) => {
-      if (data.runId) setSelectedRunId(data.runId);
+    onSuccess: (data, variables) => {
+      if (shouldSelectRecoveredRunAfterSuccess({
+        action: variables.action,
+        currentSelectedRunId: homeUiStateManager.getSnapshot().selectedRunId,
+        requestedRunId: variables.runId,
+        recoveredRunId: data.runId,
+      })) {
+        setSelectedRunId(data.runId ?? null);
+      }
       setEditingMessageId(null);
       setEditingMessageValue("");
     },
@@ -511,7 +566,7 @@ export function useHomeMutations({
   });
 
   const runCommand = useMutation({
-    mutationFn: async (payload: { content: string; attachments: PendingChatAttachment[]; projectPath: string | null }) => {
+    mutationFn: async (payload: { content: string; attachments: PendingChatAttachment[]; projectPath: string | null; requestedRunId: string }) => {
       const isAutoWorkerSelection = selectedCliAgent === "auto";
       const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel);
       const uploadedAttachments = await uploadPendingChatAttachments(payload.attachments);
@@ -529,6 +584,7 @@ export function useHomeMutations({
           mode: selectedConversationMode,
           command: payload.content,
           projectPath: payload.projectPath,
+          requestedRunId: payload.requestedRunId,
           gitWorkspaceLaunch: pendingWorkspaceLaunch,
           gitWorkspaceTarget: selectedWorkspaceTarget,
           preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
@@ -545,34 +601,62 @@ export function useHomeMutations({
     onMutate: (payload) => {
       const previousCommand = homeUiStateManager.getSnapshot().command;
       const previousCommandCursor = homeUiStateManager.getSnapshot().commandCursor;
+      const previousSelectedRunId = homeUiStateManager.getSnapshot().selectedRunId;
+      const previousDraftProjectPath = homeUiStateManager.getSnapshot().draftProjectPath;
+      const requestedRunId = payload.requestedRunId;
       setCommand("");
       homeUiSetters.setCommandCursor(0);
+      setSelectedRunId(requestedRunId);
+      replaceBrowserConversationPath(requestedRunId, null);
       return {
         projectPath: payload.projectPath,
+        requestedRunId,
+        previousSelectedRunId,
+        previousDraftProjectPath,
         previousCommand,
         previousCommandCursor,
       };
     },
     onSuccess: (data, variables) => {
-      clearAttachments();
       if (variables.projectPath) {
         gitWorkspaceManager.consumePendingLaunch(variables.projectPath);
       }
-      if (data.runId) {
+      const createdRunId = data.runId ?? data.run?.id ?? variables.requestedRunId;
+      const ownsSelection = ownsOptimisticRunSelection({
+        requestedRunId: variables.requestedRunId,
+        currentSelectedRunId: homeUiStateManager.getSnapshot().selectedRunId,
+      });
+      if (ownsSelection) {
+        clearAttachments();
+      }
+      if (createdRunId) {
         if (data.run) {
-          pendingCreatedConversationSnapshotsRef.current.set(data.runId, {
+          pendingCreatedConversationSnapshotsRef.current.set(createdRunId, {
             plan: data.plan,
             run: data.run,
             message: data.message,
           });
           setState((current) => appendCreatedConversationSnapshot(current, data));
         }
-        setSelectedRunId(data.runId);
+        if (ownsSelection) {
+          setSelectedRunId(createdRunId);
+          replaceBrowserConversationPath(createdRunId, null);
+        }
       }
     },
     onError: (_error, _variables, context) => {
+      const ownsSelection = context
+        ? ownsOptimisticRunSelection({
+          requestedRunId: context.requestedRunId,
+          currentSelectedRunId: homeUiStateManager.getSnapshot().selectedRunId,
+        })
+        : false;
+      if (context && ownsSelection) {
+        setSelectedRunId(context.previousSelectedRunId);
+        replaceBrowserConversationPath(context.previousSelectedRunId, context.previousDraftProjectPath);
+      }
       const snapshot = homeUiStateManager.getSnapshot();
-      if (context && !snapshot.command.trim()) {
+      if (context && ownsSelection && !snapshot.command.trim()) {
         setCommand(context.previousCommand);
         homeUiSetters.setCommandCursor(context.previousCommandCursor);
       }
@@ -580,12 +664,21 @@ export function useHomeMutations({
   });
 
   const sendConversationMessage = useMutation({
+    onMutate: () => ({
+      commandAtStart: homeUiStateManager.getSnapshot().command,
+      attachmentsAtStart: homeUiStateManager.getSnapshot().attachments,
+    }),
     mutationFn: async (payload: {
       runId: string;
       content: string;
       attachments: PendingChatAttachment[];
       busyAction?: BusyMessageAction;
     }) => {
+      const isAutoWorkerSelection = selectedCliAgent === "auto";
+      const selectedWorkerType = isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent;
+      const resolvedSelectedModel = selectedWorkerType
+        ? resolveSelectedWorkerModel(selectedWorkerType as WorkerType, selectedModel)
+        : null;
       const uploadedAttachments = await uploadPendingChatAttachments(payload.attachments);
       return requestJson<{
         ok: true;
@@ -598,13 +691,17 @@ export function useHomeMutations({
           content: payload.content,
           attachments: uploadedAttachments,
           busyAction: payload.busyAction,
+          preferredWorkerType: selectedWorkerType,
+          preferredWorkerModel: isAutoWorkerSelection ? null : resolvedSelectedModel,
+          preferredWorkerEffort: selectedEffort.toLowerCase(),
+          allowedWorkerTypes: activeAllowedWorkerTypes,
         }),
       }, {
         source: "Conversations",
         action: "Send a conversation message",
       });
     },
-    onSuccess: (data) => {
+    onSuccess: (data, variables, context) => {
       if (data.message) {
         pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
       }
@@ -612,9 +709,24 @@ export function useHomeMutations({
         busyMessageQueueManager.upsertQueuedMessage(data.queuedMessage);
       }
       setState((current) => appendSentConversationMessageSnapshot(current, data.message));
-      setCommand("");
-      clearAttachments();
-      scrollConversationToBottom();
+      const snapshot = homeUiStateManager.getSnapshot();
+      const ownsSideEffects = ownsConversationSideEffects({
+        runId: variables.runId,
+        currentSelectedRunId: snapshot.selectedRunId,
+      });
+      if (ownsSideEffects && context && shouldClearSubmittedComposer({
+        submittedContent: variables.content,
+        commandAtStart: context.commandAtStart,
+        currentCommand: snapshot.command,
+        attachmentsAtStart: context.attachmentsAtStart,
+        currentAttachments: snapshot.attachments,
+      })) {
+        setCommand("");
+        clearAttachments();
+      }
+      if (ownsSideEffects) {
+        scrollConversationToBottom();
+      }
     },
   });
 
@@ -651,10 +763,21 @@ export function useHomeMutations({
       busyMessageQueueManager.markCancelling(messageId);
     },
     onSuccess: (data, variables) => {
+      const ownsSideEffects = ownsConversationSideEffects({
+        runId: variables.runId,
+        currentSelectedRunId: homeUiStateManager.getSnapshot().selectedRunId,
+      });
       if (data.message) {
         pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
         setState((current) => appendSentConversationMessageSnapshot(current, data.message));
-        scrollConversationToBottom();
+        if (ownsSideEffects) {
+          scrollConversationToBottom();
+        }
+      }
+
+      if (data.message && data.queuedMessage?.status === "delivering") {
+        busyMessageQueueManager.hideQueuedMessage(variables.messageId);
+        return;
       }
 
       if (data.queuedMessage && (data.queuedMessage.status === "pending" || data.queuedMessage.status === "delivering")) {
@@ -679,16 +802,26 @@ export function useHomeMutations({
       source: "Conversations",
       action: "Commit chat",
     }),
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       if (data.message) {
         pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
       }
       setState((current) => appendSentConversationMessageSnapshot(current, data.message));
-      scrollConversationToBottom();
+      if (ownsConversationSideEffects({
+        runId: variables.runId,
+        currentSelectedRunId: homeUiStateManager.getSnapshot().selectedRunId,
+      })) {
+        scrollConversationToBottom();
+      }
     },
   });
 
   const autoCommitProject = useMutation({
+    onMutate: () => ({
+      selectedRunIdAtStart: homeUiStateManager.getSnapshot().selectedRunId,
+      commandAtStart: homeUiStateManager.getSnapshot().command,
+      attachmentsAtStart: homeUiStateManager.getSnapshot().attachments,
+    }),
     mutationFn: async (payload: { projectPath: string; action: ManualCommitAction }) => {
       const isAutoWorkerSelection = selectedCliAgent === "auto";
       const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel);
@@ -709,10 +842,22 @@ export function useHomeMutations({
         action: "Commit project",
       });
     },
-    onSuccess: (data) => {
-      setCommand("");
-      clearAttachments();
-      setMobileNavOpen(false);
+    onSuccess: (data, _variables, context) => {
+      const ownsSelection = ownsSelectionFromMutationStart({
+        selectedRunIdAtStart: context?.selectedRunIdAtStart ?? null,
+        currentSelectedRunId: homeUiStateManager.getSnapshot().selectedRunId,
+      });
+      const snapshot = homeUiStateManager.getSnapshot();
+      const composerStillOwned = ownsSelection
+        && snapshot.command === context?.commandAtStart
+        && snapshot.attachments === context?.attachmentsAtStart;
+      if (composerStillOwned) {
+        setCommand("");
+        clearAttachments();
+      }
+      if (ownsSelection) {
+        setMobileNavOpen(false);
+      }
       if (data.runId) {
         if (data.run) {
           pendingCreatedConversationSnapshotsRef.current.set(data.runId, {
@@ -722,7 +867,9 @@ export function useHomeMutations({
           });
           setState((current) => appendCreatedConversationSnapshot(current, data));
         }
-        setSelectedRunId(data.runId);
+        if (ownsSelection) {
+          setSelectedRunId(data.runId);
+        }
       }
     },
   });
@@ -786,6 +933,9 @@ export function useHomeMutations({
   });
 
   const promotePlanningConversation = useMutation({
+    onMutate: (payload: { runId: string; planPath: string | null }) => ({
+      selectedRunIdAtStart: homeUiStateManager.getSnapshot().selectedRunId ?? payload.runId,
+    }),
     mutationFn: async (payload: { runId: string; planPath: string | null }) => requestJson<{ runId?: string }>(`/api/planning/${payload.runId}/promote`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -794,8 +944,13 @@ export function useHomeMutations({
       source: "Planning",
       action: "Promote planning conversation",
     }),
-    onSuccess: (data) => {
-      if (data.runId) setSelectedRunId(data.runId);
+    onSuccess: (data, _variables, context) => {
+      if (data.runId && ownsSelectionFromMutationStart({
+        selectedRunIdAtStart: context?.selectedRunIdAtStart ?? null,
+        currentSelectedRunId: homeUiStateManager.getSnapshot().selectedRunId,
+      })) {
+        setSelectedRunId(data.runId);
+      }
     },
   });
 

@@ -3,12 +3,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
+  clarifications,
+  conversationReadMarkers,
+  creditEvents,
   executionEvents,
   messages,
+  planItems,
+  planningReviewFindings,
+  planningReviewRounds,
+  planningReviewRuns,
   plans,
+  processSessions,
   queuedConversationMessages,
+  recoveryIncidents,
   runs,
   supervisorInterventions,
+  supervisorScheduledWakes,
+  workerAssignments,
+  workerCounters,
   workers,
 } from "@/server/db/schema";
 import {
@@ -25,6 +37,7 @@ const { mockAskAgent } = vi.hoisted(() => ({
 
 vi.mock("@/server/bridge-client", () => ({
   askAgent: mockAskAgent,
+  getAgent: vi.fn().mockResolvedValue(null),
 }));
 
 import {
@@ -32,6 +45,7 @@ import {
   drainQueuedImplementationMessages,
   drainQueuedWorkerMessages,
 } from "@/server/conversations/queued-messages";
+import { __resetWorkerTurnChainsForTests } from "@/server/conversations/worker-turn-gate";
 
 async function createDirectRun() {
   const planId = randomUUID();
@@ -96,18 +110,36 @@ async function insertActiveWorker(runId: string) {
 
 describe("unified worker stream — dual-write on delivery", () => {
   beforeEach(async () => {
-    mockAskAgent.mockClear();
+    mockAskAgent.mockReset();
+    mockAskAgent.mockResolvedValue({
+      response: "Worker received the steering note.",
+      state: "idle",
+    });
+    __resetWorkerTurnChainsForTests();
     __resetOutputStoreCachesForTests();
+    await db.delete(planningReviewFindings);
+    await db.delete(planningReviewRounds);
+    await db.delete(planningReviewRuns);
+    await db.delete(supervisorScheduledWakes);
     await db.delete(executionEvents);
     await db.delete(supervisorInterventions);
+    await db.delete(workerAssignments);
+    await db.delete(clarifications);
+    await db.delete(recoveryIncidents);
     await db.delete(queuedConversationMessages);
     await db.delete(messages);
+    await db.delete(processSessions);
+    await db.delete(creditEvents);
     await db.delete(workers);
+    await db.delete(workerCounters);
+    await db.delete(conversationReadMarkers);
     await db.delete(runs);
+    await db.delete(planItems);
     await db.delete(plans);
   });
 
   afterEach(() => {
+    __resetWorkerTurnChainsForTests();
     __resetOutputStoreCachesForTests();
   });
 

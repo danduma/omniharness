@@ -22,12 +22,12 @@ import { selectSpawnableWorkerType } from "@/server/supervisor/worker-availabili
 import { attemptWorkerFailover, loadPendingFailoverContext } from "@/server/supervisor/worker-failover";
 import { parseAllowedWorkerTypes, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
 import { persistRunFailure } from "@/server/runs/failures";
-import { isActiveImplementationRun } from "@/server/runs/status";
+import { isRunnableImplementationRun, normalizeRunStatus } from "@/server/runs/status";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { appendLifecycleEntry, appendSupervisorInputOnDelivery } from "@/server/workers/stream-writer";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
-import { normalizeWorkerStatus, workerTurnRecheckDelayMs } from "@/server/supervisor/worker-completion";
+import { isLongWorkerCompletionText, normalizeWorkerStatus, workerTurnRecheckDelayMs } from "@/server/supervisor/worker-completion";
 import { drainQueuedImplementationMessages } from "@/server/conversations/queued-messages";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -54,6 +54,13 @@ export type SupervisorRunResult =
 
 const DEFAULT_SUPERVISOR_TURN_STEP_LIMIT = 6;
 const WORKER_TURN_DEFAULT_RECHECK_DELAY_MS = 5_000;
+
+type WorkerRole = "implementation" | "validation";
+
+interface WorkerAllocation {
+  role: WorkerRole;
+  allocationKey: string;
+}
 
 function getSupervisorTurnStepLimit(env: NodeJS.ProcessEnv = process.env) {
   const parsed = Number.parseInt(env.SUPERVISOR_TURN_STEP_LIMIT ?? "", 10);
@@ -196,7 +203,11 @@ function resolveWorkerSpawnMode(requestedMode: unknown, yoloModeEnabled: boolean
 
 function isMissingAgentError(error: unknown) {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-  return message.includes("404") || message.includes("not_found") || message.includes("agent not found");
+  return message.includes("404")
+    || message.includes("not_found")
+    || message.includes("agent not found")
+    || message.includes("session not found")
+    || message.includes("invalid session identifier");
 }
 
 function formatSupervisorError(error: unknown) {
@@ -325,6 +336,52 @@ async function buildPreflightConfirmationQuestion(args: {
   ].join("\n");
 }
 
+async function persistAwaitingUserQuestion(args: {
+  runId: string;
+  question: string;
+  messageKind: "clarification" | "implementation_confirmation";
+  eventType: "clarification_requested" | "implementation_confirmation_requested" | "preflight_confirmation_required";
+  eventDetails: Record<string, unknown>;
+}) {
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    await tx.insert(clarifications).values({
+      id: randomUUID(),
+      runId: args.runId,
+      question: args.question,
+      answer: null,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await tx.insert(dbMessages).values({
+      id: randomUUID(),
+      runId: args.runId,
+      role: "supervisor",
+      kind: args.messageKind,
+      content: args.question,
+      workerId: null,
+      createdAt: now,
+    });
+    await tx.update(runs).set({ status: "awaiting_user", updatedAt: now }).where(eq(runs.id, args.runId));
+    await tx.insert(executionEvents).values({
+      id: randomUUID(),
+      runId: args.runId,
+      workerId: null,
+      planItemId: null,
+      eventType: args.eventType,
+      details: JSON.stringify(args.eventDetails),
+      createdAt: now,
+    });
+  });
+  await notifyRunLifecycleEventBestEffort({
+    runId: args.runId,
+    eventType: args.eventType,
+    details: args.eventDetails,
+  });
+  notifyEventStreamSubscribers();
+}
+
 async function pauseForPreflightConfirmation(args: {
   runId: string;
   title: string;
@@ -343,23 +400,17 @@ async function pauseForPreflightConfirmation(args: {
   }
 
   const question = await buildPreflightConfirmationQuestion(args);
-  const now = new Date();
-  await db.insert(clarifications).values({
-    id: randomUUID(),
+  await persistAwaitingUserQuestion({
     runId: args.runId,
     question,
-    answer: null,
-    status: "pending",
-    createdAt: now,
-    updatedAt: now,
+    messageKind: "implementation_confirmation",
+    eventType: "preflight_confirmation_required",
+    eventDetails: {
+      summary: "Paused before first worker spawn for user confirmation.",
+      title: args.title,
+      purpose: args.purpose,
+    },
   });
-  await db.update(runs).set({ status: "awaiting_user", updatedAt: now }).where(eq(runs.id, args.runId));
-  await insertExecutionEvent(args.runId, "preflight_confirmation_required", {
-    summary: "Paused before first worker spawn for user confirmation.",
-    title: args.title,
-    purpose: args.purpose,
-  });
-  await insertRunMessage(args.runId, "supervisor", question, "implementation_confirmation");
   return true;
 }
 
@@ -608,6 +659,8 @@ async function reserveWorkerRow(args: {
   cwd: string;
   title: string;
   initialPrompt: string;
+  workerRole: WorkerRole;
+  allocationKey: string;
 }) {
   const { workerId, workerNumber } = await allocateWorkerIdentity(args.runId);
 
@@ -618,6 +671,8 @@ async function reserveWorkerRow(args: {
     status: "starting",
     cwd: args.cwd,
     workerNumber,
+    workerRole: args.workerRole,
+    allocationKey: args.allocationKey,
     title: args.title,
     initialPrompt: args.initialPrompt,
     outputLog: "",
@@ -640,7 +695,7 @@ async function reserveWorkerRow(args: {
 }
 
 function isActiveWorkerStatus(status: string | null | undefined) {
-  return ["starting", "working", "idle", "stuck"].includes(normalizeWorkerStatus(status));
+  return ["starting", "working", "stuck"].includes(normalizeWorkerStatus(status));
 }
 
 function isResumableWorkerStatus(status: string | null | undefined) {
@@ -652,18 +707,99 @@ function describesSeparatedAllocation(...values: Array<string | null | undefined
   const hasExplicitOnly = /\bonly\b/.test(text);
   const hasConcreteSlice = /\b(part\s+[a-z0-9]+|slice|component|module|file|area|phase|section)\b/.test(text);
   const reviewsExistingWorker = /\b(review|audit|validate|validator|validation)\b/.test(text)
-    && /\b(worker|output|result|diff|patch)\b/.test(text);
+    && /\b(worker\s+(output|result|diff|patch)|output|result|diff|patch)\b/.test(text);
   return (hasExplicitOnly && hasConcreteSlice) || reviewsExistingWorker;
 }
 
-async function findActiveMainWorker(runId: string) {
+function describesValidationIntent(...values: Array<string | null | undefined>) {
+  const text = values.join("\n").toLowerCase();
+  const asksForValidation = /\b(validate|validator|validation|verify|verification|review|audit|check)\b/.test(text);
+  const asksForMutation = /\b(continue|implement|fix|build|edit|change|write|complete|ship)\b/.test(text);
+  return asksForValidation && !asksForMutation;
+}
+
+function normalizeAllocationText(value: string) {
+  const normalized = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return normalized || "main";
+}
+
+function classifyWorkerAllocation(...values: Array<string | null | undefined>): WorkerAllocation {
+  const role: WorkerRole = describesValidationIntent(...values) ? "validation" : "implementation";
+  const allocationKey = role === "validation" || !describesSeparatedAllocation(...values)
+    ? "main"
+    : `slice:${normalizeAllocationText(values.find((value) => value?.trim()) ?? "main")}`;
+  return { role, allocationKey };
+}
+
+function resolveWorkerAllocation(worker: Pick<typeof workers.$inferSelect, "workerRole" | "allocationKey" | "title" | "initialPrompt">): WorkerAllocation {
+  const classified = classifyWorkerAllocation(worker.title, worker.initialPrompt);
+  return {
+    role: worker.workerRole === "validation" || worker.workerRole === "implementation"
+      ? worker.workerRole
+      : classified.role,
+    allocationKey: worker.allocationKey?.trim() || classified.allocationKey,
+  };
+}
+
+function hasFinalLookingWorkerOutput(worker: Pick<typeof workers.$inferSelect, "currentText" | "lastText" | "outputLog">) {
+  return isLongWorkerCompletionText(worker.currentText)
+    || isLongWorkerCompletionText(worker.lastText)
+    || isLongWorkerCompletionText(worker.outputLog);
+}
+
+async function parkFinalLookingWorkerForValidator(args: {
+  runId: string;
+  worker: typeof workers.$inferSelect;
+  requestedTitle: string;
+  requestedPurpose: string;
+}) {
+  await db.update(workers).set({
+    status: "idle",
+    updatedAt: new Date(),
+  }).where(eq(workers.id, args.worker.id));
+
+  emitNamedEvent({
+    kind: "worker.status",
+    runId: args.runId,
+    workerId: args.worker.id,
+    prev: args.worker.status,
+    next: "idle",
+  });
+  await appendLifecycleEntry({
+    runId: args.runId,
+    workerId: args.worker.id,
+    text: `Worker parked for validator handoff: ${args.worker.status} -> idle`,
+    raw: { eventType: "worker.status", prev: args.worker.status, next: "idle" },
+  });
+
+  await insertExecutionEvent(args.runId, "worker_completed_parked", {
+    summary: `Parked completed-looking implementation worker ${args.worker.id} before validator spawn.`,
+    requestedTitle: args.requestedTitle,
+    requestedPurpose: args.requestedPurpose,
+  }, args.worker.id);
+}
+
+async function findBlockingWorkerForAllocation(runId: string, requestedAllocation: WorkerAllocation) {
   const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
   return runWorkers.find((worker) => {
     if (!isActiveWorkerStatus(worker.status) && !(worker.bridgeSessionId && isResumableWorkerStatus(worker.status))) {
       return false;
     }
 
-    return !describesSeparatedAllocation(worker.title, worker.initialPrompt);
+    const workerAllocation = resolveWorkerAllocation(worker);
+    if (workerAllocation.allocationKey !== requestedAllocation.allocationKey) {
+      return false;
+    }
+
+    if (workerAllocation.role === requestedAllocation.role) {
+      return true;
+    }
+
+    return workerAllocation.role === "implementation" && requestedAllocation.role === "validation";
   }) ?? null;
 }
 
@@ -718,23 +854,40 @@ async function resumeWorkerFromSavedSessionForSupervisor(runId: string, workerId
 
   const mode = normalizeBridgeWorkerMode(worker.bridgeSessionMode);
   const { env: envParams } = await readRuntimeEnvFromSettings();
+  const spawnParams = {
+    type: worker.type,
+    cwd: worker.cwd,
+    name: worker.id,
+    ...(mode ? { mode } : {}),
+    env: envParams,
+    ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+    ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+  };
   let resumedWorker: bridge.AgentRecord;
   try {
     resumedWorker = await bridge.spawnAgent({
-      type: worker.type,
-      cwd: worker.cwd,
-      name: worker.id,
-      ...(mode ? { mode } : {}),
-      env: envParams,
-      ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
-      ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+      ...spawnParams,
       resumeSessionId: sessionId,
     });
   } catch (error) {
-    if (!isAgentAlreadyExistsError(error, worker.id)) {
+    if (isAgentAlreadyExistsError(error, worker.id)) {
+      resumedWorker = await bridge.getAgent(worker.id, { retryIndefinitely: false });
+    } else if (isMissingAgentError(error)) {
+      await insertExecutionEvent(runId, "worker_session_missing", {
+        summary: `Saved bridge session for ${worker.id} is no longer available`,
+        reason: formatSupervisorError(error),
+        sessionId,
+      }, worker.id);
+      await db.update(workers).set({
+        status: "starting",
+        bridgeSessionId: null,
+        bridgeSessionMode: null,
+        updatedAt: new Date(),
+      }).where(eq(workers.id, worker.id));
+      resumedWorker = await bridge.spawnAgent(spawnParams);
+    } else {
       throw error;
     }
-    resumedWorker = await bridge.getAgent(worker.id, { retryIndefinitely: false });
   }
 
   await db.update(workers).set({
@@ -872,9 +1025,15 @@ export class Supervisor {
     return completion.toolCalls;
   }
 
-  private async loadActiveRun() {
+  private resultForInactiveRun(run: typeof runs.$inferSelect | null | undefined): SupervisorRunResult {
+    return run?.mode === "implementation" && normalizeRunStatus(run.status) === "awaiting_user"
+      ? { state: "paused" }
+      : { state: "completed" };
+  }
+
+  private async haltResultIfRunCannotContinue(): Promise<SupervisorRunResult | null> {
     const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
-    return isActiveImplementationRun(run) ? run : null;
+    return isRunnableImplementationRun(run) ? null : this.resultForInactiveRun(run);
   }
 
   private async cleanupWorkerAfterInactiveRun(workerId: string, snapshot?: bridge.AgentRecord | null) {
@@ -894,14 +1053,15 @@ export class Supervisor {
 
   async run(): Promise<SupervisorRunResult> {
     const currentRun = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
-    if (!isActiveImplementationRun(currentRun)) {
-      return { state: "completed" };
+    if (!isRunnableImplementationRun(currentRun)) {
+      return this.resultForInactiveRun(currentRun);
     }
 
     const { llmConfig, fallbackLlmConfig, envParams, creditStrategy, yoloModeEnabled, memoryEnabled } = await this.createModel();
 
-    if (!await this.loadActiveRun()) {
-      return { state: "completed" };
+    const initialHalt = await this.haltResultIfRunCannotContinue();
+    if (initialHalt) {
+      return initialHalt;
     }
 
     await db.update(runs).set({
@@ -940,8 +1100,9 @@ export class Supervisor {
 
     const pendingClarifications = await db.select().from(clarifications).where(eq(clarifications.runId, this.runId));
     if (pendingClarifications.some((clarification) => clarification.status === "pending")) {
-      if (!await this.loadActiveRun()) {
-        return { state: "completed" };
+      const pendingHalt = await this.haltResultIfRunCannotContinue();
+      if (pendingHalt) {
+        return pendingHalt;
       }
       await db.update(runs).set({ status: "awaiting_user", updatedAt: new Date() }).where(eq(runs.id, this.runId));
       return { state: "paused" };
@@ -1019,8 +1180,9 @@ export class Supervisor {
             : { state: "paused" };
         }
       }
-      if (!await this.loadActiveRun()) {
-        return { state: "completed" };
+      const postModelHalt = await this.haltResultIfRunCannotContinue();
+      if (postModelHalt) {
+        return postModelHalt;
       }
 
       const action = parseSupervisorToolCallFromMastra(toolCalls);
@@ -1028,7 +1190,7 @@ export class Supervisor {
       if (evidenceKey) {
         if (evidenceActionsSeen.has(evidenceKey)) {
           await insertExecutionEvent(this.runId, "supervisor_turn_stopped", {
-            summary: `Pausing to stabilize conversation after repeated tool requests: ${action.name}.`,
+            summary: `Supervisor delayed a repeated tool request: ${action.name}.`,
             actionName: action.name,
             evidenceKey,
           });
@@ -1057,19 +1219,38 @@ export class Supervisor {
           }
           const skillRoots = asOptionalStringArray(action.args.skillRoots, "skillRoots");
           const mcpServers = asOptionalMcpServers(action.args.mcpServers, "mcpServers");
-          const activeMainWorker = await findActiveMainWorker(this.runId);
-          if (activeMainWorker && !describesSeparatedAllocation(title, purpose, prompt)) {
-            const resumable = activeMainWorker.bridgeSessionId && isResumableWorkerStatus(activeMainWorker.status);
-            await insertExecutionEvent(this.runId, "worker_spawn_blocked", {
-              summary: resumable
-                ? `Blocked replacement worker spawn because ${this.runId} already has resumable implementation worker ${activeMainWorker.id}.`
-                : `Blocked duplicate worker spawn because ${this.runId} already has active implementation worker ${activeMainWorker.id}.`,
-              requestedTitle: title,
-              requestedPurpose: purpose,
-              activeWorkerId: activeMainWorker.id,
-              resumableSessionId: resumable ? activeMainWorker.bridgeSessionId : null,
-            });
-            return { state: "wait", delayMs: 5_000 };
+          const requestedAllocation = classifyWorkerAllocation(title, purpose, prompt);
+          const blockingWorker = await findBlockingWorkerForAllocation(this.runId, requestedAllocation);
+          if (blockingWorker) {
+            const blockingAllocation = resolveWorkerAllocation(blockingWorker);
+            if (
+              requestedAllocation.role === "validation"
+              && blockingAllocation.role === "implementation"
+              && hasFinalLookingWorkerOutput(blockingWorker)
+            ) {
+              await parkFinalLookingWorkerForValidator({
+                runId: this.runId,
+                worker: blockingWorker,
+                requestedTitle: title,
+                requestedPurpose: purpose,
+              });
+            } else {
+              const resumable = blockingWorker.bridgeSessionId && isResumableWorkerStatus(blockingWorker.status);
+              await insertExecutionEvent(this.runId, "worker_spawn_blocked", {
+                summary: resumable
+                  ? `Blocked replacement worker spawn because ${this.runId} already has resumable ${blockingAllocation.role} worker ${blockingWorker.id}.`
+                  : `Blocked duplicate worker spawn because ${this.runId} already has active ${blockingAllocation.role} worker ${blockingWorker.id}.`,
+                requestedTitle: title,
+                requestedPurpose: purpose,
+                requestedRole: requestedAllocation.role,
+                requestedAllocationKey: requestedAllocation.allocationKey,
+                activeWorkerId: blockingWorker.id,
+                activeWorkerRole: blockingAllocation.role,
+                activeAllocationKey: blockingAllocation.allocationKey,
+                resumableSessionId: resumable ? blockingWorker.bridgeSessionId : null,
+              });
+              return { state: "wait", delayMs: 5_000 };
+            }
           }
           const workerId = await reserveWorkerRow({
             runId: this.runId,
@@ -1077,6 +1258,8 @@ export class Supervisor {
             cwd,
             title,
             initialPrompt: prompt,
+            workerRole: requestedAllocation.role,
+            allocationKey: requestedAllocation.allocationKey,
           });
           const preferredModel = run?.preferredWorkerModel ?? null;
           const preferredEffort = run?.preferredWorkerEffort ?? null;
@@ -1157,9 +1340,10 @@ export class Supervisor {
             throw error;
           }
 
-          if (!await this.loadActiveRun()) {
+          const postSpawnHalt = await this.haltResultIfRunCannotContinue();
+          if (postSpawnHalt) {
             await this.cleanupWorkerAfterInactiveRun(workerId, spawnedWorker);
-            return { state: "completed" };
+            return postSpawnHalt;
           }
 
           await db.update(workers).set({
@@ -1194,23 +1378,23 @@ export class Supervisor {
             fallbackReason: workerType.fallbackReason,
           }, workerId);
 
+          // The bridge streams worker output while the initial ask is still
+          // in flight. Anchor the supervisor's prompt first so the unified
+          // worker stream reads as input -> agent activity.
+          await appendSupervisorInputOnDelivery({
+            runId: this.runId,
+            workerId,
+            text: prompt,
+            deliveredAt: new Date(),
+          });
+
           let response: Awaited<ReturnType<typeof bridge.askAgent>>;
           try {
             response = await bridge.askAgent(workerId, prompt);
-            // Append supervisor_input on delivery (the prompt reached
-            // the worker). The busy-fallback branch below does not
-            // append — the prompt is re-delivered later via
-            // deferBusyWorkerPrompt; the append happens on that
-            // eventual delivery.
-            await appendSupervisorInputOnDelivery({
-              runId: this.runId,
-              workerId,
-              text: prompt,
-              deliveredAt: new Date(),
-            });
-            if (!await this.loadActiveRun()) {
+            const postAskHalt = await this.haltResultIfRunCannotContinue();
+            if (postAskHalt) {
               await this.cleanupWorkerAfterInactiveRun(workerId, spawnedWorker);
-              return { state: "completed" };
+              return postAskHalt;
             }
             await persistWorkerOutput(workerId, response.response);
 
@@ -1347,9 +1531,10 @@ export class Supervisor {
               throw error;
             }
           }
-          if (!await this.loadActiveRun()) {
+          const continueHalt = await this.haltResultIfRunCannotContinue();
+          if (continueHalt) {
             await this.cleanupWorkerAfterInactiveRun(workerId);
-            return { state: "completed" };
+            return continueHalt;
           }
           // Supervisor follow-up reached the worker (askAgent resolved
           // above). Append before persisting the response so the
@@ -1450,23 +1635,13 @@ export class Supervisor {
           const question = asString(action.args.question, "question");
           const isImplementationConfirmation = action.name === "confirm_ready_to_implement";
           const messageKind = isImplementationConfirmation ? "implementation_confirmation" : "clarification";
-          const now = new Date();
-          await db.insert(clarifications).values({
-            id: randomUUID(),
+          await persistAwaitingUserQuestion({
             runId: this.runId,
             question,
-            answer: null,
-            status: "pending",
-            createdAt: now,
-            updatedAt: now,
+            messageKind,
+            eventType: isImplementationConfirmation ? "implementation_confirmation_requested" : "clarification_requested",
+            eventDetails: { summary: question },
           });
-          await db.update(runs).set({ status: "awaiting_user", updatedAt: now }).where(eq(runs.id, this.runId));
-          await insertExecutionEvent(
-            this.runId,
-            isImplementationConfirmation ? "implementation_confirmation_requested" : "clarification_requested",
-            { summary: question },
-          );
-          await insertRunMessage(this.runId, "supervisor", question, messageKind);
           return { state: "paused" };
         }
 
@@ -1659,8 +1834,9 @@ export class Supervisor {
         case "mark_complete": {
           const summary = asString(action.args.summary, "summary");
           await cancelRunWorkers(this.runId);
-          if (!await this.loadActiveRun()) {
-            return { state: "completed" };
+          const completeHalt = await this.haltResultIfRunCannotContinue();
+          if (completeHalt) {
+            return completeHalt;
           }
           if (memoryEnabled) {
             try {
@@ -1706,8 +1882,9 @@ export class Supervisor {
         case "mark_failed": {
           const reason = asString(action.args.reason, "reason");
           await cancelRunWorkers(this.runId);
-          if (!await this.loadActiveRun()) {
-            return { state: "completed" };
+          const failHalt = await this.haltResultIfRunCannotContinue();
+          if (failHalt) {
+            return failHalt;
           }
           if (memoryEnabled && !isInfraFailureReason(reason)) {
             try {

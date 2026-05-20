@@ -119,22 +119,20 @@ export async function cancelDurableSupervisorWake(runId: string, reason?: string
 }
 
 export async function claimDueDurableSupervisorWake(runId: string, nowMs = Date.now()) {
-  const row = await db
-    .select()
-    .from(supervisorScheduledWakes)
+  const claimed = await db
+    .delete(supervisorScheduledWakes)
     .where(and(
       eq(supervisorScheduledWakes.runId, runId),
       lte(supervisorScheduledWakes.wakeAt, new Date(nowMs)),
     ))
-    .get();
+    .returning();
 
-  if (!row) {
+  if (!claimed[0]) {
     return null;
   }
 
-  await db.delete(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId));
   clearDurableTimer(runId);
-  return row;
+  return claimed[0];
 }
 
 export async function getDurableSupervisorWake(runId: string) {

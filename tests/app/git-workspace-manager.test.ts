@@ -57,6 +57,16 @@ function snapshot(overrides: Partial<GitWorkspaceSnapshot> = {}): GitWorkspaceSn
   };
 }
 
+function deferredApiResponse<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((next, fail) => {
+    resolve = next;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("GitWorkspaceManager", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -248,5 +258,55 @@ describe("GitWorkspaceManager", () => {
 
     expect(manager.getSnapshot().snapshotsByProject["/repo"]?.statusFingerprint).toBe("fingerprint");
     expect(manager.getSnapshot().lastError?.message).toBe("Repository status changed after confirmation.");
+  });
+
+  it("ignores an older status response when a newer refresh for the same project already completed", async () => {
+    const first = deferredApiResponse<{ snapshot: GitWorkspaceSnapshot }>();
+    const second = deferredApiResponse<{ snapshot: GitWorkspaceSnapshot }>();
+    const api = vi.fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const manager = new GitWorkspaceManager(api);
+
+    const firstLoad = manager.loadStatus("/repo");
+    const secondLoad = manager.loadStatus("/repo");
+
+    second.resolve({ snapshot: snapshot({ branchName: "newer" }) });
+    await secondLoad;
+    first.resolve({ snapshot: snapshot({ branchName: "older" }) });
+    await firstLoad;
+
+    expect(manager.getSnapshot().snapshotsByProject["/repo"]?.branchName).toBe("newer");
+    expect(manager.getSnapshot().loadingByProject["/repo"]).toBe(false);
+  });
+
+  it("keeps the global pending operation active until all concurrent project operations settle", async () => {
+    const first = deferredApiResponse<{ target: GitWorkspaceTarget; snapshot: GitWorkspaceSnapshot }>();
+    const second = deferredApiResponse<{ target: GitWorkspaceTarget; snapshot: GitWorkspaceSnapshot }>();
+    const api = vi.fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const manager = new GitWorkspaceManager(api);
+
+    const firstSelect = manager.selectTarget("/repo-a", target({ repoRoot: "/repo-a", branchName: "a" }));
+    const secondSelect = manager.selectTarget("/repo-b", target({ repoRoot: "/repo-b", branchName: "b" }));
+
+    expect(manager.getSnapshot().pendingOperation).toBe("select");
+
+    first.resolve({
+      target: target({ repoRoot: "/repo-a", branchName: "a" }),
+      snapshot: snapshot({ repoRoot: "/repo-a", branchName: "a" }),
+    });
+    await firstSelect;
+
+    expect(manager.getSnapshot().pendingOperation).toBe("select");
+
+    second.resolve({
+      target: target({ repoRoot: "/repo-b", branchName: "b" }),
+      snapshot: snapshot({ repoRoot: "/repo-b", branchName: "b" }),
+    });
+    await secondSelect;
+
+    expect(manager.getSnapshot().pendingOperation).toBeNull();
   });
 });

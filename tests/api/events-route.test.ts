@@ -6,7 +6,7 @@ import os from "os";
 import path from "path";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { executionEvents, messages, planningReviewFindings, planningReviewRounds, planningReviewRuns, plans, recoveryIncidents, runs, supervisorInterventions, workerCounters, workers } from "@/server/db/schema";
+import { clarifications, conversationReadMarkers, creditEvents, executionEvents, messages, planItems, planningReviewFindings, planningReviewRounds, planningReviewRuns, plans, processSessions, queuedConversationMessages, recoveryIncidents, runs, supervisorInterventions, supervisorScheduledWakes, workerAssignments, workerCounters, workers } from "@/server/db/schema";
 import { buildAgentOutputActivity } from "@/lib/agent-output";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { __resetNamedEventsForTests } from "@/server/events/named-events";
@@ -25,6 +25,7 @@ vi.mock("@/server/supervisor/start", () => ({
 }));
 
 import { GET } from "@/app/api/events/route";
+import { __clearEventPayloadCachesForTests } from "@/runtime/http/routes/events";
 
 function decodeFirstEvent(chunk: Uint8Array) {
   // Kept for legacy tests that read exactly one chunk AND expect the
@@ -50,11 +51,10 @@ function decodeFirstEvent(chunk: Uint8Array) {
  * "the first chunk contains the snapshot" — named events now interleave
  * with snapshots on the wire.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function readUntilUpdateFrame(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   timeoutMs = 4_000,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  predicate?: (payload: Record<string, unknown>) => boolean,
 ): Promise<any> {
   const decoder = new TextDecoder();
   let buffer = "";
@@ -79,7 +79,10 @@ async function readUntilUpdateFrame(
       if (eventLine?.slice("event: ".length) !== "update") continue;
       const dataLine = lines.find((line) => line.startsWith("data: "));
       if (dataLine) {
-        return JSON.parse(dataLine.slice("data: ".length)) as Record<string, unknown>;
+        const payload = JSON.parse(dataLine.slice("data: ".length)) as Record<string, unknown>;
+        if (!predicate || predicate(payload)) {
+          return payload;
+        }
       }
     }
   }
@@ -101,6 +104,12 @@ async function readWithTimeout(reader: ReadableStreamDefaultReader<Uint8Array>, 
   }
 }
 
+function mockAgentRuntimeJson(payload: unknown, init?: ResponseInit) {
+  global.fetch = vi.fn().mockImplementation(() => Promise.resolve(
+    new Response(JSON.stringify(payload), init),
+  ));
+}
+
 describe("GET /api/events", () => {
   const originalFetch = global.fetch;
 
@@ -111,17 +120,29 @@ describe("GET /api/events", () => {
     // SSE route then drains as the first frame on the next test's
     // connection — pre-empting the snapshot frame the test expects.
     __resetNamedEventsForTests();
+    __clearEventPayloadCachesForTests();
     notifyEventStreamSubscribers();
     mockEnsureSupervisorRuntimeStarted.mockClear();
     mockStartSupervisorRun.mockClear();
     global.fetch = originalFetch;
-    await db.delete(recoveryIncidents);
+    await db.delete(planningReviewFindings);
+    await db.delete(planningReviewRounds);
+    await db.delete(planningReviewRuns);
+    await db.delete(supervisorScheduledWakes);
     await db.delete(supervisorInterventions);
     await db.delete(executionEvents);
+    await db.delete(workerAssignments);
+    await db.delete(clarifications);
+    await db.delete(recoveryIncidents);
+    await db.delete(queuedConversationMessages);
+    await db.delete(conversationReadMarkers);
     await db.delete(messages);
+    await db.delete(processSessions);
+    await db.delete(creditEvents);
     await db.delete(workers);
     await db.delete(workerCounters);
     await db.delete(runs);
+    await db.delete(planItems);
     await db.delete(plans);
   });
 
@@ -190,6 +211,45 @@ describe("GET /api/events", () => {
     expect(payload.agents).toEqual([]);
     expect(payload.executionEvents).toEqual([]);
     expect(payload.supervisorInterventions).toEqual([]);
+  });
+
+  it("includes persisted read markers in event snapshots", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date("2026-05-20T12:00:00.000Z");
+    const readAt = new Date("2026-05-20T12:30:00.000Z");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/read-markers.md",
+      status: "done",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "done",
+      title: "Read marker test",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(conversationReadMarkers).values({
+      runId,
+      lastReadAt: readAt,
+      createdAt: readAt,
+      updatedAt: readAt,
+    });
+
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+    const response = await GET(new NextRequest("http://localhost/api/events?snapshot=1"));
+    const payload = await response.json();
+
+    expect(payload.readMarkers).toEqual({
+      [runId]: "2026-05-20T12:30:00.000Z",
+    });
   });
 
   it("omits archived conversations from event snapshots", async () => {
@@ -354,10 +414,23 @@ describe("GET /api/events", () => {
   });
 
   it("keeps selected-run snapshots from scanning unrelated heavy event history", async () => {
-    const source = fs.readFileSync(path.join(process.cwd(), "src/app/api/events/route.ts"), "utf8");
+    const source = fs.readFileSync(path.join(process.cwd(), "src/runtime/http/routes/events.ts"), "utf8");
 
     expect(source).not.toContain("db.select().from(executionEvents).orderBy(desc(executionEvents.createdAt))");
     expect(source).not.toContain("db.select().from(messages).orderBy(messages.createdAt)");
+  });
+
+  it("uses stable id tie-breakers for timestamp-ordered snapshot queries", async () => {
+    const runtimeSource = fs.readFileSync(path.join(process.cwd(), "src/runtime/http/routes/events.ts"), "utf8");
+    const persistedSource = fs.readFileSync(path.join(process.cwd(), "src/server/events/persisted-snapshot.ts"), "utf8");
+
+    for (const source of [runtimeSource, persistedSource]) {
+      expect(source).toContain("orderBy(desc(runs.createdAt), desc(runs.id))");
+      expect(source).toContain("orderBy(asc(messages.createdAt), asc(messages.id))");
+      expect(source).toContain("orderBy(desc(executionEvents.createdAt), desc(executionEvents.id))");
+      expect(source).toContain("orderBy(desc(queuedConversationMessages.createdAt), desc(queuedConversationMessages.id))");
+      expect(source).toContain("orderBy(desc(recoveryIncidents.updatedAt), desc(recoveryIncidents.id))");
+    }
   });
 
   it.skip("serves persisted snapshots from sqlite without waiting for supervisor startup or bridge fetches", async () => {
@@ -994,6 +1067,7 @@ describe("GET /api/events", () => {
   it("returns a persisted-only JSON snapshot without polling the agent runtime", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
+    const workerId = randomUUID();
     const now = new Date();
 
     await db.insert(plans).values({
@@ -1009,6 +1083,22 @@ describe("GET /api/events", () => {
       mode: "implementation",
       status: "running",
       title: "Persisted snapshot conversation",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: JSON.stringify([
+        { id: "entry-1", type: "message", text: "first persisted line", timestamp: now.toISOString() },
+        { id: "entry-2", type: "message", text: "second persisted line", timestamp: new Date(now.getTime() + 1).toISOString() },
+      ]),
+      currentText: "",
+      lastText: "",
       createdAt: now,
       updatedAt: now,
     });
@@ -1030,6 +1120,44 @@ describe("GET /api/events", () => {
     expect(payload.frontendErrors).toEqual([]);
     expect(payload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Persisted snapshot conversation");
     expect(payload.messages.find((message: { runId: string }) => message.runId === runId)?.content).toBe("Recover from persisted state");
+    expect(payload.messageScope).toEqual({ runIds: [runId], complete: true });
+    expect(payload.workerEntrySeqs[workerId]).toBe(2);
+    expect(payload.workerEntries).toBeUndefined();
+    expect(payload.agents.find((agent: { name: string; outputEntries: unknown[] }) => agent.name === workerId)?.outputEntries).toEqual([]);
+  });
+
+  it("surfaces an invariant error when an awaiting-user snapshot has no supervisor question", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/missing-awaiting-user-question.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "awaiting_user",
+      title: "Missing awaiting-user question",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const payload = await response.json();
+
+    expect(payload.frontendErrors).toEqual([
+      expect.objectContaining({
+        source: "Lifecycle",
+        action: "Load conversation state",
+        message: expect.stringContaining("awaiting user input but no supervisor question"),
+      }),
+    ]);
   });
 
   it("reuses cached persisted snapshots until a live update notification arrives", async () => {
@@ -1206,7 +1334,7 @@ describe("GET /api/events", () => {
       updatedAt: now,
     });
 
-    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([
+    mockAgentRuntimeJson([
       {
         name: workerId,
         type: "codex",
@@ -1218,14 +1346,16 @@ describe("GET /api/events", () => {
         stderrBuffer: [],
         stopReason: null,
       },
-    ]), { status: 200 }));
+    ], { status: 200 });
 
     const controller = new AbortController();
     const response = await GET(new NextRequest(`http://localhost/api/events?runId=${runId}`, {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
-    const payload = await readUntilUpdateFrame(reader);
+    const payload = await readUntilUpdateFrame(reader, 8_000, (candidate) =>
+      (candidate.runs as Array<{ id: string; status?: string }> | undefined)
+        ?.some((run) => run.id === runId && run.status === "done") ?? false);
     controller.abort();
     await reader.cancel();
     expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("done");
@@ -1272,7 +1402,7 @@ describe("GET /api/events", () => {
       updatedAt: now,
     });
 
-    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([
+    mockAgentRuntimeJson([
       {
         name: workerId,
         type: "codex",
@@ -1286,7 +1416,7 @@ describe("GET /api/events", () => {
         stderrBuffer: [],
         stopReason: null,
       },
-    ]), { status: 200 }));
+    ], { status: 200 });
 
     const response = await GET(new NextRequest(`http://localhost/api/events?runId=${runId}&snapshot=1`));
     const payload = await response.json();
@@ -1349,7 +1479,7 @@ describe("GET /api/events", () => {
         id: selectedWorkerId,
         runId: selectedRunId,
         type: "codex",
-        status: "cancelled",
+        status: "idle",
         cwd: "/workspace/app",
         outputLog: "",
         outputEntriesJson: "[]",
@@ -1453,7 +1583,7 @@ describe("GET /api/events", () => {
       createdAt: now,
     });
 
-    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+    mockAgentRuntimeJson([], { status: 200 });
 
     const controller = new AbortController();
     const response = await GET(new NextRequest(`http://localhost/api/events?runId=${runId}`, {

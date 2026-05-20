@@ -3,6 +3,7 @@ import { EventStreamSnapshotCacheManager } from "./EventStreamSnapshotCacheManag
 
 type EventStreamStateListener = (state: EventStreamState) => void;
 type EventStreamStateAction = EventStreamState | ((current: EventStreamState) => EventStreamState);
+type EventStreamSnapshotSource = NonNullable<EventStreamState["snapshotSource"]>;
 
 function messageTimestampMs(message: MessageRecord) {
   const value = new Date(message.createdAt).getTime();
@@ -50,18 +51,21 @@ function mergeScopedRuns(current: EventStreamState, incoming: EventStreamState) 
 /**
  * Supervisor-conversation messages still flow through the `messages`
  * table (worker-attributed messages moved to the unified worker
- * stream). The merge keeps a stable list when an incoming snapshot
- * doesn't include the supervisor narration we already have locally.
+ * stream). Snapshots declare whether their message run scope is
+ * complete; partial updates are additive and must not erase durable
+ * conversation messages the client already knows about.
  */
 function mergeScopedMessages(current: EventStreamState, incoming: EventStreamState) {
   const incomingMessages = incoming.messages ?? [];
   const incomingMessageIds = new Set(incomingMessages.map((message) => message.id));
-  const incomingMessageRunIds = new Set(incomingMessages.map((message) => message.runId));
+  const completeMessageRunIds = new Set(
+    incoming.messageScope?.complete ? incoming.messageScope.runIds : [],
+  );
   const liveRunIds = new Set((incoming.runs ?? []).map((run) => run.id));
   const retainedCurrentMessages = (current.messages ?? []).filter((message) => (
     liveRunIds.has(message.runId)
     && !incomingMessageIds.has(message.id)
-    && (!incomingMessageRunIds.has(message.runId) || message.role === "user")
+    && !completeMessageRunIds.has(message.runId)
   ));
   const mergedMessages = sortMessages([
     ...retainedCurrentMessages,
@@ -117,13 +121,19 @@ export class EventStreamStateManager {
     snapshotCache?: EventStreamSnapshotCacheManager;
     snapshotCacheScope?: string | null;
     deferCacheHydration?: boolean;
+    initialSnapshotSource?: EventStreamSnapshotSource;
   } = {}) {
     this.snapshotCache = options.snapshotCache ?? new EventStreamSnapshotCacheManager();
     this.snapshotCacheScope = options.snapshotCacheScope?.trim() || null;
+    const source = options.initialSnapshotSource;
+    const initialWithSource = source ? { ...initialState, snapshotSource: source } : initialState;
     if (options.deferCacheHydration) {
-      this.state = initialState;
+      this.state = initialWithSource;
     } else {
-      this.state = this.snapshotCache.hydrateState(initialState, this.snapshotCacheScope);
+      this.state = {
+        ...this.snapshotCache.hydrateState(initialWithSource, this.snapshotCacheScope),
+        snapshotSource: "cache",
+      };
     }
   }
 
@@ -132,7 +142,7 @@ export class EventStreamStateManager {
     if (cached === this.state) {
       return;
     }
-    this.state = cached;
+    this.state = { ...cached, snapshotSource: "cache" };
     for (const listener of this.listeners) {
       listener(this.state);
     }
@@ -145,7 +155,10 @@ export class EventStreamStateManager {
       return false;
     }
 
-    this.state = mergeScopedCachedState(this.state, cached);
+    this.state = {
+      ...mergeScopedCachedState(this.state, cached),
+      snapshotSource: "cache",
+    };
     for (const listener of this.listeners) {
       listener(this.state);
     }
@@ -167,10 +180,15 @@ export class EventStreamStateManager {
     this.snapshotCacheScope = scope?.trim() || null;
   }
 
-  update(action: EventStreamStateAction) {
+  update(action: EventStreamStateAction, options: { snapshotSource?: EventStreamSnapshotSource } = {}) {
     const incoming = typeof action === "function" ? action(this.state) : action;
     const incomingWithRuns = mergeScopedRuns(this.state, incoming);
-    const nextState = mergeScopedMessages(this.state, incomingWithRuns);
+    const nextState = {
+      ...mergeScopedMessages(this.state, incomingWithRuns),
+      snapshotSource: options.snapshotSource
+        ?? incoming.snapshotSource
+        ?? this.state.snapshotSource,
+    };
 
     if (Object.is(nextState, this.state)) {
       return this.state;
@@ -180,5 +198,9 @@ export class EventStreamStateManager {
     this.snapshotCache.rememberState(nextState, this.snapshotCacheScope);
     this.listeners.forEach((listener) => listener(this.state));
     return this.state;
+  }
+
+  updateFromServer(action: EventStreamStateAction) {
+    return this.update(action, { snapshotSource: "server" });
   }
 }

@@ -2,7 +2,8 @@ import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { executionEvents, messages, plans, recoveryIncidents, runs, settings, workers } from "@/server/db/schema";
+import { clarifications, conversationReadMarkers, creditEvents, executionEvents, messages, planItems, planningReviewFindings, planningReviewRounds, planningReviewRuns, plans, processSessions, queuedConversationMessages, recoveryIncidents, runs, settings, supervisorInterventions, supervisorScheduledWakes, workerAssignments, workerCounters, workers } from "@/server/db/schema";
+import { getEventStreamNotificationVersion } from "@/server/events/live-updates";
 
 const { mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
   mockSpawnAgent: vi.fn(),
@@ -27,11 +28,24 @@ describe("syncConversationSessions", () => {
   beforeEach(async () => {
     mockSpawnAgent.mockReset();
     mockStartSupervisorRun.mockReset();
-    await db.delete(recoveryIncidents);
+    await db.delete(planningReviewFindings);
+    await db.delete(planningReviewRounds);
+    await db.delete(planningReviewRuns);
+    await db.delete(supervisorScheduledWakes);
+    await db.delete(supervisorInterventions);
     await db.delete(executionEvents);
+    await db.delete(workerAssignments);
+    await db.delete(clarifications);
+    await db.delete(recoveryIncidents);
+    await db.delete(queuedConversationMessages);
     await db.delete(messages);
+    await db.delete(processSessions);
+    await db.delete(creditEvents);
     await db.delete(workers);
+    await db.delete(workerCounters);
+    await db.delete(conversationReadMarkers);
     await db.delete(runs);
+    await db.delete(planItems);
     await db.delete(plans);
     await db.delete(settings);
   });
@@ -99,7 +113,7 @@ describe("syncConversationSessions", () => {
     const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
 
-    expect(run?.status).toBe("running");
+    expect(run?.status).toBe("done");
     expect(run?.lastError).toBeNull();
     expect(worker?.status).toBe("idle");
     expect(worker?.bridgeSessionId).toBe("session-direct-resumed");
@@ -198,7 +212,7 @@ describe("syncConversationSessions", () => {
     const activeWorker = await db.select().from(workers).where(eq(workers.id, activeWorkerId)).get();
     const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
 
-    expect(run?.status).toBe("running");
+    expect(run?.status).toBe("done");
     expect(activeWorker?.status).toBe("idle");
     expect(activeWorker?.bridgeSessionId).toBe("active-session-resumed");
     expect(incident).toMatchObject({
@@ -260,5 +274,311 @@ describe("syncConversationSessions", () => {
 
     expect(run?.status).toBe("awaiting_user");
     expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it("completes a running direct run when the live worker is idle with output but no stop reason", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Direct idle live worker",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "codex",
+        cwd: process.cwd(),
+        state: "idle",
+        sessionId: "session-live",
+        sessionMode: "full-access",
+        lastText: "",
+        currentText: "",
+        stderrBuffer: [],
+        stopReason: null,
+        outputEntries: [
+          {
+            id: "entry-1",
+            type: "message",
+            text: "Done. I traced the queue and fixed the stale row.",
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      },
+    ], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+
+    expect(run?.status).toBe("done");
+    expect(worker?.status).toBe("idle");
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it("does not recover a running implementation worker from an incomplete runtime list", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const oldEnoughForRecoveryClassifier = new Date(Date.now() - 120_000);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/implementation.md",
+      status: "running",
+      createdAt: oldEnoughForRecoveryClassifier,
+      updatedAt: oldEnoughForRecoveryClassifier,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      title: "Implementation recovery guard",
+      createdAt: oldEnoughForRecoveryClassifier,
+      updatedAt: oldEnoughForRecoveryClassifier,
+    });
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "user",
+      kind: "clarification_answer",
+      content: "Yes, implement it",
+      createdAt: oldEnoughForRecoveryClassifier,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "gemini",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      workerNumber: 1,
+      createdAt: oldEnoughForRecoveryClassifier,
+      updatedAt: oldEnoughForRecoveryClassifier,
+    });
+
+    await syncConversationSessions([], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const incidents = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
+
+    expect(run?.status).toBe("running");
+    expect(worker?.status).toBe("working");
+    expect(incidents).toEqual([]);
+    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it("fails a running direct run when the live worker is idle with no output", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Direct idle empty worker",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "gemini",
+      status: "idle",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "gemini",
+        cwd: process.cwd(),
+        state: "idle",
+        sessionId: "session-live-empty",
+        sessionMode: "full-access",
+        lastText: "",
+        currentText: "",
+        renderedOutput: "",
+        outputEntries: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    ], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const errorMessage = await db.select().from(messages).where(eq(messages.runId, runId)).get();
+
+    expect(run?.status).toBe("failed");
+    expect(run?.lastError).toContain("idle with no recorded output");
+    expect(worker?.status).toBe("error");
+    expect(worker?.outputLog).toContain("idle with no recorded output");
+    expect(errorMessage?.kind).toBe("error");
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it("completes a direct run when latest worker text supersedes an older question", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+    const oldQuestion = [
+      "Before merging, I need your decision.",
+      "Should I commit, stash, or merge only committed changes?",
+      "Which approach do you want?",
+    ].join("\n");
+    const latestDone = "Done. Committed the changes, merged into master, pushed, and deleted the branch.";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "awaiting_user",
+      title: "Merge and delete branch",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "idle",
+      cwd: process.cwd(),
+      outputLog: oldQuestion,
+      outputEntriesJson: "[]",
+      currentText: latestDone,
+      lastText: latestDone,
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const notificationVersionBefore = getEventStreamNotificationVersion();
+
+    await syncConversationSessions([], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+
+    expect(run?.status).toBe("done");
+    expect(getEventStreamNotificationVersion()).toBeGreaterThan(notificationVersionBefore);
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it("does not resurrect a cancelled implementation worker from a late live bridge snapshot", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/implementation.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      title: "Implementation cancellation",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "gemini",
+      status: "cancelled",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      bridgeSessionId: "cancelled-session",
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "gemini",
+        cwd: process.cwd(),
+        state: "working",
+        sessionId: "cancelled-session",
+        sessionMode: "full-access",
+        lastText: "late bridge output",
+        currentText: "late bridge output",
+        renderedOutput: "late bridge output",
+        outputEntries: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    ], { selectedRunId: runId });
+
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+
+    expect(worker?.status).toBe("cancelled");
+    expect(worker?.currentText).toBe("");
+    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
   });
 });

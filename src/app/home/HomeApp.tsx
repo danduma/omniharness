@@ -15,6 +15,7 @@ import { busyMessageQueueManager } from "./BusyMessageQueueManager";
 import { conversationNotificationManager } from "./ConversationNotificationManager";
 import { sideWindowManager } from "./SideWindowManager";
 import { parseBusyMessageAction } from "./busy-message-behavior";
+import { cancelInactiveAutoResumeTimers, shouldFireAutoResumeTimer } from "./auto-resume-selection";
 import { EventStreamStateManager } from "./EventStreamStateManager";
 import {
   homeUiSetters,
@@ -28,6 +29,7 @@ import { planningReviewPreferencesManager } from "./PlanningReviewPreferencesMan
 import { preflightConfirmationActionsManager } from "./PreflightConfirmationActionsManager";
 import {
   filterOptimisticallyDeletedRuns,
+  createClientRunId,
   mergePendingCreatedConversationSnapshots,
   mergePendingSentConversationMessages,
   parseProjectList,
@@ -50,6 +52,7 @@ import { useHomeMutations } from "./useHomeMutations";
 import { useConversationActions } from "./useConversationActions";
 import { useHomeLayoutController } from "./useHomeLayoutController";
 import { ComposerContainer } from "./ComposerContainer";
+import { sessionStateManager } from "./SessionStateManager";
 import { t } from "@/lib/i18n";
 import { StateManager } from "@/lib/state-manager";
 
@@ -110,6 +113,27 @@ function selectHomeAppState(state: HomeUiState): HomeAppState {
   delete s.mentionIndex;
   delete s.attachments;
   return s as HomeAppState;
+}
+
+function timestampMs(value: string | null | undefined) {
+  if (!value) {
+    return 0;
+  }
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function mergeReadMarkers(
+  persisted: Record<string, string> | null | undefined,
+  optimistic: Record<string, string>,
+) {
+  const merged = { ...(persisted ?? {}) };
+  for (const [runId, readAt] of Object.entries(optimistic)) {
+    if (timestampMs(readAt) >= timestampMs(merged[runId])) {
+      merged[runId] = readAt;
+    }
+  }
+  return merged;
 }
 
 function applyHomeBootstrap(bootstrap: HomeBootstrapPayload | null | undefined, notify = true) {
@@ -211,6 +235,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     setDraftProjectPath,
     setReadMarkers,
     setCollapsedProjectPaths,
+    setProjectExpanded,
     setRenameValue,
     setEditingMessageValue,
     setExpandedDirectMessageIds,
@@ -231,6 +256,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   const stateManager = useMemo(() => new EventStreamStateManager(initialEventState, {
     snapshotCacheScope: initialSnapshotScope,
     deferCacheHydration: true,
+    initialSnapshotSource: bootstrap?.initialEventState ? "server" : undefined,
   }), [initialEventState, initialSnapshotScope]);
   useEffect(() => {
     stateManager.hydrateFromCaches();
@@ -254,9 +280,23 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     },
     [selectedRunId, stateManager],
   );
+  const applyServerEventStreamState = useCallback<React.Dispatch<React.SetStateAction<EventStreamState>>>(
+    (action) => {
+      stateManager.setSnapshotCacheScope(selectedRunId);
+      stateManager.updateFromServer(action);
+    },
+    [selectedRunId, stateManager],
+  );
   const getSnapshotChecksum = useCallback(
     () => stateManager.getSnapshot().snapshotChecksum ?? null,
     [stateManager],
+  );
+  useEffect(() => {
+    sessionStateManager.ingestSnapshot(state, selectedRunId);
+  }, [selectedRunId, state]);
+  const effectiveReadMarkers = useMemo(
+    () => mergeReadMarkers(state.readMarkers, readMarkers),
+    [state.readMarkers, readMarkers],
   );
 
   // Refs
@@ -363,6 +403,15 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     apiKeys,
     workerCatalogData: workerCatalogQuery.data,
   });
+
+  // Auto-expand project when a session or draft project is selected
+  useEffect(() => {
+    if (selectedRunId && vm.selectedRun?.projectPath) {
+      setProjectExpanded(vm.selectedRun.projectPath, true);
+    } else if (!selectedRunId && draftProjectPath) {
+      setProjectExpanded(draftProjectPath, true);
+    }
+  }, [selectedRunId, vm.selectedRun?.projectPath, draftProjectPath, setProjectExpanded]);
 
   const {
     runs,
@@ -507,8 +556,10 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   // Lifecycle
   useHomeLifecycle({
     appUnlocked,
+    initialLastEventId: bootstrap?.initialLastEventId ?? null,
     setHasReceivedInitialEventStreamPayload,
     setState,
+    applyServerEventStreamState,
     setRuntimeErrors,
     routeReady,
     setRouteReady,
@@ -527,8 +578,6 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     setSelectedCliAgent,
     setSelectedModel,
     setSelectedEffort,
-    setReadMarkers,
-    readMarkers,
     collapsedProjectPaths,
     setCollapsedProjectPaths,
     leftSidebarWidth,
@@ -580,6 +629,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     configuredAllowedWorkerTypes,
     apiKeys,
     setApiKeys,
+    readMarkers: effectiveReadMarkers,
     setReadMarkers,
   });
 
@@ -611,6 +661,10 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   // stuck staring at "Reconnecting..." forever.
   const MAX_AUTO_RESUME_ATTEMPTS = 3;
   useEffect(() => {
+    cancelInactiveAutoResumeTimers(autoResumeStateRef.current, selectedRunId);
+  }, [selectedRunId]);
+
+  useEffect(() => {
     if (
       !selectedRunId || !selectedRun
       || (!isImplementationConversation && !isDirectConversation)
@@ -641,6 +695,14 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     // Backoff: 1s, 4s, 10s.
     const delay = [1000, 4000, 10000][state.attempts] ?? 10000;
     const timerId = setTimeout(() => {
+      if (!shouldFireAutoResumeTimer({
+        entries: autoResumeStateRef.current,
+        runId,
+        failureKey,
+        activeRunId: homeUiStateManager.getSnapshot().selectedRunId,
+      })) {
+        return;
+      }
       const current = autoResumeStateRef.current.get(runId);
       if (!current) return;
       autoResumeStateRef.current.set(runId, { ...current, attempts: current.attempts + 1, timerId: null });
@@ -726,7 +788,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   const isConversationStoppable = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
   const isStopConversationPending = stopSupervisor.isPending || stopWorker.isPending;
   const isStartingCurrentProjectConversation = runCommand.isPending
-    && !selectedRunId
+    && (!selectedRunId || selectedRunId === runCommand.variables?.requestedRunId)
     && (runCommand.variables?.projectPath ?? null) === (currentProjectScope ?? null);
   const isComposerSubmitting = isStartingCurrentProjectConversation || sendConversationMessage.isPending || sendQueuedMessageNow.isPending || promotePlanningConversation.isPending || isStopConversationPending;
   const busyMessageAction = parseBusyMessageAction(apiKeys.BUSY_MESSAGE_ACTION);
@@ -735,7 +797,8 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     || WORKER_OPTIONS.find((o) => o.value === autoSelectedWorkerType)?.label
     || "Direct worker";
   const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct";
-  const showDirectControlWorkingIndicator = isDirectConversation && hasBusyConversation;
+  const directConversationIsRunning = selectedRun?.mode === "direct" && selectedRun.status === "running";
+  const showDirectControlWorkingIndicator = isDirectConversation && (hasBusyConversation || directConversationIsRunning);
   const welcomeRepoName = resolveRepoName(currentProjectScope);
   const pairDeviceAvailabilityError = !authEnabled
     ? "Phone pairing requires OmniHarness auth. Set OMNIHARNESS_AUTH_PASSWORD or OMNIHARNESS_AUTH_PASSWORD_HASH and restart, then open Connect Phone again."
@@ -786,7 +849,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
       onSendConversationMessage={(content, attachments, busyAction) => {
         if (selectedRunId) sendConversationMessage.mutate({ runId: selectedRunId, content, attachments, busyAction });
       }}
-      onRunCommand={(content, attachments) => runCommand.mutate({ content, attachments, projectPath: currentProjectScope })}
+      onRunCommand={(content, attachments) => runCommand.mutate({ content, attachments, projectPath: currentProjectScope, requestedRunId: createClientRunId() })}
       onStopConversation={handleStopConversation}
     />
   );
@@ -819,7 +882,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     setSearchQuery,
     selectedRunId,
     messages: state.messages,
-    readMarkers,
+    readMarkers: effectiveReadMarkers,
     collapsedProjectPaths,
     visibleProjectSessionCounts,
     onProjectOpenChange: actions.handleProjectOpenChange,

@@ -15,6 +15,7 @@ import {
   updateDirectRunStatusFromWorkerOutput,
 } from "./direct-run-status";
 
+const EMPTY_IDLE_WORKER_OUTPUT_DIAGNOSTIC = "Worker is idle with no recorded output.";
 const MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC = "Worker is idle with no recorded output, and the bridge no longer has a live session for it.";
 
 function hasAgentOutput(agent: ReturnType<typeof normalizeAgentRecord>) {
@@ -51,6 +52,10 @@ function resolveSyncedRunState(run: typeof runs.$inferSelect, agent: ReturnType<
     return "awaiting_user";
   }
 
+  if (run.mode === "direct" && agent.state === "idle" && hasAgentOutput(agent)) {
+    return "done";
+  }
+
   if (
     ["stopped", "cancelled", "done", "completed"].includes(agent.state)
     || (agent.state === "idle" && agent.stopReason === "end_turn" && hasAgentOutput(agent))
@@ -85,6 +90,10 @@ async function resolvePersistedRunState(run: typeof runs.$inferSelect, worker: t
 async function isEmptyIdlePersistedWorker(worker: typeof workers.$inferSelect) {
   const status = worker.status.trim().toLowerCase().split(":")[0]?.trim() ?? "";
   return status === "idle" && !(await hasPersistedWorkerOutput(worker));
+}
+
+function isIdleLiveAgentWithoutOutput(agent: ReturnType<typeof normalizeAgentRecord>) {
+  return agent.state === "idle" && !hasAgentOutput(agent);
 }
 
 function isAgentBusyRunFailure(run: typeof runs.$inferSelect) {
@@ -190,6 +199,17 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
 
       for (const implementationWorker of implementationWorkers) {
         const implementationAgent = agents.find((candidate) => candidate.name === implementationWorker.id);
+        const cancelledWorkerHasMatchingLiveSession = Boolean(
+          implementationAgent
+          && implementationWorker.bridgeSessionId
+          && implementationWorker.bridgeSessionMode
+          && implementationAgent.sessionId === implementationWorker.bridgeSessionId
+          && implementationAgent.sessionMode === implementationWorker.bridgeSessionMode,
+        );
+        if (isCancelledWorkerStatus(implementationWorker.status)
+          && !cancelledWorkerHasMatchingLiveSession) {
+          continue;
+        }
         if (!implementationAgent || !isCleanLiveAgent(implementationAgent) || !isActiveLiveAgent(implementationAgent)) {
           continue;
         }
@@ -219,17 +239,6 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
           startSupervisorRun(run.id);
         }
         continue;
-      }
-
-      if (!options.selectedRunId || options.selectedRunId === run.id) {
-        const recoveryResult = await reconcileRunRecovery({
-          runId: run.id,
-          liveAgents: agents,
-          source: "conversation-sync",
-        });
-        if (recoveryResult.action !== "none" && recoveryResult.action !== "wait_for_backoff") {
-          continue;
-        }
       }
 
       if (!staleImplementationTransientFailure) {
@@ -290,6 +299,23 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       continue;
     }
 
+    if (
+      run.mode === "direct"
+      && worker.status.trim().toLowerCase().split(":")[0]?.trim() === "idle"
+      && isIdleLiveAgentWithoutOutput(agent)
+    ) {
+      await db.update(workers).set({
+        status: "error",
+        cwd: agent.cwd || worker.cwd,
+        currentText: agent.currentText,
+        lastText: agent.lastText,
+        outputLog: EMPTY_IDLE_WORKER_OUTPUT_DIAGNOSTIC,
+        updatedAt: new Date(),
+      }).where(eq(workers.id, worker.id));
+      await persistRunFailure(run.id, new Error(EMPTY_IDLE_WORKER_OUTPUT_DIAGNOSTIC));
+      continue;
+    }
+
     await writeWorkerOutputEntries(run.id, worker.id, agent.outputEntries);
     await db.update(workers).set({
       status: agent.state,
@@ -317,7 +343,7 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       continue;
     }
 
-    if (nextRunState === "awaiting_user") {
+    if (run.mode === "direct" && (nextRunState === "awaiting_user" || nextRunState === "done")) {
       await updateDirectRunStatusFromWorkerOutput({
         runId: run.id,
         workerId: worker.id,
@@ -395,7 +421,7 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       continue;
     }
 
-    if (nextRunState === "awaiting_user") {
+    if (run.mode === "direct" && (nextRunState === "awaiting_user" || nextRunState === "done")) {
       await updateDirectRunStatusFromWorkerOutput({
         runId: run.id,
         workerId: worker.id,

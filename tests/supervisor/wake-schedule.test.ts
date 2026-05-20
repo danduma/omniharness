@@ -2,7 +2,27 @@ import { randomUUID } from "crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { plans, runs, supervisorScheduledWakes } from "@/server/db/schema";
+import {
+  clarifications,
+  conversationReadMarkers,
+  creditEvents,
+  executionEvents,
+  messages,
+  planItems,
+  planningReviewFindings,
+  planningReviewRounds,
+  planningReviewRuns,
+  processSessions,
+  queuedConversationMessages,
+  recoveryIncidents,
+  supervisorInterventions,
+  supervisorScheduledWakes,
+  workerAssignments,
+  workerCounters,
+  workers,
+  plans,
+  runs,
+} from "@/server/db/schema";
 import {
   cancelDurableSupervisorWake,
   claimDueDurableSupervisorWake,
@@ -40,8 +60,24 @@ describe("durable supervisor wake schedule", () => {
     vi.useFakeTimers();
     vi.setSystemTime(baseNow);
     resetDurableSupervisorWakeSchedulerForTests();
+    await db.delete(planningReviewFindings);
+    await db.delete(planningReviewRounds);
+    await db.delete(planningReviewRuns);
     await db.delete(supervisorScheduledWakes);
+    await db.delete(supervisorInterventions);
+    await db.delete(executionEvents);
+    await db.delete(workerAssignments);
+    await db.delete(clarifications);
+    await db.delete(recoveryIncidents);
+    await db.delete(queuedConversationMessages);
+    await db.delete(messages);
+    await db.delete(processSessions);
+    await db.delete(creditEvents);
+    await db.delete(workers);
+    await db.delete(workerCounters);
+    await db.delete(conversationReadMarkers);
     await db.delete(runs);
+    await db.delete(planItems);
     await db.delete(plans);
   });
 
@@ -157,6 +193,25 @@ describe("durable supervisor wake schedule", () => {
       runId,
       reason: "quota_wait",
     });
+    expect(await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get()).toBeUndefined();
+  });
+
+  it("atomically claims a due durable wake once under concurrent claimers", async () => {
+    const runId = await insertRun();
+    await scheduleDurableSupervisorWakeAt({
+      runId,
+      wakeAt: new Date(baseNow.getTime()),
+      reason: "quota_wait",
+    });
+
+    const [first, second] = await Promise.all([
+      claimDueDurableSupervisorWake(runId, baseNow.getTime()),
+      claimDueDurableSupervisorWake(runId, baseNow.getTime()),
+    ]);
+
+    const claimed = [first, second].filter(Boolean);
+    expect(claimed).toHaveLength(1);
+    expect(claimed[0]).toMatchObject({ runId, reason: "quota_wait" });
     expect(await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get()).toBeUndefined();
   });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AppRequestError } from "@/lib/app-errors";
-import { LiveEventConnectionManager } from "@/app/home/LiveEventConnectionManager";
+import { buildEventStreamUrl, LiveEventConnectionManager } from "@/app/home/LiveEventConnectionManager";
 import type { EventStreamState } from "@/app/home/types";
 
 function createState(id: string): EventStreamState {
@@ -24,6 +24,14 @@ function createState(id: string): EventStreamState {
     executionEvents: [],
     supervisorInterventions: [],
     frontendErrors: [],
+  };
+}
+
+function createWorkerEntriesNotifier() {
+  return {
+    onKnownSeqs: vi.fn(),
+    onStreamResync: vi.fn(),
+    onWakeUp: vi.fn(),
   };
 }
 
@@ -55,6 +63,26 @@ class MockEventSource {
 }
 
 describe("LiveEventConnectionManager", () => {
+  it("includes the snapshot anchor when opening the event stream", () => {
+    expect(buildEventStreamUrl("run-1", "42")).toBe("/api/events?runId=run-1&lastEventId=42");
+
+    MockEventSource.instances = [];
+    const manager = new LiveEventConnectionManager({
+      selectedRunId: "run-1",
+      initialLastEventId: "42",
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestJson: vi.fn().mockResolvedValue(createState("persisted-initial")),
+      applyUpdate: vi.fn(),
+      reportError: vi.fn(),
+    });
+
+    manager.start();
+
+    expect(MockEventSource.instances[0]?.url).toBe("/api/events?runId=run-1&lastEventId=42");
+
+    manager.stop();
+  });
+
   it("polls the persisted snapshot endpoint without reporting transient connectivity loss", async () => {
     vi.useFakeTimers();
     MockEventSource.instances = [];
@@ -154,6 +182,53 @@ describe("LiveEventConnectionManager", () => {
 
     manager.stop();
     vi.useRealTimers();
+  });
+
+  it("uses snapshot worker seq hints to recover missed worker entry wake-ups", async () => {
+    vi.useFakeTimers();
+    MockEventSource.instances = [];
+    const workerEntries = createWorkerEntriesNotifier();
+    const requestJson = vi.fn().mockResolvedValue(createState("persisted-initial"));
+    const manager = new LiveEventConnectionManager({
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestJson,
+      applyUpdate: vi.fn(),
+      reportError: vi.fn(),
+      workerEntries,
+      fallbackCooldownMs: 0,
+    });
+
+    manager.start();
+    MockEventSource.instances[0]?.emit("update", {
+      ...createState("stream-update"),
+      workerEntrySeqs: { "worker-1": 7 },
+    });
+
+    expect(workerEntries.onKnownSeqs).toHaveBeenCalledWith({ "worker-1": 7 });
+
+    manager.stop();
+    vi.useRealTimers();
+  });
+
+  it("routes worker entry wake-ups and resync controls through the worker stream manager", () => {
+    MockEventSource.instances = [];
+    const workerEntries = createWorkerEntriesNotifier();
+    const manager = new LiveEventConnectionManager({
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestJson: vi.fn().mockResolvedValue(createState("persisted-initial")),
+      applyUpdate: vi.fn(),
+      reportError: vi.fn(),
+      workerEntries,
+    });
+
+    manager.start();
+    MockEventSource.instances[0]?.emit("worker.entry_appended", { workerId: "worker-1", seq: 3 });
+    MockEventSource.instances[0]?.emit("stream.resync_required", { reason: "test" });
+
+    expect(workerEntries.onWakeUp).toHaveBeenCalledWith({ workerId: "worker-1", seq: 3 });
+    expect(workerEntries.onStreamResync).toHaveBeenCalledTimes(1);
+
+    manager.stop();
   });
 
   it("stops fallback polling when the event stream reconnects without a changed payload", async () => {

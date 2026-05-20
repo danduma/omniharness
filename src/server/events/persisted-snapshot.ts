@@ -8,8 +8,10 @@ import {
   planItems,
   plans,
   queuedConversationMessages,
+  conversationReadMarkers,
   recoveryIncidents,
   runs,
+  processSessions,
   supervisorInterventions,
   workers,
 } from "@/server/db/schema";
@@ -17,10 +19,13 @@ import { serializeMessageRecord } from "@/server/conversations/message-records";
 import { isTerminalRunStatus } from "@/lib/run-status";
 import type { EventStreamState } from "@/app/home/types";
 import { normalizeChatAttachments } from "@/lib/chat-attachments";
-import { readWorkerEntriesSince } from "@/server/workers/output-store";
+import { readWorkerLatestSeq } from "@/server/workers/output-store";
 import type { BusyMessageAction } from "@/app/home/busy-message-behavior";
 import type { ConversationModeOption } from "@/components/ConversationModePicker";
 import { withEventPayloadChecksum } from "@/server/events/payload-checksum";
+import { buildAwaitingUserQuestionInvariantErrors } from "@/server/events/lifecycle-invariants";
+import { serializeSessionRecord } from "@/server/session-providers/session-records";
+import { reconcileOrphanedProcessSessions } from "@/server/session-providers/process-store";
 
 const EXECUTION_EVENT_LIMIT = 100;
 const WORKER_INITIAL_PROMPT_PREVIEW_LIMIT = 1_000;
@@ -120,6 +125,7 @@ function compactWorkerRecord(worker: CompactWorkerRecord) {
 function serializeRunRecord(run: typeof runs.$inferSelect) {
   return {
     ...run,
+    sessionType: run.sessionType === "process" ? "process" as const : "omni" as const,
     mode: run.mode as ConversationModeOption | null,
     createdAt: run.createdAt.toISOString(),
     updatedAt: run.updatedAt?.toISOString() ?? null,
@@ -216,9 +222,10 @@ function serializeQueuedConversationMessage(record: typeof queuedConversationMes
 }
 
 export async function buildPersistedEventPayload(options: EventPayloadOptions = {}): Promise<EventStreamState> {
+  await reconcileOrphanedProcessSessions();
   const selectedRunId = options.selectedRunId?.trim() || null;
-  const allPlans = await db.select().from(plans).orderBy(desc(plans.createdAt));
-  const allRuns = await db.select().from(runs).where(isNull(runs.archivedAt)).orderBy(desc(runs.createdAt));
+  const allPlans = await db.select().from(plans).orderBy(desc(plans.createdAt), desc(plans.id));
+  const allRuns = await db.select().from(runs).where(isNull(runs.archivedAt)).orderBy(desc(runs.createdAt), desc(runs.id));
   const selectedRun = selectedRunId ? allRuns.find((run) => run.id === selectedRunId) ?? null : null;
   const selectedPlanId = selectedRun?.planId ?? null;
   const transcriptRunIds = selectedRunId
@@ -247,25 +254,27 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
     allSupervisorInterventions,
     allQueuedMessages,
     allRecoveryIncidents,
+    allProcessSessions,
+    allReadMarkers,
   ] = await Promise.all([
     selectedRunId
-      ? db.select().from(messages).where(inArray(messages.runId, transcriptRunIds)).orderBy(asc(messages.createdAt))
+      ? db.select().from(messages).where(inArray(messages.runId, transcriptRunIds)).orderBy(asc(messages.createdAt), asc(messages.id))
       : [],
     db.select().from(accounts),
     selectedRunId
-      ? db.select(WORKER_SNAPSHOT_COLUMNS).from(workers).where(eq(workers.runId, selectedRunId))
-      : db.select(WORKER_SNAPSHOT_COLUMNS).from(workers),
+      ? db.select(WORKER_SNAPSHOT_COLUMNS).from(workers).where(eq(workers.runId, selectedRunId)).orderBy(asc(workers.createdAt), asc(workers.id))
+      : db.select(WORKER_SNAPSHOT_COLUMNS).from(workers).orderBy(asc(workers.createdAt), asc(workers.id)),
     selectedPlanId
       ? db.select().from(planItems).where(eq(planItems.planId, selectedPlanId))
       : [],
     selectedRunId
-      ? db.select().from(clarifications).where(eq(clarifications.runId, selectedRunId)).orderBy(desc(clarifications.createdAt))
+      ? db.select().from(clarifications).where(eq(clarifications.runId, selectedRunId)).orderBy(desc(clarifications.createdAt), desc(clarifications.id))
       : [],
     selectedRunId
-      ? db.select().from(executionEvents).where(eq(executionEvents.runId, selectedRunId)).orderBy(desc(executionEvents.createdAt)).limit(EXECUTION_EVENT_LIMIT)
+      ? db.select().from(executionEvents).where(eq(executionEvents.runId, selectedRunId)).orderBy(desc(executionEvents.createdAt), desc(executionEvents.id)).limit(EXECUTION_EVENT_LIMIT)
       : [],
     selectedRunId
-      ? db.select().from(supervisorInterventions).where(eq(supervisorInterventions.runId, selectedRunId)).orderBy(desc(supervisorInterventions.createdAt))
+      ? db.select().from(supervisorInterventions).where(eq(supervisorInterventions.runId, selectedRunId)).orderBy(desc(supervisorInterventions.createdAt), desc(supervisorInterventions.id))
       : [],
     selectedRunId
       ? db.select().from(queuedConversationMessages)
@@ -273,32 +282,59 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
           eq(queuedConversationMessages.runId, selectedRunId),
           inArray(queuedConversationMessages.status, ["pending", "delivering"]),
         ))
-        .orderBy(desc(queuedConversationMessages.createdAt))
+        .orderBy(desc(queuedConversationMessages.createdAt), desc(queuedConversationMessages.id))
       : [],
     selectedRunId
       ? db.select().from(recoveryIncidents)
         .where(eq(recoveryIncidents.runId, selectedRunId))
-        .orderBy(desc(recoveryIncidents.updatedAt))
+        .orderBy(desc(recoveryIncidents.updatedAt), desc(recoveryIncidents.id))
         .limit(20)
       : [],
+    db.select().from(processSessions),
+    db.select().from(conversationReadMarkers).where(allRuns.length > 0 ? inArray(conversationReadMarkers.runId, allRuns.map((run) => run.id)) : eq(conversationReadMarkers.runId, "__none__")),
   ]);
-  const selectedWorkerEntries = selectedRunId
-    ? Object.fromEntries(
-      await Promise.all(
-        allWorkers
-          .filter((worker) => worker.runId === selectedRunId)
-          .map(async (worker) => {
-            const { entries } = await readWorkerEntriesSince(selectedRunId, worker.id, 0);
-            return [worker.id, entries] as const;
-          }),
-      ),
+  const processSessionsByRunId = new Map(allProcessSessions.map((session) => [session.runId, session]));
+  const workersByRunId = new Map<string, typeof allWorkers[number]>();
+  for (const worker of allWorkers) {
+    if (!workersByRunId.has(worker.runId)) {
+      workersByRunId.set(worker.runId, worker);
+    }
+  }
+  const sessions = allRuns.map((run) => serializeSessionRecord({
+    run,
+    primaryWorker: workersByRunId.get(run.id) ?? null,
+    processSession: processSessionsByRunId.get(run.id) ?? null,
+  }));
+  const selectedWorkerEntryResults = selectedRunId
+    ? await Promise.all(
+      allWorkers
+        .filter((worker) => worker.runId === selectedRunId)
+        .map(async (worker) => {
+          const latestSeq = await readWorkerLatestSeq(selectedRunId, worker.id);
+          return { workerId: worker.id, latestSeq };
+        }),
     )
-    : {};
+    : [];
+  const selectedWorkerEntrySeqs = Object.fromEntries(
+    selectedWorkerEntryResults
+      .filter((result) => result.latestSeq > 0)
+      .map((result) => [result.workerId, result.latestSeq] as const),
+  );
+  const lifecycleErrors = buildAwaitingUserQuestionInvariantErrors({
+    runs: allRuns,
+    messages: msgs,
+    selectedRunId,
+  });
+  const readMarkers = Object.fromEntries(
+    allReadMarkers.map((marker) => [marker.runId, marker.lastReadAt.toISOString()]),
+  );
 
   return withEventPayloadChecksum({
     messages: msgs.map(serializeMessageRecord).filter((message): message is NonNullable<typeof message> => Boolean(message)),
+    readMarkers,
     plans: allPlans,
     runs: allRuns.map(serializeRunRecord),
+    sessions,
     accounts: allAccounts,
     agents: [],
     workers: allWorkers.map(compactWorkerRecord),
@@ -313,8 +349,12 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
     recoveryState: runIds && !isTerminalRunStatus(selectedRun?.status)
       ? deriveRecoveryState(allRecoveryIncidents)
       : null,
-    frontendErrors: [],
+    frontendErrors: lifecycleErrors,
     snapshotRunId: selectedRunId ?? null,
-    workerEntries: selectedWorkerEntries,
+    messageScope: {
+      runIds: transcriptRunIds,
+      complete: true,
+    },
+    workerEntrySeqs: selectedWorkerEntrySeqs,
   });
 }

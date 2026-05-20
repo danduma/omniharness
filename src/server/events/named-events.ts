@@ -27,7 +27,16 @@ export type SurfacedErrorCode =
   | "plan.review.failed"
   | "conversation.delete.foreign_key"
   | "conversation.delete.failed"
+  | "process.spawn.failed"
+  | "process.cwd.invalid"
+  | "process.stdin.closed"
+  | "process.stop.failed"
+  | "process.orphaned_after_restart"
   | "recovery.gave_up"
+  | "runtime.start_failed"
+  | "session.provider.unknown"
+  | "session.action.unsupported"
+  | "surface.bridge_failed"
   | "worker.spawn.failed"
   | "worker.failover.failed"
   | "codex_auth_missing"
@@ -39,6 +48,49 @@ export type FailoverStage = "selection" | "handoff" | "spawn";
 export type HandoffSource = "worker" | "synthetic";
 
 export type ErrorSurface = "toast" | "banner" | "log";
+
+export type RuntimeSurface = "web" | "electron" | "vscode" | "cli" | "test";
+
+export type RuntimeStopReason =
+  | "shutdown"
+  | "test_complete"
+  | "restart"
+  | "surface_closed"
+  | "error";
+
+export type RuntimeEvent =
+  | {
+      kind: "runtime.started";
+      surface: RuntimeSurface;
+      label: string;
+      startedAt: string;
+    }
+  | {
+      kind: "runtime.start_failed";
+      surface: RuntimeSurface;
+      label: string;
+      reason: string;
+    }
+  | {
+      kind: "runtime.stopped";
+      surface: RuntimeSurface;
+      reason: RuntimeStopReason;
+    }
+  | {
+      kind: "surface.connected";
+      surface: RuntimeSurface;
+      label: string;
+    }
+  | {
+      kind: "surface.disconnected";
+      surface: RuntimeSurface;
+      reason: string;
+    }
+  | {
+      kind: "surface.bridge_failed";
+      surface: RuntimeSurface;
+      reason: string;
+    };
 
 export type WorkerEvent =
   | { kind: "worker.spawned"; runId: string; workerId: string; workerType: string }
@@ -89,7 +141,14 @@ export type SupervisorStopReason =
   | "explicit";
 
 export type SupervisorEvent =
-  | { kind: "supervisor.stopped"; runId: string; reason: SupervisorStopReason };
+  | { kind: "supervisor.stopped"; runId: string; reason: SupervisorStopReason }
+  | {
+      kind: "supervisor.wake_skipped";
+      runId: string;
+      reason: "in_flight" | "lease_blocked" | "quota_wait_future_wake" | "run_not_runnable";
+    }
+  | { kind: "supervisor.wake_scheduled"; runId: string; delayMs: number; source: "volatile" | "lease_retry" }
+  | { kind: "supervisor.durable_wake_claimed"; runId: string; reason: string; source: string | null };
 
 export type PlanEvent =
   | { kind: "plan.ready"; runId: string; planId: string | null }
@@ -105,8 +164,21 @@ export type RecoveryEvent =
 
 export type ConversationEvent =
   | { kind: "conversation.awaiting_user"; runId: string; workerId?: string; reason: "worker_requested_input" }
+  | { kind: "conversation.read"; runId: string; lastReadAt: string }
   | { kind: "conversation.deleted"; runId: string }
   | { kind: "conversation.delete_failed"; runId: string; blockingTable: string | null };
+
+export type SessionEvent =
+  | { kind: "session.created"; runId: string; sessionType: string; actorIds: string[] }
+  | { kind: "session.starting"; runId: string; sessionType: string }
+  | { kind: "session.status"; runId: string; sessionType: string; prev: string | null; next: string; reason?: string }
+  | { kind: "session.input.accepted"; runId: string; targetActorId: string; inputId: string }
+  | { kind: "session.input.delivered"; runId: string; targetActorId: string; inputId: string }
+  | { kind: "session.input.refused"; runId: string; sessionType: string; code: string; reason: string }
+  | { kind: "session.action.refused"; runId: string; sessionType: string; action: string; code: string; reason: string }
+  | { kind: "session.stopped"; runId: string; sessionType: string; reason: string }
+  | { kind: "process.spawned"; runId: string; workerId: string; pid: number; commandPreview: string }
+  | { kind: "process.exited"; runId: string; workerId: string; exitCode: number | null; signal: string | null };
 
 export type ErrorSurfacedEvent = {
   kind: "error.surfaced";
@@ -125,11 +197,13 @@ export type StreamControlEvent = {
 };
 
 export type NamedEvent =
+  | RuntimeEvent
   | WorkerEvent
   | SupervisorEvent
   | PlanEvent
   | RecoveryEvent
   | ConversationEvent
+  | SessionEvent
   | ErrorSurfacedEvent
   | StreamControlEvent;
 
@@ -161,12 +235,12 @@ function pickRunId(event: NamedEvent | SnapshotMarker): string | null {
   return null;
 }
 
-function append(event: NamedEvent | SnapshotMarker): BufferedEntry {
+function append(event: NamedEvent | SnapshotMarker, runIdOverride?: string | null): BufferedEntry {
   cursor += 1;
   const entry = {
     id: cursor,
     emittedAt: Date.now(),
-    runId: pickRunId(event),
+    runId: runIdOverride ?? pickRunId(event),
     event,
   } as BufferedEntry;
   ring.push(entry);
@@ -204,7 +278,7 @@ export function recordSnapshotMarker(
   version: number,
   runId: string | null = null,
 ): BufferedEntry {
-  return append({ kind: "snapshot.marker", version });
+  return append({ kind: "snapshot.marker", version }, runId);
 }
 
 // ---------------------------------------------------------------------------

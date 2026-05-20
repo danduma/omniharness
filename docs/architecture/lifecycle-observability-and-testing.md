@@ -2,6 +2,16 @@
 
 > What we keep getting wrong, why our tests don't catch it, and the discipline that fixes it.
 
+Related: `docs/architecture/hot-path-responsiveness-and-resource-leaks.md`
+documents the May 2026 reload/worker-streaming latency incident and the
+resource-ownership rules for keeping page bootstrap, SSE, and worker stream
+paths responsive while agents are running.
+
+Related: `docs/architecture/timing-determinism-audit.md` records the May 20,
+2026 audit of race-prone frontend and control-plane patterns: cached snapshots
+pretending to be authoritative, stale async callbacks, timer-owned actions,
+timestamp-only ordering, and silent wake/lease contention.
+
 ## Why this document exists
 
 Over a single afternoon we hit three production-class bugs that the existing test
@@ -26,6 +36,23 @@ These are not unrelated bugs. They share a single root cause:
 
 This document records what we learned and the rules we now follow so that this
 class of bug stops shipping.
+
+Related incident note: `docs/architecture/supervisor-worker-switching-incident.md`
+records the worker-switching failure from session `690d2fa9f2a7`, where
+`awaiting_user` was treated as runnable, Gemini workers were live but persisted
+as `starting`, and duplicate continuation workers were spawned.
+
+Related direct-control note:
+`docs/architecture/direct-control-session-regressions.md` records the
+`ffb912d4d5d7`, `937e642f3535`, and `734cc38f4d7f` regressions around
+lifecycle noise, stale queued send-now state, missing unified-stream worker
+output, and permanent "Thinking..." indicators.
+
+Related state-staleness note:
+`docs/architecture/state-staleness-and-session-lifecycle-lessons.md` records
+the `0785684884fa`, `14260d2a2df0`, `ecea142f7344`, and `18fc406457f3`
+regressions around stale SSE/cache payloads, queued-message races, direct-run
+status classification, unread markers, and worker-stream loading.
 
 ---
 
@@ -207,6 +234,39 @@ Every harness client starts by calling `GET /api/events?snapshot=1` for state
 truth, then opens the SSE stream with `Last-Event-ID` set to the id at
 snapshot time. This is the canonical pattern. The UI should do this too;
 right now it doesn't, which is a latent bug.
+
+### Rule 9: snapshots declare scoped completeness
+
+An event snapshot may be a full replacement for a selected run's transcript,
+or it may be only a partial update. The payload must say which one it is.
+
+`messageScope` carries the contract:
+
+- `runIds`: the conversation run ids whose message set the payload is talking
+  about. For promoted implementation runs this includes the parent planning
+  run plus the selected implementation run.
+- `complete`: `true` means the payload contains the complete message set for
+  those run ids, so absent messages may be removed locally. `false` or a
+  missing scope means the payload is additive and must not erase durable
+  messages already known to the client.
+
+Never infer completeness from "this snapshot contains a message for that run."
+That was the race behind the disappearing preflight confirmation: a partial
+live update containing only the user checkpoint looked authoritative enough to
+erase the supervisor confirmation from frontend state.
+
+### Rule 10: `awaiting_user` implies a visible question
+
+A selected run with `status="awaiting_user"` must include a visible supervisor
+message with kind `clarification` or `implementation_confirmation`. The
+transition that creates this state must persist the clarification row, the
+supervisor message, the run status, and the lifecycle event before notifying
+SSE clients.
+
+If a snapshot violates this invariant, it surfaces a `Lifecycle` frontend
+error instead of leaving the UI stuck on "Loading Omni's question". The error
+is not a substitute for the invariant; it is the safety rail that makes any
+future violation observable.
 
 ---
 

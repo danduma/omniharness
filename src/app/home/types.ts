@@ -7,10 +7,36 @@ import type { BusyMessageAction } from "./busy-message-behavior";
 
 export type { ConversationModeOption };
 
+export type SessionType = "omni" | "process";
+export type SessionCapability =
+  | "send_input"
+  | "stop"
+  | "retry_from_message"
+  | "edit_message"
+  | "fork_session"
+  | "fork_message"
+  | "queue_input"
+  | "approve_permission"
+  | "open_project_file"
+  | "use_git_workspace";
+
+export type SessionRecord = {
+  id: string;
+  runId: string;
+  sessionType: SessionType;
+  status: string;
+  capabilities: SessionCapability[];
+  primaryActorId: string | null;
+  title: string | null;
+  projectPath: string | null;
+  providerMetadata?: Record<string, unknown> | null;
+};
+
 export type PlanRecord = { id: string; path: string };
 export type RunRecord = {
   id: string;
   planId: string;
+  sessionType?: SessionType | null;
   mode?: ConversationModeOption | null;
   status: string;
   createdAt: string;
@@ -277,8 +303,10 @@ export type AuthSessionResponse = {
 };
 export type EventStreamState = {
   messages: MessageRecord[];
+  readMarkers?: Record<string, string>;
   plans: PlanRecord[];
   runs: RunRecord[];
+  sessions?: SessionRecord[];
   accounts: unknown[];
   agents: AgentSnapshot[];
   workers: ConversationWorkerRecord[];
@@ -295,6 +323,12 @@ export type EventStreamState = {
   frontendErrors?: AppErrorDescriptor[];
   snapshotRunId?: string | null;
   snapshotChecksum?: string;
+  snapshotSource?: "cache" | "optimistic" | "server";
+  messageScope?: {
+    runIds: string[];
+    complete: boolean;
+  };
+  workerEntrySeqs?: Record<string, number>;
   workerEntries?: Record<string, WorkerEntry[]>;
 };
 export type SettingsTab = "general" | "models" | "credentials" | "agents" | "runtime" | "memory";

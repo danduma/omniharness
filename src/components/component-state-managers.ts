@@ -61,7 +61,19 @@ export type PairingState<TPairing, TStatus> = {
   nowMs: number;
 };
 
-export const pairDeviceManager = new class extends StateManager<PairingState<unknown, string>> {
+function pairingIdentifier(pairing: unknown) {
+  if (!pairing || typeof pairing !== "object") {
+    return null;
+  }
+  const candidate = pairing as { pairingId?: unknown; id?: unknown };
+  return typeof candidate.pairingId === "string"
+    ? candidate.pairingId
+    : typeof candidate.id === "string"
+      ? candidate.id
+      : null;
+}
+
+export class PairDeviceStateManager extends StateManager<PairingState<unknown, string>> {
   constructor() {
     super({
       pairing: null,
@@ -75,6 +87,17 @@ export const pairDeviceManager = new class extends StateManager<PairingState<unk
     });
   }
 
+  patchIfCurrentPairing = (
+    pairingId: string,
+    patch: Partial<PairingState<unknown, string>> | ((current: PairingState<unknown, string>) => Partial<PairingState<unknown, string>>),
+  ) => this.patch((current) => (
+    pairingIdentifier(current.pairing) === pairingId
+      ? typeof patch === "function"
+        ? patch(current)
+        : patch
+      : {}
+  ));
+
   reset = () => this.patch({
     pairing: null,
     pairingStatus: null,
@@ -83,7 +106,9 @@ export const pairDeviceManager = new class extends StateManager<PairingState<unk
     error: null,
     copyNotice: null,
   });
-}();
+}
+
+export const pairDeviceManager = new PairDeviceStateManager();
 
 export const planningArtifactsManager = new class extends StateManager<{ selectedPlanPath: string | null }> {
   constructor() {
@@ -152,6 +177,35 @@ export const conversationMainManager = new class extends StateManager<{
       : { ...current, hasOutputBelow }
   ));
 }();
+
+export class ConversationCopyNoticeManager extends StateManager<{ copiedMessageId: string | null }> {
+  private clearTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor() {
+    super({ copiedMessageId: null });
+  }
+
+  showCopiedMessage = (messageId: string) => {
+    if (this.clearTimer) {
+      clearTimeout(this.clearTimer);
+    }
+
+    this.setKey("copiedMessageId", messageId);
+    this.clearTimer = setTimeout(() => {
+      this.clearCopiedMessage(messageId);
+    }, 1_800);
+  };
+
+  clearCopiedMessage = (messageId: string) => {
+    if (this.getSnapshot().copiedMessageId !== messageId) {
+      return;
+    }
+
+    this.setKey("copiedMessageId", null);
+  };
+}
+
+export const conversationCopyNoticeManager = new ConversationCopyNoticeManager();
 
 export const workersSidebarManager = new class extends StateManager<{
   activeTab: "active" | "finished";

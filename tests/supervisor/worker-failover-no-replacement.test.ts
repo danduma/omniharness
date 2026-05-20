@@ -35,12 +35,24 @@ describe("worker failover when no replacement is available", () => {
 
     const { db } = await import("@/server/db");
     const schema = await import("@/server/db/schema");
+    await db.delete(schema.planningReviewFindings);
+    await db.delete(schema.planningReviewRounds);
+    await db.delete(schema.planningReviewRuns);
     await db.delete(schema.executionEvents);
     await db.delete(schema.supervisorScheduledWakes);
+    await db.delete(schema.supervisorInterventions);
+    await db.delete(schema.workerAssignments);
+    await db.delete(schema.clarifications);
     await db.delete(schema.recoveryIncidents);
+    await db.delete(schema.queuedConversationMessages);
+    await db.delete(schema.messages);
+    await db.delete(schema.processSessions);
+    await db.delete(schema.creditEvents);
     await db.delete(schema.workers);
     await db.delete(schema.workerCounters);
+    await db.delete(schema.conversationReadMarkers);
     await db.delete(schema.runs);
+    await db.delete(schema.planItems);
     await db.delete(schema.plans);
     const { __resetNamedEventsForTests } = await import("@/server/events/named-events");
     __resetNamedEventsForTests();
@@ -48,7 +60,7 @@ describe("worker failover when no replacement is available", () => {
     resetDurableSupervisorWakeSchedulerForTests();
   });
 
-  it("parks the run in quota_waiting and does not emit failover events", async () => {
+  it("parks the run in quota_waiting and preserves replacement selection failure detail", async () => {
     const { db } = await import("@/server/db");
     const schema = await import("@/server/db/schema");
     const planId = randomUUID();
@@ -109,6 +121,8 @@ describe("worker failover when no replacement is available", () => {
     });
 
     expect(result.state).toBe("no_replacement");
+    expect(result.reason).toContain("Worker availability check failed:");
+    expect(result.reason).toContain("No spawnable worker is available.");
 
     const run = await db.select().from(schema.runs).where(eq(schema.runs.id, runId)).get();
     expect(run?.status).toBe("quota_waiting");
@@ -118,5 +132,18 @@ describe("worker failover when no replacement is available", () => {
     expect(kinds).not.toContain("worker.failover_started");
     expect(kinds).not.toContain("worker.failover_completed");
     expect(kinds).not.toContain("worker.handoff_emitted");
+    expect(__getRingForTests().map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "worker.failover_failed",
+      runId,
+      outgoingWorkerId: workerId,
+      stage: "selection",
+      reason: expect.stringContaining("No spawnable worker is available."),
+    }));
+    const events = await db.select().from(schema.executionEvents).where(eq(schema.executionEvents.runId, runId));
+    expect(events).toContainEqual(expect.objectContaining({
+      workerId,
+      eventType: "worker_failover_failed",
+      details: expect.stringContaining('"stage":"selection"'),
+    }));
   });
 });
