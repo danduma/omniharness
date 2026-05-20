@@ -35,11 +35,12 @@ export function QueuedMessageDrawer({
       )}
     >
       <div className="mb-1.5 text-xs font-semibold text-muted-foreground">
-        Queued messages
+        {t("queued.message.drawerTitle")}
       </div>
       <div className="max-h-32 space-y-1 overflow-y-auto">
         {visibleMessages.map((message) => {
           const isCancelling = cancellingMessageIds.has(message.id);
+          const isDelivering = message.status === "delivering";
           return (
             <div
               key={message.id}
@@ -60,7 +61,7 @@ export function QueuedMessageDrawer({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  disabled={isCancelling || message.status === "delivering"}
+                  disabled={isCancelling || isDelivering}
                   onClick={() => onEdit(message)}
                   className="h-6 w-6 rounded-full text-muted-foreground hover:text-foreground"
                   aria-label={t("queued.message.editAria")}
@@ -72,7 +73,7 @@ export function QueuedMessageDrawer({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  disabled={isCancelling || message.status === "delivering"}
+                  disabled={isCancelling || isDelivering}
                   onClick={() => onSendNow(message.id)}
                   className="h-6 w-6 rounded-full text-muted-foreground hover:text-foreground"
                   aria-label={t("queued.message.sendNowAria")}
@@ -84,7 +85,7 @@ export function QueuedMessageDrawer({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  disabled={isCancelling || message.status === "delivering"}
+                  disabled={isCancelling}
                   onClick={() => onCancel(message.id)}
                   className="h-6 w-6 rounded-full text-muted-foreground hover:text-foreground"
                   aria-label={t("queued.message.cancelAria")}

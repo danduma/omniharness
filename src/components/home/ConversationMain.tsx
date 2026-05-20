@@ -1,7 +1,7 @@
 import type React from "react";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo } from "react";
-import { ArrowDown, ArrowLeftRight, Blocks, Check, ChevronDown, CirclePlay, CircleStop, FolderGit2, GitBranch, Pencil, RotateCcw, Route } from "lucide-react";
+import { ArrowDown, ArrowLeftRight, Blocks, Check, ChevronDown, CirclePlay, CircleStop, Copy, FolderGit2, GitBranch, Pencil, RotateCcw, Route } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -17,7 +17,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import type { TerminalUserMessage } from "@/components/Terminal";
 import { PlanningArtifactsPanel } from "@/components/PlanningArtifactsPanel";
-import { conversationMainManager } from "@/components/component-state-managers";
+import { conversationCopyNoticeManager, conversationMainManager } from "@/components/component-state-managers";
 import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
 import { extractLatestPlainTextTurn } from "@/lib/agent-output";
 import { shouldShowPlanningTerminalActivity } from "@/lib/planning-output";
@@ -30,7 +30,7 @@ import type { ProjectFileReference } from "@/lib/project-file-links";
 import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "@/app/home/GitWorkspaceManager";
 import { preflightConfirmationActionsManager } from "@/app/home/PreflightConfirmationActionsManager";
 import { useWorkerStream } from "@/app/home/WorkerEntriesManager";
-import { shouldShowDirectWorkerStreamInitialLoading } from "@/app/home/direct-worker-stream-loading";
+import { deriveConversationLoadState, shouldShowDirectConversationLoading } from "@/app/home/direct-worker-stream-loading";
 import { type PlanningReviewAgentSelection } from "@/server/planning/review-preferences";
 import { WORKER_TYPE_LABELS, type SupportedWorkerType } from "@/server/supervisor/worker-types";
 import type { WorkerEntry } from "@/server/workers/entries-types";
@@ -340,6 +340,7 @@ function WorkerOutputMessage({
               className="h-72"
               projectRoot={projectRoot}
               onOpenProjectFile={onOpenProjectFile}
+              scrollAnchorKey={message.id}
             />
           </div>
         </CollapsibleContent>
@@ -377,6 +378,7 @@ function PlannerOutputMessage({
       emptyState={null}
       projectRoot={projectRoot}
       onOpenProjectFile={onOpenProjectFile}
+      scrollAnchorKey={message.id}
     />
   );
 }
@@ -586,11 +588,13 @@ export function ConversationMain({
     unifiedWorkerStreamEnabled ? primaryConversationWorkerId : null,
     primaryConversationWorkerId ? initialWorkerEntries[primaryConversationWorkerId] ?? [] : [],
   );
-  const isDirectWorkerStreamInitialLoad = shouldShowDirectWorkerStreamInitialLoading({
+  const directConversationLoadState = deriveConversationLoadState({
+    snapshotLoaded: isSelectedConversationLoaded,
     unifiedWorkerStreamEnabled,
     primaryConversationWorkerId,
     streamState: directWorkerStream.state,
   });
+  const isDirectWorkerStreamLoading = shouldShowDirectConversationLoading(directConversationLoadState);
   const forkWorkspaceSelector = useMemo(() => {
     return (state: ReturnType<typeof gitWorkspaceManager.getSnapshot>) => {
       const dialog = state.activeDialog?.kind === "fork_message_worktree" || state.activeDialog?.kind === "fork_session_worktree"
@@ -630,9 +634,10 @@ export function ConversationMain({
       checkoutPath: suggestCheckoutPath(forkWorkspaceSnapshot.repoRoot, nextBranch),
     });
   }, [forkWorkspaceDialog, forkWorkspaceSnapshot, selectedRun?.title]);
-  const handleCopyDirectMessage = async (content: string) => {
+  const handleCopyDirectMessage = async (content: string, messageId: string) => {
     try {
       await navigator.clipboard.writeText(content);
+      conversationCopyNoticeManager.showCopiedMessage(messageId);
     } catch (error) {
       console.error("Copy message failed:", error);
     }
@@ -643,6 +648,14 @@ export function ConversationMain({
     if (!canRecoverUserMessage) {
       return [];
     }
+
+    const copyAction: UserInputMessageAction = {
+      label: t("conversation.message.copyAria"),
+      title: t("conversation.message.copyAria"),
+      icon: <Copy className="h-3.5 w-3.5" />,
+      onClick: () => void handleCopyDirectMessage(message.content, message.id),
+      feedback: "copy-message",
+    };
 
     const retryActions: UserInputMessageAction[] = [
       {
@@ -658,6 +671,7 @@ export function ConversationMain({
     }
 
     return [
+      copyAction,
       ...retryActions,
       {
         label: t("conversation.message.action.editInPlace"),
@@ -715,7 +729,7 @@ export function ConversationMain({
   <ScrollArea className="h-full" ref={scrollRef}>
     {selectedRunId ? (
       isDirectConversation ? (
-        <div className="mx-auto flex h-full w-full max-w-6xl flex-col gap-4 p-4 pb-24 sm:p-6 sm:pb-20">
+        <div className="omni-conversation-text-scale mx-auto flex w-full max-w-6xl flex-col gap-4 p-4 pb-24 sm:p-6 sm:pb-20">
           {!isSelectedConversationLoaded ? (
             <div
               className="flex flex-col items-center justify-center gap-3 pt-24 text-sm text-muted-foreground sm:pt-32"
@@ -738,7 +752,7 @@ export function ConversationMain({
                     ? directWorkerStream.entries
                     : undefined
                 }
-                allowUserMessageFallback={directWorkerStream.isLoaded}
+                allowUserMessageFallback
                 getUserMessageActions={getUserMessageActions}
                 editingUserMessageId={editingMessageId}
                 editingUserMessageValue={editingMessageValue}
@@ -748,11 +762,14 @@ export function ConversationMain({
                 onSaveEditedUserMessage={handleSaveEditedMessage}
                 variant="native"
                 textSizeScope="conversation"
+                conversationMessageTextSize
                 className="min-h-[32rem]"
                 showPendingAssistantIndicator={showDirectControlWorkingIndicator}
-                isLoading={isHydratingConversations || isDirectWorkerStreamInitialLoad}
+                isLoading={isHydratingConversations || isDirectWorkerStreamLoading}
                 projectRoot={projectRoot}
                 onOpenProjectFile={onOpenProjectFile}
+                scrollAnchorKey={selectedRunId}
+                summarizeWorkBlocks={isDirectConversation}
               />
             </DirectControlTerminalColumn>
           )}
@@ -868,6 +885,7 @@ export function ConversationMain({
                   </div>
                 ) : isUserMessage ? (
                   <UserInputMessage
+                    messageId={msg.id}
                     content={msg.content}
                     attachments={msg.attachments}
                     createdAt={msg.createdAt}

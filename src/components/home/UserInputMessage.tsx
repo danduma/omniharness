@@ -1,11 +1,12 @@
 import Image from "next/image";
 import type React from "react";
 import { Copy } from "lucide-react";
-import { attachmentImagePreviewManager } from "@/components/component-state-managers";
+import { attachmentImagePreviewManager, conversationCopyNoticeManager } from "@/components/component-state-managers";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { formatBytes, type ChatAttachment } from "@/lib/chat-attachments";
 import { cn } from "@/lib/utils";
-import { t } from "@/lib/i18n";
+import { t, useI18nSnapshot } from "@/lib/i18n";
+import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 
 export type UserInputMessageActionItem = {
   label: string;
@@ -22,15 +23,17 @@ export type UserInputMessageAction = {
   disabled?: boolean;
   onClick?: () => void;
   menuItems?: UserInputMessageActionItem[];
+  feedback?: "copy-message";
 };
 
 interface UserInputMessageProps {
+  messageId: string;
   content: string;
   attachments?: ChatAttachment[];
   createdAt?: string;
   isExpanded: boolean;
   onToggleExpanded: () => void;
-  onCopy?: (content: string) => void | Promise<void>;
+  onCopy?: (content: string, messageId: string) => void | Promise<void>;
   actions?: UserInputMessageAction[];
 }
 
@@ -48,6 +51,7 @@ function formatUserMessageTimestamp(value: string) {
 }
 
 export function UserInputMessage({
+  messageId,
   content,
   attachments = [],
   createdAt,
@@ -56,6 +60,8 @@ export function UserInputMessage({
   onCopy,
   actions = [],
 }: UserInputMessageProps) {
+  useI18nSnapshot();
+  const { copiedMessageId } = useManagerSnapshot(conversationCopyNoticeManager);
   const isLongMessage = content.length > 420 || content.split(/\r\n|\r|\n/).length > 6;
   const timestampLabel = createdAt ? formatUserMessageTimestamp(createdAt) : "";
   const attachmentUrl = (attachment: ChatAttachment) => attachment.previewUrl
@@ -134,15 +140,26 @@ export function UserInputMessage({
           <div className="mt-1.5 flex w-full items-center justify-end gap-2 pr-4 text-[13px] leading-none text-[#8a8b8e] dark:text-zinc-500">
             {timestampLabel ? <span>{timestampLabel}</span> : null}
             {onCopy ? (
-              <button
-                type="button"
-                aria-label={t("conversation.message.copyAria")}
-                title="Copy message"
-                onClick={() => void onCopy(content)}
-                className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <Copy className="h-4 w-4" />
-              </button>
+              <span className="relative inline-flex flex-col items-center">
+                <button
+                  type="button"
+                  aria-label={t("conversation.message.copyAria")}
+                  title={t("conversation.message.copyAria")}
+                  onClick={() => void onCopy(content, messageId)}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <Copy className="h-4 w-4" />
+                </button>
+                {copiedMessageId === messageId ? (
+                  <span
+                    role="status"
+                    aria-live="polite"
+                    className="pointer-events-none absolute top-full z-20 mt-1 whitespace-nowrap rounded-md border border-border/70 bg-popover px-2 py-1 text-[11px] font-medium leading-none text-popover-foreground shadow-sm"
+                  >
+                    {t("conversation.message.copiedNotice")}
+                  </span>
+                ) : null}
+              </span>
             ) : null}
             {actions.map((action) => (
               action.menuItems?.length ? (

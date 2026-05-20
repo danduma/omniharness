@@ -9,7 +9,7 @@ export function OmniHarnessMark({ className, imageClassName }: OmniHarnessMarkPr
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center justify-center rounded-full bg-[#fffdf8] p-[3px] shadow-sm ring-1 ring-black/10 dark:ring-white/15",
+        "inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#fffdf8] p-[3px] shadow-sm ring-1 ring-black/10 dark:ring-white/15",
         className,
       )}
       aria-hidden="true"
@@ -17,7 +17,7 @@ export function OmniHarnessMark({ className, imageClassName }: OmniHarnessMarkPr
       <svg
         xmlns="http://www.w3.org/2000/svg"
         viewBox="0 0 64 64"
-        className={cn("h-full w-full", imageClassName)}
+        className={cn("h-full w-full scale-[1.75]", imageClassName)}
         aria-hidden="true"
       >
         <g fill="none" stroke="#e86b20" strokeWidth="4" strokeLinecap="butt" strokeLinejoin="miter">

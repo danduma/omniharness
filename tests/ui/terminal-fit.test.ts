@@ -158,6 +158,13 @@ test("terminal uses the same measured expansion animation for thoughts", () => {
   expect(terminalSource).not.toContain("space-y-1 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1");
 });
 
+test("terminal displays a thought snippet and duration on the same line as the Thought label", () => {
+  expect(terminalSource).toContain('activity.thoughts.length > 0 && (');
+  expect(terminalSource).toContain('truncate text-[length:var(--terminal-thought-size)] font-normal text-muted-foreground/60');
+  expect(terminalSource).toContain('activity.thoughts.join(" ").replace(/\\s+/g, " ").trim()');
+  expect(terminalSource).toContain('{formatThoughtLabel(activity)}');
+});
+
 test("terminal exposes a text size icon menu with tiny through huge", () => {
   expect(terminalSource).toContain("TERMINAL_TEXT_SIZE_LEVELS");
   expect(terminalPreferenceSource).toContain('value: "tiny"');
@@ -237,6 +244,9 @@ test("terminal only follows live output while the viewport is already near the b
   expect(terminalSource).toContain("const TERMINAL_BOTTOM_THRESHOLD_PX = 1");
   expect(terminalSource).not.toContain("shouldForceFollowPendingAssistant");
   expect(terminalSource).toContain("const activityChanged = previousActivityVersionRef.current !== activityVersion;");
+  expect(terminalSource).toContain("const isFirstRenderedActivity = filteredActivity.length > 0 && !hasPositionedFirstActivityRef.current;");
+  expect(terminalSource).toContain('const scrollBehavior: ScrollBehavior = isFirstRenderedActivity ? "auto" : "smooth";');
+  expect(terminalSource).toContain('scrollTerminalToBottom(container, "auto")');
 
   expect(shouldTerminalFollowLatest({
     scrollTop: 700,

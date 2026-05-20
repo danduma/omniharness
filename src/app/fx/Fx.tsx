@@ -19,7 +19,7 @@ export const Fx = React.forwardRef<HTMLElement, FxProps>(function Fx(
 ) {
   return (
     <Tag
-      ref={ref as React.Ref<any>}
+      ref={ref as React.Ref<HTMLElement>}
       {...rest}
       className={["fxPlay", className].filter(Boolean).join(" ")}
       style={{
@@ -47,13 +47,18 @@ type FxStaggerOwnProps = {
 type FxStaggerProps = FxStaggerOwnProps &
   Omit<React.HTMLAttributes<HTMLElement>, keyof FxStaggerOwnProps>;
 
+type FxChildProps = {
+  className?: string;
+  style?: React.CSSProperties;
+};
+
 export const FxStagger = React.forwardRef<HTMLElement, FxStaggerProps>(function FxStagger(
   { as: Tag = "div" as const, at, stagger, effect, duration, easing, className, style, children, ...rest },
   ref,
 ) {
   return (
     <Tag
-      ref={ref as React.Ref<any>}
+      ref={ref as React.Ref<HTMLElement>}
       {...rest}
       className={className}
       style={{
@@ -67,10 +72,11 @@ export const FxStagger = React.forwardRef<HTMLElement, FxStaggerProps>(function 
     >
       {React.Children.map(children, (child, i) => {
         if (!React.isValidElement(child)) return child;
+        const childElement = child as React.ReactElement<FxChildProps>;
         return React.cloneElement(child as React.ReactElement, {
-          className: ["fxStagger", (child as any).props.className].filter(Boolean).join(" "),
+          className: ["fxStagger", childElement.props.className].filter(Boolean).join(" "),
           style: {
-            ...(child as any).props.style,
+            ...childElement.props.style,
             "--row-i": i,
           } as React.CSSProperties,
         });

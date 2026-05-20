@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { ChevronDownIcon, CheckCircle2, AlertCircle, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +45,7 @@ const PROVIDER_VALUES = new Set<string>(LLM_PROVIDER_OPTIONS.map((option) => opt
 type ModelProfileUiState = Record<string, {
   apiKeyEditing: boolean;
   advancedOpen: boolean;
+  codexStatus: CodexStatus | null;
 }>;
 
 class ModelProfileUiManager extends StateManager<ModelProfileUiState> {
@@ -53,7 +54,7 @@ class ModelProfileUiManager extends StateManager<ModelProfileUiState> {
   }
 
   private getProfile(prefix: LlmFieldPrefix) {
-    return this.getSnapshot()[prefix] ?? { apiKeyEditing: false, advancedOpen: false };
+    return this.getSnapshot()[prefix] ?? { apiKeyEditing: false, advancedOpen: false, codexStatus: null };
   }
 
   setApiKeyEditing(prefix: LlmFieldPrefix, apiKeyEditing: boolean) {
@@ -67,6 +68,13 @@ class ModelProfileUiManager extends StateManager<ModelProfileUiState> {
     this.update((current) => ({
       ...current,
       [prefix]: { ...this.getProfile(prefix), advancedOpen },
+    }));
+  }
+
+  setCodexStatus(prefix: LlmFieldPrefix, codexStatus: CodexStatus | null) {
+    this.update((current) => ({
+      ...current,
+      [prefix]: { ...this.getProfile(prefix), codexStatus },
     }));
   }
 }
@@ -85,7 +93,6 @@ export function ModelProfileForm({
   secretStates,
 }: ModelProfileFormProps) {
   useI18nSnapshot();
-  const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
   const providerKey = `${prefix}_PROVIDER`;
   const modelKey = `${prefix}_MODEL`;
   const baseUrlKey = `${prefix}_BASE_URL`;
@@ -102,9 +109,9 @@ export function ModelProfileForm({
   const apiKeyConfigured = apiKeySecret?.configured ?? false;
   const apiKeyPreview = apiKeySecret?.preview ?? "";
   const apiKeyDraftValue = settings[apiKeyKey] || "";
-  const { apiKeyEditing, advancedOpen } = useManagerSelector(
+  const { apiKeyEditing, advancedOpen, codexStatus } = useManagerSelector(
     modelProfileUiManager,
-    (state) => state[prefix] ?? { apiKeyEditing: false, advancedOpen: false },
+    (state) => state[prefix] ?? { apiKeyEditing: false, advancedOpen: false, codexStatus: null },
     shallowEqualRecord,
   );
   const showEditMode = apiKeyEditing || !apiKeyConfigured || apiKeyDraftValue.length > 0;
@@ -117,12 +124,12 @@ export function ModelProfileForm({
     if (prefix === "SUPERVISOR_LLM") {
       fetch("/api/codex-auth/status")
         .then((res) => res.json())
-        .then(setCodexStatus)
-        .catch(() => setCodexStatus({ available: false }));
+        .then((status: CodexStatus) => modelProfileUiManager.setCodexStatus(prefix, status))
+        .catch(() => modelProfileUiManager.setCodexStatus(prefix, { available: false }));
     }
   }, [prefix]);
 
-  const catalog = LLM_PROVIDER_MODEL_CATALOG[provider] ?? [];
+  const catalog = useMemo(() => LLM_PROVIDER_MODEL_CATALOG[provider] ?? [], [provider]);
   const modelOptions: SelectOption[] = useMemo(() => {
     const options = catalog.map((model) => ({ value: model.value, label: model.label }));
     if (currentModel && !options.some((option) => option.value === currentModel)) {

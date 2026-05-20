@@ -646,6 +646,7 @@ export function WorkerCard({
                 hasMoreHistory={hasMoreHistory}
                 onRequestMoreHistory={onLoadWorkerHistory}
                 showTextSizeControl={false}
+                scrollAnchorKey={`${workerId}:${open ? "open" : "closed"}`}
               />
             </div>
           </div>

@@ -106,11 +106,138 @@ test("unified stream falls back to direct user messages when stale entries lack 
   expect(text.indexOf("stop showing the branch in the top bar!!")).toBeLessThan(text.indexOf("Looking for the top bar branch label."));
 });
 
-test("unified stream waits for entries before showing fallback user messages", () => {
+test("unified stream hides worker status lifecycle noise from the terminal", () => {
+  Object.assign(globalThis, { React });
+
+  const entries: WorkerEntry[] = [
+    {
+      id: "status-1",
+      seq: 1,
+      type: "lifecycle",
+      text: "Worker status: idle → working",
+      timestamp: "2026-05-17T00:44:20.200Z",
+      authorRole: "system",
+      raw: { eventType: "worker.status", prev: "idle", next: "working" },
+    },
+    {
+      id: "status-2",
+      seq: 2,
+      type: "lifecycle",
+      text: "Worker reached terminal status: cancelled",
+      timestamp: "2026-05-17T00:44:21.200Z",
+      authorRole: "system",
+      raw: { eventType: "worker.terminal", status: "cancelled" },
+    },
+    {
+      id: "worker-message",
+      seq: 3,
+      type: "message",
+      text: "Actual worker output",
+      timestamp: "2026-05-17T00:45:03.708Z",
+    },
+  ];
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries,
+    showTextSizeControl: false,
+  }));
+  const text = html.replace(/<[^>]+>/g, "");
+
+  expect(text).toContain("Actual worker output");
+  expect(text).not.toContain("Worker status:");
+  expect(text).not.toContain("Worker reached terminal status:");
+});
+
+test("unified stream hides worker spawned lifecycle noise from direct output", () => {
+  Object.assign(globalThis, { React });
+
+  const entries: WorkerEntry[] = [
+    {
+      id: "initial-user-message",
+      seq: 1,
+      type: "user_input",
+      text: "Explain supervisor tools.",
+      timestamp: "2026-05-19T14:32:31.654Z",
+      authorRole: "user",
+      attachments: [],
+    },
+    {
+      id: "worker-spawned",
+      seq: 2,
+      type: "lifecycle",
+      text: "Worker spawned (gemini)",
+      timestamp: "2026-05-19T14:32:31.728Z",
+      authorRole: "system",
+      raw: { eventType: "worker.spawned", workerType: "gemini" },
+    },
+    {
+      id: "worker-message",
+      seq: 3,
+      type: "message",
+      text: "Supervisor tools spawn and coordinate workers.",
+      timestamp: "2026-05-19T14:32:34.000Z",
+    },
+  ];
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries,
+    showTextSizeControl: false,
+  }));
+  const text = html.replace(/<[^>]+>/g, "");
+
+  expect(text).toContain("Explain supervisor tools.");
+  expect(text).toContain("Supervisor tools spawn and coordinate workers.");
+  expect(text).not.toContain("Worker spawned");
+});
+
+test("unified stream hides arbitrary lifecycle entries from direct output", () => {
+  Object.assign(globalThis, { React });
+
+  const entries: WorkerEntry[] = [
+    {
+      id: "initial-user-message",
+      seq: 1,
+      type: "user_input",
+      text: "Explain supervisor tools.",
+      timestamp: "2026-05-19T14:32:31.654Z",
+      authorRole: "user",
+      attachments: [],
+    },
+    {
+      id: "reattach-lifecycle",
+      seq: 2,
+      type: "lifecycle",
+      text: "Worker reattached after restart",
+      timestamp: "2026-05-19T14:32:32.000Z",
+      authorRole: "system",
+      raw: { eventType: "worker.reattached" },
+    },
+    {
+      id: "worker-message",
+      seq: 3,
+      type: "message",
+      text: "Supervisor tools spawn and coordinate workers.",
+      timestamp: "2026-05-19T14:32:34.000Z",
+    },
+  ];
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries,
+    showTextSizeControl: false,
+  }));
+  const text = html.replace(/<[^>]+>/g, "");
+
+  expect(text).toContain("Explain supervisor tools.");
+  expect(text).toContain("Supervisor tools spawn and coordinate workers.");
+  expect(text).not.toContain("Worker reattached after restart");
+});
+
+test("unified stream shows fallback user messages while entries are still loading", () => {
   Object.assign(globalThis, { React });
 
   const html = renderToStaticMarkup(React.createElement(Terminal, {
     entries: [],
+    allowUserMessageFallback: true,
     userMessages: [
       {
         id: "first-user-message",
@@ -130,12 +257,12 @@ test("unified stream waits for entries before showing fallback user messages", (
   }));
   const text = html.replace(/<[^>]+>/g, "");
 
-  expect(text).not.toContain("first prompt");
-  expect(text).not.toContain("second prompt");
-  expect(text).toContain("Loading session");
+  expect(text).toContain("first prompt");
+  expect(text).toContain("second prompt");
+  expect(text).toContain("Thinking...");
 });
 
-test("unified stream waits until loaded before showing fallback user messages", () => {
+test("unified stream dedupes fallback user messages already present in entries", () => {
   Object.assign(globalThis, { React });
 
   const entries: WorkerEntry[] = [
@@ -159,6 +286,7 @@ test("unified stream waits until loaded before showing fallback user messages", 
 
   const html = renderToStaticMarkup(React.createElement(Terminal, {
     entries,
+    allowUserMessageFallback: true,
     userMessages: [
       {
         id: "first-user-message",
@@ -180,5 +308,48 @@ test("unified stream waits until loaded before showing fallback user messages", 
 
   expect(text).toContain("first prompt");
   expect(text).toContain("middle agent work");
-  expect(text).not.toContain("second prompt");
+  expect(text).toContain("second prompt");
+  expect(text.match(/first prompt/g)).toHaveLength(1);
+});
+
+test("unified stream dedupes fallback user messages when stream ids differ", () => {
+  Object.assign(globalThis, { React });
+
+  const entries: WorkerEntry[] = [
+    {
+      id: "stream-generated-user-input-id",
+      seq: 1,
+      type: "user_input",
+      text: "same prompt",
+      timestamp: "2026-05-17T00:43:48.044Z",
+      authorRole: "user",
+      attachments: [],
+    },
+    {
+      id: "agent-message",
+      seq: 2,
+      type: "message",
+      text: "worker answer",
+      timestamp: "2026-05-17T00:43:50.000Z",
+    },
+  ];
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries,
+    allowUserMessageFallback: true,
+    userMessages: [
+      {
+        id: "database-message-id",
+        content: "same prompt",
+        createdAt: "2026-05-17T00:43:48.500Z",
+        attachments: [],
+      },
+    ],
+    showTextSizeControl: false,
+  }));
+  const text = html.replace(/<[^>]+>/g, "");
+
+  expect(text).toContain("same prompt");
+  expect(text).toContain("worker answer");
+  expect(text.match(/same prompt/g)).toHaveLength(1);
 });

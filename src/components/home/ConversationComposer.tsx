@@ -1,5 +1,5 @@
 import Image from "next/image";
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import type React from "react";
 import { ArrowUp, FileText, LoaderCircle, Plus, SlidersHorizontal, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,8 @@ import { getComposerSubmitShortcutLabel, isAppleComposerShortcutPlatform, should
 import type { ComposerWorkerOption, QueuedConversationMessageRecord, WorkerModelOption } from "@/app/home/types";
 import { formatBytes, type PendingChatAttachment } from "@/lib/chat-attachments";
 import { t, useI18nSnapshot } from "@/lib/i18n";
+import { StateManager } from "@/lib/state-manager";
+import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { cn } from "@/lib/utils";
 
 interface ConversationComposerProps {
@@ -63,6 +65,16 @@ interface ConversationComposerProps {
   onRunCommand: (content: string) => void;
   onStopConversation: () => void;
 }
+
+class ComposerUiManager extends StateManager<{ mobileSettingsOpen: boolean }> {
+  constructor() {
+    super({ mobileSettingsOpen: false });
+  }
+
+  setMobileSettingsOpen = (mobileSettingsOpen: boolean) => this.setKey("mobileSettingsOpen", mobileSettingsOpen);
+}
+
+const composerUiManager = new ComposerUiManager();
 
 export function ConversationComposer({
   className,
@@ -113,7 +125,7 @@ export function ConversationComposer({
   const trimmedCommand = command.trim();
   const hasAttachments = attachments.length > 0;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
+  const { mobileSettingsOpen } = useManagerSnapshot(composerUiManager);
   const isStopButtonVisible = composerBehavior.buttonKind === "stop";
   const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;
   const isStopButtonBusy = isStopButtonVisible && isStopConversationPending;
@@ -431,27 +443,29 @@ export function ConversationComposer({
               />
             )}
 
-            <ComposerModelPicker
+            <>
+              <ComposerModelPicker
               value={selectedModel}
               options={activeWorkerModelOptions}
               onChange={setSelectedModel}
               themeMode={themeMode}
             />
 
-            <ComposerSelect
-              ariaLabel="Worker effort"
-              value={selectedEffort}
-              options={EFFORT_OPTIONS.map((effort) => ({ value: effort, label: effort }))}
-              onChange={setSelectedEffort}
-              themeMode={themeMode}
-            />
+              <ComposerSelect
+                ariaLabel="Worker effort"
+                value={selectedEffort}
+                options={EFFORT_OPTIONS.map((effort) => ({ value: effort, label: effort }))}
+                onChange={setSelectedEffort}
+                themeMode={themeMode}
+              />
+            </>
           </div>
 
           {/* Mobile settings button — hidden on desktop */}
           <Button
             type="button"
             variant="ghost"
-            onClick={() => setMobileSettingsOpen(true)}
+            onClick={() => composerUiManager.setMobileSettingsOpen(true)}
             className={cn(
               "ml-auto flex h-8 min-w-0 max-w-[min(13rem,48vw)] shrink items-center gap-1.5 rounded-full px-2 text-xs font-medium sm:hidden",
               themeMode === "night"
@@ -498,7 +512,7 @@ export function ConversationComposer({
     </form>
 
       {/* Mobile settings sheet */}
-      <Sheet open={mobileSettingsOpen} onOpenChange={setMobileSettingsOpen}>
+      <Sheet open={mobileSettingsOpen} onOpenChange={composerUiManager.setMobileSettingsOpen}>
         <SheetContent side="bottom" className="px-4 pb-8 pt-0">
           <SheetHeader className="pb-2">
             <SheetTitle>{t("conversation.composer.settings.title")}</SheetTitle>
