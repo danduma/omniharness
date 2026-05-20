@@ -54,6 +54,10 @@ determinism contract:
   due durable wake claiming uses a single `DELETE ... RETURNING` transition.
 - Snapshot SQL and frontend "latest" sorts use stable id tie-breakers for
   equal timestamps.
+- Worker stream fetching now retries when a wake-up advances a worker's known
+  sequence while an older empty fetch is still in flight. A selected direct
+  conversation no longer depends on a later remount/session switch to fetch
+  entries that were announced during the in-flight request.
 - Worker failover selection failures preserve the concrete availability error
   in both execution events and `worker.failover_failed` named events.
 - Heuristic observer/stabilization breadcrumbs remain low-authority and hidden
@@ -345,6 +349,35 @@ unless the selected run is actually running. Keep applying that rule:
   run state or a durable recovery incident.
 - Tests should inject time deterministically rather than waiting wall-clock
   intervals.
+
+### 14. Worker stream wake-ups can arrive while an older fetch is in flight
+
+File: `src/app/home/WorkerEntriesManager.ts`
+
+The unified worker stream is intentionally split: SSE sends only
+`worker.entry_appended { workerId, seq }`, and the client fetches content from
+`/api/workers/:workerId/entries?afterSeq=...`.
+
+The risky timing pattern is:
+
+1. A fetch is already in flight for `afterSeq=N`.
+2. A new wake-up arrives and raises `latestKnownSeq` to `M`.
+3. The older fetch returns no new entries, for example because it was issued
+   before the durable writer had published the later JSONL lines.
+4. The manager records `latestKnownSeq=M` and `latestContiguousSeq=N`, but does
+   not retry because the previous retry rule required forward progress.
+
+That leaves the selected terminal stale until some unrelated path calls
+`ensureLoaded()` again, such as switching away and back to the session. This is
+not acceptable: the state already proves it is incomplete.
+
+Required shape:
+
+- Capture both contiguous and known cursors at fetch start.
+- Retry after the fetch if either the contiguous cursor advanced or the known
+  cursor advanced while the request was in flight.
+- Keep the stale-server guard: do not loop forever when the server repeatedly
+  reports `latestSeq` ahead but returns no entries and no newer wake-up arrives.
 
 ## Audit Heuristics To Keep Running
 

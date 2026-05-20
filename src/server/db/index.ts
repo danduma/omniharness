@@ -4,14 +4,14 @@ import * as schema from './schema';
 import { getAppDataPath } from '@/server/app-root';
 
 const dbPath = getAppDataPath('sqlite.db');
-const client = createClient({ url: `file:${dbPath}` });
+type DbClient = ReturnType<typeof createClient>;
 
-async function tableColumns(table: string): Promise<Set<string>> {
+async function tableColumns(client: DbClient, table: string): Promise<Set<string>> {
   const result = await client.execute(`PRAGMA table_info(${table})`);
   return new Set(result.rows.map((row) => String((row as Record<string, unknown>).name)));
 }
 
-async function initializeSchema() {
+async function initializeSchema(client: DbClient) {
 await client.execute('PRAGMA journal_mode = WAL');
 await client.execute('PRAGMA synchronous = NORMAL');
 await client.execute('PRAGMA busy_timeout = 15000');
@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS plans (
 CREATE TABLE IF NOT EXISTS runs (
   id text PRIMARY KEY NOT NULL,
   plan_id text NOT NULL,
+  session_type text NOT NULL DEFAULT 'omni',
   mode text NOT NULL DEFAULT 'implementation',
   project_path text,
   title text,
@@ -68,6 +69,8 @@ CREATE TABLE IF NOT EXISTS workers (
   status text NOT NULL,
   cwd text NOT NULL,
   worker_number integer,
+  worker_role text,
+  allocation_key text,
   title text NOT NULL DEFAULT '',
   initial_prompt text NOT NULL DEFAULT '',
   output_log text NOT NULL DEFAULT '',
@@ -81,6 +84,27 @@ CREATE TABLE IF NOT EXISTS workers (
   created_at integer NOT NULL,
   updated_at integer NOT NULL,
   FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE IF NOT EXISTS process_sessions (
+  run_id text PRIMARY KEY NOT NULL,
+  worker_id text NOT NULL,
+  cwd text NOT NULL,
+  command_json text NOT NULL,
+  command_preview text NOT NULL,
+  env_policy text NOT NULL DEFAULT 'minimal',
+  pid integer,
+  status text NOT NULL,
+  exit_code integer,
+  signal text,
+  started_at integer,
+  exited_at integer,
+  kill_escalated_at integer,
+  last_error text,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action,
+  FOREIGN KEY (worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE no action
 );
 
 CREATE TABLE IF NOT EXISTS worker_counters (
@@ -103,6 +127,14 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at integer NOT NULL,
   FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action,
   FOREIGN KEY (worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE IF NOT EXISTS conversation_read_markers (
+  run_id text PRIMARY KEY NOT NULL,
+  last_read_at integer NOT NULL,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action
 );
 
 CREATE TABLE IF NOT EXISTS queued_conversation_messages (
@@ -350,7 +382,10 @@ CREATE TABLE IF NOT EXISTS planning_review_findings (
 
 await client.executeMultiple(`
 CREATE INDEX IF NOT EXISTS messages_run_created_idx ON messages(run_id, created_at);
+CREATE INDEX IF NOT EXISTS conversation_read_markers_last_read_idx ON conversation_read_markers(last_read_at);
 CREATE INDEX IF NOT EXISTS workers_run_idx ON workers(run_id);
+CREATE INDEX IF NOT EXISTS process_sessions_worker_idx ON process_sessions(worker_id);
+CREATE INDEX IF NOT EXISTS process_sessions_status_idx ON process_sessions(status);
 CREATE INDEX IF NOT EXISTS plan_items_plan_idx ON plan_items(plan_id);
 CREATE INDEX IF NOT EXISTS clarifications_run_created_idx ON clarifications(run_id, created_at);
 CREATE INDEX IF NOT EXISTS execution_events_run_created_idx ON execution_events(run_id, created_at);
@@ -370,7 +405,11 @@ CREATE INDEX IF NOT EXISTS notification_subscriptions_revoked_idx ON notificatio
 // not persisted heuristic rows inferred from plan prose.
 await client.execute("DROP TABLE IF EXISTS validation_runs;");
 
-const runColumnNames = await tableColumns("runs");
+const runColumnNames = await tableColumns(client, "runs");
+
+if (!runColumnNames.has("session_type")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN session_type text NOT NULL DEFAULT 'omni';");
+}
 
 if (!runColumnNames.has("project_path")) {
   await client.execute("ALTER TABLE runs ADD COLUMN project_path text;");
@@ -464,9 +503,9 @@ if (!runColumnNames.has("last_memory_consolidation_at")) {
   await client.execute("ALTER TABLE runs ADD COLUMN last_memory_consolidation_at integer;");
 }
 
-const messageColumnNames = await tableColumns("messages");
+const messageColumnNames = await tableColumns(client, "messages");
 
-const workerColumnNames = await tableColumns("workers");
+const workerColumnNames = await tableColumns(client, "workers");
 
 if (!workerColumnNames.has("output_log")) {
   await client.execute("ALTER TABLE workers ADD COLUMN output_log text NOT NULL DEFAULT '';");
@@ -474,6 +513,14 @@ if (!workerColumnNames.has("output_log")) {
 
 if (!workerColumnNames.has("worker_number")) {
   await client.execute("ALTER TABLE workers ADD COLUMN worker_number integer;");
+}
+
+if (!workerColumnNames.has("worker_role")) {
+  await client.execute("ALTER TABLE workers ADD COLUMN worker_role text;");
+}
+
+if (!workerColumnNames.has("allocation_key")) {
+  await client.execute("ALTER TABLE workers ADD COLUMN allocation_key text;");
 }
 
 if (!workerColumnNames.has("title")) {
@@ -576,13 +623,31 @@ if (!messageColumnNames.has("attachments_json")) {
 }
 }
 
-const schemaInitStart = Date.now();
-export const dbReady = initializeSchema().then(() => {
-  console.log(`[db] schema ready in ${Date.now() - schemaInitStart}ms`);
-});
+function createDbState() {
+  const client = createClient({ url: `file:${dbPath}` });
+  const schemaInitStart = Date.now();
+  const dbReady = initializeSchema(client).then(() => {
+    console.log(`[db] schema ready in ${Date.now() - schemaInitStart}ms`);
+  });
+  const db = drizzle(client, { schema });
+  return { client, dbReady, db };
+}
+
+const processDb = process as NodeJS.Process & {
+  __omniHarnessDbStates?: Map<string, ReturnType<typeof createDbState>>;
+};
+
+const dbStates = processDb.__omniHarnessDbStates ??= new Map();
+let dbState = dbStates.get(dbPath);
+if (!dbState) {
+  dbState = createDbState();
+  dbStates.set(dbPath, dbState);
+}
+
+export const dbReady = dbState.dbReady;
 dbReady.catch((error) => {
   console.error("Failed to initialize database schema:", error);
   process.exit(1);
 });
 
-export const db = drizzle(client, { schema });
+export const db = dbState.db;
