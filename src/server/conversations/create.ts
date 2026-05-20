@@ -11,10 +11,11 @@ import { normalizeConversationMode, type ConversationMode } from "./modes";
 import { normalizeWorkerType, parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
 import { buildPlannerSystemPrompt } from "@/server/prompts";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
-import { createRunId } from "@/server/runs/ids";
+import { createRunId, RUN_ID_PATTERN } from "@/server/runs/ids";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { appendLifecycleEntry, appendUserInputOnDelivery } from "@/server/workers/stream-writer";
+import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
@@ -261,6 +262,12 @@ async function runInitialWorkerTurn(args: {
     } catch {
       // The bridge may have already dropped a failed worker; the ask response still determines the visible state.
     }
+    await appendAskResponseFallbackEntry({
+      runId: args.runId,
+      workerId: args.workerId,
+      responseText: response.response,
+      snapshot,
+    });
 
     if (!hasVisibleWorkerOutput(response.response, snapshot)) {
       const failureMessage = buildEmptyWorkerOutputMessage(snapshot, response.state);
@@ -403,6 +410,7 @@ export async function createConversation(args: {
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
   allowedWorkerTypes?: string[] | string | null;
+  requestedRunId?: string | null;
   attachments?: ChatAttachment[];
 }) {
   const mode = normalizeConversationMode(args.mode);
@@ -443,6 +451,10 @@ export async function createConversation(args: {
       ? captureGitBaseline(projectPath)
       : null;
     const planId = randomUUID();
+    const requestedRunId = args.requestedRunId?.trim() || null;
+    if (requestedRunId && !RUN_ID_PATTERN.test(requestedRunId)) {
+      throw Object.assign(new Error("Invalid requested run id."), { status: 400 });
+    }
     await db.insert(plans).values({
       id: planId,
       path: planPath,
@@ -451,7 +463,7 @@ export async function createConversation(args: {
       updatedAt: new Date(),
     });
 
-    const runId = createRunId();
+    const runId = requestedRunId || createRunId();
     await db.insert(runs).values({
       id: runId,
       planId,

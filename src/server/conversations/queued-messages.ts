@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { asc, desc, eq } from "drizzle-orm";
-import { askAgent } from "@/server/bridge-client";
+import { askAgent, getAgent } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { executionEvents, messages, queuedConversationMessages, runs, supervisorInterventions, workers } from "@/server/db/schema";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
@@ -10,13 +10,17 @@ import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
 import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
+import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
+import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { runWorkerTurn } from "./worker-turn-gate";
-import { updateDirectRunAwaitingUserInputIfRequested } from "./direct-run-status";
+import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
 
 export type BusyMessageAction = "queue" | "steer";
 export type QueuedConversationMessageStatus = "pending" | "delivering" | "delivered" | "cancelled" | "failed";
 
 type QueuedConversationMessageRecord = typeof queuedConversationMessages.$inferSelect;
+type WorkerAskResponse = Awaited<ReturnType<typeof askAgent>>;
+type WorkerResponseRun = Pick<typeof runs.$inferSelect, "id" | "mode">;
 
 export function parseBusyMessageAction(value: unknown): BusyMessageAction | null {
   return value === "queue" || value === "steer" ? value : null;
@@ -29,6 +33,15 @@ function isAgentBusyError(error: unknown) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function queuedMessageStatus(messageId: string) {
+  const record = await db
+    .select({ status: queuedConversationMessages.status })
+    .from(queuedConversationMessages)
+    .where(eq(queuedConversationMessages.id, messageId))
+    .get();
+  return record?.status ?? null;
 }
 
 function isAgentNotFoundError(error: unknown) {
@@ -50,6 +63,23 @@ function isCancelledWorkerStatus(status: string | null | undefined) {
   return normalized === "cancelled" || normalized === "canceled";
 }
 
+function isActiveWorkerStatus(status: string | null | undefined) {
+  const normalized = status?.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  return normalized === "starting" || normalized === "working" || normalized === "stuck";
+}
+
+function hasVisibleWorkerProgress(worker: typeof workers.$inferSelect) {
+  return Boolean(
+    worker.currentText.trim()
+      || worker.lastText.trim()
+      || worker.outputLog.trim(),
+  );
+}
+
+function isWorkerClearlyBusy(worker: typeof workers.$inferSelect) {
+  return isActiveWorkerStatus(worker.status) && hasVisibleWorkerProgress(worker);
+}
+
 function formatWorkerLabel(worker: typeof workers.$inferSelect) {
   if (typeof worker.workerNumber === "number" && Number.isFinite(worker.workerNumber)) {
     return `worker ${worker.workerNumber}`;
@@ -57,6 +87,46 @@ function formatWorkerLabel(worker: typeof workers.$inferSelect) {
 
   const match = worker.id.match(/-worker-(\d+)$/);
   return match ? `worker ${match[1]}` : "the active worker";
+}
+
+async function persistDeliveredWorkerResponse({
+  run,
+  workerId,
+  response,
+  deliveredAt,
+}: {
+  run: WorkerResponseRun;
+  workerId: string;
+  response: WorkerAskResponse;
+  deliveredAt: Date;
+}) {
+  const snapshot = await Promise.resolve(getAgent(workerId)).catch(() => null);
+  if (snapshot) {
+    await persistWorkerSnapshot(workerId, snapshot);
+  }
+  await appendAskResponseFallbackEntry({
+    runId: run.id,
+    workerId,
+    responseText: response.response,
+    snapshot,
+  });
+
+  await db.update(workers).set({
+    status: snapshot?.state ?? response.state,
+    updatedAt: deliveredAt,
+  }).where(eq(workers.id, workerId));
+
+  if (run.mode === "direct") {
+    await updateDirectRunStatusFromWorkerOutput({
+      runId: run.id,
+      workerId,
+      responseText: response.response,
+      renderedOutput: snapshot?.renderedOutput,
+      currentText: snapshot?.currentText,
+      lastText: snapshot?.lastText,
+      outputEntries: snapshot?.outputEntries,
+    });
+  }
 }
 
 async function insertQueueExecutionEvent(
@@ -160,7 +230,7 @@ export async function cancelQueuedConversationMessage({
     .where(eq(queuedConversationMessages.id, messageId))
     .get();
 
-  if (!record || record.runId !== runId || record.status !== "pending") {
+  if (!record || record.runId !== runId || (record.status !== "pending" && record.status !== "delivering")) {
     throw Object.assign(new Error("Queued message not found"), { status: 404 });
   }
 
@@ -192,35 +262,54 @@ async function deliverQueuedWorkerSteering(args: {
   attachments: ChatAttachment[];
 }) {
   await runWorkerTurn(args.worker.id, async () => {
-    const response = await askAgent(args.worker.id, args.content);
-    const deliveredAt = new Date();
-    // Append user_input on delivery — use the literal user text
-    // (record.content), not the bridge-augmented content with attachment
-    // context appended.
-    await appendUserInputOnDelivery({
-      id: args.userMessageId ?? undefined,
-      runId: args.run.id,
-      workerId: args.worker.id,
-      text: args.userText,
-      deliveredAt,
-      attachments: args.attachments.map((attachment) => ({
-        id: attachment.id,
-        filename: attachment.name,
-        mimeType: attachment.mimeType,
-        sizeBytes: attachment.size,
-      })),
-    });
-    await db.update(workers).set({
-      status: response.state,
-      updatedAt: deliveredAt,
-    }).where(eq(workers.id, args.worker.id));
-    if (args.run.mode === "direct") {
-      await updateDirectRunAwaitingUserInputIfRequested({
+    let userInputAppended = false;
+    const appendQueuedUserInput = async (deliveredAt: Date) => {
+      await appendUserInputOnDelivery({
+        id: args.userMessageId ?? args.messageId,
         runId: args.run.id,
         workerId: args.worker.id,
-        responseText: response.response,
+        text: args.userText,
+        deliveredAt,
+        attachments: args.attachments.map((attachment) => ({
+          id: attachment.id,
+          filename: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.size,
+        })),
       });
+      userInputAppended = true;
+    };
+
+    if (await queuedMessageStatus(args.messageId) !== "delivering") {
+      notifyEventStreamSubscribers();
+      return;
     }
+
+    await appendQueuedUserInput(new Date());
+    notifyEventStreamSubscribers();
+
+    if (await queuedMessageStatus(args.messageId) !== "delivering") {
+      notifyEventStreamSubscribers();
+      return;
+    }
+
+    const response = await askAgent(args.worker.id, args.content);
+    const deliveredAt = new Date();
+    if (await queuedMessageStatus(args.messageId) !== "delivering") {
+      notifyEventStreamSubscribers();
+      return;
+    }
+    if (!userInputAppended) {
+      // Kept as a defensive fallback for future call paths that might
+      // choose not to pre-anchor the prompt before bridge output streams.
+      await appendQueuedUserInput(deliveredAt);
+    }
+    await persistDeliveredWorkerResponse({
+      run: args.run,
+      workerId: args.worker.id,
+      response,
+      deliveredAt,
+    });
     // Worker response now lives in the unified worker stream; the
     // legacy role:"worker" messages row is no longer written.
     await db.update(queuedConversationMessages).set({
@@ -271,6 +360,10 @@ async function continueQueuedWorkerSteering(args: {
     }
 
     const failedAt = new Date();
+    if (await queuedMessageStatus(args.messageId) !== "delivering") {
+      notifyEventStreamSubscribers();
+      return;
+    }
     await db.update(queuedConversationMessages).set({
       status: isAgentBusyError(error) ? "pending" : "failed",
       lastError: errorMessage(error),
@@ -386,8 +479,39 @@ export async function sendQueuedConversationMessageNow({
     throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
   }
 
+  if (isWorkerClearlyBusy(worker)) {
+    const error = `Ask failed: Agent is busy: ${worker.id}`;
+    await db.update(queuedConversationMessages).set({
+      action: "steer",
+      targetWorkerId: worker.id,
+      status: "pending",
+      lastError: error,
+      updatedAt: new Date(),
+    }).where(eq(queuedConversationMessages.id, messageId));
+    await insertQueueExecutionEvent(runId, "queued_message_deferred", {
+      summary: `Worker ${worker.id} is still busy; queued message will be retried.`,
+      queuedMessageId: messageId,
+      action: "steer",
+      error,
+    }, worker.id);
+    notifyEventStreamSubscribers();
+
+    return {
+      ok: true,
+      queuedMessage: serializeQueuedConversationMessage({
+        ...record,
+        targetWorkerId: worker.id,
+        action: "steer",
+        status: "pending",
+        lastError: error,
+        updatedAt: startedAt,
+        deliveredAt: null,
+      }),
+    };
+  }
+
   const userMessage = {
-    id: randomUUID(),
+    id: messageId,
     runId,
     role: "user",
     kind: "checkpoint",
@@ -548,10 +672,12 @@ export async function drainQueuedImplementationMessages(runId: string) {
             attachmentsJson: null,
             createdAt: deliveredAt,
           });
-          await db.update(workers).set({
-            status: response.state,
-            updatedAt: deliveredAt,
-          }).where(eq(workers.id, worker.id));
+          await persistDeliveredWorkerResponse({
+            run: { id: runId, mode: "implementation" },
+            workerId: worker.id,
+            response,
+            deliveredAt,
+          });
           // Worker response now lives in the unified worker stream.
           await db.update(queuedConversationMessages).set({
             targetWorkerId: worker.id,
@@ -690,17 +816,12 @@ export async function drainQueuedWorkerMessages({
           })),
         });
         await db.insert(messages).values(userMessage);
-        await db.update(workers).set({
-          status: response.state,
-          updatedAt: deliveredAt,
-        }).where(eq(workers.id, workerId));
-        if (run.mode === "direct") {
-          await updateDirectRunAwaitingUserInputIfRequested({
-            runId,
-            workerId,
-            responseText: response.response,
-          });
-        }
+        await persistDeliveredWorkerResponse({
+          run,
+          workerId,
+          response,
+          deliveredAt,
+        });
         // Worker response now lives in the unified worker stream.
         await db.update(queuedConversationMessages).set({
           status: "delivered",

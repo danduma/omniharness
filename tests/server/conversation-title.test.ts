@@ -22,7 +22,7 @@ vi.mock("@/server/supervisor/runtime-settings", () => ({
   hydrateRuntimeEnvFromSettings: () => ({
     env: {
       SUPERVISOR_LLM_PROVIDER: "gemini",
-      SUPERVISOR_LLM_MODEL: "gemini-3.1-pro-preview",
+      SUPERVISOR_LLM_MODEL: "gemini-3.5-flash",
       SUPERVISOR_LLM_API_KEY: "gemini-key",
       GEMINI_API_KEY: "gemini-key",
     },
@@ -56,7 +56,7 @@ describe("conversation title generation", () => {
   it("uses the configured supervisor Gemini model through Mastra instead of hardcoded OpenAI", async () => {
     await db.insert(settings).values([
       { key: "SUPERVISOR_LLM_PROVIDER", value: "gemini", updatedAt: new Date() },
-      { key: "SUPERVISOR_LLM_MODEL", value: "gemini-3.1-pro-preview", updatedAt: new Date() },
+      { key: "SUPERVISOR_LLM_MODEL", value: "gemini-3.5-flash", updatedAt: new Date() },
       { key: "GEMINI_API_KEY", value: "gemini-key", updatedAt: new Date() },
     ]);
     tokenMocks.generate.mockResolvedValue({
@@ -69,7 +69,7 @@ describe("conversation title generation", () => {
     expect(tokenMocks.agentConstructors).toHaveBeenCalledWith(
       expect.objectContaining({
         model: {
-          id: "google/gemini-3.1-pro-preview",
+          id: "google/gemini-3.5-flash",
           apiKey: "gemini-key",
           url: undefined,
         },

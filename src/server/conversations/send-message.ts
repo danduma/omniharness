@@ -9,16 +9,18 @@ import { startSupervisorRun } from "@/server/supervisor/start";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
+import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
+import { normalizeWorkerType, SUPPORTED_WORKER_TYPES, type SupportedWorkerType } from "@/server/supervisor/worker-types";
 import { createQueuedConversationMessage, type BusyMessageAction } from "./queued-messages";
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import { runConversationMutation, runWorkerTurn } from "./worker-turn-gate";
-import { updateDirectRunAwaitingUserInputIfRequested } from "./direct-run-status";
+import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
@@ -258,6 +260,12 @@ async function continueWorkerConversation({
     if (snapshot) {
       await persistWorkerSnapshot(worker.id, snapshot);
     }
+    await appendAskResponseFallbackEntry({
+      runId: run.id,
+      workerId: worker.id,
+      responseText: response.response,
+      snapshot,
+    });
 
     const workerAfterSnapshot = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
     if (isWorkerCancelled(workerAfterSnapshot)) {
@@ -286,7 +294,7 @@ async function continueWorkerConversation({
         });
       }
     } else if (run.mode === "direct") {
-      await updateDirectRunAwaitingUserInputIfRequested({
+      await updateDirectRunStatusFromWorkerOutput({
         runId: run.id,
         workerId: worker.id,
         responseText: response.response,
@@ -335,7 +343,109 @@ type SendConversationMessageArgs = {
   content: string;
   attachments?: ChatAttachment[];
   busyAction?: BusyMessageAction | null;
+  preferredWorkerType?: string | null;
+  preferredWorkerModel?: string | null;
+  preferredWorkerEffort?: string | null;
+  allowedWorkerTypes?: string[] | string | null;
 };
+
+function parseAllowedWorkerTypeInput(value: string[] | string | null | undefined) {
+  const rawValues = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? (() => {
+        try {
+          const parsed = JSON.parse(value) as unknown;
+          return Array.isArray(parsed) ? parsed : value.split(",");
+        } catch {
+          return value.split(",");
+        }
+      })()
+      : [];
+
+  const normalized = rawValues
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => normalizeWorkerType(entry))
+    .filter((entry): entry is SupportedWorkerType => SUPPORTED_WORKER_TYPES.includes(entry as SupportedWorkerType));
+  return Array.from(new Set(normalized));
+}
+
+function parseExplicitWorkerType(value: string | null | undefined) {
+  if (!value?.trim()) {
+    return null;
+  }
+  const normalized = normalizeWorkerType(value.replace(/\s+/g, "-"));
+  return SUPPORTED_WORKER_TYPES.includes(normalized as SupportedWorkerType)
+    ? normalized as SupportedWorkerType
+    : null;
+}
+
+function parseWorkerSwitchFromText(content: string) {
+  const match = content.match(/\b(?:switch|change|set)\s+(?:the\s+)?(?:cli\s+)?(?:worker|workers|agent|agents|worker\s+agent|worker\s+agents)\s+(?:to|as)\s+(codex|claude(?:[-_\s]+code)?|gemini|open[-_\s]*code|opencode)\b/i);
+  if (!match?.[1]) {
+    return null;
+  }
+  return parseExplicitWorkerType(match[1]);
+}
+
+async function applyWorkerPreferenceForMessage(args: {
+  run: RunRecord;
+  content: string;
+  preferredWorkerType?: string | null;
+  preferredWorkerModel?: string | null;
+  preferredWorkerEffort?: string | null;
+  allowedWorkerTypes?: string[] | string | null;
+}) {
+  const explicitWorkerType = parseExplicitWorkerType(args.preferredWorkerType);
+  const textWorkerType = parseWorkerSwitchFromText(args.content);
+  const nextWorkerType = explicitWorkerType ?? textWorkerType;
+  if (!nextWorkerType) {
+    return args.run;
+  }
+
+  const allowedFromPayload = parseAllowedWorkerTypeInput(args.allowedWorkerTypes);
+  const nextAllowedWorkerTypes = allowedFromPayload.length > 0
+    ? Array.from(new Set([...allowedFromPayload, nextWorkerType]))
+    : [...SUPPORTED_WORKER_TYPES];
+  const nextPreferredWorkerModel = explicitWorkerType
+    ? args.preferredWorkerModel?.trim() || null
+    : null;
+  const nextPreferredWorkerEffort = args.preferredWorkerEffort?.trim() || args.run.preferredWorkerEffort || null;
+  const now = new Date();
+
+  await db.update(runs).set({
+    preferredWorkerType: nextWorkerType,
+    preferredWorkerModel: nextPreferredWorkerModel,
+    preferredWorkerEffort: nextPreferredWorkerEffort,
+    allowedWorkerTypes: JSON.stringify(nextAllowedWorkerTypes),
+    updatedAt: now,
+  }).where(eq(runs.id, args.run.id));
+  await db.insert(executionEvents).values({
+    id: randomUUID(),
+    runId: args.run.id,
+    workerId: null,
+    planItemId: null,
+    eventType: "worker_selection_changed",
+    details: JSON.stringify({
+      summary: `Changed preferred worker selection to ${nextWorkerType}.`,
+      preferredWorkerType: nextWorkerType,
+      preferredWorkerModel: nextPreferredWorkerModel,
+      preferredWorkerEffort: nextPreferredWorkerEffort,
+      allowedWorkerTypes: nextAllowedWorkerTypes,
+      source: explicitWorkerType ? "composer_selection" : "message_text",
+    }),
+    createdAt: now,
+  });
+
+  return {
+    ...args.run,
+    preferredWorkerType: nextWorkerType,
+    preferredWorkerModel: nextPreferredWorkerModel,
+    preferredWorkerEffort: nextPreferredWorkerEffort,
+    allowedWorkerTypes: JSON.stringify(nextAllowedWorkerTypes),
+    updatedAt: now,
+  };
+}
 
 export async function sendConversationMessage(args: SendConversationMessageArgs) {
   return runConversationMutation(args.runId, () => sendConversationMessageUnlocked(args));
@@ -346,6 +456,10 @@ async function sendConversationMessageUnlocked({
   content,
   attachments = [],
   busyAction = null,
+  preferredWorkerType = null,
+  preferredWorkerModel = null,
+  preferredWorkerEffort = null,
+  allowedWorkerTypes = null,
 }: SendConversationMessageArgs) {
   const trimmedContent = content.trim();
   const normalizedAttachments = normalizeChatAttachments(attachments);
@@ -355,10 +469,18 @@ async function sendConversationMessageUnlocked({
     throw Object.assign(new Error("Message content or attachment is required"), { status: 400 });
   }
 
-  const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+  let run = await db.select().from(runs).where(eq(runs.id, runId)).get();
   if (!run) {
     throw Object.assign(new Error("Conversation not found"), { status: 404 });
   }
+  run = await applyWorkerPreferenceForMessage({
+    run,
+    content: trimmedContent,
+    preferredWorkerType,
+    preferredWorkerModel,
+    preferredWorkerEffort,
+    allowedWorkerTypes,
+  });
 
   if (run.mode === "planning" && (run.status === "reviewing_plan" || run.status === "revising_plan")) {
     throw Object.assign(new Error("Plan review is in progress. Please wait for the review to complete before sending further messages."), { status: 409 });
@@ -479,6 +601,23 @@ async function sendConversationMessageUnlocked({
   notifyEventStreamSubscribers();
 
   if (run.mode === "direct") {
+    // Append user_input to the stream immediately so the UI reflects the
+    // message instantly, without waiting for the worker's turn chain.
+    await appendUserInputOnDelivery({
+      id: userMessage.id,
+      runId: run.id,
+      workerId: worker.id,
+      text: trimmedContent,
+      deliveredAt: userMessageCreatedAt,
+      attachments: normalizedAttachments.map((attachment) => ({
+        id: attachment.id,
+        filename: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.size,
+      })),
+    });
+    notifyEventStreamSubscribers();
+
     if (busyAction === "steer") {
       try {
         await runWorkerTurn(worker.id, () => continueWorkerConversation({
@@ -488,6 +627,8 @@ async function sendConversationMessageUnlocked({
           userInputText: trimmedContent,
           userInputId: userMessage.id,
           attachments: normalizedAttachments,
+          // Already appended above.
+          appendUserInputBeforeAsk: false,
         }));
       } catch (error) {
         if (isAgentBusyError(error)) {
@@ -515,12 +656,8 @@ async function sendConversationMessageUnlocked({
       };
     }
 
-    let markUserInputAppended!: () => void;
-    let markUserInputFailed!: (error: unknown) => void;
-    const userInputAppend = new Promise<void>((resolve, reject) => {
-      markUserInputAppended = resolve;
-      markUserInputFailed = reject;
-    });
+    // Direct follow-up follows the same "append-immediately" path. The
+    // turn runs in the background.
     const turn = runWorkerTurn(worker.id, () => continueWorkerConversation({
       run,
       worker,
@@ -528,18 +665,16 @@ async function sendConversationMessageUnlocked({
       userInputText: trimmedContent,
       userInputId: userMessage.id,
       attachments: normalizedAttachments,
-      appendUserInputBeforeAsk: true,
-      onUserInputAppended: markUserInputAppended,
+      // Already appended above.
+      appendUserInputBeforeAsk: false,
     }));
     turn.catch((error) => {
-      markUserInputFailed(error);
       if (isAgentBusyError(error)) {
         return;
       }
 
       console.error("Direct conversation follow-up failed:", error);
     });
-    await userInputAppend;
 
     return {
       ok: true,

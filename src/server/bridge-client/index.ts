@@ -374,16 +374,38 @@ async function readAskStream(response: Response): Promise<{ response: string; st
   const decoder = new TextDecoder();
   let buffer = "";
   let completed: { response: string; state: string; stopReason?: string | null } | null = null;
+  let streamedResponse = "";
 
   const handleEvent = (streamEvent: AskStreamEvent) => {
-    if (streamEvent.event === "progress" || streamEvent.event === "chunk") {
+    if (streamEvent.event === "chunk") {
+      try {
+        const payload = JSON.parse(streamEvent.data) as { chunk?: unknown };
+        if (typeof payload.chunk === "string") {
+          streamedResponse += payload.chunk;
+        }
+      } catch {
+        // Malformed chunk payloads should still wake subscribers; the
+        // final done/error event remains authoritative for turn status.
+      }
+      notifyEventStreamSubscribers();
+      return;
+    }
+
+    if (streamEvent.event === "progress") {
       notifyEventStreamSubscribers();
       return;
     }
 
     if (streamEvent.event === "done") {
       notifyEventStreamSubscribers();
-      completed = JSON.parse(streamEvent.data) as typeof completed;
+      const payload = JSON.parse(streamEvent.data) as Partial<NonNullable<typeof completed>>;
+      completed = {
+        response: typeof payload.response === "string" && payload.response.length > 0
+          ? payload.response
+          : streamedResponse,
+        state: typeof payload.state === "string" ? payload.state : "idle",
+        stopReason: typeof payload.stopReason === "string" ? payload.stopReason : null,
+      };
       return;
     }
 

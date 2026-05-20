@@ -105,6 +105,35 @@ describe("bridge client", () => {
     expect(mockNotifyEventStreamSubscribers).toHaveBeenCalledTimes(3);
   });
 
+  it("uses streamed chunks as the response fallback when done omits response text", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response([
+        "event: chunk",
+        "data: {\"chunk\":\"hello \"}",
+        "",
+        "event: chunk",
+        "data: {\"chunk\":\"world\"}",
+        "",
+        "event: done",
+        "data: {\"state\":\"idle\",\"stopReason\":\"end_turn\"}",
+        "",
+      ].join("\n"), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { askAgent } = await import("@/server/bridge-client");
+    const result = await askAgent("worker-1", "hello");
+
+    expect(result).toEqual({
+      response: "hello world",
+      state: "idle",
+      stopReason: "end_turn",
+    });
+  });
+
   it("does not retry a busy worker ask so callers can defer the prompt", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ error: "Agent is busy: worker-1" }), {

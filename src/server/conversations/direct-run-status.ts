@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { executionEvents, runs } from "@/server/db/schema";
+import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent } from "@/server/events/named-events";
 
 type OutputEntryLike = {
@@ -59,16 +60,24 @@ function visibleEntryText(entries: readonly OutputEntryLike[] | null | undefined
     .filter((text) => text.trim().length > 0);
 }
 
+function latestVisibleEntryText(entries: readonly OutputEntryLike[] | null | undefined) {
+  return visibleEntryText(entries).at(-1) ?? "";
+}
+
+function firstNonEmptyText(values: ReadonlyArray<string | null | undefined>) {
+  return values.find((value) => typeof value === "string" && value.trim().length > 0) ?? "";
+}
+
 export function directWorkerOutputRequestsUserInput(source: WorkerOutputSource) {
-  const text = normalizeOutputText([
+  const text = normalizeOutputText(firstNonEmptyText([
     source.responseText,
-    source.renderedOutput,
     source.currentText,
     source.lastText,
+    latestVisibleEntryText(source.outputEntries),
+    latestVisibleEntryText(parseOutputEntriesJson(source.outputEntriesJson)),
+    source.renderedOutput,
     source.outputLog,
-    ...visibleEntryText(source.outputEntries),
-    ...visibleEntryText(parseOutputEntriesJson(source.outputEntriesJson)),
-  ].filter((item): item is string => typeof item === "string" && item.trim().length > 0).join("\n"));
+  ]));
 
   if (!text) {
     return false;
@@ -115,6 +124,8 @@ export async function updateDirectRunStatusFromWorkerOutput(args: WorkerOutputSo
       details: JSON.stringify({ reason: "worker_requested_input" }),
       createdAt: now,
     });
+  } else if (nextStatus !== run.status || run.failedAt || run.lastError) {
+    notifyEventStreamSubscribers();
   }
 
   return nextStatus;
