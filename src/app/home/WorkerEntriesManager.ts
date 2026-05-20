@@ -190,7 +190,14 @@ export class WorkerEntriesManager {
       return existing;
     }
     const cachedEntries = initialEntries.length > 0 ? [] : this.getCachedEntries(workerId);
-    const nextEntries = initialEntries.length > 0 ? initialEntries : cachedEntries;
+    const rawNextEntries = initialEntries.length > 0 ? initialEntries : cachedEntries;
+    // Trim to the tail window — see getCachedEntries for the rationale.
+    // Same trim is applied to caller-supplied initialEntries (e.g. an
+    // event-snapshot hydration) so a long transcript doesn't render in
+    // full on mount.
+    const nextEntries = rawNextEntries.length > DEFAULT_TAIL_LIMIT
+      ? rawNextEntries.slice(-DEFAULT_TAIL_LIMIT)
+      : rawNextEntries;
     const next = initialState(workerId, nextEntries);
     this.stateByWorker.set(workerId, next);
     if (nextEntries.length > 0) {
@@ -568,6 +575,14 @@ export class WorkerEntriesManager {
     const cached = this.readEnvelope().workers[workerId];
     if (!cached || !isWorkerEntryArray(cached.entries)) {
       return [];
+    }
+    // Trim to the tail window. The cache used to rehydrate full
+    // transcripts which caused the worker view to render every entry
+    // from seq 1 and then auto-scroll down — bad UX on long sessions.
+    // We want the user to see the most recent N entries immediately,
+    // then load older ones on scroll-back via loadOlder().
+    if (cached.entries.length > DEFAULT_TAIL_LIMIT) {
+      return cached.entries.slice(-DEFAULT_TAIL_LIMIT);
     }
     return cached.entries;
   }

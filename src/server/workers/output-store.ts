@@ -385,6 +385,11 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isRecoverableLockRaceError(error: unknown) {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
 async function isWorkerFileLockStale(lockPath: string) {
   try {
     const stat = await fs.stat(lockPath);
@@ -399,7 +404,7 @@ async function isWorkerFileLockStale(lockPath: string) {
     return stat.mtimeMs < Date.now() - WORKER_FILE_LOCK_STALE_MS;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return false;
+      return true;
     }
     throw error;
   }
@@ -422,6 +427,9 @@ async function acquireWorkerFileLock(runId: string, workerId: string): Promise<(
         await fs.writeFile(ownerPath, owner, "utf8");
       } catch (error) {
         await fs.rm(lockPath, { recursive: true, force: true });
+        if (isRecoverableLockRaceError(error)) {
+          continue;
+        }
         throw error;
       }
 
@@ -878,11 +886,24 @@ export async function readWorkerOutputEntries(
  * the returned list is empty (e.g. a wake-up arrived but the on-disk
  * tail hadn't actually changed yet).
  */
+export type ReadWorkerEntriesPath =
+  | "nextSeq.caughtUp"
+  | "cache.caughtUp"
+  | "cache.filtered"
+  | "jsonl.tail"
+  | "canonical.fullRead";
+
+// Cap the forward-fetch response so a client whose afterSeq is far
+// behind doesn't get a multi-MB JSON blob (which the dev proxy then
+// spends seconds brotli-compressing). The manager's gap-chasing loop
+// handles the rest of the catch-up automatically.
+const MAX_FORWARD_ENTRIES = 200;
+
 export async function readWorkerEntriesSince(
   runId: string,
   workerId: string,
   afterSeq: number,
-): Promise<{ entries: WorkerEntry[]; latestSeq: number }> {
+): Promise<{ entries: WorkerEntry[]; latestSeq: number; _path?: ReadWorkerEntriesPath }> {
   const key = chainKey(runId, workerId);
   const filePath = workerFilePath(runId, workerId);
 
@@ -891,7 +912,7 @@ export async function readWorkerEntriesSince(
   // readWorkerLatestSeq for the same invariant.
   const nextSeq = nextSeqByKey.get(key);
   if (afterSeq > 0 && nextSeq !== undefined && nextSeq > 0 && afterSeq >= nextSeq - 1) {
-    return { entries: [], latestSeq: nextSeq - 1 };
+    return { entries: [], latestSeq: nextSeq - 1, _path: "nextSeq.caughtUp" };
   }
 
   // Stat the plaintext .jsonl up front. ENOENT here means we'll fall back
@@ -915,12 +936,12 @@ export async function readWorkerEntriesSince(
       // Trim allocation when the caller is already caught up so we don't
       // churn the GC on every snapshot poll.
       if (afterSeq > 0 && cached.latestSeq <= afterSeq) {
-        return { entries: [], latestSeq: cached.latestSeq };
+        return { entries: [], latestSeq: cached.latestSeq, _path: "cache.caughtUp" };
       }
       const filtered = afterSeq <= 0
         ? cached.entries
         : cached.entries.filter((entry) => typeof entry.seq === "number" && entry.seq > afterSeq);
-      return { entries: filtered, latestSeq: cached.latestSeq };
+      return { entries: filtered, latestSeq: cached.latestSeq, _path: "cache.filtered" };
     }
   }
 
@@ -937,7 +958,13 @@ export async function readWorkerEntriesSince(
           mtimeMs: stat.mtimeMs,
         });
       }
-      return fromJsonlTail;
+      // Cap the response so a client far behind doesn't get a megablob.
+      // Returning the oldest unseen entries first lets the manager's
+      // gap-chasing fill the rest on subsequent polls.
+      const capped = fromJsonlTail.entries.length > MAX_FORWARD_ENTRIES
+        ? fromJsonlTail.entries.slice(0, MAX_FORWARD_ENTRIES)
+        : fromJsonlTail.entries;
+      return { entries: capped, latestSeq: fromJsonlTail.latestSeq, _path: "jsonl.tail" };
     }
   }
 
@@ -960,7 +987,12 @@ export async function readWorkerEntriesSince(
   const filtered = afterSeq <= 0
     ? withSeqs
     : withSeqs.filter((entry) => typeof entry.seq === "number" && entry.seq > afterSeq);
-  return { entries: filtered, latestSeq };
+  // Same cap as the tail-scan path: limit forward catch-up responses so
+  // the client gets a fast first page even when far behind.
+  const capped = afterSeq > 0 && filtered.length > MAX_FORWARD_ENTRIES
+    ? filtered.slice(0, MAX_FORWARD_ENTRIES)
+    : filtered;
+  return { entries: capped, latestSeq, _path: "canonical.fullRead" };
 }
 
 /**
