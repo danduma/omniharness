@@ -26,11 +26,19 @@ const eslintConfig = [
     },
   },
   {
+    files: ["tests/**/*.ts", "tests/**/*.tsx"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+    },
+  },
+  {
     ignores: [
       "node_modules/**",
       ".next/**",
       "out/**",
       "build/**",
+      "apps/vscode/dist/**",
+      "apps/electron/dist/**",
       "next-env.d.ts",
       ".agents/**",
       ".claude/**",

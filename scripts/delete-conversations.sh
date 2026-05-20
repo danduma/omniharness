@@ -61,8 +61,14 @@ function deleteConversationRows() {
     if (tables.has("queued_conversation_messages")) {
       db.prepare("delete from queued_conversation_messages where run_id in (select id from runs)").run();
     }
+    if (tables.has("conversation_read_markers")) {
+      db.prepare("delete from conversation_read_markers where run_id in (select id from runs)").run();
+    }
     if (tables.has("worker_assignments")) {
       db.prepare("delete from worker_assignments where run_id in (select id from runs)").run();
+    }
+    if (tables.has("process_sessions")) {
+      db.prepare("delete from process_sessions where run_id in (select id from runs)").run();
     }
     db.prepare("delete from workers where run_id in (select id from runs)").run();
     if (tables.has("worker_counters")) {

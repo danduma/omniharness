@@ -21,6 +21,8 @@
 
 # production
 /build
+/apps/vscode/dist/
+/apps/electron/dist/
 
 # misc
 .DS_Store

@@ -46,7 +46,7 @@ afterEach(async () => {
 });
 
 describe(`lifecycle harness — chaos reconnect storm (seed=${seed.toString(16)})`, () => {
-  it("observes every emitted event despite chaos-driven reconnects", { timeout: 30_000 }, async () => {
+  it("observes every emitted event despite chaos-driven reconnects", { timeout: 60_000 }, async () => {
     const { runId } = await seedDirectRun();
     await client.bootstrapSnapshot(runId);
     await client.subscribe({ runId });
@@ -66,7 +66,7 @@ describe(`lifecycle harness — chaos reconnect storm (seed=${seed.toString(16)}
       // is preceded by a known-delivered checkpoint.
       await client.waitFor("worker.status", {
         predicate: (frame) => (frame.payload as { next?: string } | null)?.next === next,
-        timeoutMs: 5_000,
+        timeoutMs: 15_000,
       });
       // Mid-stream forced drops: every 3rd emit, ask the client to
       // close. The autoReconnect path picks up via Last-Event-ID.

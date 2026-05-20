@@ -318,6 +318,7 @@
   "workers.sidebar.collapseAria": "Collapse workers sidebar",
   "conversation.loading": "Loading conversation...",
   "conversation.message.copyAria": "Copy message",
+  "conversation.message.copiedNotice": "Copied to clipboard",
   "conversation.message.action.resumeFromHere": "Riprendi da qui",
   "conversation.message.action.retryFromHere": "Riprova da qui",
   "conversation.message.action.editInPlace": "Modifica qui",
@@ -439,5 +440,18 @@
   "conversation.chip.switchedWorkers": "Switched workers: {outgoing} → {incoming}",
   "conversation.chip.switchedWorkersAria": "Worker failover",
   "settings.agents.failover.title": "Quota failover",
-  "settings.agents.failover.help": "When the current worker exhausts its quota mid-run, Omni hands off to the next allowed worker."
+  "settings.agents.failover.help": "When the current worker exhausts its quota mid-run, Omni hands off to the next allowed worker.",
+  "vscode.panel.server": "Server",
+  "vscode.panel.workspace": "Workspace: {path}",
+  "vscode.panel.noWorkspace": "No workspace folder",
+  "vscode.panel.openInBrowser": "Open in Browser",
+  "vscode.panel.promptPlaceholder": "Ask OmniHarness to work on this workspace",
+  "vscode.panel.startConversation": "Start Conversation",
+  "vscode.panel.noConversations": "No conversations found.",
+  "vscode.panel.noProject": "No project",
+  "vscode.panel.status.loading": "Loading...",
+  "vscode.panel.status.loadingConversations": "Loading conversations...",
+  "vscode.panel.status.connected": "Connected",
+  "vscode.panel.status.disconnected": "Disconnected",
+  "vscode.panel.status.starting": "Starting conversation..."
 }
