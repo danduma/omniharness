@@ -43,8 +43,8 @@ describe("AppearancePreferencesManager", () => {
       "--omni-ui-icon-sm-size": "calc(15px + var(--omni-mobile-ui-icon-boost, 0px))",
     });
     expect(getConversationTextSizeStyle("default")).toMatchObject({
-      "--omni-conversation-font-size": "calc(15px + var(--omni-mobile-conversation-font-boost, 0px))",
-      "--omni-conversation-line-height": "calc(25px + var(--omni-mobile-conversation-line-boost, 0px))",
+      "--omni-conversation-font-size": "calc(14px + var(--omni-mobile-conversation-font-boost, 0px))",
+      "--omni-conversation-line-height": "calc(24px + var(--omni-mobile-conversation-line-boost, 0px))",
     });
   });
 
@@ -53,8 +53,8 @@ describe("AppearancePreferencesManager", () => {
 
     expect(manager.getSnapshot().terminalTextSize).toBe("default");
     expect(getTerminalTextSizeStyle("default")).toMatchObject({
-      "--terminal-message-size": "13px",
-      "--terminal-pane-size": "10px",
+      "--terminal-message-size": "14px",
+      "--terminal-pane-size": "11px",
     });
   });
 
@@ -168,8 +168,8 @@ describe("AppearancePreferencesManager", () => {
 
   it("combines app-shell and conversation CSS variables for the app root", () => {
     expect(getAppearanceTextSizeStyle("large", "huge")).toMatchObject({
-      "--omni-ui-font-size": "calc(15px + var(--omni-mobile-ui-font-boost, 0px))",
-      "--omni-conversation-font-size": "calc(19px + var(--omni-mobile-conversation-font-boost, 0px))",
+      "--omni-ui-font-size": "calc(16px + var(--omni-mobile-ui-font-boost, 0px))",
+      "--omni-conversation-font-size": "calc(18px + var(--omni-mobile-conversation-font-boost, 0px))",
     });
   });
 });

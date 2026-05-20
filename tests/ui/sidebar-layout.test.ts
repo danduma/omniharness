@@ -3,6 +3,7 @@ import path from "path";
 import { test, expect } from "vitest";
 import {
   getConversationOutputVersion,
+  hasSelectedRunMessageOutput,
   hasMeaningfulConversationOverflow,
   shouldConversationFollowLatest,
   shouldConversationKeepFollowingLatest,
@@ -345,11 +346,13 @@ test("worker detail renders from streamed agent state instead of per-worker poll
 test("conversation output only follows live worker updates when already near the bottom", () => {
   expect(pageSource).toContain("const CONVERSATION_BOTTOM_THRESHOLD_PX = 8");
   expect(pageSource).toContain("const CONVERSATION_MEANINGFUL_OVERFLOW_PX = 112");
-  expect(pageSource).toContain('behavior: runChanged ? "auto" : "smooth"');
+  expect(pageSource).toContain("const selectedRunHasOutput = hasSelectedRunMessageOutput(selectedRunId, state.messages);");
+  expect(pageSource).toContain("const shouldRestoreInstantly = runChanged");
+  expect(pageSource).toContain('const scrollBehavior: ScrollBehavior = shouldRestoreInstantly ? "auto" : "smooth";');
   expect(pageSource).toContain("if (hasMeaningfulConversationOverflow(viewport)) {");
   expect(pageSource).toContain("const outputVersion = getConversationOutputVersion(selectedRunId, state.messages, state.agents);");
   expect(pageSource).toContain("if (!runChanged && !outputChanged) {");
-  expect(pageSource).toContain("}, [scrollRef, outputVersion, selectedRunId]);");
+  expect(pageSource).toContain("}, [scrollRef, outputVersion, selectedRunHasOutput, selectedRunId]);");
 
   expect(shouldConversationFollowLatest({
     scrollTop: 696,
@@ -415,6 +418,14 @@ test("conversation output only follows live worker updates when already near the
       scrollHeight: 1000,
     })
   ).toBe(false);
+
+  expect(hasSelectedRunMessageOutput("run-1", [
+    { id: "message-1", runId: "run-1", role: "user", content: "hello", createdAt: "2026-05-09T00:00:00.000Z" },
+  ])).toBe(true);
+
+  expect(hasSelectedRunMessageOutput("run-1", [
+    { id: "message-2", runId: "run-2", role: "user", content: "other", createdAt: "2026-05-09T00:00:00.000Z" },
+  ])).toBe(false);
 });
 
 test("conversation output version ignores state refreshes without new rendered output", () => {
@@ -574,7 +585,7 @@ test("direct conversations render the user transcript next to the worker surface
   expect(pageSource).toContain('const isExpanded = expandedDirectMessageIds.has(msg.id);');
   expect(pageSource).toContain('className="flex justify-end"');
   expect(pageSource).toContain('flex-col items-end');
-  expect(pageSource).toContain('const handleCopyDirectMessage = async (content: string) => {');
+  expect(pageSource).toContain('const handleCopyDirectMessage = async (content: string, messageId: string) => {');
   expect(pageSource).toContain('await navigator.clipboard.writeText(content);');
   expect(pageSource).toContain('select-text');
   expect(pageSource).toContain('aria-label={isExpanded ? "Show less message text" : "Show more message text"}');

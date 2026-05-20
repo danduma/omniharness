@@ -10,6 +10,7 @@ export type RenameSource = "sidebar" | "topbar";
 
 export const INITIAL_EVENT_STREAM_STATE: EventStreamState = {
   messages: [],
+  readMarkers: {},
   plans: [],
   runs: [],
   accounts: [],
@@ -266,6 +267,20 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
     });
   }
 
+  setProjectExpanded(projectPath: string, expanded: boolean) {
+    this.setKey("collapsedProjectPaths", (current) => {
+      const next = new Set(current);
+      if (expanded) {
+        if (!next.has(projectPath)) return current;
+        next.delete(projectPath);
+      } else {
+        if (next.has(projectPath)) return current;
+        next.add(projectPath);
+      }
+      return next;
+    });
+  }
+
   createSetter<TKey extends keyof HomeUiState>(key: TKey) {
     return (value: StateUpdate<HomeUiState[TKey]>) => {
       this.setKey(key, value);
@@ -300,6 +315,7 @@ export const homeUiSetters = {
   setMentionIndex: homeUiStateManager.createSetter("mentionIndex"),
   setReadMarkers: homeUiStateManager.createSetter("readMarkers"),
   setCollapsedProjectPaths: homeUiStateManager.createSetter("collapsedProjectPaths"),
+  setProjectExpanded: (projectPath: string, expanded: boolean) => homeUiStateManager.setProjectExpanded(projectPath, expanded),
   setVisibleProjectSessionCounts: homeUiStateManager.createSetter("visibleProjectSessionCounts"),
   revealMoreProjectSessions: (projectPath: string) => homeUiStateManager.revealMoreProjectSessions(projectPath),
   resetProjectSessionDisplayLimit: (projectPath: string) => homeUiStateManager.resetProjectSessionDisplayLimit(projectPath),

@@ -257,6 +257,7 @@ export const terminalUiManager = new class extends StateManager<{
   toolGroupOpenById: Record<string, boolean>;
   toolOutputExpandedById: Record<string, boolean>;
   thoughtOpenById: Record<string, boolean>;
+  workSummaryOpenById: Record<string, boolean>;
 }> {
   constructor() {
     super({
@@ -264,6 +265,7 @@ export const terminalUiManager = new class extends StateManager<{
       toolGroupOpenById: {},
       toolOutputExpandedById: {},
       thoughtOpenById: {},
+      workSummaryOpenById: {},
     });
   }
 
@@ -285,5 +287,10 @@ export const terminalUiManager = new class extends StateManager<{
   setThoughtOpen = (id: string, open: StateUpdate<boolean>) => this.setKey("thoughtOpenById", (current) => ({
     ...current,
     [id]: typeof open === "function" ? (open as (value: boolean) => boolean)(current[id] ?? false) : open,
+  }));
+
+  setWorkSummaryOpen = (id: string, open: boolean) => this.setKey("workSummaryOpenById", (current) => ({
+    ...current,
+    [id]: open,
   }));
 }();

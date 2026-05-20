@@ -1,7 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import type React from "react";
 import { conversationMainManager } from "@/components/component-state-managers";
-import { getRunLatestMessageTimestamp } from "@/lib/conversation-state";
+import { getRunLatestUnreadTimestamp } from "@/lib/conversation-state";
 import type { ConversationModeOption } from "@/components/ConversationModePicker";
 import type { AgentSnapshot, ComposerWorkerOption, MessageRecord, RunRecord, WorkerType } from "./types";
 import { parseWorkerType, resolveComposerEffortLabel, resolveComposerModelValue } from "./utils";
@@ -65,6 +65,19 @@ export function getConversationOutputVersion(
   return `${selectedRunId}::${messageVersion}::${agentVersion}`;
 }
 
+export function hasSelectedRunMessageOutput(
+  selectedRunId: string | null,
+  messages: MessageRecord[] | undefined,
+) {
+  if (!selectedRunId) {
+    return false;
+  }
+
+  return (messages ?? []).some((message) => (
+    message.runId === selectedRunId && Boolean(message.content.trim())
+  ));
+}
+
 interface UseRunSelectionEffectsProps {
   scrollRef: React.RefObject<HTMLDivElement | null>;
   state: { messages?: MessageRecord[]; agents?: AgentSnapshot[] };
@@ -85,6 +98,7 @@ interface UseRunSelectionEffectsProps {
   configuredAllowedWorkerTypes: WorkerType[];
   apiKeys: Record<string, string>;
   setApiKeys: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  readMarkers: Record<string, string>;
   setReadMarkers: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 }
 
@@ -108,13 +122,17 @@ export function useRunSelectionEffects({
   configuredAllowedWorkerTypes,
   apiKeys,
   setApiKeys,
+  readMarkers,
   setReadMarkers,
 }: UseRunSelectionEffectsProps) {
   const shouldFollowLatestRef = useRef(true);
   const previousScrollTopRef = useRef(0);
   const previousSelectedRunIdRef = useRef<string | null>(null);
   const previousOutputVersionRef = useRef<string | null>(null);
+  const instantPositionedRunIdRef = useRef<string | null>(null);
+  const persistedReadMarkerRef = useRef<Map<string, string>>(new Map());
   const outputVersion = getConversationOutputVersion(selectedRunId, state.messages, state.agents);
+  const selectedRunHasOutput = hasSelectedRunMessageOutput(selectedRunId, state.messages);
 
   useEffect(() => {
     const viewport = scrollRef.current?.querySelector(SCROLL_AREA_VIEWPORT_SELECTOR) as HTMLDivElement | null;
@@ -151,13 +169,16 @@ export function useRunSelectionEffects({
     };
   }, [scrollRef, selectedRunId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const viewport = scrollRef.current?.querySelector(SCROLL_AREA_VIEWPORT_SELECTOR) as HTMLDivElement | null;
     if (!viewport) {
       return;
     }
 
     const runChanged = previousSelectedRunIdRef.current !== selectedRunId;
+    if (runChanged) {
+      instantPositionedRunIdRef.current = null;
+    }
     previousSelectedRunIdRef.current = selectedRunId;
     const outputChanged = previousOutputVersionRef.current !== outputVersion;
     previousOutputVersionRef.current = outputVersion;
@@ -170,17 +191,24 @@ export function useRunSelectionEffects({
       return;
     }
 
+    const shouldRestoreInstantly = runChanged
+      || (selectedRunHasOutput && instantPositionedRunIdRef.current !== selectedRunId);
+    const scrollBehavior: ScrollBehavior = shouldRestoreInstantly ? "auto" : "smooth";
+
     if (hasMeaningfulConversationOverflow(viewport)) {
       viewport.scrollTo({
         top: viewport.scrollHeight,
-        behavior: runChanged ? "auto" : "smooth",
+        behavior: scrollBehavior,
       });
       previousScrollTopRef.current = viewport.scrollHeight;
     } else {
       previousScrollTopRef.current = viewport.scrollTop;
     }
+    if (selectedRunHasOutput) {
+      instantPositionedRunIdRef.current = selectedRunId;
+    }
     shouldFollowLatestRef.current = true;
-  }, [scrollRef, outputVersion, selectedRunId]);
+  }, [scrollRef, outputVersion, selectedRunHasOutput, selectedRunId]);
 
   useEffect(() => {
     if (!selectedRunId || !selectedRun) {
@@ -265,8 +293,16 @@ export function useRunSelectionEffects({
       return;
     }
 
-    const latestForSelected = getRunLatestMessageTimestamp(selectedRunId, state.messages || []);
+    if (!selectedRun) {
+      return;
+    }
+
+    const latestForSelected = getRunLatestUnreadTimestamp(selectedRun, state.messages || []);
     if (!latestForSelected) {
+      return;
+    }
+
+    if (readMarkers[selectedRunId] === latestForSelected) {
       return;
     }
 
@@ -276,5 +312,20 @@ export function useRunSelectionEffects({
       }
       return { ...current, [selectedRunId]: latestForSelected };
     });
-  }, [selectedRunId, state.messages, setReadMarkers]);
+
+    const persistedKey = `${selectedRunId}:${latestForSelected}`;
+    if (persistedReadMarkerRef.current.get(selectedRunId) === persistedKey) {
+      return;
+    }
+    persistedReadMarkerRef.current.set(selectedRunId, persistedKey);
+
+    void fetch(`/api/runs/${encodeURIComponent(selectedRunId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "mark_read" }),
+    }).catch((error) => {
+      persistedReadMarkerRef.current.delete(selectedRunId);
+      console.warn("Failed to persist conversation read marker:", error);
+    });
+  }, [readMarkers, selectedRunId, selectedRun, state.messages, setReadMarkers]);
 }

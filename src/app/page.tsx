@@ -1,4 +1,4 @@
-import { HomeApp } from "./home/HomeApp";
+import { OmniApp } from "@/ui/OmniApp";
 import { buildHomeBootstrap } from "./home/bootstrap.server";
 
 type PageProps = {
@@ -7,5 +7,5 @@ type PageProps = {
 
 export default async function Page({ searchParams }: PageProps) {
   const bootstrap = await buildHomeBootstrap(await searchParams);
-  return <HomeApp bootstrap={bootstrap} />;
+  return <OmniApp bootstrap={bootstrap} />;
 }

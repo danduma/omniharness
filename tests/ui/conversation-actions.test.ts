@@ -213,8 +213,14 @@ test("user input messages share the direct-control bubble renderer", () => {
   expect(userInputSource).toContain('maxHeight: isExpanded ? undefined : "calc(1.5rem * 6)"');
   expect(userInputSource).toContain('aria-label={isExpanded ? "Show less message text" : "Show more message text"}');
   expect(userInputSource).toContain('conversation.message.copyAria');
+  expect(userInputSource).toContain('conversation.message.copiedNotice');
+  expect(userInputSource).toContain('conversationCopyNoticeManager');
+  expect(userInputSource).toContain('copiedMessageId === messageId');
+  expect(userInputSource).toContain('role="status"');
+  expect(userInputSource).toContain('aria-live="polite"');
   expect(conversationMainSource).toContain('from "./UserInputMessage";');
   expect(conversationMainSource).toContain('<UserInputMessage');
+  expect(conversationMainSource).toContain('messageId={msg.id}');
   expect(conversationMainSource).toContain('createdAt={msg.createdAt}');
   expect(conversationMainSource).not.toContain('rounded-[1.9rem] rounded-br-lg bg-[#242424]');
   expect(conversationMainSource).not.toContain('msg.role === "user"\n                      ? "border-transparent bg-muted/30 text-foreground"');
@@ -266,8 +272,9 @@ test("direct conversations keep the terminal mounted during worker stream refres
   expect(loadingGateStart).toBeGreaterThanOrEqual(0);
   expect(terminalStart).toBeGreaterThan(loadingGateStart);
   expect(loadingGate).not.toContain("directWorkerStream.isLoaded");
-  expect(conversationMainSource).toContain("shouldShowDirectWorkerStreamInitialLoading({");
-  expect(conversationMainSource).toContain("isLoading={isHydratingConversations || isDirectWorkerStreamInitialLoad}");
+  expect(conversationMainSource).toContain("deriveConversationLoadState({");
+  expect(conversationMainSource).toContain("shouldShowDirectConversationLoading(directConversationLoadState)");
+  expect(conversationMainSource).toContain("isLoading={isHydratingConversations || isDirectWorkerStreamLoading}");
 });
 
 test("attachment image previews use a global full-screen dialog", () => {
@@ -381,6 +388,13 @@ test("send queued now failures do not leak into every conversation notice stack"
   expect(useAppErrorsSource).not.toContain('action: "Send queued message now"');
 });
 
+test("send queued now hides accepted direct messages from the queued drawer", () => {
+  const useHomeMutationsSource = readSource("src/app/home/useHomeMutations.ts");
+
+  expect(useHomeMutationsSource).toContain('if (data.message && data.queuedMessage?.status === "delivering")');
+  expect(useHomeMutationsSource).toContain("busyMessageQueueManager.hideQueuedMessage(variables.messageId);");
+});
+
 test("direct control conversations show a tiny animated working indicator while stoppable", () => {
   expect(terminalSource).toContain("function PendingAssistantActivity()");
   expect(terminalSource).toContain('const PENDING_ASSISTANT_TEXT = "Thinking..."');
@@ -391,7 +405,8 @@ test("direct control conversations show a tiny animated working indicator while 
   expect(pageSource).toContain("showDirectControlWorkingIndicator={showDirectControlWorkingIndicator}");
   expect(pageSource).toContain("showPendingAssistantIndicator={showDirectControlWorkingIndicator}");
   expect(pageSource).toContain("const hasBusyConversation = isSupervisorRunning || Boolean(stoppableConversationWorkerId);");
-  expect(pageSource).toContain("const showDirectControlWorkingIndicator = isDirectConversation && hasBusyConversation;");
+  expect(pageSource).toContain('const directConversationIsRunning = selectedRun?.mode === "direct" && selectedRun.status === "running";');
+  expect(pageSource).toContain("const showDirectControlWorkingIndicator = isDirectConversation && (hasBusyConversation || directConversationIsRunning);");
   expect(terminalSource).toContain("showPendingAssistantIndicator = false");
   expect(terminalSource).toContain("pendingAssistantActivity");
   expect(terminalSource).toContain("const TERMINAL_BOTTOM_THRESHOLD_PX = 1");
@@ -399,13 +414,32 @@ test("direct control conversations show a tiny animated working indicator while 
   expect(terminalSource).toContain("scrollTerminalToBottom");
   expect(terminalSource).not.toContain("shouldForceFollowPendingAssistant");
   expect(terminalSource).toContain("const activityChanged = previousActivityVersionRef.current !== activityVersion;");
-  expect(terminalSource).toContain("if (!container || !activityChanged || !shouldFollowLatestRef.current)");
+  expect(terminalSource).toContain("scrollAnchorKey = null");
+  expect(terminalSource).toContain("const scrollAnchorChanged = previousScrollAnchorKeyRef.current !== scrollAnchorKey;");
+  expect(terminalSource).toContain("|| (!shouldFollowLatestRef.current && !isFirstRenderedActivity)");
   expect(terminalSource).toContain("shouldFollowLatestRef.current = true");
-  expect(terminalSource).toContain('behavior: "smooth"');
+  expect(terminalSource).toContain("hasPositionedFirstActivityRef");
+  expect(terminalSource).toContain('const scrollBehavior: ScrollBehavior = isFirstRenderedActivity ? "auto" : "smooth";');
+  expect(terminalSource).toContain('scrollTerminalToBottom(container, "auto")');
   expect(terminalSource).toContain("inline-block animate-pulse text-foreground/80");
   expect(terminalSource).toContain("animationDuration:");
   expect(terminalSource).toContain("relative z-10 mt-3 flex w-full justify-start px-1");
   expect(terminalSource).toContain("animationDelay:");
+});
+
+test("starting a new conversation immediately selects the reserved session route", () => {
+  expect(pageSource).toContain("requestedRunId: createClientRunId()");
+  expect(pageSource).toContain("requestedRunId: payload.requestedRunId");
+  expect(pageSource).toContain("const requestedRunId = payload.requestedRunId;");
+  expect(pageSource).toContain("setSelectedRunId(requestedRunId);");
+  expect(pageSource).toContain("replaceBrowserConversationPath(requestedRunId, null);");
+  expect(pageSource).toContain("const createdRunId = data.runId ?? data.run?.id ?? variables.requestedRunId;");
+  expect(pageSource).toContain("setSelectedRunId(createdRunId);");
+  expect(pageSource).toContain("replaceBrowserConversationPath(createdRunId, null);");
+  expect(pageSource).toContain("setSelectedRunId(context.previousSelectedRunId);");
+  expect(pageSource).toContain("replaceBrowserConversationPath(context.previousSelectedRunId, context.previousDraftProjectPath);");
+  expect(pageSource).toContain("export function createClientRunId()");
+  expect(pageSource).toContain("&& (!selectedRunId || selectedRunId === runCommand.variables?.requestedRunId)");
 });
 
 test("frontend transport and mutation errors render as explicit notices", () => {

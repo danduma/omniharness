@@ -160,6 +160,39 @@ export class WorkerEntriesManager {
   }
 
   /**
+   * Durable cursor hints from `/api/events` snapshots. These recover
+   * from missed `worker.entry_appended` wake-up frames without carrying
+   * worker transcript content on the global snapshot stream.
+   */
+  onKnownSeqs(workerEntrySeqs: Record<string, unknown> | null | undefined): void {
+    if (!workerEntrySeqs) {
+      return;
+    }
+
+    for (const [workerId, rawSeq] of Object.entries(workerEntrySeqs)) {
+      const seq = typeof rawSeq === "number" && Number.isFinite(rawSeq)
+        ? Math.max(0, Math.floor(rawSeq))
+        : 0;
+      if (seq <= 0) {
+        continue;
+      }
+
+      const state = this.getState(workerId);
+
+      const latestKnownSeq = Math.max(state.latestKnownSeq, seq);
+      if (latestKnownSeq <= state.latestContiguousSeq && state.status !== "error") {
+        continue;
+      }
+
+      this.updateState(workerId, {
+        ...state,
+        latestKnownSeq,
+      });
+      void this.fetch(workerId, state.latestContiguousSeq);
+    }
+  }
+
+  /**
    * Global SSE resync signal. Re-validates every worker we track by
    * refetching from each one's current contiguous cursor. A worker
    * whose `latestContiguousSeq === latestKnownSeq` will get an empty
@@ -187,6 +220,7 @@ export class WorkerEntriesManager {
     this.updateState(workerId, { ...previous, status: "loading", lastError: null });
     const url = this.fetchEndpoint(workerId, afterSeq);
     const cursorBeforeFetch = previous.latestContiguousSeq;
+    const knownBeforeFetch = previous.latestKnownSeq;
     const promise = this.requestJson<FetchResponse>(url, undefined, {
       source: "Worker entries",
       action: "Load worker stream",
@@ -206,9 +240,10 @@ export class WorkerEntriesManager {
       // infinite loop when the server reports `latestSeq` ahead of the
       // entries it returned (race or stale latest hint).
       const after = this.getState(workerId);
+      const wakeUpAdvancedKnownSeq = after.latestKnownSeq > knownBeforeFetch;
       if (
         after.status === "loaded"
-        && after.latestContiguousSeq > cursorBeforeFetch
+        && (after.latestContiguousSeq > cursorBeforeFetch || wakeUpAdvancedKnownSeq)
         && after.latestContiguousSeq < after.latestKnownSeq
       ) {
         void this.fetch(workerId, after.latestContiguousSeq);

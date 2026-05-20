@@ -66,7 +66,7 @@ export function useConversationActions({
     setEditingMessageId,
     setEditingMessageValue,
     setExpandedDirectMessageIds,
-    setCollapsedProjectPaths,
+    setProjectExpanded,
     revealMoreProjectSessions,
     setRightSidebarOpen,
     setMobileWorkersOpen,
@@ -300,15 +300,7 @@ export function useConversationActions({
 
   const handleProjectOpenChange = (projectPath: string, open: boolean) => {
     homeUiStateManager.resetProjectSessionDisplayLimit(projectPath);
-    setCollapsedProjectPaths((current) => {
-      const next = new Set(current);
-      if (open) {
-        next.delete(projectPath);
-      } else {
-        next.add(projectPath);
-      }
-      return next;
-    });
+    setProjectExpanded(projectPath, open);
   };
 
   const handleShowMoreProjectSessions = (projectPath: string) => {

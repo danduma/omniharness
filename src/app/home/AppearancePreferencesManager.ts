@@ -7,11 +7,11 @@ export const TERMINAL_TEXT_SIZE_STORAGE_KEY = "omni-terminal-text-size";
 export const LEGACY_DIRECT_TEXT_SIZE_STORAGE_KEY = "omni-direct-text-size";
 
 export const TEXT_SIZE_LEVELS = [
-  { value: "tiny", labelKey: "settings.textSize.tiny", uiSize: 12, conversationSize: 13, conversationLineHeight: 22, terminalScale: 0.86 },
-  { value: "small", labelKey: "settings.textSize.small", uiSize: 13, conversationSize: 14, conversationLineHeight: 23, terminalScale: 0.94 },
-  { value: "default", labelKey: "settings.textSize.default", uiSize: 14, conversationSize: 15, conversationLineHeight: 25, terminalScale: 1 },
-  { value: "large", labelKey: "settings.textSize.large", uiSize: 15, conversationSize: 17, conversationLineHeight: 28, terminalScale: 1.16 },
-  { value: "huge", labelKey: "settings.textSize.huge", uiSize: 17, conversationSize: 19, conversationLineHeight: 31, terminalScale: 1.34 },
+  { value: "tiny", labelKey: "settings.textSize.tiny", uiSize: 12, conversationSize: 12, conversationLineHeight: 20, terminalScale: 0.86 },
+  { value: "small", labelKey: "settings.textSize.small", uiSize: 13, conversationSize: 13, conversationLineHeight: 22, terminalScale: 0.94 },
+  { value: "default", labelKey: "settings.textSize.default", uiSize: 14, conversationSize: 14, conversationLineHeight: 24, terminalScale: 1 },
+  { value: "large", labelKey: "settings.textSize.large", uiSize: 16, conversationSize: 16, conversationLineHeight: 28, terminalScale: 1.14 },
+  { value: "huge", labelKey: "settings.textSize.huge", uiSize: 18, conversationSize: 18, conversationLineHeight: 32, terminalScale: 1.28 },
 ] as const;
 
 export const UI_TEXT_SIZE_LEVELS = TEXT_SIZE_LEVELS;
@@ -157,16 +157,16 @@ export function getAppearanceTextSizeStyle(uiTextSize: UiTextSizeLevel, conversa
 }
 
 const TERMINAL_BASE_FONT_SIZES = {
-  message: 13,
-  thought: 12,
-  thoughtLabel: 12,
-  toolLabel: 12,
-  toolTitle: 11,
-  pane: 10,
-  paneLabel: 9,
-  badge: 9,
-  permissionTitle: 12,
-  permissionText: 11,
+  message: 14,
+  thought: 13,
+  thoughtLabel: 13,
+  toolLabel: 13,
+  toolTitle: 12,
+  pane: 11,
+  paneLabel: 10,
+  badge: 10,
+  permissionTitle: 13,
+  permissionText: 12,
 };
 
 export function getTerminalTextSizeStyle(level: TerminalTextSizeLevel): CSSProperties {
