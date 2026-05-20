@@ -886,6 +886,14 @@ export async function readWorkerEntriesSince(
   const key = chainKey(runId, workerId);
   const filePath = workerFilePath(runId, workerId);
 
+  // Authoritative in-process cursor: if afterSeq is already at-or-past
+  // nextSeq-1, the client is caught up and no FS access is needed. See
+  // readWorkerLatestSeq for the same invariant.
+  const nextSeq = nextSeqByKey.get(key);
+  if (afterSeq > 0 && nextSeq !== undefined && nextSeq > 0 && afterSeq >= nextSeq - 1) {
+    return { entries: [], latestSeq: nextSeq - 1 };
+  }
+
   // Stat the plaintext .jsonl up front. ENOENT here means we'll fall back
   // to compressed/legacy paths inside readCanonicalPersistedEntries and
   // can't validate the entries cache against an mtime, so skip the cache
@@ -1202,8 +1210,20 @@ export async function readWorkerLatestSeq(
   runId: string,
   workerId: string,
 ): Promise<number> {
-  const filePath = workerFilePath(runId, workerId);
   const key = chainKey(runId, workerId);
+
+  // Authoritative in-process cursor: every append in this process bumps
+  // nextSeqByKey. If it's set, the latest persisted seq is nextSeq - 1
+  // and no FS access is required. All writers to these files live in
+  // the same Node process as this reader (see writeWorkerOutputEntries
+  // call sites — sync.ts, snapshots.ts, recovery-reconciler.ts), so
+  // this cache cannot fall behind disk.
+  const nextSeq = nextSeqByKey.get(key);
+  if (nextSeq !== undefined && nextSeq > 0) {
+    return nextSeq - 1;
+  }
+
+  const filePath = workerFilePath(runId, workerId);
   let statForCache: { size: number; mtimeMs: number } | null = null;
   try {
     const stat = await fs.stat(filePath);
