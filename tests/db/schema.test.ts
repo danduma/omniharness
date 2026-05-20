@@ -16,6 +16,8 @@ describe("db schema", () => {
   it("persists durable worker terminal snapshots", () => {
     expect(schema).toHaveProperty("workerCounters");
     expect(schema.workers).toHaveProperty("workerNumber");
+    expect(schema.workers).toHaveProperty("workerRole");
+    expect(schema.workers).toHaveProperty("allocationKey");
     expect(schema.workers).toHaveProperty("outputEntriesJson");
     expect(schema.workers).toHaveProperty("currentText");
     expect(schema.workers).toHaveProperty("lastText");
@@ -25,8 +27,15 @@ describe("db schema", () => {
     expect(schema.messages).toHaveProperty("attachmentsJson");
   });
 
+  it("persists conversation read markers server-side", () => {
+    expect(schema).toHaveProperty("conversationReadMarkers");
+    expect(schema.conversationReadMarkers).toHaveProperty("runId");
+    expect(schema.conversationReadMarkers).toHaveProperty("lastReadAt");
+  });
+
   it("persists mode-aware conversation metadata on runs", () => {
     expect(schema.runs).toHaveProperty("mode");
+    expect(schema.runs).toHaveProperty("sessionType");
     expect(schema.runs).toHaveProperty("specPath");
     expect(schema.runs).toHaveProperty("artifactPlanPath");
     expect(schema.runs).toHaveProperty("plannerArtifactsJson");
@@ -44,5 +53,12 @@ describe("db schema", () => {
     expect(schema).toHaveProperty("planningReviewRuns");
     expect(schema).toHaveProperty("planningReviewRounds");
     expect(schema).toHaveProperty("planningReviewFindings");
+  });
+
+  it("defines process session metadata", () => {
+    expect(schema).toHaveProperty("processSessions");
+    expect(schema.processSessions).toHaveProperty("commandJson");
+    expect(schema.processSessions).toHaveProperty("commandPreview");
+    expect(schema.processSessions).toHaveProperty("status");
   });
 });

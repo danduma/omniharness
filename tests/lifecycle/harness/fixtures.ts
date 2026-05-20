@@ -4,7 +4,7 @@
  * harness server sees them.
  */
 import { db } from "@/server/db";
-import { plans, runs, workers, planningReviewRuns } from "@/server/db/schema";
+import { plans, processSessions, runs, workers, planningReviewRuns } from "@/server/db/schema";
 
 export interface SeededRun {
   planId: string;
@@ -81,6 +81,7 @@ export async function clearLifecycleSchema(): Promise<void> {
   // Pull in only tables we touch in scenarios; other tables (messages,
   // executionEvents, etc.) are cleared by individual scenario beforeEach.
   tables.push(() => db.delete(planningReviewRuns));
+  tables.push(() => db.delete(processSessions));
   tables.push(() => db.delete(workers));
   tables.push(() => db.delete(runs));
   tables.push(() => db.delete(plans));

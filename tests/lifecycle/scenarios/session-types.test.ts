@@ -17,6 +17,7 @@ import {
   executionEvents,
   messages,
   plans,
+  processSessions,
   runs,
   workerCounters,
   workers,
@@ -94,6 +95,7 @@ beforeEach(async () => {
   __resetNamedEventsForTests();
   await db.delete(executionEvents);
   await db.delete(messages);
+  await db.delete(processSessions);
   await db.delete(workers);
   await db.delete(workerCounters);
   await db.delete(runs);

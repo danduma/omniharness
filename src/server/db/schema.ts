@@ -11,6 +11,7 @@ export const plans = sqliteTable('plans', {
 export const runs = sqliteTable('runs', {
   id: text('id').primaryKey(),
   planId: text('plan_id').references(() => plans.id).notNull(),
+  sessionType: text('session_type').notNull().default('omni'),
   mode: text('mode').notNull().default('implementation'),
   projectPath: text('project_path'),
   title: text('title'),
@@ -46,6 +47,8 @@ export const workers = sqliteTable('workers', {
   status: text('status').notNull(), // 'idle', 'working', 'stuck', 'cred-exhausted'
   cwd: text('cwd').notNull(),
   workerNumber: integer('worker_number'),
+  workerRole: text('worker_role'),
+  allocationKey: text('allocation_key'),
   title: text('title').notNull().default(''),
   initialPrompt: text('initial_prompt').notNull().default(''),
   outputLog: text('output_log').notNull().default(''),
@@ -56,6 +59,25 @@ export const workers = sqliteTable('workers', {
   bridgeSessionMode: text('bridge_session_mode'),
   activeWorkStartedAt: integer('active_work_started_at', { mode: 'timestamp' }),
   activeWorkDurationMs: integer('active_work_duration_ms').notNull().default(0),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const processSessions = sqliteTable('process_sessions', {
+  runId: text('run_id').primaryKey().references(() => runs.id),
+  workerId: text('worker_id').references(() => workers.id).notNull(),
+  cwd: text('cwd').notNull(),
+  commandJson: text('command_json').notNull(),
+  commandPreview: text('command_preview').notNull(),
+  envPolicy: text('env_policy').notNull().default('minimal'),
+  pid: integer('pid'),
+  status: text('status').notNull(),
+  exitCode: integer('exit_code'),
+  signal: text('signal'),
+  startedAt: integer('started_at', { mode: 'timestamp' }),
+  exitedAt: integer('exited_at', { mode: 'timestamp' }),
+  killEscalatedAt: integer('kill_escalated_at', { mode: 'timestamp' }),
+  lastError: text('last_error'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });
@@ -77,6 +99,13 @@ export const messages = sqliteTable('messages', {
   supersededAt: integer('superseded_at', { mode: 'timestamp' }),
   editedFromMessageId: text('edited_from_message_id'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const conversationReadMarkers = sqliteTable('conversation_read_markers', {
+  runId: text('run_id').primaryKey().references(() => runs.id),
+  lastReadAt: integer('last_read_at', { mode: 'timestamp' }).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });
 
 export const queuedConversationMessages = sqliteTable('queued_conversation_messages', {
