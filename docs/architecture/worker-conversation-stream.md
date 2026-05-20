@@ -11,6 +11,31 @@ of a long-running class of bugs.
 The plan that introduced this surface is at
 `docs/superpowers/plans/2026-05-16-unified-worker-conversation-stream.md`.
 
+Operational constraints for keeping this stream responsive under long-running
+workers are captured in
+`docs/architecture/hot-path-responsiveness-and-resource-leaks.md`. In
+particular, snapshots carry worker seq cursors rather than transcript bodies,
+incremental reads use bounded JSONL tail scans, and normal streaming appends
+must not rebuild the full transcript cache on every chunk.
+
+Direct-control regressions found after this cutover, including blank worker
+output, queued send-now persistence, duplicate first messages, and stuck
+"Thinking..." states, are documented in
+`docs/architecture/direct-control-session-regressions.md`.
+
+Frontend loading and stale-cache regressions involving sessions
+`7ebf2bc8e556` and `17a194b3c1c1` are documented in
+`docs/architecture/state-staleness-and-session-lifecycle-lessons.md`. That
+note covers the fallback rule for legacy `messages` rows: use them only after
+the relevant worker stream is loaded, and never let them render ahead of
+unknown stream content.
+
+Related incident note: `docs/architecture/supervisor-worker-switching-incident.md`
+documents a transcript-ordering regression where a supervisor-spawned worker
+streamed bridge output before the server appended the initial
+`supervisor_input`, causing the prompt to render at the end of the worker
+conversation.
+
 ## File format
 
 One file per worker, in append-only JSONL at:
@@ -54,12 +79,14 @@ Every entry carries a `seq: number` that is:
   (assigned in file order, no rewrite). The next compaction sweep
   writes the assigned seq back to disk.
 
-The writer caches the next-seq in memory keyed by `(runId, workerId)`
-and rebuilds it from the file's current tail on first use after a
-process restart. A truncated last line (crash mid-write) is tolerated:
-`parseLines` skips the malformed bytes, and the next append starts
-from `max-valid-seq + 1` and prefixes its own line with `\n` so the
-broken trailer stays on its own line.
+The writer caches the next-seq, seen ids, fingerprints, and file stat in
+memory keyed by `(runId, workerId)`. It rebuilds from disk on first use after a
+process restart, or when the file stat shows another writer changed the file.
+Normal streaming appends must reuse the cache and advance the cursor without
+re-reading the whole transcript. A truncated last line (crash mid-write) is
+tolerated: `parseLines` skips the malformed bytes, and the next append starts
+from `max-valid-seq + 1` and prefixes its own line with `\n` so the broken
+trailer stays on its own line.
 
 ## Dedup-by-id
 
@@ -116,9 +143,9 @@ given `(runId, workerId)` — append, expand-from-gz, compact-to-gz,
 delete — acquire this mutex. An earlier version of the compaction
 sweep bypassed the chain; that latent loss bug is fixed.
 
-If we ever shard worker ownership across processes, the chain must be
-replaced with a file lock. The single-writer-per-worker invariant is
-load-bearing.
+The in-process chain is paired with an OS-visible worker-file lock so Next dev
+module instances and process boundaries cannot interleave file mutations. The
+single-writer-per-worker invariant is load-bearing.
 
 ## Two cursors, kept distinct
 
@@ -149,8 +176,12 @@ per-worker state. The contract is:
   latestKnownSeq && status === "loaded"`.
 
 The Terminal renders either entries (when provided) or the legacy
-`agent` + `userMessages` props (before cutover). When `entries` is
-provided the legacy props are ignored.
+`agent` + `userMessages` props (before cutover). When `entries` is provided,
+the worker stream is the transcript authority. Legacy `userMessages` rows may
+be used only as a gated fallback for stale historical data after
+`WorkerEntriesManager.isLoaded(workerId)` is true; before that point, rendering
+fallback rows can create a false chronology while the contiguous stream is
+still arriving.
 
 ## Dual-write feature flag
 
@@ -188,3 +219,9 @@ tool-call shape, a new lifecycle marker, a new server-injected note —
 extend `WorkerEntry` and route it through `appendWorkerEntry`. Don't
 add a sibling JSONL, a new `messages.kind`, or an in-memory cache that
 the frontend has to reconcile against the stream.
+
+Provider-backed sessions use the same stream. A local process session
+creates a normal `workers` row with `type = "process"` and appends
+stdout, stderr, stdin, and lifecycle markers to
+`app-data/run-data/<runId>/<workerId>.jsonl`. The session provider
+model is described in `docs/architecture/session-provider-model.md`.

@@ -1,0 +1,10 @@
+# Worker Stream In-Flight Wake-Up Retry
+
+**Date:** 2026-05-20
+**Context:** OmniHarness direct-control conversations, unified worker stream, SSE wake-ups
+**Symptom:** A second human message appeared in the selected direct-control session, the input cleared, "Thinking..." disappeared, and no worker output appeared until switching sessions forced a refetch.
+**Root Cause:** `WorkerEntriesManager` could receive `worker.entry_appended` while a previous worker-entry fetch was still in flight. If that older fetch returned no new entries, the manager recorded `latestKnownSeq > latestContiguousSeq` but did not retry because the retry rule only chased gaps after forward progress. The selected terminal therefore stayed incomplete until an unrelated remount called `ensureLoaded()` again.
+**Fix:** Capture both the contiguous cursor and known cursor at fetch start. After the fetch resolves, retry if either the contiguous cursor advanced or the known cursor advanced while the request was in flight, while preserving the stale-server guard that prevents infinite retries when no newer wake-up arrives.
+**Verification:** Added a failing regression in `tests/app/worker-entries-manager.test.ts` for an in-flight empty fetch followed by a wake-up. Verified it failed before the fix, then passed after the fix. Also ran `pnpm exec vitest run tests/app/worker-entries-manager.test.ts tests/app/live-event-connection-manager.test.ts tests/api/conversation-messages-route.test.ts --pool=forks --poolOptions.forks.singleFork=true` and `pnpm lint`.
+**Prevention:** Any manager with separate "known cursor" and "loaded cursor" state must prove eventual fetch progress when the known cursor advances during an in-flight request. A known gap is not a loaded state, and repair must not depend on remount, navigation, or a later unrelated poll.
+**Skill/Doc Updates:** Updated `docs/architecture/timing-determinism-audit.md` with the worker-stream wake-up race pattern. No global skill update was needed because the existing control-plane and verification skills already require cursor/replay invariants; this was a project-specific missed invariant.

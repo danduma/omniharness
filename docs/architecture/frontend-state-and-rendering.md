@@ -2,6 +2,13 @@
 
 This document is the source of truth for state ownership, subscription boundaries, high-churn state policy, and render-performance budgets in the OmniHarness Next.js app shell.
 
+Related incident note:
+`docs/architecture/state-staleness-and-session-lifecycle-lessons.md` records
+the May 2026 conversation-loading regressions where cached selected-run state
+was not hydrated immediately, unchanged snapshots were reapplied, fallback
+`messages` rows rendered before worker entries were loaded, and scroll
+affordances treated bottom padding as real content.
+
 ## Manager Ownership
 
 Each shared manager owns a focused slice of UI state. Components should subscribe via `useManagerSelector` to a narrow slice; broad `useManagerSnapshot` reads are only permitted in approved leaf containers (see `tests/ui/react-best-practices.test.ts`).
@@ -15,6 +22,17 @@ Each shared manager owns a focused slice of UI state. Components should subscrib
 | `AppearancePreferencesManager` | text-size preferences, theme-adjacent UI prefs | Persists to localStorage |
 | `SideWindowManager` | side-window open state, current resource | Opens in response to project file refs |
 | Component-level managers (e.g. inside `Terminal`, `WorkerCard`) | local component UI state (expanded groups, scroll-follow, search) | Never lifted into `HomeUiStateManager` |
+
+## Conversation Loading Invariants
+
+- Selecting a run hydrates `EventStreamStateManager` from the scoped frontend
+  cache immediately, then asks the server whether the snapshot checksum changed.
+- A not-modified snapshot confirms freshness and must not replace local state.
+- Worker-backed transcripts render from `WorkerEntriesManager` entries. Legacy
+  `messages` rows are fallback evidence only after the selected worker stream
+  is fully loaded.
+- Conversation first-positioning and "more below" affordances must be driven by
+  meaningful transcript overflow, not bottom padding or pending-state spacers.
 
 ## High-Churn State Rules
 
@@ -41,6 +59,18 @@ Rules:
   - the manager's owning container (where the entire state is needed for layout wiring).
   - tests and devtools.
 - New code may not call `useManagerSnapshot(homeUiStateManager)` outside the explicit allowlist in `tests/ui/react-best-practices.test.ts`.
+
+## Snapshot Merge Safety
+
+Live event snapshots are not automatically authoritative. If a payload does
+not declare a complete scope, it is a partial update and must not erase local
+optimistic state, recently created sessions, delivered worker-stream inputs, or
+read markers.
+
+State merge bugs are documented in
+`docs/architecture/state-staleness-and-session-lifecycle-lessons.md`. Read that
+note before changing `EventStreamStateManager`, `mergePendingCreatedConversationSnapshots`,
+`WorkerEntriesManager`, queued-message UI state, or read-marker logic.
 
 ## Render Performance Budgets
 
