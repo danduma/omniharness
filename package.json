@@ -26,6 +26,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "electron:build": "node ./apps/electron/scripts/build.mjs",
+    "vscode:build": "node ./apps/vscode/scripts/build.mjs",
     "test:lifecycle": "vitest run tests/lifecycle",
     "measure:dev": "node ./scripts/measure-local-dev.mjs"
   },

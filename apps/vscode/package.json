@@ -1,0 +1,76 @@
+{
+  "name": "omniharness-vscode",
+  "displayName": "OmniHarness",
+  "description": "Operate OmniHarness conversations from VS Code.",
+  "version": "0.1.0",
+  "publisher": "omniharness",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onCommand:omniHarness.openPanel",
+    "onCommand:omniHarness.refresh",
+    "onCommand:omniHarness.startConversation",
+    "onView:omniHarness.panel"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "omniHarness",
+          "title": "OmniHarness",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "omniHarness": [
+        {
+          "type": "webview",
+          "id": "omniHarness.panel",
+          "name": "Conversations"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "omniHarness.openPanel",
+        "category": "OmniHarness",
+        "title": "Open Panel"
+      },
+      {
+        "command": "omniHarness.refresh",
+        "category": "OmniHarness",
+        "title": "Refresh"
+      },
+      {
+        "command": "omniHarness.startConversation",
+        "category": "OmniHarness",
+        "title": "Start Conversation"
+      }
+    ],
+    "configuration": {
+      "title": "OmniHarness",
+      "properties": {
+        "omniHarness.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:3035",
+          "description": "OmniHarness server URL. Use http://localhost:3035 for the normal local app, or http://localhost:3050 for the raw Next dev server."
+        },
+        "omniHarness.sessionCookie": {
+          "type": "string",
+          "default": "",
+          "description": "Optional omni_session cookie value for password-protected OmniHarness instances."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node ./scripts/build.mjs"
+  }
+}
