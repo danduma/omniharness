@@ -23,14 +23,14 @@ import { extractLatestPlainTextTurn } from "@/lib/agent-output";
 import { shouldShowPlanningTerminalActivity } from "@/lib/planning-output";
 import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, NoticeDescriptor, RunRecord, PlanningReviewRunRecord, PlanningReviewRoundRecord, PlanningReviewFindingRecord } from "@/app/home/types";
 import type { RecoveryIncidentRecord, RunRecoveryState } from "@/app/home/types";
-import { formatExecutionTimestamp, formatExecutionEventType, getExecutionEventDetailRows, summarizeExecutionEvent, type ConversationTimelineItem } from "@/app/home/utils";
+import { formatExecutionTimestamp, formatExecutionEventType, getExecutionEventDetailRows, shouldShowLatestRecoveryAction, summarizeExecutionEvent, type ConversationTimelineItem } from "@/app/home/utils";
 import { cn } from "@/lib/utils";
 import { shallowEqualRecord, useManagerSelector, useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { ProjectFileReference } from "@/lib/project-file-links";
 import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "@/app/home/GitWorkspaceManager";
 import { preflightConfirmationActionsManager } from "@/app/home/PreflightConfirmationActionsManager";
 import { useWorkerStream } from "@/app/home/WorkerEntriesManager";
-import { deriveConversationLoadState, shouldShowDirectConversationLoading } from "@/app/home/direct-worker-stream-loading";
+import { deriveConversationLoadState, resolveDirectWorkerStreamRefreshInterval, shouldShowDirectConversationLoading } from "@/app/home/direct-worker-stream-loading";
 import { type PlanningReviewAgentSelection } from "@/server/planning/review-preferences";
 import { WORKER_TYPE_LABELS, type SupportedWorkerType } from "@/server/supervisor/worker-types";
 import type { WorkerEntry } from "@/server/workers/entries-types";
@@ -44,6 +44,9 @@ const Terminal = dynamic(
   () => import("@/components/Terminal").then((m) => m.Terminal),
   { ssr: false },
 );
+
+const DIRECT_WORKER_STREAM_REFRESH_INTERVAL_MS = 2_000;
+const DIRECT_WORKER_STREAM_VALIDATION_INTERVAL_MS = 5_000;
 
 function slugBranchName(value: string) {
   return value
@@ -401,6 +404,7 @@ interface ConversationMainProps {
   initialWorkerEntries?: Record<string, WorkerEntry[]> | undefined;
   unifiedWorkerStreamEnabled: boolean;
   isHydratingConversations: boolean;
+  isSelectedConversationPreviewAvailable: boolean;
   isSelectedConversationLoaded: boolean;
   promotePlanningConversation: {
     isPending: boolean;
@@ -484,6 +488,7 @@ function FailoverChip({ events }: { events: ExecutionEventRecord[] }) {
 function LatestRecoveryAction({
   selectedRun,
   canRetryConversation,
+  isSelectedConversationLoaded,
   recoverRun,
   showRecoverableRunningState,
   hasStuckWorker,
@@ -492,18 +497,25 @@ function LatestRecoveryAction({
 }: {
   selectedRun: RunRecord | null;
   canRetryConversation: boolean;
+  isSelectedConversationLoaded: boolean;
   recoverRun: { isPending: boolean };
   showRecoverableRunningState: boolean;
   hasStuckWorker: boolean;
   latestUserCheckpoint: MessageRecord | null;
   handleRetryMessage: (messageId: string) => void;
 }) {
-  if (!canRetryConversation || !latestUserCheckpoint) {
+  if (!shouldShowLatestRecoveryAction({
+    selectedRun,
+    canRetryConversation,
+    isSelectedConversationLoaded,
+    latestUserCheckpoint,
+    showRecoverableRunningState,
+    hasStuckWorker,
+  })) {
     return null;
   }
-
-  const canRecover = selectedRun?.status === "failed" || showRecoverableRunningState || hasStuckWorker;
-  if (!canRecover) {
+  const checkpoint = latestUserCheckpoint;
+  if (!checkpoint) {
     return null;
   }
 
@@ -512,7 +524,7 @@ function LatestRecoveryAction({
       <Button
         variant="outline"
         size="sm"
-        onClick={() => handleRetryMessage(latestUserCheckpoint.id)}
+        onClick={() => handleRetryMessage(checkpoint.id)}
         disabled={recoverRun.isPending}
       >
         <RotateCcw className="mr-2 h-4 w-4" /> {selectedRun?.status === "failed" ? "Resume worker" : "Unstick latest"}
@@ -539,6 +551,7 @@ export function ConversationMain({
   initialWorkerEntries = {},
   unifiedWorkerStreamEnabled,
   isHydratingConversations,
+  isSelectedConversationPreviewAvailable,
   isSelectedConversationLoaded,
   promotePlanningConversation,
   onStartReview,
@@ -587,9 +600,18 @@ export function ConversationMain({
   const directWorkerStream = useWorkerStream(
     unifiedWorkerStreamEnabled ? primaryConversationWorkerId : null,
     primaryConversationWorkerId ? initialWorkerEntries[primaryConversationWorkerId] ?? [] : [],
+    {
+      refreshIntervalMs: resolveDirectWorkerStreamRefreshInterval({
+        unifiedWorkerStreamEnabled,
+        primaryConversationWorkerId,
+        activeRefreshIntervalMs: DIRECT_WORKER_STREAM_REFRESH_INTERVAL_MS,
+        validationIntervalMs: DIRECT_WORKER_STREAM_VALIDATION_INTERVAL_MS,
+        showDirectControlWorkingIndicator,
+      }),
+    },
   );
   const directConversationLoadState = deriveConversationLoadState({
-    snapshotLoaded: isSelectedConversationLoaded,
+    snapshotLoaded: isSelectedConversationPreviewAvailable,
     unifiedWorkerStreamEnabled,
     primaryConversationWorkerId,
     streamState: directWorkerStream.state,
@@ -607,7 +629,7 @@ export function ConversationMain({
         loading: projectPath ? Boolean(state.loadingByProject[projectPath]) : false,
         pendingOperation: state.pendingOperation,
         dialogDraft: state.dialogDraft,
-        lastError: state.lastError,
+        lastError: projectPath ? state.lastErrorByProject[projectPath] ?? null : null,
       };
     };
   }, []);
@@ -730,7 +752,7 @@ export function ConversationMain({
     {selectedRunId ? (
       isDirectConversation ? (
         <div className="omni-conversation-text-scale mx-auto flex w-full max-w-6xl flex-col gap-4 p-4 pb-24 sm:p-6 sm:pb-20">
-          {!isSelectedConversationLoaded ? (
+          {!isSelectedConversationPreviewAvailable ? (
             <div
               className="flex flex-col items-center justify-center gap-3 pt-24 text-sm text-muted-foreground sm:pt-32"
               role="status"
@@ -763,13 +785,22 @@ export function ConversationMain({
                 variant="native"
                 textSizeScope="conversation"
                 conversationMessageTextSize
-                className="min-h-[32rem]"
                 showPendingAssistantIndicator={showDirectControlWorkingIndicator}
                 isLoading={isHydratingConversations || isDirectWorkerStreamLoading}
                 projectRoot={projectRoot}
                 onOpenProjectFile={onOpenProjectFile}
                 scrollAnchorKey={selectedRunId}
                 summarizeWorkBlocks={isDirectConversation}
+                hasMoreHistory={
+                  unifiedWorkerStreamEnabled && primaryConversationWorkerId
+                    ? directWorkerStream.hasOlder
+                    : undefined
+                }
+                onRequestMoreHistory={
+                  unifiedWorkerStreamEnabled && primaryConversationWorkerId
+                    ? () => { void directWorkerStream.loadOlder(); }
+                    : undefined
+                }
               />
             </DirectControlTerminalColumn>
           )}
@@ -786,6 +817,7 @@ export function ConversationMain({
               <LatestRecoveryAction
                 selectedRun={selectedRun}
                 canRetryConversation={canRetryConversation}
+                isSelectedConversationLoaded={isSelectedConversationLoaded}
                 recoverRun={recoverRun}
                 showRecoverableRunningState={showRecoverableRunningState}
                 hasStuckWorker={hasStuckWorker}
@@ -805,7 +837,7 @@ export function ConversationMain({
             />
           ) : null}
           {isImplementationConversation ? <FailoverChip events={executionEvents} /> : null}
-          {!isSelectedConversationLoaded ? (
+          {!isSelectedConversationPreviewAvailable ? (
             <div
               className="flex flex-col items-center justify-center gap-3 pt-24 text-sm text-muted-foreground sm:pt-32"
               role="status"
@@ -1012,6 +1044,7 @@ export function ConversationMain({
             <LatestRecoveryAction
               selectedRun={selectedRun}
               canRetryConversation={canRetryConversation}
+              isSelectedConversationLoaded={isSelectedConversationLoaded}
               recoverRun={recoverRun}
               showRecoverableRunningState={showRecoverableRunningState}
               hasStuckWorker={hasStuckWorker}
@@ -1034,6 +1067,7 @@ export function ConversationMain({
               <LatestRecoveryAction
                 selectedRun={selectedRun}
                 canRetryConversation={canRetryConversation}
+                isSelectedConversationLoaded={isSelectedConversationLoaded}
                 recoverRun={recoverRun}
                 showRecoverableRunningState={showRecoverableRunningState}
                 hasStuckWorker={hasStuckWorker}

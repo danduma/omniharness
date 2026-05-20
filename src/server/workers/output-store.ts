@@ -3,6 +3,7 @@ import { promises as fs, existsSync } from "node:fs";
 import path from "node:path";
 import { brotliDecompressSync, gzipSync, gunzipSync } from "node:zlib";
 import AdmZip from "adm-zip";
+import type { AgentOutputEntry } from "@/lib/agent-output";
 import type { AgentRecord } from "@/server/bridge-client";
 import { getAppDataPath } from "@/server/app-root";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -10,7 +11,7 @@ import type {
   WorkerEntry,
 } from "@/server/workers/entries-types";
 
-type OutputEntry = NonNullable<AgentRecord["outputEntries"]>[number];
+type OutputEntry = WorkerEntry;
 
 const RUN_DATA_SUBDIR = "run-data";
 const COMPRESSED_LEGACY_PREFIX = "br:v1:";
@@ -328,6 +329,18 @@ let tmpCounter = 0;
 // stat before each chained write so normal streaming appends do not parse
 // the whole transcript every tick.
 const nextSeqByKey = new Map<string, number>();
+// Read-side cache: maps a (runId, workerId) to its latest persisted seq,
+// pinned to the file's (size, mtimeMs). On a read we stat the file once;
+// if the stat matches the pinned values, we return the cached seq without
+// opening the file. Writes happen in a separate bridge process, so this
+// cache cannot piggyback on nextSeqByKey — but the stat-based invariant
+// catches any external writer's append correctly.
+const readLatestSeqByKey = new Map<string, { latestSeq: number; size: number; mtimeMs: number }>();
+// Same shape but for the full parsed entries list. Used by
+// readWorkerEntriesSince to skip read+parse when (size, mtimeMs) matches.
+// The entries list also lets us filter by afterSeq in memory, so even an
+// afterSeq=0 first-load is served from this cache after the initial read.
+const readEntriesByKey = new Map<string, { entries: WorkerEntry[]; latestSeq: number; size: number; mtimeMs: number }>();
 // Cache of bridge entry ids that have already been written, used to make
 // append-from-snapshot idempotent. Built lazily from the file on first
 // use and updated on every successful append.
@@ -359,6 +372,8 @@ function clearChainCaches(runId: string, workerId: string) {
   seenIdsByKey.delete(key);
   fingerprintsByKey.delete(key);
   fileStateByKey.delete(key);
+  readLatestSeqByKey.delete(key);
+  readEntriesByKey.delete(key);
 }
 
 function workerFileLockDelay(attempt: number) {
@@ -373,6 +388,14 @@ function sleep(ms: number) {
 async function isWorkerFileLockStale(lockPath: string) {
   try {
     const stat = await fs.stat(lockPath);
+    try {
+      await fs.access(path.join(lockPath, "owner.json"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return true;
+      }
+      throw error;
+    }
     return stat.mtimeMs < Date.now() - WORKER_FILE_LOCK_STALE_MS;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -574,14 +597,18 @@ async function readAllPersistedEntries(runId: string, workerId: string): Promise
  *
  * If `entry.id` is already present on disk (or in the seen-ids cache),
  * the call is a no-op and the previously persisted entry is returned
- * when discoverable; otherwise null is returned to indicate the entry
- * was rejected as a duplicate.
+ * with `appended: false` so wake-up publishers do not re-announce old seqs.
  */
-export async function appendWorkerEntry(
+export type AppendWorkerEntryResult = {
+  entry: WorkerEntry;
+  appended: boolean;
+};
+
+export async function appendWorkerEntryWithResult(
   runId: string,
   workerId: string,
   entry: Omit<WorkerEntry, "seq">,
-): Promise<WorkerEntry> {
+): Promise<AppendWorkerEntryResult> {
   return runOnChain(runId, workerId, async () => {
     return withWorkerFileLock(runId, workerId, async () => {
       // If a compaction race somehow stranded the plaintext file under .gz,
@@ -597,11 +624,11 @@ export async function appendWorkerEntry(
         const persisted = await readCanonicalPersistedEntries(runId, workerId);
         const match = persisted.find((line) => line.id === entry.id);
         if (match && typeof match.seq === "number") {
-          return match;
+          return { entry: match, appended: false };
         }
         // Legacy line without seq: assign one virtually based on file
         // position. The writer doesn't advance nextSeq in this case.
-        return { ...(entry as WorkerEntry), seq: 0 };
+        return { entry: { ...(entry as WorkerEntry), seq: 0 }, appended: false };
       }
 
       const persistedEntry: WorkerEntry = {
@@ -627,9 +654,17 @@ export async function appendWorkerEntry(
       }
       nextSeqByKey.set(chainKey(runId, workerId), nextSeq + 1);
       await rememberWorkerFileState(runId, workerId);
-      return compact;
+      return { entry: compact, appended: true };
     });
   });
+}
+
+export async function appendWorkerEntry(
+  runId: string,
+  workerId: string,
+  entry: Omit<WorkerEntry, "seq">,
+): Promise<WorkerEntry> {
+  return (await appendWorkerEntryWithResult(runId, workerId, entry)).entry;
 }
 
 /**
@@ -656,7 +691,7 @@ export async function writeWorkerOutputEntries(
       await expandWorkerOutputFileInternal(runId, workerId);
 
       const { fingerprints } = await refreshChainCaches(runId, workerId);
-      const newEntries: OutputEntry[] = [];
+      const newEntries: AgentOutputEntry[] = [];
       const acceptedFingerprintsById = new Map<string, string>();
       for (const entry of entries) {
         if (!entry) continue;
@@ -848,9 +883,52 @@ export async function readWorkerEntriesSince(
   workerId: string,
   afterSeq: number,
 ): Promise<{ entries: WorkerEntry[]; latestSeq: number }> {
+  const key = chainKey(runId, workerId);
+  const filePath = workerFilePath(runId, workerId);
+
+  // Stat the plaintext .jsonl up front. ENOENT here means we'll fall back
+  // to compressed/legacy paths inside readCanonicalPersistedEntries and
+  // can't validate the entries cache against an mtime, so skip the cache
+  // entirely in that case.
+  let stat: { size: number; mtimeMs: number } | null = null;
+  try {
+    const s = await fs.stat(filePath);
+    stat = { size: s.size, mtimeMs: s.mtimeMs };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  if (stat) {
+    const cached = readEntriesByKey.get(key);
+    if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
+      // File hasn't moved since we parsed it — serve from memory.
+      // Trim allocation when the caller is already caught up so we don't
+      // churn the GC on every snapshot poll.
+      if (afterSeq > 0 && cached.latestSeq <= afterSeq) {
+        return { entries: [], latestSeq: cached.latestSeq };
+      }
+      const filtered = afterSeq <= 0
+        ? cached.entries
+        : cached.entries.filter((entry) => typeof entry.seq === "number" && entry.seq > afterSeq);
+      return { entries: filtered, latestSeq: cached.latestSeq };
+    }
+  }
+
   if (afterSeq > 0) {
     const fromJsonlTail = await readWorkerEntriesSinceJsonlTail(runId, workerId, afterSeq);
     if (fromJsonlTail) {
+      // Tail-scan only gives us a partial entries list (those > afterSeq),
+      // so we can't populate the full-entries cache here. Bump the seq
+      // cache for the snapshot path's benefit.
+      if (stat) {
+        readLatestSeqByKey.set(key, {
+          latestSeq: fromJsonlTail.latestSeq,
+          size: stat.size,
+          mtimeMs: stat.mtimeMs,
+        });
+      }
       return fromJsonlTail;
     }
   }
@@ -862,10 +940,169 @@ export async function readWorkerEntriesSince(
       latestSeq = entry.seq;
     }
   }
+  if (stat) {
+    readEntriesByKey.set(key, {
+      entries: withSeqs,
+      latestSeq,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+    });
+    readLatestSeqByKey.set(key, { latestSeq, size: stat.size, mtimeMs: stat.mtimeMs });
+  }
   const filtered = afterSeq <= 0
     ? withSeqs
     : withSeqs.filter((entry) => typeof entry.seq === "number" && entry.seq > afterSeq);
   return { entries: filtered, latestSeq };
+}
+
+/**
+ * Read the last `limit` entries (in seq order) and the file's latest seq.
+ * Uses the same backward chunk-scan as readWorkerEntriesSinceJsonlTail —
+ * for an active worker streaming output we only touch the tail of the
+ * file, not the whole transcript.
+ *
+ * Returns null when the file doesn't exist or the tail-scan can't prove
+ * its boundary (e.g. legacy lines without seq). Caller falls back to the
+ * canonical full read.
+ */
+export async function readWorkerEntriesTail(
+  runId: string,
+  workerId: string,
+  limit: number,
+): Promise<{ entries: WorkerEntry[]; latestSeq: number; hasOlder: boolean } | null> {
+  if (limit <= 0) {
+    return { entries: [], latestSeq: 0, hasOlder: true };
+  }
+  return readWorkerEntriesTailJsonl(runId, workerId, limit);
+}
+
+async function readWorkerEntriesTailJsonl(
+  runId: string,
+  workerId: string,
+  limit: number,
+): Promise<{ entries: WorkerEntry[]; latestSeq: number; hasOlder: boolean } | null> {
+  const filePath = workerFilePath(runId, workerId);
+  let size = 0;
+  try {
+    size = (await fs.stat(filePath)).size;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  if (size <= 0) {
+    return { entries: [], latestSeq: 0, hasOlder: false };
+  }
+
+  const maxBytes = Math.min(size, 4 * 1024 * 1024);
+  const chunkSize = Math.min(maxBytes, 64 * 1024);
+  const handle = await fs.open(filePath, "r");
+  try {
+    let offset = size;
+    let tail = "";
+    while (offset > 0 && Buffer.byteLength(tail, "utf8") < maxBytes) {
+      const readSize = Math.min(chunkSize, offset);
+      offset -= readSize;
+      const buffer = Buffer.alloc(readSize);
+      await handle.read(buffer, 0, readSize, offset);
+      tail = buffer.toString("utf8") + tail;
+
+      const parsed = entriesTailInJsonlText(tail, offset === 0, limit);
+      if (parsed === "incomplete") {
+        continue;
+      }
+      return parsed;
+    }
+    return null;
+  } finally {
+    await handle.close();
+  }
+}
+
+function entriesTailInJsonlText(
+  text: string,
+  includesFileStart: boolean,
+  limit: number,
+): { entries: WorkerEntry[]; latestSeq: number; hasOlder: boolean } | "incomplete" {
+  const lines = text.split("\n");
+  const firstLineIndex = includesFileStart ? 0 : 1;
+  const entries: WorkerEntry[] = [];
+  let latestSeq = 0;
+
+  for (let index = lines.length - 1; index >= firstLineIndex; index -= 1) {
+    const trimmed = lines[index]?.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as WorkerEntry;
+      const seq = typeof parsed.seq === "number" && Number.isFinite(parsed.seq)
+        ? Math.floor(parsed.seq)
+        : 0;
+      if (seq <= 0) {
+        // Legacy line without seq — boundary can't be proven from the tail.
+        return "incomplete";
+      }
+      if (latestSeq === 0) latestSeq = seq;
+      entries.push(parsed);
+      if (entries.length >= limit) {
+        entries.reverse();
+        const lowestSeq = entries[0]?.seq;
+        return {
+          entries,
+          latestSeq,
+          // hasOlder iff there's at least one more durable line before
+          // the first kept entry — we don't know for sure here unless we
+          // saw the file start, so we conservatively assume there is.
+          hasOlder: !includesFileStart || (typeof lowestSeq === "number" && lowestSeq > 1),
+        };
+      }
+    } catch {
+      // Last line may be a partial write after a crash. Tolerate that
+      // single tail malformed line; treat any earlier malformed line as
+      // proof we cannot disambiguate the cursor and bail.
+      if (index !== lines.length - 1) {
+        return "incomplete";
+      }
+    }
+  }
+
+  if (includesFileStart) {
+    entries.reverse();
+    return { entries, latestSeq, hasOlder: false };
+  }
+  return "incomplete";
+}
+
+/**
+ * Read up to `limit` entries with seq strictly less than `beforeSeq`,
+ * along with the file's latest seq and whether older entries remain on
+ * disk. Used to hydrate scroll-back without re-reading the prefix the
+ * client already has.
+ */
+export async function readWorkerEntriesBefore(
+  runId: string,
+  workerId: string,
+  beforeSeq: number,
+  limit: number,
+): Promise<{ entries: WorkerEntry[]; latestSeq: number; hasOlder: boolean }> {
+  if (limit <= 0 || beforeSeq <= 1) {
+    return { entries: [], latestSeq: 0, hasOlder: false };
+  }
+  // No clever shortcut: the older range may not be in the tail window, so
+  // we read the full canonical entries (using the existing cache) and
+  // filter. The readEntriesByKey cache makes repeated scroll-back cheap.
+  const all = await readCanonicalPersistedEntries(runId, workerId);
+  let latestSeq = 0;
+  for (const entry of all) {
+    if (typeof entry.seq === "number" && entry.seq > latestSeq) {
+      latestSeq = entry.seq;
+    }
+  }
+  const older = all.filter((entry) => typeof entry.seq === "number" && entry.seq < beforeSeq);
+  const slice = older.slice(Math.max(0, older.length - limit));
+  const lowestKeptSeq = slice[0]?.seq;
+  const hasOlder = older.length > slice.length || (typeof lowestKeptSeq === "number" && lowestKeptSeq > 1);
+  return { entries: slice, latestSeq, hasOlder };
 }
 
 async function readWorkerEntriesSinceJsonlTail(
@@ -966,11 +1203,19 @@ export async function readWorkerLatestSeq(
   workerId: string,
 ): Promise<number> {
   const filePath = workerFilePath(runId, workerId);
+  const key = chainKey(runId, workerId);
+  let statForCache: { size: number; mtimeMs: number } | null = null;
   try {
     const stat = await fs.stat(filePath);
+    statForCache = { size: stat.size, mtimeMs: stat.mtimeMs };
+    const cached = readLatestSeqByKey.get(key);
+    if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
+      return cached.latestSeq;
+    }
     if (stat.size > 0) {
       const seq = await readLatestSeqFromJsonlTail(filePath, stat.size);
       if (seq !== null) {
+        readLatestSeqByKey.set(key, { latestSeq: seq, size: stat.size, mtimeMs: stat.mtimeMs });
         return seq;
       }
     }
@@ -986,6 +1231,9 @@ export async function readWorkerLatestSeq(
     if (typeof entry.seq === "number" && Number.isFinite(entry.seq) && entry.seq > latestSeq) {
       latestSeq = entry.seq;
     }
+  }
+  if (statForCache) {
+    readLatestSeqByKey.set(key, { latestSeq, size: statForCache.size, mtimeMs: statForCache.mtimeMs });
   }
   return latestSeq;
 }
@@ -1057,7 +1305,7 @@ function workerEntryFingerprint(entry: unknown): string {
   return JSON.stringify(rest);
 }
 
-function bridgeOutputEntryFingerprint(entry: OutputEntry): string {
+function bridgeOutputEntryFingerprint(entry: AgentOutputEntry): string {
   const compact = compactEntryForHistory({
     ...(entry as unknown as Record<string, unknown>),
     seq: 0,
@@ -1286,7 +1534,7 @@ export async function compactStaleWorkerOutputs(options: {
   }
 
   const workerIds = candidates.map((c) => c.workerId);
-  const rows = workerIds.length > 0
+  const rows: Array<{ id: string; status: string }> = workerIds.length > 0
     ? await db.select({ id: workers.id, status: workers.status })
         .from(workers)
         .where(inArray(workers.id, workerIds))
@@ -1338,6 +1586,8 @@ export function __resetOutputStoreCachesForTests() {
   seenIdsByKey.clear();
   fingerprintsByKey.clear();
   fileStateByKey.clear();
+  readLatestSeqByKey.clear();
+  readEntriesByKey.clear();
   chainCacheDiskRefreshesForTests = 0;
 }
 

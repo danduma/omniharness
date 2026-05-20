@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   deriveConversationLoadState,
   isWorkerStreamCaughtUp,
+  resolveDirectWorkerStreamRefreshInterval,
   shouldShowDirectConversationLoading,
   shouldShowDirectWorkerStreamInitialLoading,
 } from "@/app/home/direct-worker-stream-loading";
@@ -12,8 +13,10 @@ function buildState(overrides: Partial<WorkerStreamState> = {}): WorkerStreamSta
   return {
     workerId: "worker-1",
     entries: [],
+    lowestSeq: 0,
     latestContiguousSeq: 0,
     latestKnownSeq: 0,
+    hasOlder: false,
     status: "idle",
     lastError: null,
     ...overrides,
@@ -142,5 +145,31 @@ describe("shouldShowDirectWorkerStreamInitialLoading", () => {
       primaryConversationWorkerId: "worker-1",
       streamState: buildState({ status: "loaded", latestContiguousSeq: 2, latestKnownSeq: 2 }),
     }))).toBe(false);
+  });
+
+  it("keeps selected direct worker streams on a validation refresh after work looks idle", () => {
+    expect(resolveDirectWorkerStreamRefreshInterval({
+      unifiedWorkerStreamEnabled: true,
+      primaryConversationWorkerId: "worker-1",
+      activeRefreshIntervalMs: 2_000,
+      validationIntervalMs: 5_000,
+      showDirectControlWorkingIndicator: true,
+    })).toBe(2_000);
+
+    expect(resolveDirectWorkerStreamRefreshInterval({
+      unifiedWorkerStreamEnabled: true,
+      primaryConversationWorkerId: "worker-1",
+      activeRefreshIntervalMs: 2_000,
+      validationIntervalMs: 5_000,
+      showDirectControlWorkingIndicator: false,
+    })).toBe(5_000);
+
+    expect(resolveDirectWorkerStreamRefreshInterval({
+      unifiedWorkerStreamEnabled: true,
+      primaryConversationWorkerId: null,
+      activeRefreshIntervalMs: 2_000,
+      validationIntervalMs: 5_000,
+      showDirectControlWorkingIndicator: false,
+    })).toBeNull();
   });
 });

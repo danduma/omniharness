@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { AlertTriangle, Bot, ChevronDown, Clock, Cpu, Hash, Maximize2, Minimize2, Square, SquareTerminal } from "lucide-react";
 import { Terminal, TerminalTextSizeControl, type AgentTerminalPayload, type TerminalUserMessage } from "@/components/Terminal";
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
@@ -12,7 +12,7 @@ import type { AgentOutputEntry } from "@/lib/agent-output";
 import { isWorkerActiveStatus } from "@/lib/conversation-workers";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
-import type { WorkerEntry } from "@/server/workers/entries-types";
+import type { BridgeWorkerEntryType, WorkerEntry } from "@/server/workers/entries-types";
 import {
   deriveVisibleWorkerTerminalProcesses,
   type WorkerTerminalProcess,
@@ -169,22 +169,22 @@ function hasOmittedWorkerStreamHistory(entries: WorkerEntry[] | undefined) {
   )));
 }
 
+const WORKER_CARD_BRIDGE_TYPES = new Set<BridgeWorkerEntryType>([
+  "message",
+  "thought",
+  "tool_call",
+  "tool_call_update",
+  "permission",
+]);
+
 function isWorkerCardBridgeEntry(entry: WorkerEntry): entry is WorkerEntry & AgentOutputEntry {
-  return (
-    entry.type === "message"
-    || entry.type === "thought"
-    || entry.type === "tool_call"
-    || entry.type === "tool_call_update"
-    || entry.type === "permission"
-  );
+  return WORKER_CARD_BRIDGE_TYPES.has(entry.type as BridgeWorkerEntryType);
 }
 
 function isWorkerCardTerminalEntry(entry: WorkerEntry) {
-  return (
-    isWorkerCardBridgeEntry(entry)
-    || entry.type === "user_input"
+  return entry.type === "user_input"
     || entry.type === "supervisor_input"
-  );
+    || WORKER_CARD_BRIDGE_TYPES.has(entry.type as BridgeWorkerEntryType);
 }
 
 function WorkerExpandedFooter({
@@ -440,8 +440,15 @@ export function WorkerCard({
   const showHeaderStopWorker = showStopWorker && !hasActiveTerminalProcesses;
   const showWorkerError = shouldShowWorkerError(agent);
   const hasMoreHistory = unifiedTerminalEntries
-    ? hasOmittedWorkerStreamHistory(unifiedTerminalEntries)
+    ? workerStream.hasOlder || hasOmittedWorkerStreamHistory(unifiedTerminalEntries)
     : hasOmittedWorkerHistory(agent);
+  const handleRequestMoreHistory = useCallback(() => {
+    if (unifiedTerminalEntries && workerStream.hasOlder) {
+      void workerStream.loadOlder();
+      return;
+    }
+    onLoadWorkerHistory?.();
+  }, [onLoadWorkerHistory, unifiedTerminalEntries, workerStream]);
   const showFocusControl = canFocus && Boolean(onToggleFocus);
 
   const workerNumberLabel = useMemo(() => {
@@ -644,7 +651,7 @@ export function WorkerCard({
                 projectRoot={projectRoot}
                 onOpenProjectFile={(file) => sideWindowManager.openFile(file)}
                 hasMoreHistory={hasMoreHistory}
-                onRequestMoreHistory={onLoadWorkerHistory}
+                onRequestMoreHistory={handleRequestMoreHistory}
                 showTextSizeControl={false}
                 scrollAnchorKey={`${workerId}:${open ? "open" : "closed"}`}
               />

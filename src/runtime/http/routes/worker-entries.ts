@@ -9,9 +9,20 @@
  */
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
-import { readWorkerEntriesSince } from "@/server/workers/output-store";
+import { readWorkerEntriesBefore, readWorkerEntriesSince, readWorkerEntriesTail } from "@/server/workers/output-store";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
+import { startSlowProbe } from "@/server/slow-probe";
 import { toNextRequest } from "./next-request";
+
+const DEFAULT_TAIL_LIMIT = 100;
+const MAX_TAIL_LIMIT = 1000;
+
+function parsePositiveInt(value: string | null): number | null {
+  if (value == null) return null;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
 
 function parseAfterSeq(value: string | null): number {
   if (value == null) {
@@ -58,28 +69,60 @@ export const handleWorkerEntriesRequest: OmniHttpHandler = async (request, conte
     });
   }
 
+  const workerId = context.params?.workerId?.trim() ?? "?";
+  const probe = startSlowProbe(`GET /api/workers/${workerId}/entries`);
+
   const auth = await requireApiSession(toNextRequest(request), {
     source: "Worker entries",
     action: "Load worker stream",
   });
+  probe.mark("auth");
   if (auth.response) {
+    probe.end();
     return auth.response;
   }
 
-  const workerId = context.params?.workerId?.trim();
-  if (!workerId) {
+  if (!context.params?.workerId?.trim()) {
+    probe.end();
     return Response.json({ error: "Worker not found" }, { status: 404 });
   }
 
   const runId = await resolveRunIdForWorker(workerId);
+  probe.mark("resolveRunId");
   if (!runId) {
+    probe.end();
     return Response.json({ error: "Worker not found" }, { status: 404 });
   }
 
-  const afterSeq = parseAfterSeq(new URL(request.url).searchParams.get("afterSeq"));
+  const url = new URL(request.url);
+  const afterSeq = parseAfterSeq(url.searchParams.get("afterSeq"));
+  const beforeSeq = parsePositiveInt(url.searchParams.get("beforeSeq"));
+  const limitRaw = parsePositiveInt(url.searchParams.get("limit"));
+  const limit = limitRaw == null ? null : Math.min(limitRaw, MAX_TAIL_LIMIT);
 
   try {
+    // Scroll-back path: caller wants entries strictly older than beforeSeq.
+    if (beforeSeq != null) {
+      const result = await readWorkerEntriesBefore(runId, workerId, beforeSeq, limit ?? DEFAULT_TAIL_LIMIT);
+      probe.mark("readBefore");
+      return Response.json(result);
+    }
+
+    // Tail-first initial load: only `limit` (no afterSeq). Returns the
+    // last N entries plus `hasOlder` so the client knows whether to wire
+    // up scroll-back.
+    if (limit != null && afterSeq === 0) {
+      const tail = await readWorkerEntriesTail(runId, workerId, limit);
+      if (tail) {
+        probe.mark("readTail");
+        return Response.json(tail);
+      }
+      // tail-scan couldn't prove the boundary; fall through to full read.
+    }
+
+    // Existing live-tail path: entries strictly newer than afterSeq.
     const { entries, latestSeq } = await readWorkerEntriesSince(runId, workerId, afterSeq);
+    probe.mark("readEntries");
     return Response.json({ entries, latestSeq });
   } catch (error) {
     return errorResponse(error, {
@@ -87,5 +130,7 @@ export const handleWorkerEntriesRequest: OmniHttpHandler = async (request, conte
       source: "Worker entries",
       action: "Load worker stream",
     });
+  } finally {
+    probe.end();
   }
 };

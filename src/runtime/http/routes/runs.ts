@@ -42,6 +42,7 @@ import { normalizeSessionType } from "@/server/session-providers/capabilities";
 import { getSessionProvider } from "@/server/session-providers/registry";
 import { stopLiveProcessForDelete } from "@/server/session-providers/process-store";
 import type { OmniHttpHandler, OmniRequestContext } from "@/runtime/http/registry";
+import { startSlowProbe } from "@/server/slow-probe";
 import { toNextRequest } from "./next-request";
 
 function normalizeTitle(input: unknown) {
@@ -185,10 +186,31 @@ async function cancelWorker(worker: typeof workers.$inferSelect) {
     // best effort: the bridge process may already be gone or wedged
   });
 
+  const previousStatus = worker.status;
   await db.update(workers).set({
     status: "cancelled",
     updatedAt: new Date(),
   }).where(eq(workers.id, worker.id));
+
+  // Stop endpoints went through this helper but never emitted named
+  // lifecycle events. Subscribers that watch `worker.status` /
+  // `worker.terminal` missed every HTTP-initiated stop. Skip the emit
+  // on re-cancel so duplicate requests don't double-toast.
+  if (previousStatus !== "cancelled") {
+    emitNamedEvent({
+      kind: "worker.status",
+      runId: worker.runId,
+      workerId: worker.id,
+      prev: previousStatus,
+      next: "cancelled",
+    });
+    emitNamedEvent({
+      kind: "worker.terminal",
+      runId: worker.runId,
+      workerId: worker.id,
+      status: "cancelled",
+    });
+  }
 }
 
 async function pauseImplementationRunAfterWorkerStop(runId: string, stoppedWorkerId: string) {
@@ -311,9 +333,11 @@ export const handleRunPatchRequest: OmniHttpHandler = async (request, context) =
 };
 
 export const handleRunPostRequest: OmniHttpHandler = async (request, context) => {
+  const probe = startSlowProbe(`POST /api/runs/${context.params?.id ?? "?"}`);
   let postActionLabel = "Recover conversation";
   try {
     if (request.method !== "POST") {
+      probe.end();
       return Response.json({ error: { code: "method_not_allowed", message: "Method not allowed." } }, {
         status: 405,
         headers: { allow: "POST" },
@@ -325,15 +349,19 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
       action: "Recover conversation",
       enforceSameOrigin: true,
     });
+    probe.mark("auth");
     if (auth.response) {
+      probe.end();
       return auth.response;
     }
 
     const runId = requireRunId(context);
     const body = await request.json();
+    probe.mark("body");
     const action = body?.action;
     postActionLabel = actionLabelForPostAction(action);
     const actionRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    probe.mark(`q.runLookup[action=${String(action ?? "?")}]`);
     if (!actionRun) {
       return errorResponse("Run not found", {
         status: 404,
@@ -556,10 +584,14 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
       content,
       gitWorkspaceLaunch: readGitWorkspaceLaunch(body?.gitWorkspaceLaunch),
     });
+    probe.mark("recoverRun");
     notifyEventStreamSubscribers();
 
-    return Response.json({ ok: true, ...result });
+    const response = Response.json({ ok: true, ...result });
+    probe.end();
+    return response;
   } catch (error) {
+    probe.end();
     const errorMessage = error instanceof Error ? error.message : String(error);
     const status = gitWorkspaceStatus(error)
       ?? (errorMessage.includes("must be a user message")
@@ -580,6 +612,8 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
         ].filter((detail): detail is string => Boolean(detail))
         : undefined,
     });
+  } finally {
+    probe.end();
   }
 };
 

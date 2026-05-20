@@ -2,10 +2,8 @@ import { db } from "@/server/db";
 import { messages, plans, runs, accounts, workers, planItems, clarifications, executionEvents, supervisorInterventions, queuedConversationMessages, recoveryIncidents, planningReviewRuns, planningReviewRounds, planningReviewFindings, processSessions, conversationReadMarkers } from "@/server/db/schema";
 import { BRIDGE_URL } from "@/server/bridge-client";
 import { isTerminalRunStatus } from "@/lib/run-status";
-import { buildAppError } from "@/server/api-errors";
+import { buildAppError, type AppErrorPayload } from "@/server/api-errors";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
-import { syncConversationSessions } from "@/server/conversations/sync";
-import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
 import { requireApiSession } from "@/server/auth/guards";
 import { buildLiveWorkerSnapshots } from "@/server/workers/live-snapshots";
 import { readWorkerLatestSeq } from "@/server/workers/output-store";
@@ -18,11 +16,12 @@ import {
 import { withEventPayloadChecksum } from "@/server/events/payload-checksum";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { serializeMessageRecord } from "@/server/conversations/message-records";
-import { serializeQueuedConversationMessage } from "@/server/conversations/queued-messages";
+import { serializeQueuedConversationMessage } from "@/server/conversations/queued-message-records";
 import { buildAwaitingUserQuestionInvariantErrors } from "@/server/events/lifecycle-invariants";
 import { serializeSessionRecord } from "@/server/session-providers/session-records";
 import { reconcileOrphanedProcessSessions } from "@/server/session-providers/process-store";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
+import { startSlowProbe } from "@/server/slow-probe";
 import { toNextRequest } from "./next-request";
 
 const STREAM_REFRESH_INTERVAL_MS = 15_000;
@@ -52,11 +51,14 @@ async function fetchWithTimeout(url: string, timeoutMs: number) {
   }
 }
 
-async function readPersistedEventRecords(options: EventPayloadOptions = {}) {
+async function readPersistedEventRecords(options: EventPayloadOptions = {}, probe?: { mark: (label: string) => void }) {
   await reconcileOrphanedProcessSessions();
+  probe?.mark("reconcile");
   const selectedRunId = options.selectedRunId?.trim() || null;
   const allPlans = await db.select().from(plans).orderBy(desc(plans.createdAt), desc(plans.id));
+  probe?.mark("q.plans");
   const allRuns = await db.select().from(runs).where(isNull(runs.archivedAt)).orderBy(desc(runs.createdAt), desc(runs.id));
+  probe?.mark("q.runs");
   const visibleRunIds = allRuns.map((run) => run.id);
   const selectedRun = selectedRunId ? allRuns.find((run) => run.id === selectedRunId) ?? null : null;
   const selectedPlanId = selectedRun?.planId ?? null;
@@ -98,7 +100,7 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}) {
       initialPrompt: workers.initialPrompt,
       createdAt: workers.createdAt,
       updatedAt: workers.updatedAt,
-    }).from(workers).where(visibleRunIds.length > 0 ? inArray(workers.runId, visibleRunIds) : eq(workers.id, "__none__")).orderBy(asc(workers.createdAt), asc(workers.id)),
+    }).from(workers).where(visibleRunIds.length > 0 ? inArray(workers.runId, visibleRunIds) : eq(workers.id, "__none__")).orderBy(asc(workers.runId), asc(workers.createdAt), asc(workers.id)),
     selectedRunId
       ? db.select({
         id: workers.id,
@@ -158,6 +160,7 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}) {
     db.select().from(processSessions),
     db.select().from(conversationReadMarkers).where(visibleRunIds.length > 0 ? inArray(conversationReadMarkers.runId, visibleRunIds) : eq(conversationReadMarkers.runId, "__none__")),
   ]);
+  probe?.mark("q.parallel15");
 
   return {
     msgs,
@@ -234,25 +237,6 @@ function selectedRunIds(options: EventPayloadOptions) {
   return selectedRunId ? new Set([selectedRunId]) : null;
 }
 
-function filterSelectedRunScopedRecords<T extends { runId: string }>(
-  records: T[],
-  runIds: Set<string> | null,
-) {
-  return runIds ? records.filter((record) => runIds.has(record.runId)) : [];
-}
-
-function selectedPlanIds(records: PersistedEventRecords, runIds: Set<string> | null) {
-  if (!runIds) {
-    return null;
-  }
-
-  return new Set(
-    records.allRuns
-      .filter((run) => runIds.has(run.id))
-      .map((run) => run.planId),
-  );
-}
-
 function selectedMessageRunIds(records: PersistedEventRecords, options: EventPayloadOptions) {
   const selectedRunId = options.selectedRunId?.trim();
   if (!selectedRunId) {
@@ -264,13 +248,6 @@ function selectedMessageRunIds(records: PersistedEventRecords, options: EventPay
     ...(selectedRun?.mode === "implementation" && selectedRun.parentRunId ? [selectedRun.parentRunId] : []),
     selectedRunId,
   ];
-}
-
-function filterSelectedPlanScopedRecords<T extends { planId: string }>(
-  records: T[],
-  planIds: Set<string> | null,
-) {
-  return planIds ? records.filter((record) => planIds.has(record.planId)) : [];
 }
 
 function compactExecutionEvent(event: PersistedEventRecords["allExecutionEvents"][number]) {
@@ -440,19 +417,20 @@ function filterRuntimeAgentsForWorkers(rawAgents: unknown[], scopedWorkers: Pers
 function buildEventPayload(
   records: PersistedEventRecords,
   agentsData: ReturnType<typeof buildLiveWorkerSnapshots>,
-  frontendErrors: unknown[] = [],
+  frontendErrors: AppErrorPayload[] = [],
   options: EventPayloadOptions = {},
   workerEntrySeqs: Record<string, number> = {},
 ) {
   const runIds = selectedRunIds(options);
-  const planIds = selectedPlanIds(records, runIds);
   const messageRunIds = selectedMessageRunIds(records, options);
   const lifecycleErrors = buildAwaitingUserQuestionInvariantErrors({
     runs: records.allRuns,
     messages: records.msgs,
     selectedRunId: options.selectedRunId,
   });
-  const processSessionsByRunId = new Map(records.allProcessSessions.map((session) => [session.runId, session]));
+  const processSessionsByRunId = new Map<string, PersistedEventRecords["allProcessSessions"][number]>(
+    records.allProcessSessions.map((session) => [session.runId, session]),
+  );
   const workersByRunId = new Map<string, PersistedEventRecords["allWorkers"][number]>();
   for (const worker of records.allWorkers) {
     if (!workersByRunId.has(worker.runId)) {
@@ -481,26 +459,26 @@ function buildEventPayload(
     accounts: records.allAccounts,
     agents: agentsData.map(compactAgentSnapshot),
     workers: records.allWorkers.map(compactWorkerRecord),
-    planItems: filterSelectedPlanScopedRecords(records.allPlanItems, planIds),
-    clarifications: filterSelectedRunScopedRecords(records.allClarifications, runIds),
-    executionEvents: filterSelectedRunScopedRecords(records.allExecutionEvents, runIds)
+    planItems: records.allPlanItems,
+    clarifications: records.allClarifications,
+    executionEvents: records.allExecutionEvents
       .slice(0, EXECUTION_EVENT_LIMIT)
       .map(compactExecutionEvent),
-    supervisorInterventions: filterSelectedRunScopedRecords(records.allSupervisorInterventions, runIds)
+    supervisorInterventions: records.allSupervisorInterventions
       .map(compactSupervisorIntervention),
-    queuedMessages: filterSelectedRunScopedRecords(records.allQueuedMessages, runIds)
+    queuedMessages: records.allQueuedMessages
       .filter((message) => message.status === "pending" || message.status === "delivering")
       .map(serializeQueuedConversationMessage),
-    recoveryIncidents: filterSelectedRunScopedRecords(records.allRecoveryIncidents, runIds)
+    recoveryIncidents: records.allRecoveryIncidents
       .map(compactRecoveryIncident),
     recoveryState: runIds && !isTerminalRunStatus(
       records.allRuns.find((run) => runIds.has(run.id))?.status,
     )
       ? deriveRecoveryState(records.allRecoveryIncidents)
       : null,
-    reviewRuns: filterSelectedRunScopedRecords(records.allReviewRuns, runIds),
-    reviewRounds: filterSelectedRunScopedRecords(records.allReviewRounds, runIds),
-    reviewFindings: filterSelectedRunScopedRecords(records.allReviewFindings, runIds)
+    reviewRuns: records.allReviewRuns,
+    reviewRounds: records.allReviewRounds,
+    reviewFindings: records.allReviewFindings
       .map(compactReviewFinding),
     frontendErrors: [...frontendErrors, ...lifecycleErrors],
     snapshotRunId: options.selectedRunId?.trim() || null,
@@ -512,11 +490,13 @@ function buildEventPayload(
   });
 }
 
-async function buildPersistedEventPayload(options: EventPayloadOptions = {}) {
-  const records = await readPersistedEventRecords(options);
+async function buildPersistedEventPayload(options: EventPayloadOptions = {}, probe?: { mark: (label: string) => void }) {
+  const records = await readPersistedEventRecords(options, probe);
+  probe?.mark("readRecords.total");
   const scopedWorkers = selectedRunWorkers(records, options);
   const workerEntrySeqs = await buildWorkerEntrySeqs(scopedWorkers);
-  return buildEventPayload(
+  probe?.mark(`workerSeqs[${scopedWorkers.length}]`);
+  const payload = buildEventPayload(
     records,
     buildLiveWorkerSnapshots({
       workers: scopedWorkers,
@@ -526,6 +506,8 @@ async function buildPersistedEventPayload(options: EventPayloadOptions = {}) {
     options,
     workerEntrySeqs,
   );
+  probe?.mark("buildPayload");
+  return payload;
 }
 
 type EventPayloadCacheEntry = {
@@ -579,35 +561,42 @@ function pruneEventPayloadCache(cache: Map<string, EventPayloadCacheEntry>) {
   }
 }
 
-function buildSharedPersistedEventPayload(options: EventPayloadOptions = {}) {
+function buildSharedPersistedEventPayload(options: EventPayloadOptions = {}, probe?: { mark: (label: string) => void }) {
   return shareInFlightEventPayload(
     cachedPersistedPayloads,
     options,
-    () => buildPersistedEventPayload(options),
+    () => buildPersistedEventPayload(options, probe),
   );
 }
 
-async function buildRuntimeEnrichedEventPayload(options: EventPayloadOptions = {}) {
-  let records = await readPersistedEventRecords(options);
+async function buildRuntimeEnrichedEventPayload(options: EventPayloadOptions = {}, probe?: { mark: (label: string) => void }) {
+  let records = await readPersistedEventRecords(options, probe);
+  probe?.mark("readRecords#1.total");
   let scopedWorkers = selectedRunWorkers(records, options);
   let workerEntrySeqs = await buildWorkerEntrySeqs(scopedWorkers);
+  probe?.mark(`workerSeqs#1[${scopedWorkers.length}]`);
   let agentsData = buildLiveWorkerSnapshots({
     workers: scopedWorkers,
     runs: records.allRuns,
   });
-  const frontendErrors = [];
+  const frontendErrors: AppErrorPayload[] = [];
 
   try {
     const res = await fetchWithTimeout(`${BRIDGE_URL}/agents`, RUNTIME_AGENT_TIMEOUT_MS);
+    probe?.mark("bridge.fetch");
     if (res.ok) {
       const rawAgentsPayload = await res.json();
       const rawAgents = Array.isArray(rawAgentsPayload) ? rawAgentsPayload : [];
+      const { syncConversationSessions } = await import("@/server/conversations/sync");
       await syncConversationSessions(rawAgents, {
         selectedRunId: options.selectedRunId,
       });
+      probe?.mark("bridge.sync");
       records = await readPersistedEventRecords(options);
+      probe?.mark("readRecords#2.total");
       scopedWorkers = selectedRunWorkers(records, options);
       workerEntrySeqs = await buildWorkerEntrySeqs(scopedWorkers);
+      probe?.mark(`workerSeqs#2[${scopedWorkers.length}]`);
       agentsData = buildLiveWorkerSnapshots({
         agents: filterRuntimeAgentsForWorkers(rawAgents, scopedWorkers),
         workers: scopedWorkers,
@@ -647,11 +636,11 @@ async function buildRuntimeEnrichedEventPayload(options: EventPayloadOptions = {
   return buildEventPayload(records, agentsData, frontendErrors, options, workerEntrySeqs);
 }
 
-function buildSharedRuntimeEnrichedEventPayload(options: EventPayloadOptions = {}) {
+function buildSharedRuntimeEnrichedEventPayload(options: EventPayloadOptions = {}, probe?: { mark: (label: string) => void }) {
   return shareInFlightEventPayload(
     cachedRuntimePayloads,
     options,
-    () => buildRuntimeEnrichedEventPayload(options),
+    () => buildRuntimeEnrichedEventPayload(options, probe),
   );
 }
 
@@ -676,11 +665,18 @@ function parseLastEventId(raw: string | null | undefined): number | null {
 
 export const handleEventsRequest: OmniHttpHandler = async (request) => {
   const url = new URL(request.url);
+  const isSnapshot = url.searchParams.get("snapshot") === "1";
+  const persistedOnly = url.searchParams.get("persisted") === "1";
+  const probe = isSnapshot
+    ? startSlowProbe(`GET /api/events?snapshot=1${persistedOnly ? "&persisted=1" : ""}${url.searchParams.get("runId") ? `&runId=${url.searchParams.get("runId")}` : ""}`)
+    : null;
   const auth = await requireApiSession(toNextRequest(request), {
     source: "Events",
     action: "Stream live updates",
   });
+  probe?.mark("auth");
   if (auth.response) {
+    probe?.end();
     return auth.response;
   }
 
@@ -688,14 +684,16 @@ export const handleEventsRequest: OmniHttpHandler = async (request) => {
     selectedRunId: url.searchParams.get("runId"),
   } satisfies EventPayloadOptions;
 
-  if (url.searchParams.get("snapshot") === "1") {
-    const persistedOnly = url.searchParams.get("persisted") === "1";
+  if (isSnapshot) {
     const payload = persistedOnly
-      ? await buildSharedPersistedEventPayload(eventPayloadOptions)
+      ? await buildSharedPersistedEventPayload(eventPayloadOptions, probe ?? undefined)
       : await (async () => {
+        const { ensureSupervisorRuntimeStarted } = await import("@/server/supervisor/runtime-watchdog");
         await ensureSupervisorRuntimeStarted();
-        return buildSharedRuntimeEnrichedEventPayload(eventPayloadOptions);
+        probe?.mark("ensureSupervisor");
+        return buildSharedRuntimeEnrichedEventPayload(eventPayloadOptions, probe ?? undefined);
       })();
+    probe?.mark("payload.total");
     const requestedChecksum = url.searchParams.get("checksum")?.trim() || "";
 
     // Anchor the snapshot to the current cursor so a subsequent SSE
@@ -705,16 +703,22 @@ export const handleEventsRequest: OmniHttpHandler = async (request) => {
     // that the UI consumes.
     const response = Response.json(
       requestedChecksum && requestedChecksum === payload.snapshotChecksum
-        ? { notModified: true, snapshotChecksum: payload.snapshotChecksum }
+        ? {
+          notModified: true,
+          snapshotChecksum: payload.snapshotChecksum,
+          workerEntrySeqs: payload.workerEntrySeqs,
+        }
         : payload,
     );
     response.headers.set("x-omni-last-event-id", String(getEventCursor()));
     if (payload.snapshotChecksum) {
       response.headers.set("x-omni-snapshot-checksum", payload.snapshotChecksum);
     }
+    probe?.end();
     return response;
   }
 
+  const { ensureSupervisorRuntimeStarted } = await import("@/server/supervisor/runtime-watchdog");
   await ensureSupervisorRuntimeStarted();
 
   const lastEventIdHeader = request.headers.get("last-event-id");
@@ -752,8 +756,11 @@ export const handleEventsRequest: OmniHttpHandler = async (request) => {
           // Stream might be closed
         }
       };
-      const drainBufferedEvents = () => {
-        const replay = getNamedEventsSince(lastDeliveredId, { runId: runIdScope });
+      const drainBufferedEvents = (options: { throughId?: number | null } = {}) => {
+        const replay = getNamedEventsSince(lastDeliveredId, {
+          runId: runIdScope,
+          throughId: options.throughId,
+        });
         if (replay.resyncRequired) {
           // Anchor the resync frame to the current cursor so the
           // client's resume position advances; without an id, the
@@ -787,6 +794,13 @@ export const handleEventsRequest: OmniHttpHandler = async (request) => {
         lastUpdatePayload = serializedPayload;
         const version = getEventStreamNotificationVersion();
         const marker = recordSnapshotMarker(version, runIdScope);
+        // A named event can still land in the tiny window between the
+        // pre-marker drain above and marker allocation. Drain only up
+        // through the id immediately before the marker, then let the
+        // snapshot frame advance the client to the marker id. Events
+        // emitted after the marker are delivered by the post-snapshot
+        // drain below, preserving monotonic SSE ids.
+        drainBufferedEvents({ throughId: marker.id - 1 });
         lastDeliveredId = marker.id;
         writeFrame(marker.id, "update", serializedPayload);
       };

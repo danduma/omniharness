@@ -13,6 +13,7 @@ import {
   sendQueuedConversationMessageNow,
 } from "@/server/conversations/queued-messages";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
+import { startSlowProbe } from "@/server/slow-probe";
 import { toNextRequest } from "./next-request";
 
 function statusFromError(error: unknown) {
@@ -30,8 +31,10 @@ function requireParam(params: Record<string, string> | undefined, key: string) {
 }
 
 export const handleConversationMessagesRequest: OmniHttpHandler = async (request, context) => {
+  const probe = startSlowProbe(`POST /api/conversations/${context.params?.id ?? "?"}/messages`);
   try {
     if (request.method !== "POST") {
+      probe.end();
       return Response.json({ error: { code: "method_not_allowed", message: "Method not allowed." } }, {
         status: 405,
         headers: { allow: "POST" },
@@ -43,12 +46,15 @@ export const handleConversationMessagesRequest: OmniHttpHandler = async (request
       action: "Send a conversation message",
       enforceSameOrigin: true,
     });
+    probe.mark("auth");
     if (auth.response) {
+      probe.end();
       return auth.response;
     }
 
     const runId = requireParam(context.params, "id");
     const body = await request.json();
+    probe.mark("body");
     const content = String(body?.content ?? "").trim();
     const attachments = normalizeChatAttachments(body?.attachments);
     const busyAction = parseBusyMessageAction(body?.busyAction);
@@ -67,7 +73,9 @@ export const handleConversationMessagesRequest: OmniHttpHandler = async (request
     }
 
     const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    probe.mark("q.runLookup");
     if (!run) {
+      probe.end();
       return errorResponse("Conversation not found", {
         status: 404,
         source: "Conversations",
@@ -76,7 +84,7 @@ export const handleConversationMessagesRequest: OmniHttpHandler = async (request
     }
     const sessionType = normalizeSessionType(run.sessionType);
     if (sessionType === "omni") {
-      return Response.json(await sendConversationMessage({
+      const result = await sendConversationMessage({
         runId,
         content,
         attachments,
@@ -85,16 +93,26 @@ export const handleConversationMessagesRequest: OmniHttpHandler = async (request
         preferredWorkerModel,
         preferredWorkerEffort,
         allowedWorkerTypes,
-      }));
+      });
+      probe.mark("sendConversationMessage");
+      const response = Response.json(result);
+      probe.end();
+      return response;
     }
     const provider = getSessionProvider(sessionType);
-    return Response.json(await provider.sendInput({ runId, content, attachments, busyAction }));
+    const result = await provider.sendInput({ runId, content, attachments, busyAction });
+    probe.mark("provider.sendInput");
+    const response = Response.json(result);
+    probe.end();
+    return response;
   } catch (error) {
     return errorResponse(error, {
       status: statusFromError(error),
       source: "Conversations",
       action: "Send a conversation message",
     });
+  } finally {
+    probe.end();
   }
 };
 
