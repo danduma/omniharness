@@ -10,7 +10,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { OmniHarnessMark } from "@/components/OmniHarnessMark";
 import { CliBrandIcon } from "@/components/cli-brand-icons";
 import { PRODUCT_NAME, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "@/app/home/constants";
-import { getRunLatestMessageTimestamp, isRunUnread } from "@/lib/conversation-state";
+import { getRunLatestUnreadTimestamp, isRunUnread } from "@/lib/conversation-state";
 import { getConversationVisualKind, type ConversationVisualKind } from "@/lib/conversation-visuals";
 import type { ManualCommitAction } from "@/lib/commit-workflow";
 import { t, useI18nSnapshot } from "@/lib/i18n";
@@ -301,7 +301,7 @@ export function ConversationSidebar({
                       const canArchiveConversation = isArchivableRunStatus(run.status);
                       const normalizedRunStatus = normalizeRunStatus(run.status);
                       const runIsUnread = isRunUnread({
-                        latestMessageAt: getRunLatestMessageTimestamp(run.id, messages || []),
+                        latestMessageAt: getRunLatestUnreadTimestamp(run, messages || []),
                         lastReadAt: readMarkers[run.id] ?? null,
                       });
                       const showCompletedAttentionIndicator = normalizedRunStatus === "done" && runIsUnread;

@@ -78,6 +78,14 @@ export type AgentActivityItem =
       detail?: string | null;
       timestamp: string;
       status: string;
+    }
+  | {
+      id: string;
+      kind: "work_summary";
+      durationMs: number;
+      timestamp: string;
+      inProgress: boolean;
+      items: AgentActivityItem[];
     };
 
 type AgentOutputSnapshot = {
@@ -890,10 +898,9 @@ function deriveToolGroupStatus(tools: AgentToolActivity[]): string {
 
 function createToolGroup(tools: AgentToolActivity[]): AgentActivityItem {
   const firstTool = tools[0];
-  const lastTool = tools[tools.length - 1];
 
   return {
-    id: `tool-group:${firstTool.id}:${lastTool.id}`,
+    id: `tool-group:${firstTool.id}`,
     kind: "tool_group",
     status: deriveToolGroupStatus(tools),
     timestamp: firstTool.timestamp,

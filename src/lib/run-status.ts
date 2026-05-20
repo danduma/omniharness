@@ -16,3 +16,7 @@ export function isArchivableRunStatus(status: string | null | undefined) {
 export function isActiveImplementationRun(run: { mode?: string | null; status?: string | null } | null | undefined) {
   return Boolean(run && run.mode === "implementation" && !isTerminalRunStatus(run.status));
 }
+
+export function isRunnableImplementationRun(run: { mode?: string | null; status?: string | null } | null | undefined) {
+  return isActiveImplementationRun(run) && normalizeRunStatus(run?.status) !== "awaiting_user";
+}

@@ -107,7 +107,7 @@ describe("agent output normalization", () => {
     expect(activity).toHaveLength(3);
     expect(activity[1]).toMatchObject({
       kind: "tool_group",
-      id: "tool-group:read-1:edit-1",
+      id: "tool-group:read-1",
       status: "completed",
       counts: {
         editedFiles: 1,
@@ -121,6 +121,70 @@ describe("agent output normalization", () => {
         expect.objectContaining({ kind: "tool", label: "Edit", targetPath: "/workspace/src/Terminal.tsx" }),
       ],
     });
+  });
+
+  it("keeps a stable tool_group ID when new tools are appended to the group", () => {
+    const baseOutputEntries = [
+      {
+        id: "read-1",
+        type: "tool_call",
+        text: "Read File",
+        timestamp: "2026-05-10T00:00:01.000Z",
+        toolCallId: "read-1",
+        toolKind: "read",
+        status: "completed",
+        raw: {
+          kind: "read",
+          rawInput: { path: "/workspace/src/Terminal.tsx" },
+        },
+      },
+      {
+        id: "search-1",
+        type: "tool_call",
+        text: "Search",
+        timestamp: "2026-05-10T00:00:02.000Z",
+        toolCallId: "search-1",
+        toolKind: "search",
+        status: "completed",
+        raw: {
+          kind: "search",
+          rawInput: { command: "rg Terminal src" },
+        },
+      },
+    ];
+
+    const initialActivity = buildAgentOutputActivity({
+      outputEntries: baseOutputEntries,
+    });
+
+    expect(initialActivity).toHaveLength(1);
+    expect(initialActivity[0].kind).toBe("tool_group");
+    const initialGroupId = initialActivity[0].id;
+    expect(initialGroupId).toBe("tool-group:read-1");
+
+    // Now append a new tool
+    const updatedActivity = buildAgentOutputActivity({
+      outputEntries: [
+        ...baseOutputEntries,
+        {
+          id: "edit-1",
+          type: "tool_call",
+          text: "Edit File",
+          timestamp: "2026-05-10T00:00:03.000Z",
+          toolCallId: "edit-1",
+          toolKind: "edit",
+          status: "completed",
+          raw: {
+            kind: "edit",
+            rawInput: { file_path: "/workspace/src/Terminal.tsx", old_string: "old", new_string: "new" },
+          },
+        },
+      ],
+    });
+
+    expect(updatedActivity).toHaveLength(1);
+    expect(updatedActivity[0].kind).toBe("tool_group");
+    expect(updatedActivity[0].id).toBe(initialGroupId); // The ID remains exactly the same!
   });
 
   it("marks a grouped tool run as failed when any child tool fails", () => {
