@@ -38,10 +38,12 @@ conversation.
 
 ## File format
 
-One file per worker, in append-only JSONL at:
+One file per worker, in append-only JSONL. The location is project-local
+when a project is known, with a fallback to the legacy global root:
 
 ```
-app-data/run-data/<runId>/<workerId>.jsonl
+<projectPath>/.omniharness/run-data/<runId>/workers/<workerId>.jsonl   (preferred)
+<appData>/run-data/<runId>/<workerId>.jsonl                            (legacy, read-only)
 ```
 
 After the worker reaches a terminal status and the file has been idle
@@ -49,6 +51,12 @@ for at least 5 minutes, it is gzipped to `<workerId>.jsonl.gz`. Reads
 are transparent across both. If the worker resumes after compaction
 (e.g. recovery), the next append auto-expands the gzip back to plain
 JSONL.
+
+Worker streams share the generic engine in
+`src/server/artifacts/append-only-store.ts` with execution events,
+supervisor interventions, and planning review findings: same lock
+discipline, same compaction policy, same sparse seq→offset index for
+fast tail-N reads.
 
 Each line is one JSON object of type `WorkerEntry`
 (`src/server/workers/entries-types.ts`). Two families of entries share

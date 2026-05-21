@@ -8,7 +8,12 @@ ACP is a backend protocol option, not the UI abstraction. An ACP-backed runtime 
 
 ## Persistence
 
-Process sessions add one `process_sessions` row keyed by `run_id` and one normal `workers` row with `type = "process"`. Transcript content still lives in the unified worker stream at `app-data/run-data/<runId>/<workerId>.jsonl`.
+Process sessions add one `process_sessions` row keyed by `run_id` and one normal `workers` row with `type = "process"`. Transcript content still lives in the unified worker stream, written through the generic append-only artifact engine. The on-disk location is project-local when a project is known:
+
+```
+<projectPath>/.omniharness/run-data/<runId>/workers/<workerId>.jsonl   (preferred)
+<appData>/run-data/<runId>/<workerId>.jsonl                            (legacy, read-only)
+```
 
 Do not add another transcript table, sibling JSONL file, or frontend cache for process content. New provider-backed actors append entries through `appendWorkerEntry` via the stream helpers.
 

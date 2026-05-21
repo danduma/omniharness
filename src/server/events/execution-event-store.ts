@@ -26,6 +26,7 @@ import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/server/db";
 import { executionEvents } from "@/server/db/schema";
 import { appendArtifactLine } from "@/server/artifacts/append-only-store";
+import { emitNamedEvent } from "@/server/events/named-events";
 import {
   buildArtifactPreview,
   commitArtifactAppend,
@@ -113,7 +114,19 @@ export async function recordExecutionEvent(input: RecordExecutionEventInput): Pr
     createdAt: createdAt.toISOString(),
     payload,
   };
-  await appendArtifactLine(location, JSON.stringify(envelope));
+  try {
+    await appendArtifactLine(location, JSON.stringify(envelope));
+  } catch (error) {
+    emitNamedEvent({
+      kind: "artifact.append_failed",
+      runId: input.runId,
+      streamKind: "execution_events",
+      ownerId: null,
+      seq,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 
   // Dual-write `details` for the migration window: artifact stream is
   // the new source of truth (artifact_seq + the JSONL payload) but the
@@ -269,6 +282,18 @@ async function hydrateExecutionEventDetails(rows: ExecutionEventRow[]): Promise<
       const env = byId.get(row.id);
       if (env) {
         detailsById.set(row.id, typeof env.payload === "string" ? env.payload : JSON.stringify(env.payload));
+      } else {
+        // Row has artifactSeq + nulled legacy `details`, but the
+        // envelope wasn't found in the stream — surface so an operator
+        // can run the repair script.
+        emitNamedEvent({
+          kind: "artifact.payload_missing",
+          runId,
+          streamKind: "execution_events",
+          ownerId: null,
+          seq: row.artifactSeq,
+          recordId: row.id,
+        });
       }
     }
   }

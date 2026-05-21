@@ -27,18 +27,32 @@ export type SurfacedErrorCode =
   | "plan.review.failed"
   | "conversation.delete.foreign_key"
   | "conversation.delete.failed"
+  | "conversation.continue.failed"
   | "process.spawn.failed"
   | "process.cwd.invalid"
   | "process.stdin.closed"
   | "process.stop.failed"
   | "process.orphaned_after_restart"
   | "recovery.gave_up"
+  | "recovery.run_failed"
   | "runtime.start_failed"
   | "session.provider.unknown"
   | "session.action.unsupported"
+  | "supervisor.gave_up"
+  | "supervisor.wake.failed"
   | "surface.bridge_failed"
   | "worker.spawn.failed"
   | "worker.failover.failed"
+  | "worker.bridge.fatal_stderr"
+  | "worker.environment_mismatch"
+  | "worker.idle.empty_output"
+  | "worker.idle.missing_output"
+  | "worker.initial.empty_output"
+  | "worker.initial.turn_failed"
+  | "worker.observer.failed"
+  | "worker.poll.failed"
+  | "worker.resume.failed"
+  | "worker.snapshot.invalid"
   | "codex_auth_missing"
   | "codex_auth_refresh_failed"
   | "codex_auth_unavailable"
@@ -143,11 +157,35 @@ export type SupervisorStopReason =
 export type SupervisorEvent =
   | { kind: "supervisor.stopped"; runId: string; reason: SupervisorStopReason }
   | {
+      kind: "supervisor.wake_lease_acquired";
+      runId: string;
+      source: "insert" | "replace_expired" | "replace_malformed";
+    }
+  | {
+      kind: "supervisor.wake_lease_blocked";
+      runId: string;
+      reason: "active_lease" | "insert_conflict" | "claim_race";
+    }
+  | { kind: "supervisor.wake_lease_released"; runId: string }
+  | {
+      kind: "supervisor.wake_lease_release_skipped";
+      runId: string;
+      reason: "missing" | "malformed" | "not_owner";
+    }
+  | { kind: "supervisor.wake_lease_recovered"; runId: string; reason: "orphaned_completion" }
+  | {
       kind: "supervisor.wake_skipped";
       runId: string;
       reason: "in_flight" | "lease_blocked" | "quota_wait_future_wake" | "run_not_runnable";
     }
   | { kind: "supervisor.wake_scheduled"; runId: string; delayMs: number; source: "volatile" | "lease_retry" }
+  | {
+      kind: "supervisor.durable_wake_schedule_failed";
+      runId: string;
+      reason: string;
+      source: string | null;
+      error: string;
+    }
   | { kind: "supervisor.durable_wake_claimed"; runId: string; reason: string; source: string | null };
 
 export type PlanEvent =
@@ -196,6 +234,59 @@ export type StreamControlEvent = {
   reason: "id_out_of_buffer" | "buffer_reset";
 };
 
+export type ArtifactStreamKindLabel =
+  | "execution_events"
+  | "supervisor_interventions"
+  | "planning_review_findings"
+  | "worker_entries";
+
+export type ArtifactEvent =
+  | {
+      kind: "artifact.append_failed";
+      runId: string;
+      streamKind: ArtifactStreamKindLabel;
+      ownerId: string | null;
+      seq: number | null;
+      reason: string;
+    }
+  | {
+      kind: "artifact.metadata_mismatch";
+      runId: string;
+      streamKind: ArtifactStreamKindLabel;
+      ownerId: string | null;
+      expectedSeq: number | null;
+      observedSeq: number | null;
+      detail: string;
+    }
+  | {
+      kind: "artifact.compaction_failed";
+      runId: string;
+      streamKind: ArtifactStreamKindLabel;
+      ownerId: string | null;
+      reason: string;
+    }
+  | {
+      kind: "artifact.compaction_completed";
+      runId: string;
+      streamKind: ArtifactStreamKindLabel;
+      ownerId: string | null;
+    }
+  | {
+      kind: "artifact.payload_missing";
+      runId: string;
+      streamKind: ArtifactStreamKindLabel;
+      ownerId: string | null;
+      seq: number | null;
+      recordId: string | null;
+    }
+  | {
+      kind: "artifact.backfill_failed";
+      streamKind: ArtifactStreamKindLabel;
+      runId: string;
+      recordId: string;
+      reason: string;
+    };
+
 export type NamedEvent =
   | RuntimeEvent
   | WorkerEvent
@@ -205,7 +296,8 @@ export type NamedEvent =
   | ConversationEvent
   | SessionEvent
   | ErrorSurfacedEvent
-  | StreamControlEvent;
+  | StreamControlEvent
+  | ArtifactEvent;
 
 // Internal: snapshot marker stored in the ring so `Last-Event-ID` resume
 // from immediately after a snapshot remains resolvable. The marker itself
@@ -303,6 +395,10 @@ export type ReplayOptions = {
   /** Filter to events scoped to this runId or unscoped (runId=null in
    * the buffer). Pass null/undefined to receive all events. */
   runId?: string | null;
+  /** Return only events at or below this id. Used by the SSE route to
+   * catch events that arrive just before a snapshot marker without
+   * delivering later events before the marker frame. */
+  throughId?: number | null;
   /** Include snapshot markers in the returned events. The SSE route
    * uses this internally; the dev log endpoint does not. */
   includeSnapshotMarkers?: boolean;
@@ -318,6 +414,9 @@ export function getNamedEventsSince(
 ): ReplayResult {
   const includeMarkers = options.includeSnapshotMarkers === true;
   const runIdFilter = options.runId ?? null;
+  const throughId = typeof options.throughId === "number" && Number.isFinite(options.throughId)
+    ? Math.floor(options.throughId)
+    : null;
 
   // A client carrying a `lastEventId` greater than our current cursor
   // means the server cursor was reset under their feet (process
@@ -344,6 +443,9 @@ export function getNamedEventsSince(
 
   const events = ring.filter((entry) => {
     if (lastEventId !== null && entry.id <= lastEventId) {
+      return false;
+    }
+    if (throughId !== null && entry.id > throughId) {
       return false;
     }
     if (!includeMarkers && entry.event.kind === "snapshot.marker") {

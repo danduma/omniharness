@@ -15,6 +15,7 @@ import { emitNamedEvent } from "@/server/events/named-events";
 import { GitWorkspaceError } from "@/server/git/workspaces";
 import { getRunLatestUnreadTimestamp } from "@/lib/conversation-state";
 import { compactRunOutputs } from "@/server/workers/output-store";
+import { cleanupRunArtifacts } from "@/server/artifacts/cleanup";
 import { pauseForClarifications } from "@/server/clarifications/loop";
 import { isArchivableRunStatus } from "@/server/runs/status";
 import {
@@ -691,6 +692,16 @@ export const handleRunDeleteRequest: OmniHttpHandler = async (request, context) 
     await db.delete(processSessions).where(eq(processSessions.runId, runId));
     await db.delete(workers).where(eq(workers.runId, runId));
     await db.delete(workerCounters).where(eq(workerCounters.runId, runId));
+
+    // Remove on-disk artifact streams (project-local + legacy global). Must
+    // run BEFORE the runs row is deleted because the cleanup helper reads
+    // `runs.projectPath` to resolve the project-local root. The DB cascade
+    // only deletes `artifact_streams` rows; the JSONL/.gz files are ours.
+    const artifactCleanup = await cleanupRunArtifacts(runId);
+    if (artifactCleanup.errors.length > 0) {
+      console.warn(`[runs.delete] artifact cleanup errors for ${runId}:`, artifactCleanup.errors);
+    }
+
     await db.delete(runs).where(eq(runs.id, runId));
 
     for (const planItemId of planItemIds) {

@@ -2,10 +2,13 @@ import type { AppErrorDescriptor } from "@/lib/app-errors";
 import type { ConversationModeOption } from "@/components/ConversationModePicker";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { ChatAttachment } from "@/lib/chat-attachments";
+import type { AgentOutputEntry } from "@/lib/agent-output";
 import type { WorkerEntry } from "@/server/workers/entries-types";
 import type { BusyMessageAction } from "./busy-message-behavior";
 
 export type { ConversationModeOption };
+
+export type RunMode = ConversationModeOption | "commit";
 
 export type SessionType = "omni" | "process";
 export type SessionCapability =
@@ -37,7 +40,7 @@ export type RunRecord = {
   id: string;
   planId: string;
   sessionType?: SessionType | null;
-  mode?: ConversationModeOption | null;
+  mode?: RunMode | null;
   status: string;
   createdAt: string;
   updatedAt?: string | null;
@@ -211,16 +214,7 @@ export type AgentSnapshot = {
     maxTokens?: number | null;
     fullnessPercent?: number | null;
   } | null;
-  outputEntries?: Array<{
-    id: string;
-    type: "message" | "thought" | "tool_call" | "tool_call_update" | "permission";
-    text: string;
-    timestamp: string;
-    toolCallId?: string | null;
-    toolKind?: string | null;
-    status?: string | null;
-    raw?: unknown;
-  }>;
+  outputEntries?: AgentOutputEntry[];
   lastText?: string;
   currentText?: string;
   displayText?: string;
@@ -328,6 +322,18 @@ export type EventStreamState = {
     runIds: string[];
     complete: boolean;
   };
+  snapshotScope?: {
+    executionEvents?: {
+      limit: number;
+      complete: boolean;
+      oldestCreatedAt: string | null;
+    };
+    supervisorInterventions?: {
+      limit: number;
+      complete: boolean;
+      oldestCreatedAt: string | null;
+    };
+  };
   workerEntrySeqs?: Record<string, number>;
   workerEntries?: Record<string, WorkerEntry[]>;
 };
@@ -337,7 +343,7 @@ export type SidebarRun = {
   id: string;
   title: string;
   path: string;
-  mode?: ConversationModeOption | null;
+  mode?: RunMode | null;
   status: string;
   createdAt: string;
   preferredWorkerType?: WorkerType | null;

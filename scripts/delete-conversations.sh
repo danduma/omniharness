@@ -29,6 +29,9 @@ const adHocPlanPaths = db
   .prepare("select path from plans where path like 'vibes/ad-hoc/%'")
   .all()
   .map((row) => row.path);
+const runRowsForCleanup = db
+  .prepare("select id, project_path from runs")
+  .all();
 
 async function cancelWorkers() {
   for (const id of workerIds) {
@@ -96,10 +99,49 @@ function deleteAdHocPlanFiles() {
   }
 }
 
+function deleteArtifactFiles() {
+  // Each run owns artifacts in two possible locations:
+  //   - <projectPath>/.omniharness/run-data/<runId>/   (new, project-local)
+  //   - <appData>/run-data/<runId>/                    (legacy global)
+  // We attempt both and ignore ENOENT. The companion .zip is a legacy
+  // archive format that may also be sitting next to the global root.
+  const appDataRoot = process.env.OMNIHARNESS_APPDATA_DIR
+    || path.join(process.env.HOME || "", "Library", "Application Support", "omniharness");
+  const legacyGlobalRoot = path.join(appDataRoot, "run-data");
+
+  for (const row of runRowsForCleanup) {
+    const runId = row.id;
+    const projectPath = row.project_path;
+    const candidates = [];
+    if (projectPath) {
+      candidates.push(path.join(projectPath, ".omniharness", "run-data", runId));
+    }
+    candidates.push(path.join(legacyGlobalRoot, runId));
+    for (const dir of candidates) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch (error) {
+        if (error?.code !== "ENOENT") {
+          console.warn(`[delete-conversations] failed to remove ${dir}: ${error.message}`);
+        }
+      }
+    }
+    const zip = path.join(legacyGlobalRoot, `${runId}.zip`);
+    try {
+      fs.unlinkSync(zip);
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        console.warn(`[delete-conversations] failed to remove ${zip}: ${error.message}`);
+      }
+    }
+  }
+}
+
 async function main() {
   await cancelWorkers();
   deleteConversationRows();
   deleteAdHocPlanFiles();
+  deleteArtifactFiles();
 }
 
 main().catch((error) => {

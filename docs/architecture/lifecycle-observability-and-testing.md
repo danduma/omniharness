@@ -219,6 +219,24 @@ expect(events).toHaveEmitted("worker.reattached", { runId });
 // not "worker.recreated", not absence — explicitly reattached
 ```
 
+### Rule 7: cleanup waits for server-owned background work
+
+Lifecycle scenarios may call routes that intentionally return before a direct
+worker turn finishes. That is fine for product latency, but it is not fine for
+test cleanup to delete `OMNIHARNESS_ROOT` while those server-owned tasks are
+still writing worker JSONL, recovery rows, or named events.
+
+Required shape:
+
+- Fire-and-forget direct/planning turns are registered as background
+  conversation tasks.
+- The lifecycle harness waits for registered background tasks before deleting
+  its temp root.
+- A timeout while waiting is a test failure, not harmless stderr after the test
+  already passed.
+- Do not paper over storage `ENOENT` from cleanup races by retrying file writes;
+  the ownership bug is untracked background work.
+
 Asserting on rendered DOM state is the wrong granularity. We assert on the
 server's *decisions*, which are now first-class events.
 
@@ -254,6 +272,39 @@ Never infer completeness from "this snapshot contains a message for that run."
 That was the race behind the disappearing preflight confirmation: a partial
 live update containing only the user checkpoint looked authoritative enough to
 erase the supervisor confirmation from frontend state.
+
+`snapshotScope` extends the same idea to bounded streams that live in
+artifact storage (execution events, supervisor interventions, planning review
+findings). Each entry reports `{limit, complete, oldestCreatedAt}`. Clients
+that want older records keep a cursor (`oldestCreatedAt`) and request a
+deeper window; clients that just need the head trust the snapshot and stop.
+
+### Append-only artifact streams
+
+The bulky payload fields of these record families now live in JSONL files
+under `<projectPath>/.omniharness/run-data/<runId>/`, not in SQLite:
+
+- `execution_events.details` → `execution-events.jsonl`
+- `supervisor_interventions.{prompt,summary}` → `supervisor-interventions.jsonl`
+- `planning_review_findings.{details,recommendation}` → `planning-review-findings.jsonl`
+- `worker_entries` (per-worker) → `workers/<workerId>.jsonl`
+
+The metadata layer (`artifact_streams`) keeps a row per (runId, kind, ownerId)
+with `latest_seq`, `latest_record_id`, `compacted_at`, and the resolved
+`project_path` + `relative_root_path`. Each domain row keeps a content hash
+and a short preview so list views don't need to read the artifact. Failure
+modes surface through named events:
+
+- `artifact.append_failed` — JSONL write or lock acquisition failed.
+- `artifact.metadata_mismatch` — `latest_seq` and the file tail disagree.
+- `artifact.compaction_failed` / `artifact.compaction_completed` — terminal-run
+  sweep result.
+- `artifact.payload_missing` — domain row points at an artifact line that
+  isn't on disk (run `pnpm exec tsx scripts/artifact-repair.ts`).
+- `artifact.backfill_failed` — emitted by the migration script.
+
+Snapshot readers tolerate hydration failures: rows render from the preview
+column and emit `artifact.payload_missing` so an operator can repair.
 
 ### Rule 10: `awaiting_user` implies a visible question
 
