@@ -80,6 +80,41 @@ export async function cleanupRunArtifacts(runId: string): Promise<CleanupReport>
     }
   }
 
+  // Remove the agent runtime's per-worker output archive (a separate
+  // store from the worker conversation stream). Files are named
+  // `<runId>-worker-*.jsonl` under `.omniharness/agent-runtime-output/`.
+  // The directory is resolved relative to process.cwd() to match
+  // `openAgentOutputArchive` in src/server/agent-runtime/output-store.ts.
+  const runtimeOutputDir = path.join(process.cwd(), ".omniharness", "agent-runtime-output");
+  try {
+    const entries = await fs.readdir(runtimeOutputDir);
+    const prefix = `${runId}-`;
+    for (const entry of entries) {
+      if (!entry.startsWith(prefix) || !entry.endsWith(".jsonl")) continue;
+      const filePath = path.join(runtimeOutputDir, entry);
+      try {
+        await fs.unlink(filePath);
+        report.removedFiles.push(filePath);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT") {
+          report.errors.push({
+            path: filePath,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") {
+      report.errors.push({
+        path: runtimeOutputDir,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   return report;
 }
 

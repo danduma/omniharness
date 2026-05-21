@@ -135,6 +135,33 @@ function deleteArtifactFiles() {
       }
     }
   }
+
+  // Remove the agent runtime's per-worker output archive (a separate
+  // store from the worker conversation stream). Files are named
+  // `<runId>-worker-*.jsonl` under `.omniharness/agent-runtime-output/`.
+  const runtimeOutputDir = path.join(rootDir, ".omniharness", "agent-runtime-output");
+  let entries = [];
+  try {
+    entries = fs.readdirSync(runtimeOutputDir);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.warn(`[delete-conversations] failed to read ${runtimeOutputDir}: ${error.message}`);
+    }
+  }
+  for (const row of runRowsForCleanup) {
+    const prefix = `${row.id}-`;
+    for (const entry of entries) {
+      if (!entry.startsWith(prefix) || !entry.endsWith(".jsonl")) continue;
+      const filePath = path.join(runtimeOutputDir, entry);
+      try {
+        fs.unlinkSync(filePath);
+      } catch (error) {
+        if (error?.code !== "ENOENT") {
+          console.warn(`[delete-conversations] failed to remove ${filePath}: ${error.message}`);
+        }
+      }
+    }
+  }
 }
 
 async function main() {
