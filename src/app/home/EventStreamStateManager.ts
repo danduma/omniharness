@@ -24,7 +24,13 @@ function runUpdatedTimestampMs(run: RunRecord) {
   return Number.isFinite(value) ? value : 0;
 }
 
-function mergeScopedRuns(current: EventStreamState, incoming: EventStreamState) {
+function mergeScopedRuns(current: EventStreamState, incoming: EventStreamState, options: {
+  serverAuthoritative: boolean;
+}) {
+  if (options.serverAuthoritative) {
+    return incoming;
+  }
+
   const incomingRuns = incoming.runs ?? [];
   if (incomingRuns.length === 0 || !current.runs?.length) {
     return incoming;
@@ -138,6 +144,12 @@ export class EventStreamStateManager {
   }
 
   hydrateFromCaches() {
+    if (
+      this.state.snapshotSource === "server"
+      && (!this.snapshotCacheScope || this.state.snapshotRunId === this.snapshotCacheScope)
+    ) {
+      return;
+    }
     const cached = this.snapshotCache.hydrateState(this.state, this.snapshotCacheScope);
     if (cached === this.state) {
       return;
@@ -150,6 +162,13 @@ export class EventStreamStateManager {
 
   hydrateFromCacheScope(scope: string | null | undefined) {
     this.snapshotCacheScope = scope?.trim() || null;
+    if (
+      this.state.snapshotSource === "server"
+      && this.snapshotCacheScope
+      && this.state.snapshotRunId === this.snapshotCacheScope
+    ) {
+      return false;
+    }
     const cached = this.snapshotCache.getCachedState(this.snapshotCacheScope);
     if (!cached || Object.is(cached, this.state)) {
       return false;
@@ -182,12 +201,15 @@ export class EventStreamStateManager {
 
   update(action: EventStreamStateAction, options: { snapshotSource?: EventStreamSnapshotSource } = {}) {
     const incoming = typeof action === "function" ? action(this.state) : action;
-    const incomingWithRuns = mergeScopedRuns(this.state, incoming);
+    const snapshotSource = options.snapshotSource
+      ?? incoming.snapshotSource
+      ?? this.state.snapshotSource;
+    const incomingWithRuns = mergeScopedRuns(this.state, incoming, {
+      serverAuthoritative: snapshotSource === "server",
+    });
     const nextState = {
       ...mergeScopedMessages(this.state, incomingWithRuns),
-      snapshotSource: options.snapshotSource
-        ?? incoming.snapshotSource
-        ?? this.state.snapshotSource,
+      snapshotSource,
     };
 
     if (Object.is(nextState, this.state)) {

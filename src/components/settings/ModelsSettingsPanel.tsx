@@ -3,7 +3,9 @@ import type { LlmProfileTab } from "@/app/home/types";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { Select, type SelectOption } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { ModelProfileForm } from "./ModelProfileForm";
+import { parseBooleanSetting } from "@/app/home/utils";
 
 interface ModelsSettingsPanelProps {
   activeLlmProfileTab: LlmProfileTab;
@@ -32,6 +34,7 @@ export function ModelsSettingsPanel({
     ? (settings.CREDIT_STRATEGY as CreditStrategyValue)
     : "swap_account";
   const strategyExplanation = t(`settings.models.creditStrategy.explanation.${toCamel(currentStrategy)}`);
+  const customMemoryModelEnabled = parseBooleanSetting(settings.SUPERVISOR_MEMORY_LLM_USE_CUSTOM, false);
 
   return (
     <div className="space-y-4">
@@ -39,6 +42,7 @@ export function ModelsSettingsPanel({
         {([
           ["supervisor", t("settings.models.tabs.supervisorCredentials")],
           ["fallback", t("settings.models.tabs.fallbackCredentials")],
+          ["memory", t("settings.models.tabs.memoryCredentials")],
         ] as Array<[LlmProfileTab, string]>).map(([tab, label]) => (
           <button
             key={tab}
@@ -65,7 +69,7 @@ export function ModelsSettingsPanel({
           setSetting={setSetting}
           secretStates={secretStates}
         />
-      ) : (
+      ) : activeLlmProfileTab === "fallback" ? (
         <ModelProfileForm
           prefix="SUPERVISOR_FALLBACK_LLM"
           title={t("settings.models.fallbackTitle")}
@@ -73,6 +77,30 @@ export function ModelsSettingsPanel({
           setSetting={setSetting}
           secretStates={secretStates}
         />
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3 rounded-lg border border-border/60 bg-background/70 p-3">
+            <Switch
+              id="SUPERVISOR_MEMORY_LLM_USE_CUSTOM"
+              aria-label={t("settings.models.memory.useCustom")}
+              checked={customMemoryModelEnabled}
+              onCheckedChange={(checked) => setSetting("SUPERVISOR_MEMORY_LLM_USE_CUSTOM", checked ? "true" : "false")}
+            />
+            <div className="min-w-0 space-y-1">
+              <div className="text-sm font-medium">{t("settings.models.memory.useCustom")}</div>
+              <p className="text-xs text-muted-foreground">{t("settings.models.memory.inheritHelp")}</p>
+            </div>
+          </div>
+          <ModelProfileForm
+            prefix="SUPERVISOR_MEMORY_LLM"
+            title={t("settings.models.memoryTitle")}
+            settings={settings}
+            setSetting={setSetting}
+            secretStates={secretStates}
+            disabled={!customMemoryModelEnabled}
+            autoFillDefaultModel={customMemoryModelEnabled}
+          />
+        </div>
       )}
 
       <div className="rounded-xl border border-border/60 bg-muted/20 p-4">

@@ -10,7 +10,7 @@ import { QueuedMessageDrawer } from "./QueuedMessageDrawer";
 import { BranchWorkspaceButton } from "./BranchWorkspaceButton";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { EFFORT_OPTIONS } from "@/app/home/constants";
-import { resolveBusyMessageActionForSubmitAction, type BusyComposerBehavior, type BusyMessageAction } from "@/app/home/busy-message-behavior";
+import { isManualStopCommand, resolveBusyMessageActionForSubmitAction, type BusyComposerBehavior, type BusyMessageAction } from "@/app/home/busy-message-behavior";
 import { getComposerSubmitShortcutLabel, isAppleComposerShortcutPlatform, shouldSubmitComposerKeyDown, shouldUseAlternateComposerSubmitKeyDown } from "@/app/home/composer-keyboard";
 import type { ComposerWorkerOption, QueuedConversationMessageRecord, WorkerModelOption } from "@/app/home/types";
 import { formatBytes, type PendingChatAttachment } from "@/lib/chat-attachments";
@@ -111,6 +111,7 @@ export function ConversationComposer({
   setSelectedEffort,
   isComposerSubmitting,
   isStopConversationPending,
+  isConversationStoppable,
   composerBehavior,
   queuedMessages,
   cancellingQueuedMessageIds,
@@ -127,6 +128,7 @@ export function ConversationComposer({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { mobileSettingsOpen } = useManagerSnapshot(composerUiManager);
   const isStopButtonVisible = composerBehavior.buttonKind === "stop";
+  const showSeparateStopButton = isConversationStoppable && !isStopButtonVisible;
   const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;
   const isStopButtonBusy = isStopButtonVisible && isStopConversationPending;
   const isSubmitButtonDisabled = isStopButtonVisible
@@ -313,6 +315,11 @@ export function ConversationComposer({
               }
 
               if (!isComposerSubmitting && (trimmedCommand || hasAttachments)) {
+                if (selectedRunId && !hasAttachments && isManualStopCommand(command)) {
+                  setCommand("");
+                  onStopConversation();
+                  return;
+                }
                 if (selectedRunId) {
                   onSendConversationMessage(
                     command,
@@ -484,6 +491,29 @@ export function ConversationComposer({
               {selectedModelLabel}
             </span>
           </Button>
+
+          {showSeparateStopButton && (
+            <Button
+              type="button"
+              size="icon"
+              disabled={isStopConversationPending}
+              aria-label={t("conversation.composer.sendButton.stop")}
+              title={t("conversation.composer.sendButton.stopTitle")}
+              onClick={onStopConversation}
+              className={cn(
+                "h-8 w-8 shrink-0 rounded-full transition-all",
+                themeMode === "night"
+                  ? "border border-red-300/15 bg-red-400/[0.06] text-red-100/85 hover:bg-red-400/[0.12] disabled:opacity-50"
+                  : "border border-stone-300/80 bg-stone-100/40 text-stone-500 hover:border-rose-300/70 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-red-300/15 dark:bg-red-400/[0.06] dark:text-red-100/85 dark:hover:bg-red-400/[0.12]",
+              )}
+            >
+              {isStopConversationPending ? (
+                <LoaderCircle className="h-[17px] w-[17px] animate-spin" />
+              ) : (
+                <Square className="h-[13.6px] w-[13.6px] fill-current" />
+              )}
+            </Button>
+          )}
 
           <Button
             type="submit"

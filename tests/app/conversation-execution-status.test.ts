@@ -221,6 +221,34 @@ describe("useConversationExecutionStatus", () => {
     });
   });
 
+  it("shows direct-control awaiting input without requiring a supervisor question", () => {
+    const { liveExecutionStatus } = useConversationExecutionStatus({
+      selectedRun: buildRun({ mode: "direct", status: "awaiting_user" }),
+      latestExecutionEvent: buildExecutionEvent({
+        eventType: "direct_worker_awaiting_user",
+        details: JSON.stringify({ reason: "worker_requested_input" }),
+      }),
+      erroredAgent: null,
+      pendingPermissionAgent: null,
+      hasStuckWorker: false,
+      latestStuckEvent: null,
+      showRecoverableRunningState: false,
+      latestWaitEvent: null,
+      latestPromptDeferredEvent: null,
+      completionEvent: null,
+      queuedMessageCount: 0,
+      activeConversationAgents: [],
+      liveThoughts: [],
+      awaitingUserQuestionMessage: null,
+      isSelectedConversationLoaded: true,
+    });
+
+    expect(liveExecutionStatus).toMatchObject({
+      label: "Awaiting input",
+      tone: "warning",
+    });
+  });
+
   it("shows a loading state when the selected conversation snapshot has not arrived", () => {
     const { liveExecutionStatus } = useConversationExecutionStatus({
       selectedRun: buildRun({ status: "running" }),

@@ -77,6 +77,16 @@ export function useConversationExecutionStatus({
     }
 
     if (selectedRun?.status === "awaiting_user") {
+      if (
+        (selectedRun.mode === "direct" || selectedRun.mode === "commit")
+        && latestExecutionEvent?.eventType === "direct_worker_awaiting_user"
+      ) {
+        return {
+          label: "Awaiting input",
+          detail: t("conversation.status.awaitingWorkerInput"),
+          tone: "warning" as const,
+        };
+      }
       if (!awaitingUserQuestionMessage) {
         return {
           label: "Loading",
@@ -150,7 +160,7 @@ export function useConversationExecutionStatus({
       };
     }
 
-    if (latestPromptDeferredEvent) {
+    if (latestPromptDeferredEvent && latestPromptDeferredEvent.id === latestExecutionEvent?.id) {
       return {
         label: "Retry queued",
         detail: [durationLabel, summarizeExecutionEvent(latestPromptDeferredEvent)].filter(Boolean).join(". "),

@@ -24,9 +24,11 @@ import { shouldShowPlanningTerminalActivity } from "@/lib/planning-output";
 import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, NoticeDescriptor, RunRecord, PlanningReviewRunRecord, PlanningReviewRoundRecord, PlanningReviewFindingRecord } from "@/app/home/types";
 import type { RecoveryIncidentRecord, RunRecoveryState } from "@/app/home/types";
 import { formatExecutionTimestamp, formatExecutionEventType, getExecutionEventDetailRows, shouldShowLatestRecoveryAction, summarizeExecutionEvent, type ConversationTimelineItem } from "@/app/home/utils";
+import { buildSupervisorActivityCard, type SupervisorActivityWorker } from "@/app/home/supervisor-activity";
 import { cn } from "@/lib/utils";
 import { shallowEqualRecord, useManagerSelector, useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { ProjectFileReference } from "@/lib/project-file-links";
+import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "@/app/home/GitWorkspaceManager";
 import { preflightConfirmationActionsManager } from "@/app/home/PreflightConfirmationActionsManager";
 import { useWorkerStream } from "@/app/home/WorkerEntriesManager";
@@ -34,6 +36,7 @@ import { deriveConversationLoadState, resolveDirectWorkerStreamRefreshInterval, 
 import { type PlanningReviewAgentSelection } from "@/server/planning/review-preferences";
 import { WORKER_TYPE_LABELS, type SupportedWorkerType } from "@/server/supervisor/worker-types";
 import type { WorkerEntry } from "@/server/workers/entries-types";
+import { CliBrandIcon } from "@/components/cli-brand-icons";
 import { ErrorNotice } from "./ErrorNotice";
 import { RecoveryIncidentInspector } from "./RecoveryIncidentInspector";
 import { RunRecoveryNotice } from "./RunRecoveryNotice";
@@ -78,18 +81,107 @@ interface ConversationExecutionStatusProps {
   liveThoughts: Array<{ agentName: string; text: string; snippet: string; isLive: boolean }>;
 }
 
+function formatActivityWorkerTitle(worker: SupervisorActivityWorker) {
+  if (worker.title) {
+    return worker.title;
+  }
+  if (worker.workerNumber !== null) {
+    return t("supervisor.activity.worker.fallbackName", { number: worker.workerNumber });
+  }
+  return worker.workerId;
+}
+
+function renderActivityText(worker: SupervisorActivityWorker) {
+  if (worker.activityKey) {
+    return t(worker.activityKey, worker.activityParams);
+  }
+  return worker.activityText;
+}
+
+const WORKER_MENTION_PATTERN = /\b[Ww]orker\s+(\d+)\b/g;
+
+function renderTextWithWorkerLinks(
+  text: string,
+  workers: ConversationWorkerRecord[],
+  onOpenWorker?: (workerId: string) => void,
+): React.ReactNode {
+  if (!text || !onOpenWorker || workers.length === 0) {
+    return text;
+  }
+  const workerByNumber = new Map<number, ConversationWorkerRecord>();
+  for (const worker of workers) {
+    if (typeof worker.workerNumber === "number") {
+      workerByNumber.set(worker.workerNumber, worker);
+    }
+  }
+  if (workerByNumber.size === 0) {
+    return text;
+  }
+  const nodes: React.ReactNode[] = [];
+  let cursor = 0;
+  let keyCounter = 0;
+  for (const match of text.matchAll(WORKER_MENTION_PATTERN)) {
+    const matchStart = match.index ?? 0;
+    const number = Number.parseInt(match[1]!, 10);
+    const target = Number.isFinite(number) ? workerByNumber.get(number) : null;
+    if (!target) {
+      continue;
+    }
+    if (matchStart > cursor) {
+      nodes.push(text.slice(cursor, matchStart));
+    }
+    const workerId = target.id;
+    nodes.push(
+      <button
+        key={`worker-link-${keyCounter++}`}
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenWorker(workerId);
+        }}
+        className="omni-worker-mention-link inline cursor-pointer underline decoration-dotted underline-offset-2 hover:text-foreground"
+      >
+        {match[0]}
+      </button>,
+    );
+    cursor = matchStart + match[0].length;
+  }
+  if (cursor === 0) {
+    return text;
+  }
+  if (cursor < text.length) {
+    nodes.push(text.slice(cursor));
+  }
+  return nodes;
+}
+
 function ConversationExecutionPanel({
   runId,
+  selectedRun,
   liveExecutionStatus,
   liveThoughts,
   executionEvents,
+  activeWorkers,
+  conversationAgents,
+  onOpenWorkerActivity,
 }: ConversationExecutionStatusProps & {
   runId: string | null;
+  selectedRun: RunRecord | null;
   executionEvents: ExecutionEventRecord[];
+  activeWorkers: ConversationWorkerRecord[];
+  conversationAgents: AgentSnapshot[];
+  onOpenWorkerActivity?: (workerId: string) => void;
 }) {
   const { runLogOpenByRunId } = useManagerSnapshot(conversationMainManager);
+  const activityCard = useMemo(() => buildSupervisorActivityCard({
+    selectedRun,
+    liveExecutionStatus,
+    activeWorkers,
+    agents: conversationAgents,
+    executionEvents,
+  }), [activeWorkers, conversationAgents, executionEvents, liveExecutionStatus, selectedRun]);
   const liveThoughtText = liveThoughts[0]?.snippet?.trim() ?? "";
-  const statusText = liveExecutionStatus.detail || liveThoughtText;
+  const statusText = activityCard.detailText || liveThoughtText;
   const open = Boolean(runId && runLogOpenByRunId[runId]);
 
   return (
@@ -102,49 +194,134 @@ function ConversationExecutionPanel({
       }}
     >
       <div className="omni-run-status rounded-lg text-sm" aria-label="Run Log">
-        <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left">
-          <span
-            className={cn(
-              "shrink-0 text-xs font-semibold tracking-wide",
-              liveExecutionStatus.tone === "error"
-                ? "text-destructive"
-                : liveExecutionStatus.tone === "warning"
-                  ? "text-amber-600 dark:text-amber-300"
-                  : liveExecutionStatus.tone === "muted"
-                    ? "text-muted-foreground"
-                    : "omni-run-status-label",
-            )}
-          >
-            {liveExecutionStatus.label}
-          </span>
-          {liveExecutionStatus.tone !== "muted" ? (
-            <div className="flex shrink-0 items-center gap-1" aria-hidden={liveExecutionStatus.tone !== "active"}>
-              {[0, 1, 2].map((index) => (
+        <div className="space-y-2 px-3 py-2.5">
+          <div className="flex min-w-0 items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                 <span
-                  key={index}
                   className={cn(
-                    "h-1.5 w-1.5 rounded-full",
-                    liveExecutionStatus.tone === "error"
-                      ? "bg-destructive/70"
-                      : liveExecutionStatus.tone === "warning"
-                        ? "bg-amber-500/80"
-                        : "bg-muted-foreground/80 animate-pulse",
+                    "shrink-0 text-xs font-semibold tracking-wide",
+                    activityCard.status.tone === "error"
+                      ? "text-destructive"
+                      : activityCard.status.tone === "warning"
+                        ? "text-amber-600 dark:text-amber-300"
+                        : activityCard.status.tone === "muted"
+                          ? "text-muted-foreground"
+                          : "omni-run-status-label",
                   )}
-                  style={{ animationDelay: `${index * 180}ms` }}
-                />
-              ))}
+                >
+                  {activityCard.status.label}
+                </span>
+                {activityCard.status.tone !== "muted" ? (
+                  <div className="flex shrink-0 items-center gap-1" aria-hidden={activityCard.status.tone !== "active"}>
+                    {[0, 1, 2].map((index) => (
+                      <span
+                        key={index}
+                        className={cn(
+                          "h-1.5 w-1.5 rounded-full",
+                          activityCard.status.tone === "error"
+                            ? "bg-destructive/70"
+                            : activityCard.status.tone === "warning"
+                              ? "bg-amber-500/80"
+                              : "bg-muted-foreground/80 animate-pulse",
+                        )}
+                        style={{ animationDelay: `${index * 180}ms` }}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+                <span className="min-w-0 text-xs font-medium text-foreground">
+                  {t(activityCard.phaseKey, activityCard.phaseParams)}
+                </span>
+              </div>
+              {statusText ? (
+                <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                  {renderTextWithWorkerLinks(statusText, activeWorkers, onOpenWorkerActivity)}
+                </p>
+              ) : null}
+            </div>
+            <CollapsibleTrigger
+              className="group inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground"
+              aria-label={t("supervisor.activity.expandLog")}
+              title={t("supervisor.activity.expandLog")}
+            >
+              {executionEvents.length > 0 ? (
+                <span className="rounded-full bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  {executionEvents.length}
+                </span>
+              ) : null}
+              <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
+            </CollapsibleTrigger>
+          </div>
+
+          {activityCard.workers.length > 0 ? (
+            <div className="space-y-1.5" aria-label={t("supervisor.activity.activeWorkers")}>
+              {activityCard.workers.map((worker) => {
+                const workerTitle = formatActivityWorkerTitle(worker);
+                const visibleWorkerTitle = worker.title || (worker.workerNumber === null ? worker.workerId : "");
+                return (
+                  <button
+                    key={worker.workerId}
+                    type="button"
+                    className="group flex w-full min-w-0 items-start gap-2.5 rounded-md border border-border/55 bg-background/45 px-2.5 py-2 text-left shadow-[inset_0_1px_0_color-mix(in_oklch,var(--foreground)_4%,transparent)] transition-colors hover:border-foreground/18 hover:bg-background/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={() => onOpenWorkerActivity?.(worker.workerId)}
+                    aria-label={t("supervisor.activity.openWorker", { worker: workerTitle })}
+                  >
+                    <span
+                      className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border/70 bg-muted/20 text-muted-foreground group-hover:border-foreground/20 group-hover:text-foreground"
+                      aria-hidden="true"
+                    >
+                      <CliBrandIcon workerType={worker.workerType} className="h-3.5 w-3.5" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <span
+                          className={cn(
+                            "h-2 w-2 shrink-0 rounded-full",
+                            worker.tone === "error"
+                              ? "bg-destructive"
+                              : worker.tone === "warning"
+                                ? "bg-amber-500"
+                                : worker.isLive
+                                  ? "bg-emerald-500"
+                                  : "bg-muted-foreground/65",
+                          )}
+                        />
+                        {worker.workerNumber !== null ? (
+                          <span className="shrink-0 text-xs font-semibold text-foreground">
+                            {t("supervisor.activity.worker.fallbackName", { number: worker.workerNumber })}
+                          </span>
+                        ) : null}
+                        {visibleWorkerTitle ? (
+                          <span className="min-w-0 truncate text-xs font-medium text-foreground">{visibleWorkerTitle}</span>
+                        ) : null}
+                        <span className="shrink-0 text-[10px] font-medium text-muted-foreground">
+                          {t(worker.statusKey, worker.statusParams)}
+                        </span>
+                        {worker.runtimeLabel ? (
+                          <span className="shrink-0 text-[10px] text-muted-foreground/70">{worker.runtimeLabel}</span>
+                        ) : null}
+                        {worker.attentionKey ? (
+                          <span className={cn(
+                            "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
+                            worker.tone === "error"
+                              ? "bg-destructive/10 text-destructive"
+                              : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                          )}>
+                            {t(worker.attentionKey, worker.attentionParams)}
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="mt-0.5 block min-w-0 truncate text-[11px] leading-4 text-muted-foreground">
+                        {renderActivityText(worker)}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           ) : null}
-          {statusText ? (
-            <span className="min-w-0 flex-1 truncate text-xs leading-5 text-muted-foreground">{statusText}</span>
-          ) : <span className="min-w-0 flex-1" />}
-          {executionEvents.length > 0 ? (
-            <span className="rounded-full bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-              {executionEvents.length}
-            </span>
-          ) : null}
-          <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
-        </CollapsibleTrigger>
+        </div>
         <CollapsibleContent>
           <div className="border-t border-border/35 px-3 py-2">
             {liveThoughts.length > 0 ? (
@@ -445,9 +622,11 @@ interface ConversationMainProps {
   liveExecutionStatus: ConversationExecutionStatusProps["liveExecutionStatus"];
   liveThoughts: ConversationExecutionStatusProps["liveThoughts"];
   executionEvents: ExecutionEventRecord[];
+  activeWorkers: ConversationWorkerRecord[];
   emptyComposer: React.ReactNode;
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
+  onOpenWorkerActivity?: (workerId: string) => void;
 }
 
 function FailoverChip({ events }: { events: ExecutionEventRecord[] }) {
@@ -585,9 +764,11 @@ export function ConversationMain({
   liveExecutionStatus,
   liveThoughts,
   executionEvents,
+  activeWorkers,
   emptyComposer,
   projectRoot,
   onOpenProjectFile,
+  onOpenWorkerActivity,
 }: ConversationMainProps) {
   useI18nSnapshot();
   const { hasOutputBelow } = useManagerSnapshot(conversationMainManager);
@@ -1027,9 +1208,13 @@ export function ConversationMain({
           {isImplementationConversation && showConversationExecution ? (
             <ConversationExecutionPanel
               runId={selectedRunId}
+              selectedRun={selectedRun}
               liveExecutionStatus={liveExecutionStatus}
               liveThoughts={liveThoughts}
               executionEvents={executionEvents}
+              activeWorkers={activeWorkers}
+              conversationAgents={conversationAgents}
+              onOpenWorkerActivity={onOpenWorkerActivity}
             />
           ) : null}
 

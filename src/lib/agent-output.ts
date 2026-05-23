@@ -1,12 +1,17 @@
+import type { WorkerEntryChannel, WorkerEntryType } from "@/server/workers/entries-types";
+
 export interface AgentOutputEntry {
   id: string;
-  type: "message" | "thought" | "tool_call" | "tool_call_update" | "permission";
+  seq?: number;
+  type: WorkerEntryType;
   text: string;
   timestamp: string;
   toolCallId?: string | null;
   toolKind?: string | null;
   status?: string | null;
   raw?: unknown;
+  authorRole?: string | null;
+  channel?: WorkerEntryChannel;
 }
 
 export interface AgentOutputPane {
@@ -213,6 +218,72 @@ function stringifyUnknown(value: unknown): string | null {
 
 function outputEntryFingerprint(entry: AgentOutputEntry): string {
   return JSON.stringify(entry);
+}
+
+function isFragmentedMessageCandidate(entry: AgentOutputEntry) {
+  if (entry.type !== "message" || entry.toolCallId || entry.status) {
+    return false;
+  }
+  const text = entry.text ?? "";
+  return text.length > 0 && text.length <= 24;
+}
+
+function hasFragmentedMessageEvidence(entries: AgentOutputEntry[]) {
+  if (entries.length < 4) {
+    return false;
+  }
+
+  const totalLength = entries.reduce((sum, entry) => sum + (entry.text?.length ?? 0), 0);
+  if (totalLength < 32) {
+    return false;
+  }
+
+  return entries.some((entry) => {
+    const text = entry.text ?? "";
+    return /^\s/.test(text)
+      || /\s$/.test(text)
+      || /^[`.,:;!?()[\]{}<>=+\-_/\\\n]/.test(text);
+  });
+}
+
+function mergeFragmentedMessageRun(entries: AgentOutputEntry[]) {
+  const first = entries[0]!;
+  const last = entries[entries.length - 1]!;
+  return {
+    ...first,
+    id: `message-fragment-run:${first.id}:${last.id}`,
+    text: entries.map((entry) => normalizeMultilineText(entry.text ?? "")).join(""),
+    timestamp: first.timestamp,
+  } satisfies AgentOutputEntry;
+}
+
+function coalesceFragmentedMessageEntries(entries: AgentOutputEntry[]) {
+  const coalesced: AgentOutputEntry[] = [];
+  let pending: AgentOutputEntry[] = [];
+
+  const flush = () => {
+    if (pending.length === 0) {
+      return;
+    }
+    if (hasFragmentedMessageEvidence(pending)) {
+      coalesced.push(mergeFragmentedMessageRun(pending));
+    } else {
+      coalesced.push(...pending);
+    }
+    pending = [];
+  };
+
+  for (const entry of entries) {
+    if (isFragmentedMessageCandidate(entry)) {
+      pending.push(entry);
+      continue;
+    }
+    flush();
+    coalesced.push(entry);
+  }
+
+  flush();
+  return coalesced;
 }
 
 function stringifyToolRawOutput(value: unknown): string | null {
@@ -434,6 +505,128 @@ function buildLineDiff(path: string | null, marker: "+" | "-", value: unknown, l
   return `${pathPrefixForDiff(path, "")}@@ ${label} @@\n${lines}`;
 }
 
+type ReplacementDiffOp = {
+  kind: "context" | "remove" | "add";
+  text: string;
+  oldLine?: number;
+  newLine?: number;
+};
+
+const REPLACEMENT_DIFF_CONTEXT_LINES = 1;
+const REPLACEMENT_DIFF_MAX_LCS_CELLS = 1_500_000;
+
+function buildFallbackReplacementDiff(path: string | null, oldString: string, newString: string): string {
+  const removed = oldString.split("\n").map((line) => `-${line}`).join("\n");
+  const added = newString.split("\n").map((line) => `+${line}`).join("\n");
+  return `${pathPrefixForDiff(path, "")}@@ -1,${oldString.split("\n").length} +1,${newString.split("\n").length} @@\n${removed}\n${added}`;
+}
+
+function diffReplacementLines(oldLines: string[], newLines: string[]): ReplacementDiffOp[] | null {
+  const width = newLines.length + 1;
+  const cells = (oldLines.length + 1) * width;
+  if (cells > REPLACEMENT_DIFF_MAX_LCS_CELLS) {
+    return null;
+  }
+
+  const table = new Uint32Array(cells);
+  const at = (oldIndex: number, newIndex: number) => oldIndex * width + newIndex;
+
+  for (let oldIndex = oldLines.length - 1; oldIndex >= 0; oldIndex -= 1) {
+    for (let newIndex = newLines.length - 1; newIndex >= 0; newIndex -= 1) {
+      table[at(oldIndex, newIndex)] = oldLines[oldIndex] === newLines[newIndex]
+        ? table[at(oldIndex + 1, newIndex + 1)] + 1
+        : Math.max(table[at(oldIndex + 1, newIndex)], table[at(oldIndex, newIndex + 1)]);
+    }
+  }
+
+  const ops: ReplacementDiffOp[] = [];
+  let oldIndex = 0;
+  let newIndex = 0;
+  let oldLine = 1;
+  let newLine = 1;
+
+  while (oldIndex < oldLines.length && newIndex < newLines.length) {
+    if (oldLines[oldIndex] === newLines[newIndex]) {
+      ops.push({ kind: "context", text: oldLines[oldIndex], oldLine, newLine });
+      oldIndex += 1;
+      newIndex += 1;
+      oldLine += 1;
+      newLine += 1;
+      continue;
+    }
+
+    if (table[at(oldIndex + 1, newIndex)] >= table[at(oldIndex, newIndex + 1)]) {
+      ops.push({ kind: "remove", text: oldLines[oldIndex], oldLine });
+      oldIndex += 1;
+      oldLine += 1;
+    } else {
+      ops.push({ kind: "add", text: newLines[newIndex], newLine });
+      newIndex += 1;
+      newLine += 1;
+    }
+  }
+
+  while (oldIndex < oldLines.length) {
+    ops.push({ kind: "remove", text: oldLines[oldIndex], oldLine });
+    oldIndex += 1;
+    oldLine += 1;
+  }
+
+  while (newIndex < newLines.length) {
+    ops.push({ kind: "add", text: newLines[newIndex], newLine });
+    newIndex += 1;
+    newLine += 1;
+  }
+
+  return ops;
+}
+
+function replacementDiffHunks(ops: ReplacementDiffOp[], contextLines = REPLACEMENT_DIFF_CONTEXT_LINES): ReplacementDiffOp[][] {
+  const changedIndexes = ops
+    .map((op, index) => (op.kind === "context" ? -1 : index))
+    .filter((index) => index >= 0);
+
+  if (changedIndexes.length === 0) {
+    return [];
+  }
+
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (const index of changedIndexes) {
+    const start = Math.max(0, index - contextLines);
+    const end = Math.min(ops.length, index + contextLines + 1);
+    const last = ranges[ranges.length - 1];
+    if (last && start <= last.end) {
+      last.end = Math.max(last.end, end);
+    } else {
+      ranges.push({ start, end });
+    }
+  }
+
+  return ranges.map((range) => ops.slice(range.start, range.end));
+}
+
+function formatHunkRange(start: number, count: number): string {
+  return count === 1 ? `${start}` : `${start},${count}`;
+}
+
+function hunkHeader(hunk: ReplacementDiffOp[]): string {
+  const oldLines = hunk.filter((op) => op.kind !== "add");
+  const newLines = hunk.filter((op) => op.kind !== "remove");
+  const firstOld = oldLines[0]?.oldLine ?? hunk[0]?.oldLine ?? 1;
+  const firstNew = newLines[0]?.newLine ?? hunk[0]?.newLine ?? 1;
+  return `@@ -${formatHunkRange(firstOld, oldLines.length)} +${formatHunkRange(firstNew, newLines.length)} @@`;
+}
+
+function formatReplacementDiffOp(op: ReplacementDiffOp): string {
+  if (op.kind === "add") {
+    return `+${op.text}`;
+  }
+  if (op.kind === "remove") {
+    return `-${op.text}`;
+  }
+  return ` ${op.text}`;
+}
+
 function collectChangeDiffs(value: unknown): string[] {
   const changes = asRecord(value);
   if (!changes) {
@@ -472,9 +665,26 @@ function buildReplacementDiffFromStrings(path: string | null, oldValue: unknown,
     return null;
   }
 
-  const removed = oldString.split("\n").map((line) => `-${line}`).join("\n");
-  const added = newString.split("\n").map((line) => `+${line}`).join("\n");
-  return `${pathPrefixForDiff(path, "")}@@ replacement @@\n${removed}\n${added}`;
+  const oldLines = oldString.split("\n");
+  const newLines = newString.split("\n");
+  const ops = diffReplacementLines(oldLines, newLines);
+  if (!ops) {
+    return buildFallbackReplacementDiff(path, oldString, newString);
+  }
+
+  const hunks = replacementDiffHunks(ops);
+  if (hunks.length === 0) {
+    return null;
+  }
+
+  const hunkText = hunks
+    .map((hunk) => [
+      hunkHeader(hunk),
+      ...hunk.map(formatReplacementDiffOp),
+    ].join("\n"))
+    .join("\n");
+
+  return `${pathPrefixForDiff(path, "")}${hunkText}`;
 }
 
 function buildReplacementDiff(rawInput: Record<string, unknown> | null): string | null {
@@ -964,7 +1174,9 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
   const permissionDetailByRequestId = new Map<number, string>();
   const permissionIndexByRequestId = new Map<number, number>();
   const thoughtLocationById = new Map<string, { activity: MutableThinkingActivity; index: number }>();
-  const outputEntries = Array.isArray(snapshot.outputEntries) ? snapshot.outputEntries : [];
+  const outputEntries = coalesceFragmentedMessageEntries(
+    Array.isArray(snapshot.outputEntries) ? snapshot.outputEntries : [],
+  );
   const seenOutputEntryFingerprints = new Set<string>();
   let openThinking: MutableThinkingActivity | null = null;
 

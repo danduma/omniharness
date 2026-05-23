@@ -239,6 +239,13 @@ export class ProjectMemoryPanelManager extends StateManager<ProjectMemoryPanelSt
       ) {
         return;
       }
+      if (current.content !== content) {
+        this.patch({
+          saving: false,
+          saveStatus: "idle",
+        });
+        return;
+      }
       this.patch({
         originalContent: content,
         saveStatus: "saved",

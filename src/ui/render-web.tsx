@@ -6,6 +6,7 @@ import { t } from "@/lib/i18n";
 import { OmniApp } from "@/ui/OmniApp";
 import { createElectronRuntimeAPIs } from "@/runtime-api/electron";
 import { createWebRuntimeAPIs } from "@/runtime-api/web";
+import type { HomeBootstrapPayload } from "@/runtime/bootstrap";
 
 function createRuntimeApis() {
   if (typeof window !== "undefined" && window.omniElectron) {
@@ -28,7 +29,7 @@ async function mount() {
       selectedRunId: params.get("run"),
       draftProjectPath: params.get("project"),
       pairToken: params.get("pair"),
-    });
+    }) as HomeBootstrapPayload;
     createRoot(root).render(<OmniApp bootstrap={bootstrap} runtimeApis={runtimeApis} />);
   } catch (error) {
     root.textContent = error instanceof Error ? error.message : String(error);

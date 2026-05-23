@@ -105,6 +105,34 @@ export function ownsSelectionFromMutationStart(args: {
   return args.currentSelectedRunId === args.selectedRunIdAtStart;
 }
 
+export function shouldSelectProjectMutationResult(args: {
+  selectedRunIdAtStart: string | null;
+  currentSelectedRunId: string | null;
+  resultRunId: string | null | undefined;
+}) {
+  return Boolean(args.resultRunId) && ownsSelectionFromMutationStart(args);
+}
+
+export function shouldSelectSourceRunMutationResult(args: {
+  sourceRunId: string;
+  selectedRunIdAtStart: string | null;
+  currentSelectedRunId: string | null;
+  resultRunId: string | null | undefined;
+}) {
+  return Boolean(args.resultRunId)
+    && args.selectedRunIdAtStart === args.sourceRunId
+    && args.currentSelectedRunId === args.sourceRunId;
+}
+
+export function shouldRestoreSelectionAfterOptimisticRemovalError(args: {
+  removedRunId: string;
+  selectedRunIdAtStart: string | null;
+  currentSelectedRunId: string | null;
+}) {
+  return args.selectedRunIdAtStart === args.removedRunId
+    && args.currentSelectedRunId === null;
+}
+
 export function ownsConversationSideEffects(args: {
   runId: string;
   currentSelectedRunId: string | null;
@@ -122,6 +150,68 @@ export function shouldClearSubmittedComposer(args: {
   return args.commandAtStart === args.submittedContent
     && args.currentCommand === args.submittedContent
     && args.currentAttachments === args.attachmentsAtStart;
+}
+
+function timestampMs(value: string | undefined | null) {
+  if (!value) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+}
+
+function mergeOutputEntries(
+  current: AgentSnapshot["outputEntries"],
+  loaded: AgentSnapshot["outputEntries"],
+) {
+  const byId = new Map<string, NonNullable<AgentSnapshot["outputEntries"]>[number]>();
+  for (const entry of loaded ?? []) {
+    byId.set(entry.id, entry);
+  }
+  for (const entry of current ?? []) {
+    byId.set(entry.id, entry);
+  }
+  return Array.from(byId.values()).sort((first, second) => {
+    const timeDelta = timestampMs(first.timestamp) - timestampMs(second.timestamp);
+    return timeDelta !== 0 ? timeDelta : first.id.localeCompare(second.id);
+  });
+}
+
+export function mergeLoadedWorkerHistoryAgent(
+  current: AgentSnapshot | undefined,
+  loaded: AgentSnapshot,
+): AgentSnapshot {
+  if (!current) {
+    return loaded;
+  }
+
+  const currentIsNewer = timestampMs(current.updatedAt) > timestampMs(loaded.updatedAt);
+  const outputEntries = mergeOutputEntries(current.outputEntries, loaded.outputEntries);
+  if (!currentIsNewer) {
+    return {
+      ...loaded,
+      outputEntries,
+    };
+  }
+
+  return {
+    ...loaded,
+    state: current.state,
+    currentText: current.currentText,
+    lastText: current.lastText,
+    displayText: current.displayText,
+    lastError: current.lastError,
+    recentStderr: current.recentStderr,
+    pendingPermissions: current.pendingPermissions,
+    contextUsage: current.contextUsage,
+    bridgeLastError: current.bridgeLastError,
+    runLastError: current.runLastError,
+    stderrBuffer: current.stderrBuffer,
+    stopReason: current.stopReason,
+    bridgeMissing: current.bridgeMissing,
+    updatedAt: current.updatedAt,
+    outputEntries,
+  };
 }
 
 function applyStopWorkerOptimisticUpdate(current: EventStreamState, runId: string, workerId: string) {
@@ -449,7 +539,13 @@ export function useHomeMutations({
         pendingCreatedConversationSnapshotsRef.current.set(variables.runId, context.previousPendingCreatedSnapshot);
       }
       setState(context.previousState);
-      setSelectedRunId(context.previousSelectedRunId);
+      if (shouldRestoreSelectionAfterOptimisticRemovalError({
+        removedRunId: variables.runId,
+        selectedRunIdAtStart: context.previousSelectedRunId,
+        currentSelectedRunId: homeUiStateManager.getSnapshot().selectedRunId,
+      })) {
+        setSelectedRunId(context.previousSelectedRunId);
+      }
       setRenamingRunId(context.previousRenamingRunId);
       setRenameValue(context.previousRenameValue);
       setRenameSource(context.previousRenameSource);
@@ -506,7 +602,13 @@ export function useHomeMutations({
         pendingCreatedConversationSnapshotsRef.current.set(variables.runId, context.previousPendingCreatedSnapshot);
       }
       setState(context.previousState);
-      setSelectedRunId(context.previousSelectedRunId);
+      if (shouldRestoreSelectionAfterOptimisticRemovalError({
+        removedRunId: variables.runId,
+        selectedRunIdAtStart: context.previousSelectedRunId,
+        currentSelectedRunId: homeUiStateManager.getSnapshot().selectedRunId,
+      })) {
+        setSelectedRunId(context.previousSelectedRunId);
+      }
       setRenamingRunId(context.previousRenamingRunId);
       setRenameValue(context.previousRenameValue);
       setRenameSource(context.previousRenameSource);
@@ -829,7 +931,7 @@ export function useHomeMutations({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          mode: "direct",
+          mode: "commit",
           command: getManualProjectCommitPrompt(payload.action),
           projectPath: payload.projectPath,
           preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
@@ -843,9 +945,10 @@ export function useHomeMutations({
       });
     },
     onSuccess: (data, _variables, context) => {
-      const ownsSelection = ownsSelectionFromMutationStart({
+      const ownsSelection = shouldSelectProjectMutationResult({
         selectedRunIdAtStart: context?.selectedRunIdAtStart ?? null,
         currentSelectedRunId: homeUiStateManager.getSnapshot().selectedRunId,
+        resultRunId: data.runId,
       });
       const snapshot = homeUiStateManager.getSnapshot();
       const composerStillOwned = ownsSelection
@@ -869,6 +972,7 @@ export function useHomeMutations({
         }
         if (ownsSelection) {
           setSelectedRunId(data.runId);
+          replaceBrowserConversationPath(data.runId, null);
         }
       }
     },
@@ -933,8 +1037,8 @@ export function useHomeMutations({
   });
 
   const promotePlanningConversation = useMutation({
-    onMutate: (payload: { runId: string; planPath: string | null }) => ({
-      selectedRunIdAtStart: homeUiStateManager.getSnapshot().selectedRunId ?? payload.runId,
+    onMutate: (_payload: { runId: string; planPath: string | null }) => ({
+      selectedRunIdAtStart: homeUiStateManager.getSnapshot().selectedRunId,
     }),
     mutationFn: async (payload: { runId: string; planPath: string | null }) => requestJson<{ runId?: string }>(`/api/planning/${payload.runId}/promote`, {
       method: "POST",
@@ -944,12 +1048,15 @@ export function useHomeMutations({
       source: "Planning",
       action: "Promote planning conversation",
     }),
-    onSuccess: (data, _variables, context) => {
-      if (data.runId && ownsSelectionFromMutationStart({
+    onSuccess: (data, variables, context) => {
+      if (data.runId && shouldSelectSourceRunMutationResult({
+        sourceRunId: variables.runId,
         selectedRunIdAtStart: context?.selectedRunIdAtStart ?? null,
         currentSelectedRunId: homeUiStateManager.getSnapshot().selectedRunId,
+        resultRunId: data.runId,
       })) {
         setSelectedRunId(data.runId);
+        replaceBrowserConversationPath(data.runId, null);
       }
     },
   });
@@ -986,7 +1093,7 @@ export function useHomeMutations({
         const agentsByName = new Map(
           (current.agents || []).map((candidate: AgentSnapshot) => [candidate.name, candidate]),
         );
-        agentsByName.set(agent.name, agent);
+        agentsByName.set(agent.name, mergeLoadedWorkerHistoryAgent(agentsByName.get(agent.name), agent));
         return { ...current, agents: Array.from(agentsByName.values()) };
       });
     } catch (error) {

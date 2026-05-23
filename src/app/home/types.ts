@@ -353,5 +353,5 @@ export type SidebarGroup = { path: string; name: string; runs: SidebarRun[] };
 export type NoticeTone = "error" | "warning" | "success" | "progress";
 export type NoticeDescriptor = AppErrorDescriptor & { tone?: NoticeTone };
 
-export type LlmProfileTab = "supervisor" | "fallback";
-export type LlmFieldPrefix = "SUPERVISOR_LLM" | "SUPERVISOR_FALLBACK_LLM";
+export type LlmProfileTab = "supervisor" | "fallback" | "memory";
+export type LlmFieldPrefix = "SUPERVISOR_LLM" | "SUPERVISOR_FALLBACK_LLM" | "SUPERVISOR_MEMORY_LLM";

@@ -163,11 +163,16 @@ test("composer draft state is isolated from the root home app subscription", () 
 test("composer submit button sends text, stops live conversations, and disables when idle empty", () => {
   expect(pageSource).toContain("const isSupervisorRunning = Boolean(selectedRun && selectedRun.mode === \"implementation\" && selectedRun.status === \"running\")");
   expect(pageSource).toContain("const busyConversationWorkerId = !isImplementationConversation");
-  expect(pageSource).toContain("const pendingConversationWorkerId = !isImplementationConversation && sendConversationMessage.isPending");
-  expect(pageSource).toContain("const stoppableConversationWorkerId = busyConversationWorkerId ?? pendingConversationWorkerId");
+  expect(pageSource).toContain("const isSendingSelectedConversationMessage = isMutationPendingForSelectedRun({");
+  expect(pageSource).toContain("mutationRunId: sendConversationMessage.variables?.runId");
+  expect(pageSource).toContain("const pendingConversationWorkerId = resolvePendingConversationWorkerId({");
+  expect(pageSource).toContain("selectedWorkerIds: selectedRunWorkersForDisplay.map((worker) => worker.id)");
+  expect(pageSource).toContain("const directRunningConversationWorkerId = isDirectConversation");
+  expect(pageSource).toContain("const stoppableConversationWorkerId = busyConversationWorkerId ?? pendingConversationWorkerId ?? directRunningConversationWorkerId");
   expect(pageSource).toContain("const isConversationStoppable = isSupervisorRunning || Boolean(stoppableConversationWorkerId)");
-  expect(pageSource).toContain("const isStopConversationPending = stopSupervisor.isPending || stopWorker.isPending");
+  expect(pageSource).toContain("const isStopConversationPending = isStoppingSelectedSupervisor || isStoppingSelectedWorker");
   expect(pageSource).toContain('const isStopButtonVisible = composerBehavior.buttonKind === "stop"');
+  expect(pageSource).toContain("const showSeparateStopButton = isConversationStoppable && !isStopButtonVisible");
   expect(pageSource).toContain('const isSubmitButtonDisabled = isStopButtonVisible\n    ? isStopConversationPending');
   expect(pageSource).toContain("resolveBusyComposerBehavior({");
   expect(pageSource).toContain('forceSteer: selectedConversationMode === "implementation"');
@@ -184,6 +189,8 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain("getComposerSubmitShortcutLabel(isAppleComposerShortcutPlatform())");
   expect(pageSource).toContain("sendButtonTitle");
   expect(pageSource).toContain("isSendButtonBusy || isStopButtonBusy ? (");
+  expect(pageSource).toContain("showSeparateStopButton && (");
+  expect(pageSource).toContain("onClick={onStopConversation}");
   expect(pageSource).toContain("<Square className=\"h-[13.6px] w-[13.6px] fill-current\" />");
 });
 
@@ -222,4 +229,35 @@ test("worker cards expose individual stop controls", () => {
   expect(pageSource).toContain("stopWorker.mutate({ runId: selectedRunId, workerId })");
   expect(pageSource).toContain("onStopWorker={onStopWorker}");
   expect(pageSource).toContain('aria-label={`Stop ${displayId}`}');
+});
+
+test("promotePlanningConversation.isPending is scoped to the selected run before use in isComposerSubmitting", () => {
+  expect(pageSource).toContain("const isPromotePlanningPendingForSelectedRun = isMutationPendingForSelectedRun({");
+  expect(pageSource).toContain("mutationRunId: promotePlanningConversation.variables?.runId,");
+  expect(pageSource).toContain("isPromotePlanningPendingForSelectedRun || isStopConversationPending");
+  // Unscoped isPending must not appear in the isComposerSubmitting expression.
+  expect(pageSource).not.toContain("promotePlanningConversation.isPending || isStopConversationPending");
+});
+
+test("recoverRun.isPending is scoped to the selected run before suppressing auto-resume", () => {
+  expect(pageSource).toContain("const isRecoverRunPendingForSelectedRun = isMutationPendingForSelectedRun({");
+  expect(pageSource).toContain("mutationRunId: recoverRun.variables?.runId,");
+  expect(pageSource).toContain("recoverRunIsPending: isRecoverRunPendingForSelectedRun,");
+  expect(pageSource).toContain("|| isRecoverRunPendingForSelectedRun");
+  // Unscoped recoverRun.isPending must not guard the auto-resume effect.
+  expect(pageSource).not.toContain("|| recoverRun.isPending");
+});
+
+test("resumeRunRecovery.isPending is scoped to the selected run before being passed to ConversationMain", () => {
+  expect(pageSource).toContain("const isResumeRunRecoveryPendingForSelectedRun = isMutationPendingForSelectedRun({");
+  expect(pageSource).toContain("mutationRunId: resumeRunRecovery.variables?.runId,");
+  expect(pageSource).toContain("resumeRunRecovery={{ isPending: isResumeRunRecoveryPendingForSelectedRun }}");
+  // Unscoped object must not be forwarded.
+  expect(pageSource).not.toContain("resumeRunRecovery={resumeRunRecovery}");
+});
+
+test("preflight confirmation answering uses the already-scoped send-message pending flag", () => {
+  expect(pageSource).toContain("isPreflightConfirmationAnswering={isSendingSelectedConversationMessage}");
+  // Unscoped global must not be used for this prop.
+  expect(pageSource).not.toContain("isPreflightConfirmationAnswering={sendConversationMessage.isPending}");
 });

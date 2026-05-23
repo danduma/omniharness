@@ -203,17 +203,18 @@ export function PairDeviceDialog({
     }
 
     const interval = window.setInterval(async () => {
+      const pollRequestId = pairDeviceManager.beginStatusPoll(pairing.pairingId);
       try {
         const data = await requestJson<PairStatusResponse>(`/api/auth/pair?id=${encodeURIComponent(pairing.pairingId)}`, undefined, {
           source: "Auth",
           action: "Load pairing status",
         });
 
-        pairDeviceManager.patchIfCurrentPairing(pairing.pairingId, {
+        pairDeviceManager.patchIfCurrentStatusPoll(pairing.pairingId, pollRequestId, {
           pairingStatus: data.pairing.status,
         });
       } catch (pollError) {
-        pairDeviceManager.patchIfCurrentPairing(pairing.pairingId, {
+        pairDeviceManager.patchIfCurrentStatusPoll(pairing.pairingId, pollRequestId, {
           error: pollError instanceof Error ? pollError.message : String(pollError),
         });
       }

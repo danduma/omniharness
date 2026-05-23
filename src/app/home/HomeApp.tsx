@@ -15,6 +15,11 @@ import { busyMessageQueueManager } from "./BusyMessageQueueManager";
 import { conversationNotificationManager } from "./ConversationNotificationManager";
 import { sideWindowManager } from "./SideWindowManager";
 import { parseBusyMessageAction } from "./busy-message-behavior";
+import {
+  isMutationPendingForSelectedRun,
+  resolvePendingConversationWorkerId,
+  shouldShowDirectControlPendingAssistant,
+} from "./direct-control-activity";
 import { cancelInactiveAutoResumeTimers, shouldFireAutoResumeTimer } from "./auto-resume-selection";
 import { EventStreamStateManager } from "./EventStreamStateManager";
 import {
@@ -55,6 +60,7 @@ import { ComposerContainer } from "./ComposerContainer";
 import { sessionStateManager } from "./SessionStateManager";
 import { t } from "@/lib/i18n";
 import { StateManager } from "@/lib/state-manager";
+import { workersSidebarManager } from "@/components/component-state-managers";
 
 const FolderPickerDialog = dynamic(
   () => import("@/components/FolderPickerDialog").then((m) => m.FolderPickerDialog),
@@ -306,7 +312,17 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   const pendingCreatedConversationSnapshotsRef = useRef<Map<string, CreatedConversationSnapshot>>(new Map());
   const pendingSentConversationMessagesRef = useRef<Map<string, MessageRecord>>(new Map());
   const loadingWorkerHistoryIdsRef = useRef<Set<string>>(new Set());
-  const autoResumeStateRef = useRef<Map<string, { failureKey: string; attempts: number; timerId: ReturnType<typeof setTimeout> | null }>>(new Map());
+  const autoResumeStateRef = useRef<Map<string, { failureKey: string; targetMessageId: string; attempts: number; timerId: ReturnType<typeof setTimeout> | null }>>(new Map());
+  const autoResumeRuntimeFactsRef = useRef({
+    activeRunId: null as string | null,
+    isAutoResumableConversation: false,
+    selectedRunStatus: null as string | null,
+    failureKey: null as string | null,
+    targetMessageId: null as string | null,
+    failedWorkerAvailabilityStatus: null as string | null,
+    hasWorkerFailureDetail: false,
+    recoverRunIsPending: false,
+  });
   const autoResumeExhaustedRunIds = useSyncExternalStore(
     useCallback((listener) => autoResumeExhaustionManager.subscribe(listener), []),
     useCallback(() => autoResumeExhaustionManager.getSnapshot(), []),
@@ -449,6 +465,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     latestWaitEvent,
     latestPromptDeferredEvent,
     awaitingUserQuestionMessage,
+    isSelectedConversationPreviewAvailable,
     isSelectedConversationLoaded,
     latestStuckEvent,
     hasStuckWorker,
@@ -457,6 +474,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     activeConversationCwd,
     workspaceSideWindowAvailable,
     conversationTimelineItems,
+    conversationWorkerGroups,
   } = vm;
 
   useEffect(() => {
@@ -644,17 +662,64 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     setSelectedModel(activeWorkerModelOptions[0].value);
   }, [activeWorkerModelOptions, vm.activeWorkerModelType, selectedModel, setSelectedModel]);
 
-  // Auto-sync the desktop side window with implementation conversations that have workers.
+  // Pre-warm the worker the user is about to use. Overlapping ACP startup
+  // (~3–30 s depending on CLI) with composer typing keeps "press Send → first
+  // token" close to model latency instead of model + worker boot. Bridge dedups
+  // per pool key; we still gate per (cwd,type,model) here to avoid refire on
+  // re-render or window focus.
+  const prewarmedWorkerSlotsRef = useRef<Set<string>>(new Set());
+  const effectivePrewarmType =
+    selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent;
   useEffect(() => {
-    if (selectedRunId && isImplementationConversation && selectedRunWorkersForDisplay.length > 0) {
-      setRightSidebarOpen(true);
+    if (!appUnlocked) return;
+    if (!currentProjectScope) return;
+    if (!effectivePrewarmType) return;
+    const modelKey = selectedModel ?? "";
+    const slot = `${currentProjectScope}::${effectivePrewarmType}::${modelKey}`;
+    if (prewarmedWorkerSlotsRef.current.has(slot)) return;
+    prewarmedWorkerSlotsRef.current.add(slot);
+    void fetch("/api/agents/prewarm-worker", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: effectivePrewarmType,
+        cwd: currentProjectScope,
+        model: selectedModel ?? null,
+      }),
+      credentials: "same-origin",
+    }).catch(() => {
+      prewarmedWorkerSlotsRef.current.delete(slot);
+    });
+  }, [appUnlocked, currentProjectScope, effectivePrewarmType, selectedModel]);
+
+  // Keep non-worker conversations from leaving the workspace side window open.
+  useEffect(() => {
+    if (selectedRunId && !isImplementationConversation) {
+      setRightSidebarOpen(false);
+      setMobileWorkersOpen(false);
+    }
+  }, [isImplementationConversation, selectedRunId, setMobileWorkersOpen, setRightSidebarOpen]);
+
+  const handleOpenWorkerActivity = useCallback((workerId: string) => {
+    // Hard invariant: never open the workers sidebar unless the worker we're
+    // trying to open is actually visible in the current snapshot. Otherwise
+    // the user gets an empty side window with no obvious way to close it.
+    const matchingWorker = selectedRunWorkersForDisplay.find((worker) => worker.id === workerId);
+    if (!matchingWorker) {
       return;
     }
-
-    if (selectedRunId) {
-      setRightSidebarOpen(false);
+    const targetTab = matchingWorker.status === "cancelled" || matchingWorker.status === "stopped" || matchingWorker.status === "done" || matchingWorker.status === "completed" || matchingWorker.status === "error" || matchingWorker.status === "failed"
+      ? "finished"
+      : "active";
+    workersSidebarManager.setActiveTab(targetTab);
+    workersSidebarManager.setFocusedWorker(workerId);
+    if (typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches) {
+      setRightSidebarOpen(true);
+    } else {
+      setMobileWorkersOpen(true);
     }
-  }, [isImplementationConversation, selectedRunId, selectedRunWorkersForDisplay.length, setRightSidebarOpen]);
+    void handleLoadWorkerHistory(workerId);
+  }, [handleLoadWorkerHistory, selectedRunWorkersForDisplay, setMobileWorkersOpen, setRightSidebarOpen]);
 
   // Auto-resume failed runs with backoff. Up to MAX_AUTO_RESUME_ATTEMPTS per
   // distinct failure; after that, surface the real error so the user is not
@@ -664,24 +729,43 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     cancelInactiveAutoResumeTimers(autoResumeStateRef.current, selectedRunId);
   }, [selectedRunId]);
 
+  const selectedAutoResumeFailureKey = selectedRun?.status === "failed"
+    ? `${selectedRun.failedAt ?? ""}:${selectedRun.lastError ?? ""}`
+    : null;
+  const isRecoverRunPendingForSelectedRun = isMutationPendingForSelectedRun({
+    isPending: recoverRun.isPending,
+    mutationRunId: recoverRun.variables?.runId,
+    selectedRunId,
+  });
+  autoResumeRuntimeFactsRef.current = {
+    activeRunId: selectedRunId,
+    isAutoResumableConversation: Boolean(selectedRun && (isImplementationConversation || isDirectConversation)),
+    selectedRunStatus: selectedRun?.status ?? null,
+    failureKey: selectedAutoResumeFailureKey,
+    targetMessageId: latestUserCheckpoint?.id ?? null,
+    failedWorkerAvailabilityStatus: failedWorkerAvailability?.availability.status ?? null,
+    hasWorkerFailureDetail: Boolean(workerFailureDetail),
+    recoverRunIsPending: isRecoverRunPendingForSelectedRun,
+  };
+
   useEffect(() => {
     if (
       !selectedRunId || !selectedRun
       || (!isImplementationConversation && !isDirectConversation)
       || selectedRun.status !== "failed"
       || failedWorkerAvailability?.availability.status !== "ok"
-      || workerFailureDetail || !latestUserCheckpoint || recoverRun.isPending
+      || workerFailureDetail || !latestUserCheckpoint || isRecoverRunPendingForSelectedRun
     ) return;
 
     const runId = selectedRunId;
-    const failureKey = `${selectedRun.failedAt ?? ""}:${selectedRun.lastError ?? ""}`;
+    const failureKey = selectedAutoResumeFailureKey ?? "";
     const targetMessageId = latestUserCheckpoint.id;
     const existing = autoResumeStateRef.current.get(runId);
 
     // New failure for this run — reset attempt counter and clear exhausted flag.
-    if (!existing || existing.failureKey !== failureKey) {
+    if (!existing || existing.failureKey !== failureKey || existing.targetMessageId !== targetMessageId) {
       if (existing?.timerId) clearTimeout(existing.timerId);
-      autoResumeStateRef.current.set(runId, { failureKey, attempts: 0, timerId: null });
+      autoResumeStateRef.current.set(runId, { failureKey, targetMessageId, attempts: 0, timerId: null });
       autoResumeExhaustionManager.clear(runId);
     }
 
@@ -695,11 +779,18 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     // Backoff: 1s, 4s, 10s.
     const delay = [1000, 4000, 10000][state.attempts] ?? 10000;
     const timerId = setTimeout(() => {
+      const facts = autoResumeRuntimeFactsRef.current;
       if (!shouldFireAutoResumeTimer({
         entries: autoResumeStateRef.current,
         runId,
         failureKey,
-        activeRunId: homeUiStateManager.getSnapshot().selectedRunId,
+        targetMessageId,
+        activeRunId: facts.activeRunId,
+        isAutoResumableConversation: facts.isAutoResumableConversation,
+        selectedRunStatus: facts.selectedRunStatus,
+        failedWorkerAvailabilityStatus: facts.failedWorkerAvailabilityStatus,
+        hasWorkerFailureDetail: facts.hasWorkerFailureDetail,
+        recoverRunIsPending: facts.recoverRunIsPending,
       })) {
         return;
       }
@@ -714,9 +805,11 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     failedWorkerAvailability?.availability.status,
     isDirectConversation,
     isImplementationConversation,
+    isRecoverRunPendingForSelectedRun,
     latestUserCheckpoint,
     recoverRun,
     selectedRun,
+    selectedAutoResumeFailureKey,
     selectedRunId,
     workerFailureDetail,
   ]);
@@ -781,24 +874,70 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   });
 
   // Composer state
-  const pendingConversationWorkerId = !isImplementationConversation && sendConversationMessage.isPending
+  const isSendingSelectedConversationMessage = isMutationPendingForSelectedRun({
+    isPending: sendConversationMessage.isPending,
+    mutationRunId: sendConversationMessage.variables?.runId,
+    selectedRunId,
+  });
+  const isSendingSelectedQueuedMessage = isMutationPendingForSelectedRun({
+    isPending: sendQueuedMessageNow.isPending,
+    mutationRunId: sendQueuedMessageNow.variables?.runId,
+    selectedRunId,
+  });
+  const isStoppingSelectedSupervisor = isMutationPendingForSelectedRun({
+    isPending: stopSupervisor.isPending,
+    mutationRunId: stopSupervisor.variables?.runId,
+    selectedRunId,
+  });
+  const isStoppingSelectedWorker = isMutationPendingForSelectedRun({
+    isPending: stopWorker.isPending,
+    mutationRunId: stopWorker.variables?.runId,
+    selectedRunId,
+  });
+  const pendingConversationWorkerId = resolvePendingConversationWorkerId({
+    isPending: sendConversationMessage.isPending,
+    mutationRunId: sendConversationMessage.variables?.runId,
+    selectedRunId,
+    isImplementationConversation,
+    selectedWorkerIds: selectedRunWorkersForDisplay.map((worker) => worker.id),
+  });
+  const directRunningConversationWorkerId = isDirectConversation
+    && (selectedRun?.mode === "direct" || selectedRun?.mode === "commit")
+    && selectedRun.status === "running"
     ? selectedRunWorkersForDisplay[0]?.id ?? null
     : null;
-  const stoppableConversationWorkerId = busyConversationWorkerId ?? pendingConversationWorkerId;
+  const stoppableConversationWorkerId = busyConversationWorkerId ?? pendingConversationWorkerId ?? directRunningConversationWorkerId;
   const isConversationStoppable = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
-  const isStopConversationPending = stopSupervisor.isPending || stopWorker.isPending;
+  const isStopConversationPending = isStoppingSelectedSupervisor || isStoppingSelectedWorker;
   const isStartingCurrentProjectConversation = runCommand.isPending
     && (!selectedRunId || selectedRunId === runCommand.variables?.requestedRunId)
     && (runCommand.variables?.projectPath ?? null) === (currentProjectScope ?? null);
-  const isComposerSubmitting = isStartingCurrentProjectConversation || sendConversationMessage.isPending || sendQueuedMessageNow.isPending || promotePlanningConversation.isPending || isStopConversationPending;
+  const isPromotePlanningPendingForSelectedRun = isMutationPendingForSelectedRun({
+    isPending: promotePlanningConversation.isPending,
+    mutationRunId: promotePlanningConversation.variables?.runId,
+    selectedRunId,
+  });
+  const isResumeRunRecoveryPendingForSelectedRun = isMutationPendingForSelectedRun({
+    isPending: resumeRunRecovery.isPending,
+    mutationRunId: resumeRunRecovery.variables?.runId,
+    selectedRunId,
+  });
+  const isComposerSubmitting = isStartingCurrentProjectConversation || isSendingSelectedConversationMessage || isSendingSelectedQueuedMessage || isPromotePlanningPendingForSelectedRun || isStopConversationPending;
   const busyMessageAction = parseBusyMessageAction(apiKeys.BUSY_MESSAGE_ACTION);
   const hasBusyConversation = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
   const lockedDirectWorkerLabel = WORKER_OPTIONS.find((o) => o.value === (selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent))?.label
     || WORKER_OPTIONS.find((o) => o.value === autoSelectedWorkerType)?.label
     || "Direct worker";
   const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct";
-  const directConversationIsRunning = selectedRun?.mode === "direct" && selectedRun.status === "running";
-  const showDirectControlWorkingIndicator = isDirectConversation && (hasBusyConversation || directConversationIsRunning);
+  const showDirectControlWorkingIndicator = shouldShowDirectControlPendingAssistant({
+    isDirectConversation,
+    pendingConversationWorkerId,
+    busyConversationWorkerId,
+    selectedRunStatus: selectedRun?.status,
+    workerStatuses: selectedRunWorkersForDisplay.map((worker) => worker.status),
+    agentStates: conversationAgents.map((agent) => agent.state),
+    hasAgentCurrentText: conversationAgents.some((agent) => Boolean(agent.currentText?.trim())),
+  });
   const welcomeRepoName = resolveRepoName(currentProjectScope);
   const pairDeviceAvailabilityError = !authEnabled
     ? "Phone pairing requires OmniHarness auth. Set OMNIHARNESS_AUTH_PASSWORD or OMNIHARNESS_AUTH_PASSWORD_HASH and restart, then open Connect Phone again."
@@ -999,6 +1138,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           initialWorkerEntries={state.workerEntries}
           unifiedWorkerStreamEnabled={bootstrap?.features?.unifiedWorkerStream ?? false}
           isHydratingConversations={isHydratingConversations}
+          isSelectedConversationPreviewAvailable={isSelectedConversationPreviewAvailable}
           isSelectedConversationLoaded={isSelectedConversationLoaded}
           promotePlanningConversation={promotePlanningConversation}
           onStartReview={(prefs) => {
@@ -1013,7 +1153,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           recoverRun={recoverRun}
           recoveryState={selectedRecoveryState}
           recoveryIncidents={selectedRecoveryIncidents}
-          resumeRunRecovery={resumeRunRecovery}
+          resumeRunRecovery={{ isPending: isResumeRunRecoveryPendingForSelectedRun }}
           showRecoverableRunningState={showRecoverableRunningState}
           hasStuckWorker={hasStuckWorker}
           latestUserCheckpoint={latestUserCheckpoint}
@@ -1033,16 +1173,18 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
               sendConversationMessage.mutate({ runId: selectedRunId, content, attachments: [] });
             }
           }}
-          isPreflightConfirmationAnswering={sendConversationMessage.isPending}
+          isPreflightConfirmationAnswering={isSendingSelectedConversationMessage}
           conversationAgents={conversationAgents}
           showDirectControlWorkingIndicator={showDirectControlWorkingIndicator}
           showConversationExecution={showConversationExecution}
           liveExecutionStatus={liveExecutionStatus}
           liveThoughts={liveThoughts}
           executionEvents={selectedRunExecutionEvents}
+          activeWorkers={conversationWorkerGroups.active}
           emptyComposer={renderComposer("mt-2 w-full pt-0 sm:pt-0")}
           projectRoot={currentProjectScope}
           onOpenProjectFile={actions.handleOpenProjectFile}
+          onOpenWorkerActivity={handleOpenWorkerActivity}
         />
 
         {selectedRunId ? renderComposer("w-full") : null}

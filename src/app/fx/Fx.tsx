@@ -1,9 +1,9 @@
-import React, { JSX } from "react";
+import React from "react";
 
 // fx.css is a GLOBAL stylesheet — class names are plain strings, not module imports.
 
 type FxOwnProps = {
-  as?: keyof JSX.IntrinsicElements;
+  as?: React.ElementType;
   effect?: string;
   at?: string;
   duration?: string;
@@ -17,8 +17,9 @@ export const Fx = React.forwardRef<HTMLElement, FxProps>(function Fx(
   { as: Tag = "div" as const, effect, at, duration, easing, className, style, children, ...rest },
   ref,
 ) {
+  const Component = Tag as React.ElementType;
   return (
-    <Tag
+    <Component
       ref={ref as React.Ref<HTMLElement>}
       {...rest}
       className={["fxPlay", className].filter(Boolean).join(" ")}
@@ -31,12 +32,12 @@ export const Fx = React.forwardRef<HTMLElement, FxProps>(function Fx(
       } as React.CSSProperties}
     >
       {children}
-    </Tag>
+    </Component>
   );
 });
 
 type FxStaggerOwnProps = {
-  as?: keyof JSX.IntrinsicElements;
+  as?: React.ElementType;
   at?: string;
   stagger?: string;
   effect?: string;
@@ -56,8 +57,9 @@ export const FxStagger = React.forwardRef<HTMLElement, FxStaggerProps>(function 
   { as: Tag = "div" as const, at, stagger, effect, duration, easing, className, style, children, ...rest },
   ref,
 ) {
+  const Component = Tag as React.ElementType;
   return (
-    <Tag
+    <Component
       ref={ref as React.Ref<HTMLElement>}
       {...rest}
       className={className}
@@ -73,7 +75,7 @@ export const FxStagger = React.forwardRef<HTMLElement, FxStaggerProps>(function 
       {React.Children.map(children, (child, i) => {
         if (!React.isValidElement(child)) return child;
         const childElement = child as React.ReactElement<FxChildProps>;
-        return React.cloneElement(child as React.ReactElement, {
+        return React.cloneElement(childElement, {
           className: ["fxStagger", childElement.props.className].filter(Boolean).join(" "),
           style: {
             ...childElement.props.style,
@@ -81,7 +83,7 @@ export const FxStagger = React.forwardRef<HTMLElement, FxStaggerProps>(function 
           } as React.CSSProperties,
         });
       })}
-    </Tag>
+    </Component>
   );
 });
 

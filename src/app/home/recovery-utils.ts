@@ -31,5 +31,8 @@ export function recoveryDescriptionKey(state: RunRecoveryState | null | undefine
 }
 
 export function latestRelevantRecoveryIncident(incidents: RecoveryIncidentRecord[]) {
-  return [...incidents].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0] ?? null;
+  return [...incidents].sort((a, b) => {
+    const updatedDelta = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    return updatedDelta !== 0 ? updatedDelta : b.id.localeCompare(a.id);
+  })[0] ?? null;
 }

@@ -14,39 +14,12 @@ type ConversationVisualRun = {
   title?: string | null;
 };
 
-type ConversationVisualMessage = {
-  runId: string;
-  role?: string | null;
-  kind?: string | null;
-  content?: string | null;
-  createdAt?: string | null;
-};
-
-function getInitialUserMessage(runId: string, messages: ConversationVisualMessage[]) {
-  return messages
-    .filter((message) => (
-      message.runId === runId
-      && message.role === "user"
-      && message.content?.trim()
-    ))
-    .sort((left, right) => (left.createdAt ?? "").localeCompare(right.createdAt ?? ""))[0] ?? null;
+export function isCommitConversation(run: ConversationVisualRun) {
+  return run.mode === "commit";
 }
 
-export function isCommitConversation(run: ConversationVisualRun, messages: ConversationVisualMessage[] = []) {
-  if (run.mode !== "direct") {
-    return false;
-  }
-
-  const initialMessage = getInitialUserMessage(run.id, messages);
-  if (MANUAL_COMMIT_PROJECT_PROMPTS.has(initialMessage?.content?.trim() ?? "")) {
-    return true;
-  }
-
-  return /\bcommit\b/i.test(run.title ?? "");
-}
-
-export function getConversationVisualKind(run: ConversationVisualRun, messages: ConversationVisualMessage[] = []): ConversationVisualKind {
-  if (isCommitConversation(run, messages)) {
+export function getConversationVisualKind(run: ConversationVisualRun): ConversationVisualKind {
+  if (isCommitConversation(run)) {
     return "commit";
   }
 

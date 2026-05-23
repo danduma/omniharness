@@ -1,8 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { useLayoutEffect, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
-import { ALargeSmall, Check, ChevronDown, LoaderCircle } from "lucide-react";
+import { useLayoutEffect, useMemo, useRef, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { ALargeSmall, Check, ChevronDown, Copy, LoaderCircle } from "lucide-react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { attachmentImagePreviewManager, conversationCopyNoticeManager, terminalUiManager } from "@/components/component-state-managers";
 import { Button } from "@/components/ui/button";
@@ -232,6 +232,26 @@ function scrollTerminalToBottom(container: HTMLDivElement, behavior: ScrollBehav
   });
 }
 
+export function shouldTerminalScrollToLatest({
+  variant,
+  isFirstRenderedActivity,
+  latestActivityKind,
+}: {
+  variant: "terminal" | "native";
+  isFirstRenderedActivity: boolean;
+  latestActivityKind: TerminalActivityKind | undefined;
+}) {
+  if (variant !== "native") {
+    return true;
+  }
+
+  if (latestActivityKind === "pending_assistant") {
+    return false;
+  }
+
+  return !(isFirstRenderedActivity && latestActivityKind === "user_message");
+}
+
 function activityTimestampMs(timestamp: string) {
   const value = new Date(timestamp).getTime();
   return Number.isFinite(value) ? value : 0;
@@ -363,18 +383,37 @@ function formatWorkDuration(durationMs: number): string {
   return parts.join(" ");
 }
 
+function countBlockToolCalls(block: TerminalActivityItemWithOrder[]): number {
+  let count = 0;
+  for (const item of block) {
+    if (item.kind === "tool") count += 1;
+    else if (item.kind === "tool_group") count += item.counts.total;
+  }
+  return count;
+}
+
 function summarizeWorkIntervals(items: TerminalActivityItemWithOrder[]): TerminalActivityItemWithOrder[] {
   const result: TerminalActivityItemWithOrder[] = [];
   let workBlock: TerminalActivityItemWithOrder[] = [];
 
-  const flushWorkBlock = (endTimestamp: string | null) => {
+  const flushWorkBlock = (nextItem: TerminalActivityItemWithOrder | null) => {
     if (workBlock.length === 0) {
       return;
     }
+    const followedByMessage = nextItem?.kind === "message";
+    const toolCallCount = countBlockToolCalls(workBlock);
+    const shouldSummarize = followedByMessage && toolCallCount > 1;
+
+    if (!shouldSummarize) {
+      result.push(...workBlock);
+      workBlock = [];
+      return;
+    }
+
     const firstItem = workBlock[0]!;
     const lastItem = workBlock[workBlock.length - 1]!;
     const firstTs = Date.parse(firstItem.timestamp);
-    const endTs = endTimestamp ? Date.parse(endTimestamp) : null;
+    const endTs = nextItem ? Date.parse(nextItem.timestamp) : null;
     const lastTs = Date.parse(lastItem.timestamp);
     const durationMs = Number.isFinite(firstTs) && endTs != null && Number.isFinite(endTs)
       ? Math.max(0, endTs - firstTs)
@@ -397,10 +436,10 @@ function summarizeWorkIntervals(items: TerminalActivityItemWithOrder[]): Termina
   };
 
   for (const item of items) {
-    if (item.kind === "thinking" || item.kind === "tool" || item.kind === "tool_group") {
+    if (item.kind === "thinking" || item.kind === "tool" || item.kind === "tool_group" || item.kind === "permission") {
       workBlock.push(item);
     } else {
-      flushWorkBlock(item.timestamp);
+      flushWorkBlock(item);
       result.push(item);
     }
   }
@@ -623,45 +662,190 @@ function ActivityPane({
   );
 }
 
-function diffLineClass(line: string, variant: "terminal" | "native") {
-  if (line.startsWith("@@")) {
-    return variant === "native"
-      ? "bg-sky-500/8 text-sky-700 dark:text-sky-300"
-      : "bg-cyan-500/10 text-cyan-800 dark:bg-cyan-400/8 dark:text-cyan-200";
+type DiffDisplayRow = {
+  id: string;
+  kind: "context" | "add" | "remove" | "separator";
+  visible: string;
+  lineNumber: number | null;
+};
+
+type ParsedDiffPane = {
+  fileName: string | null;
+  added: number;
+  removed: number;
+  rows: DiffDisplayRow[];
+};
+
+function basenameDiffPath(value: string): string {
+  const trimmed = value.trim().replace(/^["']|["']$/g, "");
+  const cleaned = trimmed.replace(/^(?:a|b)\//, "");
+  const segments = cleaned.split(/[/\\]/).filter(Boolean);
+  return segments[segments.length - 1] || cleaned || trimmed;
+}
+
+function extractDiffFileName(line: string): string | null {
+  if (line.startsWith("diff --")) {
+    const parts = line.trim().split(/\s+/);
+    return basenameDiffPath(parts[parts.length - 1] ?? "");
   }
-  if (line.startsWith("diff --") || line.startsWith("+++") || line.startsWith("---") || line.startsWith("***")) {
+
+  if (line.startsWith("*** Update File:") || line.startsWith("*** Add File:") || line.startsWith("*** Delete File:")) {
+    return basenameDiffPath(line.slice(line.indexOf(":") + 1));
+  }
+
+  if (line.startsWith("+++ ") && !line.startsWith("+++ /dev/null")) {
+    return basenameDiffPath(line.slice(4));
+  }
+
+  if (line.startsWith("--- ") && !line.startsWith("--- /dev/null")) {
+    return basenameDiffPath(line.slice(4));
+  }
+
+  return null;
+}
+
+function parseHunkStart(line: string): { oldLine: number; newLine: number } | null {
+  const match = line.match(/^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    oldLine: Number(match[1]),
+    newLine: Number(match[2]),
+  };
+}
+
+function isDiffMetadataLine(line: string): boolean {
+  return line.startsWith("diff --")
+    || line.startsWith("+++")
+    || line.startsWith("---")
+    || line.startsWith("***")
+    || line.startsWith("index ")
+    || line.startsWith("\\ No newline");
+}
+
+function parseDiffPane(text: string): ParsedDiffPane {
+  const rows: DiffDisplayRow[] = [];
+  let fileName: string | null = null;
+  let oldLine: number | null = null;
+  let newLine: number | null = null;
+  let added = 0;
+  let removed = 0;
+  let pendingSeparator = false;
+
+  const addSeparator = (id: string) => {
+    if (rows.length > 0 && rows[rows.length - 1]?.kind !== "separator") {
+      rows.push({ id, kind: "separator", visible: "", lineNumber: null });
+    }
+  };
+
+  text.split("\n").forEach((line, index) => {
+    fileName = fileName || extractDiffFileName(line);
+
+    if (/^\[\d+ unchanged lines omitted\]$/.test(line.trim())) {
+      addSeparator(`${index}:omitted`);
+      return;
+    }
+
+    const hunkStart = parseHunkStart(line);
+    if (hunkStart) {
+      oldLine = hunkStart.oldLine;
+      newLine = hunkStart.newLine;
+      pendingSeparator = rows.length > 0;
+      return;
+    }
+
+    if (isDiffMetadataLine(line)) {
+      return;
+    }
+
+    if (pendingSeparator) {
+      addSeparator(`${index}:hunk`);
+      pendingSeparator = false;
+    }
+
+    if (line.startsWith("+")) {
+      rows.push({
+        id: `${index}:add:${line}`,
+        kind: "add",
+        visible: line.slice(1),
+        lineNumber: newLine,
+      });
+      added += 1;
+      newLine = newLine == null ? null : newLine + 1;
+      return;
+    }
+
+    if (line.startsWith("-")) {
+      rows.push({
+        id: `${index}:remove:${line}`,
+        kind: "remove",
+        visible: line.slice(1),
+        lineNumber: oldLine,
+      });
+      removed += 1;
+      oldLine = oldLine == null ? null : oldLine + 1;
+      return;
+    }
+
+    const visible = line.startsWith(" ") ? line.slice(1) : line;
+    rows.push({
+      id: `${index}:context:${line}`,
+      kind: "context",
+      visible,
+      lineNumber: newLine ?? oldLine,
+    });
+    oldLine = oldLine == null ? null : oldLine + 1;
+    newLine = newLine == null ? null : newLine + 1;
+  });
+
+  return { fileName, added, removed, rows };
+}
+
+function diffRowClass(kind: DiffDisplayRow["kind"], variant: "terminal" | "native") {
+  if (kind === "add") {
+    return variant === "native"
+      ? "bg-emerald-500/13 text-emerald-900 dark:text-emerald-200"
+      : "bg-emerald-500/14 text-emerald-900 dark:bg-emerald-400/12 dark:text-emerald-100";
+  }
+  if (kind === "remove") {
+    return variant === "native"
+      ? "bg-red-500/13 text-red-900 dark:text-red-200"
+      : "bg-red-500/14 text-red-900 dark:bg-red-400/12 dark:text-red-100";
+  }
+  if (kind === "separator") {
     return variant === "native"
       ? "bg-muted/45 text-muted-foreground"
-      : "bg-muted/45 text-muted-foreground dark:bg-white/7 dark:text-zinc-400";
-  }
-  if (line.startsWith("+")) {
-    return variant === "native"
-      ? "bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
-      : "bg-emerald-500/12 text-emerald-800 dark:bg-emerald-400/10 dark:text-emerald-200";
-  }
-  if (line.startsWith("-")) {
-    return variant === "native"
-      ? "bg-red-500/10 text-red-800 dark:text-red-300"
-      : "bg-red-500/12 text-red-800 dark:bg-red-400/10 dark:text-red-200";
+      : "bg-muted/35 text-muted-foreground dark:bg-white/7 dark:text-zinc-500";
   }
   return variant === "native" ? "text-foreground" : "text-foreground dark:text-zinc-200";
 }
 
-function formatVisibleDiffLine(line: string): string | null {
-  if (
-    line.startsWith("@@")
-    || line.startsWith("diff --")
-    || line.startsWith("+++")
-    || line.startsWith("---")
-    || line.startsWith("***")
-    || line.startsWith("\\ No newline")
-  ) {
-    return null;
+function diffLineNumberClass(kind: DiffDisplayRow["kind"], variant: "terminal" | "native") {
+  if (kind === "add") {
+    return variant === "native"
+      ? "text-emerald-700 dark:text-emerald-300"
+      : "text-emerald-700 dark:text-emerald-300";
   }
-  if (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) {
-    return line.slice(1);
+  if (kind === "remove") {
+    return variant === "native"
+      ? "text-red-700 dark:text-red-300"
+      : "text-red-700 dark:text-red-300";
   }
-  return line;
+  return variant === "native"
+    ? "text-muted-foreground"
+    : "text-muted-foreground dark:text-zinc-500";
+}
+
+function diffChangeRailClass(kind: DiffDisplayRow["kind"], variant: "terminal" | "native") {
+  if (kind === "add") {
+    return variant === "native" ? "bg-emerald-500" : "bg-emerald-400";
+  }
+  if (kind === "remove") {
+    return variant === "native" ? "bg-red-500" : "bg-red-400";
+  }
+  return "bg-transparent";
 }
 
 function DiffPane({
@@ -679,30 +863,27 @@ function DiffPane({
   interactive?: boolean;
   onClick?: () => void;
 }) {
-  const lines = text
-    .split("\n")
-    .map((line, index) => ({
-      id: `${index}:${line}`,
-      original: line,
-      visible: formatVisibleDiffLine(line),
-    }))
-    .filter((line) => line.visible != null);
-  const canExpand = preview && lines.length > TOOL_OUTPUT_PREVIEW_LINES;
+  const diff = useMemo(() => parseDiffPane(text), [text]);
+  const canExpand = preview && diff.rows.length > TOOL_OUTPUT_PREVIEW_LINES;
   const canInteract = canExpand && interactive;
   const clipped = canExpand && !expanded;
   const previewStyle: CSSProperties | undefined = canExpand
     ? { maxHeight: clipped ? TOOL_OUTPUT_COLLAPSED_MAX_HEIGHT : TOOL_OUTPUT_EXPANDED_MAX_HEIGHT }
     : undefined;
+  const copyDiff = (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    void navigator.clipboard?.writeText(text);
+  };
 
   return (
     <div
       style={previewStyle}
       className={cn(
-        "overflow-hidden rounded border",
+        "overflow-hidden rounded-lg border",
         canInteract && "cursor-pointer",
         canExpand && "transition-[max-height,background-color,border-color,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
         variant === "native"
-          ? "border-border/60 bg-muted/25"
+          ? "border-border/70 bg-muted/20 shadow-sm"
           : "border-border/70 bg-background shadow-sm dark:border-white/10 dark:bg-[#111318] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
       )}
       onClick={canInteract ? onClick : undefined}
@@ -716,19 +897,72 @@ function DiffPane({
         }
       } : undefined}
     >
-      <pre className={cn(
-        "block w-full overflow-auto py-2 font-mono font-semibold whitespace-pre-wrap break-words text-[length:var(--terminal-pane-size)]",
-        variant === "native" ? "leading-[1.5]" : "leading-[1.55]",
+      <div className={cn(
+        "flex min-h-8 items-center gap-1.5 border-b px-2.5 py-1",
+        variant === "native"
+          ? "border-border/70 bg-muted/25"
+          : "border-border/70 bg-muted/20 dark:border-white/10 dark:bg-white/5",
       )}>
-        {lines.map((line) => (
-          <span
-            key={line.id}
-            className={cn("block px-2.5", diffLineClass(line.original, variant))}
-          >
-            {line.visible && line.visible.length > 0 ? line.visible : " "}
+        <div className="min-w-0 flex-1">
+          <div className={cn(
+            "truncate font-mono text-[length:var(--terminal-pane-size)] font-medium",
+            variant === "native" ? "text-foreground/75" : "text-foreground/75 dark:text-zinc-300",
+          )}>
+            {diff.fileName ?? t("terminal.diff.unknownFile")}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5 font-mono text-[length:var(--terminal-pane-size)] font-semibold">
+          <span className={variant === "native" ? "text-emerald-700 dark:text-emerald-300" : "text-emerald-600 dark:text-emerald-300"}>
+            +{diff.added}
           </span>
-        ))}
-      </pre>
+          <span className={variant === "native" ? "text-red-700 dark:text-red-300" : "text-red-600 dark:text-red-300"}>
+            -{diff.removed}
+          </span>
+        </div>
+        <button
+          type="button"
+          className={cn(
+            "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45",
+            variant === "native"
+              ? "text-muted-foreground hover:bg-muted hover:text-foreground"
+              : "text-muted-foreground hover:bg-white/8 hover:text-foreground dark:text-zinc-500 dark:hover:text-zinc-200",
+          )}
+          aria-label={t("terminal.diff.copyAria")}
+          title={t("terminal.diff.copyAria")}
+          onClick={copyDiff}
+        >
+          <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+      </div>
+      <div className="overflow-auto">
+        <div className={cn(
+          "min-w-max py-1 font-mono font-medium text-[length:var(--terminal-pane-size)]",
+          variant === "native" ? "leading-[1.55]" : "leading-[1.6]",
+        )}>
+          {diff.rows.map((line) => (
+            line.kind === "separator" ? (
+              <div
+                key={line.id}
+                className={cn("h-2 border-y", variant === "native" ? "border-border/45 bg-muted/30" : "border-border/45 bg-muted/25 dark:border-white/8 dark:bg-white/5")}
+                aria-hidden="true"
+              />
+            ) : (
+              <div
+                key={line.id}
+                className={cn("grid grid-cols-[4px_5.5rem_minmax(0,1fr)]", diffRowClass(line.kind, variant))}
+              >
+                <span className={cn("block", diffChangeRailClass(line.kind, variant))} aria-hidden="true" />
+                <span className={cn("select-none border-r px-3 text-right tabular-nums", variant === "native" ? "border-border/50" : "border-border/50 dark:border-white/8", diffLineNumberClass(line.kind, variant))}>
+                  {line.lineNumber ?? ""}
+                </span>
+                <span className="whitespace-pre px-4">
+                  {line.visible.length > 0 ? line.visible : " "}
+                </span>
+              </div>
+            )
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -944,7 +1178,8 @@ function ToolActivity({
   const showToolLabel = activity.label !== "Tool";
   const { toolDetailsOpenById, toolOutputExpandedById } = useManagerSnapshot(terminalUiManager);
   const detailsOpen = toolDetailsOpenById[activity.id] ?? !isDone;
-  const outputExpanded = toolOutputExpandedById[activity.id] ?? false;
+  const outputIsDiff = activity.outputPane?.kind === "diff";
+  const outputExpanded = toolOutputExpandedById[activity.id] ?? outputIsDiff;
   const hasToolPanes = Boolean(activity.inputPane || activity.outputPane);
 
   return (
@@ -953,10 +1188,13 @@ function ToolActivity({
         type="button"
         className="group/tool flex w-full flex-wrap items-center gap-1.5 text-left"
         onClick={() => {
-          if (detailsOpen) {
+          const nextDetailsOpen = !detailsOpen;
+          if (nextDetailsOpen && outputIsDiff) {
+            terminalUiManager.setToolOutputExpanded(activity.id, true);
+          } else if (detailsOpen) {
             terminalUiManager.setToolOutputExpanded(activity.id, false);
           }
-          terminalUiManager.setToolDetailsOpen(activity.id, !detailsOpen);
+          terminalUiManager.setToolDetailsOpen(activity.id, nextDetailsOpen);
         }}
         aria-expanded={detailsOpen}
       >
@@ -1271,7 +1509,7 @@ function WorkSummaryNestedItem({
   projectRoot,
   onOpenProjectFile,
 }: {
-  item: Extract<AgentActivityItem, { kind: "thinking" | "tool" | "tool_group" }>;
+  item: Extract<AgentActivityItem, { kind: "thinking" | "tool" | "tool_group" | "permission" }>;
   isFirst: boolean;
   isLast: boolean;
   variant: "terminal" | "native";
@@ -1282,9 +1520,11 @@ function WorkSummaryNestedItem({
 }) {
   const running = item.kind === "thinking"
     ? item.inProgress
-    : isRunningActivityStatus(item.status);
+    : item.kind === "permission"
+      ? item.status === "pending"
+      : isRunningActivityStatus(item.status);
   const isError = (item.kind === "tool" || item.kind === "tool_group") && isErrorActivityStatus(item.status);
-  const markerTone = item.kind === "thinking" ? "thought" : isError ? "error" : "tool";
+  const markerTone = item.kind === "thinking" ? "thought" : item.kind === "permission" ? "permission" : isError ? "error" : "tool";
   const markerColorClass = {
     thought: variant === "native"
       ? (running ? "border-muted-foreground/55 bg-transparent" : "border-muted-foreground/55 bg-muted-foreground/75")
@@ -1295,6 +1535,9 @@ function WorkSummaryNestedItem({
     error: variant === "native"
       ? "border-destructive/80 bg-destructive"
       : "border-red-500/80 bg-red-500 dark:border-red-400/80 dark:bg-red-400",
+    permission: variant === "native"
+      ? (running ? "border-amber-500/75 bg-transparent" : "border-amber-500/75 bg-amber-500")
+      : (running ? "border-amber-500/75 bg-transparent dark:border-amber-400/75" : "border-amber-500/75 bg-amber-500 dark:border-amber-400/75 dark:bg-amber-400"),
   }[markerTone];
 
   return (
@@ -1341,6 +1584,34 @@ function WorkSummaryNestedItem({
             onOpenProjectFile={onOpenProjectFile}
           />
         ) : null}
+        {item.kind === "permission" ? (
+          item.status === "pending" ? (
+            <div className={cn(
+              "rounded border px-2 py-1.5",
+              variant === "native"
+                ? "border-amber-500/35 bg-amber-500/10"
+                : "border-amber-500/25 bg-amber-500/10 dark:border-amber-400/20 dark:bg-[rgba(96,67,22,0.34)]",
+            )}>
+              <div className={cn("text-[length:var(--terminal-permission-title-size)] font-semibold tracking-tight", variant === "native" ? "text-amber-800 dark:text-amber-300" : "text-amber-800 dark:text-amber-100")}>{item.title}</div>
+              {item.detail ? (
+                <p className={cn("mt-0.5 break-words font-mono text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/85 dark:text-amber-100/85" : "text-amber-900/85 dark:text-amber-50/85")}>{item.detail}</p>
+              ) : null}
+              {item.text ? (
+                <p className={cn("mt-0.5 whitespace-pre-wrap text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/75 dark:text-amber-100/75" : "text-amber-900/75 dark:text-amber-50/75")}>{item.text}</p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="py-0.5">
+              <div className={cn("text-[length:var(--terminal-permission-title-size)] font-medium", variant === "native" ? "text-foreground/80 dark:text-zinc-300" : "text-foreground/80 dark:text-zinc-300")}>{item.title}</div>
+              {item.detail ? (
+                <p className={cn("mt-0.5 break-words font-mono text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-500")}>{item.detail}</p>
+              ) : null}
+              {item.text ? (
+                <p className={cn("mt-0.5 whitespace-pre-wrap text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-500")}>{item.text}</p>
+              ) : null}
+            </div>
+          )
+        ) : null}
       </div>
     </div>
   );
@@ -1364,8 +1635,8 @@ function WorkSummaryActivity({
   const { workSummaryOpenById } = useManagerSnapshot(terminalUiManager);
   const open = workSummaryOpenById[activity.id] ?? false;
   const nestedItems = activity.items.filter(
-    (item): item is Extract<AgentActivityItem, { kind: "thinking" | "tool" | "tool_group" }> =>
-      item.kind === "thinking" || item.kind === "tool" || item.kind === "tool_group",
+    (item): item is Extract<AgentActivityItem, { kind: "thinking" | "tool" | "tool_group" | "permission" }> =>
+      item.kind === "thinking" || item.kind === "tool" || item.kind === "tool_group" || item.kind === "permission",
   );
 
   return (
@@ -1703,14 +1974,14 @@ export function Terminal({
   const { conversationTextSize, terminalTextSize } = useManagerSnapshot(appearancePreferencesManager);
 
   const activity = useMemo(() => {
-    // When the unified worker stream provides `entries`, the legacy
+    // When the unified worker stream provides actual `entries`, the legacy
     // `agent` / `userMessages` props are ignored. Split the entries by
     // type and route them through the same renderers — bridge-typed
     // entries feed `buildAgentOutputActivity`, server-produced
     // user_input/supervisor_input entries become user-message
     // activity items, and visible lifecycle/system entries fall
     // through to the agent activity builder as plain messages.
-    const usingUnifiedStream = Array.isArray(entries);
+    const usingUnifiedStream = Array.isArray(entries) && entries.length > 0;
     const visibleEntries = usingUnifiedStream
       ? (entries ?? []).filter(shouldRenderUnifiedStreamEntry)
       : undefined;
@@ -1823,8 +2094,7 @@ export function Terminal({
     const latestActivityTimestamp = [...userActivity, ...agentActivity]
       .map((item) => activityTimestampMs(item.timestamp))
       .reduce((latest, timestamp) => Math.max(latest, timestamp), 0);
-    const shouldShowPendingAssistantActivity = showPendingAssistantIndicator
-      || (isLoading && usingUnifiedStream && agentActivity.length === 0);
+    const shouldShowPendingAssistantActivity = showPendingAssistantIndicator;
     const pendingAssistantActivity: TerminalActivityItem[] = shouldShowPendingAssistantActivity
       ? [{
           id: "pending-assistant",
@@ -1848,7 +2118,7 @@ export function Terminal({
       return activityKindOrder(a) - activityKindOrder(b) || a.id.localeCompare(b.id);
     });
     return summarizeWorkBlocks ? summarizeWorkIntervals(sorted) : sorted;
-  }, [agent, allowUserMessageFallback, entries, getUserMessageActions, isLoading, showPendingAssistantIndicator, summarizeWorkBlocks, userMessages]);
+  }, [agent, allowUserMessageFallback, entries, getUserMessageActions, showPendingAssistantIndicator, summarizeWorkBlocks, userMessages]);
   const filteredActivity = useMemo(
     () => activityFilter ? activity.filter(activityFilter) : activity,
     [activity, activityFilter],
@@ -1915,6 +2185,12 @@ export function Terminal({
       return;
     }
 
+    const latestActivityKind = filteredActivity.at(-1)?.kind;
+    if (!shouldTerminalScrollToLatest({ variant, isFirstRenderedActivity, latestActivityKind })) {
+      previousScrollTopRef.current = container.scrollTop;
+      return;
+    }
+
     shouldFollowLatestRef.current = true;
     if (filteredActivity.length > 0) {
       hasPositionedFirstActivityRef.current = true;
@@ -1922,10 +2198,7 @@ export function Terminal({
     const scrollBehavior: ScrollBehavior = isFirstRenderedActivity ? "auto" : "smooth";
 
     if (isFirstRenderedActivity) {
-      requestAnimationFrame(() => {
-        scrollTerminalToBottom(container, "auto");
-        previousScrollTopRef.current = container.scrollTop;
-      });
+      scrollTerminalToBottom(container, "auto");
       previousScrollTopRef.current = container.scrollTop;
       return;
     }
@@ -1938,7 +2211,7 @@ export function Terminal({
       }
       previousScrollTopRef.current = container.scrollTop;
     });
-  }, [filteredActivity, scrollAnchorKey]);
+  }, [filteredActivity, scrollAnchorKey, variant]);
 
   return (
     <div className={cn(

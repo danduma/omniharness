@@ -193,6 +193,7 @@ describe("useHomeViewModel", () => {
       }],
     }));
 
+    expect(viewModel.isSelectedConversationPreviewAvailable).toBe(true);
     expect(viewModel.isSelectedConversationLoaded).toBe(false);
   });
 });

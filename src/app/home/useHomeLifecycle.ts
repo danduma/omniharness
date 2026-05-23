@@ -41,7 +41,7 @@ interface UseHomeLifecycleProps {
   pairRedeemAttempted: boolean;
   setPairRedeemAttempted: React.Dispatch<React.SetStateAction<boolean>>;
   selectedRunId: string | null;
-  setSelectedRunId: React.Dispatch<React.SetStateAction<string | null>>;
+  setSelectedRunId: (value: string | null) => void;
   draftProjectPath: string | null;
   setDraftProjectPath: React.Dispatch<React.SetStateAction<string | null>>;
   setSelectedConversationMode: React.Dispatch<React.SetStateAction<ConversationModeOption>>;

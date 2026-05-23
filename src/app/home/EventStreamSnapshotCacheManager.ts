@@ -62,7 +62,15 @@ function compactStateForCache(state: EventStreamState): EventStreamState {
   };
 }
 
-function preferInitialArray<T>(initial: T[] | undefined, cached: T[] | undefined) {
+function preferInitialArray<T>(
+  initial: T[] | undefined,
+  cached: T[] | undefined,
+  options: { serverAuthoritative: boolean },
+) {
+  if (options.serverAuthoritative && initial) {
+    return initial;
+  }
+
   return initial && initial.length > 0 ? initial : cached ?? [];
 }
 
@@ -95,22 +103,25 @@ export class EventStreamSnapshotCacheManager {
     if (!cachedState) {
       return initialState;
     }
+    const arrayMergeOptions = {
+      serverAuthoritative: initialState.snapshotSource === "server",
+    };
 
     return {
       ...cachedState,
       ...initialState,
-      messages: preferInitialArray(initialState.messages, cachedState.messages),
-      plans: preferInitialArray(initialState.plans, cachedState.plans),
-      runs: preferInitialArray(initialState.runs, cachedState.runs),
-      accounts: preferInitialArray(initialState.accounts, cachedState.accounts),
-      agents: preferInitialArray(initialState.agents, cachedState.agents),
-      workers: preferInitialArray(initialState.workers, cachedState.workers),
-      planItems: preferInitialArray(initialState.planItems, cachedState.planItems),
-      clarifications: preferInitialArray(initialState.clarifications, cachedState.clarifications),
-      executionEvents: preferInitialArray(initialState.executionEvents, cachedState.executionEvents),
-      supervisorInterventions: preferInitialArray(initialState.supervisorInterventions, cachedState.supervisorInterventions),
-      queuedMessages: preferInitialArray(initialState.queuedMessages, cachedState.queuedMessages),
-      recoveryIncidents: preferInitialArray(initialState.recoveryIncidents, cachedState.recoveryIncidents),
+      messages: preferInitialArray(initialState.messages, cachedState.messages, arrayMergeOptions),
+      plans: preferInitialArray(initialState.plans, cachedState.plans, arrayMergeOptions),
+      runs: preferInitialArray(initialState.runs, cachedState.runs, arrayMergeOptions),
+      accounts: preferInitialArray(initialState.accounts, cachedState.accounts, arrayMergeOptions),
+      agents: preferInitialArray(initialState.agents, cachedState.agents, arrayMergeOptions),
+      workers: preferInitialArray(initialState.workers, cachedState.workers, arrayMergeOptions),
+      planItems: preferInitialArray(initialState.planItems, cachedState.planItems, arrayMergeOptions),
+      clarifications: preferInitialArray(initialState.clarifications, cachedState.clarifications, arrayMergeOptions),
+      executionEvents: preferInitialArray(initialState.executionEvents, cachedState.executionEvents, arrayMergeOptions),
+      supervisorInterventions: preferInitialArray(initialState.supervisorInterventions, cachedState.supervisorInterventions, arrayMergeOptions),
+      queuedMessages: preferInitialArray(initialState.queuedMessages, cachedState.queuedMessages, arrayMergeOptions),
+      recoveryIncidents: preferInitialArray(initialState.recoveryIncidents, cachedState.recoveryIncidents, arrayMergeOptions),
       frontendErrors: [],
     };
   }
@@ -189,7 +200,10 @@ export class EventStreamSnapshotCacheManager {
   private pruneEnvelope(envelope: SnapshotEnvelope): SnapshotEnvelope {
     const snapshots = Object.fromEntries(
       Object.entries(envelope.snapshots)
-        .sort((left, right) => right[1].updatedAt - left[1].updatedAt)
+        .sort((left, right) => {
+          const updatedDelta = right[1].updatedAt - left[1].updatedAt;
+          return updatedDelta !== 0 ? updatedDelta : left[0].localeCompare(right[0]);
+        })
         .slice(0, this.maxSnapshots),
     );
 

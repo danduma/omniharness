@@ -55,6 +55,7 @@ export interface WorkerStreamState {
   hasOlder: boolean;
   status: WorkerStreamStatus;
   lastError: string | null;
+  needsTailValidation?: boolean;
 }
 
 type Listener = (state: WorkerStreamState) => void;
@@ -97,7 +98,11 @@ function latestSeq(entries: WorkerEntry[]) {
   ), 0);
 }
 
-function initialState(workerId: string, entries: WorkerEntry[] = []): WorkerStreamState {
+function initialState(
+  workerId: string,
+  entries: WorkerEntry[] = [],
+  options: { needsTailValidation?: boolean } = {},
+): WorkerStreamState {
   const latest = latestSeq(entries);
   const lowest = entries.length > 0
     ? entries.reduce((acc, entry) => (
@@ -113,6 +118,7 @@ function initialState(workerId: string, entries: WorkerEntry[] = []): WorkerStre
     hasOlder: lowest > 1,
     status: entries.length > 0 ? "loaded" : "idle",
     lastError: null,
+    needsTailValidation: options.needsTailValidation,
   };
 }
 
@@ -198,7 +204,9 @@ export class WorkerEntriesManager {
     const nextEntries = rawNextEntries.length > DEFAULT_TAIL_LIMIT
       ? rawNextEntries.slice(-DEFAULT_TAIL_LIMIT)
       : rawNextEntries;
-    const next = initialState(workerId, nextEntries);
+    const next = initialState(workerId, nextEntries, {
+      needsTailValidation: initialEntries.length === 0 && cachedEntries.length > 0,
+    });
     this.stateByWorker.set(workerId, next);
     if (nextEntries.length > 0) {
       this.rememberState(workerId, nextEntries);
@@ -214,6 +222,7 @@ export class WorkerEntriesManager {
     return (
       state.status === "loaded"
       && state.latestContiguousSeq === state.latestKnownSeq
+      && !state.needsTailValidation
     );
   }
 
@@ -245,12 +254,13 @@ export class WorkerEntriesManager {
       state.status === "loaded"
       && state.latestContiguousSeq === state.latestKnownSeq
       && !loadedEmptyWithoutProof
+      && !state.needsTailValidation
     ) {
       return Promise.resolve();
     }
     // Cold start (no entries yet) → tail-load the last N entries instead
     // of pulling the whole transcript from seq 1.
-    if (state.entries.length === 0) {
+    if (state.entries.length === 0 || state.needsTailValidation) {
       return this.fetchTail(workerId, DEFAULT_TAIL_LIMIT);
     }
     return this.fetch(workerId, state.latestContiguousSeq);
@@ -370,7 +380,8 @@ export class WorkerEntriesManager {
         const lowest = sorted.length > 0 ? sorted[0]!.seq : 0;
         // Preserve any latestKnownSeq advance that landed via wake-up
         // while this tail load was in flight.
-        const latestKnown = Math.max(current.latestKnownSeq, response.latestSeq ?? 0, latestContiguous);
+        const currentKnown = current.needsTailValidation ? 0 : current.latestKnownSeq;
+        const latestKnown = Math.max(currentKnown, response.latestSeq ?? 0, latestContiguous);
         this.updateState(workerId, {
           ...current,
           entries: sorted,
@@ -380,6 +391,7 @@ export class WorkerEntriesManager {
           hasOlder: response.hasOlder ?? (lowest > 1),
           status: "loaded",
           lastError: null,
+          needsTailValidation: false,
         });
       },
       (error: unknown) => {
@@ -550,6 +562,7 @@ export class WorkerEntriesManager {
       // assert anything about whether older entries exist.
       status: "loaded",
       lastError: null,
+      needsTailValidation: false,
     };
     this.updateState(workerId, next);
 
@@ -588,11 +601,24 @@ export class WorkerEntriesManager {
   }
 
   private rememberState(workerId: string, entries: WorkerEntry[]): void {
-    if (!this.storage || entries.length === 0) {
+    if (!this.storage) {
       return;
     }
 
     const currentEnvelope = this.readEnvelope();
+    if (entries.length === 0) {
+      const { [workerId]: _removed, ...workers } = currentEnvelope.workers;
+      try {
+        this.storage.setItem(this.storageKey, JSON.stringify({
+          ...currentEnvelope,
+          workers,
+        }));
+      } catch {
+        // localStorage is a preview cache only; live server state remains authoritative.
+      }
+      return;
+    }
+
     const envelope = this.pruneEnvelope({
       ...currentEnvelope,
       workers: {

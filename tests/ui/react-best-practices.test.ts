@@ -40,7 +40,7 @@ describe("React best practices", () => {
   it("uses import/RefObject patterns and keeps frontend literals out of env", () => {
     const offenders = frontendSourceFiles()
       .flatMap((file) => {
-        const violations = [];
+        const violations: string[] = [];
         if (/\bMutableRefObject\b/.test(file.source)) {
           violations.push(`${file.relativePath}: MutableRefObject`);
         }

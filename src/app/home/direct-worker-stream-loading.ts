@@ -61,3 +61,19 @@ export function shouldShowDirectConversationLoading(args: ConversationLoadState)
     && args.loadingReason === "worker_stream"
   );
 }
+
+export function resolveDirectWorkerStreamRefreshInterval(args: {
+  unifiedWorkerStreamEnabled: boolean;
+  primaryConversationWorkerId: string | null | undefined;
+  activeRefreshIntervalMs: number;
+  validationIntervalMs: number;
+  showDirectControlWorkingIndicator: boolean;
+}) {
+  if (!args.unifiedWorkerStreamEnabled || !args.primaryConversationWorkerId) {
+    return null;
+  }
+
+  return args.showDirectControlWorkingIndicator
+    ? args.activeRefreshIntervalMs
+    : args.validationIntervalMs;
+}

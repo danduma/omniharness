@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vitest";
-import { Terminal } from "@/components/Terminal";
+import { shouldTerminalScrollToLatest, Terminal } from "@/components/Terminal";
 import type { WorkerEntry } from "@/server/workers/entries-types";
 
 test("unified stream renders entries in seq order when timestamps arrive out of order", () => {
@@ -66,6 +66,44 @@ test("unified stream displays the initial user message before lifecycle and thin
   expect(text.indexOf("Convert the crowded mobile bottom bar into a menu")).toBe(0);
   expect(text.indexOf("Convert the crowded mobile bottom bar into a menu")).toBeLessThan(text.indexOf("Agent activity started"));
   expect(text.indexOf("Convert the crowded mobile bottom bar into a menu")).toBeLessThan(text.indexOf("Thinking"));
+});
+
+test("native conversation terminal starts at meaningful output without chasing pending space", () => {
+  expect(shouldTerminalScrollToLatest({
+    variant: "native",
+    isFirstRenderedActivity: true,
+    latestActivityKind: "pending_assistant",
+  })).toBe(false);
+
+  expect(shouldTerminalScrollToLatest({
+    variant: "native",
+    isFirstRenderedActivity: false,
+    latestActivityKind: "pending_assistant",
+  })).toBe(false);
+
+  expect(shouldTerminalScrollToLatest({
+    variant: "native",
+    isFirstRenderedActivity: true,
+    latestActivityKind: "user_message",
+  })).toBe(false);
+
+  expect(shouldTerminalScrollToLatest({
+    variant: "native",
+    isFirstRenderedActivity: true,
+    latestActivityKind: "message",
+  })).toBe(true);
+
+  expect(shouldTerminalScrollToLatest({
+    variant: "native",
+    isFirstRenderedActivity: false,
+    latestActivityKind: "message",
+  })).toBe(true);
+
+  expect(shouldTerminalScrollToLatest({
+    variant: "terminal",
+    isFirstRenderedActivity: true,
+    latestActivityKind: "pending_assistant",
+  })).toBe(true);
 });
 
 test("unified stream falls back to direct user messages when stale entries lack user_input", () => {
@@ -232,7 +270,7 @@ test("unified stream hides arbitrary lifecycle entries from direct output", () =
   expect(text).not.toContain("Worker reattached after restart");
 });
 
-test("unified stream shows fallback user messages while entries are still loading", () => {
+test("unified stream loading shows fallback user messages without inventing assistant activity", () => {
   Object.assign(globalThis, { React });
 
   const html = renderToStaticMarkup(React.createElement(Terminal, {
@@ -259,7 +297,7 @@ test("unified stream shows fallback user messages while entries are still loadin
 
   expect(text).toContain("first prompt");
   expect(text).toContain("second prompt");
-  expect(text).toContain("Thinking...");
+  expect(text).not.toContain("Thinking...");
 });
 
 test("unified stream dedupes fallback user messages already present in entries", () => {

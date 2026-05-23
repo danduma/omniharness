@@ -296,7 +296,7 @@ export function ConversationSidebar({
                       )
                     ) : null}
                     {visibleRuns.map((run) => {
-                      const visualKind = getConversationVisualKind(run, messages ?? []);
+                      const visualKind = getConversationVisualKind(run);
                       const isCommitConversation = visualKind === "commit";
                       const canArchiveConversation = isArchivableRunStatus(run.status);
                       const normalizedRunStatus = normalizeRunStatus(run.status);

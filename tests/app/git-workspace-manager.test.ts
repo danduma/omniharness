@@ -258,6 +258,7 @@ describe("GitWorkspaceManager", () => {
 
     expect(manager.getSnapshot().snapshotsByProject["/repo"]?.statusFingerprint).toBe("fingerprint");
     expect(manager.getSnapshot().lastError?.message).toBe("Repository status changed after confirmation.");
+    expect(manager.getSnapshot().lastErrorByProject["/repo"]?.message).toBe("Repository status changed after confirmation.");
   });
 
   it("ignores an older status response when a newer refresh for the same project already completed", async () => {
@@ -307,6 +308,35 @@ describe("GitWorkspaceManager", () => {
     });
     await secondSelect;
 
+    expect(manager.getSnapshot().pendingOperation).toBeNull();
+  });
+
+  it("scopes operation errors to the project that owned the failed request", async () => {
+    const first = deferredApiResponse<{ target: GitWorkspaceTarget; snapshot: GitWorkspaceSnapshot }>();
+    const second = deferredApiResponse<{ target: GitWorkspaceTarget; snapshot: GitWorkspaceSnapshot }>();
+    const api = vi.fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const manager = new GitWorkspaceManager(api);
+
+    const firstSelect = manager.selectTarget("/repo-a", target({ repoRoot: "/repo-a", branchName: "a" }));
+    const secondSelect = manager.selectTarget("/repo-b", target({ repoRoot: "/repo-b", branchName: "b" }));
+
+    first.reject(new Error("repo a changed"));
+    await expect(firstSelect).rejects.toThrow("repo a changed");
+
+    expect(manager.getSnapshot().lastErrorByProject["/repo-a"]?.message).toBe("repo a changed");
+    expect(manager.getSnapshot().lastErrorByProject["/repo-b"]).toBeUndefined();
+    expect(manager.getSnapshot().pendingOperation).toBe("select");
+
+    second.resolve({
+      target: target({ repoRoot: "/repo-b", branchName: "b" }),
+      snapshot: snapshot({ repoRoot: "/repo-b", branchName: "b" }),
+    });
+    await secondSelect;
+
+    expect(manager.getSnapshot().lastErrorByProject["/repo-a"]?.message).toBe("repo a changed");
+    expect(manager.getSnapshot().lastErrorByProject["/repo-b"]).toBeUndefined();
     expect(manager.getSnapshot().pendingOperation).toBeNull();
   });
 });

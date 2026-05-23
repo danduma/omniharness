@@ -57,6 +57,16 @@ export function SideWindow({
       onCloseWindow?.();
     }
   }, [visibleTabs.length, onCloseWindow]);
+  useEffect(() => {
+    if (!onCloseWindow) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onCloseWindow();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onCloseWindow]);
   const workersTabLabel = t("side.window.workersTabAria");
   const closeButtonLabel = closeButtonVariant === "back" ? t("common.back") : t("side.window.collapseAria");
   const CloseButtonIcon = closeButtonVariant === "back" ? ArrowLeft : PanelRightClose;

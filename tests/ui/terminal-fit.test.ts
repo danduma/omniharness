@@ -84,7 +84,9 @@ test("terminal keeps tool output compact and expandable", () => {
   expect(terminalSource).toContain("const TOOL_OUTPUT_PREVIEW_LINES = 3");
   expect(terminalSource).toContain("isTerminalToolStatus(activity.status)");
   expect(terminalSource).toContain("toolDetailsOpenById[activity.id] ?? !isDone");
-  expect(terminalSource).toContain("toolOutputExpandedById[activity.id] ?? false");
+  expect(terminalSource).toContain('const outputIsDiff = activity.outputPane?.kind === "diff";');
+  expect(terminalSource).toContain("toolOutputExpandedById[activity.id] ?? outputIsDiff");
+  expect(terminalSource).toContain("terminalUiManager.setToolOutputExpanded(activity.id, true)");
   expect(terminalSource).not.toContain("isDone ? false : toolDetailsOpenById[activity.id]");
   expect(terminalSource).not.toContain("isDone ? false : toolOutputExpandedById[activity.id]");
   expect(terminalSource).toContain("shouldShowToolStatusBadge(activity.status)");
@@ -93,7 +95,7 @@ test("terminal keeps tool output compact and expandable", () => {
   expect(terminalSource).toContain('return ["in_progress", "working"].includes(status);');
   expect(terminalSource).toContain("<LoaderCircle");
   expect(terminalSource).toContain('"h-3 w-3 shrink-0 animate-spin"');
-  expect(terminalSource).toContain("terminalUiManager.setToolDetailsOpen(activity.id, !detailsOpen)");
+  expect(terminalSource).toContain("terminalUiManager.setToolDetailsOpen(activity.id, nextDetailsOpen)");
   expect(terminalSource).toContain("line-clamp-[3]");
   expect(terminalSource).toContain("Click to expand full output");
   expect(terminalSource).toContain("ChevronDown");
@@ -113,20 +115,28 @@ test("terminal renders edit diffs with dedicated red and green lines", () => {
   );
 
   expect(terminalSource).toContain("function DiffPane");
-  expect(terminalSource).toContain("function diffLineClass");
-  expect(terminalSource).toContain("function formatVisibleDiffLine");
+  expect(terminalSource).toContain("function parseDiffPane");
+  expect(terminalSource).toContain("function diffRowClass");
   expect(terminalSource).toContain('activity.outputPane?.kind === "diff"');
-  expect(terminalSource).toContain("bg-emerald-500/10 text-emerald-800");
-  expect(terminalSource).toContain("bg-red-500/10 text-red-800");
-  expect(diffPaneSource).toContain("block w-full overflow-auto py-2 font-mono font-semibold whitespace-pre-wrap");
+  expect(terminalSource).toContain("Copy");
+  expect(terminalSource).toContain('t("terminal.diff.copyAria")');
+  expect(terminalSource).toContain('t("terminal.diff.unknownFile")');
+  expect(diffPaneSource).toContain("flex min-h-8 items-center gap-1.5 border-b px-2.5 py-1");
+  expect(diffPaneSource).toContain("inline-flex h-6 w-6");
+  expect(terminalSource).toContain("bg-emerald-500/13 text-emerald-900");
+  expect(terminalSource).toContain("bg-red-500/13 text-red-900");
+  expect(diffPaneSource).toContain("grid grid-cols-[4px_5.5rem_minmax(0,1fr)]");
+  expect(diffPaneSource).toContain("tabular-nums");
+  expect(diffPaneSource).toContain("whitespace-pre px-4");
   expect(terminalSource).not.toContain("<DiffPane\n                  label=");
   expect(diffPaneSource).not.toContain("label,");
   expect(diffPaneSource).not.toContain("label: string;");
-  expect(terminalSource).toContain('line.startsWith("+")');
-  expect(terminalSource).toContain('line.startsWith("-")');
-  expect(terminalSource).toContain("return line.slice(1);");
-  expect(terminalSource).toContain('line.startsWith("@@")');
-  expect(terminalSource).toContain("visible: formatVisibleDiffLine(line)");
+  expect(terminalSource).toContain("parseHunkStart");
+  expect(terminalSource).toContain("line.startsWith(\"+\")");
+  expect(terminalSource).toContain("line.startsWith(\"-\")");
+  expect(terminalSource).toContain("visible: line.slice(1)");
+  expect(terminalSource).toContain("lineNumber: newLine");
+  expect(terminalSource).toContain("lineNumber: oldLine");
 });
 
 test("terminal uses a measured v0-style expansion animation for tool call details", () => {

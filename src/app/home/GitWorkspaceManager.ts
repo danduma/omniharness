@@ -85,6 +85,7 @@ export type GitWorkspaceManagerState = {
   pendingOperation: GitWorkspaceApiRequest["operation"] | null;
   activeDialog: GitWorkspaceDialog | null;
   dialogDraft: GitWorkspaceDialogDraft;
+  lastErrorByProject: Record<string, GitWorkspaceErrorState | undefined>;
   lastError: GitWorkspaceErrorState | null;
 };
 
@@ -99,6 +100,7 @@ const INITIAL_STATE: GitWorkspaceManagerState = {
     branchName: "",
     checkoutPath: "",
   },
+  lastErrorByProject: {},
   lastError: null,
 };
 
@@ -242,6 +244,7 @@ export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> 
     this.activeStatusRequestsByProject.set(projectPath, requestId);
     this.patch((current) => ({
       loadingByProject: { ...current.loadingByProject, [projectPath]: true },
+      lastErrorByProject: omitKey(current.lastErrorByProject, projectPath),
       lastError: null,
     }));
     try {
@@ -256,6 +259,7 @@ export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> 
           ? { ...current.snapshotsByProject, [projectPath]: payload.snapshot }
           : current.snapshotsByProject,
         loadingByProject: { ...current.loadingByProject, [projectPath]: false },
+        lastErrorByProject: omitKey(current.lastErrorByProject, projectPath),
         lastError: null,
       }));
       return payload.snapshot ?? null;
@@ -264,9 +268,11 @@ export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> 
         throw error;
       }
       this.activeStatusRequestsByProject.delete(projectPath);
+      const errorState = toErrorState(error);
       this.patch((current) => ({
         loadingByProject: { ...current.loadingByProject, [projectPath]: false },
-        lastError: toErrorState(error),
+        lastErrorByProject: { ...current.lastErrorByProject, [projectPath]: errorState },
+        lastError: errorState,
       }));
       throw error;
     }
@@ -336,6 +342,7 @@ export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> 
         ...current.pendingLaunchByProject,
         [request.projectPath]: request,
       },
+      lastErrorByProject: omitKey(current.lastErrorByProject, request.projectPath),
       lastError: null,
     }));
   }
@@ -380,8 +387,16 @@ export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> 
     return launch;
   }
 
-  clearError() {
-    this.setKey("lastError", null);
+  clearError(projectPath?: string) {
+    if (!projectPath) {
+      this.patch({ lastErrorByProject: {}, lastError: null });
+      return;
+    }
+
+    this.patch((current) => ({
+      lastErrorByProject: omitKey(current.lastErrorByProject, projectPath),
+      lastError: current.lastErrorByProject[projectPath] === current.lastError ? null : current.lastError,
+    }));
   }
 
   requestForkMessageWorktree(projectPath: string, runId: string, targetMessageId: string, content: string) {
@@ -398,7 +413,11 @@ export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> 
   ) {
     const requestId = this.nextRequestId();
     this.activeOperationsByProject.set(request.projectPath, { id: requestId, operation: request.operation });
-    this.patch({ pendingOperation: this.currentPendingOperation(), lastError: null });
+    this.patch((current) => ({
+      pendingOperation: this.currentPendingOperation(),
+      lastErrorByProject: omitKey(current.lastErrorByProject, request.projectPath),
+      lastError: null,
+    }));
     try {
       const payload = await this.api(request);
       if (this.activeOperationsByProject.get(request.projectPath)?.id !== requestId) {
@@ -409,6 +428,7 @@ export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> 
       this.patch({
         ...applyPayload(payload),
         pendingOperation: this.currentPendingOperation(),
+        lastErrorByProject: omitKey(this.getSnapshot().lastErrorByProject, request.projectPath),
         lastError: null,
       });
       return payload;
@@ -417,9 +437,11 @@ export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> 
         throw error;
       }
       this.activeOperationsByProject.delete(request.projectPath);
+      const errorState = toErrorState(error);
       this.patch({
         pendingOperation: this.currentPendingOperation(),
-        lastError: toErrorState(error),
+        lastErrorByProject: { ...this.getSnapshot().lastErrorByProject, [request.projectPath]: errorState },
+        lastError: errorState,
       });
       throw error;
     }

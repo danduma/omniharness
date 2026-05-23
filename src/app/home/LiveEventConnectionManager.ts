@@ -1,29 +1,49 @@
-import { type AppErrorDescriptor, normalizeAppError, requestJson as defaultRequestJson } from "@/lib/app-errors";
+import {
+  AppRequestError,
+  type AppErrorDescriptor,
+  normalizeAppError,
+  parseErrorResponse,
+  requestJson as defaultRequestJson,
+} from "@/lib/app-errors";
 import type { EventStreamState } from "./types";
 import { workerEntriesManager } from "./WorkerEntriesManager";
 
 const SNAPSHOT_FALLBACK_INTERVAL_MS = 15_000;
 const SNAPSHOT_FALLBACK_COOLDOWN_MS = 1_000;
+const SNAPSHOT_VALIDATION_INTERVAL_MS = 5_000;
 
 type JsonRequester = typeof defaultRequestJson;
+type SnapshotRequester = (
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  fallback: Partial<AppErrorDescriptor>,
+) => Promise<SnapshotPollResult>;
 
 interface LiveEventConnectionManagerOptions {
   selectedRunId?: string | null;
   initialLastEventId?: string | number | null;
   EventSourceConstructor?: typeof EventSource;
   requestJson?: JsonRequester;
+  requestSnapshot?: SnapshotRequester;
   getSnapshotChecksum?: () => string | null | undefined;
   workerEntries?: Pick<typeof workerEntriesManager, "onKnownSeqs" | "onStreamResync" | "onWakeUp">;
   applyUpdate: (state: EventStreamState) => void;
   reportError: (error: AppErrorDescriptor) => void;
   fallbackIntervalMs?: number;
   fallbackCooldownMs?: number;
+  snapshotValidationIntervalMs?: number | null;
 }
 
 type SnapshotPollResponse = EventStreamState | {
   notModified: true;
   snapshotChecksum?: string;
+  workerEntrySeqs?: Record<string, number>;
 };
+
+interface SnapshotPollResult {
+  data: SnapshotPollResponse;
+  lastEventId?: string | null;
+}
 
 function encodeRunParam(selectedRunId: string | null | undefined, prefix: "?" | "&") {
   const runId = selectedRunId?.trim();
@@ -69,6 +89,11 @@ function encodeLastEventIdParam(lastEventId: string | number | null | undefined,
   return value ? `${prefix}lastEventId=${encodeURIComponent(value)}` : "";
 }
 
+function normalizeLastEventId(lastEventId: string | number | null | undefined) {
+  const value = String(lastEventId ?? "").trim();
+  return value || null;
+}
+
 export function buildEventStreamUrl(selectedRunId?: string | null, lastEventId?: string | number | null) {
   const runParam = encodeRunParam(selectedRunId, "?");
   const lastEventIdParam = encodeLastEventIdParam(lastEventId, runParam ? "&" : "?");
@@ -84,34 +109,64 @@ function isNotModifiedSnapshot(value: SnapshotPollResponse): value is Extract<Sn
   return typeof value === "object" && value !== null && "notModified" in value && value.notModified === true;
 }
 
+async function defaultRequestSnapshot(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  fallback: Partial<AppErrorDescriptor>,
+): Promise<SnapshotPollResult> {
+  const response = await fetch(input, init);
+  if (!response.ok) {
+    throw new AppRequestError(await parseErrorResponse(response, fallback));
+  }
+
+  return {
+    data: await response.json() as SnapshotPollResponse,
+    lastEventId: response.headers.get("x-omni-last-event-id"),
+  };
+}
+
 export class LiveEventConnectionManager {
   private readonly selectedRunId?: string | null;
-  private readonly initialLastEventId?: string | number | null;
   private readonly EventSourceConstructor: typeof EventSource;
-  private readonly requestJson: JsonRequester;
+  private readonly requestSnapshot: SnapshotRequester;
   private readonly getSnapshotChecksum?: () => string | null | undefined;
   private readonly workerEntries: Pick<typeof workerEntriesManager, "onKnownSeqs" | "onStreamResync" | "onWakeUp">;
   private readonly applyUpdate: (state: EventStreamState) => void;
   private readonly reportError: (error: AppErrorDescriptor) => void;
   private readonly fallbackIntervalMs: number;
   private readonly fallbackCooldownMs: number;
+  private readonly snapshotValidationIntervalMs: number | null;
   private eventSource: EventSource | null = null;
   private fallbackTimer: ReturnType<typeof setInterval> | null = null;
+  private snapshotValidationTimer: ReturnType<typeof setInterval> | null = null;
   private active = false;
   private pollingSnapshot = false;
+  private snapshotPollPromise: Promise<boolean> | null = null;
+  private reconnectingAfterResync = false;
   private lastSnapshotPollAt = 0;
+  private lastEventId: string | null;
 
   constructor(options: LiveEventConnectionManagerOptions) {
     this.selectedRunId = options.selectedRunId;
-    this.initialLastEventId = options.initialLastEventId;
+    this.lastEventId = normalizeLastEventId(options.initialLastEventId);
     this.EventSourceConstructor = options.EventSourceConstructor ?? EventSource;
-    this.requestJson = options.requestJson ?? defaultRequestJson;
+    const requestJson = options.requestJson;
+    this.requestSnapshot = options.requestSnapshot
+      ?? (requestJson
+        ? async (input, init, fallback) => ({
+          data: await requestJson<SnapshotPollResponse>(input, init, fallback),
+          lastEventId: null,
+        })
+        : defaultRequestSnapshot);
     this.getSnapshotChecksum = options.getSnapshotChecksum;
     this.workerEntries = options.workerEntries ?? workerEntriesManager;
     this.applyUpdate = options.applyUpdate;
     this.reportError = options.reportError;
     this.fallbackIntervalMs = options.fallbackIntervalMs ?? SNAPSHOT_FALLBACK_INTERVAL_MS;
     this.fallbackCooldownMs = options.fallbackCooldownMs ?? SNAPSHOT_FALLBACK_COOLDOWN_MS;
+    this.snapshotValidationIntervalMs = options.snapshotValidationIntervalMs === undefined
+      ? SNAPSHOT_VALIDATION_INTERVAL_MS
+      : options.snapshotValidationIntervalMs;
   }
 
   start() {
@@ -120,7 +175,14 @@ export class LiveEventConnectionManager {
     }
 
     this.active = true;
-    this.eventSource = new this.EventSourceConstructor(buildEventStreamUrl(this.selectedRunId, this.initialLastEventId));
+    this.openEventSource();
+
+    this.startSnapshotValidation();
+    void this.pollSnapshot({ force: true });
+  }
+
+  private openEventSource() {
+    this.eventSource = new this.EventSourceConstructor(buildEventStreamUrl(this.selectedRunId, this.lastEventId));
     this.eventSource.addEventListener("update", (event) => {
       this.handleUpdateEvent(event);
     });
@@ -135,7 +197,7 @@ export class LiveEventConnectionManager {
       this.handleWorkerEntryAppended(event);
     });
     this.eventSource.addEventListener("stream.resync_required", () => {
-      this.workerEntries.onStreamResync();
+      void this.handleStreamResyncRequired();
     });
     this.eventSource.onopen = () => {
       this.stopFallbackPolling();
@@ -145,13 +207,12 @@ export class LiveEventConnectionManager {
       this.startFallbackPolling();
       void this.pollSnapshot({ force: true });
     };
-
-    void this.pollSnapshot({ force: true });
   }
 
   stop() {
     this.active = false;
     this.stopFallbackPolling();
+    this.stopSnapshotValidation();
     this.eventSource?.close();
     this.eventSource = null;
   }
@@ -205,6 +266,28 @@ export class LiveEventConnectionManager {
     void this.pollSnapshot({ force: true });
   }
 
+  private async handleStreamResyncRequired() {
+    this.workerEntries.onStreamResync();
+    if (!this.active || this.reconnectingAfterResync) {
+      return;
+    }
+
+    this.reconnectingAfterResync = true;
+    this.eventSource?.close();
+    this.eventSource = null;
+    try {
+      const snapshotLoaded = await this.pollSnapshot({ force: true });
+      if (!this.active || !snapshotLoaded) {
+        this.startFallbackPolling();
+        return;
+      }
+
+      this.openEventSource();
+    } finally {
+      this.reconnectingAfterResync = false;
+    }
+  }
+
   private startFallbackPolling() {
     if (this.fallbackTimer) {
       return;
@@ -224,21 +307,56 @@ export class LiveEventConnectionManager {
     this.fallbackTimer = null;
   }
 
-  private async pollSnapshot(options: { force?: boolean } = {}) {
-    const now = Date.now();
+  private startSnapshotValidation() {
     if (
-      !this.active
-      || this.pollingSnapshot
-      || (!options.force && now - this.lastSnapshotPollAt < this.fallbackCooldownMs)
+      this.snapshotValidationTimer
+      || this.snapshotValidationIntervalMs == null
+      || this.snapshotValidationIntervalMs <= 0
     ) {
       return;
     }
 
+    this.snapshotValidationTimer = setInterval(() => {
+      void this.pollSnapshot();
+    }, this.snapshotValidationIntervalMs);
+  }
+
+  private stopSnapshotValidation() {
+    if (!this.snapshotValidationTimer) {
+      return;
+    }
+
+    clearInterval(this.snapshotValidationTimer);
+    this.snapshotValidationTimer = null;
+  }
+
+  private async pollSnapshot(options: { force?: boolean } = {}): Promise<boolean> {
+    if (this.pollingSnapshot) {
+      return this.snapshotPollPromise ?? Promise.resolve(false);
+    }
+
+    const now = Date.now();
+    if (
+      !this.active
+      || (!options.force && now - this.lastSnapshotPollAt < this.fallbackCooldownMs)
+    ) {
+      return false;
+    }
+
     this.lastSnapshotPollAt = now;
     this.pollingSnapshot = true;
-
+    this.snapshotPollPromise = this.runSnapshotPoll();
     try {
-      const data = await this.requestJson<SnapshotPollResponse>(
+      return await this.snapshotPollPromise;
+    } finally {
+      this.pollingSnapshot = false;
+      this.snapshotPollPromise = null;
+    }
+  }
+
+  private async runSnapshotPoll(): Promise<boolean> {
+    try {
+      const result = await this.requestSnapshot(
         buildPersistedSnapshotUrl(this.selectedRunId, this.getSnapshotChecksum?.()),
         undefined,
         {
@@ -246,17 +364,22 @@ export class LiveEventConnectionManager {
           action: "Load live state snapshot",
         },
       );
+      if (!this.active) {
+        return false;
+      }
+      this.setLastEventId(result.lastEventId);
+      const data = result.data;
       if (isNotModifiedSnapshot(data)) {
-        return;
+        this.workerEntries.onKnownSeqs(data.workerEntrySeqs);
+        return true;
       }
-      if (this.active) {
-        this.applyUpdate(data);
-        this.workerEntries.onKnownSeqs(data?.workerEntrySeqs);
-      }
+      this.applyUpdate(data);
+      this.workerEntries.onKnownSeqs(data?.workerEntrySeqs);
+      return true;
     } catch (error) {
       if (this.active) {
         if (isTransientConnectivityError(error)) {
-          return;
+          return false;
         }
 
         this.reportError(withFallbackErrorContext(error, {
@@ -264,8 +387,14 @@ export class LiveEventConnectionManager {
           action: "Load live state snapshot",
         }));
       }
-    } finally {
-      this.pollingSnapshot = false;
+      return false;
+    }
+  }
+
+  private setLastEventId(lastEventId: string | number | null | undefined) {
+    const normalized = normalizeLastEventId(lastEventId);
+    if (normalized) {
+      this.lastEventId = normalized;
     }
   }
 }

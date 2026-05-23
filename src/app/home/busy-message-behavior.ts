@@ -13,6 +13,11 @@ export function parseBusyMessageAction(value: string | null | undefined): BusyMe
   return value === "steer" ? "steer" : "queue";
 }
 
+export function isManualStopCommand(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "stop" || normalized === "/stop";
+}
+
 export function resolveBusyComposerBehavior({
   hasBusyConversation,
   isConversationStoppable,

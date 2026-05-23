@@ -15,7 +15,7 @@ import { buildDirectTerminalUserMessages } from "@/lib/worker-terminal-messages"
 import { resolveProjectScope } from "@/lib/project-scope";
 import { buildConversationTimelineItems, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterPromotedPlanningTranscriptMessages, extractWorkerFailureDetail, getConversationTranscriptRunIds, getLatestUnresolvedWorkerStuckEvent, getWorkerModelOptions, parseProjectList, parseWorkerType, parseWorkerTypes, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought } from "./utils";
 import { COMPOSER_WORKER_OPTIONS, WORKER_OPTIONS } from "./constants";
-import type { AgentSnapshot, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, RunRecord, SupervisorInterventionRecord } from "./types";
+import type { AgentSnapshot, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, RunMode, RunRecord, SupervisorInterventionRecord } from "./types";
 import type { WorkerCatalogResponse } from "./types";
 import { sessionStateManager } from "./SessionStateManager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
@@ -57,11 +57,13 @@ export function useHomeViewModel({
   const selectedRunNeedsRecovery = normalizeRunStatus(selectedRun?.status) === "needs_recovery";
 
   const isSupervisorRunning = Boolean(selectedRun && selectedRun.mode === "implementation" && selectedRun.status === "running");
-  const selectedRunMode: ConversationModeOption = selectedRun?.mode || "implementation";
+  const selectedRunMode: RunMode = selectedRun?.mode || "implementation";
   const isImplementationConversation = selectedRunMode === "implementation";
   const isPlanningConversation = selectedRunMode === "planning";
-  const isDirectConversation = selectedRunMode === "direct";
-  const activeComposerMode: ConversationModeOption = selectedRun ? selectedRunMode : selectedConversationMode;
+  const isDirectConversation = selectedRunMode === "direct" || selectedRunMode === "commit";
+  const activeComposerMode: ConversationModeOption = selectedRun
+    ? selectedRunMode === "commit" ? "direct" : selectedRunMode
+    : selectedConversationMode;
 
   const catalogWorkers = useMemo(
     () => workerCatalogData?.workers ?? [],
@@ -337,7 +339,7 @@ export function useHomeViewModel({
     // Only show "Reconnecting" when an auto-resume will actually run. HomeApp
     // only auto-resumes direct/implementation runs; planning runs surface the
     // real error and rely on the user to act.
-    const autoResumes = selectedRun.mode === "direct" || selectedRun.mode === "implementation";
+    const autoResumes = selectedRun.mode === "direct" || selectedRun.mode === "commit" || selectedRun.mode === "implementation";
     const staleFailure = autoResumes && failedWorkerAvailability?.availability.status === "ok";
     const workerLabel = failedWorkerAvailability?.label;
     const workerStatus = failedWorkerAvailability?.availability.message;
@@ -398,10 +400,8 @@ export function useHomeViewModel({
   const latestWaitEvent = selectedRunExecutionEvents.find((event) => event.eventType === "supervisor_wait") ?? null;
   const latestPromptDeferredEvent = selectedRunExecutionEvents.find((event) => event.eventType === "worker_prompt_deferred") ?? null;
 
-  const isSelectedConversationLoaded = !selectedRunId || (
-    state.snapshotRunId === selectedRunId
-    && state.snapshotSource === "server"
-  );
+  const isSelectedConversationPreviewAvailable = !selectedRunId || state.snapshotRunId === selectedRunId;
+  const isSelectedConversationLoaded = isSelectedConversationPreviewAvailable && state.snapshotSource === "server";
 
   const awaitingUserQuestionMessage = useMemo(() => {
     if (selectedRun?.status !== "awaiting_user") {
@@ -451,7 +451,14 @@ export function useHomeViewModel({
     || selectedRun?.status === "awaiting_user"
     || selectedRun?.status === "failed";
 
-  const showConversationExecution = isSelectedConversationLoaded && shouldShowConversationExecutionPanel({
+  // Don't gate the panel on `isSelectedConversationLoaded`: that flag
+  // demotes to false whenever the snapshot transitions to a cache view
+  // (e.g. during a brief SSE/cache re-hydration window), which would
+  // otherwise make the supervisor activity bar disappear mid-run.
+  // `shouldShowConversationExecutionPanel` is already conservative —
+  // it requires a selected run and some signal of activity — so the
+  // loaded-state gate is redundant for visibility.
+  const showConversationExecution = shouldShowConversationExecutionPanel({
     selectedRun,
     isConversationThinking,
     executionEventCount: conversationTimelineActivityCount,
@@ -525,6 +532,7 @@ export function useHomeViewModel({
     latestWaitEvent,
     latestPromptDeferredEvent,
     awaitingUserQuestionMessage,
+    isSelectedConversationPreviewAvailable,
     isSelectedConversationLoaded,
     latestStuckEvent,
     hasStuckWorker,

@@ -123,7 +123,7 @@ export function buildDirectTerminalUserMessages({
       userMessages.push({
         id: `${primary.id}:initial-prompt`,
         content: primary.initialPrompt,
-        createdAt: primary.createdAt,
+        createdAt: primary.createdAt ?? new Date(0).toISOString(),
         attachments: [],
       });
     }

@@ -55,7 +55,7 @@ describe("auto-resume selection guards", () => {
   it("rechecks selected run and failure generation before a delayed auto-resume fires", () => {
     const timer = setTimeout(() => undefined, 10_000);
     const entries = new Map([
-      ["failed-run", { failureKey: "failure-a", timerId: timer }],
+      ["failed-run", { failureKey: "failure-a", targetMessageId: "message-a", timerId: timer }],
     ]);
 
     try {
@@ -63,21 +63,78 @@ describe("auto-resume selection guards", () => {
         entries,
         runId: "failed-run",
         failureKey: "failure-a",
+        targetMessageId: "message-a",
         activeRunId: "failed-run",
+        isAutoResumableConversation: true,
+        selectedRunStatus: "failed",
+        failedWorkerAvailabilityStatus: "ok",
+        hasWorkerFailureDetail: false,
+        recoverRunIsPending: false,
       })).toBe(true);
 
       expect(shouldFireAutoResumeTimer({
         entries,
         runId: "failed-run",
         failureKey: "failure-a",
+        targetMessageId: "message-a",
         activeRunId: "other-run",
+        isAutoResumableConversation: true,
+        selectedRunStatus: "failed",
+        failedWorkerAvailabilityStatus: "ok",
+        hasWorkerFailureDetail: false,
+        recoverRunIsPending: false,
       })).toBe(false);
 
       expect(shouldFireAutoResumeTimer({
         entries,
         runId: "failed-run",
         failureKey: "failure-b",
+        targetMessageId: "message-a",
         activeRunId: "failed-run",
+        isAutoResumableConversation: true,
+        selectedRunStatus: "failed",
+        failedWorkerAvailabilityStatus: "ok",
+        hasWorkerFailureDetail: false,
+        recoverRunIsPending: false,
+      })).toBe(false);
+
+      expect(shouldFireAutoResumeTimer({
+        entries,
+        runId: "failed-run",
+        failureKey: "failure-a",
+        targetMessageId: "message-b",
+        activeRunId: "failed-run",
+        isAutoResumableConversation: true,
+        selectedRunStatus: "failed",
+        failedWorkerAvailabilityStatus: "ok",
+        hasWorkerFailureDetail: false,
+        recoverRunIsPending: false,
+      })).toBe(false);
+
+      expect(shouldFireAutoResumeTimer({
+        entries,
+        runId: "failed-run",
+        failureKey: "failure-a",
+        targetMessageId: "message-a",
+        activeRunId: "failed-run",
+        isAutoResumableConversation: true,
+        selectedRunStatus: "failed",
+        failedWorkerAvailabilityStatus: "blocked",
+        hasWorkerFailureDetail: false,
+        recoverRunIsPending: false,
+      })).toBe(false);
+
+      expect(shouldFireAutoResumeTimer({
+        entries,
+        runId: "failed-run",
+        failureKey: "failure-a",
+        targetMessageId: "message-a",
+        activeRunId: "failed-run",
+        isAutoResumableConversation: true,
+        selectedRunStatus: "running",
+        failedWorkerAvailabilityStatus: "ok",
+        hasWorkerFailureDetail: false,
+        recoverRunIsPending: false,
       })).toBe(false);
     } finally {
       clearTimeout(timer);

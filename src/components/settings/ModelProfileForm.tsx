@@ -30,6 +30,8 @@ interface ModelProfileFormProps {
   settings: Record<string, string>;
   setSetting: (key: string, value: string) => void;
   secretStates?: Record<string, { configured: boolean; updatedAt: string; preview?: string }>;
+  disabled?: boolean;
+  autoFillDefaultModel?: boolean;
 }
 
 interface CodexStatus {
@@ -91,6 +93,8 @@ export function ModelProfileForm({
   settings,
   setSetting,
   secretStates,
+  disabled = false,
+  autoFillDefaultModel = true,
 }: ModelProfileFormProps) {
   useI18nSnapshot();
   const providerKey = `${prefix}_PROVIDER`;
@@ -101,7 +105,7 @@ export function ModelProfileForm({
   const temperatureKey = `${prefix}_TEMPERATURE`;
   const maxOutputTokensKey = `${prefix}_MAX_OUTPUT_TOKENS`;
 
-  const defaultProvider: LlmProviderId = prefix === "SUPERVISOR_LLM" ? "gemini" : "openai";
+  const defaultProvider: LlmProviderId = prefix === "SUPERVISOR_FALLBACK_LLM" ? "openai" : "gemini";
   const rawProvider = settings[providerKey] || defaultProvider;
   const provider: LlmProviderId = isProvider(rawProvider) ? rawProvider : defaultProvider;
   const currentModel = settings[modelKey] || "";
@@ -139,12 +143,12 @@ export function ModelProfileForm({
   }, [catalog, currentModel]);
 
   useEffect(() => {
-    if (currentModel) return;
+    if (!autoFillDefaultModel || currentModel) return;
     const fallback = LLM_DEFAULT_MODEL[provider] || catalog[0]?.value || "";
     if (fallback) {
       setSetting(modelKey, fallback);
     }
-  }, [catalog, currentModel, modelKey, provider, setSetting]);
+  }, [autoFillDefaultModel, catalog, currentModel, modelKey, provider, setSetting]);
 
   const handleProviderChange = (value: string) => {
     if (value === provider) return;
@@ -163,7 +167,7 @@ export function ModelProfileForm({
   const isCodex = provider === "codex";
 
   return (
-    <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
+    <div className={cn("space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4", disabled && "opacity-60")}>
       {prefix === "SUPERVISOR_LLM" && (
         <div className="mb-4 space-y-3 rounded-lg border border-border/60 bg-background/50 p-3">
           <div className="flex items-center justify-between">
@@ -233,6 +237,7 @@ export function ModelProfileForm({
               label: opt.value === "codex" ? t("settings.models.provider.codex") : opt.label
             })) as readonly SelectOption[]}
             onValueChange={handleProviderChange}
+            disabled={disabled}
           />
         </Field>
         <Field htmlFor={modelKey} label={t("settings.models.model")}>
@@ -243,6 +248,7 @@ export function ModelProfileForm({
               options={modelOptions}
               onValueChange={(value) => setSetting(modelKey, value)}
               placeholder={t("settings.models.selectModel")}
+              disabled={disabled}
             />
           ) : (
             <Input
@@ -251,6 +257,7 @@ export function ModelProfileForm({
               onChange={(event) => setSetting(modelKey, event.target.value)}
               placeholder={t("settings.models.customModelPlaceholder")}
               className="h-8 bg-background text-xs"
+              disabled={disabled}
             />
           )}
         </Field>
@@ -261,7 +268,7 @@ export function ModelProfileForm({
             onChange={(event) => setSetting(baseUrlKey, event.target.value)}
             placeholder={isCustomEndpoint ? t("settings.models.requiredBaseUrl") : t("settings.models.optionalBaseUrl")}
             className="h-8 bg-background text-xs"
-            disabled={isCodex}
+            disabled={isCodex || disabled}
           />
         </Field>
         <Field htmlFor={apiKeyKey} label={t("settings.models.apiKey")}>
@@ -283,7 +290,7 @@ export function ModelProfileForm({
                   ? t("settings.models.credentialReplaceHint")
                   : t("settings.models.providerCredential")}
                 className="h-8 flex-1 bg-background text-xs"
-                disabled={isCodex}
+                disabled={isCodex || disabled}
               />
               {apiKeyConfigured ? (
                 <Button
@@ -295,7 +302,7 @@ export function ModelProfileForm({
                     setSetting(apiKeyKey, "");
                     modelProfileUiManager.setApiKeyEditing(prefix, false);
                   }}
-                  disabled={isCodex}
+                  disabled={isCodex || disabled}
                 >
                   {t("common.cancel")}
                 </Button>
@@ -312,7 +319,7 @@ export function ModelProfileForm({
                 spellCheck={false}
                 autoComplete="off"
                 className="h-8 flex-1 bg-background/60 font-mono text-xs text-muted-foreground"
-                disabled={isCodex}
+                disabled={isCodex || disabled}
               />
               <Button
                 type="button"
@@ -326,7 +333,7 @@ export function ModelProfileForm({
                     el?.focus();
                   });
                 }}
-                disabled={isCodex}
+                disabled={isCodex || disabled}
               >
                 {t("settings.models.replaceCredential")}
               </Button>
@@ -361,6 +368,7 @@ export function ModelProfileForm({
                   value={settings[thinkingEffortKey] || "medium"}
                   options={thinkingEffortOptions}
                   onValueChange={(value) => setSetting(thinkingEffortKey, value)}
+                  disabled={disabled}
                 />
               </Field>
               <Field htmlFor={temperatureKey} label={t("settings.models.temperature")}>
@@ -371,6 +379,7 @@ export function ModelProfileForm({
                   placeholder={t("settings.models.temperaturePlaceholder")}
                   inputMode="decimal"
                   className="h-8 bg-background text-xs"
+                  disabled={disabled}
                 />
               </Field>
               <Field htmlFor={maxOutputTokensKey} label={t("settings.models.maxOutputTokens")}>
@@ -381,6 +390,7 @@ export function ModelProfileForm({
                   placeholder={t("settings.models.maxOutputTokensPlaceholder")}
                   inputMode="numeric"
                   className="h-8 bg-background text-xs"
+                  disabled={disabled}
                 />
               </Field>
             </div>

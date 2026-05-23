@@ -75,12 +75,12 @@ describe("WorkerEntriesManager", () => {
     expect(requestJson).not.toHaveBeenCalled();
   });
 
-  it("hydrates a worker stream from the frontend cache without waiting for the server", async () => {
+  it("hydrates a worker stream from the frontend cache, then validates the tail against the server", async () => {
     const storage = memoryStorage();
     const first = new WorkerEntriesManager({ storage });
     first.getState("w1", [entry(1), entry(2)]);
 
-    const requestJson = vi.fn(async () => ({ entries: [entry(3)], latestSeq: 3 }));
+    const requestJson = vi.fn(async () => ({ entries: [entry(2), entry(3)], latestSeq: 3 }));
     const second = new WorkerEntriesManager({
       requestJson: requestJson as unknown as never,
       storage,
@@ -90,10 +90,45 @@ describe("WorkerEntriesManager", () => {
 
     expect(cached.entries.map((item) => item.seq)).toEqual([1, 2]);
     expect(cached.status).toBe("loaded");
-    expect(second.isLoaded("w1")).toBe(true);
+    expect(second.isLoaded("w1")).toBe(false);
 
     await second.ensureLoaded("w1");
-    expect(requestJson).not.toHaveBeenCalled();
+    expect(requestJson).toHaveBeenCalledWith(
+      "/api/workers/w1/entries?limit=100",
+      undefined,
+      expect.objectContaining({ action: "Load worker stream tail" }),
+    );
+    expect(second.getState("w1").entries.map((item) => item.seq)).toEqual([2, 3]);
+    expect(second.isLoaded("w1")).toBe(true);
+  });
+
+  it("clears stale cached entries when the authoritative worker stream is empty", async () => {
+    const storage = memoryStorage();
+    const first = new WorkerEntriesManager({ storage });
+    first.getState("w1", [entry(1), entry(2)]);
+
+    const requestJson = vi.fn(async () => ({ entries: [], latestSeq: 0 }));
+    const second = new WorkerEntriesManager({
+      requestJson: requestJson as unknown as never,
+      storage,
+    });
+
+    expect(second.getState("w1").entries.map((item) => item.seq)).toEqual([1, 2]);
+
+    await second.ensureLoaded("w1");
+
+    expect(second.getState("w1")).toMatchObject({
+      entries: [],
+      latestContiguousSeq: 0,
+      latestKnownSeq: 0,
+      status: "loaded",
+    });
+
+    const third = new WorkerEntriesManager({
+      requestJson: requestJson as unknown as never,
+      storage,
+    });
+    expect(third.getState("w1").entries).toEqual([]);
   });
 
   it("refresh revalidates a loaded worker stream from the current cursor", async () => {

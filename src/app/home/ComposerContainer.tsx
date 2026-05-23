@@ -10,6 +10,7 @@ import type { ProjectFileReference } from "@/lib/project-file-links";
 import { getActiveMentionQuery, replaceActiveMention } from "@/lib/mentions";
 import { shallowEqualRecord, useManagerSelector } from "@/lib/use-manager-snapshot";
 import {
+  isManualStopCommand,
   resolveBusyComposerBehavior,
   resolveBusyMessageActionForSubmitAction,
   type BusyMessageAction,
@@ -171,6 +172,11 @@ export function ComposerContainer({
     event.preventDefault();
     if (composerBehavior.submitAction === "stop") { onStopConversation(); return; }
     if (!command.trim() && attachments.length === 0) return;
+    if (selectedRunId && attachments.length === 0 && isManualStopCommand(command)) {
+      homeUiSetters.setCommand("");
+      onStopConversation();
+      return;
+    }
     if (selectedRunId) {
       onSendConversationMessage(command, attachments, resolveBusyMessageActionForSubmitAction(composerBehavior.submitAction));
       return;

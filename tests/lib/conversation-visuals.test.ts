@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AUTO_COMMIT_PROJECT_PROMPT, getConversationVisualKind } from "@/lib/conversation-visuals";
+import { getConversationVisualKind } from "@/lib/conversation-visuals";
 
 describe("getConversationVisualKind", () => {
   it("treats implementation and planning conversations as supervisor-driven", () => {
@@ -11,17 +11,17 @@ describe("getConversationVisualKind", () => {
     expect(getConversationVisualKind({ id: "run-1", mode: "direct", title: "Debug CSS" })).toBe("direct");
   });
 
-  it("detects project auto-commit direct conversations from the initial message", () => {
+  it("does not infer commit conversations from title text", () => {
+    expect(getConversationVisualKind({ id: "run-1", mode: "direct", title: "Commit sidebar follow-up" })).toBe("direct");
+  });
+
+  it("does not infer commit conversations from user messages", () => {
+    expect(getConversationVisualKind({ id: "run-1", mode: "direct", title: "Commit" })).toBe("direct");
+  });
+
+  it("detects project auto-commit conversations from explicit initial mode", () => {
     expect(getConversationVisualKind(
-      { id: "run-1", mode: "direct", title: "New conversation" },
-      [
-        {
-          runId: "run-1",
-          role: "user",
-          content: AUTO_COMMIT_PROJECT_PROMPT,
-          createdAt: "2026-05-09T04:10:42.701Z",
-        },
-      ],
+      { id: "run-1", mode: "commit", title: "New conversation" },
     )).toBe("commit");
   });
 });

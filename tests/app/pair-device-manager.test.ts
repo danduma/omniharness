@@ -47,4 +47,31 @@ describe("PairDeviceStateManager", () => {
 
     expect(manager.getSnapshot().pairingStatus).toBe("redeemed");
   });
+
+  test("ignores an older status poll after a newer poll for the same pairing resolves", () => {
+    const manager = new PairDeviceStateManager();
+
+    manager.patch({
+      pairing: { pairingId: "pair-a", pairUrl: "https://example.test/a", expiresAt: "2026-05-20T00:00:00.000Z" },
+      pairingStatus: "pending",
+      isActivating: false,
+      error: null,
+    });
+
+    const olderPollId = manager.beginStatusPoll("pair-a");
+    const newerPollId = manager.beginStatusPoll("pair-a");
+
+    manager.patchIfCurrentStatusPoll("pair-a", newerPollId, {
+      pairingStatus: "redeemed",
+    });
+    manager.patchIfCurrentStatusPoll("pair-a", olderPollId, {
+      pairingStatus: "pending",
+      error: "stale poll failed",
+    });
+
+    expect(manager.getSnapshot()).toMatchObject({
+      pairingStatus: "redeemed",
+      error: null,
+    });
+  });
 });

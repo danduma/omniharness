@@ -74,6 +74,9 @@ function pairingIdentifier(pairing: unknown) {
 }
 
 export class PairDeviceStateManager extends StateManager<PairingState<unknown, string>> {
+  private statusPollSeq = 0;
+  private activeStatusPoll: { pairingId: string; requestId: number } | null = null;
+
   constructor() {
     super({
       pairing: null,
@@ -92,6 +95,28 @@ export class PairDeviceStateManager extends StateManager<PairingState<unknown, s
     patch: Partial<PairingState<unknown, string>> | ((current: PairingState<unknown, string>) => Partial<PairingState<unknown, string>>),
   ) => this.patch((current) => (
     pairingIdentifier(current.pairing) === pairingId
+      ? typeof patch === "function"
+        ? patch(current)
+        : patch
+      : {}
+  ));
+
+  beginStatusPoll = (pairingId: string) => {
+    const requestId = ++this.statusPollSeq;
+    this.activeStatusPoll = pairingIdentifier(this.getSnapshot().pairing) === pairingId
+      ? { pairingId, requestId }
+      : null;
+    return requestId;
+  };
+
+  patchIfCurrentStatusPoll = (
+    pairingId: string,
+    requestId: number,
+    patch: Partial<PairingState<unknown, string>> | ((current: PairingState<unknown, string>) => Partial<PairingState<unknown, string>>),
+  ) => this.patch((current) => (
+    pairingIdentifier(current.pairing) === pairingId
+      && this.activeStatusPoll?.pairingId === pairingId
+      && this.activeStatusPoll.requestId === requestId
       ? typeof patch === "function"
         ? patch(current)
         : patch

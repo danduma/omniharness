@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isManualStopCommand,
   resolveBusyComposerBehavior,
   resolveBusyMessageActionForSubmitAction,
 } from "@/app/home/busy-message-behavior";
@@ -82,5 +83,13 @@ describe("busy message behavior", () => {
   it("does not invent a busy action for normal sends or stop controls", () => {
     expect(resolveBusyMessageActionForSubmitAction("send_normal")).toBeUndefined();
     expect(resolveBusyMessageActionForSubmitAction("stop", { useAlternate: true })).toBeUndefined();
+  });
+
+  it("recognizes exact manual stop text as a stop command", () => {
+    expect(isManualStopCommand("stop")).toBe(true);
+    expect(isManualStopCommand(" stop ")).toBe(true);
+    expect(isManualStopCommand("/stop")).toBe(true);
+    expect(isManualStopCommand("please stop")).toBe(false);
+    expect(isManualStopCommand("stop after this")).toBe(false);
   });
 });

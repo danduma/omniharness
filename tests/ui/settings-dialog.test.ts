@@ -73,6 +73,7 @@ test("general settings owns language and local text-size preferences without the
 test("models, agents, and runtime panels preserve server-backed settings", () => {
   expect(settingsSource).toContain('t("settings.models.supervisorTitle")');
   expect(settingsSource).toContain('t("settings.models.fallbackTitle")');
+  expect(settingsSource).toContain('t("settings.models.memoryTitle")');
   expect(settingsSource).toContain('t("settings.models.creditStrategy.label")');
   expect(settingsSource).toContain("SUPERVISOR_LLM_PROVIDER");
   expect(settingsSource).toContain("SUPERVISOR_LLM_MODEL");
@@ -82,6 +83,11 @@ test("models, agents, and runtime panels preserve server-backed settings", () =>
   expect(settingsSource).toContain("SUPERVISOR_FALLBACK_LLM_MODEL");
   expect(settingsSource).toContain("SUPERVISOR_FALLBACK_LLM_BASE_URL");
   expect(settingsSource).toContain("SUPERVISOR_FALLBACK_LLM_API_KEY");
+  expect(settingsSource).toContain("SUPERVISOR_MEMORY_LLM_USE_CUSTOM");
+  expect(settingsSource).toContain("SUPERVISOR_MEMORY_LLM_PROVIDER");
+  expect(settingsSource).toContain("SUPERVISOR_MEMORY_LLM_MODEL");
+  expect(settingsSource).toContain("SUPERVISOR_MEMORY_LLM_BASE_URL");
+  expect(settingsSource).toContain("SUPERVISOR_MEMORY_LLM_API_KEY");
   expect(settingsSource).toContain("LLM_PROVIDER_MODEL_CATALOG");
   expect(settingsSource).toContain("SUPERVISOR_LLM_THINKING_EFFORT");
   expect(settingsSource).toContain("settings.models.creditStrategy.explanation.");

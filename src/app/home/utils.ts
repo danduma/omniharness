@@ -229,6 +229,18 @@ export function mergePendingCreatedConversationSnapshots(
   return nextState;
 }
 
+const ACTIVE_RUN_STATUSES_FOR_EXECUTION_PANEL = new Set([
+  "running",
+  "starting",
+  "recovering",
+  "needs_recovery",
+  "awaiting_user",
+  "reviewing_plan",
+  "revising_plan",
+  "stuck",
+  "quota_waiting",
+]);
+
 export function shouldShowConversationExecutionPanel({
   selectedRun,
   isConversationThinking,
@@ -238,7 +250,16 @@ export function shouldShowConversationExecutionPanel({
   isConversationThinking: boolean;
   executionEventCount: number;
 }) {
-  return Boolean(selectedRun && (isConversationThinking || executionEventCount > 0));
+  if (!selectedRun) {
+    return false;
+  }
+  // A non-terminal run is always "running enough" to deserve the panel,
+  // even if the derived signals (active workers, recent events) flicker
+  // across a snapshot refresh or a supervisor wake/sleep gap.
+  if (ACTIVE_RUN_STATUSES_FOR_EXECUTION_PANEL.has(selectedRun.status)) {
+    return true;
+  }
+  return isConversationThinking || executionEventCount > 0;
 }
 
 const RECOVERABLE_RUNNING_GRACE_MS = 30_000;
@@ -279,13 +300,50 @@ export function shouldShowRecoverableRunningState({
     return false;
   }
 
-  const referenceTimestamp = latestExecutionEventCreatedAt || selectedRun.createdAt;
-  const referenceTimeMs = new Date(referenceTimestamp).getTime();
+  const candidateTimestamps = [
+    latestExecutionEventCreatedAt,
+    latestUserCheckpoint.createdAt,
+    selectedRun.createdAt,
+  ];
+  let referenceTimeMs = -Infinity;
+  for (const candidate of candidateTimestamps) {
+    if (!candidate) continue;
+    const ms = new Date(candidate).getTime();
+    if (Number.isFinite(ms) && ms > referenceTimeMs) {
+      referenceTimeMs = ms;
+    }
+  }
   if (!Number.isFinite(referenceTimeMs)) {
     return false;
   }
 
   return nowMs - referenceTimeMs >= RECOVERABLE_RUNNING_GRACE_MS;
+}
+
+export function shouldShowLatestRecoveryAction({
+  selectedRun,
+  canRetryConversation,
+  isSelectedConversationLoaded,
+  latestUserCheckpoint,
+  showRecoverableRunningState,
+  hasStuckWorker,
+}: {
+  selectedRun: RunRecord | null;
+  canRetryConversation: boolean;
+  isSelectedConversationLoaded: boolean;
+  latestUserCheckpoint: MessageRecord | null;
+  showRecoverableRunningState: boolean;
+  hasStuckWorker: boolean;
+}) {
+  if (!isSelectedConversationLoaded || !canRetryConversation || !latestUserCheckpoint) {
+    return false;
+  }
+
+  if (selectedRun?.status === "failed") {
+    return true;
+  }
+
+  return selectedRun?.status === "running" && (showRecoverableRunningState || hasStuckWorker);
 }
 
 export function shouldOpenExecutionDetailsForRun({
@@ -334,6 +392,7 @@ const RUN_LOG_ONLY_EVENT_TYPES = new Set([
   "worker_permission_auto_approved",
   "worker_prompted",
   "worker_session_resumed",
+  "worker_session_recreated",
   "worker_snapshot_invalid",
   "worker_stopped",
   "worker_turn_completed",
@@ -972,6 +1031,10 @@ export function summarizeExecutionEvent(event: ExecutionEventRecord) {
 
   if (event.eventType === "worker_session_resumed") {
     return `Resumed ${workerLabel} from saved session`;
+  }
+
+  if (event.eventType === "worker_session_recreated") {
+    return `Started a fresh session for ${workerLabel}`;
   }
 
   if (event.eventType === "worker_session_missing") {

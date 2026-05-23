@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/app/home/utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowLatestRecoveryAction, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/app/home/utils";
 import type { EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord, SupervisorInterventionRecord } from "@/app/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 
@@ -149,6 +149,50 @@ describe("home utils", () => {
       selectedRun: buildRun({ status: "failed" }),
       isConversationThinking: false,
       executionEventCount: 1,
+    })).toBe(true);
+  });
+
+  it("does not show latest recovery while the selected conversation is still loading", () => {
+    expect(shouldShowLatestRecoveryAction({
+      selectedRun: buildRun({ status: "running" }),
+      canRetryConversation: true,
+      isSelectedConversationLoaded: false,
+      latestUserCheckpoint: buildMessage({ role: "user", kind: "checkpoint" }),
+      showRecoverableRunningState: true,
+      hasStuckWorker: true,
+    })).toBe(false);
+  });
+
+  it("does not show latest recovery for awaiting-user conversations even with stale stuck-worker state", () => {
+    expect(shouldShowLatestRecoveryAction({
+      selectedRun: buildRun({ status: "awaiting_user" }),
+      canRetryConversation: true,
+      isSelectedConversationLoaded: true,
+      latestUserCheckpoint: buildMessage({ role: "user", kind: "checkpoint" }),
+      showRecoverableRunningState: true,
+      hasStuckWorker: true,
+    })).toBe(false);
+  });
+
+  it("shows latest recovery for loaded failed or stuck running conversations", () => {
+    const latestUserCheckpoint = buildMessage({ role: "user", kind: "checkpoint" });
+
+    expect(shouldShowLatestRecoveryAction({
+      selectedRun: buildRun({ status: "failed" }),
+      canRetryConversation: true,
+      isSelectedConversationLoaded: true,
+      latestUserCheckpoint,
+      showRecoverableRunningState: false,
+      hasStuckWorker: false,
+    })).toBe(true);
+
+    expect(shouldShowLatestRecoveryAction({
+      selectedRun: buildRun({ status: "running" }),
+      canRetryConversation: true,
+      isSelectedConversationLoaded: true,
+      latestUserCheckpoint,
+      showRecoverableRunningState: false,
+      hasStuckWorker: true,
     })).toBe(true);
   });
 
@@ -413,6 +457,7 @@ describe("home utils", () => {
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_spawned" }))).toBe("inline_event");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_stuck" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_session_missing" }))).toBe("run_log");
+    expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_session_recreated" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_spawn_blocked" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "run_failed" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "supervisor_file_read" }))).toBe("run_log");
@@ -673,6 +718,29 @@ describe("home utils", () => {
       latestExecutionEventCreatedAt: null,
       nowMs: new Date("2026-04-27T00:00:31.000Z").getTime(),
     })).toBe(true);
+  });
+
+  it("does not show recovery right after a fresh user checkpoint even when execution events are stale", () => {
+    expect(shouldShowRecoverableRunningState({
+      selectedRun: buildRun({
+        status: "running",
+        createdAt: "2026-04-27T00:00:00.000Z",
+      }),
+      latestUserCheckpoint: {
+        id: "message-2",
+        runId: "run-1",
+        role: "user",
+        kind: "checkpoint",
+        content: "Yes, implement it",
+        createdAt: "2026-04-27T00:15:00.000Z",
+      },
+      hasPendingPermission: false,
+      hasActiveWorker: false,
+      hasStuckWorker: false,
+      activeWorkerCount: 0,
+      latestExecutionEventCreatedAt: "2026-04-27T00:10:00.000Z",
+      nowMs: new Date("2026-04-27T00:15:05.000Z").getTime(),
+    })).toBe(false);
   });
 
   it("optimistically appends a sent follow-up message and revives the run status", () => {
@@ -1018,6 +1086,19 @@ describe("home utils", () => {
       }),
       createdAt: "2026-04-27T00:00:00.000Z",
     })).toBe("worker-1 session is no longer available");
+  });
+
+  it("summarizes fresh worker sessions after saved-session rejection", () => {
+    expect(summarizeExecutionEvent({
+      id: "event-1",
+      runId: "run-1",
+      workerId: "worker-1",
+      eventType: "worker_session_recreated",
+      details: JSON.stringify({
+        summary: "Started a fresh runtime worker for worker-1 after its saved session was rejected.",
+      }),
+      createdAt: "2026-04-27T00:00:00.000Z",
+    })).toBe("Started a fresh session for worker-1");
   });
 
   it("uses short worker labels in execution event summaries", () => {

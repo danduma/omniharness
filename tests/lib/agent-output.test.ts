@@ -1,7 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { buildAgentOutputActivity, extractLatestPlainTextTurn } from "@/lib/agent-output";
+import { buildAgentOutputActivity, extractLatestPlainTextTurn, type AgentOutputEntry } from "@/lib/agent-output";
 
 describe("agent output normalization", () => {
+  it("coalesces token-sized assistant message fragments into one activity", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        { id: "m1", type: "message", text: "The", timestamp: "2026-05-20T15:42:32.454Z" },
+        { id: "m2", type: "message", text: " executor", timestamp: "2026-05-20T15:42:32.477Z" },
+        { id: "m3", type: "message", text: " already", timestamp: "2026-05-20T15:42:32.498Z" },
+        { id: "m4", type: "message", text: " turns", timestamp: "2026-05-20T15:42:32.514Z" },
+        { id: "m5", type: "message", text: " that", timestamp: "2026-05-20T15:42:32.533Z" },
+        { id: "m6", type: "message", text: " into", timestamp: "2026-05-20T15:42:32.575Z" },
+        { id: "m7", type: "message", text: " real", timestamp: "2026-05-20T15:42:32.723Z" },
+        { id: "m8", type: "message", text: " trim", timestamp: "2026-05-20T15:42:32.727Z" },
+        { id: "m9", type: "message", text: " semantics", timestamp: "2026-05-20T15:42:32.732Z" },
+        { id: "m10", type: "message", text: ":", timestamp: "2026-05-20T15:42:32.738Z" },
+        { id: "m11", type: "message", text: " `", timestamp: "2026-05-20T15:42:32.749Z" },
+        { id: "m12", type: "message", text: "trim", timestamp: "2026-05-20T15:42:32.749Z" },
+        { id: "m13", type: "message", text: "Start", timestamp: "2026-05-20T15:42:32.749Z" },
+        { id: "m14", type: "message", text: "`,", timestamp: "2026-05-20T15:42:32.749Z" },
+      ],
+    });
+
+    expect(activity).toHaveLength(1);
+    expect(activity[0]).toMatchObject({
+      kind: "message",
+      text: "The executor already turns that into real trim semantics: `trimStart`,",
+      timestamp: "2026-05-20T15:42:32.454Z",
+    });
+  });
+
   it("renders the latest changed revision for repeated bridge message ids", () => {
     const activity = buildAgentOutputActivity({
       outputEntries: [
@@ -124,7 +152,7 @@ describe("agent output normalization", () => {
   });
 
   it("keeps a stable tool_group ID when new tools are appended to the group", () => {
-    const baseOutputEntries = [
+    const baseOutputEntries: AgentOutputEntry[] = [
       {
         id: "read-1",
         type: "tool_call",
@@ -684,7 +712,7 @@ describe("agent output normalization", () => {
       outputPane: {
         label: "DIFF",
         kind: "diff",
-        text: "diff -- /workspace/app/src/index.ts\n@@ replacement @@\n-const status = 'old';\n+const status = 'new';",
+        text: "diff -- /workspace/app/src/index.ts\n@@ -1 +1 @@\n-const status = 'old';\n+const status = 'new';",
       },
     });
   });
@@ -843,9 +871,55 @@ describe("agent output normalization", () => {
       outputPane: {
         label: "DIFF",
         kind: "diff",
-        text: "diff -- /workspace/app/src/index.ts\n@@ replacement @@\n-const status = 'old';\n+const status = 'new';",
+        text: "diff -- /workspace/app/src/index.ts\n@@ -1 +1 @@\n-const status = 'old';\n+const status = 'new';",
       },
     });
+  });
+
+  it("keeps contextual hunk shape for replacement diffs with unchanged lines", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        {
+          id: "edit-1",
+          type: "tool_call",
+          text: "Edit /workspace/app/src/index.ts",
+          timestamp: "2026-04-22T00:00:00.000Z",
+          toolCallId: "tool-1",
+          toolKind: "edit",
+          status: "completed",
+          raw: {
+            kind: "edit",
+            rawInput: {
+              file_path: "/workspace/app/src/index.ts",
+              old_string: [
+                "const first = true;",
+                "const mode = 'direct';",
+                "const command = AUTO_COMMIT_PROJECT_PROMPT;",
+                "const later = 1;",
+                "expect(payload.run.title).toBe('Commit');",
+              ].join("\n"),
+              new_string: [
+                "const first = true;",
+                "const mode = 'commit';",
+                "const command = AUTO_COMMIT_PROJECT_PROMPT;",
+                "const later = 1;",
+                "expect(payload.run.title).toBe('Commit');",
+                "expect(payload.run.mode).toBe('commit');",
+              ].join("\n"),
+            },
+          },
+        },
+      ],
+    });
+
+    const text = activity[0]?.kind === "tool" ? activity[0].outputPane?.text ?? "" : "";
+    expect(text).toContain("@@ -1,3 +1,3 @@");
+    expect(text).toContain(" const first = true;");
+    expect(text).toContain("-const mode = 'direct';");
+    expect(text).toContain("+const mode = 'commit';");
+    expect(text).toContain("@@ -5 +5,2 @@");
+    expect(text).toContain("+expect(payload.run.mode).toBe('commit');");
+    expect(text).not.toContain("@@ replacement @@");
   });
 
   it("groups active thoughts into a thinking activity", () => {

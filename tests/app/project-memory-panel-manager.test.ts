@@ -80,4 +80,76 @@ describe("ProjectMemoryPanelManager", () => {
       loading: false,
     });
   });
+
+  it("does not mark a newer draft as saved when an older save finishes", async () => {
+    const manager = new ProjectMemoryPanelManager();
+    const saveResponse = deferredResponse({ ok: true });
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(saveResponse.response));
+
+    manager.patch({
+      projectPath: "/project",
+      selectedPath: "memory.md",
+      content: "first draft",
+      originalContent: "original",
+    });
+    const save = manager.save();
+    manager.setContent("second draft");
+    saveResponse.resolve();
+    await save;
+
+    expect(manager.getSnapshot()).toMatchObject({
+      selectedPath: "memory.md",
+      content: "second draft",
+      originalContent: "original",
+      saving: false,
+      saveStatus: "idle",
+    });
+  });
+
+  it("ignores a stale toggle response after the project changes", async () => {
+    const manager = new ProjectMemoryPanelManager();
+    const first = deferredResponse({ ok: true });
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(first.response));
+
+    manager.patch({
+      projectPath: "/project-a",
+      enabled: false,
+    });
+    const toggle = manager.toggleEnabled(true);
+    manager.setProjectPath("/project-b");
+    first.resolve();
+    await toggle;
+
+    expect(manager.getSnapshot()).toMatchObject({
+      projectPath: "/project-b",
+      enabled: true,
+      error: null,
+    });
+  });
+
+  it("lets the latest same-project toggle own the enabled state", async () => {
+    const manager = new ProjectMemoryPanelManager();
+    const first = deferredResponse({ ok: true });
+    const second = deferredResponse({ ok: true });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockReturnValueOnce(first.response)
+      .mockReturnValueOnce(second.response));
+
+    manager.patch({
+      projectPath: "/project",
+      enabled: false,
+    });
+    const enable = manager.toggleEnabled(true);
+    const disable = manager.toggleEnabled(false);
+    second.resolve();
+    await disable;
+    first.resolve();
+    await enable;
+
+    expect(manager.getSnapshot()).toMatchObject({
+      projectPath: "/project",
+      enabled: false,
+      error: null,
+    });
+  });
 });

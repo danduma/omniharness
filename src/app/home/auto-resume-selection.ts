@@ -44,14 +44,30 @@ export function cancelInactiveAutoResumeTimers<TEntry extends { timerId: ReturnT
   return cancelled;
 }
 
-export function shouldFireAutoResumeTimer<TEntry extends { failureKey: string; timerId: ReturnType<typeof setTimeout> | null }>(args: {
+export function shouldFireAutoResumeTimer<TEntry extends {
+  failureKey: string;
+  targetMessageId: string;
+  timerId: ReturnType<typeof setTimeout> | null;
+}>(args: {
   entries: Map<string, TEntry>;
   runId: string;
   failureKey: string;
+  targetMessageId: string;
   activeRunId: string | null;
+  isAutoResumableConversation: boolean;
+  selectedRunStatus: string | null;
+  failedWorkerAvailabilityStatus: string | null;
+  hasWorkerFailureDetail: boolean;
+  recoverRunIsPending: boolean;
 }) {
   const current = args.entries.get(args.runId);
   return Boolean(current)
     && current?.failureKey === args.failureKey
-    && args.activeRunId === args.runId;
+    && current?.targetMessageId === args.targetMessageId
+    && args.activeRunId === args.runId
+    && args.isAutoResumableConversation
+    && args.selectedRunStatus === "failed"
+    && args.failedWorkerAvailabilityStatus === "ok"
+    && !args.hasWorkerFailureDetail
+    && !args.recoverRunIsPending;
 }

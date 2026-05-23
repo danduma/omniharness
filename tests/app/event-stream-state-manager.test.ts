@@ -243,6 +243,77 @@ describe("EventStreamStateManager", () => {
     expect(manager.getSnapshot().messages.map((message) => message.content)).toEqual(["fresh server conversation"]);
   });
 
+  it("does not demote selected server bootstrap state to a cached preview for the same run", () => {
+    const cache = new EventStreamSnapshotCacheManager({ storage: memoryStorage() });
+    cache.rememberState(state("run-b", "cached second conversation", "sha256:cached"), "run-b");
+    const manager = new EventStreamStateManager(state("run-b", "fresh server conversation", "sha256:server"), {
+      snapshotCache: cache,
+      snapshotCacheScope: "run-b",
+      deferCacheHydration: true,
+      initialSnapshotSource: "server",
+    });
+
+    expect(manager.hydrateFromCacheScope("run-b")).toBe(false);
+
+    expect(manager.getSnapshot().snapshotRunId).toBe("run-b");
+    expect(manager.getSnapshot().snapshotSource).toBe("server");
+    expect(manager.getSnapshot().messages.map((message) => message.content)).toEqual(["fresh server conversation"]);
+  });
+
+  it("does not resurrect cached queued messages when the server snapshot has an empty queue", () => {
+    const cache = new EventStreamSnapshotCacheManager({ storage: memoryStorage() });
+    cache.rememberState({
+      ...state("run-b", "cached second conversation", "sha256:cached-queue"),
+      queuedMessages: [{
+        id: "queued-stale",
+        runId: "run-b",
+        targetWorkerId: "run-b-worker-1",
+        action: "steer",
+        content: "This was already delivered.",
+        status: "pending",
+        lastError: null,
+        attachments: [],
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+        deliveredAt: null,
+      }],
+    }, "run-b");
+
+    const serverState = {
+      ...state("run-b", "fresh server conversation", "sha256:fresh-empty-queue"),
+      queuedMessages: [],
+      snapshotSource: "server" as const,
+    };
+    const hydrated = cache.hydrateState(serverState, "run-b");
+
+    expect(hydrated.queuedMessages).toEqual([]);
+  });
+
+  it("lets authoritative server run state retire a newer optimistic running row", () => {
+    const optimistic = state("run-b", "follow-up", "sha256:optimistic");
+    optimistic.runs = [{
+      ...optimistic.runs[0],
+      status: "running",
+      updatedAt: "2026-05-20T10:00:00.000Z",
+    }];
+    const serverDone = state("run-b", "follow-up", "sha256:server-done");
+    serverDone.runs = [{
+      ...serverDone.runs[0],
+      status: "done",
+      updatedAt: "2026-05-20T09:59:59.000Z",
+    }];
+    const manager = new EventStreamStateManager(optimistic, {
+      deferCacheHydration: true,
+      initialSnapshotSource: "cache",
+    });
+
+    manager.updateFromServer(serverDone);
+
+    expect(manager.getSnapshot().runs[0]?.status).toBe("done");
+    expect(manager.getSnapshot().runs[0]?.updatedAt).toBe("2026-05-20T09:59:59.000Z");
+    expect(manager.getSnapshot().snapshotSource).toBe("server");
+  });
+
   it("does not resurrect deleted runs from stale scoped frontend caches", () => {
     const cache = new EventStreamSnapshotCacheManager({ storage: memoryStorage() });
     cache.rememberState(

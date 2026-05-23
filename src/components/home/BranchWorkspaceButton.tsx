@@ -100,7 +100,7 @@ function selectWorkspaceState(projectPath: string | null) {
         pendingOperation: snapshot.pendingOperation,
         activeDialog: snapshot.activeDialog,
         dialogDraft: snapshot.dialogDraft,
-        lastError: snapshot.lastError,
+        lastError: null,
       };
     }
     return {
@@ -111,7 +111,7 @@ function selectWorkspaceState(projectPath: string | null) {
       pendingOperation: snapshot.pendingOperation,
       activeDialog: snapshot.activeDialog,
       dialogDraft: snapshot.dialogDraft,
-      lastError: snapshot.lastError,
+      lastError: snapshot.lastErrorByProject[projectPath] ?? null,
     };
   };
 }
