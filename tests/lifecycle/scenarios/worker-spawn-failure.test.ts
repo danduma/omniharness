@@ -8,6 +8,7 @@
  * surface a toast and the chaos harness can assert the failure.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
   executionEvents,
@@ -84,10 +85,26 @@ describe("lifecycle harness — worker spawn failure", () => {
       predicate: (frame) => (frame.payload as { code?: string } | null)?.code === "worker.spawn.failed",
       timeoutMs: 10_000,
     });
+    const runId = (surfaced.payload as { runId?: string }).runId;
+    const workerId = (surfaced.payload as { workerId?: string }).workerId;
+    expect(runId).toBeTruthy();
+    expect(workerId).toBeTruthy();
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId!)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId!)).get();
+
     expect(surfaced.payload).toMatchObject({
       code: "worker.spawn.failed",
       surface: "toast",
       cause: expect.objectContaining({ message: "bridge unreachable" }),
     });
+    expect(run).toEqual(expect.objectContaining({
+      status: "failed",
+      lastError: "bridge unreachable",
+    }));
+    expect(worker).toEqual(expect.objectContaining({
+      status: "error",
+      outputLog: "bridge unreachable",
+    }));
   });
 });

@@ -6,6 +6,7 @@ import { clearSupervisorWakeLease } from "./lease";
 import { isTransientSupervisorError } from "./retry";
 import { cancelDurableSupervisorWakesForTerminalRuns, rehydrateDurableSupervisorWakes } from "./wake-schedule";
 import { compactStaleWorkerOutputs } from "@/server/workers/output-store";
+import { compactStaleArtifactStreams } from "@/server/artifacts/compaction";
 
 const WATCHDOG_INTERVAL_MS = 15_000;
 
@@ -54,6 +55,9 @@ export async function syncRunningSupervision() {
   await rehydrateDurableSupervisorWakes();
   void compactStaleWorkerOutputs().catch((error) => {
     console.warn("Worker output compaction sweep failed:", error);
+  });
+  void compactStaleArtifactStreams().catch((error) => {
+    console.warn("Artifact stream compaction sweep failed:", error);
   });
   const activeRuns = await db.select().from(runs).where(and(
     inArray(runs.status, ["running", "failed", "quota_waiting"]),

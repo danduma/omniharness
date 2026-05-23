@@ -82,6 +82,46 @@ describe("supervisor model config", () => {
     });
   });
 
+  it("uses the active supervisor model for memory consolidation by default", () => {
+    const config = getSupervisorModelConfig({
+      SUPERVISOR_LLM_PROVIDER: "gemini",
+      SUPERVISOR_LLM_MODEL: "gemini-3.5-pro",
+      SUPERVISOR_LLM_API_KEY: "primary-key",
+      SUPERVISOR_FALLBACK_LLM_PROVIDER: "openai",
+      SUPERVISOR_FALLBACK_LLM_MODEL: "gpt-5.4-mini",
+      SUPERVISOR_FALLBACK_LLM_API_KEY: "fallback-key",
+    }, "memory");
+
+    expect(config).toEqual({
+      provider: "gemini",
+      model: "gemini-3.5-pro",
+      apiKey: "primary-key",
+      baseURL: undefined,
+      source: "primary",
+    });
+  });
+
+  it("can explicitly load a custom memory consolidation profile", () => {
+    const config = getSupervisorModelConfig({
+      SUPERVISOR_LLM_PROVIDER: "gemini",
+      SUPERVISOR_LLM_MODEL: "gemini-3.5-pro",
+      SUPERVISOR_LLM_API_KEY: "primary-key",
+      SUPERVISOR_MEMORY_LLM_USE_CUSTOM: "true",
+      SUPERVISOR_MEMORY_LLM_PROVIDER: "openai",
+      SUPERVISOR_MEMORY_LLM_MODEL: "gpt-5.4-mini",
+      SUPERVISOR_MEMORY_LLM_API_KEY: "memory-key",
+      SUPERVISOR_MEMORY_LLM_BASE_URL: "https://memory.example.com/v1",
+    }, "memory");
+
+    expect(config).toEqual({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      apiKey: "memory-key",
+      baseURL: "https://memory.example.com/v1",
+      source: "memory",
+    });
+  });
+
   it("fails with a clear recovery message when the supervisor key cannot be decrypted", () => {
     const config = getSupervisorModelConfig({});
 

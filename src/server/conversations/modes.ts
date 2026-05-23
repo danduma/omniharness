@@ -1,4 +1,4 @@
-export const CONVERSATION_MODES = ["implementation", "planning", "direct"] as const;
+export const CONVERSATION_MODES = ["implementation", "planning", "direct", "commit"] as const;
 
 export type ConversationMode = (typeof CONVERSATION_MODES)[number];
 
@@ -9,5 +9,5 @@ export function normalizeConversationMode(value: unknown): ConversationMode {
 }
 
 export function isDirectConversationMode(mode: ConversationMode) {
-  return mode === "planning" || mode === "direct";
+  return mode === "planning" || mode === "direct" || mode === "commit";
 }

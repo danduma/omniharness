@@ -24,5 +24,6 @@ export function resolveWorkerLaunchMode(requestedMode: unknown, yoloModeEnabled:
 export async function readWorkerYoloModeEnabled(defaultValue = true) {
   const allSettings = await db.select().from(settings);
   const settingValues = new Map(allSettings.map((setting) => [setting.key, setting.value]));
-  return parseBooleanSetting(settingValues.get(WORKER_YOLO_MODE_SETTING), defaultValue);
+  const stored = settingValues.get(WORKER_YOLO_MODE_SETTING);
+  return parseBooleanSetting(typeof stored === "string" ? stored : null, defaultValue);
 }

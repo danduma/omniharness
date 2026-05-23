@@ -11,6 +11,11 @@ import {
   readWorkerOutputEntries,
   writeWorkerOutputEntries,
 } from "@/server/workers/output-store";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
+import {
+  __resetWorkerTurnChainsForTests,
+  waitForConversationBackgroundTasksForTests,
+} from "@/server/conversations/worker-turn-gate";
 
 const {
   mockStartSupervisorRun,
@@ -172,6 +177,8 @@ describe("POST /api/conversations", () => {
     mockValidateWorkspaceTarget.mockReset();
     mockCreateBranchWorktree.mockReset();
     __resetOutputStoreCachesForTests();
+    __resetNamedEventsForTests();
+    __resetWorkerTurnChainsForTests();
 
     await db.delete(executionEvents);
     await db.delete(messages);
@@ -706,6 +713,54 @@ describe("POST /api/conversations", () => {
     expect(storedMessages.filter((message) => message.kind === "error")).toHaveLength(0);
   });
 
+  it("marks a planning conversation failed and emits a surfaced error when initial spawn rejects", async () => {
+    mockSpawnAgent.mockRejectedValueOnce(new Error("planner bridge unreachable"));
+
+    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "planning",
+        command: "Help me write a plan that cannot spawn",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    const workerId = `${payload.runId}-worker-1`;
+
+    await waitForConversationBackgroundTasksForTests();
+
+    const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+    const createdPlan = await db.select().from(plans).where(eq(plans.id, payload.planId)).get();
+    const createdWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const namedEvents = getNamedEventsSince(0, { runId: payload.runId }).events.map((entry) => entry.event);
+
+    expect(createdRun).toEqual(expect.objectContaining({
+      status: "failed",
+      lastError: "planner bridge unreachable",
+    }));
+    expect(createdPlan?.status).toBe("failed");
+    expect(createdWorker).toEqual(expect.objectContaining({
+      status: "error",
+      outputLog: "planner bridge unreachable",
+    }));
+    expect(namedEvents).toContainEqual(expect.objectContaining({
+      kind: "worker.status",
+      workerId,
+      prev: "starting",
+      next: "error",
+    }));
+    expect(namedEvents).toContainEqual(expect.objectContaining({
+      kind: "error.surfaced",
+      code: "worker.spawn.failed",
+      runId: payload.runId,
+      workerId,
+    }));
+    expect(mockAskAgent).not.toHaveBeenCalled();
+  });
+
   it("starts a direct conversation with one direct worker and no supervisor", async () => {
     const request = new NextRequest("http://localhost/api/conversations", {
       method: "POST",
@@ -835,6 +890,54 @@ describe("POST /api/conversations", () => {
     );
   });
 
+  it("marks a direct conversation failed and emits a surfaced error when initial spawn rejects", async () => {
+    mockSpawnAgent.mockRejectedValueOnce(new Error("bridge unreachable"));
+
+    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command: "Open a direct session that cannot spawn",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    const workerId = `${payload.runId}-worker-1`;
+
+    await waitForConversationBackgroundTasksForTests();
+
+    const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+    const createdWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const entries = await readWorkerOutputEntries(payload.runId, workerId);
+    const namedEvents = getNamedEventsSince(0, { runId: payload.runId }).events.map((entry) => entry.event);
+
+    expect(createdRun).toEqual(expect.objectContaining({
+      status: "failed",
+      lastError: "bridge unreachable",
+    }));
+    expect(createdWorker).toEqual(expect.objectContaining({
+      status: "error",
+      outputLog: "bridge unreachable",
+    }));
+    expect(entries.some((entry) => entry.type === "lifecycle" && entry.text === "Worker spawn failed: bridge unreachable")).toBe(true);
+    expect(namedEvents).toContainEqual(expect.objectContaining({
+      kind: "worker.status",
+      workerId,
+      prev: "starting",
+      next: "error",
+    }));
+    expect(namedEvents).toContainEqual(expect.objectContaining({
+      kind: "error.surfaced",
+      code: "worker.spawn.failed",
+      runId: payload.runId,
+      workerId,
+    }));
+    expect(mockAskAgent).not.toHaveBeenCalled();
+  });
+
   it("returns a direct conversation without waiting for supervisor runtime startup", async () => {
     const resolveStartupRef: Array<() => void> = [];
     mockEnsureSupervisorRuntimeStarted.mockImplementationOnce(() => new Promise<void>((resolve) => {
@@ -872,7 +975,7 @@ describe("POST /api/conversations", () => {
     const request = new NextRequest("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
-        mode: "direct",
+        mode: "commit",
         command: AUTO_COMMIT_PROJECT_PROMPT,
         projectPath: "/workspace/app",
         preferredWorkerType: "codex",
@@ -886,7 +989,9 @@ describe("POST /api/conversations", () => {
     const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
 
     expect(payload.run.title).toBe("Commit");
+    expect(payload.run.mode).toBe("commit");
     expect(createdRun?.title).toBe("Commit");
+    expect(createdRun?.mode).toBe("commit");
     expect(mockQueueConversationTitleGeneration).not.toHaveBeenCalled();
   });
 

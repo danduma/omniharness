@@ -415,6 +415,10 @@ function readLoginShellPath(env: EnvLike, mode: "blocking" | "cached"): string |
 
   const cacheKey = loginShellPathCacheKey(env, shell);
   if (mode === "blocking") {
+    const cached = loginShellPathCache.get(cacheKey);
+    if (cached && !cached.refreshing) {
+      return cached.path;
+    }
     const path = readLoginShellPathBlocking(shell, env);
     loginShellPathCache.set(cacheKey, { path, refreshing: false });
     return path;

@@ -25,6 +25,7 @@ import {
   plans,
 } from "@/server/db/schema";
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
+import * as wakeSchedule from "@/server/supervisor/wake-schedule";
 import { resetDurableSupervisorWakeSchedulerForTests } from "@/server/supervisor/wake-schedule";
 
 const { mockAskAgent, mockGetAgent, mockSpawnAgent, mockSupervisorRun, mockStopRunObserver } = vi.hoisted(() => ({
@@ -53,7 +54,7 @@ vi.mock("@/server/bridge-client", () => ({
   spawnAgent: mockSpawnAgent,
 }));
 
-import { cancelSupervisorWake, executeSupervisorWake } from "@/server/supervisor/wake";
+import { cancelSupervisorWake, executeSupervisorWake, scheduleSupervisorWake } from "@/server/supervisor/wake";
 
 describe("executeSupervisorWake", () => {
   beforeEach(async () => {
@@ -200,6 +201,33 @@ describe("executeSupervisorWake", () => {
     cancelSupervisorWake(runId);
 
     expect(mockSupervisorRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces durable wake backup failures without dropping the volatile wake", async () => {
+    vi.useFakeTimers();
+    const runId = randomUUID();
+    const scheduleBackup = vi.spyOn(wakeSchedule, "scheduleDurableSupervisorWakeAt")
+      .mockRejectedValueOnce(new Error("SQLITE_BUSY: database is locked"));
+
+    scheduleSupervisorWake(runId, 1_000);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const events = getNamedEventsSince(0, { runId }).events.map((entry) => entry.event);
+    expect(events).toContainEqual({ kind: "supervisor.wake_scheduled", runId, delayMs: 1_000, source: "lease_retry" });
+    expect(events).toContainEqual({
+      kind: "supervisor.durable_wake_schedule_failed",
+      runId,
+      reason: "supervisor_wait",
+      source: "volatile-wake-backup",
+      error: "SQLITE_BUSY: database is locked",
+    });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    cancelSupervisorWake(runId);
+
+    expect(scheduleBackup).toHaveBeenCalledTimes(1);
+    expect(mockSupervisorRun).not.toHaveBeenCalled();
   });
 
   it("persists wait wakeups so supervisor heartbeats survive reloads", async () => {
@@ -374,6 +402,11 @@ describe("executeSupervisorWake", () => {
     expect(events.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
     expect(events.some((event) => event.eventType === "worker_prompted")).toBe(true);
     expect(events.some((event) => event.eventType === "run_failed")).toBe(false);
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "worker.reattached",
+      runId,
+      workerId,
+    }));
   });
 
   it("breaks an orphaned lease when an idle worker already produced completion evidence", async () => {
@@ -432,6 +465,12 @@ describe("executeSupervisorWake", () => {
     expect(mockSupervisorRun).toHaveBeenCalledTimes(1);
     const recoveryEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
     expect(recoveryEvent.some((event) => event.eventType === "supervisor_wake_lease_recovered")).toBe(true);
+    const namedEvents = getNamedEventsSince(0, { runId }).events.map((entry) => entry.event);
+    expect(namedEvents).toContainEqual({
+      kind: "supervisor.wake_lease_recovered",
+      runId,
+      reason: "orphaned_completion",
+    });
 
     cancelSupervisorWake(runId);
   });

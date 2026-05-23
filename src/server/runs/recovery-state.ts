@@ -95,7 +95,7 @@ function timestampMs(value: Date | string | null | undefined) {
 }
 
 export function isRecoverableAgentMissingError(value: string | null | undefined) {
-  return /\b(agent not found|not_found|session not found|invalid session identifier|404)\b/i.test(value ?? "");
+  return /\b(agent not found|not_found|session not found|invalid session identifier|failed to load resumed session data from file|404)\b/i.test(value ?? "");
 }
 
 function isActivePersistedWorker(worker: RecoveryWorkerLike, nowMs: number) {

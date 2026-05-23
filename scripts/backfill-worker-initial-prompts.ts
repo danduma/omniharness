@@ -14,6 +14,11 @@ import { db } from "@/server/db";
 import { runs, workers, plans, messages } from "@/server/db/schema";
 import { getAppDataPath } from "@/server/app-root";
 
+type WorkerRow = typeof workers.$inferSelect;
+type RunRow = typeof runs.$inferSelect;
+type PlanRow = typeof plans.$inferSelect;
+type MessageRow = typeof messages.$inferSelect;
+
 function extractOriginalCommand(markdown: string): string | null {
   const startMarker = "Original command:";
   const startIndex = markdown.indexOf(startMarker);
@@ -41,9 +46,9 @@ function extractOriginalCommand(markdown: string): string | null {
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
 
-  const allWorkers = await db.select().from(workers);
-  const allRuns = await db.select().from(runs);
-  const allPlans = await db.select().from(plans);
+  const allWorkers = await db.select().from(workers) as WorkerRow[];
+  const allRuns = await db.select().from(runs) as RunRow[];
+  const allPlans = await db.select().from(plans) as PlanRow[];
   const runsById = new Map(allRuns.map((run) => [run.id, run]));
   const plansById = new Map(allPlans.map((plan) => [plan.id, plan]));
 
@@ -66,7 +71,7 @@ async function main() {
     const surviving = await db
       .select()
       .from(messages)
-      .where(eq(messages.runId, worker.runId));
+      .where(eq(messages.runId, worker.runId)) as MessageRow[];
     const initialUser = surviving
       .filter((message) => message.role === "user")
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())[0];

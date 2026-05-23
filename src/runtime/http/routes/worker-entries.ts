@@ -121,9 +121,9 @@ export const handleWorkerEntriesRequest: OmniHttpHandler = async (request, conte
     }
 
     // Existing live-tail path: entries strictly newer than afterSeq.
-    const { entries, latestSeq } = await readWorkerEntriesSince(runId, workerId, afterSeq);
-    probe.mark("readEntries");
-    return Response.json({ entries, latestSeq });
+    const result = await readWorkerEntriesSince(runId, workerId, afterSeq);
+    probe.mark(`readEntries[${result._path ?? "?"}]`);
+    return Response.json({ entries: result.entries, latestSeq: result.latestSeq });
   } catch (error) {
     return errorResponse(error, {
       status: 500,

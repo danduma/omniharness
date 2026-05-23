@@ -21,6 +21,6 @@ export const handlePlansRequest: OmniHttpHandler = async (request) => {
     return auth.response;
   }
 
-  const allPlans = await db.select().from(plans).orderBy(desc(plans.createdAt));
+  const allPlans = await db.select().from(plans).orderBy(desc(plans.createdAt), desc(plans.id));
   return Response.json(allPlans);
 };

@@ -1,7 +1,5 @@
-import { randomUUID } from "crypto";
-import { db } from "@/server/db";
-import { supervisorInterventions } from "@/server/db/schema";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { recordSupervisorInterventionArtifact } from "./intervention-store";
 
 export function classifySupervisorIntervention(prompt: string) {
   const normalized = prompt.toLowerCase();
@@ -29,17 +27,25 @@ export async function recordSupervisorIntervention(args: {
   summary?: string | null;
   interventionType?: string | null;
 }) {
-  const record = {
-    id: randomUUID(),
+  const interventionType = args.interventionType?.trim() || classifySupervisorIntervention(args.prompt);
+  const summary = args.summary?.trim() || null;
+  const createdAt = new Date();
+  const { id } = await recordSupervisorInterventionArtifact({
     runId: args.runId,
     workerId: args.workerId,
-    interventionType: args.interventionType?.trim() || classifySupervisorIntervention(args.prompt),
     prompt: args.prompt,
-    summary: args.summary?.trim() || null,
-    createdAt: new Date(),
-  };
-
-  await db.insert(supervisorInterventions).values(record);
+    summary,
+    interventionType,
+    createdAt,
+  });
   notifyEventStreamSubscribers();
-  return record;
+  return {
+    id,
+    runId: args.runId,
+    workerId: args.workerId,
+    interventionType,
+    prompt: args.prompt,
+    summary,
+    createdAt,
+  };
 }

@@ -9,6 +9,7 @@ import { handleAccountsRequest } from "./accounts";
 import { handleAgentsRequest } from "./agents";
 import { handleAgentsCatalogRequest } from "./agents-catalog";
 import { handleAgentDetailRequest } from "./agent-detail";
+import { handlePrewarmWorkerRequest } from "./prewarm-worker";
 import { handleLlmModelsRequest } from "./llm-models";
 import { handleCodexAuthStatusRequest } from "./codex-auth-status";
 import { handleRuntimeBootstrapRequest } from "./runtime-bootstrap";
@@ -49,6 +50,7 @@ export function createOmniRuntimeHttpRegistry() {
     .route("GET", "/api/agents", handleAgentsRequest)
     .route("GET", "/api/agents/:name", handleAgentDetailRequest)
     .route("GET", "/api/agents/catalog", handleAgentsCatalogRequest)
+    .route("POST", "/api/agents/prewarm-worker", handlePrewarmWorkerRequest)
     .route("POST", "/api/llm-models", handleLlmModelsRequest)
     .route("GET", "/api/codex-auth/status", handleCodexAuthStatusRequest)
     .route("GET", "/api/notifications", handleNotificationsRequest)
@@ -90,6 +92,7 @@ export { handleAccountsRequest } from "./accounts";
 export { handleAgentsRequest } from "./agents";
 export { handleAgentsCatalogRequest } from "./agents-catalog";
 export { handleAgentDetailRequest } from "./agent-detail";
+export { handlePrewarmWorkerRequest } from "./prewarm-worker";
 export { handleLlmModelsRequest } from "./llm-models";
 export { handleCodexAuthStatusRequest } from "./codex-auth-status";
 export { handleRuntimeBootstrapRequest } from "./runtime-bootstrap";

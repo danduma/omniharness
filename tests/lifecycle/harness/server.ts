@@ -24,6 +24,7 @@ import { Readable } from "node:stream";
 import { NextRequest } from "next/server";
 
 import { __resetNamedEventsForTests } from "@/server/events/named-events";
+import { waitForConversationBackgroundTasksForTests } from "@/server/conversations/worker-turn-gate";
 
 type RouteHandler = (
   req: NextRequest,
@@ -172,6 +173,7 @@ export async function startLifecycleHarness(options: LifecycleHarnessOptions): P
         server.closeAllConnections?.();
         server.close((err) => (err ? reject(err) : resolve()));
       });
+      await waitForConversationBackgroundTasksForTests(2_000);
       try {
         rmSync(omniRoot, { recursive: true, force: true });
       } catch {

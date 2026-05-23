@@ -167,13 +167,26 @@ function fileLockDelay(attempt: number) {
   return Math.min(Math.round(delay), FILE_LOCK_MAX_TIMEOUT_MS);
 }
 
+function isRecoverableLockRaceError(error: unknown) {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
 async function isFileLockStale(lockPath: string) {
   try {
     const stat = await fs.stat(lockPath);
+    try {
+      await fs.access(path.join(lockPath, "owner.json"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return true;
+      }
+      throw error;
+    }
     return stat.mtimeMs < Date.now() - FILE_LOCK_STALE_MS;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return false;
+      return true;
     }
     throw error;
   }
@@ -195,6 +208,9 @@ async function acquireArtifactFileLock(lockPath: string): Promise<() => Promise<
         await fs.writeFile(ownerPath, owner, "utf8");
       } catch (error) {
         await fs.rm(lockPath, { recursive: true, force: true });
+        if (isRecoverableLockRaceError(error)) {
+          continue;
+        }
         throw error;
       }
 

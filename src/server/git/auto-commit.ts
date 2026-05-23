@@ -1,4 +1,6 @@
 import { spawnSync } from "child_process";
+import { existsSync, statSync } from "fs";
+import * as path from "path";
 
 export type GitBaseline =
   | {
@@ -7,6 +9,7 @@ export type GitBaseline =
       headSha: string | null;
       clean: boolean;
       porcelain: string;
+      capturedAt?: number;
     }
   | {
       status: "not_git";
@@ -23,7 +26,7 @@ export type AutoCommitResult =
     }
   | {
       status: "skipped";
-      reason: "disabled" | "not_git" | "dirty_baseline" | "no_changes";
+      reason: "disabled" | "not_git" | "no_changes";
       details?: string;
     }
   | {
@@ -84,6 +87,7 @@ export function captureGitBaseline(cwd: string): GitBaseline {
     headSha: head.ok ? head.stdout : null,
     clean: status.ok && status.stdout.length === 0,
     porcelain: status.stdout,
+    capturedAt: Date.now(),
   };
 }
 
@@ -102,6 +106,37 @@ export function parseGitBaselineJson(value: string | null | undefined): GitBasel
   }
 
   return null;
+}
+
+function parsePorcelain(stdout: string): Map<string, string> {
+  const fileMap = new Map<string, string>();
+  if (!stdout) return fileMap;
+
+  const lines = stdout.split("\n");
+  for (const line of lines) {
+    if (line.length < 4) continue;
+    const status = line.slice(0, 2);
+    let pathPart = line.slice(3).trim();
+
+    // Remove quotes if git quoted the path
+    if (pathPart.startsWith('"') && pathPart.endsWith('"')) {
+      pathPart = pathPart.slice(1, -1);
+    }
+
+    if (status.includes("R")) {
+      const parts = pathPart.split(" -> ");
+      if (parts.length === 2) {
+        const oldPath = parts[0].trim();
+        const newPath = parts[1].trim();
+        fileMap.set(oldPath, status);
+        fileMap.set(newPath, status);
+        continue;
+      }
+    }
+
+    fileMap.set(pathPart, status);
+  }
+  return fileMap;
 }
 
 export function autoCommitMilestone({
@@ -127,10 +162,6 @@ export function autoCommitMilestone({
     return { status: "skipped", reason: "not_git", details: baseline?.reason };
   }
 
-  if (!baseline.clean) {
-    return { status: "skipped", reason: "dirty_baseline", details: baseline.porcelain };
-  }
-
   const current = captureGitBaseline(cwd);
   if (current.status === "not_git") {
     return { status: "skipped", reason: "not_git", details: current.reason };
@@ -145,9 +176,52 @@ export function autoCommitMilestone({
     return { status: "skipped", reason: "no_changes" };
   }
 
-  const add = runGit(current.repoRoot, ["add", "-A"]);
+  const baselineFiles = parsePorcelain(baseline.status === "ok" ? baseline.porcelain : "");
+  const currentFiles = parsePorcelain(status.stdout);
+
+  const touchedFiles: string[] = [];
+
+  for (const [file, currentStatus] of currentFiles.entries()) {
+    const baselineStatus = baselineFiles.get(file);
+
+    if (baselineStatus === undefined) {
+      // File was clean at baseline and is now dirty -> touched
+      touchedFiles.push(file);
+    } else if (baselineStatus !== currentStatus) {
+      // Status changed (e.g. staged vs unstaged, or untracked to modified, etc.) -> touched
+      touchedFiles.push(file);
+    } else {
+      // Status is exactly the same. Check mtime if we have capturedAt.
+      if (baseline.status === "ok" && typeof baseline.capturedAt === "number") {
+        const absPath = path.resolve(current.repoRoot, file);
+        if (existsSync(absPath)) {
+          try {
+            const stat = statSync(absPath);
+            if (stat.mtimeMs >= baseline.capturedAt) {
+              touchedFiles.push(file);
+            }
+          } catch {
+            // Be conservative, don't assume touched if stat fails
+          }
+        }
+      }
+    }
+  }
+
+  if (touchedFiles.length === 0) {
+    return { status: "skipped", reason: "no_changes" };
+  }
+
+  if (baseline.status === "ok" && baseline.headSha) {
+    const reset = runGit(current.repoRoot, ["reset"]);
+    if (!reset.ok) {
+      return { status: "failed", reason: "reset_failed", stderr: formatGitFailure("reset", reset) };
+    }
+  }
+
+  const add = runGit(current.repoRoot, ["add", "--", ...touchedFiles]);
   if (!add.ok) {
-    return { status: "failed", reason: "add_failed", stderr: formatGitFailure("add -A", add) };
+    return { status: "failed", reason: "add_failed", stderr: formatGitFailure("add", add) };
   }
 
   const commit = runGit(current.repoRoot, ["commit", "-m", subject, "-m", body]);

@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
 import { messages, plans, queuedConversationMessages, runs, workers } from "@/server/db/schema";
 import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
@@ -10,9 +10,9 @@ export async function findLatestUserCheckpoint(runId: string) {
   const runMessages = await db.select()
     .from(messages)
     .where(eq(messages.runId, runId))
-    .orderBy(asc(messages.createdAt));
+    .orderBy(desc(messages.createdAt), desc(messages.id));
 
-  return runMessages.filter((message) => message.role === "user").at(-1) ?? null;
+  return runMessages.find((message) => message.role === "user") ?? null;
 }
 
 export async function requeueRecoverableQueuedMessages(args: {
@@ -51,7 +51,7 @@ export async function drainPendingImplementationQueuedMessages(runId: string) {
   const records = await db.select()
     .from(queuedConversationMessages)
     .where(eq(queuedConversationMessages.runId, runId))
-    .orderBy(asc(queuedConversationMessages.createdAt));
+    .orderBy(asc(queuedConversationMessages.createdAt), asc(queuedConversationMessages.id));
   let deliveredCount = 0;
 
   for (const record of records) {

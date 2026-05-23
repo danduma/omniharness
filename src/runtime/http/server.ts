@@ -61,9 +61,10 @@ async function toFetchRequest(request: IncomingMessage, host: string, port: numb
   }
 
   const method = request.method || "GET";
-  const body = method === "GET" || method === "HEAD"
+  const requestBody = method === "GET" || method === "HEAD"
     ? undefined
     : await readRequestBody(request);
+  const body = requestBody ? new Uint8Array(requestBody) : undefined;
 
   return new Request(requestUrl(request, host, port), { method, headers, body });
 }

@@ -66,6 +66,22 @@ describe("named-events ring buffer", () => {
     expect(result.events.map((entry) => entry.event.kind)).toEqual(["worker.status", "worker.terminal"]);
   });
 
+  it("can drain only through a marker boundary without leaking later events", () => {
+    emitNamedEvent({ kind: "worker.entry_appended", runId: "r1", workerId: "w1", seq: 1 });
+    const marker = recordSnapshotMarker(1, "r1");
+    emitNamedEvent({ kind: "worker.entry_appended", runId: "r1", workerId: "w1", seq: 2 });
+
+    const beforeMarker = getNamedEventsSince(0, { throughId: marker.id - 1 });
+    expect(beforeMarker.events.map((entry) => entry.event)).toEqual([
+      expect.objectContaining({ kind: "worker.entry_appended", seq: 1 }),
+    ]);
+
+    const afterMarker = getNamedEventsSince(marker.id);
+    expect(afterMarker.events.map((entry) => entry.event)).toEqual([
+      expect.objectContaining({ kind: "worker.entry_appended", seq: 2 }),
+    ]);
+  });
+
   it("signals resyncRequired when lastEventId is older than the oldest buffered entry", () => {
     const capacity = __getRingCapacity();
     for (let i = 0; i < capacity + 5; i++) {

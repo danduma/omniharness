@@ -2,6 +2,78 @@ import { describe, expect, it } from "vitest";
 import { buildLiveWorkerSnapshot } from "@/server/workers/live-snapshots";
 
 describe("buildLiveWorkerSnapshot", () => {
+  it("drops stale live current text from an idle completed direct worker", () => {
+    const snapshot = buildLiveWorkerSnapshot({
+      agent: {
+        name: "worker-done",
+        type: "gemini",
+        cwd: "/repo",
+        state: "idle",
+        currentText: "Final answer that the bridge left in currentText",
+        lastText: "Final answer that the bridge left in currentText",
+        outputEntries: [
+          {
+            id: "entry-final",
+            type: "message",
+            text: "Final answer that the bridge left in currentText",
+            timestamp: new Date(0).toISOString(),
+          },
+        ],
+        pendingPermissions: [],
+      },
+      worker: {
+        id: "worker-done",
+        runId: "run-done",
+        type: "gemini",
+        status: "idle",
+        cwd: "/repo",
+        outputLog: "",
+        outputEntries: [
+          {
+            id: "entry-final",
+            type: "message",
+            text: "Final answer that the bridge left in currentText",
+            timestamp: new Date(0).toISOString(),
+          },
+        ],
+        currentText: "",
+        lastText: "Final answer that the bridge left in currentText",
+        bridgeSessionId: "session-done",
+        bridgeSessionMode: "full-access",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      run: {
+        id: "run-done",
+        planId: "plan-done",
+        mode: "direct",
+        projectPath: "/repo",
+        title: "Completed direct run",
+        preferredWorkerType: "gemini",
+        preferredWorkerModel: "gemini-3.5-flash",
+        preferredWorkerEffort: "high",
+        allowedWorkerTypes: "gemini",
+        specPath: null,
+        artifactPlanPath: null,
+        plannerArtifactsJson: null,
+        parentRunId: null,
+        forkedFromMessageId: null,
+        status: "done",
+        failedAt: null,
+        lastError: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+
+    expect(snapshot).toEqual(expect.objectContaining({
+      state: "idle",
+      currentText: "",
+      lastText: "Final answer that the bridge left in currentText",
+      displayText: "Final answer that the bridge left in currentText",
+    }));
+  });
+
   it("drops stale bridge permission requests from completed runs", () => {
     const snapshot = buildLiveWorkerSnapshot({
       agent: {

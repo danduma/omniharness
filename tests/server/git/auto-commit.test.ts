@@ -55,10 +55,11 @@ describe("autoCommitMilestone", () => {
     expect(git(repo, ["status", "--porcelain"])).toBe("");
   }, GIT_AUTO_COMMIT_TEST_TIMEOUT_MS);
 
-  it("skips when the baseline was dirty", () => {
+  it("commits only touched files when the baseline was dirty", () => {
     const repo = createRepo("dirty-baseline");
     writeFileSync(path.join(repo, "dirty.txt"), "already dirty\n");
     const baseline = captureGitBaseline(repo);
+    // Write feature.txt after baseline capture. This is the touched file.
     writeFileSync(path.join(repo, "feature.txt"), "implemented\n");
 
     const result = autoCommitMilestone({
@@ -70,12 +71,16 @@ describe("autoCommitMilestone", () => {
       body: "run id: test-run",
     });
 
-    expect(result.status).toBe("skipped");
-    if (result.status !== "skipped") {
-      throw new Error(`Expected skipped result, got ${result.status}`);
+    expect(result.status).toBe("created");
+    if (result.status !== "created") {
+      throw new Error(`Expected created result, got ${result.status}`);
     }
-    expect(result.reason).toBe("dirty_baseline");
-    expect(git(repo, ["log", "-1", "--pretty=%s"])).toBe("initial");
+    expect(result.commitSha).toMatch(/^[0-9a-f]{7,40}$/);
+    expect(git(repo, ["log", "-1", "--pretty=%s"])).toBe("OmniHarness: test milestone");
+
+    // Check that dirty.txt remains unstaged/dirty, but feature.txt is now clean (since it was committed)
+    const statusOutput = git(repo, ["status", "--porcelain"]);
+    expect(statusOutput).toBe("?? dirty.txt");
   }, GIT_AUTO_COMMIT_TEST_TIMEOUT_MS);
 
   it("skips when there are no changes", () => {

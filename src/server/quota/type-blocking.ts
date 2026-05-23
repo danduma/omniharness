@@ -8,6 +8,8 @@ import {
   normalizeWorkerType,
 } from "@/server/supervisor/worker-types";
 
+type RecoveryIncidentRecord = typeof recoveryIncidents.$inferSelect;
+
 export type QuotaBlockReason = {
   reason: string;
   resumeAt: Date | null;
@@ -32,6 +34,13 @@ function readResumeAt(details: Record<string, unknown>): Date | null {
   if (typeof value !== "string") return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function newestRecoveryIncident(incidents: RecoveryIncidentRecord[]) {
+  return [...incidents].sort((a, b) => {
+    const updatedDelta = b.updatedAt.getTime() - a.updatedAt.getTime();
+    return updatedDelta !== 0 ? updatedDelta : b.id.localeCompare(a.id);
+  })[0] ?? null;
 }
 
 function isResumeAtPast(resumeAt: Date | null, now: Date): boolean {
@@ -73,9 +82,9 @@ export async function isWorkerTypeQuotaBlocked(
       ));
 
     const anyStillActive = exhaustedWorkers.some((worker) => {
-      const incidentForWorker = recentIncidents
-        .filter((incident) => incident.workerId === worker.id)
-        .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0];
+      const incidentForWorker = newestRecoveryIncident(
+        recentIncidents.filter((incident) => incident.workerId === worker.id),
+      );
       if (!incidentForWorker) return true;
       const details = parseDetails(incidentForWorker.details);
       const resumeAt = readResumeAt(details);
@@ -148,9 +157,9 @@ export async function quotaBlockedTypes(
     : [];
 
   for (const worker of credExhaustedRows) {
-    const incidentForWorker = credIncidents
-      .filter((incident) => incident.workerId === worker.id)
-      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0];
+    const incidentForWorker = newestRecoveryIncident(
+      credIncidents.filter((incident) => incident.workerId === worker.id),
+    );
     const details = parseDetails(incidentForWorker?.details);
     const resumeAt = readResumeAt(details);
     if (isResumeAtPast(resumeAt, now)) {

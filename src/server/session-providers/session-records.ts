@@ -1,8 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { processSessions, runs, workers } from "@/server/db/schema";
-import { getSessionProvider } from "./registry";
-import { normalizeSessionType } from "./capabilities";
+import { getDefaultCapabilities, normalizeSessionType } from "./capabilities";
 import type { ProviderSessionRecord, SessionRecord, SessionType } from "./types";
 
 type RunRow = typeof runs.$inferSelect;
@@ -66,7 +65,17 @@ export function serializeSessionRecord(args: {
   processSession?: ProcessSessionRow | null;
 }): SessionRecord {
   const providerRecord = buildProviderSessionRecord(args);
-  return getSessionProvider(providerRecord.sessionType).serialize(providerRecord);
+  return {
+    id: providerRecord.runId,
+    runId: providerRecord.runId,
+    sessionType: providerRecord.sessionType,
+    status: providerRecord.status,
+    capabilities: getDefaultCapabilities(providerRecord),
+    primaryActorId: providerRecord.primaryActorId ?? null,
+    title: providerRecord.title ?? null,
+    projectPath: providerRecord.projectPath ?? null,
+    providerMetadata: providerRecord.providerMetadata ?? null,
+  };
 }
 
 export async function readSessionRecord(runId: string): Promise<SessionRecord | null> {

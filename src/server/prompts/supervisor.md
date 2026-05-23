@@ -49,6 +49,7 @@ Preflight intent confirmation:
 - Do not repeat preflight after work has started unless new user input materially changes the objective.
 
 Independent validation:
+- When an implementation worker emits stopReason "end_turn" or otherwise claims completion ("I have successfully completed…", "All tasks done", "Implementation complete", etc.), your ONLY allowed first response is `worker_spawn` for a fresh validator worker. You MUST NOT call `worker_continue` on the implementer, `mark_complete`, or `end_turn` until a validator has independently confirmed or refuted the claim. Sending a "Please continue" nudge in this state is a bug — the worker said it's done, and you have no evidence to the contrary; spawn the validator and let it produce the evidence.
 - Before calling mark_complete on anything beyond a tiny mechanical edit, spawn a separate validator CLI worker to independently verify that the plan and original user intent were really implemented. This is the default expectation, not an optional extra. The implementation worker's own claim of completion does not count as validation.
 - Treat this as a validator/checker CLI worker, not another main implementer.
 - The validator must be a fresh worker_spawn (not a worker_continue on the implementer) so it reasons from the code and plan rather than the implementer's narrative. Give it the original user intent, the plan, and an explicit charge to confirm or refute completion.

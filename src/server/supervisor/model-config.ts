@@ -15,7 +15,7 @@ interface ModelConfig {
   model: string;
   apiKey: string | undefined;
   baseURL: string | undefined;
-  source: "primary" | "fallback";
+  source: "primary" | "fallback" | "memory";
 }
 
 function fallbackApiKey(provider: string, env: EnvLike) {
@@ -45,6 +45,15 @@ function fallbackApiKeySetting(provider: string) {
   }
 }
 
+function defaultModelForProvider(provider: string) {
+  if (provider === DEFAULT_PROVIDER) return DEFAULT_MODEL;
+  if (provider === DEFAULT_FALLBACK_PROVIDER) return DEFAULT_FALLBACK_MODEL;
+  if (provider === "codex") return "gpt-5.4";
+  if (provider === "anthropic") return "claude-opus-4-7";
+  if (provider === "openrouter") return "anthropic/claude-opus-4-7";
+  return "";
+}
+
 function formatSettingChoices(settingNames: string[]) {
   if (settingNames.length === 1) {
     return settingNames[0];
@@ -64,7 +73,11 @@ function hasUsableCredentials(cfg: ModelConfig) {
   return !!cfg.apiKey;
 }
 
-export function getSupervisorModelConfig(env: EnvLike, source?: "primary" | "fallback") {
+function enabled(value: string | undefined) {
+  return ["1", "true", "yes", "on"].includes(value?.trim().toLowerCase() ?? "");
+}
+
+export function getSupervisorModelConfig(env: EnvLike, source?: "primary" | "fallback" | "memory") {
   const primaryProvider = env.SUPERVISOR_LLM_PROVIDER?.trim() || DEFAULT_PROVIDER;
   const fallbackProvider = env.SUPERVISOR_FALLBACK_LLM_PROVIDER?.trim() || DEFAULT_FALLBACK_PROVIDER;
 
@@ -91,6 +104,23 @@ export function getSupervisorModelConfig(env: EnvLike, source?: "primary" | "fal
     return fallbackConfig;
   }
 
+  if (source === "memory") {
+    const supervisorConfig = hasUsableCredentials(primaryConfig) ? primaryConfig : hasUsableCredentials(fallbackConfig) ? fallbackConfig : primaryConfig;
+    if (!enabled(env.SUPERVISOR_MEMORY_LLM_USE_CUSTOM)) {
+      return supervisorConfig;
+    }
+
+    const memoryProvider = env.SUPERVISOR_MEMORY_LLM_PROVIDER?.trim() || supervisorConfig.provider;
+    return {
+      provider: memoryProvider,
+      model: env.SUPERVISOR_MEMORY_LLM_MODEL?.trim()
+        || (memoryProvider === supervisorConfig.provider ? supervisorConfig.model : defaultModelForProvider(memoryProvider)),
+      apiKey: env.SUPERVISOR_MEMORY_LLM_API_KEY?.trim() || fallbackApiKey(memoryProvider, env),
+      baseURL: env.SUPERVISOR_MEMORY_LLM_BASE_URL?.trim() || undefined,
+      source: "memory",
+    };
+  }
+
   return hasUsableCredentials(primaryConfig) ? primaryConfig : hasUsableCredentials(fallbackConfig) ? fallbackConfig : primaryConfig;
 }
 
@@ -113,7 +143,9 @@ export function validateSupervisorModelConfig(
   const relevantSettings =
     config.source === "fallback"
       ? ["SUPERVISOR_FALLBACK_LLM_API_KEY"]
-      : ["SUPERVISOR_LLM_API_KEY", "SUPERVISOR_FALLBACK_LLM_API_KEY"];
+      : config.source === "memory"
+        ? ["SUPERVISOR_MEMORY_LLM_API_KEY"]
+        : ["SUPERVISOR_LLM_API_KEY", "SUPERVISOR_FALLBACK_LLM_API_KEY"];
   const providerApiKeySetting = fallbackApiKeySetting(config.provider);
   if (providerApiKeySetting && !relevantSettings.includes(providerApiKeySetting)) {
     relevantSettings.push(providerApiKeySetting);

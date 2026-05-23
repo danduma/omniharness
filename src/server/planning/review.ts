@@ -8,6 +8,7 @@ import {
   planningReviewFindings,
 } from "@/server/db/schema";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
+import { recordPlanningReviewFinding } from "@/server/planning/review-artifact-store";
 import { eq, and, desc } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import fs from "fs";
@@ -358,8 +359,7 @@ async function orchestratePlanningReview(reviewRunId: string) {
 
       if (findings.length > 0) {
         for (const f of findings) {
-          await db.insert(planningReviewFindings).values({
-            id: randomUUID(),
+          await recordPlanningReviewFinding({
             reviewRunId,
             roundId,
             runId: run.id,
@@ -369,7 +369,6 @@ async function orchestratePlanningReview(reviewRunId: string) {
             details: f.details,
             recommendation: f.recommendation,
             sourcePath: f.sourcePath,
-            createdAt: new Date(),
           });
         }
 

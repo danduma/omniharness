@@ -121,6 +121,9 @@ describe("worker failover when no replacement is available", () => {
     });
 
     expect(result.state).toBe("no_replacement");
+    if (result.state !== "no_replacement") {
+      throw new Error(`Expected no_replacement, got ${result.state}`);
+    }
     expect(result.reason).toContain("Worker availability check failed:");
     expect(result.reason).toContain("No spawnable worker is available.");
 

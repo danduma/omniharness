@@ -15,6 +15,7 @@ import {
   workers,
 } from "@/server/db/schema";
 import { listExecutionEventsForSnapshot } from "@/server/events/execution-event-store";
+import { listSupervisorInterventionsForSnapshot } from "@/server/supervisor/intervention-store";
 import { serializeMessageRecord } from "@/server/conversations/message-records";
 import { isTerminalRunStatus } from "@/lib/run-status";
 import type { EventStreamState } from "@/app/home/types";
@@ -28,6 +29,8 @@ import { serializeSessionRecord } from "@/server/session-providers/session-recor
 import { reconcileOrphanedProcessSessions } from "@/server/session-providers/process-store";
 
 const EXECUTION_EVENT_LIMIT = 100;
+const SUPERVISOR_INTERVENTION_LIMIT = 50;
+const PLANNING_REVIEW_FINDING_LIMIT = 50;
 const WORKER_INITIAL_PROMPT_PREVIEW_LIMIT = 1_000;
 const EXECUTION_EVENT_DETAIL_LIMIT = 1_000;
 const SUPERVISOR_INTERVENTION_TEXT_LIMIT = 2_000;
@@ -267,7 +270,7 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
       ? listExecutionEventsForSnapshot(selectedRunId, EXECUTION_EVENT_LIMIT)
       : [],
     selectedRunId
-      ? db.select().from(supervisorInterventions).where(eq(supervisorInterventions.runId, selectedRunId)).orderBy(desc(supervisorInterventions.createdAt), desc(supervisorInterventions.id))
+      ? listSupervisorInterventionsForSnapshot(selectedRunId, SUPERVISOR_INTERVENTION_LIMIT)
       : [],
     selectedRunId
       ? db.select().from(queuedConversationMessages)
@@ -349,6 +352,22 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
     messageScope: {
       runIds: transcriptRunIds,
       complete: true,
+    },
+    snapshotScope: {
+      executionEvents: {
+        limit: EXECUTION_EVENT_LIMIT,
+        complete: allExecutionEvents.length < EXECUTION_EVENT_LIMIT,
+        oldestCreatedAt: allExecutionEvents.length > 0
+          ? allExecutionEvents[allExecutionEvents.length - 1]!.createdAt.toISOString()
+          : null,
+      },
+      supervisorInterventions: {
+        limit: SUPERVISOR_INTERVENTION_LIMIT,
+        complete: allSupervisorInterventions.length < SUPERVISOR_INTERVENTION_LIMIT,
+        oldestCreatedAt: allSupervisorInterventions.length > 0
+          ? allSupervisorInterventions[allSupervisorInterventions.length - 1]!.createdAt.toISOString()
+          : null,
+      },
     },
     workerEntrySeqs: selectedWorkerEntrySeqs,
   });

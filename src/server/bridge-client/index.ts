@@ -1,5 +1,6 @@
 import { isRecoverableConnectionSupervisorError, isTransientSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import type { AgentOutputEntry } from "@/lib/agent-output";
 
 export const BRIDGE_URL = process.env.OMNIHARNESS_BRIDGE_URL?.trim() || "http://127.0.0.1:7800";
 const BRIDGE_CONNECTION_RESET_MAX_BACKOFF_MS = 15 * 60_000;
@@ -44,16 +45,7 @@ export interface AgentRecord {
     } | null;
     options?: Array<{ optionId: string; kind: string; name: string }>;
   }>;
-  outputEntries?: Array<{
-    id: string;
-    type: "message" | "thought" | "tool_call" | "tool_call_update" | "permission";
-    text: string;
-    timestamp: string;
-    toolCallId?: string | null;
-    toolKind?: string | null;
-    status?: string | null;
-    raw?: unknown;
-  }>;
+  outputEntries?: AgentOutputEntry[];
   outputArchive?: {
     totalEntries: number;
     byteSize: number;
@@ -459,6 +451,33 @@ async function readAskStream(response: Response): Promise<{ response: string; st
   }
 
   return completed;
+}
+
+export type PrewarmWorkerResult = {
+  ok: true;
+  key: string;
+  size: number;
+  warmed: boolean;
+};
+
+export async function prewarmWorker(params: {
+  type: string;
+  cwd: string;
+  model?: string | null;
+  mode?: string | null;
+  env?: Record<string, string>;
+  mcpServers?: BridgeMcpServer[];
+}) {
+  return requestBridge<PrewarmWorkerResult>(
+    "/prewarm/worker",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    },
+    "Prewarm worker",
+    { retryIndefinitely: false },
+  );
 }
 
 export async function spawnAgent(params: {

@@ -2,9 +2,11 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { messages, runs, workers } from "@/server/db/schema";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
-import { normalizeAgentRecord } from "@/server/bridge-client";
+import { normalizeAgentRecord, type AgentRecord } from "@/server/bridge-client";
+import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { persistRunFailure } from "@/server/runs/failures";
 import { isTerminalRunStatus } from "@/server/runs/status";
+import { isLongWorkerCompletionText } from "@/server/supervisor/worker-completion";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { isRecoverableConnectionSupervisorError, isTransientSupervisorError } from "@/server/supervisor/retry";
 import { readWorkerOutputEntries, writeWorkerOutputEntries } from "@/server/workers/output-store";
@@ -18,6 +20,10 @@ import {
 const EMPTY_IDLE_WORKER_OUTPUT_DIAGNOSTIC = "Worker is idle with no recorded output.";
 const MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC = "Worker is idle with no recorded output, and the bridge no longer has a live session for it.";
 
+function isDirectRunMode(mode: string | null | undefined) {
+  return mode === "direct" || mode === "commit";
+}
+
 function hasAgentOutput(agent: ReturnType<typeof normalizeAgentRecord>) {
   return Boolean(
     agent.renderedOutput?.trim()
@@ -25,6 +31,76 @@ function hasAgentOutput(agent: ReturnType<typeof normalizeAgentRecord>) {
     || agent.lastText.trim()
     || agent.outputEntries?.some((entry) => entry.text.trim()),
   );
+}
+
+function normalizedStatus(value: string | null | undefined) {
+  return value?.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+}
+
+function isCompletedEntryStatus(value: string | null | undefined) {
+  const status = normalizedStatus(value);
+  return !status || [
+    "approved",
+    "cancelled",
+    "canceled",
+    "completed",
+    "denied",
+    "error",
+    "failed",
+    "success",
+  ].includes(status);
+}
+
+function isInputEntry(entry: NonNullable<AgentRecord["outputEntries"]>[number]) {
+  const type = (entry as { type?: string | null }).type;
+  return type === "user_input" || type === "supervisor_input";
+}
+
+function isOpenWorkEntry(entry: NonNullable<AgentRecord["outputEntries"]>[number]) {
+  if (entry.type !== "tool_call" && entry.type !== "tool_call_update" && entry.type !== "permission") {
+    return false;
+  }
+
+  return !isCompletedEntryStatus(entry.status);
+}
+
+function directLiveAgentHasCompletedTurn(agent: ReturnType<typeof normalizeAgentRecord>) {
+  const state = normalizedStatus(agent.state);
+  if (state !== "working" && state !== "starting" && state !== "stuck") {
+    return false;
+  }
+
+  if (!agent.stopReason?.trim() && !isLongWorkerCompletionText(agent.currentText || agent.lastText || agent.renderedOutput)) {
+    return false;
+  }
+
+  if ((agent.pendingPermissions?.length ?? 0) > 0) {
+    return false;
+  }
+
+  const entries = agent.outputEntries ?? [];
+  if (entries.length === 0) {
+    return false;
+  }
+
+  const lastInputIndex = entries.findLastIndex(isInputEntry);
+  const turnEntries = entries.slice(lastInputIndex + 1);
+  if (turnEntries.some(isOpenWorkEntry)) {
+    return false;
+  }
+
+  const currentText = agent.currentText.trim();
+  const lastText = agent.lastText.trim();
+  if (currentText && lastText && currentText !== lastText) {
+    return false;
+  }
+
+  const latestMeaningfulEntry = [...turnEntries].reverse().find((entry) => (
+    entry.status !== "archived"
+    && entry.text.trim().length > 0
+  ));
+
+  return latestMeaningfulEntry?.type === "message";
 }
 
 async function hasPersistedWorkerOutput(worker: typeof workers.$inferSelect) {
@@ -48,11 +124,15 @@ function resolveSyncedRunState(run: typeof runs.$inferSelect, agent: ReturnType<
     return "failed";
   }
 
-  if (run.mode === "direct" && resolveDirectRunStatusFromWorkerOutput(agent) === "awaiting_user") {
+  if (isDirectRunMode(run.mode) && resolveDirectRunStatusFromWorkerOutput(agent) === "awaiting_user") {
     return "awaiting_user";
   }
 
-  if (run.mode === "direct" && agent.state === "idle" && hasAgentOutput(agent)) {
+  if (isDirectRunMode(run.mode) && directLiveAgentHasCompletedTurn(agent)) {
+    return "done";
+  }
+
+  if (isDirectRunMode(run.mode) && agent.state === "idle" && hasAgentOutput(agent)) {
     return "done";
   }
 
@@ -67,13 +147,13 @@ function resolveSyncedRunState(run: typeof runs.$inferSelect, agent: ReturnType<
 }
 
 async function resolvePersistedRunState(run: typeof runs.$inferSelect, worker: typeof workers.$inferSelect) {
-  const status = worker.status.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  const status = normalizedStatus(worker.status);
 
   if (status === "error") {
     return "failed";
   }
 
-  if (run.mode === "direct" && resolveDirectRunStatusFromWorkerOutput(worker) === "awaiting_user") {
+  if (isDirectRunMode(run.mode) && resolveDirectRunStatusFromWorkerOutput(worker) === "awaiting_user") {
     return "awaiting_user";
   }
 
@@ -88,7 +168,7 @@ async function resolvePersistedRunState(run: typeof runs.$inferSelect, worker: t
 }
 
 async function isEmptyIdlePersistedWorker(worker: typeof workers.$inferSelect) {
-  const status = worker.status.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  const status = normalizedStatus(worker.status);
   return status === "idle" && !(await hasPersistedWorkerOutput(worker));
 }
 
@@ -121,23 +201,51 @@ function isCleanLiveAgent(agent: ReturnType<typeof normalizeAgentRecord>) {
 }
 
 function isActiveLiveAgent(agent: ReturnType<typeof normalizeAgentRecord>) {
-  const state = agent.state.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  const state = normalizedStatus(agent.state);
   return ["starting", "working", "stuck"].includes(state) || Boolean(agent.currentText.trim());
 }
 
 function isWorkerQueueDrainableStatus(status: string) {
-  const normalized = status.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  const normalized = normalizedStatus(status);
   return Boolean(normalized) && !["starting", "working", "stuck", "error", "cancelled"].includes(normalized);
 }
 
 function isRecoverableMissingDirectWorkerStatus(status: string) {
-  const normalized = status.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  const normalized = normalizedStatus(status);
   return ["starting", "working", "stuck", "recovering"].includes(normalized);
 }
 
 function isCancelledWorkerStatus(status: string | null | undefined) {
-  const normalized = status?.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+  const normalized = normalizedStatus(status);
   return normalized === "cancelled" || normalized === "canceled";
+}
+
+function isIdleDirectWorkerWithStaleCurrentText(worker: typeof workers.$inferSelect) {
+  if (normalizedStatus(worker.status) !== "idle") {
+    return false;
+  }
+
+  const currentText = worker.currentText.trim();
+  if (!currentText) {
+    return false;
+  }
+
+  const lastText = worker.lastText.trim();
+  return !lastText || currentText === lastText;
+}
+
+async function clearStaleDirectCurrentText(run: typeof runs.$inferSelect, worker: typeof workers.$inferSelect) {
+  if (!isDirectRunMode(run.mode) || !isTerminalRunStatus(run.status) || !isIdleDirectWorkerWithStaleCurrentText(worker)) {
+    return false;
+  }
+
+  await db.update(workers).set({
+    currentText: "",
+    lastText: worker.lastText || worker.currentText,
+    updatedAt: new Date(),
+  }).where(eq(workers.id, worker.id));
+  notifyEventStreamSubscribers();
+  return true;
 }
 
 function workerCreatedAtMs(worker: typeof workers.$inferSelect) {
@@ -285,12 +393,16 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       continue;
     }
 
-    if (isTerminalRunStatus(run.status) && !staleBusyFailure) {
+    const worker = selectConversationWorker(run.id, allWorkers);
+    if (!worker) {
       continue;
     }
 
-    const worker = selectConversationWorker(run.id, allWorkers);
-    if (!worker) {
+    if (await clearStaleDirectCurrentText(run, worker)) {
+      continue;
+    }
+
+    if (isTerminalRunStatus(run.status) && !staleBusyFailure) {
       continue;
     }
 
@@ -300,7 +412,7 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
     }
 
     if (
-      run.mode === "direct"
+      isDirectRunMode(run.mode)
       && worker.status.trim().toLowerCase().split(":")[0]?.trim() === "idle"
       && isIdleLiveAgentWithoutOutput(agent)
     ) {
@@ -312,20 +424,22 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
         outputLog: EMPTY_IDLE_WORKER_OUTPUT_DIAGNOSTIC,
         updatedAt: new Date(),
       }).where(eq(workers.id, worker.id));
-      await persistRunFailure(run.id, new Error(EMPTY_IDLE_WORKER_OUTPUT_DIAGNOSTIC));
+      await persistRunFailure(run.id, new Error(EMPTY_IDLE_WORKER_OUTPUT_DIAGNOSTIC), {
+        surface: { code: "worker.idle.empty_output", workerId: worker.id },
+      });
       continue;
     }
 
     await writeWorkerOutputEntries(run.id, worker.id, agent.outputEntries);
+    const nextRunState = resolveSyncedRunState(run, agent);
+    const quiescedDirectWorker = isDirectRunMode(run.mode) && directLiveAgentHasCompletedTurn(agent);
     await db.update(workers).set({
-      status: agent.state,
+      status: quiescedDirectWorker ? "idle" : agent.state,
       cwd: agent.cwd || worker.cwd,
-      currentText: agent.currentText,
+      currentText: quiescedDirectWorker ? "" : agent.currentText,
       lastText: agent.lastText,
       updatedAt: new Date(),
     }).where(eq(workers.id, worker.id));
-
-    const nextRunState = resolveSyncedRunState(run, agent);
 
     if (run.mode === "planning") {
       const result = await refreshPlanningArtifactsForRun({
@@ -343,7 +457,7 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       continue;
     }
 
-    if (run.mode === "direct" && (nextRunState === "awaiting_user" || nextRunState === "done")) {
+    if (isDirectRunMode(run.mode) && (nextRunState === "awaiting_user" || nextRunState === "done")) {
       await updateDirectRunStatusFromWorkerOutput({
         runId: run.id,
         workerId: worker.id,
@@ -380,7 +494,7 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
     }
 
     if (
-      run.mode === "direct"
+      isDirectRunMode(run.mode)
       && options.selectedRunId === run.id
       && isRecoverableMissingDirectWorkerStatus(worker.status)
     ) {
@@ -400,7 +514,9 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
         outputLog: MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC,
         updatedAt: new Date(),
       }).where(eq(workers.id, worker.id));
-      await persistRunFailure(run.id, new Error(MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC));
+      await persistRunFailure(run.id, new Error(MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC), {
+        surface: { code: "worker.idle.missing_output", workerId: worker.id },
+      });
       continue;
     }
 
@@ -421,7 +537,7 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       continue;
     }
 
-    if (run.mode === "direct" && (nextRunState === "awaiting_user" || nextRunState === "done")) {
+    if (isDirectRunMode(run.mode) && (nextRunState === "awaiting_user" || nextRunState === "done")) {
       await updateDirectRunStatusFromWorkerOutput({
         runId: run.id,
         workerId: worker.id,

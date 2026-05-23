@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { clarifications, conversationReadMarkers, creditEvents, executionEvents, messages, planItems, planningReviewFindings, planningReviewRounds, planningReviewRuns, plans, processSessions, queuedConversationMessages, recoveryIncidents, runs, settings, supervisorInterventions, supervisorScheduledWakes, workerAssignments, workerCounters, workers } from "@/server/db/schema";
 import { getEventStreamNotificationVersion } from "@/server/events/live-updates";
+import { readWorkerOutputEntries } from "@/server/workers/output-store";
 
 const { mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
   mockSpawnAgent: vi.fn(),
@@ -343,6 +344,248 @@ describe("syncConversationSessions", () => {
     expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 
+  it("completes a direct run when a live adapter keeps reporting working after a final assistant message", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+    const finalAnswer = [
+      "I have implemented the fix and verified the changed files.",
+      "The direct conversation can now inspect the worker stream, persist the final answer, and avoid leaving the run stuck in a stale working state.",
+      "Verification covered the relevant control-plane path, the worker status transition, and the persisted terminal output that the UI consumes after a reload.",
+      "The remaining work is only normal review; there is no pending tool call, permission prompt, or user decision blocking this turn.",
+      "This deliberately long final-looking text mirrors the fallback path for adapters that keep reporting working even after a complete response has already been emitted.",
+      "It is long enough to avoid confusing an early partial assistant chunk with a real completed answer.",
+    ].join(" ");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-stale-working.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Direct stale working",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "gemini",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "Previous in-flight text",
+      lastText: "Previous in-flight text",
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "gemini",
+        cwd: process.cwd(),
+        state: "working",
+        sessionId: "stale-working-session",
+        sessionMode: "full-access",
+        lastText: finalAnswer,
+        currentText: finalAnswer,
+        renderedOutput: finalAnswer,
+        outputEntries: [
+          {
+            id: "user-1",
+            type: "user_input",
+            text: "Fix it",
+            timestamp: now.toISOString(),
+          },
+          {
+            id: "tool-1",
+            type: "tool_call",
+            text: "Edit",
+            toolCallId: "tool-1",
+            toolKind: "edit",
+            status: "completed",
+            timestamp: new Date(now.getTime() + 1).toISOString(),
+          },
+          {
+            id: "message-1",
+            type: "message",
+            text: finalAnswer,
+            timestamp: new Date(now.getTime() + 2).toISOString(),
+          },
+        ],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    ], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+
+    expect(run?.status).toBe("done");
+    expect(worker?.status).toBe("idle");
+    expect(worker?.currentText).toBe("");
+    expect(worker?.lastText).toBe(finalAnswer);
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it("keeps a direct run running when the live worker only has a partial streaming message", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+    const partialText = "I’ll trace the co-p";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-partial-stream.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Direct partial stream",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "codex",
+        cwd: process.cwd(),
+        state: "working",
+        sessionId: "streaming-session",
+        sessionMode: "full-access",
+        lastText: partialText,
+        currentText: partialText,
+        renderedOutput: partialText,
+        outputEntries: [
+          {
+            id: "message-1",
+            type: "message",
+            text: partialText,
+            timestamp: new Date(now.getTime() + 1).toISOString(),
+          },
+        ],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    ], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const entries = await readWorkerOutputEntries(runId, workerId);
+
+    expect(run?.status).toBe("running");
+    expect(worker?.status).toBe("working");
+    expect(worker?.currentText).toBe(partialText);
+    expect(worker?.lastText).toBe(partialText);
+    expect(entries.map((entry) => (entry as { text?: string }).text)).toContain(partialText);
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it("revives and syncs a selected terminal direct run when the live worker is still streaming", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+    const partialText = "I’ll trace the co-p";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-terminal-stream.md",
+      status: "done",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "done",
+      title: "Terminal direct still streaming",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "codex",
+        cwd: process.cwd(),
+        state: "working",
+        sessionId: "terminal-streaming-session",
+        sessionMode: "full-access",
+        lastText: partialText,
+        currentText: partialText,
+        renderedOutput: partialText,
+        outputEntries: [
+          {
+            id: "message-1",
+            type: "message",
+            text: partialText,
+            timestamp: new Date(now.getTime() + 1).toISOString(),
+          },
+        ],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    ], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const entries = await readWorkerOutputEntries(runId, workerId);
+
+    expect(run?.status).toBe("running");
+    expect(worker?.status).toBe("working");
+    expect(worker?.currentText).toBe(partialText);
+    expect(worker?.lastText).toBe(partialText);
+    expect(entries.map((entry) => (entry as { text?: string }).text)).toContain(partialText);
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
   it("does not recover a running implementation worker from an incomplete runtime list", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -580,5 +823,55 @@ describe("syncConversationSessions", () => {
     expect(worker?.status).toBe("cancelled");
     expect(worker?.currentText).toBe("");
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+  });
+
+  it("clears stale direct currentText on terminal idle workers", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+    const finalAnswer = "Final answer already rendered in the worker stream.";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "done",
+      title: "Terminal direct run",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "gemini",
+      status: "idle",
+      cwd: process.cwd(),
+      outputLog: finalAnswer,
+      outputEntriesJson: "[]",
+      currentText: finalAnswer,
+      lastText: finalAnswer,
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await syncConversationSessions([], { selectedRunId: runId });
+
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+
+    expect(run?.status).toBe("done");
+    expect(worker?.status).toBe("idle");
+    expect(worker?.currentText).toBe("");
+    expect(worker?.lastText).toBe(finalAnswer);
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 });

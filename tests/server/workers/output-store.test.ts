@@ -1,6 +1,6 @@
 import { promises as fs } from "fs";
 import path from "path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getAppDataPath } from "@/server/app-root";
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 import {
@@ -14,6 +14,7 @@ import {
   workerOutputFilePathFor,
   writeWorkerOutputEntries,
 } from "@/server/workers/output-store";
+import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 
 type BridgeEntry = NonNullable<Parameters<typeof writeWorkerOutputEntries>[2]>[number];
 type PersistedEntryShape = { id: string; text: string; seq: number };
@@ -67,6 +68,65 @@ describe("appendWorkerEntry", () => {
       expect(all).toHaveLength(1);
       expect((all[0] as any).text).toBe("once");
     } finally {
+      await cleanupRun(runId);
+    }
+  });
+
+  it("recovers an ownerless worker output lock directory", async () => {
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    try {
+      const filePath = workerOutputFilePathFor(runId, workerId);
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, "", "utf8");
+      await fs.mkdir(`${filePath}.lock`, { recursive: true });
+
+      const entry = await appendWorkerEntry(runId, workerId, {
+        id: "after-ownerless-lock",
+        type: "message",
+        text: "recovered",
+        timestamp: "2026-01-01T00:00:00.000Z",
+      });
+
+      expect(entry.seq).toBe(1);
+      await expect(fs.stat(`${filePath}.lock`)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await cleanupRun(runId);
+    }
+  });
+
+  it("retries when a lock is reclaimed before owner metadata is written", async () => {
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    try {
+      const filePath = workerOutputFilePathFor(runId, workerId);
+      let failedOwnerWrite = false;
+      const originalWriteFile = fs.writeFile.bind(fs);
+      vi.spyOn(fs, "writeFile").mockImplementation(async (...args: Parameters<typeof fs.writeFile>) => {
+        const target = String(args[0]);
+        if (!failedOwnerWrite && target === `${filePath}.lock/owner.json`) {
+          failedOwnerWrite = true;
+          const error = Object.assign(new Error(`ENOENT: no such file or directory, open '${target}'`), {
+            code: "ENOENT",
+            path: target,
+          });
+          throw error;
+        }
+        return originalWriteFile(...args);
+      });
+
+      const entry = await appendWorkerEntry(runId, workerId, {
+        id: "after-owner-write-race",
+        type: "message",
+        text: "recovered",
+        timestamp: "2026-01-01T00:00:00.000Z",
+      });
+
+      expect(failedOwnerWrite).toBe(true);
+      expect(entry.seq).toBe(1);
+      await expect(fs.stat(`${filePath}.lock`)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      vi.restoreAllMocks();
       await cleanupRun(runId);
     }
   });
@@ -145,6 +205,48 @@ describe("readWorkerEntriesSince", () => {
       const empty = await readWorkerEntriesSince(runId, workerId, 5);
       expect(empty.entries).toEqual([]);
       expect(empty.latestSeq).toBe(5);
+    } finally {
+      await cleanupRun(runId);
+    }
+  });
+
+  it("writes a sparse seq→offset index every INDEX_CADENCE records on append", async () => {
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    try {
+      // Append 250 entries — at INDEX_CADENCE=100 we expect index points for
+      // seqs 100 and 200, and the line at each indexed offset must parse
+      // back to that seq.
+      for (let i = 0; i < 250; i += 1) {
+        await appendWorkerEntry(runId, workerId, {
+          id: `e-${i}`,
+          type: "message",
+          text: `m${i}`,
+          timestamp: new Date(1700000000000 + i).toISOString(),
+        });
+      }
+      const filePath = workerOutputFilePathFor(runId, workerId);
+      const idxPath = `${filePath}.idx`;
+      const body = await fs.readFile(idxPath, "utf8");
+      const points = body.split("\n").filter(Boolean).map((l) => JSON.parse(l) as { seq: number; offset: number });
+      expect(points.map((p) => p.seq)).toEqual([100, 200]);
+
+      const fileBytes = await fs.readFile(filePath);
+      for (const point of points) {
+        // Slice from the index offset to the next newline and confirm the
+        // line decodes to a record at the indexed seq.
+        const newlineIdx = fileBytes.indexOf(0x0a, point.offset);
+        const lineEnd = newlineIdx === -1 ? fileBytes.length : newlineIdx;
+        const line = fileBytes.subarray(point.offset, lineEnd).toString("utf8");
+        const parsed = JSON.parse(line) as { seq: number };
+        expect(parsed.seq).toBe(point.seq);
+      }
+
+      // A tail read should still produce the correct entries; this exercises
+      // the index-seek path in readWorkerEntriesSince.
+      const tail = await readWorkerEntriesSince(runId, workerId, 245);
+      expect(tail.entries.map((e) => e.seq)).toEqual([246, 247, 248, 249, 250]);
+      expect(tail.latestSeq).toBe(250);
     } finally {
       await cleanupRun(runId);
     }
@@ -316,6 +418,36 @@ describe("compaction interaction with appends", () => {
   });
 });
 
+describe("stream writer wake events", () => {
+  it("does not re-emit worker.entry_appended for duplicate stable entries", async () => {
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    try {
+      await appendUserInputOnDelivery({
+        id: "message-1",
+        runId,
+        workerId,
+        text: "Initial prompt",
+        deliveredAt: new Date("2026-01-01T00:00:00.000Z"),
+      });
+      await appendUserInputOnDelivery({
+        id: "message-1",
+        runId,
+        workerId,
+        text: "Initial prompt",
+        deliveredAt: new Date("2026-01-01T00:00:00.000Z"),
+      });
+
+      const events = getNamedEventsSince(0).events
+        .map((entry) => entry.event)
+        .filter((event) => event.kind === "worker.entry_appended");
+      expect(events.map((event) => event.seq)).toEqual([1]);
+    } finally {
+      await cleanupRun(runId);
+    }
+  });
+});
+
 describe("writeWorkerOutputEntries (diff-and-append)", () => {
   it("emits worker entry wake events for appended bridge entries", async () => {
     const runId = uniqueId("run");
@@ -467,6 +599,104 @@ describe("writeWorkerOutputEntries (diff-and-append)", () => {
         { id: "c", text: "three replayed", seq: 4 },
         { id: "d", text: "four", seq: 5 },
       ]);
+    } finally {
+      await cleanupRun(runId);
+    }
+  });
+});
+
+describe("output-store cache memory bounds", () => {
+  // Regression: under supervisor load with many workers, the per-(run,worker)
+  // module-level Maps in output-store grew without bound. These tests pin
+  // the LRU caps so a memory regression fails CI instead of OOMing prod.
+  it("bounds readEntriesByKey to 32 chains across many workers", async () => {
+    const runId = uniqueId("run");
+    const workerIds: string[] = [];
+    try {
+      for (let i = 0; i < 80; i += 1) {
+        const workerId = uniqueId(`w-${i}`);
+        workerIds.push(workerId);
+        await appendWorkerEntry(runId, workerId, {
+          id: `seed-${i}`,
+          type: "message",
+          text: `m${i}`,
+          timestamp: new Date(1700000000000 + i).toISOString(),
+        });
+        // readWorkerEntriesSince is what populates readEntriesByKey.
+        await readWorkerEntriesSince(runId, workerId, 0);
+      }
+      const stats = __getOutputStoreCacheStatsForTests();
+      expect(stats.readEntriesCacheCount).toBeLessThanOrEqual(32);
+    } finally {
+      await Promise.all(workerIds.map(() => cleanupRun(runId)));
+    }
+  });
+
+  it("bounds seenIds/fingerprints/nextSeq chain caches to 64 across many workers", async () => {
+    const runId = uniqueId("run");
+    const workerIds: string[] = [];
+    try {
+      for (let i = 0; i < 120; i += 1) {
+        const workerId = uniqueId(`cw-${i}`);
+        workerIds.push(workerId);
+        // appendWorkerEntry is what populates the write-side chain caches.
+        await appendWorkerEntry(runId, workerId, {
+          id: `seed-${i}`,
+          type: "message",
+          text: `m${i}`,
+          timestamp: new Date(1700000000000 + i).toISOString(),
+        });
+      }
+      const stats = __getOutputStoreCacheStatsForTests();
+      expect(stats.workerCacheCount).toBeLessThanOrEqual(64);
+      expect(stats.seenIdsCacheCount).toBeLessThanOrEqual(64);
+      expect(stats.fingerprintsCacheCount).toBeLessThanOrEqual(64);
+    } finally {
+      await cleanupRun(runId);
+    }
+  });
+
+  it("LRU keeps the most-recently-used chain resident under hot-cold interleaving", async () => {
+    const runId = uniqueId("run");
+    const hotWorkerId = uniqueId("hot");
+    try {
+      // Seed the hot worker first.
+      await appendWorkerEntry(runId, hotWorkerId, {
+        id: "hot-seed",
+        type: "message",
+        text: "hot",
+        timestamp: new Date(1700000000000).toISOString(),
+      });
+      // Spam many cold workers — more than the 64-key cap.
+      for (let i = 0; i < 100; i += 1) {
+        const coldId = uniqueId(`cold-${i}`);
+        await appendWorkerEntry(runId, coldId, {
+          id: `cold-${i}`,
+          type: "message",
+          text: `c${i}`,
+          timestamp: new Date(1700000001000 + i).toISOString(),
+        });
+        // Touch hot worker every 5 iterations so it stays MRU.
+        if (i % 5 === 0) {
+          await appendWorkerEntry(runId, hotWorkerId, {
+            id: `hot-${i}`,
+            type: "message",
+            text: `still hot ${i}`,
+            timestamp: new Date(1700000002000 + i).toISOString(),
+          });
+        }
+      }
+      // The hot worker must still be cached — its append should hit the
+      // cache (no disk refresh) on the next call.
+      const refreshesBefore = __getOutputStoreCacheStatsForTests().diskRefreshCount;
+      await appendWorkerEntry(runId, hotWorkerId, {
+        id: "hot-final",
+        type: "message",
+        text: "still here",
+        timestamp: new Date(1700000003000).toISOString(),
+      });
+      const refreshesAfter = __getOutputStoreCacheStatsForTests().diskRefreshCount;
+      expect(refreshesAfter).toBe(refreshesBefore);
     } finally {
       await cleanupRun(runId);
     }

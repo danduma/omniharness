@@ -60,6 +60,35 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
         return;
       }
 
+      if (method === "POST" && parts.length === 2 && parts[0] === "prewarm" && parts[1] === "worker") {
+        const body = await readJson<{
+          type?: string;
+          cwd?: string;
+          model?: string | null;
+          mode?: string | null;
+          env?: Record<string, string>;
+          mcpServers?: unknown;
+        }>(req);
+        if (typeof body.type !== "string" || body.type.trim().length === 0) {
+          writeJson(res, 400, { error: "type is required" });
+          return;
+        }
+        if (typeof body.cwd !== "string" || body.cwd.trim().length === 0) {
+          writeJson(res, 400, { error: "cwd is required" });
+          return;
+        }
+        const mcpServers = Array.isArray(body.mcpServers) ? body.mcpServers as Parameters<typeof manager.prewarmWorker>[0]["mcpServers"] : undefined;
+        writeJson(res, 200, await manager.prewarmWorker({
+          type: body.type,
+          cwd: body.cwd,
+          model: body.model ?? null,
+          mode: body.mode ?? null,
+          env: body.env,
+          mcpServers,
+        }));
+        return;
+      }
+
       if (method === "GET" && parts.length === 1 && parts[0] === "agents") {
         writeJson(res, 200, manager.listAgents());
         return;

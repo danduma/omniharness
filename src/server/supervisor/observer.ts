@@ -1125,13 +1125,25 @@ export async function pollRunWorkers(
       const activityEvent = filteredEvents.find((event) => event.updatesActivity);
       const nextStatus = resolvePersistedWorkerStatus(snapshot, filteredEvents);
       const prevStatus = worker.status;
-      await db.update(workers).set({
-        status: nextStatus,
-        bridgeSessionId: snapshot.sessionId ?? worker.bridgeSessionId,
-        bridgeSessionMode: snapshot.sessionMode ?? worker.bridgeSessionMode,
-        updatedAt: activityEvent ? new Date(now) : worker.updatedAt,
-      }).where(eq(workers.id, worker.id));
-      if (nextStatus !== prevStatus) {
+      // Gate the UPDATE on the previous status so only one racing observer
+      // can claim a given transition. The losers see 0 rows returned and
+      // skip the lifecycle entry, which prevents duplicate "status: X → Y"
+      // lines (and the duplicate-seq writer race they used to trigger when
+      // each observer generated a fresh UUID for the same logical event).
+      const transitioned = nextStatus !== prevStatus
+        ? await db.update(workers).set({
+            status: nextStatus,
+            bridgeSessionId: snapshot.sessionId ?? worker.bridgeSessionId,
+            bridgeSessionMode: snapshot.sessionMode ?? worker.bridgeSessionMode,
+            updatedAt: activityEvent ? new Date(now) : worker.updatedAt,
+          }).where(and(eq(workers.id, worker.id), eq(workers.status, prevStatus))).returning({ id: workers.id })
+        : await db.update(workers).set({
+            bridgeSessionId: snapshot.sessionId ?? worker.bridgeSessionId,
+            bridgeSessionMode: snapshot.sessionMode ?? worker.bridgeSessionMode,
+            updatedAt: activityEvent ? new Date(now) : worker.updatedAt,
+          }).where(eq(workers.id, worker.id)).returning({ id: workers.id });
+      const claimedTransition = nextStatus !== prevStatus && transitioned.length > 0;
+      if (claimedTransition) {
         emitNamedEvent({
           kind: "worker.status",
           runId,

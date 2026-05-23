@@ -4,6 +4,7 @@ import { requireApiSession } from "@/server/auth/guards";
 import { serializeMessageRecord } from "@/server/conversations/message-records";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { toNextRequest } from "./next-request";
+import { asc } from "drizzle-orm";
 
 export const handleMessagesRequest: OmniHttpHandler = async (request) => {
   if (request.method !== "GET") {
@@ -21,6 +22,6 @@ export const handleMessagesRequest: OmniHttpHandler = async (request) => {
     return auth.response;
   }
 
-  const allMessages = await db.select().from(messages).orderBy(messages.createdAt);
+  const allMessages = await db.select().from(messages).orderBy(asc(messages.createdAt), asc(messages.id));
   return Response.json(allMessages.map(serializeMessageRecord));
 };

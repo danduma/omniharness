@@ -1177,6 +1177,59 @@ describe("GET /api/events", () => {
     ]);
   });
 
+  it("does not require a supervisor question for direct worker awaiting-user snapshots", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-worker-awaiting-user.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "awaiting_user",
+      title: "Direct worker awaiting user",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "gemini",
+      status: "idle",
+      cwd: "/workspace/project",
+      outputLog: "",
+      outputEntriesJson: "",
+      currentText: "",
+      lastText: "Would you like me to make this change?",
+      title: "",
+      initialPrompt: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(executionEvents).values({
+      id: randomUUID(),
+      runId,
+      workerId,
+      planItemId: null,
+      eventType: "direct_worker_awaiting_user",
+      details: JSON.stringify({ reason: "worker_requested_input" }),
+      createdAt: now,
+    });
+
+    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const payload = await response.json();
+
+    expect(payload.frontendErrors).toEqual([]);
+  });
+
   it("reuses cached persisted snapshots until a live update notification arrives", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

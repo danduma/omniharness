@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { messages, plans, runs } from "@/server/db/schema";
 import { startSupervisorRun } from "@/server/supervisor/start";
@@ -85,7 +85,7 @@ export async function promotePlanningRun(args: {
 
   const sourceMessages = await db.select().from(messages)
     .where(eq(messages.runId, args.runId))
-    .orderBy(messages.createdAt);
+    .orderBy(asc(messages.createdAt), asc(messages.id));
 
   const previousPlanningStatus = planningRun.status;
   await db.update(runs).set({

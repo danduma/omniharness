@@ -3,6 +3,7 @@ import type { AppErrorDescriptor } from "@/lib/app-errors";
 type RunLike = {
   id: string;
   status: string;
+  mode?: string | null;
   title?: string | null;
 };
 
@@ -39,7 +40,13 @@ export function buildAwaitingUserQuestionInvariantErrors({
   }
 
   const run = runs.find((candidate) => candidate.id === runId);
-  if (!run || run.status !== "awaiting_user" || hasAwaitingUserQuestion(messages, run.id)) {
+  if (
+    !run
+    || run.status !== "awaiting_user"
+    || run.mode === "direct"
+    || run.mode === "commit"
+    || hasAwaitingUserQuestion(messages, run.id)
+  ) {
     return [];
   }
 

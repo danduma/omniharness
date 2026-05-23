@@ -18,6 +18,17 @@ import { promises as fs } from "node:fs";
 import type { ArtifactStreamLocation } from "./append-only-store";
 
 /**
+ * The index functions accept either a full `ArtifactStreamLocation` or a
+ * raw filePath string. Worker conversation streams predate the artifact
+ * engine and only have a filePath to work with.
+ */
+export type IndexTarget = ArtifactStreamLocation | { filePath: string } | string;
+
+function targetFilePath(target: IndexTarget): string {
+  return typeof target === "string" ? target : target.filePath;
+}
+
+/**
  * One indexed entry every N records. Tunable per-stream if needed; the
  * default is conservative for ~hundreds-of-KB transcripts.
  */
@@ -30,8 +41,8 @@ export interface IndexEntry {
   offset: number;
 }
 
-function indexPath(location: ArtifactStreamLocation): string {
-  return `${location.filePath}.idx`;
+function indexPath(target: IndexTarget): string {
+  return `${targetFilePath(target)}.idx`;
 }
 
 /**
@@ -40,12 +51,12 @@ function indexPath(location: ArtifactStreamLocation): string {
  * because the index is never authoritative.
  */
 export async function appendIndexEntry(
-  location: ArtifactStreamLocation,
+  target: IndexTarget,
   entry: IndexEntry,
 ): Promise<void> {
   try {
     const line = `${JSON.stringify({ seq: entry.seq, offset: entry.offset })}\n`;
-    await fs.appendFile(indexPath(location), line, "utf8");
+    await fs.appendFile(indexPath(target), line, "utf8");
   } catch {
     // Best-effort — losing the index just means slower tail reads
     // until the next compaction/rebuild.
@@ -56,10 +67,10 @@ export async function appendIndexEntry(
  * Read and parse the on-disk index, sorted ascending by seq. Returns
  * `null` if the index is missing.
  */
-export async function readIndex(location: ArtifactStreamLocation): Promise<IndexEntry[] | null> {
+export async function readIndex(target: IndexTarget): Promise<IndexEntry[] | null> {
   let body: string;
   try {
-    body = await fs.readFile(indexPath(location), "utf8");
+    body = await fs.readFile(indexPath(target), "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
@@ -102,9 +113,9 @@ export function findIndexPointForSeq(index: IndexEntry[] | null, targetSeq: numb
   return best;
 }
 
-export async function deleteIndex(location: ArtifactStreamLocation): Promise<void> {
+export async function deleteIndex(target: IndexTarget): Promise<void> {
   try {
-    await fs.unlink(indexPath(location));
+    await fs.unlink(indexPath(target));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
@@ -118,10 +129,11 @@ export async function deleteIndex(location: ArtifactStreamLocation): Promise<voi
  * Always replaces an existing index — we don't try to repair partial
  * indices in place, just regenerate.
  */
-export async function rebuildIndex(location: ArtifactStreamLocation): Promise<number> {
+export async function rebuildIndex(target: IndexTarget): Promise<number> {
+  const filePath = targetFilePath(target);
   let body: string;
   try {
-    body = await fs.readFile(location.filePath, "utf8");
+    body = await fs.readFile(filePath, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
     throw error;
@@ -148,9 +160,9 @@ export async function rebuildIndex(location: ArtifactStreamLocation): Promise<nu
   }
   // Write atomically: tmp + rename so a concurrent reader never sees a
   // half-written index.
-  const tmp = `${indexPath(location)}.tmp-${process.pid}-${Date.now()}`;
+  const tmp = `${indexPath(target)}.tmp-${process.pid}-${Date.now()}`;
   await fs.writeFile(tmp, entries.map((e) => `${JSON.stringify(e)}\n`).join(""), "utf8");
-  await fs.rename(tmp, indexPath(location));
+  await fs.rename(tmp, indexPath(target));
   return entries.length;
 }
 

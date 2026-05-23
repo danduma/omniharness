@@ -20,7 +20,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { emitNamedEvent } from "@/server/events/named-events";
-import { appendWorkerEntry } from "@/server/workers/output-store";
+import { appendWorkerEntryWithResult } from "@/server/workers/output-store";
 import type {
   WorkerEntry,
   WorkerEntryAttachment,
@@ -91,9 +91,10 @@ function persistAndAnnounce(args: {
   workerId: string;
   entry: Omit<WorkerEntry, "seq">;
 }): Promise<WorkerEntry | null> {
-  return appendWorkerEntry(args.runId, args.workerId, args.entry).then((persisted) => {
-    if (!persisted || typeof persisted.seq !== "number" || persisted.seq <= 0) {
-      return persisted ?? null;
+  return appendWorkerEntryWithResult(args.runId, args.workerId, args.entry).then((result) => {
+    const persisted = result.entry;
+    if (!result.appended || typeof persisted.seq !== "number" || persisted.seq <= 0) {
+      return persisted;
     }
     emitNamedEvent({
       kind: "worker.entry_appended",
@@ -105,8 +106,8 @@ function persistAndAnnounce(args: {
   });
 }
 
-export async function appendUserInputOnDelivery(args: AppendUserInputArgs): Promise<void> {
-  await persistAndAnnounce({
+export async function appendUserInputOnDelivery(args: AppendUserInputArgs): Promise<WorkerEntry | null> {
+  return persistAndAnnounce({
     runId: args.runId,
     workerId: args.workerId,
     entry: {
@@ -121,8 +122,8 @@ export async function appendUserInputOnDelivery(args: AppendUserInputArgs): Prom
   });
 }
 
-export async function appendSessionInputEntry(args: AppendSessionInputArgs): Promise<void> {
-  await persistAndAnnounce({
+export async function appendSessionInputEntry(args: AppendSessionInputArgs): Promise<WorkerEntry | null> {
+  return persistAndAnnounce({
     runId: args.runId,
     workerId: args.workerId,
     entry: {

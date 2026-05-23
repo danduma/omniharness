@@ -1,17 +1,54 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/server/db";
-import { messages, plans, runs, workers } from "@/server/db/schema";
+import {
+  clarifications,
+  conversationReadMarkers,
+  creditEvents,
+  executionEvents,
+  messages,
+  planItems,
+  planningReviewFindings,
+  planningReviewRounds,
+  planningReviewRuns,
+  plans,
+  processSessions,
+  queuedConversationMessages,
+  recoveryIncidents,
+  runs,
+  settings,
+  supervisorInterventions,
+  supervisorScheduledWakes,
+  workerAssignments,
+  workerCounters,
+  workers,
+} from "@/server/db/schema";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { __resetOutputStoreCachesForTests, readWorkerOutputEntries } from "@/server/workers/output-store";
 
 describe("persistWorkerSnapshot initial direct prompt ordering", () => {
   beforeEach(async () => {
     __resetOutputStoreCachesForTests();
+    await db.delete(planningReviewFindings);
+    await db.delete(planningReviewRounds);
+    await db.delete(planningReviewRuns);
+    await db.delete(supervisorScheduledWakes);
+    await db.delete(supervisorInterventions);
+    await db.delete(executionEvents);
+    await db.delete(workerAssignments);
+    await db.delete(clarifications);
+    await db.delete(recoveryIncidents);
+    await db.delete(queuedConversationMessages);
     await db.delete(messages);
+    await db.delete(processSessions);
+    await db.delete(creditEvents);
     await db.delete(workers);
+    await db.delete(workerCounters);
+    await db.delete(conversationReadMarkers);
     await db.delete(runs);
+    await db.delete(planItems);
     await db.delete(plans);
+    await db.delete(settings);
   });
 
   afterEach(() => {

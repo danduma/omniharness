@@ -214,10 +214,11 @@ function parseConsolidationPlan(raw: string): ConsolidationOperation[] {
 
 async function loadEnv() {
   const allSettings = await db.select().from(settings);
-  const { env } = hydrateRuntimeEnvFromSettings(allSettings);
+  const { env, decryptionFailures } = hydrateRuntimeEnvFromSettings(allSettings);
   Object.entries(env).forEach(([key, value]) => {
     process.env[key] = value;
   });
+  return { decryptionFailures };
 }
 
 async function recordSkipped(runId: string, trigger: ConsolidationTrigger, reason: string) {
@@ -307,10 +308,10 @@ export async function consolidateProjectMemory(args: {
     return { skipped: true, reason: "no_signal", operations: 0 };
   }
 
-  await loadEnv();
-  const llmConfig = getSupervisorModelConfig(process.env, "fallback");
+  const { decryptionFailures } = await loadEnv();
+  const llmConfig = getSupervisorModelConfig(process.env, "memory");
   try {
-    validateSupervisorModelConfig(llmConfig, []);
+    validateSupervisorModelConfig(llmConfig, decryptionFailures);
   } catch (error) {
     await recordSkipped(args.runId, args.trigger, "model_unavailable");
     throw error;

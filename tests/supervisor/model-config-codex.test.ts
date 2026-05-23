@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { getSupervisorModelConfig, validateSupervisorModelConfig, buildMastraModelConfig } from "../../src/server/supervisor/model-config";
 import * as codexAuth from "../../src/server/supervisor/codex-auth";
 
@@ -58,7 +58,7 @@ describe("model-config-codex", () => {
       const model = buildMastraModelConfig(config);
       
       expect(model).toBeDefined();
-      expect(model.modelId).toBe("gpt-5.4");
+      expect("modelId" in model ? model.modelId : model.id).toBe("gpt-5.4");
     });
   });
 });

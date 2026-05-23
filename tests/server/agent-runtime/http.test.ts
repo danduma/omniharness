@@ -708,7 +708,7 @@ exec /bin/sh "$@"
     const agentJson = await agentResponse.json();
     expect(agentJson).toMatchObject({
       name: "worker-1",
-      currentText: "fake response",
+      currentText: "",
       lastText: "fake response",
       contextUsage: {
         inputTokens: 150,
@@ -1103,8 +1103,9 @@ process.stdout.write(JSON.stringify({
     expect(agentJson.outputEntries[0].id).toBe("output-archive-marker");
     expect(agentJson.outputEntries[0].text).toContain("older raw worker activity records");
     expect(agentJson.outputEntries[0].text).toContain("not in the current terminal output");
-    expect(agentJson.currentText.length).toBeLessThanOrEqual(100_000);
-    expect(agentJson.currentText).toContain("Earlier runtime output omitted");
+    expect(agentJson.currentText).toBe("");
+    expect(agentJson.lastText.length).toBeLessThanOrEqual(100_000);
+    expect(agentJson.lastText).toContain("Earlier runtime output omitted");
     expect(agentJson.outputEntries.every((entry: { text: string }) => entry.text.length <= 5_000)).toBe(true);
     const lastEntry = agentJson.outputEntries.at(-1);
     expect(lastEntry.raw.rawOutput.formatted_output.length).toBeLessThanOrEqual(4_050);

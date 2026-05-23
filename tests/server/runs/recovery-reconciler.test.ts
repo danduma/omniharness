@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { executionEvents, messages, plans, queuedConversationMessages, recoveryIncidents, runs, settings, workers } from "@/server/db/schema";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 
 const { mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
   mockSpawnAgent: vi.fn(),
@@ -113,6 +114,7 @@ async function createDirectRun() {
 
 describe("reconcileRunRecovery", () => {
   beforeEach(async () => {
+    __resetNamedEventsForTests();
     mockSpawnAgent.mockReset();
     mockStartSupervisorRun.mockReset();
     await db.delete(recoveryIncidents);
@@ -156,6 +158,11 @@ describe("reconcileRunRecovery", () => {
     expect(worker?.status).toBe("working");
     expect(worker?.bridgeSessionId).toBe("session-2");
     expect(incident?.status).toBe("resolved");
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "worker.reattached",
+      runId,
+      workerId,
+    }));
   });
 
   it("does not auto-resume a missing implementation worker while awaiting user input", async () => {
@@ -203,6 +210,53 @@ describe("reconcileRunRecovery", () => {
       status: "resolved",
       autoAttemptCount: 2,
     });
+  });
+
+  it("recreates the same implementation worker when Gemini cannot load the saved chat file", async () => {
+    const { runId, workerId } = await createImplementationRun();
+    await db.update(workers).set({
+      bridgeSessionId: "corrupt-session",
+      bridgeSessionMode: "full-access",
+      type: "gemini",
+    }).where(eq(workers.id, workerId));
+    mockSpawnAgent
+      .mockRejectedValueOnce(new Error('Spawn failed: failed to start gemini agent via gemini: {"code":-32603,"message":"Internal error","data":{"details":"Failed to initialize chat: Failed to load resumed session data from file"}}'))
+      .mockResolvedValueOnce({
+        name: workerId,
+        type: "gemini",
+        cwd: process.cwd(),
+        state: "working",
+        sessionId: "fresh-session",
+        sessionMode: "full-access",
+        lastText: "",
+        currentText: "",
+        stderrBuffer: [],
+        stopReason: null,
+      });
+
+    const result = await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+
+    expect(result.action).toBe("resume_session");
+    expect(mockSpawnAgent).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      name: workerId,
+      resumeSessionId: "corrupt-session",
+    }));
+    expect(mockSpawnAgent).toHaveBeenNthCalledWith(2, expect.not.objectContaining({
+      resumeSessionId: expect.any(String),
+    }));
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(worker?.status).toBe("working");
+    expect(worker?.bridgeSessionId).toBe("fresh-session");
+    expect(events.map((event) => event.eventType)).toEqual(expect.arrayContaining([
+      "worker_session_missing",
+      "worker_session_recreated",
+    ]));
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "worker.recreated",
+      runId,
+      workerId,
+    }));
   });
 
   it("auto-resumes a missing direct worker with a saved session even after a queued steer failed", async () => {

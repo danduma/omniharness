@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseSupervisorToolCall, parseSupervisorToolCallFromMastra, SupervisorProtocolError } from "@/server/supervisor/protocol";
 import { buildSupervisorTools } from "@/server/supervisor/tools";
+import { getSupervisorTurnStepLimit } from "@/server/supervisor/index";
 
 describe("parseSupervisorToolCall", () => {
   it("parses the first tool call with JSON arguments", () => {
@@ -123,5 +124,35 @@ describe("buildSupervisorTools", () => {
     expect(inspectTool?.description).toContain("rg");
     expect(inspectTool?.description).toContain("sed");
     expect(inspectTool?.inputSchema).toBeTruthy();
+  });
+});
+
+describe("getSupervisorTurnStepLimit", () => {
+  it("returns the default limit when no environment variable is provided", () => {
+    const limit = getSupervisorTurnStepLimit({});
+    expect(limit).toBe(6);
+  });
+
+  it("returns the default limit when the environment variable is invalid", () => {
+    const limit = getSupervisorTurnStepLimit({ SUPERVISOR_TURN_STEP_LIMIT: "invalid" });
+    expect(limit).toBe(6);
+  });
+
+  it("returns the configured limit if it is within bounds", () => {
+    const limit = getSupervisorTurnStepLimit({ SUPERVISOR_TURN_STEP_LIMIT: "15" });
+    expect(limit).toBe(15);
+  });
+
+  it("caps the limit at 50 if the configured value exceeds the cap", () => {
+    const limit = getSupervisorTurnStepLimit({ SUPERVISOR_TURN_STEP_LIMIT: "100" });
+    expect(limit).toBe(50);
+  });
+
+  it("handles boundary values correctly", () => {
+    const limitAtCap = getSupervisorTurnStepLimit({ SUPERVISOR_TURN_STEP_LIMIT: "50" });
+    expect(limitAtCap).toBe(50);
+
+    const limitBelowCap = getSupervisorTurnStepLimit({ SUPERVISOR_TURN_STEP_LIMIT: "49" });
+    expect(limitBelowCap).toBe(49);
   });
 });

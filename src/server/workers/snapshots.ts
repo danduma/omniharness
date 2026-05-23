@@ -44,7 +44,7 @@ async function seedInitialDirectUserPrompt(worker: typeof workers.$inferSelect) 
   }
 
   const run = await db.select({ mode: runs.mode }).from(runs).where(eq(runs.id, worker.runId)).get();
-  if (run?.mode !== "direct") {
+  if (run?.mode !== "direct" && run?.mode !== "commit") {
     return;
   }
 
@@ -52,7 +52,7 @@ async function seedInitialDirectUserPrompt(worker: typeof workers.$inferSelect) 
     .select()
     .from(messages)
     .where(eq(messages.runId, worker.runId))
-    .orderBy(asc(messages.createdAt));
+    .orderBy(asc(messages.createdAt), asc(messages.id));
   const initialMessage = userMessages.find((message) => (
     message.role === "user"
     && message.content.trim() === initialPrompt

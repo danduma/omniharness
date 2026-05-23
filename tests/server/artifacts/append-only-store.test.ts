@@ -11,9 +11,10 @@
  * These tests run against a real temp directory; nothing is mocked.
  */
 import { mkdtemp, rm, readFile, stat } from "node:fs/promises";
+import { promises as fsPromises } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendArtifactLine,
   compactArtifactStream,
@@ -93,6 +94,48 @@ describe("appendArtifactLine", () => {
     // serialises by stream identity).
     expect(all).toHaveLength(20);
     expect(all.map((r) => r.seq)).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+  });
+
+  it("recovers an ownerless artifact lock directory", async () => {
+    const location = makeLocation();
+    const fs = await import("node:fs/promises");
+    await fs.mkdir(path.dirname(location.filePath), { recursive: true });
+    await fs.writeFile(location.filePath, "", "utf8");
+    await fs.mkdir(location.lockPath, { recursive: true });
+
+    await appendArtifactLine(location, JSON.stringify({ id: "after-ownerless-lock", seq: 1 }), { seq: 1 });
+
+    const all = await readAllArtifactEntries<{ id: string; seq: number }>(location);
+    expect(all.map((entry) => entry.id)).toEqual(["after-ownerless-lock"]);
+    await expect(stat(location.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("retries when an artifact lock is reclaimed before owner metadata is written", async () => {
+    const location = makeLocation();
+    let failedOwnerWrite = false;
+    const originalWriteFile = fsPromises.writeFile.bind(fsPromises);
+    vi.spyOn(fsPromises, "writeFile").mockImplementation(async (...args: Parameters<typeof fsPromises.writeFile>) => {
+      const target = String(args[0]);
+      if (!failedOwnerWrite && target === path.join(location.lockPath, "owner.json")) {
+        failedOwnerWrite = true;
+        throw Object.assign(new Error(`ENOENT: no such file or directory, open '${target}'`), {
+          code: "ENOENT",
+          path: target,
+        });
+      }
+      return originalWriteFile(...args);
+    });
+
+    try {
+      await appendArtifactLine(location, JSON.stringify({ id: "after-owner-write-race", seq: 1 }), { seq: 1 });
+    } finally {
+      vi.restoreAllMocks();
+    }
+
+    const all = await readAllArtifactEntries<{ id: string; seq: number }>(location);
+    expect(failedOwnerWrite).toBe(true);
+    expect(all.map((entry) => entry.id)).toEqual(["after-owner-write-race"]);
+    await expect(stat(location.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 

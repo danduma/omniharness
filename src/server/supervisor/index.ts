@@ -63,10 +63,10 @@ interface WorkerAllocation {
   allocationKey: string;
 }
 
-function getSupervisorTurnStepLimit(env: NodeJS.ProcessEnv = process.env) {
+export function getSupervisorTurnStepLimit(env: NodeJS.ProcessEnv = process.env) {
   const parsed = Number.parseInt(env.SUPERVISOR_TURN_STEP_LIMIT ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0
-    ? Math.min(parsed, 20)
+    ? Math.min(parsed, 50)
     : DEFAULT_SUPERVISOR_TURN_STEP_LIMIT;
 }
 

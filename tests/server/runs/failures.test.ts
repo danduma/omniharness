@@ -4,6 +4,11 @@ import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { messages, plans, runs, workerCounters } from "@/server/db/schema";
 import { persistRunFailure } from "@/server/runs/failures";
+import {
+  __resetNamedEventsForTests,
+  getNamedEventsSince,
+  type ErrorSurfacedEvent,
+} from "@/server/events/named-events";
 
 describe("persistRunFailure", () => {
   beforeEach(async () => {
@@ -11,7 +16,35 @@ describe("persistRunFailure", () => {
     await db.delete(workerCounters);
     await db.delete(runs);
     await db.delete(plans);
+    __resetNamedEventsForTests();
   });
+
+  async function seedRunningRun() {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    return { runId, planId };
+  }
+
+  function collectSurfacedEvents(): ErrorSurfacedEvent[] {
+    const replay = getNamedEventsSince(0);
+    return replay.events
+      .map((entry) => entry.event)
+      .filter((event): event is ErrorSurfacedEvent => event.kind === "error.surfaced");
+  }
 
   it("persists nested error causes instead of dropping them to a generic wrapper message", async () => {
     const planId = randomUUID();
@@ -106,5 +139,70 @@ describe("persistRunFailure", () => {
     expect(persistedRun?.status).toBe("cancelled");
     expect(persistedRun?.lastError).toBeNull();
     expect(persistedMessages).toHaveLength(0);
+  });
+
+  it("emits error.surfaced exactly once when surface option is provided and run transitions to failed", async () => {
+    const { runId } = await seedRunningRun();
+
+    await persistRunFailure(runId, new Error("worker exploded"), {
+      surface: { code: "worker.poll.failed", workerId: "worker-1" },
+    });
+
+    const events = collectSurfacedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      kind: "error.surfaced",
+      code: "worker.poll.failed",
+      message: expect.stringContaining("worker exploded"),
+      surface: "toast",
+      runId,
+      workerId: "worker-1",
+    });
+    expect(events[0]?.cause).toMatchObject({ message: "worker exploded" });
+  });
+
+  it("does not emit error.surfaced when no surface option is provided", async () => {
+    const { runId } = await seedRunningRun();
+    await persistRunFailure(runId, new Error("silent failure"));
+    expect(collectSurfacedEvents()).toHaveLength(0);
+  });
+
+  it("does not re-emit error.surfaced when persistRunFailure is called twice on an already-failed run", async () => {
+    const { runId } = await seedRunningRun();
+    await persistRunFailure(runId, new Error("first failure"), {
+      surface: { code: "worker.poll.failed", workerId: "worker-1" },
+    });
+    await persistRunFailure(runId, new Error("second failure"), {
+      surface: { code: "worker.poll.failed", workerId: "worker-1" },
+    });
+
+    const events = collectSurfacedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]?.message).toContain("first failure");
+  });
+
+  it("does not emit error.surfaced when the run is already terminal in a non-failed state", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "cancelled",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await persistRunFailure(runId, new Error("late failure"), {
+      surface: { code: "worker.poll.failed" },
+    });
+
+    expect(collectSurfacedEvents()).toHaveLength(0);
   });
 });

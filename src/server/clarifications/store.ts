@@ -4,7 +4,7 @@ import { clarifications } from "../db/schema";
 import { eq } from "drizzle-orm";
 
 export async function createClarifications(runId: string, questions: string[]) {
-  const records = [];
+  const records: Array<typeof clarifications.$inferSelect> = [];
 
   for (const question of questions) {
     const id = randomUUID();
@@ -16,9 +16,9 @@ export async function createClarifications(runId: string, questions: string[]) {
       status: "pending",
       createdAt: new Date(),
       updatedAt: new Date(),
-    } as const;
+    } satisfies typeof clarifications.$inferInsert;
     await db.insert(clarifications).values(record);
-    records.push(record);
+    records.push(record as typeof clarifications.$inferSelect);
   }
 
   return records;

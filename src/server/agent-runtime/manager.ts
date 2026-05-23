@@ -30,11 +30,18 @@ import type {
   StartAgentInput,
 } from "./types";
 import { RuntimeHttpError } from "./types";
+import {
+  computeEnvFingerprint,
+  computeWorkerPoolKey,
+  WorkerPool,
+  type WorkerPoolMember,
+} from "./worker-pool";
 
 const MAX_STDERR_LINES = 50;
 const ENDPOINT_TIMEOUT_MS = 750;
 const WORKER_CONNECTION_RESET_MAX_BACKOFF_MS = 15 * 60_000;
 const MAX_TEXT_FIELD_CHARS = 100_000;
+const DEFAULT_AGENT_STARTUP_TIMEOUT_MS = 30_000;
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -47,12 +54,41 @@ type EndpointCheckResult = {
 
 const endpointCheckCache = new Map<string, { result: EndpointCheckResult | null; refreshing: boolean }>();
 
+function defaultCommandFor(type: string, model: string | null): { command: string; args: string[] } | null {
+  switch (type) {
+    case "gemini":
+      return { command: "gemini", args: ["--experimental-acp", ...(model ? ["--model", model] : [])] };
+    case "claude":
+      return { command: "claude-agent-acp", args: [] };
+    case "codex":
+      return { command: "codex-acp", args: [] };
+    case "opencode":
+      return { command: "opencode", args: ["acp", ...(model ? ["--model", model] : [])] };
+    default:
+      return null;
+  }
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
 
 function finiteNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readPositiveInteger(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+function startupTimeout(label: string, timeoutMs: number): Promise<never> {
+  return new Promise((_, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new RuntimeHttpError(400, `${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    timeout.unref?.();
+  });
 }
 
 function updateContextUsage(record: AgentRecord, patch: Partial<NonNullable<AgentRecord["contextUsage"]>>) {
@@ -747,13 +783,23 @@ function appendPermissionOutcomeEntry(
 export class AgentRuntimeManager {
   readonly agents = new Map<string, AgentRecord>();
   private readonly chunkSubscribers = new Map<string, Set<(chunk: string) => void>>();
+  private readonly workerPool = new WorkerPool();
 
   constructor(
     private readonly options: {
       config?: AgentRuntimeConfig;
       env?: EnvLike;
     } = {},
-  ) {}
+  ) {
+    const baseEnv = this.options.env || process.env;
+    const sizeRaw = baseEnv.OMNIHARNESS_WORKER_POOL_SIZE ?? baseEnv.OMNIHARNESS_GEMINI_POOL_SIZE;
+    const parsed = sizeRaw ? Number.parseInt(sizeRaw, 10) : NaN;
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      this.workerPool.setMaxPerKey(parsed);
+    } else {
+      this.workerPool.setMaxPerKey(1);
+    }
+  }
 
   toStatus(record: AgentRecord) {
     const outputEntries = selectLiveOutputEntries(record);
@@ -919,74 +965,112 @@ export class AgentRuntimeManager {
       Object.assign(finalEnv, applyCodexBridgeEnv(finalEnv, null));
     }
 
-    const recordRef: { current?: AgentRecord } = {};
-    const stderrBuffer: string[] = [];
-    const client = new RuntimeClient(() => recordRef.current, (agentName, chunk) => this.publishChunk(agentName, chunk));
+    const requestedMode = input.mode || configuredAgent?.mode;
     const defaultCommand = input.command || configuredAgent?.command || type;
     const defaultArgsList = requestedArgs || configuredArgs || defaultArgs;
     const useCodexFallback = type === "codex" && !input.command && !configuredAgent?.command && !requestedArgs && !configuredArgs;
     const useClaudeDefault = type === "claude" && !input.command && !configuredAgent?.command && !requestedArgs && !configuredArgs;
     const useGeminiDefault = type === "gemini" && !input.command && !configuredAgent?.command && !requestedArgs && !configuredArgs;
-    const candidates = (useCodexFallback
-      ? [{ command: "codex-acp", args: [] as string[] }]
-      : useClaudeDefault
-        ? [{ command: "claude-agent-acp", args: [] as string[] }]
-        : useGeminiDefault
-          ? [{ command: "gemini", args: ["--experimental-acp", ...(requestedModel ? ["--model", requestedModel] : [])] as string[] }]
-          : [{ command: defaultCommand, args: defaultArgsList }])
-      .filter((candidate) => commandExists(candidate.command, finalEnv));
+    const useOpencodeDefault = type === "opencode" && !input.command && !configuredAgent?.command && !requestedArgs && !configuredArgs;
 
-    if (candidates.length === 0) {
-      if (type === "codex" && !input.command && !configuredAgent?.command) {
-        if (commandExists("codex", finalEnv)) {
-          throw new RuntimeHttpError(400, "codex on PATH is MCP-only and cannot be used by OmniHarness runtime. Install codex-acp or configure an ACP-compatible Codex command.");
-        }
-        throw new RuntimeHttpError(400, "codex-acp binary not found on PATH. Install codex-acp or configure an ACP-compatible Codex command.");
-      }
-      throw new RuntimeHttpError(400, `No runnable command is available for worker type "${type}".`);
-    }
+    const eligibleForPool =
+      (useGeminiDefault || useClaudeDefault || useCodexFallback || useOpencodeDefault)
+      && !resumeSessionId
+      && skillRoots.length === 0;
+    const poolKey = eligibleForPool
+      ? computeWorkerPoolKey({
+          type,
+          cwd,
+          model: requestedModel,
+          mode: requestedMode ?? null,
+          mcpServers,
+          skillRoots,
+          envFingerprint: computeEnvFingerprint(finalEnv as NodeJS.ProcessEnv),
+        })
+      : null;
+    const pooledMember = poolKey ? this.workerPool.checkout(poolKey) : null;
 
-    const managedSkillLinks = materializeSkillRoots(cwd, name, skillRoots, finalEnv);
+    let recordRef: { current?: AgentRecord };
+    let stderrBuffer: string[];
+    let client: RuntimeClient;
     let child: ChildProcessWithoutNullStreams | undefined;
     let connection: acp.ClientSideConnection | undefined;
     let init: unknown;
     let session: unknown;
-    let lastError: unknown;
+    let managedSkillLinks: string[];
 
-    for (const candidate of candidates) {
-      try {
-        const result = await this.spawnAgentConnection({
-          cwd,
-          command: expandHomePath(candidate.command, finalEnv),
-          args: candidate.args,
-          env: finalEnv as NodeJS.ProcessEnv,
-          mcpServers,
-          skillRoots,
-          ...(resumeSessionId ? { resumeSessionId } : {}),
-          getClient: () => client,
-          onStderrLine: (line) => {
-            pushStderrLine(stderrBuffer, line);
-            if (recordRef.current) {
-              recordRef.current.updatedAt = nowIso();
-            }
-          },
-        });
-        child = result.child;
-        connection = result.connection;
-        init = result.init;
-        session = result.session;
-        break;
-      } catch (error) {
-        lastError = normalizeAgentStartupError({ type, command: candidate.command, error, stderrBuffer });
+    if (pooledMember) {
+      recordRef = pooledMember.recordRef;
+      stderrBuffer = pooledMember.stderrBuffer;
+      client = pooledMember.client as RuntimeClient;
+      child = pooledMember.child;
+      connection = pooledMember.connection;
+      init = pooledMember.init;
+      session = pooledMember.session;
+      managedSkillLinks = [];
+    } else {
+      recordRef = { current: undefined };
+      stderrBuffer = [];
+      client = new RuntimeClient(() => recordRef.current, (agentName, chunk) => this.publishChunk(agentName, chunk));
+      const candidates = (useCodexFallback
+        ? [{ command: "codex-acp", args: [] as string[] }]
+        : useClaudeDefault
+          ? [{ command: "claude-agent-acp", args: [] as string[] }]
+          : useGeminiDefault
+            ? [{ command: "gemini", args: ["--experimental-acp", ...(requestedModel ? ["--model", requestedModel] : [])] as string[] }]
+            : [{ command: defaultCommand, args: defaultArgsList }])
+        .filter((candidate) => commandExists(candidate.command, finalEnv));
+
+      if (candidates.length === 0) {
+        if (type === "codex" && !input.command && !configuredAgent?.command) {
+          if (commandExists("codex", finalEnv)) {
+            throw new RuntimeHttpError(400, "codex on PATH is MCP-only and cannot be used by OmniHarness runtime. Install codex-acp or configure an ACP-compatible Codex command.");
+          }
+          throw new RuntimeHttpError(400, "codex-acp binary not found on PATH. Install codex-acp or configure an ACP-compatible Codex command.");
+        }
+        throw new RuntimeHttpError(400, `No runnable command is available for worker type "${type}".`);
+      }
+
+      managedSkillLinks = materializeSkillRoots(cwd, name, skillRoots, finalEnv);
+      let lastError: unknown;
+
+      for (const candidate of candidates) {
+        try {
+          const result = await this.spawnAgentConnection({
+            cwd,
+            command: expandHomePath(candidate.command, finalEnv),
+            args: candidate.args,
+            env: finalEnv as NodeJS.ProcessEnv,
+            startupTimeoutMs: readPositiveInteger(
+              baseEnv.OMNIHARNESS_AGENT_STARTUP_TIMEOUT_MS,
+              DEFAULT_AGENT_STARTUP_TIMEOUT_MS,
+            ),
+            mcpServers,
+            skillRoots,
+            ...(resumeSessionId ? { resumeSessionId } : {}),
+            getClient: () => client,
+            onStderrLine: (line) => {
+              pushStderrLine(stderrBuffer, line);
+              if (recordRef.current) {
+                recordRef.current.updatedAt = nowIso();
+              }
+            },
+          });
+          child = result.child;
+          connection = result.connection;
+          init = result.init;
+          session = result.session;
+          break;
+        } catch (error) {
+          lastError = normalizeAgentStartupError({ type, command: candidate.command, error, stderrBuffer });
+        }
+      }
+
+      if (!child || !connection || !session) {
+        cleanupSkillLinks(managedSkillLinks);
+        throw normalizeAgentStartupError({ type, command: defaultCommand, error: lastError ?? new Error("failed to start agent"), stderrBuffer });
       }
     }
-
-    if (!child || !connection || !session) {
-      cleanupSkillLinks(managedSkillLinks);
-      throw normalizeAgentStartupError({ type, command: defaultCommand, error: lastError ?? new Error("failed to start agent"), stderrBuffer });
-    }
-
-    const requestedMode = input.mode || configuredAgent?.mode;
     const sessionRecord = asRecord(session);
     const sessionId = resumeSessionId ?? asNonEmptyString(sessionRecord?.sessionId);
     if (!sessionId) {
@@ -1062,6 +1146,17 @@ export class AgentRuntimeManager {
       target.lastError = target.lastError ?? `exit code=${code} signal=${signal}`;
     });
 
+    if (poolKey) {
+      this.scheduleWorkerPoolRefill({
+        type,
+        cwd,
+        model: requestedModel,
+        mode: requestedMode ?? null,
+        env: input.env,
+        mcpServers: input.mcpServers ?? [],
+      });
+    }
+
     return this.toStatus(record);
   }
 
@@ -1124,6 +1219,7 @@ export class AgentRuntimeManager {
       record.stopReason = typeof responseRecord?.stopReason === "string" ? responseRecord.stopReason : null;
       applyPromptUsage(record, responseRecord?.usage);
       record.lastText = record.currentText;
+      record.currentText = "";
       record.state = "idle";
       record.updatedAt = nowIso();
       return {
@@ -1240,11 +1336,148 @@ export class AgentRuntimeManager {
     return { results };
   }
 
+  async prewarmWorker(input: {
+    type: string;
+    cwd: string;
+    model?: string | null;
+    mode?: string | null;
+    env?: Record<string, string>;
+    mcpServers?: acp.McpServer[];
+  }): Promise<{ ok: true; key: string; size: number; warmed: boolean }> {
+    const type = input.type;
+    const cwd = input.cwd || process.cwd();
+    const requestedModel = input.model?.trim() || null;
+    const configuredAgent = this.options.config?.agents?.[type];
+    const baseEnv = this.options.env || process.env;
+    const mcpServers = [
+      ...normalizeMcpServers(configuredAgent?.mcpServers, `agents.${type}.mcpServers`),
+      ...normalizeMcpServers(input.mcpServers, "mcpServers"),
+    ];
+    const skillRoots: string[] = [];
+
+    const finalEnv = withManagedPath({
+      ...baseEnv,
+      ...(configuredAgent?.env || {}),
+      ...(input.env || {}),
+    }, cwd);
+    const credentialProfile = await resolveCredentialProfile({
+      type,
+      cwd,
+      env: finalEnv,
+      requestedProfile: undefined,
+      configuredProfile: configuredAgent?.credentialProfile,
+    });
+    applyCredentialProfileEnv(finalEnv, credentialProfile);
+
+    if (type === "codex") {
+      Object.assign(finalEnv, withCodexStandardTooling(finalEnv));
+      Object.assign(finalEnv, applyCodexBridgeEnv(finalEnv, null));
+    }
+
+    const requestedMode = input.mode || configuredAgent?.mode || null;
+    const poolKey = computeWorkerPoolKey({
+      type,
+      cwd,
+      model: requestedModel,
+      mode: requestedMode,
+      mcpServers,
+      skillRoots,
+      envFingerprint: computeEnvFingerprint(finalEnv as NodeJS.ProcessEnv),
+    });
+
+    if (!this.workerPool.needsWarm(poolKey)) {
+      return { ok: true, key: poolKey, size: this.workerPool.countMembers(poolKey), warmed: false };
+    }
+
+    const candidate = defaultCommandFor(type, requestedModel);
+    if (!candidate) {
+      throw new RuntimeHttpError(400, `Worker type "${type}" has no default ACP command; cannot prewarm`);
+    }
+    if (!commandExists(candidate.command, finalEnv)) {
+      throw new RuntimeHttpError(400, `${candidate.command} binary not found on PATH; cannot prewarm`);
+    }
+
+    this.workerPool.beginInFlight(poolKey);
+    try {
+      const recordRef: { current?: AgentRecord } = {};
+      const stderrBuffer: string[] = [];
+      const client = new RuntimeClient(() => recordRef.current, (agentName, chunk) => this.publishChunk(agentName, chunk));
+
+      const result = await this.spawnAgentConnection({
+        cwd,
+        command: expandHomePath(candidate.command, finalEnv),
+        args: candidate.args,
+        env: finalEnv as NodeJS.ProcessEnv,
+        startupTimeoutMs: readPositiveInteger(
+          baseEnv.OMNIHARNESS_AGENT_STARTUP_TIMEOUT_MS,
+          DEFAULT_AGENT_STARTUP_TIMEOUT_MS,
+        ),
+        mcpServers,
+        skillRoots,
+        getClient: () => client,
+        onStderrLine: (line) => {
+          pushStderrLine(stderrBuffer, line);
+        },
+      });
+
+      const sessionRecord = asRecord(result.session);
+      const sessionId = asNonEmptyString(sessionRecord?.sessionId);
+      if (!sessionId) {
+        result.child.kill("SIGTERM");
+        throw new RuntimeHttpError(500, `${type} prewarm session did not include a session id.`);
+      }
+      const initRecord = asRecord(result.init);
+      const protocolVersion = typeof initRecord?.protocolVersion === "number" || typeof initRecord?.protocolVersion === "string"
+        ? initRecord.protocolVersion
+        : null;
+
+      this.workerPool.add({
+        key: poolKey,
+        type,
+        cwd,
+        recordRef,
+        client,
+        stderrBuffer,
+        child: result.child,
+        connection: result.connection,
+        init: result.init,
+        session: result.session,
+        sessionId,
+        protocolVersion,
+        warmedAt: Date.now(),
+      });
+
+      return { ok: true, key: poolKey, size: this.workerPool.countMembers(poolKey), warmed: true };
+    } finally {
+      this.workerPool.endInFlight(poolKey);
+    }
+  }
+
+  private scheduleWorkerPoolRefill(input: {
+    type: string;
+    cwd: string;
+    model: string | null;
+    mode: string | null;
+    env?: Record<string, string>;
+    mcpServers: acp.McpServer[];
+  }) {
+    setImmediate(() => {
+      this.prewarmWorker(input).catch((error) => {
+        process.stderr.write(`[worker-pool] refill failed (${input.type}): ${describeUnknownError(error)}\n`);
+      });
+    });
+  }
+
+  shutdownPools() {
+    this.workerPool.shutdown();
+  }
+
   private async spawnAgentConnection(input: {
     cwd: string;
     command: string;
     args: string[];
     env: NodeJS.ProcessEnv;
+    startupTimeoutMs: number;
     mcpServers: acp.McpServer[];
     skillRoots: string[];
     resumeSessionId?: string;
@@ -1300,6 +1533,7 @@ export class AgentRuntimeManager {
       const init = await Promise.race([
         suppressClosedPipeAcpWriteConsoleError(() => connection.initialize(initializeParams)),
         processFailure,
+        startupTimeout("Agent ACP initialize", input.startupTimeoutMs),
       ]);
       const sessionSetupParams = {
         cwd: input.cwd,
@@ -1307,10 +1541,17 @@ export class AgentRuntimeManager {
         ...(input.skillRoots.length > 0 ? { _meta: { "omniharness/skillRoots": input.skillRoots } } : {}),
       } as Parameters<acp.ClientSideConnection["newSession"]>[0];
       const session = input.resumeSessionId
-        ? await this.resumeOrLoadSession(connection, input.resumeSessionId, sessionSetupParams, processFailure)
+        ? await this.resumeOrLoadSession(
+          connection,
+          input.resumeSessionId,
+          sessionSetupParams,
+          processFailure,
+          input.startupTimeoutMs,
+        )
         : await Promise.race([
           suppressClosedPipeAcpWriteConsoleError(() => connection.newSession(sessionSetupParams)),
           processFailure,
+          startupTimeout("Agent ACP new session", input.startupTimeoutMs),
         ]);
       return { child, connection, init, session };
     } catch (error) {
@@ -1324,12 +1565,14 @@ export class AgentRuntimeManager {
     sessionId: string,
     sessionSetupParams: Parameters<acp.ClientSideConnection["newSession"]>[0],
     spawnError: Promise<never>,
+    startupTimeoutMs: number,
   ) {
     try {
       const resumeParams = { sessionId } as Parameters<acp.ClientSideConnection["unstable_resumeSession"]>[0];
       return await Promise.race([
         suppressClosedPipeAcpWriteConsoleError(() => connection.unstable_resumeSession(resumeParams)),
         spawnError,
+        startupTimeout("Agent ACP resume session", startupTimeoutMs),
       ]);
     } catch {
       const loadParams = {
@@ -1339,6 +1582,7 @@ export class AgentRuntimeManager {
       return await Promise.race([
         suppressClosedPipeAcpWriteConsoleError(() => connection.loadSession(loadParams)),
         spawnError,
+        startupTimeout("Agent ACP load session", startupTimeoutMs),
       ]);
     }
   }

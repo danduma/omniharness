@@ -5,10 +5,25 @@ import { messages, runs } from "@/server/db/schema";
 import { formatErrorMessage } from "@/server/error-format";
 import { isTerminalRunStatus, normalizeRunStatus } from "@/server/runs/status";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { emitNamedEvent, type ErrorSurface, type SurfacedErrorCode } from "@/server/events/named-events";
 
 export { formatErrorMessage };
 
-export async function persistRunFailure(runId: string, error: unknown) {
+export type PersistRunFailureSurface = {
+  code: SurfacedErrorCode;
+  surface?: ErrorSurface;
+  workerId?: string | null;
+};
+
+export type PersistRunFailureOptions = {
+  surface?: PersistRunFailureSurface;
+};
+
+export async function persistRunFailure(
+  runId: string,
+  error: unknown,
+  options: PersistRunFailureOptions = {},
+) {
   const errorMessage = formatErrorMessage(error);
   const now = new Date();
   const content = `Run failed: ${errorMessage}`;
@@ -16,6 +31,9 @@ export async function persistRunFailure(runId: string, error: unknown) {
   if (!currentRun || (isTerminalRunStatus(currentRun.status) && normalizeRunStatus(currentRun.status) !== "failed")) {
     return;
   }
+
+  const previousStatus = normalizeRunStatus(currentRun.status);
+  const isFirstTransitionToFailed = previousStatus !== "failed";
 
   await db.update(runs).set({
     status: "failed",
@@ -25,9 +43,25 @@ export async function persistRunFailure(runId: string, error: unknown) {
   }).where(eq(runs.id, runId));
   notifyEventStreamSubscribers();
 
+  // Emit error.surfaced once, on the actual transition into the failed
+  // state. Skip re-emission on duplicate calls so retries / fall-through
+  // safety nets don't double-toast the user.
+  if (options.surface && isFirstTransitionToFailed) {
+    const cause = error instanceof Error ? error : new Error(errorMessage);
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: options.surface.code,
+      message: errorMessage,
+      surface: options.surface.surface ?? "toast",
+      runId,
+      ...(options.surface.workerId ? { workerId: options.surface.workerId } : {}),
+      cause: { name: cause.name, message: cause.message },
+    });
+  }
+
   const latestMessage = await db.select().from(messages)
     .where(eq(messages.runId, runId))
-    .orderBy(desc(messages.createdAt))
+    .orderBy(desc(messages.createdAt), desc(messages.id))
     .get();
 
   if (

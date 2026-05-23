@@ -185,7 +185,9 @@ export function buildLiveWorkerSnapshot(args: {
 
   if (normalizedAgent) {
     const structuredOutput = cleanStructuredOutput(normalizedAgent.renderedOutput);
-    const liveText = normalizedAgent.currentText.length > 0 ? normalizedAgent.currentText : "";
+    const liveText = isAgentActive(normalizedAgent.state) && normalizedAgent.currentText.length > 0
+      ? normalizedAgent.currentText
+      : "";
     const outputEntries = mergeOutputEntries(persistedOutputEntries, normalizedAgent.outputEntries ?? []);
     const structuredEntriesText = outputEntriesText(outputEntries);
     const emptyStopDiagnostic = !structuredOutput && !liveText && outputEntries.length === 0 && !outputLog && !normalizedAgent.lastText && !persistedLastText
@@ -208,6 +210,7 @@ export function buildLiveWorkerSnapshot(args: {
       requestedEffort,
       effectiveEffort: normalizedAgent.effectiveEffort ?? null,
       outputEntries,
+      currentText: liveText,
       lastText,
       bridgeLastError: normalizedAgent.lastError ?? null,
       runLastError,

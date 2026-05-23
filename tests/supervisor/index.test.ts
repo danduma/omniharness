@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { clarifications, conversationReadMarkers, creditEvents, executionEvents, messages, planItems, planningReviewFindings, planningReviewRounds, planningReviewRuns, plans, processSessions, queuedConversationMessages, recoveryIncidents, runs, settings, supervisorInterventions, supervisorScheduledWakes, workerAssignments, workerCounters, workers } from "@/server/db/schema";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 import { readWorkerOutputEntries, writeWorkerOutputEntries } from "@/server/workers/output-store";
 
 const {
@@ -118,6 +119,7 @@ function deferred<T>() {
 describe("Supervisor worker spawn flow", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    __resetNamedEventsForTests();
     mockAgentConfigs.length = 0;
     vi.unstubAllEnvs();
     await db.delete(planningReviewFindings);
@@ -2342,6 +2344,11 @@ describe("Supervisor worker spawn flow", () => {
     expect(persistedWorker?.status).toBe("working");
     expect(workerEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
     expect(workerEvents.some((event) => event.eventType === "worker_prompted")).toBe(true);
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "worker.reattached",
+      runId,
+      workerId: "worker-needs-resume",
+    }));
   });
 
   it("starts a fresh worker when the saved resume session no longer exists", async () => {
@@ -2422,7 +2429,187 @@ describe("Supervisor worker spawn flow", () => {
     expect(persistedWorker?.status).toBe("working");
     expect(persistedWorker?.bridgeSessionId).toBe("fresh-session");
     expect(workerEvents.some((event) => event.eventType === "worker_session_missing")).toBe(true);
+    expect(workerEvents.some((event) => event.eventType === "worker_session_recreated")).toBe(true);
     expect(workerEvents.some((event) => event.eventType === "worker_prompted")).toBe(true);
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "worker.recreated",
+      runId,
+      workerId: "worker-missing-session",
+    }));
+  });
+
+  it("starts a fresh Gemini worker when the saved resume file cannot be loaded", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      preferredWorkerModel: "gemini-3",
+      preferredWorkerEffort: "high",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: "worker-corrupt-session",
+      runId,
+      type: "gemini",
+      status: "idle",
+      cwd: "/tmp/project",
+      title: "Main implementation",
+      initialPrompt: "implement the plan",
+      outputLog: "",
+      bridgeSessionId: "corrupt-session",
+      bridgeSessionMode: "full-access",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-continue-corrupt-session",
+      name: "worker_continue",
+      args: {
+        workerId: "worker-corrupt-session",
+        prompt: "Continue after the corrupt runtime session.",
+      },
+    });
+    mockAskAgent
+      .mockRejectedValueOnce(new Error("Ask failed: Agent not found: worker-corrupt-session"))
+      .mockResolvedValueOnce({ response: "Continuing in a fresh runtime worker", state: "working" });
+    mockSpawnAgent
+      .mockRejectedValueOnce(new Error('Spawn failed: failed to start gemini agent via gemini: {"code":-32603,"message":"Internal error","data":{"details":"Failed to initialize chat: Failed to load resumed session data from file"}}'))
+      .mockResolvedValueOnce({
+        name: "worker-corrupt-session",
+        type: "gemini",
+        cwd: "/tmp/project",
+        state: "idle",
+        sessionId: "fresh-session",
+        sessionMode: "full-access",
+        currentText: "",
+        lastText: "",
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
+    expect(mockSpawnAgent.mock.calls[0]?.[0]).toMatchObject({ resumeSessionId: "corrupt-session" });
+    expect(mockSpawnAgent.mock.calls[1]?.[0]).not.toHaveProperty("resumeSessionId");
+    expect(mockAskAgent).toHaveBeenCalledTimes(2);
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, "worker-corrupt-session")).get();
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, "worker-corrupt-session"));
+    expect(persistedWorker?.status).toBe("working");
+    expect(persistedWorker?.bridgeSessionId).toBe("fresh-session");
+    expect(workerEvents.some((event) => event.eventType === "worker_session_missing")).toBe(true);
+    expect(workerEvents.some((event) => event.eventType === "worker_session_recreated")).toBe(true);
+    expect(workerEvents.some((event) => event.eventType === "worker_prompted")).toBe(true);
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "worker.recreated",
+      runId,
+      workerId: "worker-corrupt-session",
+    }));
+  });
+
+  it("reattaches a newly spawned worker when the initial prompt finds the runtime missing", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      preferredWorkerType: "gemini",
+      preferredWorkerModel: "gemini-3",
+      preferredWorkerEffort: "high",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-spawn-then-missing",
+      name: "worker_spawn",
+      args: {
+        type: "gemini",
+        cwd: "/tmp/project",
+        title: "Main implementation",
+        prompt: "Implement the plan.",
+        mode: "full-access",
+        purpose: "finish the task",
+      },
+    });
+    mockSelectSpawnableWorkerType.mockReturnValue({
+      type: "gemini",
+      requestedType: "gemini",
+      fallbackReason: null,
+    });
+    mockSpawnAgent
+      .mockResolvedValueOnce({
+        name: "spawned-worker",
+        type: "gemini",
+        cwd: "/tmp/project",
+        state: "idle",
+        sessionId: "spawn-session",
+        sessionMode: "full-access",
+        currentText: "",
+        lastText: "",
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      })
+      .mockResolvedValueOnce({
+        name: "spawned-worker",
+        type: "gemini",
+        cwd: "/tmp/project",
+        state: "idle",
+        sessionId: "reattached-session",
+        sessionMode: "full-access",
+        currentText: "",
+        lastText: "",
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      });
+    mockAskAgent
+      .mockRejectedValueOnce(new Error("Ask failed: Agent not found: spawned-worker"))
+      .mockResolvedValueOnce({ response: "Initial prompt delivered after reattach", state: "working" });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 5_000 });
+
+    const persistedWorker = await db.select().from(workers).where(eq(workers.runId, runId)).get();
+    expect(persistedWorker?.status).toBe("working: finish the task");
+    expect(persistedWorker?.bridgeSessionId).toBe("reattached-session");
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
+    expect(mockSpawnAgent.mock.calls[1]?.[0]).toMatchObject({ resumeSessionId: "spawn-session" });
+    expect(mockAskAgent).toHaveBeenCalledTimes(2);
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, persistedWorker?.id ?? ""));
+    expect(workerEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
+    expect(workerEvents.some((event) => event.eventType === "worker_prompt_failed")).toBe(false);
   });
 
   it("lists recorded supervisor interventions when completing the run", async () => {

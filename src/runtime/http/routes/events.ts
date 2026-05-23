@@ -1,6 +1,8 @@
 import { db } from "@/server/db";
-import { messages, plans, runs, accounts, workers, planItems, clarifications, supervisorInterventions, queuedConversationMessages, recoveryIncidents, planningReviewRuns, planningReviewRounds, planningReviewFindings, processSessions, conversationReadMarkers } from "@/server/db/schema";
+import { messages, plans, runs, accounts, workers, planItems, clarifications, queuedConversationMessages, recoveryIncidents, planningReviewRuns, planningReviewRounds, processSessions, conversationReadMarkers } from "@/server/db/schema";
 import { listExecutionEventsForSnapshot } from "@/server/events/execution-event-store";
+import { listSupervisorInterventionsForSnapshot } from "@/server/supervisor/intervention-store";
+import { listPlanningReviewFindingsForSnapshot } from "@/server/planning/review-artifact-store";
 import { BRIDGE_URL } from "@/server/bridge-client";
 import { isTerminalRunStatus } from "@/lib/run-status";
 import { buildAppError, type AppErrorPayload } from "@/server/api-errors";
@@ -29,6 +31,8 @@ const STREAM_REFRESH_INTERVAL_MS = 15_000;
 const RUNTIME_AGENT_GRACE_MS = 150;
 const RUNTIME_AGENT_TIMEOUT_MS = 5000;
 const EXECUTION_EVENT_LIMIT = 100;
+const SUPERVISOR_INTERVENTION_LIMIT = 50;
+const PLANNING_REVIEW_FINDING_LIMIT = 50;
 const EVENT_PAYLOAD_CACHE_LIMIT = 50;
 
 async function fetchWithTimeout(url: string, timeoutMs: number) {
@@ -133,7 +137,7 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}, prob
       ? listExecutionEventsForSnapshot(selectedRunId, EXECUTION_EVENT_LIMIT)
       : [],
     selectedRunId
-      ? db.select().from(supervisorInterventions).where(eq(supervisorInterventions.runId, selectedRunId)).orderBy(desc(supervisorInterventions.createdAt), desc(supervisorInterventions.id))
+      ? listSupervisorInterventionsForSnapshot(selectedRunId, SUPERVISOR_INTERVENTION_LIMIT)
       : [],
     selectedRunId
       ? db.select().from(queuedConversationMessages)
@@ -156,7 +160,7 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}, prob
       ? db.select().from(planningReviewRounds).where(eq(planningReviewRounds.runId, selectedRunId)).orderBy(asc(planningReviewRounds.roundNumber))
       : [],
     selectedRunId
-      ? db.select().from(planningReviewFindings).where(eq(planningReviewFindings.runId, selectedRunId)).orderBy(desc(planningReviewFindings.createdAt), desc(planningReviewFindings.id))
+      ? listPlanningReviewFindingsForSnapshot(selectedRunId, PLANNING_REVIEW_FINDING_LIMIT)
       : [],
     db.select().from(processSessions),
     db.select().from(conversationReadMarkers).where(visibleRunIds.length > 0 ? inArray(conversationReadMarkers.runId, visibleRunIds) : eq(conversationReadMarkers.runId, "__none__")),
@@ -486,6 +490,34 @@ function buildEventPayload(
     messageScope: {
       runIds: messageRunIds,
       complete: true,
+    },
+    // Bounded selected-run collections: list a cursor + completeness
+    // flag so the UI can distinguish "full transcript loaded" from
+    // "preview/tail only" and trigger pagination if it wants the rest.
+    // Artifact-backed payloads MAY be partial; the cursor lets a
+    // follow-up query request older entries.
+    snapshotScope: {
+      executionEvents: {
+        limit: EXECUTION_EVENT_LIMIT,
+        complete: records.allExecutionEvents.length < EXECUTION_EVENT_LIMIT,
+        oldestCreatedAt: records.allExecutionEvents.length > 0
+          ? records.allExecutionEvents[records.allExecutionEvents.length - 1]!.createdAt.toISOString()
+          : null,
+      },
+      supervisorInterventions: {
+        limit: SUPERVISOR_INTERVENTION_LIMIT,
+        complete: records.allSupervisorInterventions.length < SUPERVISOR_INTERVENTION_LIMIT,
+        oldestCreatedAt: records.allSupervisorInterventions.length > 0
+          ? records.allSupervisorInterventions[records.allSupervisorInterventions.length - 1]!.createdAt.toISOString()
+          : null,
+      },
+      planningReviewFindings: {
+        limit: PLANNING_REVIEW_FINDING_LIMIT,
+        complete: records.allReviewFindings.length < PLANNING_REVIEW_FINDING_LIMIT,
+        oldestCreatedAt: records.allReviewFindings.length > 0
+          ? records.allReviewFindings[records.allReviewFindings.length - 1]!.createdAt.toISOString()
+          : null,
+      },
     },
     workerEntrySeqs,
   });

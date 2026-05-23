@@ -3,9 +3,20 @@ import { promises as fs, existsSync } from "node:fs";
 import path from "node:path";
 import { brotliDecompressSync, gzipSync, gunzipSync } from "node:zlib";
 import AdmZip from "adm-zip";
+import { eq } from "drizzle-orm";
 import type { AgentOutputEntry } from "@/lib/agent-output";
 import type { AgentRecord } from "@/server/bridge-client";
 import { getAppDataPath } from "@/server/app-root";
+import { db } from "@/server/db";
+import { runs } from "@/server/db/schema";
+import { resolveArtifactStreamLocation } from "@/server/artifacts/append-only-store";
+import { commitArtifactAppend, ensureArtifactStreamRow, readArtifactStreamMetadata } from "@/server/artifacts/stream-metadata";
+import {
+  appendIndexEntry,
+  findIndexPointForSeq,
+  readIndex,
+  shouldIndex,
+} from "@/server/artifacts/stream-index";
 import { emitNamedEvent } from "@/server/events/named-events";
 import type {
   WorkerEntry,
@@ -42,20 +53,99 @@ function runDataDir() {
   return getAppDataPath(RUN_DATA_SUBDIR);
 }
 
-function runDir(runId: string) {
+function legacyRunDir(runId: string) {
   return path.join(runDataDir(), runId);
 }
 
-function workerFilePath(runId: string, workerId: string) {
-  return path.join(runDir(runId), `${workerId}.jsonl`);
+function legacyWorkerFilePath(runId: string, workerId: string) {
+  return path.join(legacyRunDir(runId), `${workerId}.jsonl`);
 }
 
-function workerFileLockPath(runId: string, workerId: string) {
-  return `${workerFilePath(runId, workerId)}.lock`;
+function legacyWorkerCompressedFilePath(runId: string, workerId: string) {
+  return `${legacyWorkerFilePath(runId, workerId)}.gz`;
 }
 
-function workerCompressedFilePath(runId: string, workerId: string) {
-  return `${workerFilePath(runId, workerId)}.gz`;
+type WorkerStreamPaths = {
+  filePath: string;
+  compressedFilePath: string;
+  lockPath: string;
+};
+
+// Per-(runId,workerId) cache for the resolved stream paths. Read-mode
+// resolution does a SELECT against runs.projectPath plus the artifact
+// location resolver; project_path is immutable for a run's lifetime so
+// the resolution is stable. Reads happen at snapshot cadence (multiple
+// per second), so caching here eliminates a meaningful chunk of the
+// per-request latency budget. Write-mode resolution runs through
+// ensureArtifactStreamRow, which itself caches downstream; we still
+// memoize here so the cache key matches across read/write.
+const workerStreamPathsCache = new Map<string, WorkerStreamPaths>();
+
+async function workerStreamPaths(
+  runId: string,
+  workerId: string,
+  mode: "read" | "write",
+): Promise<WorkerStreamPaths> {
+  const key = chainKey(runId, workerId);
+  const cached = workerStreamPathsCache.get(key);
+  if (cached) return cached;
+
+  let resolved: WorkerStreamPaths;
+  if (mode === "write") {
+    try {
+      const row = await ensureArtifactStreamRow({
+        runId,
+        kind: "worker_entries",
+        ownerId: workerId,
+      });
+      resolved = {
+        filePath: row.location.filePath,
+        compressedFilePath: row.location.compressedFilePath,
+        lockPath: row.location.lockPath,
+      };
+    } catch (error) {
+      if (String((error as Error).message ?? "").includes("missing run")) {
+        resolved = legacyWorkerStreamPaths(runId, workerId);
+      } else {
+        throw error;
+      }
+    }
+  } else {
+    const run = await db
+      .select({ projectPath: runs.projectPath })
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .get();
+    if (!run) {
+      resolved = legacyWorkerStreamPaths(runId, workerId);
+    } else {
+      const location = await resolveArtifactStreamLocation(
+        {
+          runId,
+          kind: "worker_entries",
+          ownerId: workerId,
+          projectPath: run.projectPath ?? null,
+        },
+        "read",
+      );
+      resolved = {
+        filePath: location.filePath,
+        compressedFilePath: location.compressedFilePath,
+        lockPath: location.lockPath,
+      };
+    }
+  }
+  workerStreamPathsCache.set(key, resolved);
+  return resolved;
+}
+
+function legacyWorkerStreamPaths(runId: string, workerId: string): WorkerStreamPaths {
+  const filePath = legacyWorkerFilePath(runId, workerId);
+  return {
+    filePath,
+    compressedFilePath: `${filePath}.gz`,
+    lockPath: `${filePath}.lock`,
+  };
 }
 
 function runArchivePath(runId: string) {
@@ -341,6 +431,33 @@ const readLatestSeqByKey = new Map<string, { latestSeq: number; size: number; mt
 // The entries list also lets us filter by afterSeq in memory, so even an
 // afterSeq=0 first-load is served from this cache after the initial read.
 const readEntriesByKey = new Map<string, { entries: WorkerEntry[]; latestSeq: number; size: number; mtimeMs: number }>();
+// Cap how many full-entries chains we keep resident. Each value is the
+// entire parsed transcript for one worker; with long-running supervisor
+// runs across many workers this Map was the dominant resident-memory
+// source. Map iteration order is insertion order, so we evict the
+// oldest-inserted key on overflow. Cache hits also "touch" the key by
+// re-inserting so genuinely-active chains stay resident.
+const READ_ENTRIES_CACHE_MAX = 32;
+function setReadEntriesCache(
+  key: string,
+  value: { entries: WorkerEntry[]; latestSeq: number; size: number; mtimeMs: number },
+) {
+  if (readEntriesByKey.has(key)) {
+    readEntriesByKey.delete(key);
+  } else if (readEntriesByKey.size >= READ_ENTRIES_CACHE_MAX) {
+    const oldestKey = readEntriesByKey.keys().next().value;
+    if (oldestKey !== undefined) readEntriesByKey.delete(oldestKey);
+  }
+  readEntriesByKey.set(key, value);
+}
+function touchReadEntriesCache(key: string) {
+  const value = readEntriesByKey.get(key);
+  if (value !== undefined) {
+    readEntriesByKey.delete(key);
+    readEntriesByKey.set(key, value);
+  }
+  return value;
+}
 // Cache of bridge entry ids that have already been written, used to make
 // append-from-snapshot idempotent. Built lazily from the file on first
 // use and updated on every successful append.
@@ -348,6 +465,30 @@ const seenIdsByKey = new Map<string, Set<string>>();
 const fingerprintsByKey = new Map<string, Map<string, string>>();
 const fileStateByKey = new Map<string, { size: number; mtimeMs: number }>();
 let chainCacheDiskRefreshesForTests = 0;
+
+// Bound the write-side chain caches the same way as readEntriesByKey:
+// supervisor runs can spawn hundreds of workers and seenIds/fingerprints
+// each grow linearly with entry count per worker. Eviction is safe — the
+// next refreshChainCaches call rebuilds from disk and from the DB-tracked
+// latestSeq. Keep insertion order so cache hits "touch" by re-inserting.
+const CHAIN_CACHE_MAX = 64;
+function rememberChainKey(key: string) {
+  // Insertion-order LRU across the four maps that share this key set.
+  if (nextSeqByKey.has(key)) {
+    nextSeqByKey.delete(key);
+    seenIdsByKey.delete(key);
+    fingerprintsByKey.delete(key);
+    fileStateByKey.delete(key);
+  } else if (nextSeqByKey.size >= CHAIN_CACHE_MAX) {
+    const oldest = nextSeqByKey.keys().next().value;
+    if (oldest !== undefined) {
+      nextSeqByKey.delete(oldest);
+      seenIdsByKey.delete(oldest);
+      fingerprintsByKey.delete(oldest);
+      fileStateByKey.delete(oldest);
+    }
+  }
+}
 
 function chainKey(runId: string, workerId: string) {
   return `${runId}/${workerId}`;
@@ -410,8 +551,7 @@ async function isWorkerFileLockStale(lockPath: string) {
   }
 }
 
-async function acquireWorkerFileLock(runId: string, workerId: string): Promise<() => Promise<void>> {
-  const lockPath = workerFileLockPath(runId, workerId);
+async function acquireWorkerFileLock(lockPath: string): Promise<() => Promise<void>> {
   const ownerPath = path.join(lockPath, "owner.json");
   const ownerToken = randomUUID();
   const owner = JSON.stringify({
@@ -495,24 +635,24 @@ async function acquireWorkerFileLock(runId: string, workerId: string): Promise<(
 async function withWorkerFileLock<T>(
   runId: string,
   workerId: string,
-  task: () => Promise<T>,
+  task: (paths: WorkerStreamPaths) => Promise<T>,
 ): Promise<T> {
-  const dir = runDir(runId);
-  await fs.mkdir(dir, { recursive: true });
-  const target = workerFilePath(runId, workerId);
+  const paths = await workerStreamPaths(runId, workerId, "write");
+  await fs.mkdir(path.dirname(paths.filePath), { recursive: true });
   // Appending an empty string with `a` is an atomic touch.
-  await fs.writeFile(target, "", { flag: "a" });
-  const release = await acquireWorkerFileLock(runId, workerId);
+  await fs.writeFile(paths.filePath, "", { flag: "a" });
+  const release = await acquireWorkerFileLock(paths.lockPath);
   try {
-    return await task();
+    return await task(paths);
   } finally {
     await release();
   }
 }
 
 async function readWorkerFileState(runId: string, workerId: string) {
+  const paths = await workerStreamPaths(runId, workerId, "read");
   try {
-    const stat = await fs.stat(workerFilePath(runId, workerId));
+    const stat = await fs.stat(paths.filePath);
     return { size: stat.size, mtimeMs: stat.mtimeMs };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -537,6 +677,12 @@ async function refreshChainCaches(runId: string, workerId: string): Promise<{ ne
     && cachedFileState.size === currentFileState.size
     && cachedFileState.mtimeMs === currentFileState.mtimeMs
   ) {
+    // Touch the LRU so an actively-used chain stays resident.
+    rememberChainKey(key);
+    nextSeqByKey.set(key, cachedNextSeq);
+    seenIdsByKey.set(key, cachedSeen);
+    fingerprintsByKey.set(key, cachedFingerprints);
+    fileStateByKey.set(key, cachedFileState);
     return {
       nextSeq: cachedNextSeq,
       seen: cachedSeen,
@@ -545,20 +691,48 @@ async function refreshChainCaches(runId: string, workerId: string): Promise<{ ne
   }
 
   chainCacheDiskRefreshesForTests += 1;
-  const existing = await readCanonicalPersistedEntries(runId, workerId);
-  let maxSeq = 0;
+  // Use RAW persisted entries (pre-dedupe, pre-renumber) for the seq cursor
+  // so we never advance backward. A previous in-disk corruption (e.g.
+  // duplicate seqs from a cross-process race) used to be "corrected" by
+  // normalizeWorkerEntrySeqs renumbering from 1, which then caused the
+  // writer to land on seqs already present on disk — making the dupe
+  // problem self-reinforcing. Read dedup signals (seen ids, fingerprints)
+  // from the canonicalized view, but take maxSeq from the raw stream.
+  const rawExisting = await readAllPersistedEntries(runId, workerId);
+  let rawMaxSeq = 0;
+  for (const entry of rawExisting) {
+    if (typeof entry.seq === "number" && Number.isFinite(entry.seq) && entry.seq > rawMaxSeq) {
+      rawMaxSeq = entry.seq;
+    }
+  }
+  const canonical = normalizePersistedEntries(rawExisting);
   const seen = new Set<string>();
   const fingerprints = new Map<string, string>();
-  for (const entry of existing) {
+  for (const entry of canonical) {
     if (typeof entry.id === "string" && entry.id) {
       seen.add(entry.id);
       fingerprints.set(entry.id, workerEntryFingerprint(entry));
     }
-    if (typeof entry.seq === "number" && Number.isFinite(entry.seq) && entry.seq > maxSeq) {
-      maxSeq = entry.seq;
-    }
   }
-  const nextSeq = maxSeq + 1;
+  // Cross-process safety: artifact_streams.latest_seq is updated after every
+  // successful commit, so consulting it ensures we never reuse a seq another
+  // process already claimed even if our file view is stale.
+  let dbLatestSeq = 0;
+  try {
+    const metadata = await readArtifactStreamMetadata({
+      runId,
+      kind: "worker_entries",
+      ownerId: workerId,
+    });
+    if (metadata && typeof metadata.latestSeq === "number" && metadata.latestSeq > 0) {
+      dbLatestSeq = metadata.latestSeq;
+    }
+  } catch {
+    // Best-effort — if the metadata read fails, fall back to the file-only
+    // cursor. The file lock still serializes within a process.
+  }
+  const nextSeq = Math.max(rawMaxSeq, dbLatestSeq) + 1;
+  rememberChainKey(key);
   nextSeqByKey.set(key, nextSeq);
   seenIdsByKey.set(key, seen);
   fingerprintsByKey.set(key, fingerprints);
@@ -574,9 +748,9 @@ async function readAllPersistedEntries(runId: string, workerId: string): Promise
   // Mirrors readWorkerOutputEntries's plaintext-first fallback chain but
   // returns the raw on-disk shape (WorkerEntry-ish — seq may be absent on
   // legacy lines; that's fine since the writer treats missing seq as 0).
-  const filePath = workerFilePath(runId, workerId);
+  const paths = await workerStreamPaths(runId, workerId, "read");
   try {
-    const body = await fs.readFile(filePath, "utf8");
+    const body = await fs.readFile(paths.filePath, "utf8");
     const parsed = parseWorkerEntryLines(body);
     if (body.trim() || parsed.length > 0) {
       return parsed;
@@ -586,9 +760,15 @@ async function readAllPersistedEntries(runId: string, workerId: string): Promise
       throw error;
     }
   }
-  const compressed = await readFromCompressedFile(runId, workerId);
+  const compressed = await readFromCompressedFile(paths.compressedFilePath);
   if (compressed.length > 0) {
     return compressed;
+  }
+  if (paths.filePath !== legacyWorkerFilePath(runId, workerId)) {
+    const legacy = await readFromLegacyWorkerFiles(runId, workerId);
+    if (legacy.length > 0) {
+      return legacy;
+    }
   }
   const archived = await readFromArchive(runId, workerId);
   if (archived.length > 0) {
@@ -618,11 +798,11 @@ export async function appendWorkerEntryWithResult(
   entry: Omit<WorkerEntry, "seq">,
 ): Promise<AppendWorkerEntryResult> {
   return runOnChain(runId, workerId, async () => {
-    return withWorkerFileLock(runId, workerId, async () => {
+    return withWorkerFileLock(runId, workerId, async (paths) => {
       // If a compaction race somehow stranded the plaintext file under .gz,
       // expand it first so cache refresh sees the live transcript rather
       // than the lock-created empty placeholder.
-      await expandWorkerOutputFileInternal(runId, workerId);
+      await expandWorkerOutputFileInternal(paths);
 
       const { nextSeq, seen, fingerprints } = await refreshChainCaches(runId, workerId);
       if (entry.id && seen.has(entry.id)) {
@@ -646,8 +826,19 @@ export async function appendWorkerEntryWithResult(
       const compact = compactEntryForHistory(persistedEntry as unknown as CompactableEntry) as unknown as WorkerEntry;
       const line = JSON.stringify(compact) + "\n";
 
-      const target = workerFilePath(runId, workerId);
+      const target = paths.filePath;
       const newlineGuard = await needsLeadingNewline(target);
+      // Capture pre-append size so we can record the byte offset of the
+      // new line in the sparse seq→offset index. The newline-guard byte
+      // (if any) is written before the JSON line, so the line starts one
+      // byte past sizeBefore in that case.
+      let sizeBefore = 0;
+      try {
+        sizeBefore = (await fs.stat(target)).size;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      const lineStartOffset = sizeBefore + (newlineGuard ? 1 : 0);
       const handle = await fs.open(target, "a");
       try {
         await handle.appendFile(newlineGuard ? "\n" + line : line, "utf8");
@@ -656,12 +847,27 @@ export async function appendWorkerEntryWithResult(
         await handle.close();
       }
 
+      if (shouldIndex(persistedEntry.seq)) {
+        // Best-effort: appendIndexEntry swallows its own errors. The
+        // index is opportunistic — a failure here only slows future tail
+        // reads until the next rebuild.
+        await appendIndexEntry(target, {
+          seq: persistedEntry.seq,
+          offset: lineStartOffset,
+        });
+      }
+
       if (entry.id) {
         seen.add(entry.id);
         fingerprints.set(entry.id, workerEntryFingerprint(compact));
       }
       nextSeqByKey.set(chainKey(runId, workerId), nextSeq + 1);
       await rememberWorkerFileState(runId, workerId);
+      await commitArtifactAppend({
+        streamId: { runId, kind: "worker_entries", ownerId: workerId },
+        seq: compact.seq,
+        recordId: compact.id ?? `seq-${compact.seq}`,
+      });
       return { entry: compact, appended: true };
     });
   });
@@ -695,8 +901,8 @@ export async function writeWorkerOutputEntries(
   }
 
   await runOnChain(runId, workerId, async () => {
-    await withWorkerFileLock(runId, workerId, async () => {
-      await expandWorkerOutputFileInternal(runId, workerId);
+    await withWorkerFileLock(runId, workerId, async (paths) => {
+      await expandWorkerOutputFileInternal(paths);
 
       const { fingerprints } = await refreshChainCaches(runId, workerId);
       const newEntries: AgentOutputEntry[] = [];
@@ -730,7 +936,7 @@ export async function writeWorkerOutputEntries(
         throw new Error(`writeWorkerOutputEntries: missing nextSeq for ${key}`);
       }
 
-      const target = workerFilePath(runId, workerId);
+      const target = paths.filePath;
       const newlineGuard = await needsLeadingNewline(target);
 
       const lines: string[] = [];
@@ -762,6 +968,14 @@ export async function writeWorkerOutputEntries(
       }
       nextSeqByKey.set(key, nextSeq);
       await rememberWorkerFileState(runId, workerId);
+      const latestEntry = appendedEntries.at(-1);
+      if (latestEntry && typeof latestEntry.seq === "number" && Number.isFinite(latestEntry.seq)) {
+        await commitArtifactAppend({
+          streamId: { runId, kind: "worker_entries", ownerId: workerId },
+          seq: latestEntry.seq,
+          recordId: latestEntry.id ?? `seq-${latestEntry.seq}`,
+        });
+      }
       for (const entry of appendedEntries) {
         if (typeof entry.seq === "number" && Number.isFinite(entry.seq) && entry.seq > 0) {
           emitNamedEvent({
@@ -823,8 +1037,7 @@ function parseWorkerEntryLines(body: string): WorkerEntry[] {
   return out;
 }
 
-async function readFromCompressedFile(runId: string, workerId: string): Promise<WorkerEntry[]> {
-  const compressed = workerCompressedFilePath(runId, workerId);
+async function readFromCompressedFile(compressed: string): Promise<WorkerEntry[]> {
   try {
     const buf = await fs.readFile(compressed);
     return parseWorkerEntryLines(gunzipSync(buf).toString("utf8"));
@@ -834,6 +1047,22 @@ async function readFromCompressedFile(runId: string, workerId: string): Promise<
     }
     throw error;
   }
+}
+
+async function readFromLegacyWorkerFiles(runId: string, workerId: string): Promise<WorkerEntry[]> {
+  const filePath = legacyWorkerFilePath(runId, workerId);
+  try {
+    const body = await fs.readFile(filePath, "utf8");
+    const parsed = parseWorkerEntryLines(body);
+    if (body.trim() || parsed.length > 0) {
+      return parsed;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+  return readFromCompressedFile(legacyWorkerCompressedFilePath(runId, workerId));
 }
 
 async function readFromArchive(runId: string, workerId: string): Promise<WorkerEntry[]> {
@@ -891,6 +1120,7 @@ export type ReadWorkerEntriesPath =
   | "cache.caughtUp"
   | "cache.filtered"
   | "jsonl.tail"
+  | "jsonl.indexSeek"
   | "canonical.fullRead";
 
 // Cap the forward-fetch response so a client whose afterSeq is far
@@ -905,7 +1135,8 @@ export async function readWorkerEntriesSince(
   afterSeq: number,
 ): Promise<{ entries: WorkerEntry[]; latestSeq: number; _path?: ReadWorkerEntriesPath }> {
   const key = chainKey(runId, workerId);
-  const filePath = workerFilePath(runId, workerId);
+  const paths = await workerStreamPaths(runId, workerId, "read");
+  const filePath = paths.filePath;
 
   // Authoritative in-process cursor: if afterSeq is already at-or-past
   // nextSeq-1, the client is caught up and no FS access is needed. See
@@ -930,7 +1161,7 @@ export async function readWorkerEntriesSince(
   }
 
   if (stat) {
-    const cached = readEntriesByKey.get(key);
+    const cached = touchReadEntriesCache(key);
     if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
       // File hasn't moved since we parsed it — serve from memory.
       // Trim allocation when the caller is already caught up so we don't
@@ -964,7 +1195,11 @@ export async function readWorkerEntriesSince(
       const capped = fromJsonlTail.entries.length > MAX_FORWARD_ENTRIES
         ? fromJsonlTail.entries.slice(0, MAX_FORWARD_ENTRIES)
         : fromJsonlTail.entries;
-      return { entries: capped, latestSeq: fromJsonlTail.latestSeq, _path: "jsonl.tail" };
+      return {
+        entries: capped,
+        latestSeq: fromJsonlTail.latestSeq,
+        _path: fromJsonlTail.viaIndex ? "jsonl.indexSeek" : "jsonl.tail",
+      };
     }
   }
 
@@ -976,7 +1211,7 @@ export async function readWorkerEntriesSince(
     }
   }
   if (stat) {
-    readEntriesByKey.set(key, {
+    setReadEntriesCache(key, {
       entries: withSeqs,
       latestSeq,
       size: stat.size,
@@ -1021,7 +1256,9 @@ async function readWorkerEntriesTailJsonl(
   workerId: string,
   limit: number,
 ): Promise<{ entries: WorkerEntry[]; latestSeq: number; hasOlder: boolean } | null> {
-  const filePath = workerFilePath(runId, workerId);
+  const { filePath } = await workerStreamPaths(runId, workerId, "read");
+  const viaIndex = await readWorkerEntriesTailViaIndex(filePath, limit);
+  if (viaIndex) return viaIndex;
   let size = 0;
   try {
     size = (await fs.stat(filePath)).size;
@@ -1145,12 +1382,142 @@ export async function readWorkerEntriesBefore(
   return { entries: slice, latestSeq, hasOlder };
 }
 
+/**
+ * Read forward from the on-disk seq→offset index. Returns `null` if the
+ * index is missing/empty or doesn't cover the requested range — caller
+ * falls back to the backward tail scan.
+ *
+ * The index is sparse (one entry per INDEX_CADENCE seqs) so the seek
+ * point is at-or-before the first record we actually need; we read all
+ * the bytes from that offset to EOF and filter by `afterSeq`.
+ */
+async function readWorkerEntriesSinceViaIndex(
+  filePath: string,
+  afterSeq: number,
+): Promise<{ entries: WorkerEntry[]; latestSeq: number } | null> {
+  const index = await readIndex(filePath);
+  if (!index || index.length === 0) return null;
+  // findIndexPointForSeq returns at-or-before; we want the largest seq
+  // strictly <= afterSeq so the read starts just before the cutoff. If
+  // afterSeq sits below the smallest indexed seq, there's no seek point
+  // and we'd have to read the whole file — let the caller's backward
+  // scan handle that (it has its own maxBytes cap).
+  const seek = findIndexPointForSeq(index, afterSeq);
+  if (!seek) return null;
+  let body: string;
+  try {
+    const handle = await fs.open(filePath, "r");
+    try {
+      const stat = await handle.stat();
+      const length = Math.max(0, stat.size - seek.offset);
+      if (length === 0) return { entries: [], latestSeq: seek.seq };
+      const buf = Buffer.alloc(length);
+      await handle.read(buf, 0, length, seek.offset);
+      body = buf.toString("utf8");
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  const entries: WorkerEntry[] = [];
+  let latestSeq = 0;
+  for (const line of body.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as WorkerEntry;
+      const seq = typeof parsed.seq === "number" && Number.isFinite(parsed.seq)
+        ? Math.floor(parsed.seq)
+        : 0;
+      if (seq <= 0) {
+        // Encountered a legacy/malformed line we can't sequence — give
+        // up and let the caller take the backward-scan path.
+        return null;
+      }
+      if (seq > latestSeq) latestSeq = seq;
+      if (seq > afterSeq) entries.push(parsed);
+    } catch {
+      // Tolerate a single trailing partial line (mid-append crash). If
+      // it's not the last line we genuinely can't trust the boundary.
+    }
+  }
+  return { entries, latestSeq };
+}
+
+/**
+ * Read the last `limit` entries via the seq→offset index. Returns `null`
+ * if the index can't help (missing, empty, or doesn't reach the desired
+ * range) — caller falls back to backward scan.
+ */
+async function readWorkerEntriesTailViaIndex(
+  filePath: string,
+  limit: number,
+): Promise<{ entries: WorkerEntry[]; latestSeq: number; hasOlder: boolean } | null> {
+  const index = await readIndex(filePath);
+  if (!index || index.length === 0) return null;
+  // Use the largest indexed seq as a proxy for "near the end" and seek
+  // a bit further back so we have at least `limit` worth of records to
+  // pick from. INDEX_CADENCE=100 so two index points back covers up to
+  // 200 records.
+  const highestIndexed = index[index.length - 1]!;
+  const target = Math.max(1, highestIndexed.seq - Math.max(limit, 100) - 1);
+  const seek = findIndexPointForSeq(index, target);
+  if (!seek) return null;
+  let body: string;
+  try {
+    const handle = await fs.open(filePath, "r");
+    try {
+      const stat = await handle.stat();
+      const length = Math.max(0, stat.size - seek.offset);
+      if (length === 0) return null;
+      const buf = Buffer.alloc(length);
+      await handle.read(buf, 0, length, seek.offset);
+      body = buf.toString("utf8");
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  const lines = body.split("\n");
+  const parsed: WorkerEntry[] = [];
+  let latestSeq = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const trimmed = lines[i]!.trim();
+    if (!trimmed) continue;
+    try {
+      const entry = JSON.parse(trimmed) as WorkerEntry;
+      const seq = typeof entry.seq === "number" && Number.isFinite(entry.seq)
+        ? Math.floor(entry.seq)
+        : 0;
+      if (seq <= 0) return null;
+      if (seq > latestSeq) latestSeq = seq;
+      parsed.push(entry);
+    } catch {
+      // Trailing partial line is tolerable; mid-stream malformed line
+      // means we can't trust the seek window.
+      if (i !== lines.length - 1) return null;
+    }
+  }
+  if (parsed.length === 0) return null;
+  const slice = parsed.slice(Math.max(0, parsed.length - limit));
+  // We started at an index point > seq 1, so there are by definition
+  // older records on disk that we skipped.
+  return { entries: slice, latestSeq, hasOlder: seek.seq > 1 };
+}
+
 async function readWorkerEntriesSinceJsonlTail(
   runId: string,
   workerId: string,
   afterSeq: number,
-): Promise<{ entries: WorkerEntry[]; latestSeq: number } | null> {
-  const filePath = workerFilePath(runId, workerId);
+): Promise<{ entries: WorkerEntry[]; latestSeq: number; viaIndex: boolean } | null> {
+  const { filePath } = await workerStreamPaths(runId, workerId, "read");
+  // Index-based seek beats the backward chunk scan when available.
+  const viaIndex = await readWorkerEntriesSinceViaIndex(filePath, afterSeq);
+  if (viaIndex) return { ...viaIndex, viaIndex: true };
   let size = 0;
   try {
     size = (await fs.stat(filePath)).size;
@@ -1164,31 +1531,32 @@ async function readWorkerEntriesSinceJsonlTail(
     return null;
   }
 
+  // Read the tail window in one shot and parse once. The previous
+  // implementation read 64KB chunks and re-parsed the accumulated tail
+  // after every chunk — O(maxBytes^2 / chunkSize) parse work in the
+  // worst case. Under active write load (cache constantly invalidated by
+  // mtime changes) that was the dominant CPU draw on the worker-entries
+  // route.
   const maxBytes = Math.min(size, 1024 * 1024);
-  const chunkSize = Math.min(maxBytes, 64 * 1024);
+  const readSize = Math.min(maxBytes, size);
+  const offset = size - readSize;
+  const buffer = Buffer.alloc(readSize);
   const handle = await fs.open(filePath, "r");
   try {
-    let offset = size;
-    let tail = "";
-    while (offset > 0 && Buffer.byteLength(tail, "utf8") < maxBytes) {
-      const readSize = Math.min(chunkSize, offset);
-      offset -= readSize;
-      const buffer = Buffer.alloc(readSize);
-      await handle.read(buffer, 0, readSize, offset);
-      tail = buffer.toString("utf8") + tail;
-
-      const parsed = entriesSinceInJsonlText(tail, offset === 0, afterSeq);
-      if (parsed.complete) {
-        return {
-          entries: parsed.entries,
-          latestSeq: parsed.latestSeq,
-        };
-      }
-    }
-    return null;
+    await handle.read(buffer, 0, readSize, offset);
   } finally {
     await handle.close();
   }
+  const tail = buffer.toString("utf8");
+  const parsed = entriesSinceInJsonlText(tail, offset === 0, afterSeq);
+  if (parsed.complete) {
+    return {
+      entries: parsed.entries,
+      latestSeq: parsed.latestSeq,
+      viaIndex: false,
+    };
+  }
+  return null;
 }
 
 function entriesSinceInJsonlText(text: string, includesFileStart: boolean, afterSeq: number) {
@@ -1255,7 +1623,7 @@ export async function readWorkerLatestSeq(
     return nextSeq - 1;
   }
 
-  const filePath = workerFilePath(runId, workerId);
+  const { filePath } = await workerStreamPaths(runId, workerId, "read");
   let statForCache: { size: number; mtimeMs: number } | null = null;
   try {
     const stat = await fs.stat(filePath);
@@ -1265,6 +1633,15 @@ export async function readWorkerLatestSeq(
       return cached.latestSeq;
     }
     if (stat.size > 0) {
+      // Prefer the sparse seq→offset index: seek to the last indexed
+      // point (within INDEX_CADENCE records of EOF) and read forward
+      // instead of scanning backward from EOF in 64KB chunks. Falls
+      // back to the backward scan when the index is missing.
+      const seqViaIndex = await readLatestSeqViaIndex(filePath, stat.size);
+      if (seqViaIndex !== null) {
+        readLatestSeqByKey.set(key, { latestSeq: seqViaIndex, size: stat.size, mtimeMs: stat.mtimeMs });
+        return seqViaIndex;
+      }
       const seq = await readLatestSeqFromJsonlTail(filePath, stat.size);
       if (seq !== null) {
         readLatestSeqByKey.set(key, { latestSeq: seq, size: stat.size, mtimeMs: stat.mtimeMs });
@@ -1288,6 +1665,49 @@ export async function readWorkerLatestSeq(
     readLatestSeqByKey.set(key, { latestSeq, size: statForCache.size, mtimeMs: statForCache.mtimeMs });
   }
   return latestSeq;
+}
+
+/**
+ * Read the latest seq by seeking via the sparse index to the highest
+ * indexed point and scanning forward from there. Returns `null` if the
+ * index is missing or empty (caller falls back to the backward scan).
+ *
+ * For a 1MB+ transcript with an index covering up to seq N (where N
+ * may be up to INDEX_CADENCE-1 records behind the real tail), this
+ * reads at most a few KB instead of a 1MB backward chunk.
+ */
+async function readLatestSeqViaIndex(filePath: string, size: number): Promise<number | null> {
+  const index = await readIndex(filePath);
+  if (!index || index.length === 0) return null;
+  const highest = index[index.length - 1]!;
+  if (highest.offset >= size) return null;
+  const length = size - highest.offset;
+  const handle = await fs.open(filePath, "r");
+  let body: string;
+  try {
+    const buf = Buffer.alloc(length);
+    await handle.read(buf, 0, length, highest.offset);
+    body = buf.toString("utf8");
+  } finally {
+    await handle.close();
+  }
+  let latestSeq = 0;
+  const lines = body.split("\n");
+  for (let i = 0; i < lines.length; i += 1) {
+    const trimmed = lines[i]!.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as { seq?: unknown };
+      const seq = typeof parsed.seq === "number" && Number.isFinite(parsed.seq)
+        ? Math.floor(parsed.seq)
+        : 0;
+      if (seq > 0 && seq > latestSeq) latestSeq = seq;
+    } catch {
+      // Tolerate a trailing partial write but bail on mid-window garbage.
+      if (i !== lines.length - 1) return null;
+    }
+  }
+  return latestSeq > 0 ? latestSeq : null;
 }
 
 async function readLatestSeqFromJsonlTail(filePath: string, size: number): Promise<number | null> {
@@ -1418,8 +1838,8 @@ export function parseLegacyOutputEntriesJson(value: string | null | undefined): 
   }
 }
 
-async function compactWorkerOutputFileInternal(runId: string, workerId: string): Promise<boolean> {
-  const source = workerFilePath(runId, workerId);
+async function compactWorkerOutputFileInternal(paths: WorkerStreamPaths): Promise<boolean> {
+  const source = paths.filePath;
   let body: Buffer;
   try {
     body = await fs.readFile(source);
@@ -1435,7 +1855,7 @@ async function compactWorkerOutputFileInternal(runId: string, workerId: string):
   const withSeqs = normalizePersistedEntries(parsed);
   const normalizedBody = Buffer.from(withSeqs.map((entry) => JSON.stringify(entry)).join("\n") + (withSeqs.length > 0 ? "\n" : ""), "utf8");
 
-  const target = workerCompressedFilePath(runId, workerId);
+  const target = paths.compressedFilePath;
   tmpCounter = (tmpCounter + 1) >>> 0;
   const tmp = `${target}.tmp-${process.pid}-${Date.now()}-${tmpCounter}`;
   const compressed = gzipSync(normalizedBody);
@@ -1453,8 +1873,8 @@ async function compactWorkerOutputFileInternal(runId: string, workerId: string):
   return true;
 }
 
-async function expandWorkerOutputFileInternal(runId: string, workerId: string): Promise<boolean> {
-  const source = workerCompressedFilePath(runId, workerId);
+async function expandWorkerOutputFileInternal(paths: WorkerStreamPaths): Promise<boolean> {
+  const source = paths.compressedFilePath;
   let body: Buffer;
   try {
     body = await fs.readFile(source);
@@ -1465,7 +1885,7 @@ async function expandWorkerOutputFileInternal(runId: string, workerId: string): 
     throw error;
   }
   const decompressed = gunzipSync(body);
-  const target = workerFilePath(runId, workerId);
+  const target = paths.filePath;
   tmpCounter = (tmpCounter + 1) >>> 0;
   const tmp = `${target}.tmp-${process.pid}-${Date.now()}-${tmpCounter}`;
   try {
@@ -1482,35 +1902,29 @@ async function expandWorkerOutputFileInternal(runId: string, workerId: string): 
 
 export async function compactWorkerOutputFile(runId: string, workerId: string): Promise<boolean> {
   return runOnChain(runId, workerId, async () => {
-    if (!existsSync(workerFilePath(runId, workerId))) {
+    const paths = await workerStreamPaths(runId, workerId, "read");
+    if (!existsSync(paths.filePath)) {
       return false;
     }
-    return withWorkerFileLock(runId, workerId, () => compactWorkerOutputFileInternal(runId, workerId));
+    return withWorkerFileLock(runId, workerId, (lockedPaths) => compactWorkerOutputFileInternal(lockedPaths));
   });
 }
 
 export async function expandWorkerOutputFile(runId: string, workerId: string): Promise<boolean> {
   return runOnChain(runId, workerId, () =>
-    withWorkerFileLock(runId, workerId, () => expandWorkerOutputFileInternal(runId, workerId)));
+    withWorkerFileLock(runId, workerId, (paths) => expandWorkerOutputFileInternal(paths)));
 }
 
 export async function compactRunOutputs(runId: string): Promise<{ compactedWorkerIds: string[] }> {
-  const dir = runDir(runId);
-  let entries: string[];
-  try {
-    entries = await fs.readdir(dir);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { compactedWorkerIds: [] };
-    }
-    throw error;
-  }
+  const { workers } = await import("@/server/db/schema");
+  const runWorkers = await db
+    .select({ id: workers.id })
+    .from(workers)
+    .where(eq(workers.runId, runId));
   const compactedWorkerIds: string[] = [];
-  for (const entry of entries) {
-    if (!entry.endsWith(".jsonl")) continue;
-    const workerId = entry.slice(0, -".jsonl".length);
-    const ok = await compactWorkerOutputFile(runId, workerId);
-    if (ok) compactedWorkerIds.push(workerId);
+  for (const worker of runWorkers) {
+    const ok = await compactWorkerOutputFile(runId, worker.id);
+    if (ok) compactedWorkerIds.push(worker.id);
   }
   return { compactedWorkerIds };
 }
@@ -1612,8 +2026,14 @@ export async function compactStaleWorkerOutputs(options: {
 
 export async function deleteWorkerOutputFile(runId: string, workerId: string) {
   await runOnChain(runId, workerId, async () => {
-    await withWorkerFileLock(runId, workerId, async () => {
-      for (const target of [workerFilePath(runId, workerId), workerCompressedFilePath(runId, workerId)]) {
+    await withWorkerFileLock(runId, workerId, async (paths) => {
+      const legacyPaths = legacyWorkerStreamPaths(runId, workerId);
+      for (const target of [
+        paths.filePath,
+        paths.compressedFilePath,
+        legacyPaths.filePath,
+        legacyPaths.compressedFilePath,
+      ]) {
         try {
           await fs.unlink(target);
         } catch (error) {
@@ -1628,7 +2048,7 @@ export async function deleteWorkerOutputFile(runId: string, workerId: string) {
 }
 
 export function workerOutputFilePathFor(runId: string, workerId: string) {
-  return workerFilePath(runId, workerId);
+  return legacyWorkerFilePath(runId, workerId);
 }
 
 /** @internal — vitest only */
@@ -1640,6 +2060,7 @@ export function __resetOutputStoreCachesForTests() {
   fileStateByKey.clear();
   readLatestSeqByKey.clear();
   readEntriesByKey.clear();
+  workerStreamPathsCache.clear();
   chainCacheDiskRefreshesForTests = 0;
 }
 
@@ -1648,5 +2069,8 @@ export function __getOutputStoreCacheStatsForTests() {
   return {
     workerCacheCount: nextSeqByKey.size,
     diskRefreshCount: chainCacheDiskRefreshesForTests,
+    readEntriesCacheCount: readEntriesByKey.size,
+    seenIdsCacheCount: seenIdsByKey.size,
+    fingerprintsCacheCount: fingerprintsByKey.size,
   };
 }

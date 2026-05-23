@@ -26,7 +26,7 @@ describe("codex-auth-status-route security", () => {
       lastRefresh: "2026-05-17T10:00:00Z",
     });
 
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/codex-auth/status"));
     const data = await response.json();
 
     expect(data.available).toBe(true);
@@ -47,7 +47,7 @@ describe("codex-auth-status-route security", () => {
 
   it("returns available: false if no credentials", async () => {
     vi.mocked(codexAuth.readCodexCredentialsSync).mockReturnValue(null);
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/codex-auth/status"));
     const data = await response.json();
     expect(data.available).toBe(false);
   });

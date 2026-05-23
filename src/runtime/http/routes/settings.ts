@@ -22,10 +22,12 @@ async function getSettings(request: Request) {
   }
 
   const allSettings = await db.select().from(settings);
-  const projectSetting = allSettings.find((setting) => setting.key === "PROJECTS");
-  if (projectSetting) {
-    await canonicalizePersistedProjectRoots(projectSetting.value);
-  }
+  // canonicalizePersistedProjectRoots is a one-shot fixup over all runs +
+  // workers that does sync fs.existsSync and serial db.update per drifted
+  // row. Running it on every GET (which is polled by React Query and SSE
+  // reconnects) was costing 30-60s with a large run history and saturating
+  // the event loop. Canonicalization only matters when PROJECTS changes —
+  // which happens on POST.
   const diagnostics: ReturnType<typeof buildAppError>[] = [];
   const values = Object.fromEntries(allSettings.flatMap((setting) => {
     if (isInternalSettingKey(setting.key)) {

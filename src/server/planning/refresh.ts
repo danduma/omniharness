@@ -112,7 +112,7 @@ export async function refreshPlanningArtifactsForRun(args: {
 }) {
   const runMessages = await db.select().from(messages)
     .where(eq(messages.runId, args.run.id))
-    .orderBy(asc(messages.createdAt));
+    .orderBy(asc(messages.createdAt), asc(messages.id));
   const worker = args.worker ?? await db.select().from(workers).where(eq(workers.runId, args.run.id)).get();
   const snapshot = args.snapshot ?? null;
   const cwd = snapshot?.cwd || worker?.cwd || args.run.projectPath || process.cwd();

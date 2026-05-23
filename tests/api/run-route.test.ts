@@ -6,6 +6,7 @@ import fs from "fs";
 import path from "path";
 import { db } from "@/server/db";
 import { getAppDataPath } from "@/server/app-root";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 import {
   plans,
   runs,
@@ -500,6 +501,154 @@ describe("POST /api/runs/[id]", () => {
     expect(updatedWorkers.find((worker) => worker.id === targetWorkerId)?.status).toBe("cancelled");
     expect(updatedWorkers.find((worker) => worker.id === otherWorkerId)?.status).toBe("working");
     expect(stopEvent?.eventType).toBe("worker_cancelled");
+  });
+
+  it("emits worker.status and worker.terminal named events when stop_worker cancels a worker", async () => {
+    mockCancelAgent.mockClear();
+    __resetNamedEventsForTests();
+
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const targetWorkerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/stop-worker-events.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Stop worker emits named events",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: targetWorkerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "stop_worker", workerId: targetWorkerId }),
+    }), { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    const events = getNamedEventsSince(0).events
+      .map((entry) => entry.event)
+      .filter((event) => event.kind === "worker.status" || event.kind === "worker.terminal");
+
+    const statusEvent = events.find((event) => event.kind === "worker.status");
+    expect(statusEvent).toMatchObject({
+      kind: "worker.status",
+      runId,
+      workerId: targetWorkerId,
+      prev: "working",
+      next: "cancelled",
+    });
+
+    const terminalEvent = events.find((event) => event.kind === "worker.terminal");
+    expect(terminalEvent).toMatchObject({
+      kind: "worker.terminal",
+      runId,
+      workerId: targetWorkerId,
+      status: "cancelled",
+    });
+  });
+
+  it("emits worker.status and worker.terminal for each active worker stopped by stop_supervisor", async () => {
+    mockCancelAgent.mockClear();
+    mockStopRunObserver.mockClear();
+    mockCancelSupervisorWake.mockClear();
+    __resetNamedEventsForTests();
+
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const activeWorkerA = randomUUID();
+    const activeWorkerB = randomUUID();
+    const finishedWorkerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/stop-supervisor-events.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      title: "Stop supervisor emits named events",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values([
+      {
+        id: activeWorkerA,
+        runId,
+        type: "codex",
+        status: "working",
+        cwd: process.cwd(),
+        outputLog: "",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: activeWorkerB,
+        runId,
+        type: "codex",
+        status: "idle",
+        cwd: process.cwd(),
+        outputLog: "",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: finishedWorkerId,
+        runId,
+        type: "codex",
+        status: "cancelled",
+        cwd: process.cwd(),
+        outputLog: "",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+
+    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "stop_supervisor" }),
+    }), { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    const terminalEvents = getNamedEventsSince(0).events
+      .map((entry) => entry.event)
+      .filter((event) => event.kind === "worker.terminal");
+
+    const terminalWorkerIds = terminalEvents.map((event) =>
+      event.kind === "worker.terminal" ? event.workerId : null,
+    );
+    expect(terminalWorkerIds).toContain(activeWorkerA);
+    expect(terminalWorkerIds).toContain(activeWorkerB);
+    expect(terminalWorkerIds).not.toContain(finishedWorkerId);
   });
 
   it("marks a direct worker cancelled without waiting for the bridge stop to finish", async () => {
@@ -1085,6 +1234,7 @@ describe("POST /api/runs/[id]", () => {
   });
 
   it("resumes a failed direct conversation from the saved worker session", async () => {
+    __resetNamedEventsForTests();
     mockAskAgent.mockClear();
     mockCancelAgent.mockClear();
     mockGetAgent.mockClear();
@@ -1207,6 +1357,117 @@ describe("POST /api/runs/[id]", () => {
     // last `messages` row is the user prompt that triggered the resume.
     expect(storedMessages.at(-1)?.content).toBe("continue the walkthrough");
     expect(resumeEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "worker.reattached",
+      runId,
+      workerId,
+    }));
+  });
+
+  it("starts a fresh direct runtime worker when saved-session recovery is rejected", async () => {
+    __resetNamedEventsForTests();
+    mockAskAgent.mockClear();
+    mockCancelAgent.mockClear();
+    mockGetAgent.mockClear();
+    mockSpawnAgent.mockClear();
+    mockStartSupervisorRun.mockClear();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const userMessageId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: path.join("vibes", "ad-hoc", `${randomUUID()}.md`),
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Direct missing session resume",
+      projectPath: "/workspace/app",
+      preferredWorkerType: "gemini",
+      preferredWorkerModel: "gemini-3",
+      preferredWorkerEffort: "high",
+      status: "failed",
+      lastError: `Ask failed: Agent not found: ${workerId}`,
+      failedAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "gemini",
+      status: "error",
+      cwd: "/workspace/app",
+      bridgeSessionId: "missing-session",
+      bridgeSessionMode: "full-access",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(messages).values({
+      id: userMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "recover this direct turn",
+      createdAt: new Date("2026-05-10T10:55:32Z"),
+    });
+
+    mockSpawnAgent
+      .mockRejectedValueOnce(new Error('Spawn failed: failed to start gemini agent via gemini: {"code":-32603,"message":"Internal error","data":{"details":"Invalid session identifier \\"missing-session\\"."}}'))
+      .mockResolvedValueOnce({
+        name: workerId,
+        type: "gemini",
+        state: "idle",
+        cwd: "/workspace/app",
+        sessionId: "fresh-session",
+        sessionMode: "full-access",
+        lastText: "",
+        currentText: "",
+        outputEntries: [],
+        stderrBuffer: [],
+        stopReason: null,
+      });
+    mockAskAgent.mockResolvedValueOnce({
+      response: "Fresh worker continued.",
+      state: "idle",
+    });
+
+    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    expect(mockSpawnAgent).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      name: workerId,
+      resumeSessionId: "missing-session",
+    }));
+    expect(mockSpawnAgent).toHaveBeenNthCalledWith(2, expect.not.objectContaining({
+      resumeSessionId: expect.any(String),
+    }));
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "recover this direct turn");
+
+    const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const resumeEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(updatedWorker?.bridgeSessionId).toBe("fresh-session");
+    expect(resumeEvents.some((event) => event.eventType === "worker_session_recreated")).toBe(true);
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "worker.recreated",
+      runId,
+      workerId,
+    }));
   });
 
   it("edits a user checkpoint in place before rerunning", async () => {

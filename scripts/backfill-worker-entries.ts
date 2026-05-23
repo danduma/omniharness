@@ -40,8 +40,6 @@ import { getAppDataPath } from "@/server/app-root";
 type WorkerRow = typeof workersTable.$inferSelect;
 type MessageRow = typeof messagesTable.$inferSelect;
 type RunRow = typeof runsTable.$inferSelect;
-type ExecutionEventRow = typeof executionEvents.$inferSelect;
-
 interface BackfillStats {
   scanned: number;
   applied: number;
@@ -110,9 +108,9 @@ async function backfillMessages(args: {
   stats: BackfillStats;
 }) {
   const { dryRun, reportStream, stats } = args;
-  const allMessages = await db.select().from(messagesTable);
-  const allRuns = await db.select().from(runsTable);
-  const allWorkers = await db.select().from(workersTable);
+  const allMessages = await db.select().from(messagesTable) as MessageRow[];
+  const allRuns = await db.select().from(runsTable) as RunRow[];
+  const allWorkers = await db.select().from(workersTable) as WorkerRow[];
   const runsById = new Map(allRuns.map((row) => [row.id, row]));
   const workersByRunId = new Map<string, WorkerRow[]>();
   for (const worker of allWorkers) {
