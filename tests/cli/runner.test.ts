@@ -16,8 +16,8 @@ vi.mock("@/server/supervisor/runtime-watchdog", () => ({
 }));
 
 function createIo() {
-  const stdout = { text: "", write(chunk: string) { this.text += chunk; } };
-  const stderr = { text: "", write(chunk: string) { this.text += chunk; } };
+  const stdout = { text: "", write(chunk: string) { this.text += chunk; return true; } };
+  const stderr = { text: "", write(chunk: string) { this.text += chunk; return true; } };
   return { stdout, stderr };
 }
 

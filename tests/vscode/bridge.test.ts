@@ -3,8 +3,8 @@ import { handleVSCodeBridgeMessage } from "@/vscode-extension/bridge";
 
 describe("handleVSCodeBridgeMessage", () => {
   it("proxies API requests to the configured Omni runtime", async () => {
-    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
-      expect(url).toBe("http://127.0.0.1:3035/api/auth/session");
+    const fetchImpl: typeof fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(url)).toBe("http://127.0.0.1:3035/api/auth/session");
       expect(init?.method).toBe("GET");
       return new Response(JSON.stringify({ authenticated: true }), {
         status: 200,
@@ -113,8 +113,8 @@ describe("handleVSCodeBridgeMessage", () => {
   it("proxies SSE frames to the webview and supports resume ids", async () => {
     const posted: unknown[] = [];
     const encoder = new TextEncoder();
-    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
-      expect(url).toBe("http://127.0.0.1:3035/api/events?runId=run-1&lastEventId=7");
+    const fetchImpl: typeof fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(url)).toBe("http://127.0.0.1:3035/api/events?runId=run-1&lastEventId=7");
       expect(init?.headers).toMatchObject({ accept: "text/event-stream" });
       return new Response(new ReadableStream({
         start(controller) {

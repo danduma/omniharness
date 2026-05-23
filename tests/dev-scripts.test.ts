@@ -1,7 +1,9 @@
 import fs from "fs";
+import { Socket } from "node:net";
 import path from "path";
 import { expect, test } from "vitest";
 import nextConfig from "@/../next.config";
+import { attachUpgradeSocketErrorHandlers, isExpectedProxySocketError } from "@/../scripts/dev-compression-proxy";
 import { isNextDevReadyLine, prewarmDevPaths, resolveDevPrewarmBaseUrl, resolveDevPrewarmPaths } from "@/../scripts/dev-prewarm";
 import { detectNextDevRouteEnoent } from "@/../scripts/dev-web-recovery";
 
@@ -108,4 +110,29 @@ test("dev prewarm requests routes sequentially", async () => {
 
   expect(seen).toEqual(["/one", "/two"]);
   expect(results.map((result) => result.status)).toEqual([200, 200]);
+});
+
+test("dev compression proxy treats common disconnect socket errors as expected", () => {
+  expect(isExpectedProxySocketError(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }))).toBe(true);
+  expect(isExpectedProxySocketError(Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }))).toBe(true);
+  expect(isExpectedProxySocketError(Object.assign(new Error("boom"), { code: "EINVAL" }))).toBe(false);
+});
+
+test("dev compression proxy upgrade sockets handle EPIPE without unhandled errors", () => {
+  const clientSocket = new Socket();
+  const proxySocket = new Socket();
+  const unhandled: unknown[] = [];
+  const onUncaught = (error: unknown) => {
+    unhandled.push(error);
+  };
+
+  process.once("uncaughtException", onUncaught);
+  attachUpgradeSocketErrorHandlers(clientSocket, proxySocket);
+
+  proxySocket.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+
+  process.removeListener("uncaughtException", onUncaught);
+  expect(unhandled).toEqual([]);
+  expect(clientSocket.destroyed).toBe(true);
+  expect(proxySocket.destroyed).toBe(true);
 });

@@ -2,7 +2,7 @@ import type { EventStreamHandlers, RuntimeAPIs, RuntimeApiError, RuntimeSubscrip
 
 export type VSCodeRuntimeBridgeRequest = {
   id: string;
-  type: "api:proxy" | "vscode:openFile" | "vscode:openExternal" | "vscode:openDiff";
+  type: "api:proxy" | "sse:open" | "sse:close" | "vscode:openFile" | "vscode:openExternal" | "vscode:openDiff";
   payload?: unknown;
 };
 
@@ -189,7 +189,7 @@ export function createVSCodeRuntimeAPIs(options: VSCodeRuntimeApiOptions): Runti
             runId: input.runId ?? null,
             lastEventId: input.lastEventId ?? null,
           },
-        } as VSCodeRuntimeBridgeRequest);
+        });
         return {
           close() {
             unsubscribe();
@@ -197,7 +197,7 @@ export function createVSCodeRuntimeAPIs(options: VSCodeRuntimeApiOptions): Runti
               id: `${id}:close`,
               type: "sse:close",
               payload: { id },
-            } as VSCodeRuntimeBridgeRequest);
+            });
           },
         };
       },

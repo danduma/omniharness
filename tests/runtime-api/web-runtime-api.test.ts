@@ -3,8 +3,8 @@ import { createWebRuntimeAPIs } from "@/runtime-api/web";
 
 describe("createWebRuntimeAPIs", () => {
   it("loads bootstrap data through the portable runtime API contract", async () => {
-    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
-      expect(url).toBe("/api/runtime/bootstrap?run=run-1&project=%2Ftmp%2Fapp&pair=pair-1");
+    const fetchImpl: typeof fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(url)).toBe("/api/runtime/bootstrap?run=run-1&project=%2Ftmp%2Fapp&pair=pair-1");
       expect(init?.method).toBe("GET");
       return Response.json({ route: { selectedRunId: "run-1" } });
     });

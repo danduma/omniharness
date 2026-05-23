@@ -12,7 +12,7 @@ describe("Electron runtime shell", () => {
       getStatus: () => "running" as const,
       getStartedAt: () => null,
     };
-    const registry = { handle: vi.fn() };
+    const registry = { handle: vi.fn() } as never;
     const startServer = vi.fn(async (options) => ({
       origin: "http://127.0.0.1:4030",
       httpServer: {} as never,

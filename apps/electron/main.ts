@@ -40,15 +40,18 @@ function installNativeBridge() {
     }
     return handleElectronNativeCommand(request, {
       runtimeOrigin: runtimeHandle.origin,
-      senderUrl: event.senderFrame.url,
+      senderUrl: event.senderFrame?.url ?? event.sender.getURL(),
       openExternal: async ({ url }) => {
         await shell.openExternal(url);
         return { ok: true };
       },
       chooseFolder: async () => {
-        const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+        const options = {
           properties: ["openDirectory", "createDirectory"],
-        });
+        } satisfies Electron.OpenDialogOptions;
+        const result = mainWindow
+          ? await dialog.showOpenDialog(mainWindow, options)
+          : await dialog.showOpenDialog(options);
         return { path: result.canceled ? null : result.filePaths[0] ?? null };
       },
       notify: async ({ title, body }) => {

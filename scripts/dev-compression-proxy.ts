@@ -1,12 +1,15 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import https from "node:https";
-import { pipeline } from "node:stream";
+import path from "node:path";
+import { pipeline, type Duplex } from "node:stream";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import zlib from "node:zlib";
 
 const listenHost = process.env.OMNIHARNESS_DEV_PROXY_HOST?.trim() || "127.0.0.1";
 const listenPort = Number(process.env.OMNIHARNESS_DEV_PROXY_PORT || "3035");
 const target = new URL(process.env.OMNIHARNESS_DEV_PROXY_TARGET || "http://127.0.0.1:3050");
 const targetClient = target.protocol === "https:" ? https : http;
+const scriptPath = fileURLToPath(import.meta.url);
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -85,6 +88,28 @@ function isNextStaticAsset(pathname: string) {
   return pathname.startsWith("/_next/static/");
 }
 
+export function isExpectedProxySocketError(error: unknown) {
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code)
+    : "";
+  return code === "EPIPE" || code === "ECONNRESET" || code === "ERR_STREAM_DESTROYED";
+}
+
+export function attachUpgradeSocketErrorHandlers(clientSocket: Duplex, proxySocket: Duplex) {
+  const destroyPair = (error?: unknown) => {
+    if (error && !isExpectedProxySocketError(error)) {
+      console.error("[dev-proxy] Upgrade socket failed", error);
+    }
+    clientSocket.destroy();
+    proxySocket.destroy();
+  };
+
+  clientSocket.on("error", destroyPair);
+  proxySocket.on("error", destroyPair);
+  clientSocket.on("close", () => proxySocket.destroy());
+  proxySocket.on("close", () => clientSocket.destroy());
+}
+
 function proxyRequest(request: IncomingMessage, response: ServerResponse) {
   const targetUrl = new URL(request.url ?? "/", target);
   const proxyRequestOptions: http.RequestOptions = {
@@ -142,55 +167,63 @@ function proxyRequest(request: IncomingMessage, response: ServerResponse) {
   pipeline(request, upstream, () => {});
 }
 
-const server = http.createServer(proxyRequest);
+export function createDevCompressionProxyServer() {
+  const server = http.createServer(proxyRequest);
 
-server.on("upgrade", (request, socket, head) => {
-  const targetUrl = new URL(request.url ?? "/", target);
-  const upstream = targetClient.request({
-    protocol: target.protocol,
-    hostname: target.hostname,
-    port: target.port,
-    path: `${targetUrl.pathname}${targetUrl.search}`,
-    method: request.method,
-    headers: {
-      ...withoutHopByHopHeaders(request.headers),
-      connection: "Upgrade",
-      upgrade: request.headers.upgrade,
-      host: target.host,
-      "x-forwarded-host": request.headers.host,
-      "x-forwarded-proto": "http",
-    },
+  server.on("upgrade", (request, socket, head) => {
+    const targetUrl = new URL(request.url ?? "/", target);
+    const upstream = targetClient.request({
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port,
+      path: `${targetUrl.pathname}${targetUrl.search}`,
+      method: request.method,
+      headers: {
+        ...withoutHopByHopHeaders(request.headers),
+        connection: "Upgrade",
+        upgrade: request.headers.upgrade,
+        host: target.host,
+        "x-forwarded-host": request.headers.host,
+        "x-forwarded-proto": "http",
+      },
+    });
+
+    upstream.on("upgrade", (proxyResponse, proxySocket, proxyHead) => {
+      attachUpgradeSocketErrorHandlers(socket, proxySocket);
+      socket.write([
+        `HTTP/${proxyResponse.httpVersion} ${proxyResponse.statusCode} ${proxyResponse.statusMessage}`,
+        ...Object.entries(proxyResponse.headers).flatMap(([key, value]) => {
+          if (Array.isArray(value)) {
+            return value.map((item) => `${key}: ${item}`);
+          }
+          return value === undefined ? [] : [`${key}: ${value}`];
+        }),
+        "",
+        "",
+      ].join("\r\n"));
+      if (proxyHead.length > 0) {
+        socket.write(proxyHead);
+      }
+      if (head.length > 0) {
+        proxySocket.write(head);
+      }
+      proxySocket.pipe(socket);
+      socket.pipe(proxySocket);
+    });
+
+    upstream.on("error", () => {
+      socket.destroy();
+    });
+
+    upstream.end();
   });
 
-  upstream.on("upgrade", (proxyResponse, proxySocket, proxyHead) => {
-    socket.write([
-      `HTTP/${proxyResponse.httpVersion} ${proxyResponse.statusCode} ${proxyResponse.statusMessage}`,
-      ...Object.entries(proxyResponse.headers).flatMap(([key, value]) => {
-        if (Array.isArray(value)) {
-          return value.map((item) => `${key}: ${item}`);
-        }
-        return value === undefined ? [] : [`${key}: ${value}`];
-      }),
-      "",
-      "",
-    ].join("\r\n"));
-    if (proxyHead.length > 0) {
-      socket.write(proxyHead);
-    }
-    if (head.length > 0) {
-      proxySocket.write(head);
-    }
-    proxySocket.pipe(socket);
-    socket.pipe(proxySocket);
+  return server;
+}
+
+if (process.argv[1] && fileURLToPath(pathToFileURL(path.resolve(process.argv[1]))) === scriptPath) {
+  const server = createDevCompressionProxyServer();
+  server.listen(listenPort, listenHost, () => {
+    console.log(`[dev-proxy] Compressing ${target.origin} through http://${listenHost}:${listenPort}`);
   });
-
-  upstream.on("error", () => {
-    socket.destroy();
-  });
-
-  upstream.end();
-});
-
-server.listen(listenPort, listenHost, () => {
-  console.log(`[dev-proxy] Compressing ${target.origin} through http://${listenHost}:${listenPort}`);
-});
+}
