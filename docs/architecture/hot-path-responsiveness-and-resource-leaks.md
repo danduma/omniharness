@@ -415,3 +415,137 @@ showing memory pressure or UI instability.
 - "Fetching the catalog on focus is harmless because the response is cached."
 
 The worker may be running for hours. The page still has to serve.
+
+## May 22, 2026 — Recurrence and Fixes
+
+Same class of failure resurfaced after weeks of stability. Symptoms from the
+running dev stack:
+
+```text
+GET /api/settings 200 in 47865ms
+POST /api/agents/prewarm-worker 500 in 86165ms   (bridge ECONNRESET)
+POST /api/agents/prewarm-worker 500 in 123530ms  (bridge not_found after restart)
+GET /api/workers/<id>/entries?afterSeq=0 200 in 41086ms
+```
+
+Once one route blocked the event loop, every concurrent request piled up
+behind it, including auth-rejected calls that never reach a handler.
+
+### Root causes found
+
+1. **`/api/settings` GET ran `canonicalizePersistedProjectRoots` on every
+   poll.** That helper iterates all runs + all workers, does sync
+   `fs.existsSync` per run, and serial `db.update` per drifted row. With a
+   large run history and React Query plus SSE reconnect both polling
+   settings, this saturated the loop for tens of seconds. Canonicalization
+   only matters when `PROJECTS` changes — which only happens on `POST`.
+
+2. **`readEntriesByKey` (in `src/server/workers/output-store.ts`) was an
+   unbounded Map.** Each value is the full parsed transcript for one
+   `(runId, workerId)` chain. A supervisor cycling through many workers
+   kept every transcript ever read resident.
+
+3. **`readWorkerEntriesSinceJsonlTail` did quadratic re-parsing.** Each
+   "after-seq" tail call re-read and re-parsed back from end of file
+   looking for the cutoff, growing with transcript size.
+
+4. **`seenIdsByKey` / `fingerprintsByKey` / `nextSeqByKey` / `fileStateByKey`
+   write-side chain caches were also unbounded.** Same shape — one entry
+   per `(runId, workerId)`, only cleared on file deletion. A long-running
+   supervisor that cycles workers but never deletes their files leaks
+   forever. Worst offenders are `seenIdsByKey` (one string per persisted
+   entry id) and `fingerprintsByKey` (one map per id).
+
+### Fixes landed
+
+- `src/runtime/http/routes/settings.ts` — removed the
+  `canonicalizePersistedProjectRoots` call from the GET path. POST still
+  canonicalizes on `PROJECTS` writes, which is the only moment it matters.
+- `src/server/workers/output-store.ts` —
+  - `readEntriesByKey`: LRU-bounded to 32 chains via insertion-order
+    eviction + cache-hit "touch" (`setReadEntriesCache` /
+    `touchReadEntriesCache`).
+  - `readWorkerEntriesSinceJsonlTail`: rewritten to read at most 1 MB from
+    the tail in a single `fs.read`, parse once, return the entries past
+    `afterSeq`. Falls back to the legacy backward scan only when the 1 MB
+    window can't prove the cutoff.
+  - Write-side chain caches: LRU-bounded to 64 chains shared across
+    `seenIdsByKey` / `fingerprintsByKey` / `nextSeqByKey` /
+    `fileStateByKey` (`rememberChainKey`). Eviction is safe — the next
+    `refreshChainCaches` call rebuilds from disk + DB-tracked
+    `latestSeq`.
+
+### Tests added
+
+`tests/server/workers/output-store.test.ts` — new `output-store cache
+memory bounds` block proves the caps hold numerically under simulated
+multi-worker stress:
+
+- 80 worker chains → `readEntriesByKey.size ≤ 32`
+- 120 worker chains → `seenIdsByKey` / `fingerprintsByKey` /
+  `nextSeqByKey` each `≤ 64`
+- Hot worker stays cached through 100 cold worker churn (no extra disk
+  refreshes after the LRU is full)
+
+These act as a regression gate: any future commit that re-introduces an
+unbounded cache fails CI.
+
+### Verification under live multi-worker load
+
+After restart (dev stack restarted under `nohup`) with all four ACP
+binaries on PATH (`claude-agent-acp`, `codex-acp`, `gemini`, `opencode`),
+exercised the bridge directly at `:7800` to simulate a supervisor:
+
+```text
+# Concurrent prewarm of all 4 worker types
+claude:   200 0.15s
+codex:    200 0.69s
+gemini:   200 14.91s   (gemini-cli's inherent startup, not a regression)
+opencode: 200 16.25s
+
+# Bridge /agents responsiveness during prewarm: 2-7ms
+
+# 3 concurrent claude agents spawned + each handed a real Claude API
+# round-trip via POST /agents/<name>/ask
+spawn-w1: 201 0.14s
+spawn-w2: 201 1.82s
+spawn-w3: 201 1.69s
+
+ask-w1:   200 2.15s  → response: "OK"
+ask-w2:   200 2.18s  → response: "OK"
+ask-w3:   200 2.38s  → response: "OK"
+ask wall: 2.40s for all three concurrent
+
+# 10 concurrent /api/settings DURING the ACP message exchanges
+settings#1..10: 0.93-1.00s each — no degradation
+
+# Bridge RSS during/after: 43-52 MB stable across 10 child subprocesses
+# Web RSS: 1.3 GB stable
+# User's pre-existing workers (gemini+codex) survived undisturbed
+# Zero ECONNRESET, zero timeouts
+```
+
+Compared against the failure baseline:
+
+| Metric                           | Before fix          | After fix + restart |
+| -------------------------------- | ------------------- | ------------------- |
+| Single `/api/settings`           | 47 s (timeout)      | 0.65-0.95 s         |
+| `/api/agents/prewarm-worker`     | 86 s → 500 ECONNRESET | 0.15-16.2 s, all 200 |
+| 30 concurrent `/api/settings`    | (would saturate)    | 1.4 s wall, 1.16-1.32 s each |
+| 10 concurrent settings DURING ACP traffic | (would crash)    | 0.93-1.00 s each    |
+| Bridge memory after prewarm+ask  | crashed/restarted   | 43.4 MB stable      |
+| ECONNRESET under load            | reproducible        | none observed       |
+
+### Anti-patterns added (additive to the list above)
+
+- "Settings GET is idempotent so we can do fixups inside it." — only the
+  fixup is idempotent; the cost is per-call. Fixups belong on the writes
+  that cause drift.
+- "The chain cache only grows by a few KB per worker." — multiplied by a
+  supervisor cycling workers for hours, it is unbounded. Every
+  module-level Map keyed by a per-run-or-worker identifier needs an LRU
+  cap with a regression test, not a "small enough" assertion.
+- "If we evict the dedup cache we'll re-append duplicates." — safe iff
+  eviction triggers a disk + DB re-read of the canonical state on the
+  next access. Verify that path exists before claiming the cache is
+  load-bearing.

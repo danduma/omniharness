@@ -1,0 +1,10 @@
+# Direct Awaiting User Is Worker-Owned
+
+**Date:** 2026-05-21
+**Context:** OmniHarness direct-control conversations, event snapshots, and conversation status UI
+**Symptom:** A direct-control run entered `awaiting_user` after the worker asked a question, then the UI surfaced “awaiting user input but no supervisor question was included in the snapshot.”
+**Root Cause:** The lifecycle invariant treated every `awaiting_user` run as supervisor-owned clarification state. Direct and commit runs can also be waiting on user input, but that question is worker-owned and lives in the unified worker stream plus the `direct_worker_awaiting_user` event, not in `messages.kind = clarification`.
+**Fix:** Scope the missing-supervisor-question invariant to non-direct, non-commit runs, and let the execution status hook render direct/commit `direct_worker_awaiting_user` as an awaiting-input state without requiring a supervisor message. While verifying the affected suite, an order-dependent session-sync bug also surfaced; terminal direct runs now skip late live-agent rewrites before bridge snapshots can revive a cancelled run.
+**Verification:** `pnpm vitest run tests/api/events-route.test.ts tests/app/conversation-execution-status.test.ts`; `pnpm vitest run tests/server/conversations-sync.test.ts -t "recovers the latest non-cancelled direct worker|cancelled"`. `pnpm tsc --noEmit` still fails on pre-existing `tests/supervisor/protocol.test.ts` `ProcessEnv` fixture type errors.
+**Prevention:** When a run status can be reached through multiple ownership paths, invariants and UI gates must check the owner and event source before assuming the storage surface. Direct-control user input belongs to the worker stream; supervisor clarifications belong to supervisor messages and clarification rows.
+**Skill/Doc Updates:** No shared skill update needed; the lifecycle observability doc already requires named server decisions. This note records the local OmniHarness distinction between supervisor-owned and worker-owned awaiting input.

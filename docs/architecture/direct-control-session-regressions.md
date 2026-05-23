@@ -124,6 +124,48 @@ Rule: a selected direct run with status `running` is user-visible work. The UI
 must show a small pending assistant indicator even if no assistant stream entry
 has arrived yet.
 
+### "Thinking..." stayed after final output
+
+Some completed direct-control sessions rendered the final worker output and
+still showed a trailing "Thinking..." indicator.
+
+Root cause: stale worker `current_text` can survive in a persisted worker row or
+live bridge snapshot after the direct run has already reached a terminal state.
+The pending-assistant classifier treated any current text as active work even
+when the selected run was `done`.
+
+Rule: terminal direct runs cannot show pending assistant state. Durable worker
+stream entries may still render, but stale `currentText`/`lastText` is not proof
+of active work once the run status is terminal.
+
+### Worker stream loaded empty before output existed
+
+A direct-control terminal could load while the worker stream still had no
+entries, mark that stream as `loaded` at seq `0`, then miss the later wake-up.
+When the user revisited the same session, `ensureLoaded()` saw
+`latestContiguousSeq === latestKnownSeq === 0` and refused to refetch. Output
+appeared only after a later snapshot poll, reload, or session switch.
+
+Root cause: "loaded empty" was treated as permanent authority. It only proves
+the stream was empty at the time of that particular fetch.
+
+Rule: an empty loaded stream with no positive seq is not durable proof of
+completeness. When a selected worker subscribes again, revalidate from its
+current cursor so missed wake-ups cannot hide durable output.
+
+### Manual `stop` text became a user message
+
+Typing exactly `stop` or `/stop` while a conversation was actively stoppable
+could be persisted as an ordinary user message.
+
+Root cause: the composer had a separate stop button while text existed, but the
+submit path still interpreted exact stop text as a queue/steer message.
+
+Rule: while a conversation is actively stoppable, exact manual stop commands are
+control-plane actions. They must call the stop route and clear the draft, not
+enter the transcript. Non-exact text such as "please stop after this" remains an
+ordinary user message.
+
 ## Debugging checklist for a session id
 
 When a user gives a session/conversation id and asks what is going on, inspect
@@ -177,6 +219,10 @@ Interpretation:
   resolution is broken.
 - If `messages` has a user row that the worker stream lacks, the next direct
   message must be refused until the stream catches up.
+- If `messages` has exact `stop` / `/stop` rows for an active conversation,
+  inspect the composer control path; those should have been stop actions.
+- If the stream manager says `loaded` at seq `0`, treat that as an old empty
+  observation, not final proof that the worker has no output.
 - If the event log lacks a decision, the server did not make or did not publish
   that decision. Do not debug this as a frontend rendering problem first.
 
@@ -252,8 +298,16 @@ loading, but once entries arrive:
 - dedupe by normalized text plus close timestamp second;
 - preserve chronological order;
 - never render lifecycle entries as assistant content;
-- keep the pending assistant indicator visible while the selected direct run is
-  `running`.
+- keep the pending assistant indicator visible while there is current direct
+  worker activity (`starting`, `working`, `stuck`, `recovering`, live
+  `currentText`, or a pending send). A stale `running` run row alone may keep
+  stop/recovery controls available, but it must not fabricate a trailing
+  "Thinking..." bubble.
+- do not use terminal `isLoading` as a proxy for assistant activity. Loading the
+  worker stream may show fallback user messages or an empty loading state, but
+  it must not invent a pending assistant row.
+- let authoritative server snapshots retire optimistic direct run statuses even
+  if the local optimistic row has a newer timestamp.
 
 ### Queued drawer represents queued work, not accepted work
 
@@ -283,6 +337,15 @@ affected rows below.
 | New session first send | selected run and URL switch immediately to the reserved id |
 | Unified stream loads after fallback | no duplicate first user message |
 | Direct run `running` with no assistant entry yet | terminal shows pending assistant indicator |
+| Direct run shows pending assistant indicator | stop control is visible and resolves to the active direct worker |
+| Active direct stream misses SSE/snapshot wake-up | selected stream revalidates from its current seq cursor without switching sessions |
+| Server snapshot says direct run is `done` | newer optimistic `running` state is retired without requiring reload |
+| Worker stream is loading with fallback user messages | no synthetic "Thinking..." assistant row is rendered |
+| Loaded-empty worker stream later gets output | subscription revalidates seq `0` instead of treating empty loaded as complete |
+| Terminal direct run has stale current text | no trailing "Thinking..." indicator is rendered |
+| User types exact `stop` during active work | stop mutation fires and no user message row is persisted |
+| User types exact `stop` after work already ended | server returns control-plane no-op and no user message row is persisted |
+| Worker wake-up lands while snapshot marker is allocated | SSE drains lower-id worker events before exposing the marker id |
 | Lifecycle entries present | normal terminal does not render lifecycle noise |
 
 Use `pnpm test:lifecycle` for lifecycle/chaos regressions. Use focused Vitest
@@ -301,7 +364,9 @@ Ask these before approving related changes:
 5. Can lifecycle or internal status text render as assistant conversation text?
 6. If the app reloads, does it show the same transcript as before reload?
 7. If SSE reconnects, can the client recover without losing the decision event?
-8. Is there a regression test that fails for the bug we just saw?
+8. If the UI says a direct conversation is working, is there a visible stop
+   control wired to a concrete worker id?
+9. Is there a regression test that fails for the bug we just saw?
 
 If the answer to any question is "not sure", stop and instrument before
 shipping.
