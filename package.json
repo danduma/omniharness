@@ -2,6 +2,7 @@
   "name": "omniharness",
   "version": "0.1.0",
   "description": "Local web UI, CLI, and ACP control plane for supervising coding agents.",
+  "license": "AGPL-3.0-only",
   "private": true,
   "bin": {
     "omni": "./omni",

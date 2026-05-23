@@ -329,4 +329,4 @@ OmniHarness is designed around local-first supervision. The web UI and runtime c
 
 ## License
 
-No license file is currently included. Add a `LICENSE` file before treating this repository as broadly reusable open-source software or accepting external contributions.
+OmniHarness is licensed under the GNU Affero General Public License v3.0. See `LICENSE` for the full terms.
