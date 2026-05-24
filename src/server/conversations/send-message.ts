@@ -105,7 +105,7 @@ async function selectConversationWorker(runId: string) {
  * keyed by the message id, so the write is idempotent. We never block
  * the caller on this — at worst we log the failure and continue.
  */
-async function reconcileWorkerUserMessagesInStream(runId: string, workerId: string) {
+export async function reconcileWorkerUserMessagesInStream(runId: string, workerId: string) {
   const [storedUserMessages, entries] = await Promise.all([
     db
       .select()
