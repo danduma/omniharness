@@ -1,7 +1,10 @@
 /**
  * Lightweight memory instrumentation for diagnosing runaway memory use.
  *
- * Writes JSONL events to a single log file (default /tmp/omniharness-memory.log).
+ * Writes JSONL events to a single log file. Default path is
+ * `os.tmpdir()/omniharness-memory.log` — on macOS this resolves to
+ * `/var/folders/.../T/omniharness-memory.log`, on Linux to `/tmp/...`.
+ * Override with OMNIHARNESS_MEMORY_TRACE_PATH for a stable location.
  * Records three kinds of events:
  *   - "boot"     : one line when the tracer starts in a fresh runtime instance
  *   - "spawn"    : when a child agent process is registered for tracking
