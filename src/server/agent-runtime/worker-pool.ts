@@ -83,11 +83,15 @@ export class WorkerPool {
   private readonly members = new Map<string, WorkerPoolMember[]>();
   private readonly inFlight = new Map<string, number>();
   private maxPerKey = 1;
+  private maxTotal = Number.POSITIVE_INFINITY;
 
   add(member: WorkerPoolMember): void {
     if (!this.isAlive(member)) {
       this.disposeMember(member);
       return;
+    }
+    while (this.countAll() + this.countAllInFlight() >= this.maxTotal) {
+      if (!this.evictOldest()) break;
     }
     const arr = this.members.get(member.key) ?? [];
     arr.push(member);
@@ -118,6 +122,21 @@ export class WorkerPool {
     return current < this.maxPerKey;
   }
 
+  /**
+   * Atomic "check + reserve". Returns true if the caller may proceed with a
+   * warm spawn (and MUST call endInFlight when done); false if a warm is
+   * already in flight or the per-key/global cap is reached. Eliminates the
+   * needsWarm/beginInFlight race when concurrent prewarm requests arrive.
+   */
+  tryBeginWarm(key: string): boolean {
+    const memberCount = this.members.get(key)?.length ?? 0;
+    const inFlightCount = this.inFlight.get(key) ?? 0;
+    if (memberCount + inFlightCount >= this.maxPerKey) return false;
+    if (this.countAll() + this.countAllInFlight() >= this.maxTotal) return false;
+    this.inFlight.set(key, inFlightCount + 1);
+    return true;
+  }
+
   beginInFlight(key: string): void {
     this.inFlight.set(key, (this.inFlight.get(key) ?? 0) + 1);
   }
@@ -132,6 +151,10 @@ export class WorkerPool {
     this.maxPerKey = Math.max(0, Math.floor(n));
   }
 
+  setMaxTotal(n: number): void {
+    this.maxTotal = Number.isFinite(n) && n > 0 ? Math.floor(n) : Number.POSITIVE_INFINITY;
+  }
+
   countMembers(key: string): number {
     return this.members.get(key)?.length ?? 0;
   }
@@ -140,6 +163,63 @@ export class WorkerPool {
     let total = 0;
     for (const arr of this.members.values()) total += arr.length;
     return total;
+  }
+
+  countAllInFlight(): number {
+    let total = 0;
+    for (const v of this.inFlight.values()) total += v;
+    return total;
+  }
+
+  /**
+   * Disposes pool members older than maxAgeMs even if no one ever checks them
+   * out. Without this, members whose pool key is no longer requested (e.g.
+   * user switched model) would live forever until the key happened to be
+   * accessed again. Returns the number of members evicted.
+   */
+  sweepExpired(maxAgeMs: number): number {
+    const now = Date.now();
+    let evicted = 0;
+    for (const [key, arr] of this.members) {
+      const keep: WorkerPoolMember[] = [];
+      for (const member of arr) {
+        if (!this.isAlive(member) || now - member.warmedAt >= maxAgeMs) {
+          this.disposeMember(member);
+          evicted++;
+        } else {
+          keep.push(member);
+        }
+      }
+      if (keep.length === 0) this.members.delete(key);
+      else this.members.set(key, keep);
+    }
+    return evicted;
+  }
+
+  /**
+   * Disposes the single oldest live member globally. Used when adding a new
+   * member would exceed maxTotal. Returns true if a member was evicted.
+   */
+  private evictOldest(): boolean {
+    let oldestKey: string | null = null;
+    let oldestIdx = -1;
+    let oldestAt = Number.POSITIVE_INFINITY;
+    for (const [key, arr] of this.members) {
+      for (let i = 0; i < arr.length; i++) {
+        if (arr[i].warmedAt < oldestAt) {
+          oldestAt = arr[i].warmedAt;
+          oldestKey = key;
+          oldestIdx = i;
+        }
+      }
+    }
+    if (oldestKey === null || oldestIdx < 0) return false;
+    const arr = this.members.get(oldestKey);
+    if (!arr) return false;
+    const [member] = arr.splice(oldestIdx, 1);
+    if (arr.length === 0) this.members.delete(oldestKey);
+    this.disposeMember(member);
+    return true;
   }
 
   shutdown(): void {

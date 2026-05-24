@@ -36,6 +36,7 @@ import {
   WorkerPool,
   type WorkerPoolMember,
 } from "./worker-pool";
+import { MemoryTracer } from "./memory-trace";
 
 const MAX_STDERR_LINES = 50;
 const ENDPOINT_TIMEOUT_MS = 750;
@@ -784,6 +785,12 @@ export class AgentRuntimeManager {
   readonly agents = new Map<string, AgentRecord>();
   private readonly chunkSubscribers = new Map<string, Set<(chunk: string) => void>>();
   private readonly workerPool = new WorkerPool();
+  private readonly memoryTracer: MemoryTracer;
+  private readonly pendingAgentReaps = new Map<string, NodeJS.Timeout>();
+  private reapSweepTimer: NodeJS.Timeout | null = null;
+  private readonly poolMemberMaxAgeMs: number;
+  private readonly agentIdleTimeoutMs: number;
+  private readonly agentExitGraceMs: number;
 
   constructor(
     private readonly options: {
@@ -799,6 +806,70 @@ export class AgentRuntimeManager {
     } else {
       this.workerPool.setMaxPerKey(1);
     }
+    this.workerPool.setMaxTotal(
+      readPositiveInteger(baseEnv.OMNIHARNESS_WORKER_POOL_MAX_TOTAL, 4),
+    );
+    this.poolMemberMaxAgeMs = readPositiveInteger(
+      baseEnv.OMNIHARNESS_WORKER_POOL_MAX_AGE_MS,
+      30 * 60_000,
+    );
+    this.agentIdleTimeoutMs = readPositiveInteger(
+      baseEnv.OMNIHARNESS_AGENT_IDLE_TIMEOUT_MS,
+      30 * 60_000,
+    );
+    this.agentExitGraceMs = readPositiveInteger(
+      baseEnv.OMNIHARNESS_AGENT_EXIT_GRACE_MS,
+      60_000,
+    );
+    const sweepIntervalMs = readPositiveInteger(
+      baseEnv.OMNIHARNESS_RUNTIME_SWEEP_INTERVAL_MS,
+      60_000,
+    );
+    this.reapSweepTimer = setInterval(() => this.runReapSweep(), sweepIntervalMs);
+    this.reapSweepTimer.unref?.();
+    this.memoryTracer = new MemoryTracer({
+      env: baseEnv as Record<string, string | undefined>,
+      getCounts: () => ({
+        agents: this.agents.size,
+        poolMembers: this.workerPool.countAll(),
+      }),
+    });
+  }
+
+  private runReapSweep(): void {
+    try {
+      this.workerPool.sweepExpired(this.poolMemberMaxAgeMs);
+    } catch (error) {
+      process.stderr.write(`[runtime-sweep] pool sweep failed: ${describeUnknownError(error)}\n`);
+    }
+    const now = Date.now();
+    for (const [name, record] of this.agents) {
+      if (record.state !== "idle") continue;
+      const updatedAt = Date.parse(record.updatedAt);
+      if (!Number.isFinite(updatedAt)) continue;
+      if (now - updatedAt < this.agentIdleTimeoutMs) continue;
+      void this.stopAgent(name).catch((error) => {
+        process.stderr.write(
+          `[runtime-sweep] failed to reap idle agent ${name}: ${describeUnknownError(error)}\n`,
+        );
+      });
+    }
+  }
+
+  private scheduleAgentRecordReap(name: string): void {
+    const existing = this.pendingAgentReaps.get(name);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.pendingAgentReaps.delete(name);
+      const record = this.agents.get(name);
+      if (!record) return;
+      // Only reap if the record is still in a terminal state. If the agent was
+      // restarted under the same name in the grace window, leave it alone.
+      if (record.state !== "stopped" && record.state !== "error") return;
+      this.agents.delete(name);
+    }, this.agentExitGraceMs);
+    timer.unref?.();
+    this.pendingAgentReaps.set(name, timer);
   }
 
   toStatus(record: AgentRecord) {
@@ -1055,6 +1126,8 @@ export class AgentRuntimeManager {
                 recordRef.current.updatedAt = nowIso();
               }
             },
+            agentType: type,
+            spawnPurpose: "run",
           });
           child = result.child;
           connection = result.connection;
@@ -1144,6 +1217,11 @@ export class AgentRuntimeManager {
       target.updatedAt = nowIso();
       target.state = target.state === "error" ? "error" : "stopped";
       target.lastError = target.lastError ?? `exit code=${code} signal=${signal}`;
+      // Reap the record after a short grace period so the supervisor observer
+      // and UI polling get to see the stopped/error transition. Without this
+      // the record stays in this.agents forever, retaining its output buffer,
+      // closed ACP connection, and child handle.
+      this.scheduleAgentRecordReap(name);
     });
 
     if (poolKey) {
@@ -1181,6 +1259,11 @@ export class AgentRuntimeManager {
       }, 500);
       forceKillTimer.unref?.();
     } finally {
+      const pending = this.pendingAgentReaps.get(name);
+      if (pending) {
+        clearTimeout(pending);
+        this.pendingAgentReaps.delete(name);
+      }
       this.agents.delete(name);
     }
     return true;
@@ -1385,10 +1468,6 @@ export class AgentRuntimeManager {
       envFingerprint: computeEnvFingerprint(finalEnv as NodeJS.ProcessEnv),
     });
 
-    if (!this.workerPool.needsWarm(poolKey)) {
-      return { ok: true, key: poolKey, size: this.workerPool.countMembers(poolKey), warmed: false };
-    }
-
     const candidate = defaultCommandFor(type, requestedModel);
     if (!candidate) {
       throw new RuntimeHttpError(400, `Worker type "${type}" has no default ACP command; cannot prewarm`);
@@ -1397,7 +1476,13 @@ export class AgentRuntimeManager {
       throw new RuntimeHttpError(400, `${candidate.command} binary not found on PATH; cannot prewarm`);
     }
 
-    this.workerPool.beginInFlight(poolKey);
+    // Atomic check-and-reserve. Without this, two concurrent prewarm POSTs
+    // (e.g. the UI firing on focus+keystroke at the same instant) can both
+    // pass needsWarm() before either calls beginInFlight(), and we end up
+    // spawning two children for a pool that only ever holds one.
+    if (!this.workerPool.tryBeginWarm(poolKey)) {
+      return { ok: true, key: poolKey, size: this.workerPool.countMembers(poolKey), warmed: false };
+    }
     try {
       const recordRef: { current?: AgentRecord } = {};
       const stderrBuffer: string[] = [];
@@ -1418,6 +1503,8 @@ export class AgentRuntimeManager {
         onStderrLine: (line) => {
           pushStderrLine(stderrBuffer, line);
         },
+        agentType: type,
+        spawnPurpose: "prewarm",
       });
 
       const sessionRecord = asRecord(result.session);
@@ -1470,6 +1557,13 @@ export class AgentRuntimeManager {
 
   shutdownPools() {
     this.workerPool.shutdown();
+    this.memoryTracer.stop();
+    if (this.reapSweepTimer) {
+      clearInterval(this.reapSweepTimer);
+      this.reapSweepTimer = null;
+    }
+    for (const timer of this.pendingAgentReaps.values()) clearTimeout(timer);
+    this.pendingAgentReaps.clear();
   }
 
   private async spawnAgentConnection(input: {
@@ -1483,6 +1577,8 @@ export class AgentRuntimeManager {
     resumeSessionId?: string;
     getClient: () => acp.Client;
     onStderrLine?: (line: string) => void;
+    agentType?: string;
+    spawnPurpose?: "run" | "prewarm";
   }) {
     let child: ChildProcessWithoutNullStreams;
     try {
@@ -1494,6 +1590,12 @@ export class AgentRuntimeManager {
     } catch (error) {
       throw new RuntimeHttpError(400, `failed to spawn agent process: ${describeUnknownError(error)}`);
     }
+    this.memoryTracer.onSpawn(child, input.agentType ?? "unknown", {
+      command: input.command,
+      cwd: input.cwd,
+      purpose: input.spawnPurpose ?? "run",
+      resumed: Boolean(input.resumeSessionId),
+    });
 
     const processFailure = new Promise<never>((_, reject) => {
       child.once("error", (error) => {
