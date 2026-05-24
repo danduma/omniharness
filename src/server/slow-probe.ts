@@ -4,9 +4,9 @@
 
 const MIN_TOTAL_MS = (() => {
   const raw = process.env.OMNIHARNESS_SLOW_PROBE_MIN_MS;
-  if (!raw) return 100;
+  if (!raw) return 200;
   const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 100;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 200;
 })();
 
 export type SlowProbe = {
