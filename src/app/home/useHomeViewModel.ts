@@ -344,18 +344,32 @@ export function useHomeViewModel({
     const workerLabel = failedWorkerAvailability?.label;
     const workerStatus = failedWorkerAvailability?.availability.message;
 
+    const rawMessage = stripRunFailurePrefix(selectedRun.lastError);
+    const looksLikeStaleSession = typeof rawMessage === "string"
+      && /not present in the bridge runtime|worker.*not.*found|session.*lost/i.test(rawMessage);
+
     return {
-      tone: workerFailureDetail ? "warning" : staleFailure ? "progress" : "error",
-      action: workerFailureDetail ? "Worker setup" : staleFailure ? "Reconnecting" : "Run failed",
+      tone: workerFailureDetail ? "warning" : staleFailure || looksLikeStaleSession ? "progress" : "error",
+      action: workerFailureDetail
+        ? "Worker setup"
+        : staleFailure || looksLikeStaleSession
+        ? "Reconnecting"
+        : "Run failed",
       message: workerFailureDetail || (staleFailure
         ? `to ${workerLabel || "worker"}`
-        : stripRunFailurePrefix(selectedRun.lastError)),
+        : looksLikeStaleSession
+        ? `the ${workerLabel || "worker"} session — this usually clears itself in a moment.`
+        : rawMessage),
       suggestion: workerFailureDetail
         ? "Update the model or account, then resume."
-        : staleFailure
+        : staleFailure || looksLikeStaleSession
         ? undefined
-        : "Fix the worker runtime, then reconnect to the existing worker session.",
-      details: staleFailure ? [] : workerLabel && workerStatus ? [`Current ${workerLabel} status: ${workerStatus}`] : [],
+        : "Send a message to reconnect; the worker will respawn automatically.",
+      details: staleFailure || looksLikeStaleSession
+        ? []
+        : workerLabel && workerStatus
+        ? [`Current ${workerLabel} status: ${workerStatus}`]
+        : [],
     };
   }, [failedWorkerAvailability, selectedRun, workerFailureDetail]);
 
