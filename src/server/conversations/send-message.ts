@@ -139,7 +139,7 @@ export async function reconcileWorkerUserMessagesInStream(runId: string, workerI
   }
 }
 
-async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRecord) {
+export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRecord) {
   const sessionId = worker.bridgeSessionId?.trim();
   if (!sessionId) {
     return null;

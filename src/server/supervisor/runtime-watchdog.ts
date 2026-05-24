@@ -7,6 +7,7 @@ import { isTransientSupervisorError } from "./retry";
 import { cancelDurableSupervisorWakesForTerminalRuns, rehydrateDurableSupervisorWakes } from "./wake-schedule";
 import { compactStaleWorkerOutputs } from "@/server/workers/output-store";
 import { compactStaleArtifactStreams } from "@/server/artifacts/compaction";
+import { reapStuckDirectWorkers } from "@/server/workers/stuck-worker-reaper";
 
 const WATCHDOG_INTERVAL_MS = 15_000;
 
@@ -58,6 +59,15 @@ export async function syncRunningSupervision() {
   });
   void compactStaleArtifactStreams().catch((error) => {
     console.warn("Artifact stream compaction sweep failed:", error);
+  });
+  void reapStuckDirectWorkers().then((result) => {
+    if (result.ok && result.recovered > 0) {
+      process.stderr.write(`[stuck-reaper] recovered ${result.recovered} stuck direct worker(s)\n`);
+    } else if (!result.ok) {
+      process.stderr.write(`[stuck-reaper] sweep failed: ${result.error}\n`);
+    }
+  }).catch((error) => {
+    process.stderr.write(`[stuck-reaper] sweep threw: ${error instanceof Error ? error.message : String(error)}\n`);
   });
   const activeRuns = await db.select().from(runs).where(and(
     inArray(runs.status, ["running", "failed", "quota_waiting"]),
