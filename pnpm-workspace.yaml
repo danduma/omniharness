@@ -1,0 +1,13 @@
+overrides:
+  fast-xml-parser: ^5.7.2
+  esbuild: ^0.28.0
+  form-data: ^4.0.5
+  lodash: ^4.18.1
+  postcss: ^8.5.12
+  qs: ^6.15.1
+  "@smithy/config-resolver": ^4.4.17
+  uuid: ^14.0.0
+  xml2js: ^0.6.2
+
+allowBuilds:
+  "@danduma/i18n": true
