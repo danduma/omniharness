@@ -91,7 +91,21 @@ async function selectConversationWorker(runId: string) {
   return sortedWorkers.find((worker) => !isWorkerCancelled(worker)) ?? sortedWorkers[0] ?? null;
 }
 
-async function assertWorkerUserMessagesInStream(runId: string, workerId: string) {
+/**
+ * Reconcile the DB user-message list against the worker output stream.
+ *
+ * Historically this asserted the invariant and threw a 409 if any DB row
+ * was missing from the stream. That surfaced as "Previous message is
+ * still being persisted..." in the UI whenever the send-message flow
+ * crashed between the DB insert and the stream write — and the only way
+ * out was to hand-edit the DB.
+ *
+ * New contract: if a row is missing, silently backfill the stream entry
+ * from the DB row. The stream is append-only and the user_input entry is
+ * keyed by the message id, so the write is idempotent. We never block
+ * the caller on this — at worst we log the failure and continue.
+ */
+async function reconcileWorkerUserMessagesInStream(runId: string, workerId: string) {
   const [storedUserMessages, entries] = await Promise.all([
     db
       .select()
@@ -105,15 +119,24 @@ async function assertWorkerUserMessagesInStream(runId: string, workerId: string)
       .filter((entry) => (entry as { type?: string }).type === "user_input")
       .map((entry) => entry.id),
   );
-  const missing = storedUserMessages.find((message) => !streamUserInputIds.has(message.id));
-  if (!missing) {
-    return;
+  for (const message of storedUserMessages) {
+    if (streamUserInputIds.has(message.id)) continue;
+    try {
+      await appendUserInputOnDelivery({
+        id: message.id,
+        runId,
+        workerId,
+        text: message.content ?? "",
+        deliveredAt: message.createdAt instanceof Date
+          ? message.createdAt
+          : new Date(message.createdAt as unknown as string | number),
+      });
+    } catch (error) {
+      process.stderr.write(
+        `[send-message] failed to backfill user_input for message ${message.id} on worker ${workerId}: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+    }
   }
-
-  throw Object.assign(
-    new Error("Previous message is still being persisted to the worker stream. Please wait for it to appear before sending another message."),
-    { status: 409 },
-  );
 }
 
 async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRecord) {
@@ -670,7 +693,7 @@ async function sendConversationMessageUnlocked({
       throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
     }
     if (isDirectRunMode(run.mode) || run.mode === "planning") {
-      await assertWorkerUserMessagesInStream(runId, worker.id);
+      await reconcileWorkerUserMessagesInStream(runId, worker.id);
     }
 
     const queuedMessage = await createQueuedConversationMessage({
@@ -733,7 +756,7 @@ async function sendConversationMessageUnlocked({
     throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
   }
   if (isDirectRunMode(run.mode) || run.mode === "planning") {
-    await assertWorkerUserMessagesInStream(runId, worker.id);
+    await reconcileWorkerUserMessagesInStream(runId, worker.id);
   }
 
   if (busyAction === "steer" && ["starting", "working", "stuck"].includes(worker.status.trim().toLowerCase().split(":")[0] ?? "")) {
@@ -758,18 +781,13 @@ async function sendConversationMessageUnlocked({
     createdAt: userMessageCreatedAt,
   };
 
-  await db.insert(messages).values(userMessage);
-  await db.update(runs).set({
-    status: run.mode === "planning" ? "working" : "running",
-    failedAt: null,
-    lastError: null,
-    updatedAt: userMessageCreatedAt,
-  }).where(eq(runs.id, runId));
-  notifyEventStreamSubscribers();
-
+  // Stream-first: append the user_input entry BEFORE the DB insert so that
+  // a crash between the two writes leaves at most a harmless orphan stream
+  // entry rather than a DB row the worker can never see. The stream entry
+  // is keyed by message id so the write is idempotent — if a retry lands on
+  // a row that already exists in the stream, appendUserInputOnDelivery
+  // dedups instead of double-appending.
   if (isDirectRunMode(run.mode)) {
-    // Append user_input to the stream immediately so the UI reflects the
-    // message instantly, without waiting for the worker's turn chain.
     await appendUserInputOnDelivery({
       id: userMessage.id,
       runId: run.id,
@@ -783,6 +801,18 @@ async function sendConversationMessageUnlocked({
         sizeBytes: attachment.size,
       })),
     });
+  }
+
+  await db.insert(messages).values(userMessage);
+  await db.update(runs).set({
+    status: run.mode === "planning" ? "working" : "running",
+    failedAt: null,
+    lastError: null,
+    updatedAt: userMessageCreatedAt,
+  }).where(eq(runs.id, runId));
+  notifyEventStreamSubscribers();
+
+  if (isDirectRunMode(run.mode)) {
     notifyEventStreamSubscribers();
 
     if (busyAction === "steer") {
