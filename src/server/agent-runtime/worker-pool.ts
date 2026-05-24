@@ -90,7 +90,13 @@ export class WorkerPool {
       this.disposeMember(member);
       return;
     }
-    while (this.countAll() + this.countAllInFlight() >= this.maxTotal) {
+    // Defense-in-depth cap enforcement. tryBeginWarm is the primary gate;
+    // here we only consider materialized members. Including in-flight in this
+    // comparison would double-count the caller's own reservation (still held
+    // by their in-flight counter until their finally runs), and evict a
+    // perfectly good existing member to make room for a slot that was
+    // already accounted for.
+    while (this.countAll() >= this.maxTotal) {
       if (!this.evictOldest()) break;
     }
     const arr = this.members.get(member.key) ?? [];

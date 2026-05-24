@@ -73,6 +73,33 @@ describe("WorkerPool atomic warm reservation", () => {
 });
 
 describe("WorkerPool global cap + LRU eviction", () => {
+  it("does not evict when the caller's own in-flight reservation still occupies a slot", () => {
+    // Reproduces the live-run bug where the eviction loop in add() included
+    // the caller's still-open inFlight counter and unnecessarily killed an
+    // existing member to make room for a slot that was already reserved.
+    const pool = new WorkerPool();
+    pool.setMaxPerKey(5);
+    pool.setMaxTotal(4);
+
+    const existingChild = fakeChild();
+    pool.add(makeMember("k-existing", { warmedAt: 1_000, child: existingChild }));
+
+    // Simulate three concurrent warm reservations (matching the live repro
+    // where six requests arrived and three passed tryBeginWarm).
+    expect(pool.tryBeginWarm("k-a")).toBe(true);
+    expect(pool.tryBeginWarm("k-b")).toBe(true);
+    expect(pool.tryBeginWarm("k-c")).toBe(true);
+
+    // Now the first concurrent caller resolves and adds its member. The
+    // existing prewarm must NOT be evicted: pool is countAll=1, inFlight=3,
+    // maxTotal=4, the slot for this caller is already accounted for.
+    const aChild = fakeChild();
+    pool.add(makeMember("k-a", { warmedAt: 2_000, child: aChild }));
+
+    expect(existingChild.kill).not.toHaveBeenCalled();
+    expect(pool.countAll()).toBe(2);
+  });
+
   it("add() evicts the oldest member when maxTotal would be exceeded", () => {
     const pool = new WorkerPool();
     pool.setMaxPerKey(5);
