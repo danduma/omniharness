@@ -1,9 +1,49 @@
-import type React from "react";
+import React from "react";
 import { parseProjectFileReference, type ProjectFileReference } from "@/lib/project-file-links";
 import { cn } from "@/lib/utils";
 
 function isSafeHref(href: string) {
   return /^(https?:\/\/|mailto:|\/|#)/.test(href);
+}
+
+type Alignment = "left" | "center" | "right" | null;
+
+function isTableDelimiter(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed.includes("|")) return false;
+  let content = trimmed;
+  if (content.startsWith("|")) content = content.slice(1);
+  if (content.endsWith("|")) content = content.slice(0, -1);
+
+  const columns = content.split("|");
+  if (columns.length === 0) return false;
+
+  for (const col of columns) {
+    const colTrim = col.trim();
+    if (!/^[:-]+$/.test(colTrim) || !colTrim.includes("-")) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function splitTableRow(line: string): string[] {
+  let content = line.trim();
+  if (content.startsWith("|")) content = content.slice(1);
+  if (content.endsWith("|")) content = content.slice(0, -1);
+  return content.split(/(?<!\\)\|/).map((col) => col.replace(/\\\|/g, "|").trim());
+}
+
+function parseAlignments(delimiterLine: string): Alignment[] {
+  const cols = splitTableRow(delimiterLine);
+  return cols.map((col) => {
+    const starts = col.startsWith(":");
+    const ends = col.endsWith(":");
+    if (starts && ends) return "center";
+    if (ends) return "right";
+    if (starts) return "left";
+    return null;
+  });
 }
 
 interface MarkdownContentProps {
@@ -148,7 +188,18 @@ export function MarkdownContent({ content, className, inheritTextColor = false, 
 
     while (index < lines.length) {
       const line = lines[index];
-      if (!line.trim() || /^```/.test(line) || /^(#{1,4})\s+/.test(line) || /^\s*[-*]\s+/.test(line) || /^\s*\d+\.\s+/.test(line) || /^\s*>\s?/.test(line)) {
+      if (
+        !line.trim() ||
+        /^```/.test(line) ||
+        /^(#{1,4})\s+/.test(line) ||
+        /^\s*[-*]\s+/.test(line) ||
+        /^\s*\d+\.\s+/.test(line) ||
+        /^\s*>\s?/.test(line) ||
+        /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)
+      ) {
+        break;
+      }
+      if (index + 1 < lines.length && isTableDelimiter(lines[index + 1])) {
         break;
       }
       paragraph.push(line.trim());
@@ -164,6 +215,101 @@ export function MarkdownContent({ content, className, inheritTextColor = false, 
 
     if (!trimmed) {
       index += 1;
+      continue;
+    }
+
+    if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(trimmed)) {
+      blocks.push(
+        <hr
+          key={`hr-${index}`}
+          className="my-4 border-t border-border/60"
+        />,
+      );
+      index += 1;
+      continue;
+    }
+
+    if (index + 1 < lines.length && isTableDelimiter(lines[index + 1])) {
+      const start = index;
+      const headerLine = lines[index];
+      const delimiterLine = lines[index + 1];
+      const alignments = parseAlignments(delimiterLine);
+      const headers = splitTableRow(headerLine);
+
+      const rows: string[][] = [];
+      index += 2; // skip header and delimiter
+
+      while (index < lines.length) {
+        const rowLine = lines[index];
+        const trimmedRow = rowLine.trim();
+        if (
+          !trimmedRow ||
+          !trimmedRow.includes("|") ||
+          /^```/.test(trimmedRow) ||
+          /^(#{1,4})\s+/.test(trimmedRow) ||
+          /^\s*[-*]\s+/.test(trimmedRow) ||
+          /^\s*\d+\.\s+/.test(trimmedRow) ||
+          /^\s*>\s?/.test(trimmedRow) ||
+          /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(trimmedRow)
+        ) {
+          break;
+        }
+        rows.push(splitTableRow(rowLine));
+        index += 1;
+      }
+
+      blocks.push(
+        <div key={`table-${start}`} className="my-4 overflow-x-auto rounded-md border border-border/60">
+          <table className={cn(
+            "min-w-full divide-y divide-border/60 text-xs text-left",
+            inheritTextColor ? "text-current" : "text-foreground"
+          )}>
+            <thead className="bg-muted/50">
+              <tr className="divide-x divide-border/40">
+                {headers.map((header, colIdx) => {
+                  const align = alignments[colIdx] || "left";
+                  return (
+                    <th
+                      key={`th-${start}-${colIdx}`}
+                      className={cn(
+                        "px-3 py-2 font-semibold",
+                        align === "center" && "text-center",
+                        align === "right" && "text-right",
+                        align === "left" && "text-left"
+                      )}
+                    >
+                      {renderInlineMarkdown(header, `th-${start}-${colIdx}`, inheritTextColor, projectRoot, onOpenProjectFile)}
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/40 bg-card/20">
+              {rows.map((row, rowIdx) => (
+                <tr key={`tr-${start}-${rowIdx}`} className="divide-x divide-border/30 hover:bg-muted/10 transition-colors">
+                  {headers.map((_, colIdx) => {
+                    const cellValue = row[colIdx] || "";
+                    const align = alignments[colIdx] || "left";
+                    return (
+                      <td
+                        key={`td-${start}-${rowIdx}-${colIdx}`}
+                        className={cn(
+                          "px-3 py-1.5",
+                          align === "center" && "text-center",
+                          align === "right" && "text-right",
+                          align === "left" && "text-left"
+                        )}
+                      >
+                        {renderInlineMarkdown(cellValue, `td-${start}-${rowIdx}-${colIdx}`, inheritTextColor, projectRoot, onOpenProjectFile)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      );
       continue;
     }
 
