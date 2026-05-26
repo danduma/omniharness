@@ -2,8 +2,8 @@
  * Lightweight memory instrumentation for diagnosing runaway memory use.
  *
  * Writes JSONL events to a single log file. Default path is
- * `os.tmpdir()/omniharness-memory.log` — on macOS this resolves to
- * `/var/folders/.../T/omniharness-memory.log`, on Linux to `/tmp/...`.
+ * `.omniharness/memory-trace.jsonl` under the server working directory, so it
+ * survives manual restarts and macOS temp cleanup.
  * Override with OMNIHARNESS_MEMORY_TRACE_PATH for a stable location.
  * Records three kinds of events:
  *   - "boot"     : one line when the tracer starts in a fresh runtime instance
@@ -17,9 +17,8 @@
  */
 import { execFile, type ChildProcessWithoutNullStreams } from "child_process";
 import { promisify } from "util";
-import { appendFile } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
+import { appendFile, mkdir } from "fs/promises";
+import { dirname, join } from "path";
 
 const execFileAsync = promisify(execFile);
 
@@ -47,7 +46,7 @@ export class MemoryTracer {
   constructor(opts: MemoryTracerOptions) {
     const env = opts.env ?? process.env;
     this.enabled = env.OMNIHARNESS_MEMORY_TRACE !== "0";
-    this.logPath = env.OMNIHARNESS_MEMORY_TRACE_PATH || join(tmpdir(), "omniharness-memory.log");
+    this.logPath = env.OMNIHARNESS_MEMORY_TRACE_PATH || join(process.cwd(), ".omniharness", "memory-trace.jsonl");
     const intervalRaw = env.OMNIHARNESS_MEMORY_TRACE_INTERVAL_MS;
     const parsedInterval = intervalRaw ? Number.parseInt(intervalRaw, 10) : NaN;
     this.intervalMs = Number.isFinite(parsedInterval) && parsedInterval >= 1000 ? parsedInterval : 30_000;
@@ -177,6 +176,7 @@ export class MemoryTracer {
   private async append(record: Record<string, unknown>): Promise<void> {
     const line = JSON.stringify({ ts: new Date().toISOString(), ...record }) + "\n";
     try {
+      await mkdir(dirname(this.logPath), { recursive: true });
       await appendFile(this.logPath, line);
     } catch {
       // Best-effort: instrumentation must never break the host process.
