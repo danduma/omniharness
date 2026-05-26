@@ -1,6 +1,6 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import dynamic from "next/dynamic";
-import { AlertTriangle, ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, Menu, MoreHorizontal, PanelLeft, PanelRight, Pencil } from "lucide-react";
+import { ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, Menu, MoreHorizontal, PanelLeft, PanelRight, Pencil, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import {
@@ -94,6 +94,7 @@ interface HomeHeaderProps {
   onForkSession: () => void;
   onForkSessionIntoWorktree: () => void;
   canForkSession: boolean;
+  onReload: () => void;
 }
 
 export function HomeHeader({
@@ -163,6 +164,7 @@ export function HomeHeader({
   onForkSession,
   onForkSessionIntoWorktree,
   canForkSession,
+  onReload,
 }: HomeHeaderProps) {
   useI18nSnapshot();
   const conversationTitle = selectedRun?.title?.trim() || "New conversation";
@@ -388,15 +390,15 @@ export function HomeHeader({
                     <FolderGit2 className="h-4 w-4" />
                     <span>{t("session.menu.forkIntoWorktree")}</span>
                   </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={onReload}>
+                    <RotateCw className="h-4 w-4" />
+                    <span>{t("session.menu.reload")}</span>
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : null}
           </div>
-        ) : null}
-        {selectedRun?.status === "failed" ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-destructive">
-            <AlertTriangle className="h-3 w-3" /> Failed
-          </span>
         ) : null}
         {selectedRun?.status === "cancelling" ? (
           <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">

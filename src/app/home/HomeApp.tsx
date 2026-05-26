@@ -37,6 +37,7 @@ import {
   createClientRunId,
   mergePendingCreatedConversationSnapshots,
   mergePendingSentConversationMessages,
+  parseBrowserConversationRoute,
   parseProjectList,
   resolveRepoName,
   resolveSelectedWorkerModel,
@@ -148,6 +149,10 @@ function applyHomeBootstrap(bootstrap: HomeBootstrapPayload | null | undefined, 
   }
 
   appliedHomeBootstrapId = bootstrap.id;
+  const browserRoute = typeof window === "undefined"
+    ? bootstrap.route
+    : parseBrowserConversationRoute(window.location);
+  const routeSelectedRunId = browserRoute.selectedRunId;
 
   const settingsValues = bootstrap.initialQueries.settings?.values ?? {};
   if (bootstrap.initialQueries.settings) {
@@ -158,9 +163,9 @@ function applyHomeBootstrap(bootstrap: HomeBootstrapPayload | null | undefined, 
   homeUiStateManager.patch((current) => ({
     routeReady: true,
     hasReceivedInitialEventStreamPayload: Boolean(bootstrap.initialEventState),
-    selectedRunId: bootstrap.route.selectedRunId,
-    draftProjectPath: bootstrap.route.selectedRunId ? null : bootstrap.route.draftProjectPath,
-    pairTokenFromUrl: bootstrap.route.pairTokenFromUrl,
+    selectedRunId: routeSelectedRunId,
+    draftProjectPath: routeSelectedRunId ? null : browserRoute.draftProjectPath,
+    pairTokenFromUrl: browserRoute.pairTokenFromUrl,
     apiKeys: { ...current.apiKeys, ...settingsValues },
     settingsDiagnostics: bootstrap.initialQueries.settings?.diagnostics ?? current.settingsDiagnostics,
   }), notify);
@@ -173,7 +178,10 @@ function applyHomeBootstrap(bootstrap: HomeBootstrapPayload | null | undefined, 
 export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null }) {
   applyHomeBootstrap(bootstrap, false);
   const initialEventState = bootstrap?.initialEventState ?? INITIAL_EVENT_STREAM_STATE;
-  const initialSnapshotScope = bootstrap?.route.selectedRunId ?? null;
+  const initialRoute = typeof window === "undefined"
+    ? bootstrap?.route
+    : parseBrowserConversationRoute(window.location);
+  const initialSnapshotScope = initialRoute?.selectedRunId ?? null;
 
   const {
     themeMode,
@@ -349,6 +357,10 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   }, [appearanceTextSizeStyle]);
 
   const busyMessageQueueState = useManagerSnapshot(busyMessageQueueManager);
+  const selectedQueuedMessages = useMemo(
+    () => busyMessageQueueState.queuedMessages.filter((message) => message.runId === selectedRunId),
+    [busyMessageQueueState.queuedMessages, selectedRunId],
+  );
   const settingsDraft = useManagerSnapshot(settingsDraftManager);
 
   const scrollConversationToBottom = useCallback(() => {
@@ -729,6 +741,18 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     cancelInactiveAutoResumeTimers(autoResumeStateRef.current, selectedRunId);
   }, [selectedRunId]);
 
+  // Clear any lingering recover-run mutation error when the user
+  // navigates away from the run it was triggered for. Without this the
+  // mutation's `.error` stays in React Query state forever, ready to
+  // re-surface in the inline error rail whenever that run is selected
+  // again — long after the underlying problem has been worked around.
+  useEffect(() => {
+    const mutationRunId = recoverRun.variables?.runId;
+    if (recoverRun.error && mutationRunId && mutationRunId !== selectedRunId) {
+      recoverRun.reset();
+    }
+  }, [recoverRun, selectedRunId]);
+
   const selectedAutoResumeFailureKey = selectedRun?.status === "failed"
     ? `${selectedRun.failedAt ?? ""}:${selectedRun.lastError ?? ""}`
     : null;
@@ -845,8 +869,8 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     latestWaitEvent,
     latestPromptDeferredEvent,
     completionEvent,
-    queuedMessageCount: busyMessageQueueState.queuedMessages.filter(
-      (m) => m.runId === selectedRunId && (m.status === "pending" || m.status === "delivering"),
+    queuedMessageCount: selectedQueuedMessages.filter(
+      (m) => m.status === "pending" || m.status === "delivering",
     ).length,
     activeConversationAgents,
     liveThoughts,
@@ -865,7 +889,16 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     cancelQueuedMessageError: cancelQueuedMessage.error,
     autoCommitChatError: autoCommitChat.error,
     autoCommitProjectError: autoCommitProject.error,
-    recoverRunError: recoverRun.error,
+    // Scope `recoverRun` error display to the run it was triggered for.
+    // React Query keeps the last mutation error around until reset, so
+    // without this an "Agent not found …" error from a failed recover
+    // attempt on run A keeps showing while the user is now viewing run
+    // B. Mismatch → suppress. We also reset the mutation on session
+    // switch (effect below) so the error doesn't reappear if the user
+    // navigates back to the original run.
+    recoverRunError: recoverRun.variables?.runId && recoverRun.variables.runId === selectedRunId
+      ? recoverRun.error
+      : null,
     renameRunError: renameRun.error,
     archiveRunError: archiveRun.error,
     deleteRunError: deleteRun.error,
@@ -949,6 +982,16 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     if (stoppableConversationWorkerId) stopWorker.mutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId });
   };
 
+  const handleReload = useCallback(() => {
+    try {
+      window.localStorage.removeItem("omni-event-stream-snapshot-cache:v1");
+      window.localStorage.removeItem("omni-worker-entries-cache:v1");
+    } catch (e) {
+      // ignore
+    }
+    window.location.reload();
+  }, []);
+
   const renderComposer = (className: string) => (
     <ComposerContainer
       className={className}
@@ -976,7 +1019,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
       isConversationStoppable={isConversationStoppable}
       hasBusyConversation={hasBusyConversation}
       busyMessageAction={busyMessageAction}
-      queuedMessages={busyMessageQueueState.queuedMessages}
+      queuedMessages={selectedQueuedMessages}
       cancellingQueuedMessageIds={busyMessageQueueState.cancellingMessageIds}
       onEditQueuedMessage={actions.handleEditQueuedMessage}
       onSendQueuedMessageNow={(messageId) => {
@@ -1118,6 +1161,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           onForkSession={actions.handleForkSession}
           onForkSessionIntoWorktree={actions.handleForkSessionIntoWorktree}
           canForkSession={Boolean(selectedRunId && latestUserCheckpoint)}
+          onReload={handleReload}
         />
 
         <ConversationMain

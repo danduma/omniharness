@@ -125,7 +125,7 @@ const initialHomeUiState: HomeUiState = {
   expandedDirectMessageIds: new Set(),
   routeReady: false,
   hasReceivedInitialEventStreamPayload: false,
-  selectedConversationMode: "implementation",
+  selectedConversationMode: "direct",
   selectedCliAgent: "auto",
   selectedModel: "gpt-5.4",
   selectedEffort: "High",

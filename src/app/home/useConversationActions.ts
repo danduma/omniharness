@@ -71,6 +71,7 @@ export function useConversationActions({
     setRightSidebarOpen,
     setMobileWorkersOpen,
     setApiKeys,
+    setSelectedConversationMode,
   } = homeUiSetters;
 
   const autoCommitMilestonesEnabled = parseBooleanSetting(apiKeys[GIT_AUTO_COMMIT_MILESTONES_SETTING], false);
@@ -81,6 +82,7 @@ export function useConversationActions({
     setDraftProjectPath(currentProjectScope);
     setCommand("");
     clearAttachments();
+    setSelectedConversationMode("direct");
     setMobileNavOpen(false);
   };
 
@@ -126,6 +128,7 @@ export function useConversationActions({
     setDraftProjectPath(projectPath);
     setCommand("");
     clearAttachments();
+    setSelectedConversationMode("direct");
     setMobileNavOpen(false);
     requestAnimationFrame(() => {
       commandInputRef.current?.focus();

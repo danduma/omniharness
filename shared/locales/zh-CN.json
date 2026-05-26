@@ -125,6 +125,7 @@
   "session.menu.copyAsMarkdown": "Copy as Markdown",
   "session.menu.forkSession": "Fork session",
   "session.menu.forkIntoWorktree": "Fork into new worktree",
+  "session.menu.reload": "重新加载会话",
   "commit.status.autoCommitCreated": "Auto-commit created: {commit}",
   "commit.status.autoCommitSkipped": "Auto-commit skipped: {reason}",
   "commit.status.autoCommitFailed": "Auto-commit failed: {reason}",

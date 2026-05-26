@@ -27,4 +27,9 @@ describe("HomeUiStateManager", () => {
     controls.resetProjectSessionDisplayLimit?.("/workspace/app");
     expect(manager.getSnapshot().visibleProjectSessionCounts).toEqual({});
   });
+
+  it("defaults selectedConversationMode to 'direct'", () => {
+    const manager = new HomeUiStateManager();
+    expect(manager.getSnapshot().selectedConversationMode).toBe("direct");
+  });
 });

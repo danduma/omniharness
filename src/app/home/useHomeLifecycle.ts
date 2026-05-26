@@ -13,13 +13,12 @@ import {
   EFFORT_OPTIONS,
   getDefaultConversationSidebarWidth,
   getDefaultWorkersSidebarWidth,
-  RUN_PATH_PATTERN,
   WORKER_OPTIONS,
 } from "./constants";
 import { conversationNotificationManager } from "./ConversationNotificationManager";
 import { LiveEventConnectionManager } from "./LiveEventConnectionManager";
 import type { ComposerWorkerOption, EventStreamState } from "./types";
-import { buildConversationPath, buildInlineError, parseCollapsedProjectPaths } from "./utils";
+import { buildConversationPath, buildInlineError, parseBrowserConversationRoute, parseCollapsedProjectPaths } from "./utils";
 
 const lightThemeColor = "#ffffff";
 const darkThemeColor = "#0b0d10";
@@ -186,28 +185,26 @@ export function useHomeLifecycle({
       return;
     }
 
-    const pathnameMatch = window.location.pathname.match(RUN_PATH_PATTERN);
-    const routeRunId = pathnameMatch?.[1]?.trim() || "";
-    const params = new URLSearchParams(window.location.search);
-    const routeProjectPath = params.get("project")?.trim() || "";
-    const routePairToken = params.get("pair")?.trim() || "";
+    const route = parseBrowserConversationRoute(window.location);
     const savedMode = window.localStorage.getItem(COMPOSER_MODE_STORAGE_KEY)?.trim() || "";
     const savedWorker = window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)?.trim() || "";
     const savedModel = window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)?.trim() || "";
     const savedEffort = window.localStorage.getItem(COMPOSER_EFFORT_STORAGE_KEY)?.trim() || "";
 
-    setPairTokenFromUrl(routePairToken || null);
+    setPairTokenFromUrl(route.pairTokenFromUrl);
 
-    if (routeRunId) {
-      setSelectedRunId(routeRunId);
+    if (route.selectedRunId) {
+      setSelectedRunId(route.selectedRunId);
       setDraftProjectPath(null);
-    } else if (routeProjectPath) {
-      setDraftProjectPath(routeProjectPath);
+      if (savedMode === "planning" || savedMode === "implementation" || savedMode === "direct") {
+        setSelectedConversationMode(savedMode);
+      }
+    } else {
+      if (route.draftProjectPath) {
+        setDraftProjectPath(route.draftProjectPath);
+      }
       setSelectedRunId(null);
-    }
-
-    if (savedMode === "planning" || savedMode === "implementation" || savedMode === "direct") {
-      setSelectedConversationMode(savedMode);
+      setSelectedConversationMode("direct");
     }
     if (savedWorker === "auto" || WORKER_OPTIONS.some((option) => option.value === savedWorker)) {
       setSelectedCliAgent(savedWorker as ComposerWorkerOption);
