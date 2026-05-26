@@ -27,6 +27,7 @@ import { withEventPayloadChecksum } from "@/server/events/payload-checksum";
 import { buildAwaitingUserQuestionInvariantErrors } from "@/server/events/lifecycle-invariants";
 import { serializeSessionRecord } from "@/server/session-providers/session-records";
 import { reconcileOrphanedProcessSessions } from "@/server/session-providers/process-store";
+import { reconcilePersistedReloadZombies } from "@/server/runs/persisted-zombie-reconciler";
 
 const EXECUTION_EVENT_LIMIT = 100;
 const SUPERVISOR_INTERVENTION_LIMIT = 50;
@@ -226,6 +227,10 @@ function serializeQueuedConversationMessage(record: typeof queuedConversationMes
 
 export async function buildPersistedEventPayload(options: EventPayloadOptions = {}): Promise<EventStreamState> {
   await reconcileOrphanedProcessSessions();
+  await reconcilePersistedReloadZombies({
+    selectedRunId: options.selectedRunId,
+    source: "persisted-event-payload",
+  });
   const selectedRunId = options.selectedRunId?.trim() || null;
   const allPlans = await db.select().from(plans).orderBy(desc(plans.createdAt), desc(plans.id));
   const allRuns = await db.select().from(runs).where(isNull(runs.archivedAt)).orderBy(desc(runs.createdAt), desc(runs.id));
@@ -354,6 +359,9 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
       complete: true,
     },
     snapshotScope: {
+      catalog: {
+        complete: true,
+      },
       executionEvents: {
         limit: EXECUTION_EVENT_LIMIT,
         complete: allExecutionEvents.length < EXECUTION_EVENT_LIMIT,

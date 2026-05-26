@@ -23,6 +23,7 @@ import { serializeQueuedConversationMessage } from "@/server/conversations/queue
 import { buildAwaitingUserQuestionInvariantErrors } from "@/server/events/lifecycle-invariants";
 import { serializeSessionRecord } from "@/server/session-providers/session-records";
 import { reconcileOrphanedProcessSessions } from "@/server/session-providers/process-store";
+import { reconcilePersistedReloadZombies } from "@/server/runs/persisted-zombie-reconciler";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { startSlowProbe } from "@/server/slow-probe";
 import { toNextRequest } from "./next-request";
@@ -59,6 +60,11 @@ async function fetchWithTimeout(url: string, timeoutMs: number) {
 async function readPersistedEventRecords(options: EventPayloadOptions = {}, probe?: { mark: (label: string) => void }) {
   await reconcileOrphanedProcessSessions();
   probe?.mark("reconcile");
+  await reconcilePersistedReloadZombies({
+    selectedRunId: options.selectedRunId,
+    source: "events-snapshot",
+  });
+  probe?.mark("reconcile.zombies");
   const selectedRunId = options.selectedRunId?.trim() || null;
   const allPlans = await db.select().from(plans).orderBy(desc(plans.createdAt), desc(plans.id));
   probe?.mark("q.plans");
@@ -497,6 +503,9 @@ function buildEventPayload(
     // Artifact-backed payloads MAY be partial; the cursor lets a
     // follow-up query request older entries.
     snapshotScope: {
+      catalog: {
+        complete: true,
+      },
       executionEvents: {
         limit: EXECUTION_EVENT_LIMIT,
         complete: records.allExecutionEvents.length < EXECUTION_EVENT_LIMIT,
@@ -625,6 +634,26 @@ async function buildRuntimeEnrichedEventPayload(options: EventPayloadOptions = {
         selectedRunId: options.selectedRunId,
       });
       probe?.mark("bridge.sync");
+      // Second reconciliation pass — this one knows what's actually in
+      // the bridge, so it can detect workers that were "working" when
+      // the bridge died and are now stranded with no live agent. The
+      // earlier pass (inside readPersistedEventRecords) couldn't see
+      // this because it ran before we fetched the bridge agent list.
+      const bridgeAgentNames = new Set<string>();
+      for (const agent of rawAgents) {
+        if (typeof agent === "object" && agent !== null) {
+          const name = (agent as { name?: unknown }).name;
+          if (typeof name === "string" && name.length > 0) {
+            bridgeAgentNames.add(name);
+          }
+        }
+      }
+      await reconcilePersistedReloadZombies({
+        selectedRunId: options.selectedRunId,
+        source: "events-snapshot-post-bridge",
+        bridgeAgentNames,
+      });
+      probe?.mark("reconcile.bridge-orphans");
       records = await readPersistedEventRecords(options);
       probe?.mark("readRecords#2.total");
       scopedWorkers = selectedRunWorkers(records, options);

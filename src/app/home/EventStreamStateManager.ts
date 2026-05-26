@@ -19,21 +19,65 @@ function sortMessages(messages: MessageRecord[]) {
 
 type RunRecord = EventStreamState["runs"][number];
 
+function mergeByKey<T>(current: T[] | undefined, incoming: T[] | undefined, getKey: (item: T) => string | null | undefined) {
+  const incomingItems = incoming ?? [];
+  const seen = new Set<string>();
+  const merged: T[] = [];
+
+  for (const item of incomingItems) {
+    const key = getKey(item);
+    if (key) {
+      seen.add(key);
+    }
+    merged.push(item);
+  }
+
+  for (const item of current ?? []) {
+    const key = getKey(item);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(item);
+  }
+
+  return merged;
+}
+
 function runUpdatedTimestampMs(run: RunRecord) {
   const value = new Date(run.updatedAt || run.createdAt).getTime();
   return Number.isFinite(value) ? value : 0;
 }
 
-function mergeScopedRuns(current: EventStreamState, incoming: EventStreamState, options: {
-  serverAuthoritative: boolean;
-}) {
-  if (options.serverAuthoritative) {
+function mergeScopedCatalog(current: EventStreamState, incoming: EventStreamState) {
+  if (!incoming.snapshotRunId || incoming.snapshotScope?.catalog?.complete !== false) {
     return incoming;
   }
 
-  const incomingRuns = incoming.runs ?? [];
+  return {
+    ...incoming,
+    runs: mergeByKey(current.runs, incoming.runs, (run) => run.id),
+    plans: mergeByKey(current.plans, incoming.plans, (plan) => plan.id),
+    workers: mergeByKey(current.workers, incoming.workers, (worker) => worker.id),
+    sessions: mergeByKey(current.sessions, incoming.sessions, (session) => session.runId),
+    readMarkers: {
+      ...(current.readMarkers ?? {}),
+      ...(incoming.readMarkers ?? {}),
+    },
+  };
+}
+
+function mergeScopedRuns(current: EventStreamState, incoming: EventStreamState, options: {
+  serverAuthoritative: boolean;
+}) {
+  const catalogMergedIncoming = mergeScopedCatalog(current, incoming);
+  if (options.serverAuthoritative) {
+    return catalogMergedIncoming;
+  }
+
+  const incomingRuns = catalogMergedIncoming.runs ?? [];
   if (incomingRuns.length === 0 || !current.runs?.length) {
-    return incoming;
+    return catalogMergedIncoming;
   }
 
   const currentRunsById = new Map(current.runs.map((run) => [run.id, run]));
@@ -51,7 +95,7 @@ function mergeScopedRuns(current: EventStreamState, incoming: EventStreamState, 
     };
   });
 
-  return changed ? { ...incoming, runs: mergedRuns } : incoming;
+  return changed ? { ...catalogMergedIncoming, runs: mergedRuns } : catalogMergedIncoming;
 }
 
 /**

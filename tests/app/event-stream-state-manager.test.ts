@@ -86,6 +86,7 @@ function multiRunState(args: {
   messageRunId: string;
   message: string;
   checksum: string;
+  catalogComplete?: boolean;
 }): EventStreamState {
   return {
     messages: [{
@@ -109,6 +110,9 @@ function multiRunState(args: {
     frontendErrors: [],
     snapshotRunId: args.messageRunId,
     snapshotChecksum: args.checksum,
+    snapshotScope: args.catalogComplete === undefined
+      ? undefined
+      : { catalog: { complete: args.catalogComplete } },
   };
 }
 
@@ -312,6 +316,67 @@ describe("EventStreamStateManager", () => {
     expect(manager.getSnapshot().runs[0]?.status).toBe("done");
     expect(manager.getSnapshot().runs[0]?.updatedAt).toBe("2026-05-20T09:59:59.000Z");
     expect(manager.getSnapshot().snapshotSource).toBe("server");
+  });
+
+  it("does not let selected-run snapshots erase the sidebar run catalog", () => {
+    const manager = new EventStreamStateManager(
+      multiRunState({
+        runs: ["run-a", "run-b"],
+        messageRunId: "run-a",
+        message: "current first conversation",
+        checksum: "sha256:current",
+      }),
+      {
+        deferCacheHydration: true,
+        initialSnapshotSource: "server",
+      },
+    );
+
+    manager.updateFromServer(
+      multiRunState({
+        runs: ["run-b"],
+        messageRunId: "run-b",
+        message: "selected second conversation",
+        checksum: "sha256:selected",
+        catalogComplete: false,
+      }),
+    );
+
+    expect(manager.getSnapshot().runs.map((item) => item.id)).toEqual(["run-b", "run-a"]);
+    expect(manager.getSnapshot().plans.map((item) => item.id)).toEqual(["run-b-plan", "run-a-plan"]);
+    expect(manager.getSnapshot().messages.map((message) => message.content)).toEqual([
+      "current first conversation",
+      "selected second conversation",
+    ]);
+  });
+
+  it("lets complete server catalog snapshots remove absent runs", () => {
+    const manager = new EventStreamStateManager(
+      multiRunState({
+        runs: ["run-a", "run-b"],
+        messageRunId: "run-a",
+        message: "current first conversation",
+        checksum: "sha256:current",
+        catalogComplete: true,
+      }),
+      {
+        deferCacheHydration: true,
+        initialSnapshotSource: "server",
+      },
+    );
+
+    manager.updateFromServer(
+      multiRunState({
+        runs: ["run-b"],
+        messageRunId: "run-b",
+        message: "selected second conversation",
+        checksum: "sha256:selected",
+        catalogComplete: true,
+      }),
+    );
+
+    expect(manager.getSnapshot().runs.map((item) => item.id)).toEqual(["run-b"]);
+    expect(manager.getSnapshot().plans.map((item) => item.id)).toEqual(["run-b-plan"]);
   });
 
   it("does not resurrect deleted runs from stale scoped frontend caches", () => {

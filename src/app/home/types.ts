@@ -323,6 +323,9 @@ export type EventStreamState = {
     complete: boolean;
   };
   snapshotScope?: {
+    catalog?: {
+      complete: boolean;
+    };
     executionEvents?: {
       limit: number;
       complete: boolean;
