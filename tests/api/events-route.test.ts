@@ -146,6 +146,81 @@ describe("GET /api/events", () => {
     await db.delete(plans);
   });
 
+  it("does not hydrate an archived run as a selected visible conversation", async () => {
+    const activePlanId = randomUUID();
+    const archivedPlanId = randomUUID();
+    const activeRunId = randomUUID();
+    const archivedRunId = randomUUID();
+    const archivedWorkerId = `${archivedRunId}-worker-1`;
+    const now = new Date("2026-05-26T10:00:00.000Z");
+
+    await db.insert(plans).values([
+      {
+        id: activePlanId,
+        path: "vibes/ad-hoc/active.md",
+        status: "done",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: archivedPlanId,
+        path: "vibes/ad-hoc/archived.md",
+        status: "done",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+    await db.insert(runs).values([
+      {
+        id: activeRunId,
+        planId: activePlanId,
+        mode: "direct",
+        status: "done",
+        title: "Active",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: archivedRunId,
+        planId: archivedPlanId,
+        mode: "direct",
+        status: "done",
+        title: "Archived",
+        archivedAt: new Date(now.getTime() + 1_000),
+        createdAt: now,
+        updatedAt: new Date(now.getTime() + 1_000),
+      },
+    ]);
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId: archivedRunId,
+      role: "user",
+      kind: "checkpoint",
+      content: "archived content must not reload",
+      createdAt: now,
+    });
+    await db.insert(workers).values({
+      id: archivedWorkerId,
+      runId: archivedRunId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${archivedRunId}`));
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.snapshotRunId).toBeNull();
+    expect(payload.runs.map((run: { id: string }) => run.id)).toEqual([activeRunId]);
+    expect(payload.messages).toEqual([]);
+    expect(payload.workers.map((worker: { id: string }) => worker.id)).not.toContain(archivedWorkerId);
+    expect(payload.workerEntrySeqs).toEqual({});
+  });
+
   it("keeps unselected live snapshots free of run-scoped transcript history", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

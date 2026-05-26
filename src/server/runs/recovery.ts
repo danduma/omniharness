@@ -236,7 +236,21 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string, 
       effort: run.preferredWorkerEffort?.trim().toLowerCase() || undefined,
     });
     spawned = true;
-    const response = await askAgent(workerId, buildDirectWorkerPrompt(run.mode, content, cwd));
+    await db.update(workers).set({
+      type: agent.type || workerType,
+      status: "working",
+      cwd: agent.cwd || cwd,
+      bridgeSessionId: agent.sessionId ?? null,
+      bridgeSessionMode: agent.sessionMode ?? null,
+      updatedAt: new Date(),
+    }).where(eq(workers.id, workerId));
+    await appendWorkerSessionMetadata({
+      runId: run.id,
+      workerId,
+      sessionId: agent.sessionId ?? null,
+      sessionMode: agent.sessionMode ?? null,
+      source: "direct-rerun",
+    });
     await appendUserInputOnDelivery({
       id: userInputId,
       runId: run.id,
@@ -244,6 +258,7 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string, 
       text: content,
       deliveredAt: new Date(),
     });
+    const response = await askAgent(workerId, buildDirectWorkerPrompt(run.mode, content, cwd));
     let snapshot: AgentRecord | null = null;
     try {
       snapshot = await getAgent(workerId);

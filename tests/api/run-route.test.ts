@@ -1932,6 +1932,97 @@ describe("POST /api/runs/[id]", () => {
     expect(mockAskAgent).toHaveBeenCalledWith(expect.any(String), "new prompt");
   });
 
+  it("persists direct edit rerun session metadata before the first ask returns", async () => {
+    mockAskAgent.mockClear();
+    mockGetAgent.mockClear();
+    mockSpawnAgent.mockClear();
+    mockStartSupervisorRun.mockClear();
+    mockSpawnAgent.mockResolvedValueOnce({
+      name: "rerun-worker",
+      type: "codex",
+      state: "idle",
+      cwd: "/workspace/app",
+      sessionId: "session-before-ask",
+      sessionMode: "full-access",
+      lastText: "",
+      currentText: "",
+      outputEntries: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+    let resolveAsk!: (value: { response: string; state: string }) => void;
+    mockAskAgent.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveAsk = resolve;
+    }));
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const userMessageId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: path.join("vibes", "ad-hoc", `${randomUUID()}.md`),
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Edit pending ask",
+      projectPath: "/workspace/app",
+      status: "failed",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(messages).values({
+      id: userMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "old prompt",
+      createdAt: new Date("2026-04-21T10:00:00Z"),
+    });
+
+    const responsePromise = POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "edit", targetMessageId: userMessageId, content: "new prompt" }),
+    }), { params: Promise.resolve({ id: runId }) });
+
+    await vi.waitUntil(() => mockAskAgent.mock.calls.length > 0, { timeout: 1_000 });
+
+    const replacementWorker = await db.select().from(workers).where(eq(workers.id, `${runId}-worker-1`)).get();
+    const { readWorkerOutputEntries } = await import("@/server/workers/output-store");
+    const workerEntries = await readWorkerOutputEntries(runId, `${runId}-worker-1`);
+
+    expect(replacementWorker).toMatchObject({
+      status: "working",
+      bridgeSessionId: "session-before-ask",
+      bridgeSessionMode: "full-access",
+    });
+    expect(workerEntries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: userMessageId,
+        type: "user_input",
+        text: "new prompt",
+      }),
+      expect.objectContaining({
+        type: "lifecycle",
+        raw: expect.objectContaining({
+          kind: "worker_session_metadata",
+          sessionId: "session-before-ask",
+          sessionMode: "full-access",
+        }),
+      }),
+    ]));
+
+    resolveAsk({ response: "Rerun complete.", state: "idle" });
+    const response = await responsePromise;
+    expect(response.status).toBe(200);
+  });
+
   it("forks a new direct conversation from a direct user checkpoint", async () => {
     mockAskAgent.mockClear();
     mockCancelAgent.mockClear();

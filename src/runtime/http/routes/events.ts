@@ -65,13 +65,14 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}, prob
     source: "events-snapshot",
   });
   probe?.mark("reconcile.zombies");
-  const selectedRunId = options.selectedRunId?.trim() || null;
+  const requestedSelectedRunId = options.selectedRunId?.trim() || null;
   const allPlans = await db.select().from(plans).orderBy(desc(plans.createdAt), desc(plans.id));
   probe?.mark("q.plans");
   const allRuns = await db.select().from(runs).where(isNull(runs.archivedAt)).orderBy(desc(runs.createdAt), desc(runs.id));
   probe?.mark("q.runs");
   const visibleRunIds = allRuns.map((run) => run.id);
-  const selectedRun = selectedRunId ? allRuns.find((run) => run.id === selectedRunId) ?? null : null;
+  const selectedRun = requestedSelectedRunId ? allRuns.find((run) => run.id === requestedSelectedRunId) ?? null : null;
+  const selectedRunId = selectedRun?.id ?? null;
   const selectedPlanId = selectedRun?.planId ?? null;
   const transcriptRunIds = selectedRunId
     ? [
@@ -235,7 +236,7 @@ function selectedRunWorkers(
   records: PersistedEventRecords,
   options: EventPayloadOptions,
 ) {
-  const selectedRunId = options.selectedRunId?.trim();
+  const selectedRunId = resolveVisibleSelectedRunId(records, options);
   if (!selectedRunId) {
     return [];
   }
@@ -243,13 +244,22 @@ function selectedRunWorkers(
   return records.selectedAgentWorkers;
 }
 
-function selectedRunIds(options: EventPayloadOptions) {
-  const selectedRunId = options.selectedRunId?.trim();
+function resolveVisibleSelectedRunId(records: PersistedEventRecords, options: EventPayloadOptions) {
+  const requested = options.selectedRunId?.trim();
+  if (!requested) {
+    return null;
+  }
+
+  return records.allRuns.some((run) => run.id === requested) ? requested : null;
+}
+
+function visibleSelectedRunIds(records: PersistedEventRecords, options: EventPayloadOptions) {
+  const selectedRunId = resolveVisibleSelectedRunId(records, options);
   return selectedRunId ? new Set([selectedRunId]) : null;
 }
 
 function selectedMessageRunIds(records: PersistedEventRecords, options: EventPayloadOptions) {
-  const selectedRunId = options.selectedRunId?.trim();
+  const selectedRunId = resolveVisibleSelectedRunId(records, options);
   if (!selectedRunId) {
     return [];
   }
@@ -432,7 +442,8 @@ function buildEventPayload(
   options: EventPayloadOptions = {},
   workerEntrySeqs: Record<string, number> = {},
 ) {
-  const runIds = selectedRunIds(options);
+  const selectedRunId = resolveVisibleSelectedRunId(records, options);
+  const runIds = visibleSelectedRunIds(records, options);
   const messageRunIds = selectedMessageRunIds(records, options);
   const lifecycleErrors = buildAwaitingUserQuestionInvariantErrors({
     runs: records.allRuns,
@@ -492,7 +503,7 @@ function buildEventPayload(
     reviewFindings: records.allReviewFindings
       .map(compactReviewFinding),
     frontendErrors: [...frontendErrors, ...lifecycleErrors],
-    snapshotRunId: options.selectedRunId?.trim() || null,
+    snapshotRunId: selectedRunId,
     messageScope: {
       runIds: messageRunIds,
       complete: true,

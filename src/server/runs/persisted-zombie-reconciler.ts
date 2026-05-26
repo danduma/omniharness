@@ -90,7 +90,7 @@ export async function reconcilePersistedReloadZombies(args: {
   // the bridge sees: a "working" row with no live agent is the more
   // urgent failure (UI hangs forever) than a "starting" row past its
   // grace window.
-  const orphanedWorkingWorker = args.bridgeAgentNames
+  const orphanedWorkingWorker = args.bridgeAgentNames && run.mode !== "implementation"
     ? runWorkers.find((worker) => isOrphanedWorkingWorker(worker, args.bridgeAgentNames!))
     : undefined;
   const staleWorker = orphanedWorkingWorker

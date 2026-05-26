@@ -7,6 +7,7 @@ import {
 } from "@/lib/app-errors";
 import type { EventStreamState } from "./types";
 import { workerEntriesManager } from "./WorkerEntriesManager";
+import { sidebarWorkerActivityManager, type SidebarWorkerActivityManager } from "./SidebarWorkerActivityManager";
 
 const SNAPSHOT_FALLBACK_INTERVAL_MS = 15_000;
 const SNAPSHOT_FALLBACK_COOLDOWN_MS = 1_000;
@@ -27,6 +28,7 @@ interface LiveEventConnectionManagerOptions {
   requestSnapshot?: SnapshotRequester;
   getSnapshotChecksum?: () => string | null | undefined;
   workerEntries?: Pick<typeof workerEntriesManager, "onKnownSeqs" | "onStreamResync" | "onWakeUp">;
+  sidebarWorkerActivity?: Pick<SidebarWorkerActivityManager, "onKnownSeqs" | "onWakeUp">;
   applyUpdate: (state: EventStreamState) => void;
   reportError: (error: AppErrorDescriptor) => void;
   fallbackIntervalMs?: number;
@@ -131,6 +133,7 @@ export class LiveEventConnectionManager {
   private readonly requestSnapshot: SnapshotRequester;
   private readonly getSnapshotChecksum?: () => string | null | undefined;
   private readonly workerEntries: Pick<typeof workerEntriesManager, "onKnownSeqs" | "onStreamResync" | "onWakeUp">;
+  private readonly sidebarWorkerActivity: Pick<SidebarWorkerActivityManager, "onKnownSeqs" | "onWakeUp">;
   private readonly applyUpdate: (state: EventStreamState) => void;
   private readonly reportError: (error: AppErrorDescriptor) => void;
   private readonly fallbackIntervalMs: number;
@@ -160,6 +163,7 @@ export class LiveEventConnectionManager {
         : defaultRequestSnapshot);
     this.getSnapshotChecksum = options.getSnapshotChecksum;
     this.workerEntries = options.workerEntries ?? workerEntriesManager;
+    this.sidebarWorkerActivity = options.sidebarWorkerActivity ?? sidebarWorkerActivityManager;
     this.applyUpdate = options.applyUpdate;
     this.reportError = options.reportError;
     this.fallbackIntervalMs = options.fallbackIntervalMs ?? SNAPSHOT_FALLBACK_INTERVAL_MS;
@@ -223,6 +227,7 @@ export class LiveEventConnectionManager {
       this.stopFallbackPolling();
       this.applyUpdate(data);
       this.workerEntries.onKnownSeqs(data.workerEntrySeqs);
+      this.sidebarWorkerActivity.onKnownSeqs(data.workerEntrySeqs);
     } catch {
       this.reportError({
         message: "The frontend received a malformed update payload from /api/events.",
@@ -235,13 +240,15 @@ export class LiveEventConnectionManager {
 
   private handleWorkerEntryAppended(event: MessageEvent) {
     try {
-      const data = JSON.parse(event.data) as { workerId?: unknown; seq?: unknown };
+      const data = JSON.parse(event.data) as { workerId?: unknown; seq?: unknown; runId?: unknown };
       const workerId = typeof data.workerId === "string" ? data.workerId : null;
       const seq = typeof data.seq === "number" ? data.seq : null;
+      const runId = typeof data.runId === "string" ? data.runId : null;
       if (!workerId || seq == null) {
         return;
       }
       this.workerEntries.onWakeUp({ workerId, seq });
+      this.sidebarWorkerActivity.onWakeUp({ workerId, seq, runId });
     } catch {
       // Malformed frames are ignored — the next valid frame (or the
       // periodic snapshot poll) will re-sync any missed entries.
@@ -371,10 +378,12 @@ export class LiveEventConnectionManager {
       const data = result.data;
       if (isNotModifiedSnapshot(data)) {
         this.workerEntries.onKnownSeqs(data.workerEntrySeqs);
+        this.sidebarWorkerActivity.onKnownSeqs(data.workerEntrySeqs);
         return true;
       }
       this.applyUpdate(data);
       this.workerEntries.onKnownSeqs(data?.workerEntrySeqs);
+      this.sidebarWorkerActivity.onKnownSeqs(data?.workerEntrySeqs);
       return true;
     } catch (error) {
       if (this.active) {

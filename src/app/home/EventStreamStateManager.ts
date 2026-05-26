@@ -49,21 +49,58 @@ function runUpdatedTimestampMs(run: RunRecord) {
   return Number.isFinite(value) ? value : 0;
 }
 
-function mergeScopedCatalog(current: EventStreamState, incoming: EventStreamState) {
-  if (!incoming.snapshotRunId || incoming.snapshotScope?.catalog?.complete !== false) {
-    return incoming;
+function timestampMs(value: string | null | undefined) {
+  if (!value) {
+    return 0;
   }
 
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function mergeReadMarkersForVisibleRuns(current: EventStreamState, incoming: EventStreamState) {
+  const visibleRunIds = new Set((incoming.runs ?? []).map((run) => run.id));
+  const merged: Record<string, string> = {};
+
+  for (const [runId, readAt] of Object.entries(current.readMarkers ?? {})) {
+    if (visibleRunIds.has(runId)) {
+      merged[runId] = readAt;
+    }
+  }
+
+  for (const [runId, readAt] of Object.entries(incoming.readMarkers ?? {})) {
+    if (!visibleRunIds.has(runId)) {
+      continue;
+    }
+    if (timestampMs(readAt) >= timestampMs(merged[runId])) {
+      merged[runId] = readAt;
+    }
+  }
+
+  return merged;
+}
+
+function mergeScopedCatalog(current: EventStreamState, incoming: EventStreamState) {
+  const isSelectedRunScoped = Boolean(incoming.snapshotRunId?.trim());
+  const catalogIsPartial = incoming.snapshotScope?.catalog?.complete === false;
+  if (!isSelectedRunScoped && !catalogIsPartial) {
+    return {
+      ...incoming,
+      readMarkers: mergeReadMarkersForVisibleRuns(current, incoming),
+    };
+  }
+
+  const mergedRuns = mergeByKey(current.runs, incoming.runs, (run) => run.id);
   return {
     ...incoming,
-    runs: mergeByKey(current.runs, incoming.runs, (run) => run.id),
+    runs: mergedRuns,
     plans: mergeByKey(current.plans, incoming.plans, (plan) => plan.id),
     workers: mergeByKey(current.workers, incoming.workers, (worker) => worker.id),
     sessions: mergeByKey(current.sessions, incoming.sessions, (session) => session.runId),
-    readMarkers: {
-      ...(current.readMarkers ?? {}),
-      ...(incoming.readMarkers ?? {}),
-    },
+    readMarkers: mergeReadMarkersForVisibleRuns(current, {
+      ...incoming,
+      runs: mergedRuns,
+    }),
   };
 }
 
@@ -152,6 +189,15 @@ function mergeScopedCachedState(current: EventStreamState, cached: EventStreamSt
   };
 }
 
+function authoritativeCatalogExcludesScope(state: EventStreamState, scope: string | null | undefined) {
+  const scopedRunId = scope?.trim();
+  if (!scopedRunId || state.snapshotSource !== "server" || state.snapshotScope?.catalog?.complete !== true) {
+    return false;
+  }
+
+  return !(state.runs ?? []).some((run) => run.id === scopedRunId);
+}
+
 /**
  * State manager for the global `/api/events` snapshot stream. Worker
  * conversation content (bridge entries, user/supervisor inputs,
@@ -188,6 +234,9 @@ export class EventStreamStateManager {
   }
 
   hydrateFromCaches() {
+    if (authoritativeCatalogExcludesScope(this.state, this.snapshotCacheScope)) {
+      return;
+    }
     if (
       this.state.snapshotSource === "server"
       && (!this.snapshotCacheScope || this.state.snapshotRunId === this.snapshotCacheScope)
@@ -206,6 +255,9 @@ export class EventStreamStateManager {
 
   hydrateFromCacheScope(scope: string | null | undefined) {
     this.snapshotCacheScope = scope?.trim() || null;
+    if (authoritativeCatalogExcludesScope(this.state, this.snapshotCacheScope)) {
+      return false;
+    }
     if (
       this.state.snapshotSource === "server"
       && this.snapshotCacheScope

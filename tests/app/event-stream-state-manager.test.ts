@@ -350,7 +350,7 @@ describe("EventStreamStateManager", () => {
     ]);
   });
 
-  it("lets complete server catalog snapshots remove absent runs", () => {
+  it("does not let selected-run complete snapshots remove unrelated sidebar runs", () => {
     const manager = new EventStreamStateManager(
       multiRunState({
         runs: ["run-a", "run-b"],
@@ -375,8 +375,111 @@ describe("EventStreamStateManager", () => {
       }),
     );
 
+    expect(manager.getSnapshot().runs.map((item) => item.id)).toEqual(["run-b", "run-a"]);
+    expect(manager.getSnapshot().plans.map((item) => item.id)).toEqual(["run-b-plan", "run-a-plan"]);
+  });
+
+  it("lets unscoped complete server catalog snapshots remove absent runs", () => {
+    const initial = multiRunState({
+      runs: ["run-a", "run-b"],
+      messageRunId: "run-a",
+      message: "current first conversation",
+      checksum: "sha256:current",
+      catalogComplete: true,
+    });
+    const manager = new EventStreamStateManager(initial, {
+      deferCacheHydration: true,
+      initialSnapshotSource: "server",
+    });
+    const incoming = multiRunState({
+      runs: ["run-b"],
+      messageRunId: "run-b",
+      message: "selected second conversation",
+      checksum: "sha256:selected",
+      catalogComplete: true,
+    });
+
+    manager.updateFromServer({
+      ...incoming,
+      snapshotRunId: null,
+    });
+
     expect(manager.getSnapshot().runs.map((item) => item.id)).toEqual(["run-b"]);
     expect(manager.getSnapshot().plans.map((item) => item.id)).toEqual(["run-b-plan"]);
+  });
+
+  it("does not let transient snapshots clear read markers for visible runs", () => {
+    const initial = multiRunState({
+      runs: ["run-a", "run-b"],
+      messageRunId: "run-a",
+      message: "current first conversation",
+      checksum: "sha256:current",
+      catalogComplete: true,
+    });
+    const manager = new EventStreamStateManager({
+      ...initial,
+      readMarkers: {
+        "run-a": "2026-05-20T10:00:00.000Z",
+        "run-b": "2026-05-20T10:01:00.000Z",
+      },
+    }, {
+      deferCacheHydration: true,
+      initialSnapshotSource: "server",
+    });
+    const incoming = multiRunState({
+      runs: ["run-a", "run-b"],
+      messageRunId: "run-b",
+      message: "selected second conversation",
+      checksum: "sha256:missing-read-markers",
+      catalogComplete: true,
+    });
+
+    manager.updateFromServer({
+      ...incoming,
+      readMarkers: {},
+    });
+
+    expect(manager.getSnapshot().readMarkers).toEqual({
+      "run-a": "2026-05-20T10:00:00.000Z",
+      "run-b": "2026-05-20T10:01:00.000Z",
+    });
+  });
+
+  it("drops read markers for runs absent from an unscoped catalog snapshot", () => {
+    const initial = multiRunState({
+      runs: ["run-a", "run-b"],
+      messageRunId: "run-a",
+      message: "current first conversation",
+      checksum: "sha256:current",
+      catalogComplete: true,
+    });
+    const manager = new EventStreamStateManager({
+      ...initial,
+      readMarkers: {
+        "run-a": "2026-05-20T10:00:00.000Z",
+        "run-b": "2026-05-20T10:01:00.000Z",
+      },
+    }, {
+      deferCacheHydration: true,
+      initialSnapshotSource: "server",
+    });
+    const incoming = multiRunState({
+      runs: ["run-a"],
+      messageRunId: "run-a",
+      message: "current first conversation",
+      checksum: "sha256:archived",
+      catalogComplete: true,
+    });
+
+    manager.updateFromServer({
+      ...incoming,
+      snapshotRunId: null,
+      readMarkers: {},
+    });
+
+    expect(manager.getSnapshot().readMarkers).toEqual({
+      "run-a": "2026-05-20T10:00:00.000Z",
+    });
   });
 
   it("does not resurrect deleted runs from stale scoped frontend caches", () => {
@@ -411,5 +514,43 @@ describe("EventStreamStateManager", () => {
     expect(manager.getSnapshot().runs.map((item) => item.id)).toEqual(["run-a", "run-b"]);
     expect(manager.getSnapshot().plans.map((item) => item.id)).toEqual(["run-a-plan", "run-b-plan"]);
     expect(manager.getSnapshot().messages.map((message) => message.content)).toEqual(["cached second conversation"]);
+  });
+
+  it("does not hydrate a stale scoped cache when an authoritative catalog excludes that run", () => {
+    const cache = new EventStreamSnapshotCacheManager({ storage: memoryStorage() });
+    cache.rememberState(
+      multiRunState({
+        runs: ["archived-run"],
+        messageRunId: "archived-run",
+        message: "archived conversation body",
+        checksum: "sha256:archived-cache",
+      }),
+      "archived-run",
+    );
+
+    const authoritative = multiRunState({
+      runs: ["run-a", "run-b"],
+      messageRunId: "run-a",
+      message: "current first conversation",
+      checksum: "sha256:server",
+      catalogComplete: true,
+    });
+    const manager = new EventStreamStateManager({
+      ...authoritative,
+      snapshotRunId: null,
+      messages: [],
+    }, {
+      snapshotCache: cache,
+      snapshotCacheScope: "archived-run",
+      deferCacheHydration: true,
+      initialSnapshotSource: "server",
+    });
+
+    expect(manager.hydrateFromCacheScope("archived-run")).toBe(false);
+    manager.hydrateFromCaches();
+
+    expect(manager.getSnapshot().runs.map((item) => item.id)).toEqual(["run-a", "run-b"]);
+    expect(manager.getSnapshot().messages).toEqual([]);
+    expect(manager.getSnapshot().snapshotSource).toBe("server");
   });
 });

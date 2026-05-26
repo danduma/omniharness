@@ -231,10 +231,11 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
     selectedRunId: options.selectedRunId,
     source: "persisted-event-payload",
   });
-  const selectedRunId = options.selectedRunId?.trim() || null;
+  const requestedSelectedRunId = options.selectedRunId?.trim() || null;
   const allPlans = await db.select().from(plans).orderBy(desc(plans.createdAt), desc(plans.id));
   const allRuns = await db.select().from(runs).where(isNull(runs.archivedAt)).orderBy(desc(runs.createdAt), desc(runs.id));
-  const selectedRun = selectedRunId ? allRuns.find((run) => run.id === selectedRunId) ?? null : null;
+  const selectedRun = requestedSelectedRunId ? allRuns.find((run) => run.id === requestedSelectedRunId) ?? null : null;
+  const selectedRunId = selectedRun?.id ?? null;
   const selectedPlanId = selectedRun?.planId ?? null;
   const transcriptRunIds = selectedRunId
     ? [
@@ -353,7 +354,7 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
       ? deriveRecoveryState(allRecoveryIncidents)
       : null,
     frontendErrors: lifecycleErrors,
-    snapshotRunId: selectedRunId ?? null,
+    snapshotRunId: selectedRunId,
     messageScope: {
       runIds: transcriptRunIds,
       complete: true,
