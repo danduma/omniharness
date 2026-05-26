@@ -1,9 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { messages, runs, workers } from "@/server/db/schema";
+import { messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { normalizeAgentRecord, type AgentRecord } from "@/server/bridge-client";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
+import { emitNamedEvent } from "@/server/events/named-events";
 import { persistRunFailure } from "@/server/runs/failures";
 import { isTerminalRunStatus } from "@/server/runs/status";
 import { isLongWorkerCompletionText } from "@/server/supervisor/worker-completion";
@@ -208,6 +210,98 @@ function isActiveLiveAgent(agent: ReturnType<typeof normalizeAgentRecord>) {
 function isWorkerQueueDrainableStatus(status: string) {
   const normalized = normalizedStatus(status);
   return Boolean(normalized) && !["starting", "working", "stuck", "error", "cancelled"].includes(normalized);
+}
+
+async function pendingWorkerQueueCount(runId: string, workerId: string) {
+  const records = await db.select({ id: queuedConversationMessages.id })
+    .from(queuedConversationMessages)
+    .where(and(
+      eq(queuedConversationMessages.runId, runId),
+      eq(queuedConversationMessages.targetWorkerId, workerId),
+      eq(queuedConversationMessages.status, "pending"),
+    ));
+  return records.length;
+}
+
+async function recordQueueDrainDecision(args: {
+  runId: string;
+  workerId: string;
+  source: string;
+  workerStatus: string;
+  pendingCount: number;
+  decision: "drain" | "skip";
+  reason: string;
+}) {
+  emitNamedEvent({
+    kind: "queue.drain_decision",
+    runId: args.runId,
+    workerId: args.workerId,
+    source: args.source,
+    workerStatus: args.workerStatus,
+    pendingCount: args.pendingCount,
+    decision: args.decision,
+    reason: args.reason,
+  });
+  await recordExecutionEvent({
+    runId: args.runId,
+    workerId: args.workerId,
+    eventType: "queue_drain_decision",
+    details: {
+      summary: args.decision === "drain"
+        ? `Draining ${args.pendingCount} queued message(s) for ${args.workerId}.`
+        : `Skipped queue drain for ${args.workerId}: ${args.reason}.`,
+      source: args.source,
+      workerStatus: args.workerStatus,
+      pendingCount: args.pendingCount,
+      decision: args.decision,
+      reason: args.reason,
+    },
+  });
+}
+
+async function drainQueuedWorkerMessagesWithObservation(args: {
+  runId: string;
+  workerId: string;
+  workerStatus: string;
+  source: string;
+}) {
+  const pendingCount = await pendingWorkerQueueCount(args.runId, args.workerId);
+  if (pendingCount === 0) {
+    return 0;
+  }
+
+  const drainable = isWorkerQueueDrainableStatus(args.workerStatus);
+  await recordQueueDrainDecision({
+    ...args,
+    pendingCount,
+    decision: drainable ? "drain" : "skip",
+    reason: drainable ? "worker_drainable" : "worker_not_drainable",
+  });
+  if (!drainable) {
+    return 0;
+  }
+
+  const deliveredCount = await drainQueuedWorkerMessages({ runId: args.runId, workerId: args.workerId });
+  emitNamedEvent({
+    kind: "queue.drain_finished",
+    runId: args.runId,
+    workerId: args.workerId,
+    source: args.source,
+    pendingCount,
+    deliveredCount,
+  });
+  await recordExecutionEvent({
+    runId: args.runId,
+    workerId: args.workerId,
+    eventType: "queue_drain_finished",
+    details: {
+      summary: `Queue drain finished for ${args.workerId}: delivered ${deliveredCount} of ${pendingCount}.`,
+      source: args.source,
+      pendingCount,
+      deliveredCount,
+    },
+  });
+  return deliveredCount;
 }
 
 function isRecoverableMissingDirectWorkerStatus(status: string) {
@@ -451,9 +545,12 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       if (staleBusyFailure && result.status !== "failed") {
         await clearMatchingRunFailureMessage(run);
       }
-      if (isWorkerQueueDrainableStatus(agent.state)) {
-        await drainQueuedWorkerMessages({ runId: run.id, workerId: worker.id });
-      }
+      await drainQueuedWorkerMessagesWithObservation({
+        runId: run.id,
+        workerId: worker.id,
+        workerStatus: agent.state,
+        source: "live_planning_sync",
+      });
       continue;
     }
 
@@ -477,9 +574,13 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
     if (staleBusyFailure && nextRunState !== "failed") {
       await clearMatchingRunFailureMessage(run);
     }
-    if (isWorkerQueueDrainableStatus(agent.state)) {
-      await drainQueuedWorkerMessages({ runId: run.id, workerId: worker.id });
-    }
+    const effectiveWorkerStatus = quiescedDirectWorker ? "idle" : agent.state;
+    await drainQueuedWorkerMessagesWithObservation({
+      runId: run.id,
+      workerId: worker.id,
+      workerStatus: effectiveWorkerStatus,
+      source: "live_worker_sync",
+    });
   }
 
   for (const run of allRuns) {
@@ -531,9 +632,12 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
     }
 
     if (nextRunState === run.status) {
-      if (isWorkerQueueDrainableStatus(worker.status)) {
-        await drainQueuedWorkerMessages({ runId: run.id, workerId: worker.id });
-      }
+      await drainQueuedWorkerMessagesWithObservation({
+        runId: run.id,
+        workerId: worker.id,
+        workerStatus: worker.status,
+        source: "persisted_state_unchanged",
+      });
       continue;
     }
 
@@ -545,6 +649,12 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
         currentText: worker.currentText,
         lastText: worker.lastText,
         outputEntriesJson: worker.outputEntriesJson,
+      });
+      await drainQueuedWorkerMessagesWithObservation({
+        runId: run.id,
+        workerId: worker.id,
+        workerStatus: worker.status,
+        source: "persisted_direct_completion",
       });
     } else {
       await db.update(runs).set({

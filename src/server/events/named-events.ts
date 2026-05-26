@@ -34,7 +34,9 @@ export type SurfacedErrorCode =
   | "process.stop.failed"
   | "process.orphaned_after_restart"
   | "recovery.gave_up"
+  | "recovery.needs_user"
   | "recovery.run_failed"
+  | "runtime.resource_pressure"
   | "runtime.start_failed"
   | "session.provider.unknown"
   | "session.action.unsupported"
@@ -42,6 +44,7 @@ export type SurfacedErrorCode =
   | "supervisor.wake.failed"
   | "surface.bridge_failed"
   | "worker.spawn.failed"
+  | "worker.spawn.resource_exhausted"
   | "worker.failover.failed"
   | "worker.bridge.fatal_stderr"
   | "worker.environment_mismatch"
@@ -91,6 +94,16 @@ export type RuntimeEvent =
       reason: RuntimeStopReason;
     }
   | {
+      kind: "runtime.resource_pressure";
+      level: "warning" | "critical";
+      memoryFreePercent: number | null;
+      diskFreeMb: number | null;
+      activeAgents: number;
+      poolMembers: number;
+      evictedPoolMembers: number;
+      reasons: string[];
+    }
+  | {
       kind: "surface.connected";
       surface: RuntimeSurface;
       label: string;
@@ -112,6 +125,7 @@ export type WorkerEvent =
   | { kind: "worker.terminal"; runId: string; workerId: string; status: string }
   | { kind: "worker.reattached"; runId: string; workerId: string }
   | { kind: "worker.recreated"; runId: string; workerId: string }
+  | { kind: "worker.session_metadata_repaired"; runId: string; workerId: string }
   // Wake-up frame for the unified worker conversation stream. Carries
   // only (workerId, seq); clients fetch the entry via
   // GET /api/workers/:workerId/entries?afterSeq=. See
@@ -204,7 +218,25 @@ export type ConversationEvent =
   | { kind: "conversation.awaiting_user"; runId: string; workerId?: string; reason: "worker_requested_input" }
   | { kind: "conversation.read"; runId: string; lastReadAt: string }
   | { kind: "conversation.deleted"; runId: string }
-  | { kind: "conversation.delete_failed"; runId: string; blockingTable: string | null };
+  | { kind: "conversation.delete_failed"; runId: string; blockingTable: string | null }
+  | {
+      kind: "queue.drain_decision";
+      runId: string;
+      workerId: string;
+      source: string;
+      workerStatus: string;
+      pendingCount: number;
+      decision: "drain" | "skip";
+      reason: string;
+    }
+  | {
+      kind: "queue.drain_finished";
+      runId: string;
+      workerId: string;
+      source: string;
+      pendingCount: number;
+      deliveredCount: number;
+    };
 
 export type SessionEvent =
   | { kind: "session.created"; runId: string; sessionType: string; actorIds: string[] }

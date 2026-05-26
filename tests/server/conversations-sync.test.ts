@@ -6,7 +6,8 @@ import { clarifications, conversationReadMarkers, creditEvents, executionEvents,
 import { getEventStreamNotificationVersion } from "@/server/events/live-updates";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
 
-const { mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
+const { mockAskAgent, mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
+  mockAskAgent: vi.fn(),
   mockSpawnAgent: vi.fn(),
   mockStartSupervisorRun: vi.fn(),
 }));
@@ -19,6 +20,7 @@ vi.mock("@/server/bridge-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/server/bridge-client")>();
   return {
     ...actual,
+    askAgent: mockAskAgent,
     spawnAgent: mockSpawnAgent,
   };
 });
@@ -27,6 +29,11 @@ import { syncConversationSessions } from "@/server/conversations/sync";
 
 describe("syncConversationSessions", () => {
   beforeEach(async () => {
+    mockAskAgent.mockReset();
+    mockAskAgent.mockResolvedValue({
+      response: "Queued continue delivered.",
+      state: "idle",
+    });
     mockSpawnAgent.mockReset();
     mockStartSupervisorRun.mockReset();
     await db.delete(planningReviewFindings);
@@ -436,6 +443,118 @@ describe("syncConversationSessions", () => {
     expect(worker?.currentText).toBe("");
     expect(worker?.lastText).toBe(finalAnswer);
     expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it("drains queued direct messages after quiescing a live worker that still reports working", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+    const finalAnswer = [
+      "I finished the hidden recovery turn and wrote enough final output for OmniHarness to treat this direct worker as complete.",
+      "There are no pending tool calls, permission prompts, or blockers left in this worker turn.",
+      "The next queued user message should be delivered immediately once the sync pass quiesces the worker to idle.",
+      "This long completion text is deliberately shaped like a final assistant response rather than a partial streaming fragment.",
+      "It includes a complete summary, concrete verification notes, and enough stable prose to clear the long-completion threshold used for direct worker quiescence.",
+      "That threshold prevents accidental completion on tiny partial chunks, so this fixture needs to look like a genuinely finished assistant response.",
+      "After this point the worker should no longer be treated as busy by the control plane, and any queued steering for the same worker should drain.",
+    ].join(" ");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-queued-drain.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Direct queued drain",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "gemini",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(queuedConversationMessages).values({
+      id: randomUUID(),
+      runId,
+      targetWorkerId: workerId,
+      action: "steer",
+      status: "pending",
+      content: "continue",
+      attachmentsJson: "[]",
+      createdAt: new Date(now.getTime() + 3),
+      updatedAt: new Date(now.getTime() + 3),
+    });
+
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "gemini",
+        cwd: process.cwd(),
+        state: "working",
+        sessionId: "still-working-session",
+        sessionMode: "full-access",
+        lastText: finalAnswer,
+        currentText: finalAnswer,
+        renderedOutput: finalAnswer,
+        outputEntries: [
+          {
+            id: "user-1",
+            type: "user_input",
+            text: "Recover worker",
+            timestamp: now.toISOString(),
+          },
+          {
+            id: "message-1",
+            type: "message",
+            text: finalAnswer,
+            timestamp: new Date(now.getTime() + 2).toISOString(),
+          },
+        ],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    ], { selectedRunId: runId });
+
+    const queued = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId)).get();
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+
+    expect(worker?.status).toBe("idle");
+    expect(run?.status).toBe("done");
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "continue");
+    expect(queued?.status).toBe("delivered");
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "queue_drain_decision",
+        workerId,
+      }),
+      expect.objectContaining({
+        eventType: "queue_drain_finished",
+        workerId,
+      }),
+      expect.objectContaining({
+        eventType: "queued_message_delivered",
+        workerId,
+      }),
+    ]));
   });
 
   it("keeps a direct run running when the live worker only has a partial streaming message", async () => {
