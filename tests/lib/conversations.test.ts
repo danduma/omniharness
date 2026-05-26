@@ -53,6 +53,32 @@ describe("buildConversationGroups", () => {
     expect(result[0]?.runs[0]?.title).toBe("New conversation");
   });
 
+  it("keeps optimistic runs visible even before their plan record arrives", () => {
+    const result = buildConversationGroups({
+      explicitProjects: ["/workspace/app"],
+      plans: [],
+      runs: [
+        {
+          id: "run-new",
+          planId: "optimistic-plan:run-new",
+          mode: "direct",
+          status: "running",
+          createdAt: "2026-04-20T14:34:11.000Z",
+          projectPath: "/workspace/app",
+          title: "New direct session",
+        },
+      ],
+    });
+
+    expect(result[0]?.path).toBe("/workspace/app");
+    expect(result[0]?.runs[0]).toMatchObject({
+      id: "run-new",
+      title: "New direct session",
+      path: "/workspace/app",
+      mode: "direct",
+    });
+  });
+
   it("keeps persisted project-scoped runs under their folder even before explicit project settings hydrate", () => {
     const result = buildConversationGroups({
       explicitProjects: [],

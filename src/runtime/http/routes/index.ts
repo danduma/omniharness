@@ -27,6 +27,7 @@ import {
   handleQueuedConversationMessageRequest,
 } from "./conversation-messages";
 import { handleWorkerEntriesRequest } from "./worker-entries";
+import { handleConversationTranscriptRequest } from "./conversation-transcript";
 import { handleEventsLogRequest } from "./events-log";
 import { handleEventsRequest } from "./events";
 import { handleSupervisorRequest } from "./supervisor";
@@ -72,6 +73,7 @@ export function createOmniRuntimeHttpRegistry() {
     .route("PATCH", "/api/conversations/:id/queued-messages/:messageId", handleQueuedConversationMessageRequest)
     .route("DELETE", "/api/conversations/:id/queued-messages/:messageId", handleQueuedConversationMessageRequest)
     .route("GET", "/api/workers/:workerId/entries", handleWorkerEntriesRequest)
+    .route("GET", "/api/conversations/:id/transcript", handleConversationTranscriptRequest)
     .route("GET", "/api/events/log", handleEventsLogRequest)
     .route("GET", "/api/events", handleEventsRequest)
     .route("POST", "/api/supervisor", handleSupervisorRequest)

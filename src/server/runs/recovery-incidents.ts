@@ -202,6 +202,14 @@ export async function markRecoveryIncidentNeedsUser(args: {
     incidentId: args.incidentId,
     ...(args.details ?? {}),
   });
+  emitNamedEvent({
+    kind: "error.surfaced",
+    code: "recovery.needs_user",
+    message: args.reason,
+    surface: "banner",
+    runId: args.runId,
+    ...(args.workerId ? { workerId: args.workerId } : {}),
+  });
 }
 
 export async function markRecoveryIncidentFailed(args: {

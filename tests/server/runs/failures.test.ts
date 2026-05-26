@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { messages, plans, runs, workerCounters } from "@/server/db/schema";
+import { executionEvents, messages, plans, runs, workerCounters, workers } from "@/server/db/schema";
 import { persistRunFailure } from "@/server/runs/failures";
 import {
   __resetNamedEventsForTests,
@@ -13,6 +13,8 @@ import {
 describe("persistRunFailure", () => {
   beforeEach(async () => {
     await db.delete(messages);
+    await db.delete(executionEvents);
+    await db.delete(workers);
     await db.delete(workerCounters);
     await db.delete(runs);
     await db.delete(plans);
@@ -109,6 +111,32 @@ describe("persistRunFailure", () => {
 
     expect(persistedMessages).toHaveLength(1);
     expect(persistedMessages[0]?.content).toBe("Run failed: codex ACP adapter is not installed");
+  });
+
+  it("records a durable run_failed execution event for persisted failures", async () => {
+    const { runId } = await seedRunningRun();
+    await db.insert(workers).values({
+      id: "worker-1",
+      runId,
+      type: "gemini",
+      status: "working",
+      cwd: "/tmp",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await persistRunFailure(runId, new Error("direct follow-up exploded"), {
+      surface: { code: "conversation.continue.failed", workerId: "worker-1" },
+    });
+
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      eventType: "run_failed",
+      workerId: "worker-1",
+    });
+    expect(events[0]?.details).toContain("direct follow-up exploded");
   });
 
   it("does not overwrite a cancelled run with a late failure", async () => {

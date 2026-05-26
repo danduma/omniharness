@@ -83,6 +83,9 @@ export function applyRunRecoveryOptimisticUpdate(
   const targetTimestamp = new Date(targetMessage.createdAt).getTime();
   const targetRun = state.runs.find((run) => run.id === args.runId);
   const isImplementationResume = args.action === "retry" && targetRun?.mode === "implementation";
+  const isDirectSessionRetry = args.action === "retry" && (
+    targetRun?.mode === "direct" || targetRun?.mode === "commit"
+  );
 
   if (isImplementationResume) {
     return {
@@ -103,6 +106,10 @@ export function applyRunRecoveryOptimisticUpdate(
         || message.content !== `Run failed: ${targetRun?.lastError ?? ""}`
       )),
     };
+  }
+
+  if (isDirectSessionRetry) {
+    return state;
   }
 
   return {

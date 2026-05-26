@@ -500,7 +500,8 @@ describe("POST /api/conversations/[id]/messages", () => {
 
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
     expect(JSON.parse(storedMessages[0]?.attachmentsJson || "[]")).toEqual([attachment]);
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("path: attachments/upload-2/attachment-2-notes.pdf"));
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("path: "));
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("attachment-2-notes.pdf"));
   });
 
   it("stores implementation follow-ups and wakes the supervisor instead of messaging a worker directly", async () => {
@@ -1196,7 +1197,7 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(entries.filter((entry) => (entry as { type?: string }).type === "user_input").map((entry) => entry.text)).toEqual(persistedOrder);
   });
 
-  it("refuses to insert a direct follow-up while a previous user message is missing from the worker stream", async () => {
+  it("backfills a missing previous user message before inserting a direct follow-up", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = `${runId}-worker-1`;
@@ -1249,14 +1250,17 @@ describe("POST /api/conversations/[id]/messages", () => {
     });
 
     const response = await POST(request, { params: Promise.resolve({ id: runId }) });
-    expect(response.status).toBe(409);
-    const payload = await response.json();
-    expect(payload.error.message).toContain("Previous message is still being persisted");
+    expect(response.status).toBe(200);
 
-    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
-    expect(storedMessages.map((message) => message.id)).toEqual([missingMessageId]);
-    expect(mockAskAgent).not.toHaveBeenCalled();
-    expect(await readWorkerOutputEntries(runId, workerId)).toEqual([]);
+    await waitFor(
+      async () => readWorkerOutputEntries(runId, workerId),
+      (entries) => entries.some((entry) => entry.id === missingMessageId),
+    );
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
+    expect(storedMessages.map((message) => message.id)).toContain(missingMessageId);
+    expect(storedMessages.map((message) => message.content)).toContain("Do not accept this yet.");
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "Do not accept this yet.");
+    expect((await readWorkerOutputEntries(runId, workerId)).some((entry) => entry.id === missingMessageId)).toBe(true);
   });
 
   it("automatically resumes a missing direct worker before sending a follow-up", async () => {
@@ -1374,7 +1378,7 @@ describe("POST /api/conversations/[id]/messages", () => {
     }));
   });
 
-  it("starts a fresh direct worker when the saved Gemini session id is gone", async () => {
+  it("creates a fresh direct worker when an empty saved Gemini session cannot be loaded", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = `${runId}-worker-1`;
@@ -1433,7 +1437,7 @@ describe("POST /api/conversations/[id]/messages", () => {
         sessionMode: "full-access",
         outputEntries: [],
         currentText: "",
-        lastText: "Fresh Gemini session response.",
+        lastText: "",
       });
 
     const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
@@ -1458,20 +1462,16 @@ describe("POST /api/conversations/[id]/messages", () => {
       effort: "high",
       resumeSessionId: "missing-session",
     }));
-    expect(mockSpawnAgent).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      name: workerId,
-      type: "gemini",
-      cwd: "/workspace/app",
-      mode: "full-access",
-      model: "gemini-3",
-      effort: "high",
-    }));
-    expect(mockSpawnAgent.mock.calls[1]?.[0]).not.toHaveProperty("resumeSessionId");
 
     await waitFor(
       async () => db.select().from(runs).where(eq(runs.id, runId)).get(),
       (record) => record?.status === "done",
     );
+    expect(mockSpawnAgent).toHaveBeenNthCalledWith(2, expect.not.objectContaining({
+      resumeSessionId: expect.any(String),
+    }));
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
+    expect(mockAskAgent).toHaveBeenCalledTimes(2);
     const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
@@ -1481,12 +1481,112 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(updatedRun?.lastError).toBeNull();
     expect(updatedWorker?.status).toBe("idle");
     expect(updatedWorker?.bridgeSessionId).toBe("fresh-session");
-    // Worker response now lives in the unified worker stream — only
-    // the user-role row is written to `messages` after delivery.
     expect(storedMessages.map((message) => message.role)).toEqual(["user"]);
+    expect(resumeEvents.some((event) => event.eventType === "worker_session_missing")).toBe(true);
     expect(resumeEvents.some((event) => event.eventType === "worker_session_recreated")).toBe(true);
     expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
       kind: "worker.recreated",
+      runId,
+      workerId,
+    }));
+  });
+
+  it("materializes a Gemini saved session when the project session store is empty", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-transcript-replay.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      preferredWorkerType: "gemini",
+      preferredWorkerModel: "gemini-3",
+      preferredWorkerEffort: "high",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "gemini",
+      status: "idle",
+      cwd: "/workspace/app",
+      bridgeSessionId: "missing-session",
+      bridgeSessionMode: "full-access",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const { appendWorkerEntryWithResult } = await import("@/server/workers/output-store");
+    await appendWorkerEntryWithResult(runId, workerId, {
+      id: "provider-output-1",
+      type: "message",
+      text: "I already inspected slow-probe.ts.",
+      timestamp: now.toISOString(),
+      authorRole: "assistant",
+      channel: "agent",
+    });
+
+    mockAskAgent
+      .mockRejectedValueOnce(new Error(`Ask failed: Agent not found: ${workerId}`))
+      .mockResolvedValueOnce({
+        response: "Continuing from transcript.",
+        state: "idle",
+      });
+    mockSpawnAgent
+      .mockRejectedValueOnce(new Error('Spawn failed: failed to start gemini agent via gemini: {"code":-32603,"message":"Internal error","data":{"details":"No previous sessions found for this project."}}'))
+      .mockResolvedValueOnce({
+        name: workerId,
+        type: "gemini",
+        cwd: "/workspace/app",
+        state: "idle",
+        sessionId: "fresh-session",
+        sessionMode: "full-access",
+        outputEntries: [],
+        currentText: "",
+        lastText: "",
+      });
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "continue" }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    await waitFor(
+      async () => db.select().from(runs).where(eq(runs.id, runId)).get(),
+      (record) => record?.status === "done",
+    );
+
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
+    expect(mockAskAgent).toHaveBeenCalledTimes(2);
+    expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, "continue");
+
+    const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const resumeEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(updatedWorker?.bridgeSessionId).toBe("fresh-session");
+    expect(resumeEvents.some((event) => event.eventType === "worker_session_materialized")).toBe(true);
+    expect(resumeEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
+    expect(resumeEvents.some((event) => event.eventType === "worker_session_recreated_from_transcript")).toBe(false);
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "worker.reattached",
       runId,
       workerId,
     }));

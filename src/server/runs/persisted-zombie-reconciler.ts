@@ -30,10 +30,44 @@ function isStaleStartingWorker(worker: typeof workers.$inferSelect, nowMs: numbe
   return nowMs - worker.updatedAt.getTime() >= STARTING_WORKER_RELOAD_GRACE_MS;
 }
 
+// Workers that were actively producing output when the bridge died:
+// `status="working"` in the DB but absent from the bridge's live agent
+// list. Without this, the FE shows "running" in the sidebar and no
+// "Thinking…" indicator forever, because the DB row never advances and
+// the bridge has no agent to report state for. We auto-resume via the
+// same spawn-with-saved-session path that the regular send-message
+// flow uses.
+function isOrphanedWorkingWorker(
+  worker: typeof workers.$inferSelect,
+  bridgeAgentNames: ReadonlySet<string>,
+): boolean {
+  const status = normalizeRunStatus(worker.status).split(":")[0]?.trim();
+  if (status !== "working" && status !== "stuck") {
+    return false;
+  }
+  // No saved session → resume can't help; the manual recovery flow is
+  // the right surface there.
+  if (!worker.bridgeSessionId?.trim()) {
+    return false;
+  }
+  // The bridge knows about it — nothing for us to do.
+  if (bridgeAgentNames.has(worker.id)) {
+    return false;
+  }
+  return true;
+}
+
 export async function reconcilePersistedReloadZombies(args: {
   selectedRunId?: string | null;
   source?: string;
   nowMs?: number;
+  // Set of worker ids the bridge has live agent records for. When
+  // provided, we additionally detect workers whose DB status is
+  // "working"/"stuck" but who aren't in the bridge — usually because
+  // the bridge crashed/restarted while they were mid-turn. When
+  // undefined, we skip this check (we don't know what the bridge
+  // sees yet).
+  bridgeAgentNames?: ReadonlySet<string>;
 }) {
   const runId = args.selectedRunId?.trim();
   if (!runId) {
@@ -46,12 +80,21 @@ export async function reconcilePersistedReloadZombies(args: {
   }
 
   const nowMs = args.nowMs ?? Date.now();
-  const staleWorker = (await db
+  const runWorkers = await db
     .select()
     .from(workers)
     .where(eq(workers.runId, run.id))
-    .orderBy(asc(workers.createdAt), asc(workers.id)))
-    .find((worker) => isStaleStartingWorker(worker, nowMs));
+    .orderBy(asc(workers.createdAt), asc(workers.id));
+
+  // Prefer the orphaned-working case when the caller has told us what
+  // the bridge sees: a "working" row with no live agent is the more
+  // urgent failure (UI hangs forever) than a "starting" row past its
+  // grace window.
+  const orphanedWorkingWorker = args.bridgeAgentNames
+    ? runWorkers.find((worker) => isOrphanedWorkingWorker(worker, args.bridgeAgentNames!))
+    : undefined;
+  const staleWorker = orphanedWorkingWorker
+    ?? runWorkers.find((worker) => isStaleStartingWorker(worker, nowMs));
 
   if (!staleWorker) {
     return { action: "none" as const };

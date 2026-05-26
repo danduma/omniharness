@@ -177,15 +177,30 @@ function hasActiveAgentOutput(agent: ConversationWorkerAgent) {
   return isWorkerActiveStatus(agent.state) || Boolean(agent.currentText?.trim());
 }
 
+function hasReadableAgentOutput(agent: ConversationWorkerAgent) {
+  return Boolean(
+    agent.currentText?.trim()
+      || agent.displayText?.trim()
+      || agent.lastText?.trim()
+  );
+}
+
+function hasActiveReadableAgentOutput(agent: ConversationWorkerAgent) {
+  return isWorkerActiveStatus(agent.state) && hasReadableAgentOutput(agent);
+}
+
 export function selectPrimaryConversationAgent<T extends ConversationWorkerAgent>(agents: T[], directConversation: boolean) {
   if (!directConversation) {
     return agents[0] ?? null;
   }
 
   return (
-    agents.find((agent) => !isCancelledAgent(agent) && hasActiveAgentOutput(agent))
+    agents.find((agent) => !isCancelledAgent(agent) && hasActiveReadableAgentOutput(agent))
+    ?? [...agents].reverse().find(hasReadableAgentOutput)
+    ?? agents.find((agent) => !isCancelledAgent(agent) && hasActiveAgentOutput(agent))
     ?? agents.find((agent) => !isCancelledAgent(agent))
-    ?? agents[0]
+    ?? [...agents].reverse().find(hasReadableAgentOutput)
+    ?? agents.at(-1)
     ?? null
   );
 }

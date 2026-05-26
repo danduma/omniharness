@@ -112,6 +112,63 @@ describe("applyRunRecoveryOptimisticUpdate", () => {
     ]);
   });
 
+  it("keeps direct session failures visible while retrying", () => {
+    const state: RecoverableConversationState = {
+      runs: [
+        {
+          id: "run-1",
+          mode: "direct",
+          status: "failed",
+          lastError: "Gemini project session store was empty; retry will reconstruct the saved session from the OmniHarness worker stream.",
+          failedAt: "2026-05-24T19:03:00.000Z",
+        },
+      ],
+      messages: [
+        {
+          id: "message-1",
+          runId: "run-1",
+          role: "user",
+          content: "here, this one",
+          createdAt: "2026-05-24T19:02:31.000Z",
+        },
+        {
+          id: "message-2",
+          runId: "run-1",
+          role: "system",
+          content: "late status",
+          createdAt: "2026-05-24T19:02:32.000Z",
+        },
+      ],
+      workers: [{ id: "worker-3", runId: "run-1", type: "gemini", status: "cancelled" }],
+      agents: [{ name: "worker-3", state: "cancelled", lastText: "Previous output" }],
+      clarifications: [{ id: "clarification-1", runId: "run-1" }],
+      executionEvents: [{ id: "event-1", runId: "run-1", workerId: "worker-3", eventType: "worker_cancelled" }],
+      supervisorInterventions: [{ id: "intervention-1", runId: "run-1" }],
+      queuedMessages: [{ id: "queued-1", runId: "run-1" }],
+    };
+
+    const nextState = applyRunRecoveryOptimisticUpdate(state, {
+      runId: "run-1",
+      action: "retry",
+      targetMessageId: "message-1",
+    });
+
+    expect(nextState.runs[0]).toMatchObject({
+      id: "run-1",
+      mode: "direct",
+      status: "failed",
+      lastError: "Gemini project session store was empty; retry will reconstruct the saved session from the OmniHarness worker stream.",
+      failedAt: "2026-05-24T19:03:00.000Z",
+    });
+    expect(nextState.messages).toEqual(state.messages);
+    expect(nextState.workers).toEqual(state.workers);
+    expect(nextState.agents).toEqual(state.agents);
+    expect(nextState.clarifications).toEqual(state.clarifications);
+    expect(nextState.executionEvents).toEqual(state.executionEvents);
+    expect(nextState.supervisorInterventions).toEqual(state.supervisorInterventions);
+    expect(nextState.queuedMessages).toEqual(state.queuedMessages);
+  });
+
   it("keeps implementation workers and history intact when optimistically resuming", () => {
     const state: RecoverableConversationState = {
       runs: [

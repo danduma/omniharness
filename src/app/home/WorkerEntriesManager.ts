@@ -21,9 +21,72 @@
  * via the HTTP endpoint. The frame is a wake-up hint; we never trust
  * it as the entry payload.
  */
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import type { WorkerEntry } from "@/server/workers/entries-types";
 import { requestJson as defaultRequestJson } from "@/lib/app-errors";
+
+/**
+ * Collapse multiple rows that share an entry `id` into a single
+ * conversation item. The server's unified stream intentionally appends
+ * a new row whenever an entry's text grows (so a streaming assistant
+ * message can be revised in place — see the
+ * `appends changed bridge message revisions so streaming prose can expand`
+ * test in `tests/server/workers/output-store.test.ts`). It also
+ * back-fills the same user_input id onto a newer worker's stream
+ * when a run cycles through workers; the backfill timestamp is "when
+ * the backfill ran", not "when the user actually sent the message".
+ *
+ * Coalesce policy:
+ *   - Keep the entry at its FIRST appearance in the input order, so
+ *     conversational position doesn't jump when text grows.
+ *   - Use the LATEST revision's text / metadata (text grows; latest
+ *     revision is the finished one).
+ *   - Keep the EARLIEST timestamp — for streaming assistant entries
+ *     all revisions share a timestamp anyway, but for back-filled
+ *     user_input the earliest occurrence is the original send time
+ *     and any later occurrence is a re-appended backfill we want to
+ *     ignore for ordering purposes.
+ *   - Entries without an id pass through unchanged.
+ */
+export function coalesceWorkerEntriesById(entries: ReadonlyArray<WorkerEntry>): WorkerEntry[] {
+  const positionByKey = new Map<string, number>();
+  const earliestTimestampByKey = new Map<string, string>();
+  const result: WorkerEntry[] = [];
+  for (const entry of entries) {
+    const key = typeof entry.id === "string" && entry.id ? entry.id : null;
+    if (!key) {
+      result.push(entry);
+      continue;
+    }
+    const existingPosition = positionByKey.get(key);
+    if (existingPosition === undefined) {
+      positionByKey.set(key, result.length);
+      if (entry.timestamp) {
+        earliestTimestampByKey.set(key, entry.timestamp);
+      }
+      result.push(entry);
+    } else {
+      const earliest = earliestTimestampByKey.get(key);
+      const candidate = entry.timestamp;
+      let preservedTimestamp = entry.timestamp;
+      if (earliest && candidate) {
+        // Smaller ISO string compares as smaller datetime for the same
+        // timezone offset — all our timestamps are emitted with a `Z`
+        // suffix, so string compare matches Date compare.
+        preservedTimestamp = candidate < earliest ? candidate : earliest;
+        if (preservedTimestamp !== earliest) {
+          earliestTimestampByKey.set(key, preservedTimestamp);
+        }
+      } else if (earliest) {
+        preservedTimestamp = earliest;
+      } else if (candidate) {
+        earliestTimestampByKey.set(key, candidate);
+      }
+      result[existingPosition] = { ...entry, timestamp: preservedTimestamp };
+    }
+  }
+  return result;
+}
 
 type JsonRequester = typeof defaultRequestJson;
 type WorkerEntryStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -735,9 +798,10 @@ export function useWorkerStream(
     if (!workerId) return Promise.resolve();
     return workerEntriesManager.loadOlder(workerId, limit);
   }, [workerId]);
+  const entries = useMemo(() => coalesceWorkerEntriesById(state.entries), [state.entries]);
   return {
     state,
-    entries: state.entries,
+    entries,
     isLoaded: workerId ? workerEntriesManager.isLoaded(workerId) : false,
     hasOlder: state.hasOlder,
     loadOlder,

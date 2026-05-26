@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/server/db";
 import {
   executionEvents,
+  messages,
   plans,
+  queuedConversationMessages,
   recoveryIncidents,
   runs,
   workers,
@@ -64,6 +66,8 @@ describe("recovery-incidents named events", () => {
     __resetNamedEventsForTests();
     await db.delete(executionEvents);
     await db.delete(recoveryIncidents);
+    await db.delete(queuedConversationMessages);
+    await db.delete(messages);
     await db.delete(workers);
     await db.delete(runs);
     await db.delete(plans);

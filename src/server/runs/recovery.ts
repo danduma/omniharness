@@ -25,17 +25,22 @@ import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { getAppDataPath } from "@/server/app-root";
 import { buildPlannerSystemPrompt } from "@/server/prompts";
+import { appendAttachmentContext, parseChatAttachmentsJson } from "@/lib/chat-attachments";
 import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/supervisor/worker-types";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
+import { readWorkerOutputEntries } from "@/server/workers/output-store";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
+import { appendWorkerSessionMetadata, readWorkerSessionMetadata } from "@/server/workers/session-metadata";
+import { buildTranscriptReplayPrompt, canRecreateRejectedSavedSession, isRejectedSavedSessionErrorMessage, materializeProviderSessionFromWorkerStream } from "@/server/workers/session-recovery";
 import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
+import { updateDirectRunStatusFromWorkerOutput } from "@/server/conversations/direct-run-status";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { emitNamedEvent } from "@/server/events/named-events";
-import { isRecoverableAgentMissingError } from "./recovery-state";
 import { createBranchWorktree } from "@/server/git/workspaces";
 import { pendingOrphanWorktreeError } from "@/server/git/orphan-recovery";
+import { markRecoveryIncidentResolved } from "@/server/runs/recovery-incidents";
 import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
 
 export type RecoveryAction = "retry" | "edit" | "fork";
@@ -142,6 +147,29 @@ function buildDirectWorkerPrompt(mode: string, content: string, projectRoot: str
   return content;
 }
 
+function buildDirectMessagePrompt(
+  mode: string,
+  message: typeof messages.$inferSelect,
+  content: string,
+  projectRoot: string,
+) {
+  const withAttachments = appendAttachmentContext(
+    content,
+    parseChatAttachmentsJson(message.attachmentsJson),
+    { resolvePath: (storagePath) => getAppDataPath(storagePath) },
+  );
+  return buildDirectWorkerPrompt(mode, withAttachments, projectRoot);
+}
+
+function workerEntryAttachments(message: typeof messages.$inferSelect) {
+  return parseChatAttachmentsJson(message.attachmentsJson).map((attachment) => ({
+    id: attachment.id,
+    filename: attachment.name,
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.size,
+  }));
+}
+
 function hasVisibleWorkerOutput(responseText: string, snapshot: AgentRecord | null) {
   if (responseText.trim()) {
     return true;
@@ -196,65 +224,104 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string, 
   });
   emitNamedEvent({ kind: "worker.spawned", runId: run.id, workerId, workerType });
 
-  const agent = await spawnAgent({
-    type: workerType,
-    cwd,
-    name: workerId,
-    ...(workerMode ? { mode: workerMode } : {}),
-    env: envParams,
-    model: run.preferredWorkerModel?.trim() || undefined,
-    effort: run.preferredWorkerEffort?.trim().toLowerCase() || undefined,
-  });
-  const response = await askAgent(workerId, buildDirectWorkerPrompt(run.mode, content, cwd));
-  await appendUserInputOnDelivery({
-    id: userInputId,
-    runId: run.id,
-    workerId,
-    text: content,
-    deliveredAt: new Date(),
-  });
-  let snapshot: AgentRecord | null = null;
+  let spawned = false;
   try {
-    snapshot = await getAgent(workerId);
-    await persistWorkerSnapshot(workerId, snapshot);
-  } catch {
-    // The bridge may have already dropped a failed direct worker; the ask response still determines the visible state.
-  }
-  await appendAskResponseFallbackEntry({
-    runId: run.id,
-    workerId,
-    responseText: response.response,
-    snapshot,
-  });
+    const agent = await spawnAgent({
+      type: workerType,
+      cwd,
+      name: workerId,
+      ...(workerMode ? { mode: workerMode } : {}),
+      env: envParams,
+      model: run.preferredWorkerModel?.trim() || undefined,
+      effort: run.preferredWorkerEffort?.trim().toLowerCase() || undefined,
+    });
+    spawned = true;
+    const response = await askAgent(workerId, buildDirectWorkerPrompt(run.mode, content, cwd));
+    await appendUserInputOnDelivery({
+      id: userInputId,
+      runId: run.id,
+      workerId,
+      text: content,
+      deliveredAt: new Date(),
+    });
+    let snapshot: AgentRecord | null = null;
+    try {
+      snapshot = await getAgent(workerId);
+      await persistWorkerSnapshot(workerId, snapshot);
+    } catch {
+      // The bridge may have already dropped a failed direct worker; the ask response still determines the visible state.
+    }
+    await appendAskResponseFallbackEntry({
+      runId: run.id,
+      workerId,
+      responseText: response.response,
+      snapshot,
+    });
 
-  if (!hasVisibleWorkerOutput(response.response, snapshot)) {
-    const failureMessage = buildEmptyWorkerOutputMessage(snapshot, response.state);
+    if (!hasVisibleWorkerOutput(response.response, snapshot)) {
+      const failureMessage = buildEmptyWorkerOutputMessage(snapshot, response.state);
+
+      await db.update(workers).set({
+        type: snapshot?.type || agent.type || workerType,
+        status: "error",
+        cwd: snapshot?.cwd || agent.cwd || cwd,
+        outputLog: failureMessage,
+        bridgeSessionId: snapshot?.sessionId ?? agent.sessionId ?? null,
+        bridgeSessionMode: snapshot?.sessionMode ?? agent.sessionMode ?? null,
+        updatedAt: new Date(),
+      }).where(eq(workers.id, workerId));
+
+      await persistRunFailure(run.id, new Error(failureMessage), {
+        surface: { code: "recovery.run_failed", workerId },
+      });
+      return;
+    }
 
     await db.update(workers).set({
-      type: snapshot?.type || agent.type || workerType,
-      status: "error",
-      cwd: snapshot?.cwd || agent.cwd || cwd,
-      outputLog: failureMessage,
+      type: agent.type || workerType,
+      status: response.state,
+      cwd: agent.cwd || cwd,
+      outputLog: response.response.trim() ? response.response : "",
       bridgeSessionId: snapshot?.sessionId ?? agent.sessionId ?? null,
       bridgeSessionMode: snapshot?.sessionMode ?? agent.sessionMode ?? null,
       updatedAt: new Date(),
     }).where(eq(workers.id, workerId));
-
-    await persistRunFailure(run.id, new Error(failureMessage), {
-      surface: { code: "recovery.run_failed", workerId },
+  } catch (error) {
+    const failureMessage = formatErrorMessage(error);
+    const code = spawned ? "worker.initial.turn_failed" : "worker.spawn.failed";
+    const failedAt = new Date();
+    await db.update(workers).set({
+      status: "error",
+      outputLog: failureMessage,
+      currentText: "",
+      lastText: "",
+      updatedAt: failedAt,
+    }).where(eq(workers.id, workerId));
+    emitNamedEvent({
+      kind: "worker.status",
+      runId: run.id,
+      workerId,
+      prev: "starting",
+      next: "error",
     });
-    return;
+    await recordExecutionEvent({
+      runId: run.id,
+      workerId,
+      planItemId: null,
+      eventType: spawned ? "worker_initial_turn_failed" : "worker_spawn_failed",
+      details: {
+        summary: spawned
+          ? `Direct worker ${workerId} failed during its initial turn.`
+          : `Direct worker ${workerId} failed to start.`,
+        reason: failureMessage,
+      },
+    });
+    await persistRunFailure(run.id, error, {
+      surface: { code, workerId },
+    });
+    throw error;
   }
 
-  await db.update(workers).set({
-    type: agent.type || workerType,
-    status: response.state,
-    cwd: agent.cwd || cwd,
-    outputLog: response.response.trim() ? response.response : "",
-    bridgeSessionId: snapshot?.sessionId ?? agent.sessionId ?? null,
-    bridgeSessionMode: snapshot?.sessionMode ?? agent.sessionMode ?? null,
-    updatedAt: new Date(),
-  }).where(eq(workers.id, workerId));
 
   // Worker response now lives in the unified worker stream.
 }
@@ -264,20 +331,97 @@ function isAgentAlreadyExistsError(error: unknown, workerId: string) {
   return message.includes("agent already exists") && message.includes(workerId.toLowerCase());
 }
 
+function compareWorkersByCreatedAtThenId(
+  left: typeof workers.$inferSelect,
+  right: typeof workers.$inferSelect,
+) {
+  const timeDelta = left.createdAt.getTime() - right.createdAt.getTime();
+  return timeDelta !== 0 ? timeDelta : left.id.localeCompare(right.id);
+}
+
+async function workerStreamContainsUserInput(worker: typeof workers.$inferSelect, messageId: string) {
+  try {
+    const entries = await readWorkerOutputEntries(worker.runId, worker.id);
+    return entries.some((entry) => entry.type === "user_input" && entry.id === messageId);
+  } catch (error) {
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "worker.resume.failed",
+      message: `Could not inspect saved worker transcript: ${formatErrorMessage(error)}`,
+      surface: "banner",
+      runId: worker.runId,
+      workerId: worker.id,
+      cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+    });
+    throw error;
+  }
+}
+
+async function selectDirectRecoveryWorker(runId: string, targetMessageId: string) {
+  const runWorkers = (await db.select().from(workers).where(eq(workers.runId, runId)))
+    .sort(compareWorkersByCreatedAtThenId);
+  const sessionWorkers: Array<typeof workers.$inferSelect> = [];
+
+  for (const worker of runWorkers) {
+    sessionWorkers.push(await repairWorkerSessionMetadataFromStream(worker));
+  }
+
+  for (const worker of [...sessionWorkers].reverse()) {
+    if (worker.bridgeSessionId?.trim() && await workerStreamContainsUserInput(worker, targetMessageId)) {
+      return worker;
+    }
+  }
+
+  return [...sessionWorkers].reverse().find((worker) => worker.bridgeSessionId?.trim()) ?? null;
+}
+
+async function repairWorkerSessionMetadataFromStream(worker: typeof workers.$inferSelect) {
+  if (worker.bridgeSessionId?.trim()) {
+    return worker;
+  }
+
+  const metadata = await readWorkerSessionMetadata(worker.runId, worker.id);
+  if (!metadata) {
+    return worker;
+  }
+
+  await db.update(workers).set({
+    bridgeSessionId: metadata.sessionId,
+    bridgeSessionMode: metadata.sessionMode ?? worker.bridgeSessionMode,
+    updatedAt: new Date(),
+  }).where(eq(workers.id, worker.id));
+  emitNamedEvent({
+    kind: "worker.session_metadata_repaired",
+    runId: worker.runId,
+    workerId: worker.id,
+  });
+
+  return {
+    ...worker,
+    bridgeSessionId: metadata.sessionId,
+    bridgeSessionMode: metadata.sessionMode ?? worker.bridgeSessionMode,
+  };
+}
+
 async function resumeDirectRunFromSavedSession(
   run: typeof runs.$inferSelect,
   targetMessage: typeof messages.$inferSelect,
   content: string,
 ) {
-  if (!isRecoverableAgentMissingError(run.lastError)) {
-    return null;
-  }
-
-  const worker = (await db.select().from(workers).where(eq(workers.runId, run.id)))
-    .find((candidate) => candidate.bridgeSessionId?.trim());
+  const worker = await selectDirectRecoveryWorker(run.id, targetMessage.id);
   const sessionId = worker?.bridgeSessionId?.trim();
   if (!worker || !sessionId) {
-    return null;
+    const message = "Direct retry could not locate persisted ACP session metadata for this conversation.";
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "worker.resume.failed",
+      message,
+      surface: "banner",
+      runId: run.id,
+      workerId: worker?.id,
+      cause: null,
+    });
+    throw Object.assign(new Error(message), { status: 500 });
   }
 
   const laterMessages = await db.select().from(messages).where(eq(messages.runId, run.id));
@@ -293,8 +437,9 @@ async function resumeDirectRunFromSavedSession(
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
   const { env: envParams } = await readRuntimeEnvFromSettings();
-  let resumedWorker: AgentRecord;
-  let recreatedFromMissingSession = false;
+  let resumedWorker: AgentRecord | null = null;
+  let recreatedFromRejectedEmptySession = false;
+  let replayPrompt: string | null = null;
   try {
     resumedWorker = await spawnAgent({
       type: worker.type,
@@ -309,7 +454,21 @@ async function resumeDirectRunFromSavedSession(
   } catch (error) {
     if (isAgentAlreadyExistsError(error, worker.id)) {
       resumedWorker = await getAgent(worker.id);
-    } else if (isRecoverableAgentMissingError(formatErrorMessage(error))) {
+    } else if (
+      isRejectedSavedSessionErrorMessage(formatErrorMessage(error))
+      && await canRecreateRejectedSavedSession(run.id, worker.id)
+    ) {
+      await recordExecutionEvent({
+        runId: run.id,
+        workerId: worker.id,
+        planItemId: null,
+        eventType: "worker_session_missing",
+        details: {
+          summary: `Saved bridge session for ${worker.id} is not recoverable, and the worker stream has no provider transcript.`,
+          sessionId,
+          reason: formatErrorMessage(error),
+        },
+      });
       await db.update(workers).set({
         status: "starting",
         bridgeSessionId: null,
@@ -325,10 +484,110 @@ async function resumeDirectRunFromSavedSession(
         ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
         ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
       });
-      recreatedFromMissingSession = true;
+      recreatedFromRejectedEmptySession = true;
+    } else if (isRejectedSavedSessionErrorMessage(formatErrorMessage(error))) {
+      const materialized = await materializeProviderSessionFromWorkerStream({
+        runId: run.id,
+        workerId: worker.id,
+        type: worker.type,
+        sessionId,
+        cwd: worker.cwd,
+        errorMessage: formatErrorMessage(error),
+        env: envParams,
+      });
+      if (materialized) {
+        await recordExecutionEvent({
+          runId: run.id,
+          workerId: worker.id,
+          planItemId: null,
+          eventType: "worker_session_materialized",
+          details: {
+            summary: `Materialized ${materialized.provider} session ${sessionId} from the saved OmniHarness transcript.`,
+            provider: materialized.provider,
+            sessionId,
+            filePath: materialized.filePath,
+            messageCount: materialized.messageCount,
+          },
+        });
+        try {
+          resumedWorker = await spawnAgent({
+            type: worker.type,
+            cwd: worker.cwd,
+            name: worker.id,
+            ...(workerMode ? { mode: workerMode } : {}),
+            env: envParams,
+            ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+            ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+            resumeSessionId: sessionId,
+          });
+        } catch (materializedResumeError) {
+          await recordExecutionEvent({
+            runId: run.id,
+            workerId: worker.id,
+            planItemId: null,
+            eventType: "worker_session_materialized_resume_failed",
+            details: {
+              summary: `Materialized ${materialized.provider} session ${sessionId}, but ACP resume still failed.`,
+              provider: materialized.provider,
+              sessionId,
+              filePath: materialized.filePath,
+              reason: formatErrorMessage(materializedResumeError),
+            },
+          });
+        }
+      }
+      if (resumedWorker) {
+        // The materialized provider session was accepted.
+      } else {
+        await recordExecutionEvent({
+          runId: run.id,
+          workerId: worker.id,
+          planItemId: null,
+          eventType: "worker_session_missing",
+          details: {
+            summary: `Saved bridge session for ${worker.id} is not recoverable; continuing from the saved OmniHarness transcript.`,
+            sessionId,
+            reason: formatErrorMessage(error),
+            transcriptReplay: true,
+          },
+        });
+        await db.update(workers).set({
+          status: "starting",
+          bridgeSessionId: null,
+          bridgeSessionMode: null,
+          updatedAt: new Date(),
+        }).where(eq(workers.id, worker.id));
+        resumedWorker = await spawnAgent({
+          type: worker.type,
+          cwd: worker.cwd,
+          name: worker.id,
+          ...(workerMode ? { mode: workerMode } : {}),
+          env: envParams,
+          ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+          ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+        });
+        replayPrompt = await buildTranscriptReplayPrompt({
+          runId: run.id,
+          workerId: worker.id,
+          nextUserPrompt: buildDirectMessagePrompt(run.mode, targetMessage, content, worker.cwd),
+        });
+      }
     } else {
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "worker.resume.failed",
+        message: formatErrorMessage(error),
+        surface: "banner",
+        runId: run.id,
+        workerId: worker.id,
+        cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+      });
       throw error;
     }
+  }
+
+  if (!resumedWorker) {
+    throw new Error(`Failed to recover worker ${worker.id}.`);
   }
 
   const resumedAt = new Date();
@@ -336,29 +595,40 @@ async function resumeDirectRunFromSavedSession(
     runId: run.id,
     workerId: worker.id,
     planItemId: null,
-    eventType: recreatedFromMissingSession ? "worker_session_recreated" : "worker_session_resumed",
+    eventType: replayPrompt
+      ? "worker_session_recreated_from_transcript"
+      : recreatedFromRejectedEmptySession ? "worker_session_recreated" : "worker_session_resumed",
     details: {
-      summary: recreatedFromMissingSession
-        ? `Started a fresh runtime worker for ${worker.id} after its saved session was rejected.`
+      summary: replayPrompt
+        ? `Started a fresh runtime worker for ${worker.id} and continued from the saved OmniHarness transcript.`
+        : recreatedFromRejectedEmptySession
+        ? `Started a fresh runtime worker for ${worker.id} after its empty saved session was rejected.`
         : `Resumed ${worker.id} from saved session`,
-      ...(recreatedFromMissingSession
-        ? { rejectedSessionId: sessionId, newSessionId: resumedWorker.sessionId ?? null }
-        : { sessionId }),
+      rejectedSessionId: recreatedFromRejectedEmptySession || replayPrompt ? sessionId : null,
+      sessionId: recreatedFromRejectedEmptySession || replayPrompt ? resumedWorker.sessionId ?? null : sessionId,
+      transcriptReplay: Boolean(replayPrompt),
     },
     createdAt: resumedAt,
   });
   emitNamedEvent({
-    kind: recreatedFromMissingSession ? "worker.recreated" : "worker.reattached",
+    kind: recreatedFromRejectedEmptySession || replayPrompt ? "worker.recreated" : "worker.reattached",
     runId: run.id,
     workerId: worker.id,
   });
 
   await db.update(workers).set({
     status: "working",
-    bridgeSessionId: resumedWorker.sessionId ?? (recreatedFromMissingSession ? null : sessionId),
+    bridgeSessionId: resumedWorker.sessionId ?? (recreatedFromRejectedEmptySession ? null : sessionId),
     bridgeSessionMode: resumedWorker.sessionMode ?? sessionMode ?? null,
     updatedAt: resumedAt,
   }).where(eq(workers.id, worker.id));
+  await appendWorkerSessionMetadata({
+    runId: run.id,
+    workerId: worker.id,
+    sessionId: resumedWorker.sessionId ?? (recreatedFromRejectedEmptySession ? null : sessionId),
+    sessionMode: resumedWorker.sessionMode ?? sessionMode ?? null,
+    source: "direct-retry",
+  });
   await persistWorkerSnapshot(worker.id, resumedWorker);
 
   await db.update(runs).set({
@@ -368,13 +638,14 @@ async function resumeDirectRunFromSavedSession(
     updatedAt: resumedAt,
   }).where(eq(runs.id, run.id));
 
-  const response = await askAgent(worker.id, buildDirectWorkerPrompt(run.mode, content, worker.cwd));
+  const response = await askAgent(worker.id, replayPrompt ?? buildDirectMessagePrompt(run.mode, targetMessage, content, worker.cwd));
   await appendUserInputOnDelivery({
     id: targetMessage.id,
     runId: run.id,
     workerId: worker.id,
     text: content,
     deliveredAt: new Date(),
+    attachments: workerEntryAttachments(targetMessage),
   });
   let snapshot: AgentRecord | null = null;
   try {
@@ -396,6 +667,16 @@ async function resumeDirectRunFromSavedSession(
     updatedAt: completedAt,
   }).where(eq(workers.id, worker.id));
   // Worker response now lives in the unified worker stream.
+  await updateDirectRunStatusFromWorkerOutput({
+    runId: run.id,
+    workerId: worker.id,
+    responseText: response.response,
+    renderedOutput: snapshot?.renderedOutput,
+    currentText: snapshot?.currentText,
+    lastText: snapshot?.lastText,
+    outputEntries: snapshot?.outputEntries,
+  });
+  await resolveOpenRecoveryIncidentsForRun(run.id, worker.id, `Recovered ${worker.id}.`);
 
   return { runId: run.id };
 }
@@ -472,6 +753,22 @@ async function clearMatchingRunFailureMessage(run: typeof runs.$inferSelect) {
     eq(messages.kind, "error"),
     eq(messages.content, `Run failed: ${run.lastError}`),
   ));
+}
+
+async function resolveOpenRecoveryIncidentsForRun(runId: string, workerId: string, summary: string) {
+  const incidents = await db.select().from(recoveryIncidents).where(and(
+    eq(recoveryIncidents.runId, runId),
+    inArray(recoveryIncidents.status, ["open", "recovering", "needs_user", "failed"]),
+  ));
+  for (const incident of incidents) {
+    await markRecoveryIncidentResolved({
+      incidentId: incident.id,
+      runId,
+      workerId,
+      summary,
+      details: { reason: "manual_recovery_completed" },
+    });
+  }
 }
 
 export async function recoverRun(args: RecoverRunArgs) {

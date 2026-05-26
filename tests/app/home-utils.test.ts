@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowLatestRecoveryAction, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/app/home/utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildOptimisticCreatedConversationSnapshot, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseBrowserConversationRoute, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowLatestRecoveryAction, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/app/home/utils";
 import type { EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord, SupervisorInterventionRecord } from "@/app/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 
@@ -67,6 +67,26 @@ function buildWorker(overrides: Partial<ConversationWorkerRecord>): Conversation
 }
 
 describe("home utils", () => {
+  it("parses the browser route as the source of truth for selected sessions", () => {
+    expect(parseBrowserConversationRoute({
+      pathname: "/session/12345678-1234-1234-1234-123456789abc",
+      search: "?run=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa&project=/tmp/app&pair=token",
+    })).toEqual({
+      selectedRunId: "12345678-1234-1234-1234-123456789abc",
+      draftProjectPath: null,
+      pairTokenFromUrl: "token",
+    });
+
+    expect(parseBrowserConversationRoute({
+      pathname: "/",
+      search: "?project=/tmp/app",
+    })).toEqual({
+      selectedRunId: null,
+      draftProjectPath: "/tmp/app",
+      pairTokenFromUrl: null,
+    });
+  });
+
   it("uses ids as deterministic tie-breakers for equal timestamps", () => {
     const records = [
       { id: "b", createdAt: "2026-04-27T00:00:10.000Z" },
@@ -771,6 +791,37 @@ describe("home utils", () => {
     expect(appendSentConversationMessageSnapshot(next, next.messages[0]).messages).toHaveLength(1);
   });
 
+  it("does not revive a terminal run from a stale sent message after the server completed it", () => {
+    const liveState: EventStreamState = {
+      messages: [],
+      plans: [],
+      runs: [buildRun({
+        id: "run-1",
+        status: "done",
+        updatedAt: "2026-04-27T00:02:00.000Z",
+      })],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+    };
+
+    const next = appendSentConversationMessageSnapshot(liveState, {
+      id: "message-1",
+      runId: "run-1",
+      role: "user",
+      kind: "checkpoint",
+      content: "Already handled",
+      createdAt: "2026-04-27T00:01:00.000Z",
+    });
+
+    expect(next.messages.map((message) => message.content)).toEqual(["Already handled"]);
+    expect(next.runs[0]?.status).toBe("done");
+  });
+
   it("preserves sent conversation messages until the event stream catches up", () => {
     const message = {
       id: "message-1",
@@ -806,6 +857,41 @@ describe("home utils", () => {
     }, pendingMessages);
 
     expect(caughtUp.messages).toEqual([message]);
+    expect(pendingMessages.has(message.id)).toBe(false);
+  });
+
+  it("drops stale pending sent messages instead of resurrecting a server-terminal sidebar row", () => {
+    const message = {
+      id: "message-1",
+      runId: "run-1",
+      role: "user",
+      kind: "checkpoint",
+      content: "Already completed",
+      createdAt: "2026-04-27T00:01:00.000Z",
+    };
+    const pendingMessages = new Map([[message.id, message]]);
+    const terminalServerState: EventStreamState = {
+      messages: [],
+      runs: [buildRun({
+        id: "run-1",
+        status: "done",
+        updatedAt: "2026-04-27T00:02:00.000Z",
+      })],
+      plans: [],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+      messageScope: { runIds: ["other-run"], complete: true },
+    };
+
+    const preserved = mergePendingSentConversationMessages(terminalServerState, pendingMessages);
+
+    expect(preserved.messages).toEqual([]);
+    expect(preserved.runs[0]?.status).toBe("done");
     expect(pendingMessages.has(message.id)).toBe(false);
   });
 
@@ -853,6 +939,77 @@ describe("home utils", () => {
       run: next.runs[0],
       message: next.messages[0],
     }).runs).toHaveLength(1);
+  });
+
+  it("can protect a submitted conversation before the create response returns", () => {
+    const optimisticSnapshot = buildOptimisticCreatedConversationSnapshot({
+      runId: "run-1",
+      content: "Start a direct control session",
+      projectPath: "/workspace/app",
+      mode: "direct",
+      now: new Date("2026-04-27T00:01:00.000Z"),
+    });
+    const pendingSnapshots = new Map([["run-1", optimisticSnapshot]]);
+    const staleState: EventStreamState = {
+      messages: [],
+      plans: [],
+      runs: [],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+    };
+
+    const preserved = mergePendingCreatedConversationSnapshots(staleState, pendingSnapshots);
+
+    expect(preserved.runs[0]).toMatchObject({
+      id: "run-1",
+      mode: "direct",
+      status: "starting",
+      projectPath: "/workspace/app",
+      title: "Start a direct control session",
+    });
+    expect(preserved.plans).toEqual([{
+      id: "run-1:optimistic-plan",
+      path: "/workspace/app/.omniharness/pending/run-1.md",
+    }]);
+  });
+
+  it("replaces the optimistic plan when the server create response arrives", () => {
+    const optimisticSnapshot = buildOptimisticCreatedConversationSnapshot({
+      runId: "run-1",
+      content: "Start this",
+      projectPath: "/workspace/app",
+      mode: "direct",
+      now: new Date("2026-04-27T00:01:00.000Z"),
+    });
+    const optimisticState = appendCreatedConversationSnapshot({
+      messages: [],
+      plans: [],
+      runs: [],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+    }, optimisticSnapshot);
+
+    const serverState = appendCreatedConversationSnapshot(optimisticState, {
+      plan: { id: "plan-1", path: "vibes/ad-hoc/server.md" },
+      run: buildRun({ id: "run-1", planId: "plan-1", title: "Server title" }),
+    });
+
+    expect(serverState.plans.map((plan) => plan.id)).toEqual(["plan-1"]);
+    expect(serverState.runs[0]).toMatchObject({
+      id: "run-1",
+      planId: "plan-1",
+      title: "Server title",
+    });
   });
 
   it("keeps a newly created conversation through stale event payloads until the server includes it", () => {
@@ -1068,6 +1225,51 @@ describe("home utils", () => {
     expect(filtered.clarifications).toEqual([]);
     expect(filtered.executionEvents.map((event) => event.id)).toEqual(["event-1"]);
     expect(filtered.supervisorInterventions.map((event) => event.id)).toEqual(["intervention-1"]);
+  });
+
+  it("builds an optimistic created conversation snapshot for the sidebar before the server responds", () => {
+    const createdAt = "2026-05-26T00:00:00.000Z";
+    const snapshot = buildOptimisticCreatedConversationSnapshot({
+      runId: "client-run-1",
+      mode: "direct",
+      projectPath: "/workspace/app",
+      preferredWorkerType: "codex",
+      createdAt,
+    });
+
+    const next = appendCreatedConversationSnapshot({
+      messages: [],
+      plans: [{ id: "existing-plan", path: "/workspace/app/.omniharness/existing.md" }],
+      runs: [buildRun({
+        id: "existing-run",
+        planId: "existing-plan",
+        projectPath: "/workspace/app",
+      })],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+    }, snapshot);
+
+    expect(snapshot.run).toEqual(expect.objectContaining({
+      id: "client-run-1",
+      planId: "client-run-1:optimistic-plan",
+      mode: "direct",
+      status: "starting",
+      projectPath: "/workspace/app",
+      title: "New conversation",
+      preferredWorkerType: "codex",
+      createdAt,
+      updatedAt: createdAt,
+    }));
+    expect(snapshot.plan).toEqual({
+      id: "client-run-1:optimistic-plan",
+      path: "/workspace/app/.omniharness/pending/client-run-1.md",
+    });
+    expect(next.runs.map((run) => run.id)).toEqual(["client-run-1", "existing-run"]);
   });
 
   it("restores persisted collapsed project paths from localStorage JSON", () => {

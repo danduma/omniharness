@@ -1,11 +1,32 @@
 import { type AppErrorDescriptor, normalizeAppError } from "@/lib/app-errors";
 import { formatHumanDuration, type ConversationWorkerRecord } from "@/lib/conversation-workers";
+import { isTerminalRunStatus } from "@/lib/run-status";
 import { getLatestUnresolvedWorkerStuckEvent } from "@/lib/worker-stuck-events";
-import { WORKER_OPTIONS, FALLBACK_WORKER_MODEL_OPTIONS } from "./constants";
+import { RUN_PATH_PATTERN, WORKER_OPTIONS, FALLBACK_WORKER_MODEL_OPTIONS } from "./constants";
 import type { AgentSnapshot, EventStreamState, ExecutionEventRecord, MessageRecord, PlanItemRecord, PlanRecord, RunRecord, SupervisorInterventionRecord, WorkerModelCatalog, WorkerType } from "./types";
 import { t } from "@/lib/i18n";
 
 export { getLatestUnresolvedWorkerStuckEvent };
+
+export type BrowserConversationRoute = {
+  selectedRunId: string | null;
+  draftProjectPath: string | null;
+  pairTokenFromUrl: string | null;
+};
+
+export function parseBrowserConversationRoute(location: Pick<Location, "pathname" | "search">): BrowserConversationRoute {
+  const pathnameMatch = location.pathname.match(RUN_PATH_PATTERN);
+  const routeRunId = pathnameMatch?.[1]?.trim() || "";
+  const params = new URLSearchParams(location.search);
+  const queryRunId = params.get("run")?.trim() || "";
+  const selectedRunId = routeRunId || queryRunId || null;
+
+  return {
+    selectedRunId,
+    draftProjectPath: selectedRunId ? null : params.get("project")?.trim() || null,
+    pairTokenFromUrl: params.get("pair")?.trim() || null,
+  };
+}
 
 export function buildInlineError(
   error: unknown,
@@ -123,9 +144,33 @@ export function appendSentConversationMessageSnapshot(
     messages: [...messages, message],
     runs: (current.runs || []).map((run) => (
       run.id === message.runId
-        ? { ...run, status: "running", failedAt: null, lastError: null, updatedAt: message.createdAt }
+        ? reviveRunForSentMessage(run, message)
         : run
     )),
+  };
+}
+
+function shouldReviveRunForSentMessage(run: RunRecord, message: MessageRecord) {
+  if (!isTerminalRunStatus(run.status)) {
+    return true;
+  }
+
+  const runUpdatedAt = timestampMs(run.updatedAt ?? run.createdAt);
+  const messageCreatedAt = timestampMs(message.createdAt);
+  return messageCreatedAt > runUpdatedAt;
+}
+
+function reviveRunForSentMessage(run: RunRecord, message: MessageRecord): RunRecord {
+  if (!shouldReviveRunForSentMessage(run, message)) {
+    return run;
+  }
+
+  return {
+    ...run,
+    status: "running",
+    failedAt: null,
+    lastError: null,
+    updatedAt: message.createdAt,
   };
 }
 
@@ -138,14 +183,22 @@ export function mergePendingSentConversationMessages(
   }
 
   const serverMessageIds = new Set((incomingState.messages || []).map((message) => message.id));
+  const incomingRunsById = new Map((incomingState.runs || []).map((run) => [run.id, run]));
   let nextState = incomingState;
 
   for (const [messageId, message] of Array.from(pendingMessages.entries())) {
     if (serverMessageIds.has(messageId)) {
       pendingMessages.delete(messageId);
-    } else {
-      nextState = appendSentConversationMessageSnapshot(nextState, message);
+      continue;
     }
+
+    const incomingRun = incomingRunsById.get(message.runId);
+    if (incomingRun && !shouldReviveRunForSentMessage(incomingRun, message)) {
+      pendingMessages.delete(messageId);
+      continue;
+    }
+
+    nextState = appendSentConversationMessageSnapshot(nextState, message);
   }
 
   return nextState;
@@ -158,6 +211,49 @@ export type CreatedConversationSnapshot = {
   serverVisibleAtMs?: number;
 };
 
+function buildInitialConversationTitle(content: string) {
+  const firstLine = content
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .find(Boolean);
+  if (!firstLine) {
+    return "New conversation";
+  }
+  return firstLine.length <= 80 ? firstLine : `${firstLine.slice(0, 77).trimEnd()}...`;
+}
+
+export function buildOptimisticCreatedConversationSnapshot(args: {
+  runId: string;
+  content?: string;
+  projectPath: string | null;
+  mode: RunRecord["mode"];
+  preferredWorkerType?: string | null;
+  createdAt?: string;
+  now?: Date;
+}): CreatedConversationSnapshot {
+  const timestamp = args.createdAt ?? (args.now ?? new Date()).toISOString();
+  const planId = `${args.runId}:optimistic-plan`;
+  return {
+    plan: {
+      id: planId,
+      path: args.projectPath
+        ? `${args.projectPath}/.omniharness/pending/${args.runId}.md`
+        : `vibes/ad-hoc/pending/${args.runId}.md`,
+    },
+    run: {
+      id: args.runId,
+      planId,
+      mode: args.mode,
+      status: "starting",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      projectPath: args.projectPath,
+      title: buildInitialConversationTitle(args.content ?? ""),
+      preferredWorkerType: args.preferredWorkerType ?? null,
+    },
+  };
+}
+
 export function appendCreatedConversationSnapshot(
   current: EventStreamState,
   snapshot: CreatedConversationSnapshot | null | undefined,
@@ -169,12 +265,21 @@ export function appendCreatedConversationSnapshot(
 
   const plan = snapshot.plan;
   const message = snapshot.message;
-  const nextPlans = plan && !(current.plans || []).some((existingPlan) => existingPlan.id === plan.id)
-    ? [...(current.plans || []), plan]
+  const currentRuns = current.runs || [];
+  const existingRun = currentRuns.find((candidate) => candidate.id === run.id);
+  const optimisticPlanId = `${run.id}:optimistic-plan`;
+  const replacedOptimisticPlanId = existingRun?.planId === optimisticPlanId && run.planId !== optimisticPlanId
+    ? optimisticPlanId
+    : null;
+  const currentPlans = replacedOptimisticPlanId
+    ? (current.plans || []).filter((existingPlan) => existingPlan.id !== replacedOptimisticPlanId)
     : current.plans || [];
-  const nextRuns = (current.runs || []).some((existingRun) => existingRun.id === run.id)
-    ? (current.runs || []).map((existingRun) => existingRun.id === run.id ? { ...existingRun, ...run } : existingRun)
-    : [run, ...(current.runs || [])];
+  const nextPlans = plan && !currentPlans.some((existingPlan) => existingPlan.id === plan.id)
+    ? [...currentPlans, plan]
+    : currentPlans;
+  const nextRuns = existingRun
+    ? currentRuns.map((candidate) => candidate.id === run.id ? { ...candidate, ...run } : candidate)
+    : [run, ...currentRuns];
   const nextMessages = message && !(current.messages || []).some((existingMessage) => existingMessage.id === message.id)
     ? [...(current.messages || []), message]
     : current.messages || [];

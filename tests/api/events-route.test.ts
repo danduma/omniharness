@@ -1143,6 +1143,77 @@ describe("GET /api/events", () => {
     });
   });
 
+  it("marks a selected stale direct worker as needing recovery during persisted reload bootstrap", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const createdAt = new Date(0);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-zombie-reload.md",
+      status: "running",
+      createdAt,
+      updatedAt: createdAt,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Direct zombie reload",
+      createdAt,
+      updatedAt: createdAt,
+    });
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "Do the thing",
+      createdAt,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "gemini",
+      status: "starting",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      bridgeSessionId: null,
+      bridgeSessionMode: null,
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    global.fetch = vi.fn();
+
+    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const payload = await response.json();
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
+
+    expect(persistedRun?.status).toBe("needs_recovery");
+    expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("needs_recovery");
+    expect(payload.recoveryState).toMatchObject({
+      kind: "needs_recovery",
+      status: "needs_user",
+      recommendedAction: "manual_resume",
+      workerId,
+    });
+    expect(persistedRun?.lastError).toContain("Worker was marked active but is not present in the bridge runtime.");
+    expect(incident).toMatchObject({
+      kind: "worker_lost",
+      status: "needs_user",
+      workerId,
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
   it("surfaces an invariant error when an awaiting-user snapshot has no supervisor question", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

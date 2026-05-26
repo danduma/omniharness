@@ -118,25 +118,43 @@ export function formatBytes(size: number) {
   return `${value >= 10 || unitIndex === 0 ? Math.round(value) : value.toFixed(1)} ${units[unitIndex]}`;
 }
 
-export function formatAttachmentContext(attachments: ChatAttachment[]) {
+export interface AttachmentContextOptions {
+  // Map a stored attachment path to the path that should be embedded in
+  // the prompt the worker sees. Storage paths are relative to the
+  // OmniHarness data root, but the worker's cwd is the user's project,
+  // so callers on the server must pass an absolute-path resolver
+  // (typically `getAppDataPath`). Without it the worker tries to read a
+  // file that doesn't exist under its cwd.
+  resolvePath?: (storagePath: string) => string;
+}
+
+export function formatAttachmentContext(
+  attachments: ChatAttachment[],
+  options: AttachmentContextOptions = {},
+) {
   const normalized = normalizeChatAttachments(attachments).filter((attachment) => attachment.storagePath);
   if (normalized.length === 0) {
     return "";
   }
 
+  const resolvePath = options.resolvePath ?? ((p: string) => p);
   const lines = normalized.map((attachment) => [
     `- ${attachment.name}`,
     `kind: ${attachment.kind}`,
     `mime: ${attachment.mimeType || "unknown"}`,
     `size: ${formatBytes(attachment.size)}`,
-    `path: ${attachment.storagePath}`,
+    `path: ${resolvePath(attachment.storagePath!)}`,
   ].join(" | "));
 
   return `Attached files available to inspect:\n${lines.join("\n")}`;
 }
 
-export function appendAttachmentContext(content: string, attachments: ChatAttachment[]) {
-  const context = formatAttachmentContext(attachments);
+export function appendAttachmentContext(
+  content: string,
+  attachments: ChatAttachment[],
+  options: AttachmentContextOptions = {},
+) {
+  const context = formatAttachmentContext(attachments, options);
   const trimmedContent = content.trim();
 
   if (!context) {

@@ -1,10 +1,11 @@
 import { randomUUID } from "crypto";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { messages, runs } from "@/server/db/schema";
+import { messages, runs, workers } from "@/server/db/schema";
 import { formatErrorMessage } from "@/server/error-format";
 import { isTerminalRunStatus, normalizeRunStatus } from "@/server/runs/status";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { emitNamedEvent, type ErrorSurface, type SurfacedErrorCode } from "@/server/events/named-events";
 
 export { formatErrorMessage };
@@ -71,6 +72,23 @@ export async function persistRunFailure(
   ) {
     return;
   }
+
+  const workerId = options.surface?.workerId ?? null;
+  const eventWorkerId = workerId
+    ? (await db.select({ id: workers.id }).from(workers).where(eq(workers.id, workerId)).get())?.id ?? null
+    : null;
+  await recordExecutionEvent({
+    runId,
+    workerId: eventWorkerId,
+    eventType: "run_failed",
+    details: {
+      summary: errorMessage,
+      error: errorMessage,
+      code: options.surface?.code ?? null,
+      surface: options.surface?.surface ?? null,
+    },
+    createdAt: now,
+  });
 
   await db.insert(messages).values({
     id: randomUUID(),

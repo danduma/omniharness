@@ -146,6 +146,47 @@ describe("conversation worker helpers", () => {
     expect(selectPrimaryConversationAgent(agents, true)?.name).toBe("worker-latest");
   });
 
+  it("selects the newest cancelled direct agent with persisted output", () => {
+    const agents: ConversationWorkerAgent[] = [
+      {
+        name: "worker-empty",
+        state: "cancelled",
+        currentText: "",
+        lastText: "",
+      },
+      {
+        name: "worker-older-output",
+        state: "cancelled",
+        lastText: "Older transcript output.",
+      },
+      {
+        name: "worker-latest-output",
+        state: "cancelled",
+        lastText: "Latest transcript output.",
+      },
+    ];
+
+    expect(selectPrimaryConversationAgent(agents, true)?.name).toBe("worker-latest-output");
+  });
+
+  it("does not let an empty active placeholder hide older direct output", () => {
+    const agents: ConversationWorkerAgent[] = [
+      {
+        name: "worker-with-output",
+        state: "cancelled",
+        lastText: "Persisted output that should remain visible.",
+      },
+      {
+        name: "worker-empty-recovery",
+        state: "starting",
+        currentText: "",
+        lastText: "",
+      },
+    ];
+
+    expect(selectPrimaryConversationAgent(agents, true)?.name).toBe("worker-with-output");
+  });
+
   it("keeps non-direct conversations on the first agent snapshot", () => {
     const agents: ConversationWorkerAgent[] = [
       { name: "worker-1", state: "cancelled", currentText: "Older output." },

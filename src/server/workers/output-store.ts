@@ -81,59 +81,79 @@ type WorkerStreamPaths = {
 // memoize here so the cache key matches across read/write.
 const workerStreamPathsCache = new Map<string, WorkerStreamPaths>();
 
+// Tracks worker chains whose `artifact_streams` row has been ensured
+// for write in this process. A separate set from `workerStreamPathsCache`
+// because the path cache is populated by both read- and write-mode
+// resolution — and read-mode resolution does NOT create the row. So if
+// the first call for a chain was a read, the path got cached but no row
+// was ever inserted; later write calls used to hit the path cache,
+// skip `ensureArtifactStreamRow`, and append to disk forever without a
+// metadata row. Result: hand-repairs every time a worker is spawned
+// after a cancel (see worker-3 in run 2182b07381c8). Tracking
+// ensure-for-write separately lets us populate the row exactly once
+// per chain per process, even if a read warmed the path cache first.
+const ensuredForWriteByKey = new Set<string>();
+
 async function workerStreamPaths(
   runId: string,
   workerId: string,
   mode: "read" | "write",
 ): Promise<WorkerStreamPaths> {
   const key = chainKey(runId, workerId);
-  const cached = workerStreamPathsCache.get(key);
-  if (cached) return cached;
-
-  let resolved: WorkerStreamPaths;
-  if (mode === "write") {
+  if (mode === "write" && !ensuredForWriteByKey.has(key)) {
     try {
       const row = await ensureArtifactStreamRow({
         runId,
         kind: "worker_entries",
         ownerId: workerId,
       });
-      resolved = {
+      const resolved: WorkerStreamPaths = {
         filePath: row.location.filePath,
         compressedFilePath: row.location.compressedFilePath,
         lockPath: row.location.lockPath,
       };
+      workerStreamPathsCache.set(key, resolved);
+      ensuredForWriteByKey.add(key);
+      return resolved;
     } catch (error) {
       if (String((error as Error).message ?? "").includes("missing run")) {
-        resolved = legacyWorkerStreamPaths(runId, workerId);
-      } else {
-        throw error;
+        const resolved = legacyWorkerStreamPaths(runId, workerId);
+        workerStreamPathsCache.set(key, resolved);
+        ensuredForWriteByKey.add(key);
+        return resolved;
       }
+      throw error;
     }
+  }
+
+  const cached = workerStreamPathsCache.get(key);
+  if (cached) return cached;
+
+  // Read-mode cold path. We do NOT insert an artifact_streams row here
+  // — that's exclusively a write responsibility.
+  let resolved: WorkerStreamPaths;
+  const run = await db
+    .select({ projectPath: runs.projectPath })
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .get();
+  if (!run) {
+    resolved = legacyWorkerStreamPaths(runId, workerId);
   } else {
-    const run = await db
-      .select({ projectPath: runs.projectPath })
-      .from(runs)
-      .where(eq(runs.id, runId))
-      .get();
-    if (!run) {
-      resolved = legacyWorkerStreamPaths(runId, workerId);
-    } else {
-      const location = await resolveArtifactStreamLocation(
-        {
-          runId,
-          kind: "worker_entries",
-          ownerId: workerId,
-          projectPath: run.projectPath ?? null,
-        },
-        "read",
-      );
-      resolved = {
-        filePath: location.filePath,
-        compressedFilePath: location.compressedFilePath,
-        lockPath: location.lockPath,
-      };
-    }
+    const location = await resolveArtifactStreamLocation(
+      {
+        runId,
+        kind: "worker_entries",
+        ownerId: workerId,
+        projectPath: run.projectPath ?? null,
+      },
+      "read",
+    );
+    resolved = {
+      filePath: location.filePath,
+      compressedFilePath: location.compressedFilePath,
+      lockPath: location.lockPath,
+    };
   }
   workerStreamPathsCache.set(key, resolved);
   return resolved;
@@ -909,9 +929,24 @@ export async function writeWorkerOutputEntries(
       const acceptedFingerprintsById = new Map<string, string>();
       for (const entry of entries) {
         if (!entry) continue;
+        // The agent-runtime live view prepends a synthetic archive marker
+        // ("X older raw worker activity records are only in archived
+        // history…") when entries have been pruned past the live window.
+        // It is a render-time hint, not real conversation content — never
+        // persist it into the unified worker stream.
+        if (entry.id === "output-archive-marker") {
+          continue;
+        }
         // Real bridge entries always carry an id; tooling/migration code that
         // hands us synthetic snapshots may not. In that case, treat the entry
         // as opaque and always append (no dedup possible).
+        //
+        // Dedup keyed on (id, fingerprint): re-writing the exact same
+        // entry is a no-op, but a streaming chunk that grew between two
+        // persistWorkerSnapshot calls produces a second row with the
+        // same id and a longer text — the FE is expected to coalesce by
+        // id and render the latest revision. (Test:
+        // `appends changed bridge message revisions so streaming prose can expand`.)
         const id = typeof entry.id === "string" && entry.id ? entry.id : null;
         if (id) {
           const fingerprint = bridgeOutputEntryFingerprint(entry);
@@ -2061,6 +2096,7 @@ export function __resetOutputStoreCachesForTests() {
   readLatestSeqByKey.clear();
   readEntriesByKey.clear();
   workerStreamPathsCache.clear();
+  ensuredForWriteByKey.clear();
   chainCacheDiskRefreshesForTests = 0;
 }
 

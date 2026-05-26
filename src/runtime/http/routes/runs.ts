@@ -597,6 +597,9 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
     probe.end();
     const errorMessage = error instanceof Error ? error.message : String(error);
     const status = gitWorkspaceStatus(error)
+      ?? (typeof (error as { status?: unknown }).status === "number"
+        ? (error as { status: number }).status
+        : null)
       ?? (errorMessage.includes("must be a user message")
       || errorMessage.includes("required")
       || errorMessage.includes("direct control")

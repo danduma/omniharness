@@ -1,6 +1,50 @@
 import { describe, expect, it, vi } from "vitest";
 import type { WorkerEntry } from "@/server/workers/entries-types";
-import { EMPTY_WORKER_STREAM_STATE, WorkerEntriesManager } from "@/app/home/WorkerEntriesManager";
+import { EMPTY_WORKER_STREAM_STATE, WorkerEntriesManager, coalesceWorkerEntriesById } from "@/app/home/WorkerEntriesManager";
+
+describe("coalesceWorkerEntriesById", () => {
+  function asst(seq: number, text: string, id = "msg", timestamp = "2026-01-01T00:00:00.000Z"): WorkerEntry {
+    return { id, seq, type: "message", text, timestamp, authorRole: "assistant", channel: "agent" } as WorkerEntry;
+  }
+  function user(seq: number, text: string, id = `user-${seq}`, timestamp = "2026-01-01T00:00:05.000Z"): WorkerEntry {
+    return { id, seq, type: "user_input", text, timestamp, authorRole: "user", channel: "stdin" } as WorkerEntry;
+  }
+
+  it("keeps a single row per id at its first appearance, with the latest text", () => {
+    const out = coalesceWorkerEntriesById([
+      asst(1, "Hello"),
+      user(2, "your message"),
+      asst(3, "Hello world"),
+    ]);
+    expect(out.map((e) => ({ id: e.id, seq: e.seq, text: e.text }))).toEqual([
+      { id: "msg", seq: 3, text: "Hello world" },
+      { id: "user-2", seq: 2, text: "your message" },
+    ]);
+  });
+
+  it("preserves entries without an id verbatim", () => {
+    const noId = { seq: 5, type: "message", text: "synthetic" } as WorkerEntry;
+    const out = coalesceWorkerEntriesById([asst(1, "first"), noId, asst(2, "second")]);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ id: "msg", text: "second" });
+    expect(out[1]).toBe(noId);
+  });
+
+  it("handles the worker-3 sandwich case (asst@22 → user@23 → asst@24 with same id)", () => {
+    const out = coalesceWorkerEntriesById([
+      asst(22, "I have completed a comprehensive…", "asst-1", "2026-05-24T18:58:21.195Z"),
+      user(23, "you did?", "u-23", "2026-05-24T18:58:24.166Z"),
+      asst(24, "I have completed a comprehensive set of enhancements…", "asst-1", "2026-05-24T18:58:21.195Z"),
+    ]);
+    expect(out.map((e) => e.id)).toEqual(["asst-1", "u-23"]);
+    expect(out[0]?.seq).toBe(24);
+    expect(out[0]?.text).toBe("I have completed a comprehensive set of enhancements…");
+  });
+
+  it("returns an empty array for empty input", () => {
+    expect(coalesceWorkerEntriesById([])).toEqual([]);
+  });
+});
 
 function entry(seq: number, overrides: Partial<WorkerEntry> = {}): WorkerEntry {
   return {

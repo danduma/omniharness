@@ -1,0 +1,10 @@
+# Empty Direct Session Recreation
+
+**Date:** 2026-05-25
+**Context:** OmniHarness direct-control retry and follow-up recovery
+**Symptom:** A direct-control conversation with exactly one persisted user message could not recover when the saved ACP session id was rejected by the provider CLI. The UI surfaced a spawn failure even though there was no worker/provider transcript to preserve.
+**Root Cause:** Recovery treated every rejected saved session as a hard continuity failure. That is correct after provider output exists, but too strict when the unified worker stream contains only user input and lifecycle metadata.
+**Fix:** Retry and follow-up recovery now inspect the unified worker stream. If the saved session is rejected and no bridge/provider output exists, OmniHarness clears the stale bridge session, recreates the same worker id, replays the persisted user checkpoint with attachments, stores the new session metadata in the worker stream, and emits `worker_session_missing`, `worker_session_recreated`, and `worker.recreated`. If Gemini reports the exact missing `chats` directory and the OmniHarness stream has provider output, recovery materializes a Gemini JSONL session file from the saved stream and retries ACP resume before falling back to transcript replay. If materialization is unavailable or the second resume fails, recovery starts a fresh worker with an explicit transcript-replay prompt and emits `worker_session_recreated_from_transcript`.
+**Verification:** `pnpm test tests/api/run-route.test.ts tests/api/conversation-messages-route.test.ts tests/lib/run-recovery-state.test.ts tests/lib/conversation-workers.test.ts`; `git diff --check`.
+**Prevention:** Classify rejected ACP sessions by transcript state and provider capabilities. Empty direct streams can be replayed from persisted user input. Streams with provider output should first try to rebuild the provider's missing session cache from the OmniHarness stream, then fall back to explicit transcript replay only when materialization cannot work.
+**Skill/Doc Updates:** No general skill update needed; the reusable project rule is in OmniHarness recovery tests and this note.

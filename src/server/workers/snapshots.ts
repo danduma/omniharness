@@ -9,8 +9,12 @@ import {
   readWorkerOutputEntries,
   writeWorkerOutputEntries,
 } from "@/server/workers/output-store";
+import { appendWorkerSessionMetadata } from "@/server/workers/session-metadata";
 
-type PersistableWorkerSnapshot = Pick<AgentRecord, "outputEntries" | "currentText" | "lastText">;
+type PersistableWorkerSnapshot = Pick<AgentRecord, "outputEntries" | "currentText" | "lastText"> & {
+  sessionId?: string | null;
+  sessionMode?: string | null;
+};
 
 /**
  * Backward-compatible synchronous parser for legacy DB-stored JSON.
@@ -90,6 +94,13 @@ export async function persistWorkerSnapshot(
     await seedInitialDirectUserPrompt(worker);
     await writeWorkerOutputEntries(worker.runId, workerId, snapshot.outputEntries);
   }
+  await appendWorkerSessionMetadata({
+    runId: worker.runId,
+    workerId,
+    sessionId: snapshot.sessionId,
+    sessionMode: snapshot.sessionMode,
+    source: "snapshot",
+  });
   await db.update(workers).set({
     currentText: snapshot.currentText,
     lastText: snapshot.lastText || worker.lastText,

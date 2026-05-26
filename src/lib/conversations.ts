@@ -48,17 +48,15 @@ export function buildConversationGroups(args: {
   const mappedRuns = args.runs
     .map((run) => {
       const plan = args.plans.find((candidate) => candidate.id === run.planId);
-      if (!plan) {
-        return null;
-      }
+      const planPath = plan?.path ?? run.projectPath ?? run.id;
 
       const projectPath = resolveStoredProjectRoot(run.projectPath, args.explicitProjects, { staleFallbackProject })
-        ?? findMatchingProject(plan.path, args.explicitProjects);
+        ?? (plan ? findMatchingProject(plan.path, args.explicitProjects) : null);
       return {
         id: run.id,
         groupPath: projectPath ? normalizeProjectPath(projectPath) : "other",
         title: run.title || "New conversation",
-        path: plan.path,
+        path: planPath,
         mode: run.mode,
         status: run.status,
         createdAt: run.createdAt,

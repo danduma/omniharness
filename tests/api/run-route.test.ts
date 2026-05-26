@@ -4,6 +4,7 @@ import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import fs from "fs";
 import path from "path";
+import os from "os";
 import { db } from "@/server/db";
 import { getAppDataPath } from "@/server/app-root";
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
@@ -1120,7 +1121,8 @@ describe("POST /api/runs/[id]", () => {
     expect(remainingMessages.map((message) => message.id)).toEqual([userMessageId]);
   });
 
-  it("reruns a direct conversation from the selected user checkpoint in a fresh CLI worker", async () => {
+  it("repairs direct retry session metadata from the worker stream", async () => {
+    __resetNamedEventsForTests();
     mockAskAgent.mockClear();
     mockCancelAgent.mockClear();
     mockGetAgent.mockClear();
@@ -1167,6 +1169,8 @@ describe("POST /api/runs/[id]", () => {
       type: "codex",
       status: "idle",
       cwd: "/workspace/app",
+      bridgeSessionId: null,
+      bridgeSessionMode: null,
       outputLog: "",
       outputEntriesJson: "[]",
       currentText: "",
@@ -1202,6 +1206,38 @@ describe("POST /api/runs/[id]", () => {
         createdAt: new Date("2026-04-21T10:02:00Z"),
       },
     ]);
+    const { appendWorkerEntryWithResult } = await import("@/server/workers/output-store");
+    await appendWorkerEntryWithResult(runId, oldWorkerId, {
+      id: "worker-session-metadata:saved-stream-session",
+      type: "lifecycle",
+      text: "Worker ACP session metadata saved.",
+      timestamp: new Date("2026-04-21T10:00:05Z").toISOString(),
+      authorRole: "system",
+      channel: "system",
+      raw: {
+        kind: "worker_session_metadata",
+        sessionId: "saved-stream-session",
+        sessionMode: "direct",
+        source: "test",
+      },
+    });
+    mockSpawnAgent.mockResolvedValueOnce({
+      name: oldWorkerId,
+      type: "codex",
+      state: "idle",
+      cwd: "/workspace/app",
+      sessionId: "saved-stream-session",
+      sessionMode: "direct",
+      lastText: "old output",
+      currentText: "",
+      outputEntries: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+    mockAskAgent.mockResolvedValueOnce({
+      response: "Recovered from stream session metadata.",
+      state: "idle",
+    });
 
     const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
       method: "POST",
@@ -1214,23 +1250,255 @@ describe("POST /api/runs/[id]", () => {
     const storedWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
 
-    expect(mockCancelAgent).toHaveBeenCalledWith(oldWorkerId);
+    expect(mockCancelAgent).not.toHaveBeenCalled();
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
-      type: "codex",
-      cwd: "/workspace/app",
-      model: "gpt-5.4",
-      effort: "medium",
+      name: oldWorkerId,
+      resumeSessionId: "saved-stream-session",
     }));
-    expect(mockAskAgent).toHaveBeenCalledWith(expect.any(String), "rerun this direct prompt");
-    expect(storedWorkers.map((worker) => worker.status)).toContain("cancelled");
-    expect(storedWorkers.some((worker) => worker.status === "working" && worker.id !== oldWorkerId)).toBe(true);
-    expect(storedMessages.map((message) => message.id)).not.toContain(laterWorkerMessageId);
-    // Worker response now lives in the unified worker stream — the
-    // last `messages` row is the user prompt that triggered the rerun.
-    expect(storedMessages.at(-1)?.role).toBe("user");
-    expect(storedMessages.at(-1)?.content).toBe("rerun this direct prompt");
-    expect(fs.readFileSync(adHocAbsolutePath, "utf-8")).toContain("rerun this direct prompt");
+    expect(mockAskAgent).toHaveBeenCalledWith(oldWorkerId, "rerun this direct prompt");
+    expect(storedWorkers.map((worker) => worker.id)).toEqual([oldWorkerId]);
+    expect(storedWorkers[0]?.bridgeSessionId).toBe("saved-stream-session");
+    expect(storedMessages.map((message) => message.id)).toEqual([firstMessageId, rerunMessageId]);
+    expect(fs.readFileSync(adHocAbsolutePath, "utf-8")).toContain("first prompt");
+  });
+
+  it("retries a cancelled direct conversation by resuming the saved worker session", async () => {
+    mockAskAgent.mockClear();
+    mockCancelAgent.mockClear();
+    mockGetAgent.mockClear();
+    mockSpawnAgent.mockClear();
+    mockStartSupervisorRun.mockClear();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const oldWorkerId = `${runId}-worker-1`;
+    const latestWorkerId = `${runId}-worker-3`;
+    const firstMessageId = randomUUID();
+    const targetMessageId = randomUUID();
+    const adHocRelativePath = path.join("vibes", "ad-hoc", `${randomUUID()}.md`);
+    const adHocAbsolutePath = getAppDataPath(adHocRelativePath);
+    const attachment = {
+      id: "attachment-retry",
+      kind: "file",
+      name: "260524-1226-platter-core-recommendations.md",
+      mimeType: "text/markdown",
+      size: 9754,
+      storagePath: "attachments/retry/260524-1226-platter-core-recommendations.md",
+    };
+
+    fs.mkdirSync(path.dirname(adHocAbsolutePath), { recursive: true });
+    fs.writeFileSync(adHocAbsolutePath, "# temp\nhere, this one");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: adHocRelativePath,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Cancelled direct retry",
+      projectPath: "/workspace/app",
+      preferredWorkerType: "gemini",
+      preferredWorkerModel: "gemini-3.5-flash",
+      preferredWorkerEffort: "high",
+      status: "cancelled",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(workers).values([
+      {
+        id: oldWorkerId,
+        runId,
+        type: "gemini",
+        status: "cancelled",
+        cwd: "/workspace/app",
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        createdAt: new Date("2026-05-24T12:00:00Z"),
+        updatedAt: new Date("2026-05-24T18:00:00Z"),
+      },
+      {
+        id: latestWorkerId,
+        runId,
+        type: "gemini",
+        status: "cancelled",
+        cwd: "/workspace/app",
+        bridgeSessionId: "saved-direct-session",
+        bridgeSessionMode: "direct",
+        outputLog: "previous output",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "Previous direct output.",
+        createdAt: new Date("2026-05-24T18:57:46Z"),
+        updatedAt: new Date("2026-05-24T19:02:33Z"),
+      },
+    ]);
+    await db.insert(messages).values([
+      {
+        id: firstMessageId,
+        runId,
+        role: "user",
+        kind: "checkpoint",
+        content: "implement all of the things in the file I sent you where we said adopt",
+        createdAt: new Date("2026-05-24T18:59:15Z"),
+      },
+      {
+        id: targetMessageId,
+        runId,
+        role: "user",
+        kind: "checkpoint",
+        content: "here, this one",
+        attachmentsJson: JSON.stringify([attachment]),
+        createdAt: new Date("2026-05-24T19:02:31Z"),
+      },
+    ]);
+
+    mockSpawnAgent.mockResolvedValueOnce({
+      name: latestWorkerId,
+      type: "gemini",
+      state: "idle",
+      cwd: "/workspace/app",
+      sessionId: "resumed-direct-session",
+      sessionMode: "direct",
+      lastText: "Previous direct output.",
+      currentText: "",
+      outputEntries: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+    mockAskAgent.mockResolvedValueOnce({
+      response: "Resumed cancelled direct session.",
+      state: "idle",
+    });
+
+    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "retry", targetMessageId }),
+    }), { params: Promise.resolve({ id: runId }) });
+
+    expect(response.status).toBe(200);
+    expect(mockCancelAgent).not.toHaveBeenCalled();
+    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      name: latestWorkerId,
+      type: "gemini",
+      cwd: "/workspace/app",
+      resumeSessionId: "saved-direct-session",
+    }));
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      latestWorkerId,
+      expect.stringContaining("here, this one"),
+    );
+    expect(mockAskAgent.mock.calls[0]?.[1]).toContain("path:");
+    expect(mockAskAgent.mock.calls[0]?.[1]).toContain(attachment.storagePath);
+
+    const storedWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+    const updatedWorker = await db.select().from(workers).where(eq(workers.id, latestWorkerId)).get();
+    expect(storedWorkers.map((worker) => worker.id).sort()).toEqual([latestWorkerId, oldWorkerId].sort());
+    expect(updatedWorker?.bridgeSessionId).toBe("resumed-direct-session");
+  });
+
+  it("does not leave an empty direct rerun worker active when spawn fails", async () => {
+    __resetNamedEventsForTests();
+    mockAskAgent.mockClear();
+    mockCancelAgent.mockClear();
+    mockGetAgent.mockClear();
+    mockSpawnAgent.mockClear();
+    mockStartSupervisorRun.mockClear();
+    mockSpawnAgent.mockRejectedValueOnce(new Error("Spawn failed: boom"));
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const oldWorkerId = `${runId}-worker-1`;
+    const targetMessageId = randomUUID();
+    const adHocRelativePath = path.join("vibes", "ad-hoc", `${randomUUID()}.md`);
+    const adHocAbsolutePath = getAppDataPath(adHocRelativePath);
+
+    fs.mkdirSync(path.dirname(adHocAbsolutePath), { recursive: true });
+    fs.writeFileSync(adHocAbsolutePath, "# temp\nfirst prompt");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: adHocRelativePath,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Direct rerun spawn failure",
+      projectPath: "/workspace/app",
+      preferredWorkerType: "gemini",
+      preferredWorkerModel: "gemini-3.5-flash",
+      preferredWorkerEffort: "high",
+      status: "done",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(workers).values({
+      id: oldWorkerId,
+      runId,
+      type: "gemini",
+      status: "idle",
+      cwd: "/workspace/app",
+      workerNumber: 1,
+      bridgeSessionId: "saved-direct-session",
+      bridgeSessionMode: "direct",
+      outputLog: "previous output",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "Previous direct output.",
+      createdAt: new Date("2026-05-24T18:57:46Z"),
+      updatedAt: new Date("2026-05-24T19:02:33Z"),
+    });
+    await db.insert(messages).values({
+      id: targetMessageId,
+      runId,
+      role: "user",
+      content: "first prompt",
+      createdAt: new Date("2026-05-24T18:57:46Z"),
+    });
+
+    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({
+        action: "edit",
+        targetMessageId,
+        content: "fix the typescript",
+      }),
+    }), { params: Promise.resolve({ id: runId }) });
+
+    expect(response.status).toBe(500);
+    expect(mockAskAgent).not.toHaveBeenCalled();
+    const storedWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+    const replacementWorker = storedWorkers.find((worker) => worker.id !== oldWorkerId);
+    const failedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const surfacedErrors = getNamedEventsSince(0).events
+      .map((entry) => entry.event)
+      .filter((event) => event.kind === "error.surfaced");
+
+    expect(storedWorkers.some((worker) => worker.status === "starting")).toBe(false);
+    expect(replacementWorker).toMatchObject({
+      id: `${runId}-worker-2`,
+      status: "error",
+      outputLog: "Spawn failed: boom",
+    });
+    expect(failedRun?.status).toBe("failed");
+    expect(failedRun?.lastError).toContain("Spawn failed: boom");
+    expect(surfacedErrors).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "worker.spawn.failed",
+        runId,
+        workerId: `${runId}-worker-2`,
+      }),
+    ]));
   });
 
   it("resumes a failed direct conversation from the saved worker session", async () => {
@@ -1348,7 +1616,7 @@ describe("POST /api/runs/[id]", () => {
       resumeSessionId: "saved-session",
     }));
     expect(mockAskAgent).toHaveBeenCalledWith(workerId, "continue the walkthrough");
-    expect(updatedRun?.status).toBe("running");
+    expect(updatedRun?.status).toBe("done");
     expect(updatedRun?.lastError).toBeNull();
     expect(updatedRun?.failedAt).toBeNull();
     expect(updatedWorker?.bridgeSessionId).toBe("resumed-session");
@@ -1364,7 +1632,7 @@ describe("POST /api/runs/[id]", () => {
     }));
   });
 
-  it("starts a fresh direct runtime worker when saved-session recovery is rejected", async () => {
+  it("starts a fresh direct worker when an empty saved session is rejected", async () => {
     __resetNamedEventsForTests();
     mockAskAgent.mockClear();
     mockCancelAgent.mockClear();
@@ -1448,7 +1716,9 @@ describe("POST /api/runs/[id]", () => {
     });
 
     const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    const payload = await response.json();
     expect(response.status).toBe(200);
+    expect(payload).toMatchObject({ runId });
 
     expect(mockSpawnAgent).toHaveBeenNthCalledWith(1, expect.objectContaining({
       name: workerId,
@@ -1457,14 +1727,137 @@ describe("POST /api/runs/[id]", () => {
     expect(mockSpawnAgent).toHaveBeenNthCalledWith(2, expect.not.objectContaining({
       resumeSessionId: expect.any(String),
     }));
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "recover this direct turn");
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("recover this direct turn"));
 
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     const resumeEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(updatedRun?.status).toBe("done");
+    expect(updatedRun?.lastError).toBeNull();
     expect(updatedWorker?.bridgeSessionId).toBe("fresh-session");
+    expect(resumeEvents.some((event) => event.eventType === "worker_session_missing")).toBe(true);
     expect(resumeEvents.some((event) => event.eventType === "worker_session_recreated")).toBe(true);
     expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
       kind: "worker.recreated",
+      runId,
+      workerId,
+    }));
+  });
+
+  it("continues from the worker transcript when saved-session recovery fails after provider output", async () => {
+    __resetNamedEventsForTests();
+    mockAskAgent.mockClear();
+    mockCancelAgent.mockClear();
+    mockGetAgent.mockClear();
+    mockSpawnAgent.mockClear();
+    mockStartSupervisorRun.mockClear();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const userMessageId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: path.join("vibes", "ad-hoc", `${randomUUID()}.md`),
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Direct missing session resume",
+      projectPath: "/workspace/app",
+      preferredWorkerType: "gemini",
+      preferredWorkerModel: "gemini-3",
+      preferredWorkerEffort: "high",
+      status: "failed",
+      lastError: `Ask failed: Agent not found: ${workerId}`,
+      failedAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "gemini",
+      status: "error",
+      cwd: "/workspace/app",
+      bridgeSessionId: "missing-session",
+      bridgeSessionMode: "full-access",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(messages).values({
+      id: userMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "recover this direct turn",
+      createdAt: new Date("2026-05-10T10:55:32Z"),
+    });
+    const { appendWorkerEntryWithResult } = await import("@/server/workers/output-store");
+    await appendWorkerEntryWithResult(runId, workerId, {
+      id: "provider-output-1",
+      type: "message",
+      text: "I had started working on this.",
+      timestamp: new Date("2026-05-10T10:56:00Z").toISOString(),
+      authorRole: "assistant",
+      channel: "agent",
+    });
+
+    const chatsDir = fs.mkdtempSync(path.join(os.tmpdir(), "omni-gemini-materialize-"));
+    mockSpawnAgent.mockRejectedValueOnce(new Error(`Spawn failed: failed to start gemini agent via gemini: {"code":-32603,"message":"Internal error","data":{"details":"Invalid session identifier \\"missing-session\\".\\n  Searched for sessions in ${chatsDir}.\\n  Use --list-sessions to see available sessions, then use --resume {number}, --resume {uuid}, or --resume latest."}}`));
+    mockSpawnAgent.mockResolvedValueOnce({
+      name: workerId,
+      type: "gemini",
+      state: "idle",
+      cwd: "/workspace/app",
+      sessionId: "fresh-session",
+      sessionMode: "full-access",
+      lastText: "",
+      currentText: "",
+      outputEntries: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+    mockAskAgent.mockResolvedValueOnce({
+      response: "Continued from transcript.",
+      state: "idle",
+    });
+
+    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    const payload = await response.json();
+    expect(response.status).toBe(200);
+
+    expect(payload).toMatchObject({ runId });
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
+    expect(mockSpawnAgent).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      name: workerId,
+      resumeSessionId: "missing-session",
+    }));
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("recover this direct turn"));
+
+    const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const resumeEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    const materializedFiles = fs.readdirSync(chatsDir);
+    expect(updatedWorker?.bridgeSessionId).toBe("fresh-session");
+    expect(materializedFiles.some((file) => file.endsWith("-missing-.jsonl") || file.includes("missing-"))).toBe(true);
+    expect(resumeEvents.some((event) => event.eventType === "worker_session_materialized")).toBe(true);
+    expect(resumeEvents.some((event) => event.eventType === "worker_session_recreated_from_transcript")).toBe(false);
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "worker.reattached",
       runId,
       workerId,
     }));

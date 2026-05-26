@@ -333,6 +333,13 @@ function activityStreamSeq(
       .filter((seq): seq is number => typeof seq === "number");
     return seqs.length > 0 ? Math.min(...seqs) : null;
   }
+  if (activity.id.startsWith("message-fragment-run:")) {
+    const parts = activity.id.split(":");
+    const firstId = parts[1];
+    if (firstId) {
+      return seqByActivityId.get(firstId) ?? null;
+    }
+  }
   return seqByActivityId.get(activity.id) ?? null;
 }
 
@@ -2066,18 +2073,30 @@ export function Terminal({
             size: attachment.sizeBytes,
           }));
 
+          // Stream entry timestamps can drift from the original message
+          // createdAt when a user_input row gets re-appended onto a
+          // newer worker's stream (the entry id is preserved but the
+          // timestamp is whatever new Date() was when the append ran).
+          // The DB row is the source of truth for "when did the user
+          // send this", so override the entry timestamp with
+          // userMessages.createdAt whenever the ids match.
+          const matchingUserMessage = entry.entry.type === "user_input"
+            ? userMessages.find((m) => m.id === entry.entry.id)
+            : null;
+          const authoritativeTimestamp = matchingUserMessage?.createdAt ?? entry.entry.timestamp;
+
           return {
             id: `user:${entry.entry.id}`,
             kind: "user_message" as const,
             messageId: entry.entry.id,
             text: entry.entry.text,
-            timestamp: entry.entry.timestamp,
+            timestamp: authoritativeTimestamp,
             attachments,
             streamSeq: entry.entry.seq,
             actions: entry.entry.type === "user_input" ? getUserMessageActions?.({
               id: entry.entry.id,
               content: entry.entry.text,
-              createdAt: entry.entry.timestamp,
+              createdAt: authoritativeTimestamp,
               attachments,
             }) ?? [] : [],
           };
@@ -2103,12 +2122,32 @@ export function Terminal({
         }]
       : [];
 
+    // Multi-worker conversations (transcript endpoint) tag every entry
+    // with a `workerId` field. When we see more than one workerId in
+    // play we can't trust seq as a primary key — it's per-worker — so
+    // we sort by timestamp first. For single-worker streams seq still
+    // wins (it's the actual write order, robust against clock skew on
+    // entries the SDK back-dates to their thinking-started time).
+    const entriesArr = (entries ?? []) as unknown as Array<{ workerId?: unknown }>;
+    const workerIdsInEntries = new Set<string>();
+    for (const entry of entriesArr) {
+      if (typeof entry.workerId === "string" && entry.workerId.length > 0) {
+        workerIdsInEntries.add(entry.workerId);
+      }
+    }
+    const isMultiWorker = workerIdsInEntries.size > 1;
     const sorted = [...userActivity, ...agentActivity, ...pendingAssistantActivity].sort((a, b) => {
+      if (isMultiWorker) {
+        const timeDelta = activityTimestampMs(a.timestamp) - activityTimestampMs(b.timestamp);
+        if (timeDelta !== 0) {
+          return timeDelta;
+        }
+      }
       if (usingUnifiedStream) {
         const leftSeq = activityStreamSeq(a, seqByActivityId);
         const rightSeq = activityStreamSeq(b, seqByActivityId);
-        if (leftSeq !== null || rightSeq !== null) {
-          return (leftSeq ?? Number.MAX_SAFE_INTEGER) - (rightSeq ?? Number.MAX_SAFE_INTEGER);
+        if (leftSeq !== null && rightSeq !== null) {
+          return leftSeq - rightSeq;
         }
       }
       const timeDelta = activityTimestampMs(a.timestamp) - activityTimestampMs(b.timestamp);

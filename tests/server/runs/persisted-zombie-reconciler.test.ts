@@ -147,3 +147,98 @@ describe("reconcilePersistedReloadZombies — auto-recovery path", () => {
     expect(mockResumeMissingDirectWorker).not.toHaveBeenCalled();
   });
 });
+
+describe("reconcilePersistedReloadZombies — bridge-orphaned working workers", () => {
+  async function setupWorkingWorkerOrphanedByBridge(opts: { workerStatus?: string } = {}) {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const recent = new Date(Date.now() - 500); // very recent — orphan check doesn't gate on grace window
+    await db.insert(plans).values({
+      id: planId,
+      path: "docs/example.md",
+      status: "running",
+      createdAt: recent,
+      updatedAt: recent,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      createdAt: recent,
+      updatedAt: recent,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "gemini",
+      cwd: "/tmp",
+      status: opts.workerStatus ?? "working",
+      workerNumber: 1,
+      bridgeSessionId: "saved-session-id",
+      createdAt: recent,
+      updatedAt: recent,
+    });
+    return { runId, workerId };
+  }
+
+  it("recovers a 'working' worker whose session is missing from the bridge", async () => {
+    const { runId, workerId } = await setupWorkingWorkerOrphanedByBridge();
+    mockResumeMissingDirectWorker.mockResolvedValue({ name: workerId, state: "working" });
+
+    const outcome = await reconcilePersistedReloadZombies({
+      selectedRunId: runId,
+      bridgeAgentNames: new Set<string>(), // bridge has no agents — it just restarted
+    });
+
+    expect(outcome.action).toBe("recovered");
+    expect(mockResumeMissingDirectWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers a 'stuck' worker whose session is missing from the bridge", async () => {
+    const { runId, workerId } = await setupWorkingWorkerOrphanedByBridge({ workerStatus: "stuck" });
+    mockResumeMissingDirectWorker.mockResolvedValue({ name: workerId, state: "working" });
+
+    const outcome = await reconcilePersistedReloadZombies({
+      selectedRunId: runId,
+      bridgeAgentNames: new Set<string>(),
+    });
+
+    expect(outcome.action).toBe("recovered");
+    expect(mockResumeMissingDirectWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT recover when the bridge has a live agent for the worker", async () => {
+    const { runId, workerId } = await setupWorkingWorkerOrphanedByBridge();
+
+    const outcome = await reconcilePersistedReloadZombies({
+      selectedRunId: runId,
+      bridgeAgentNames: new Set([workerId]),
+    });
+
+    expect(outcome.action).toBe("none");
+    expect(mockResumeMissingDirectWorker).not.toHaveBeenCalled();
+  });
+
+  it("does NOT recover a 'cancelled' worker even when missing from the bridge", async () => {
+    const { runId } = await setupWorkingWorkerOrphanedByBridge({ workerStatus: "cancelled" });
+
+    const outcome = await reconcilePersistedReloadZombies({
+      selectedRunId: runId,
+      bridgeAgentNames: new Set<string>(),
+    });
+
+    expect(outcome.action).toBe("none");
+    expect(mockResumeMissingDirectWorker).not.toHaveBeenCalled();
+  });
+
+  it("skips the orphan check when bridgeAgentNames is omitted (caller doesn't yet know what the bridge sees)", async () => {
+    const { runId } = await setupWorkingWorkerOrphanedByBridge();
+
+    const outcome = await reconcilePersistedReloadZombies({ selectedRunId: runId });
+
+    expect(outcome.action).toBe("none");
+    expect(mockResumeMissingDirectWorker).not.toHaveBeenCalled();
+  });
+});

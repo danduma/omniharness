@@ -391,3 +391,91 @@ test("unified stream dedupes fallback user messages when stream ids differ", () 
   expect(text).toContain("worker answer");
   expect(text.match(/same prompt/g)).toHaveLength(1);
 });
+
+test("multi-worker transcript orders entries by timestamp (seq is per-worker)", () => {
+  Object.assign(globalThis, { React });
+
+  // Cross-worker scenario from run 2182b07381c8: worker-2 produced
+  // older content (seq 200) but worker-3's first entry (seq 1) is
+  // chronologically later. Without the multi-worker branch, the FE
+  // would render worker-3's seq 1 first.
+  const entries = [
+    {
+      id: "w3-first",
+      seq: 1,
+      type: "message" as const,
+      text: "Worker-3 first response",
+      timestamp: "2026-05-24T18:58:21.000Z",
+      workerId: "run-worker-3",
+    },
+    {
+      id: "w2-late",
+      seq: 200,
+      type: "message" as const,
+      text: "Worker-2 final response",
+      timestamp: "2026-05-24T17:00:00.000Z",
+      workerId: "run-worker-2",
+    },
+    {
+      id: "w3-user",
+      seq: 23,
+      type: "user_input" as const,
+      text: "you did?",
+      timestamp: "2026-05-24T17:43:44.000Z",
+      authorRole: "user" as const,
+      workerId: "run-worker-3",
+    },
+  ];
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries: entries as unknown as WorkerEntry[],
+    showTextSizeControl: false,
+  }));
+  const text = html.replace(/<[^>]+>/g, "");
+
+  const w2Idx = text.indexOf("Worker-2 final response");
+  const userIdx = text.indexOf("you did?");
+  const w3Idx = text.indexOf("Worker-3 first response");
+
+  expect(w2Idx).toBeGreaterThanOrEqual(0);
+  expect(userIdx).toBeGreaterThanOrEqual(0);
+  expect(w3Idx).toBeGreaterThanOrEqual(0);
+  expect(w2Idx).toBeLessThan(userIdx);
+  expect(userIdx).toBeLessThan(w3Idx);
+});
+
+test("unified stream resolves message-fragment-run seqs and falls back to timestamp when one is null", () => {
+  Object.assign(globalThis, { React });
+
+  const entries: WorkerEntry[] = [
+    {
+      id: "msg-first",
+      seq: 10,
+      type: "message",
+      text: "Fragment",
+      timestamp: "2026-05-17T01:00:00.000Z",
+    },
+    {
+      id: "msg-last",
+      seq: 11,
+      type: "message",
+      text: " one",
+      timestamp: "2026-05-17T01:00:01.000Z",
+    },
+    {
+      id: "user-input-steer",
+      seq: 15,
+      type: "user_input",
+      text: "Steer action",
+      timestamp: "2026-05-17T01:00:10.000Z",
+    },
+  ];
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries,
+    showTextSizeControl: false,
+  }));
+  const text = html.replace(/<[^>]+>/g, "");
+
+  expect(text.indexOf("Fragment one")).toBeLessThan(text.indexOf("Steer action"));
+});

@@ -32,6 +32,8 @@ import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "@/app/home/GitWorkspaceManager";
 import { preflightConfirmationActionsManager } from "@/app/home/PreflightConfirmationActionsManager";
 import { useWorkerStream } from "@/app/home/WorkerEntriesManager";
+import { useConversationTranscript } from "@/app/home/ConversationTranscriptManager";
+import { isTerminalRunStatus } from "@/lib/run-status";
 import { deriveConversationLoadState, resolveDirectWorkerStreamRefreshInterval, shouldShowDirectConversationLoading } from "@/app/home/direct-worker-stream-loading";
 import { type PlanningReviewAgentSelection } from "@/server/planning/review-preferences";
 import { WORKER_TYPE_LABELS, type SupportedWorkerType } from "@/server/supervisor/worker-types";
@@ -791,13 +793,42 @@ export function ConversationMain({
       }),
     },
   );
+  // The single-worker stream above is only the *active* worker's
+  // transcript. When a run has cycled through multiple workers
+  // (cancel → respawn) we also fetch the merged conversation
+  // transcript so prior workers' content stays visible. The merged
+  // stream is preferred when available; we fall back to the active
+  // worker stream during the brief moment before the transcript hook
+  // produces its first response.
+  const conversationTranscript = useConversationTranscript(
+    unifiedWorkerStreamEnabled ? selectedRunId : null,
+    {
+      enabled: unifiedWorkerStreamEnabled && Boolean(selectedRunId),
+      refreshIntervalMs: resolveDirectWorkerStreamRefreshInterval({
+        unifiedWorkerStreamEnabled,
+        primaryConversationWorkerId,
+        activeRefreshIntervalMs: DIRECT_WORKER_STREAM_REFRESH_INTERVAL_MS,
+        validationIntervalMs: DIRECT_WORKER_STREAM_VALIDATION_INTERVAL_MS,
+        showDirectControlWorkingIndicator,
+      }),
+    },
+  );
+  const conversationEntries = conversationTranscript.isLoaded
+    ? conversationTranscript.entries
+    : directWorkerStream.entries;
   const directConversationLoadState = deriveConversationLoadState({
     snapshotLoaded: isSelectedConversationPreviewAvailable,
     unifiedWorkerStreamEnabled,
     primaryConversationWorkerId,
     streamState: directWorkerStream.state,
   });
-  const isDirectWorkerStreamLoading = shouldShowDirectConversationLoading(directConversationLoadState);
+  const isDirectWorkerStreamLoading = shouldShowDirectConversationLoading(directConversationLoadState)
+    || Boolean(
+      selectedRun
+      && !isTerminalRunStatus(selectedRun.status)
+      && directConversationMessages.length === 0
+      && (!directWorkerStream.entries || directWorkerStream.entries.length === 0)
+    );
   const forkWorkspaceSelector = useMemo(() => {
     return (state: ReturnType<typeof gitWorkspaceManager.getSnapshot>) => {
       const dialog = state.activeDialog?.kind === "fork_message_worktree" || state.activeDialog?.kind === "fork_session_worktree"
@@ -932,7 +963,7 @@ export function ConversationMain({
   <ScrollArea className="h-full" ref={scrollRef}>
     {selectedRunId ? (
       isDirectConversation ? (
-        <div className="omni-conversation-text-scale mx-auto flex w-full max-w-6xl flex-col gap-4 p-4 pb-24 sm:p-6 sm:pb-20">
+        <div className="omni-conversation-text-scale mx-auto flex w-full max-w-6xl flex-col gap-4 p-4 pb-8 sm:p-6 sm:pb-8">
           {!isSelectedConversationPreviewAvailable ? (
             <div
               className="flex flex-col items-center justify-center gap-3 pt-24 text-sm text-muted-foreground sm:pt-32"
@@ -951,8 +982,8 @@ export function ConversationMain({
                 agent={primaryConversationAgent}
                 userMessages={directConversationMessages}
                 entries={
-                  unifiedWorkerStreamEnabled && primaryConversationWorkerId
-                    ? directWorkerStream.entries
+                  unifiedWorkerStreamEnabled && (primaryConversationWorkerId || selectedRunId)
+                    ? conversationEntries
                     : undefined
                 }
                 allowUserMessageFallback
@@ -1009,7 +1040,7 @@ export function ConversationMain({
           ) : null}
         </div>
       ) : (
-        <div className="omni-conversation-text-scale mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 pb-24 sm:gap-6 sm:p-6 sm:pb-20">
+        <div className="omni-conversation-text-scale mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 pb-8 sm:gap-6 sm:p-6 sm:pb-8">
           {isImplementationConversation ? (
             <RunRecoveryNotice
               recoveryState={recoveryState}

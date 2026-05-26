@@ -32,7 +32,16 @@ export type RecoveryPolicyDecision =
 
 export const DEFAULT_RECOVERY_POLICY: RecoveryPolicy = {
   autoRecoverImplementationRuns: true,
-  autoRecoverDirectRuns: false,
+  // Default flipped from `false` to `true`. The previous default meant
+  // every direct-mode worker death (bridge restart, crash, OOM, lost
+  // session, …) surfaced as a "needs recovery" incident requiring the
+  // user to click Resume. That is exactly the failure mode the user
+  // keeps hitting and explicitly does not want: "OF COURSE WE WANT TO
+  // RECOVER THE WORKER IF IT DIED FOR WHATEVER REASON … unless it was
+  // on purpose cancelled". Auto-recovery still respects
+  // `maxAutoAttemptsPerIncident` so a hard-broken worker (CLI not on
+  // PATH, etc.) eventually surfaces a manual prompt instead of looping.
+  autoRecoverDirectRuns: true,
   maxAutoAttemptsPerIncident: 3,
   baseBackoffMs: 5_000,
   maxBackoffMs: 60_000,

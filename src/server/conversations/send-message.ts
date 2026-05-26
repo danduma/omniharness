@@ -10,12 +10,15 @@ import { startSupervisorRun } from "@/server/supervisor/start";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
+import { appendWorkerSessionMetadata, readWorkerSessionMetadata } from "@/server/workers/session-metadata";
+import { buildTranscriptReplayPrompt, canRecreateRejectedSavedSession, isRejectedSavedSessionErrorMessage, materializeProviderSessionFromWorkerStream } from "@/server/workers/session-recovery";
 import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
+import { getAppDataPath } from "@/server/app-root";
 import { normalizeWorkerType, SUPPORTED_WORKER_TYPES, type SupportedWorkerType } from "@/server/supervisor/worker-types";
 import { createQueuedConversationMessage, type BusyMessageAction } from "./queued-messages";
 import { serializeMessageRecord } from "./message-records";
@@ -140,12 +143,39 @@ export async function reconcileWorkerUserMessagesInStream(runId: string, workerI
 }
 
 export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRecord) {
-  const sessionId = worker.bridgeSessionId?.trim();
+  let sessionId = worker.bridgeSessionId?.trim();
+  let sessionMode = worker.bridgeSessionMode?.trim();
   if (!sessionId) {
-    return null;
+    const metadata = await readWorkerSessionMetadata(worker.runId, worker.id);
+    if (metadata) {
+      sessionId = metadata.sessionId;
+      sessionMode = metadata.sessionMode ?? sessionMode;
+      await db.update(workers).set({
+        bridgeSessionId: metadata.sessionId,
+        bridgeSessionMode: metadata.sessionMode ?? worker.bridgeSessionMode,
+        updatedAt: new Date(),
+      }).where(eq(workers.id, worker.id));
+      emitNamedEvent({
+        kind: "worker.session_metadata_repaired",
+        runId: worker.runId,
+        workerId: worker.id,
+      });
+    }
+  }
+  if (!sessionId) {
+    const message = `Direct worker ${worker.id} is missing persisted ACP session metadata.`;
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "worker.resume.failed",
+      message,
+      surface: "banner",
+      runId: run.id,
+      workerId: worker.id,
+      cause: null,
+    });
+    throw Object.assign(new Error(message), { status: 500 });
   }
 
-  const sessionMode = worker.bridgeSessionMode?.trim();
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
   const { env: envParams } = await readRuntimeEnvFromSettings();
@@ -159,7 +189,8 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
     ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
   };
   let resumedWorker;
-  let recreatedFromMissingSession = false;
+  let recreatedFromRejectedEmptySession = false;
+  let transcriptReplayRequired = false;
   try {
     resumedWorker = await spawnAgent({
       ...spawnParams,
@@ -168,7 +199,21 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
   } catch (error) {
     if (isAgentAlreadyExistsError(error, worker.id)) {
       resumedWorker = await getAgent(worker.id);
-    } else if (isAgentNotFoundError(error)) {
+    } else if (
+      isRejectedSavedSessionErrorMessage(formatErrorMessage(error))
+      && await canRecreateRejectedSavedSession(run.id, worker.id)
+    ) {
+      await recordExecutionEvent({
+        runId: run.id,
+        workerId: worker.id,
+        planItemId: null,
+        eventType: "worker_session_missing",
+        details: {
+          summary: `Saved bridge session for ${worker.id} is not recoverable, and the worker stream has no provider transcript.`,
+          sessionId,
+          reason: formatErrorMessage(error),
+        },
+      });
       await db.update(workers).set({
         status: "starting",
         bridgeSessionId: null,
@@ -176,8 +221,84 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
         updatedAt: new Date(),
       }).where(eq(workers.id, worker.id));
       resumedWorker = await spawnAgent(spawnParams);
-      recreatedFromMissingSession = true;
+      recreatedFromRejectedEmptySession = true;
+    } else if (isRejectedSavedSessionErrorMessage(formatErrorMessage(error))) {
+      const materialized = await materializeProviderSessionFromWorkerStream({
+        runId: run.id,
+        workerId: worker.id,
+        type: worker.type,
+        sessionId,
+        cwd: worker.cwd,
+        errorMessage: formatErrorMessage(error),
+        env: envParams,
+      });
+      if (materialized) {
+        await recordExecutionEvent({
+          runId: run.id,
+          workerId: worker.id,
+          planItemId: null,
+          eventType: "worker_session_materialized",
+          details: {
+            summary: `Materialized ${materialized.provider} session ${sessionId} from the saved OmniHarness transcript.`,
+            provider: materialized.provider,
+            sessionId,
+            filePath: materialized.filePath,
+            messageCount: materialized.messageCount,
+          },
+        });
+        try {
+          resumedWorker = await spawnAgent({
+            ...spawnParams,
+            resumeSessionId: sessionId,
+          });
+        } catch (materializedResumeError) {
+          await recordExecutionEvent({
+            runId: run.id,
+            workerId: worker.id,
+            planItemId: null,
+            eventType: "worker_session_materialized_resume_failed",
+            details: {
+              summary: `Materialized ${materialized.provider} session ${sessionId}, but ACP resume still failed.`,
+              provider: materialized.provider,
+              sessionId,
+              filePath: materialized.filePath,
+              reason: formatErrorMessage(materializedResumeError),
+            },
+          });
+        }
+      }
+      if (!resumedWorker) {
+        await recordExecutionEvent({
+          runId: run.id,
+          workerId: worker.id,
+          planItemId: null,
+          eventType: "worker_session_missing",
+          details: {
+            summary: `Saved bridge session for ${worker.id} is not recoverable; continuing from the saved OmniHarness transcript.`,
+            sessionId,
+            reason: formatErrorMessage(error),
+            transcriptReplay: true,
+          },
+        });
+        await db.update(workers).set({
+          status: "starting",
+          bridgeSessionId: null,
+          bridgeSessionMode: null,
+          updatedAt: new Date(),
+        }).where(eq(workers.id, worker.id));
+        resumedWorker = await spawnAgent(spawnParams);
+        transcriptReplayRequired = true;
+      }
     } else {
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "worker.resume.failed",
+        message: formatErrorMessage(error),
+        surface: "banner",
+        runId: run.id,
+        workerId: worker.id,
+        cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+      });
       throw error;
     }
   }
@@ -186,32 +307,43 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
     runId: run.id,
     workerId: worker.id,
     planItemId: null,
-    eventType: recreatedFromMissingSession ? "worker_session_recreated" : "worker_session_resumed",
+    eventType: transcriptReplayRequired
+      ? "worker_session_recreated_from_transcript"
+      : recreatedFromRejectedEmptySession ? "worker_session_recreated" : "worker_session_resumed",
     details: {
-      summary: recreatedFromMissingSession
-        ? `Started a fresh runtime worker for ${worker.id} after its saved session was rejected.`
+      summary: transcriptReplayRequired
+        ? `Started a fresh runtime worker for ${worker.id} and continued from the saved OmniHarness transcript.`
+        : recreatedFromRejectedEmptySession
+        ? `Started a fresh runtime worker for ${worker.id} after its empty saved session was rejected.`
         : `Resumed ${worker.id} from saved session`,
-      ...(recreatedFromMissingSession
-        ? { rejectedSessionId: sessionId, newSessionId: resumedWorker.sessionId ?? null }
-        : { sessionId }),
+      rejectedSessionId: recreatedFromRejectedEmptySession || transcriptReplayRequired ? sessionId : null,
+      sessionId: recreatedFromRejectedEmptySession || transcriptReplayRequired ? resumedWorker.sessionId ?? null : sessionId,
+      transcriptReplay: transcriptReplayRequired,
     },
   });
   emitNamedEvent({
-    kind: recreatedFromMissingSession ? "worker.recreated" : "worker.reattached",
+    kind: recreatedFromRejectedEmptySession || transcriptReplayRequired ? "worker.recreated" : "worker.reattached",
     runId: run.id,
     workerId: worker.id,
   });
 
   await db.update(workers).set({
     status: resumedWorker.state,
-    bridgeSessionId: resumedWorker.sessionId ?? (recreatedFromMissingSession ? null : sessionId),
+    bridgeSessionId: resumedWorker.sessionId ?? (recreatedFromRejectedEmptySession ? null : sessionId),
     bridgeSessionMode: resumedWorker.sessionMode ?? sessionMode ?? null,
     updatedAt: new Date(),
   }).where(eq(workers.id, worker.id));
+  await appendWorkerSessionMetadata({
+    runId: run.id,
+    workerId: worker.id,
+    sessionId: resumedWorker.sessionId ?? (recreatedFromRejectedEmptySession ? null : sessionId),
+    sessionMode: resumedWorker.sessionMode ?? sessionMode ?? null,
+    source: "direct-follow-up",
+  });
 
   await persistWorkerSnapshot(worker.id, resumedWorker);
   notifyEventStreamSubscribers();
-  return resumedWorker;
+  return { ...resumedWorker, transcriptReplayRequired };
 }
 
 async function askDirectWorkerWithResume(run: RunRecord, worker: WorkerRecord, content: string) {
@@ -232,7 +364,33 @@ async function askDirectWorkerWithResume(run: RunRecord, worker: WorkerRecord, c
       throw error;
     }
 
-    return askAgent(worker.id, content);
+    // resumeMissingDirectWorker just wrote the resumed runtime agent's
+    // state ("idle" or "starting") into the DB. The askAgent call on the
+    // next line drives the runtime to "working", but no other code path
+    // touches the workers row until askAgent resolves — which for a long
+    // Claude turn is many minutes. Without re-arming the DB row here the
+    // frontend sees the worker as idle for the entire turn and never
+    // shows the "Thinking…" indicator.
+    await db.update(workers).set({
+      status: "working",
+      updatedAt: new Date(),
+    }).where(eq(workers.id, worker.id));
+    await db.update(runs).set({
+      status: "running",
+      failedAt: null,
+      lastError: null,
+      updatedAt: new Date(),
+    }).where(eq(runs.id, run.id));
+    notifyEventStreamSubscribers();
+
+    const replayPrompt = resumedWorker.transcriptReplayRequired
+      ? await buildTranscriptReplayPrompt({
+        runId: run.id,
+        workerId: worker.id,
+        nextUserPrompt: content,
+      })
+      : null;
+    return askAgent(worker.id, replayPrompt ?? content);
   }
 }
 
@@ -650,7 +808,9 @@ async function sendConversationMessageUnlocked({
   const trimmedContent = content.trim();
   const normalizedAttachments = normalizeChatAttachments(attachments);
   const attachmentsJson = serializeChatAttachments(normalizedAttachments);
-  const workerContent = appendAttachmentContext(trimmedContent, normalizedAttachments);
+  const workerContent = appendAttachmentContext(trimmedContent, normalizedAttachments, {
+    resolvePath: (storagePath) => getAppDataPath(storagePath),
+  });
   if (!trimmedContent && normalizedAttachments.length === 0) {
     throw Object.assign(new Error("Message content or attachment is required"), { status: 400 });
   }
