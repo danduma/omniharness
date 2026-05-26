@@ -15,6 +15,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { AgentRuntimeManager } from "@/server/agent-runtime/manager";
+import { acquireWorkerSpawnResources } from "@/server/agent-runtime/resource-admission";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 
 const tempDirs: string[] = [];
 
@@ -76,6 +78,7 @@ async function startAgent(manager: AgentRuntimeManager, dir: string, name: strin
 }
 
 afterEach(() => {
+  __resetNamedEventsForTests();
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -249,6 +252,192 @@ describe("MemoryTracer", () => {
       expect(exit.pid).toBe(spawn.pid);
       expect(typeof exit.livedMs).toBe("number");
     } finally {
+      manager.shutdownPools();
+    }
+  });
+});
+
+describe("AgentRuntimeManager resource admission", () => {
+  it("refuses to spawn a worker when memory headroom is below the stability margin", async () => {
+    const dir = createTempDir("omni-resource-guard-");
+    const requestLog = join(dir, "requests.jsonl");
+    createExecutable(dir, "gemini", minimalAcpScript);
+    const manager = new AgentRuntimeManager({
+      env: {
+        ...process.env,
+        PATH: `${dir}:${process.env.PATH ?? ""}`,
+        FAKE_ACP_REQUEST_LOG: requestLog,
+        OMNIHARNESS_MEMORY_TRACE: "0",
+        OMNIHARNESS_RUNTIME_SWEEP_INTERVAL_MS: "10000",
+      } as Record<string, string>,
+      resourceSnapshotProvider: () => ({
+        memoryFreePercent: 10,
+        diskFreeMb: 100_000,
+      }),
+    } as ConstructorParameters<typeof AgentRuntimeManager>[0]);
+
+    try {
+      await expect(startAgent(manager, dir, "refuse-low-memory")).rejects.toMatchObject({
+        statusCode: 503,
+        message: expect.stringContaining("Cannot spawn worker because system resources are low"),
+      });
+      expect(() => readFileSync(requestLog, "utf8")).toThrow();
+      expect(manager.agents.has("refuse-low-memory")).toBe(false);
+    } finally {
+      manager.shutdownPools();
+    }
+  });
+
+  it("allows a spawn when memory is above the configured stability margin", async () => {
+    const dir = createTempDir("omni-resource-allow-margin-");
+    createExecutable(dir, "gemini", minimalAcpScript);
+    const manager = new AgentRuntimeManager({
+      env: {
+        ...process.env,
+        PATH: `${dir}:${process.env.PATH ?? ""}`,
+        OMNIHARNESS_MEMORY_TRACE: "0",
+        OMNIHARNESS_MIN_MEMORY_FREE_PERCENT: "25",
+        OMNIHARNESS_ESTIMATED_WORKER_MEMORY_MB: "1536",
+        OMNIHARNESS_RUNTIME_SWEEP_INTERVAL_MS: "10000",
+      } as Record<string, string>,
+      resourceSnapshotProvider: () => ({
+        memoryFreePercent: 38,
+        totalMemoryMb: 16_384,
+        diskFreeMb: 100_000,
+      }),
+    } as ConstructorParameters<typeof AgentRuntimeManager>[0]);
+
+    try {
+      await expect(startAgent(manager, dir, "allow-above-margin")).resolves.toMatchObject({
+        name: "allow-above-margin",
+      });
+    } finally {
+      await manager.stopAgent("allow-above-margin");
+      manager.shutdownPools();
+    }
+  });
+
+  it("does not double-count the new worker against the memory stability margin", async () => {
+    const dir = createTempDir("omni-resource-pending-margin-");
+    const env = {
+      ...process.env,
+      OMNIHARNESS_MIN_MEMORY_FREE_PERCENT: "25",
+      OMNIHARNESS_ESTIMATED_WORKER_MEMORY_MB: "1536",
+    } as Record<string, string>;
+    const snapshotProvider = () => ({
+      memoryFreePercent: 38,
+      totalMemoryMb: 16_384,
+      diskFreeMb: 100_000,
+    });
+    const first = await acquireWorkerSpawnResources({
+      cwd: dir,
+      env,
+      snapshotProvider,
+    });
+
+    const releases: Array<() => void> = [];
+    try {
+      await expect((async () => {
+        const second = await acquireWorkerSpawnResources({
+          cwd: dir,
+          env,
+          snapshotProvider,
+        });
+        releases.push(second.release);
+        return second;
+      })()).resolves.toEqual(expect.objectContaining({
+        release: expect.any(Function),
+      }));
+    } finally {
+      first.release();
+      for (const release of releases) {
+        release();
+      }
+    }
+  });
+
+  it("reserves estimated memory while parallel worker spawns are in flight", async () => {
+    const dir = createTempDir("omni-resource-reserve-");
+    createExecutable(dir, "gemini", minimalAcpScript);
+    const manager = new AgentRuntimeManager({
+      env: {
+        ...process.env,
+        PATH: `${dir}:${process.env.PATH ?? ""}`,
+        OMNIHARNESS_MEMORY_TRACE: "0",
+        OMNIHARNESS_MIN_MEMORY_FREE_PERCENT: "20",
+        OMNIHARNESS_ESTIMATED_WORKER_MEMORY_MB: "1024",
+        OMNIHARNESS_RUNTIME_SWEEP_INTERVAL_MS: "10000",
+      } as Record<string, string>,
+      resourceSnapshotProvider: () => ({
+        memoryFreePercent: 26,
+        totalMemoryMb: 16_000,
+        diskFreeMb: 100_000,
+      }),
+    } as ConstructorParameters<typeof AgentRuntimeManager>[0]);
+
+    try {
+      const results = await Promise.allSettled([
+        startAgent(manager, dir, "parallel-a"),
+        startAgent(manager, dir, "parallel-b"),
+      ]);
+
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      const rejected = results.find((result) => result.status === "rejected");
+      expect(rejected).toMatchObject({
+        reason: expect.objectContaining({
+          statusCode: 503,
+          message: expect.stringContaining("Cannot spawn worker because system resources are low"),
+        }),
+      });
+    } finally {
+      for (const name of ["parallel-a", "parallel-b"]) {
+        await manager.stopAgent(name);
+      }
+      manager.shutdownPools();
+    }
+  });
+
+  it("evicts prewarm workers under critical pressure without killing active workers", async () => {
+    const dir = createTempDir("omni-resource-watch-");
+    createExecutable(dir, "gemini", minimalAcpScript);
+    let pressure = false;
+    const manager = new AgentRuntimeManager({
+      env: {
+        ...process.env,
+        PATH: `${dir}:${process.env.PATH ?? ""}`,
+        OMNIHARNESS_MEMORY_TRACE: "0",
+        OMNIHARNESS_MIN_MEMORY_FREE_PERCENT: "25",
+        OMNIHARNESS_RESOURCE_PRESSURE_INTERVAL_MS: "30",
+        OMNIHARNESS_RUNTIME_SWEEP_INTERVAL_MS: "10000",
+      } as Record<string, string>,
+      resourceSnapshotProvider: () => pressure
+        ? { memoryFreePercent: 10, totalMemoryMb: 16_000, diskFreeMb: 100_000 }
+        : { memoryFreePercent: 60, totalMemoryMb: 16_000, diskFreeMb: 100_000 },
+    } as ConstructorParameters<typeof AgentRuntimeManager>[0]);
+
+    try {
+      await startAgent(manager, dir, "active-under-pressure");
+      manager.agents.get("active-under-pressure")!.state = "working";
+      await manager.prewarmWorker({ type: "gemini", cwd: dir });
+      expect((manager as any).workerPool.countAll()).toBe(1);
+
+      pressure = true;
+      await sleep(120);
+
+      expect(manager.agents.get("active-under-pressure")?.state).toBe("working");
+      expect((manager as any).workerPool.countAll()).toBe(0);
+      const events = getNamedEventsSince(0).events.map((entry) => entry.event);
+      expect(events).toContainEqual(expect.objectContaining({
+        kind: "runtime.resource_pressure",
+        level: "critical",
+        evictedPoolMembers: 1,
+      }));
+      expect(events).toContainEqual(expect.objectContaining({
+        kind: "error.surfaced",
+        code: "runtime.resource_pressure",
+      }));
+    } finally {
+      await manager.stopAgent("active-under-pressure");
       manager.shutdownPools();
     }
   });

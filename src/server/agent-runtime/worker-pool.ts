@@ -236,6 +236,15 @@ export class WorkerPool {
     this.inFlight.clear();
   }
 
+  evictAll(): number {
+    const total = this.countAll();
+    for (const arr of this.members.values()) {
+      for (const member of arr) this.disposeMember(member);
+    }
+    this.members.clear();
+    return total;
+  }
+
   private removeMemberInstance(member: WorkerPoolMember): void {
     const arr = this.members.get(member.key);
     if (!arr) return;

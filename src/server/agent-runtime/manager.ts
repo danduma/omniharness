@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
-import { constants, accessSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, statSync, symlinkSync } from "fs";
+import { constants, accessSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, statSync, symlinkSync } from "fs";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { request as httpRequest } from "http";
 import { request as httpsRequest } from "https";
@@ -7,6 +7,7 @@ import { homedir } from "os";
 import { basename, dirname, join } from "path";
 import { Readable, Writable } from "stream";
 import * as acp from "@agentclientprotocol/sdk";
+import { sanitizeAcpStream } from "./acp-stream-sanitizer";
 import { applyCodexBridgeEnv, buildCodexConfigArgs, shouldSetRequestedMode } from "./codex";
 import { applyCredentialProfileEnv, resolveCredentialProfile } from "./external-credentials";
 import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
@@ -34,15 +35,31 @@ import {
   computeEnvFingerprint,
   computeWorkerPoolKey,
   WorkerPool,
-  type WorkerPoolMember,
 } from "./worker-pool";
 import { MemoryTracer } from "./memory-trace";
+import {
+  acquireWorkerSpawnResources,
+  assessResourcePressure,
+  readSystemResourceSnapshot,
+  type ResourcePressureLevel,
+  type SystemResourceSnapshotProvider,
+} from "./resource-admission";
+import { emitNamedEvent } from "@/server/events/named-events";
 
 const MAX_STDERR_LINES = 50;
 const ENDPOINT_TIMEOUT_MS = 750;
 const WORKER_CONNECTION_RESET_MAX_BACKOFF_MS = 15 * 60_000;
 const MAX_TEXT_FIELD_CHARS = 100_000;
-const DEFAULT_AGENT_STARTUP_TIMEOUT_MS = 30_000;
+// Bumped from 30s to 90s. Gemini's `--experimental-acp` startup
+// occasionally needs >30s on a cold first run (TLS cert install,
+// model fetch, etc.). The previous default caused recovery attempts
+// to abort with "Agent ACP initialize timed out after 30000ms" and
+// surface as needs_user incidents — even though the SDK would have
+// come up given a few more seconds.
+const DEFAULT_AGENT_STARTUP_TIMEOUT_MS = 90_000;
+const CLAUDE_THINKING_DISPLAY_ARGS = {
+  "thinking-display": "summarized",
+} as const;
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -68,6 +85,107 @@ function defaultCommandFor(type: string, model: string | null): { command: strin
     default:
       return null;
   }
+}
+
+function userHomeFromEnv(env: EnvLike) {
+  return env.HOME?.trim() || homedir();
+}
+
+function bridgeCredentialFileIfMissing(source: string, target: string) {
+  if (!existsSync(source) || existsSync(target)) {
+    return;
+  }
+  mkdirSync(dirname(target), { recursive: true });
+  try {
+    symlinkSync(source, target);
+  } catch {
+    copyFileSync(source, target);
+  }
+}
+
+function bridgeProjectScopedCliCredentials(type: string, env: EnvLike) {
+  if (type === "gemini") {
+    const scopedHome = env.GEMINI_CLI_HOME?.trim();
+    if (!scopedHome) return;
+    const globalHome = join(userHomeFromEnv(env), ".gemini");
+    const scopedConfigDir = join(scopedHome, ".gemini");
+    for (const fileName of [
+      "google_accounts.json",
+      "google_account_id",
+      "mcp-oauth-tokens-v2.json",
+      "settings.json",
+    ]) {
+      bridgeCredentialFileIfMissing(join(globalHome, fileName), join(scopedConfigDir, fileName));
+    }
+    return;
+  }
+
+  if (type === "codex") {
+    const scopedHome = env.CODEX_HOME?.trim();
+    if (!scopedHome) return;
+    const globalHome = join(userHomeFromEnv(env), ".codex");
+    for (const fileName of ["auth.json", "config.toml"]) {
+      bridgeCredentialFileIfMissing(join(globalHome, fileName), join(scopedHome, fileName));
+    }
+  }
+}
+
+function applyProjectScopedCliStorage(type: string, cwd: string, env: EnvLike) {
+  const cliHome = join(cwd, ".omniharness", "cli-home");
+  let shouldBridgeCredentials = false;
+  if (type === "gemini" && !env.GEMINI_CLI_HOME?.trim()) {
+    env.GEMINI_CLI_HOME = join(cliHome, "gemini");
+    shouldBridgeCredentials = true;
+  }
+  if (type === "codex") {
+    const codexHome = join(cliHome, "codex", "home");
+    if (!env.CODEX_HOME?.trim()) {
+      env.CODEX_HOME = codexHome;
+      shouldBridgeCredentials = true;
+    }
+    if (!env.CODEX_SQLITE_HOME?.trim()) {
+      env.CODEX_SQLITE_HOME = join(cliHome, "codex", "sqlite");
+    }
+  }
+  if (type === "claude" && !env.CLAUDE_CONFIG_DIR?.trim()) {
+    env.CLAUDE_CONFIG_DIR = join(cliHome, "claude");
+  }
+  if (type === "opencode") {
+    const opencodeHome = join(cliHome, "opencode");
+    if (!env.OPENCODE_CONFIG_DIR?.trim()) {
+      env.OPENCODE_CONFIG_DIR = join(opencodeHome, "config");
+    }
+    if (!env.XDG_DATA_HOME?.trim()) {
+      env.XDG_DATA_HOME = join(opencodeHome, "data");
+    }
+    if (!env.XDG_STATE_HOME?.trim()) {
+      env.XDG_STATE_HOME = join(opencodeHome, "state");
+    }
+    if (!env.XDG_CACHE_HOME?.trim()) {
+      env.XDG_CACHE_HOME = join(opencodeHome, "cache");
+    }
+  }
+  if (shouldBridgeCredentials) {
+    bridgeProjectScopedCliCredentials(type, env);
+  }
+}
+
+function buildSessionMeta(agentType: string | undefined, skillRoots: string[]) {
+  const meta: Record<string, unknown> = {};
+  if (skillRoots.length > 0) {
+    meta["omniharness/skillRoots"] = skillRoots;
+  }
+  if (agentType === "claude") {
+    meta.claudeCode = {
+      options: {
+        extraArgs: CLAUDE_THINKING_DISPLAY_ARGS,
+        settings: {
+          showThinkingSummaries: true,
+        },
+      },
+    };
+  }
+  return Object.keys(meta).length > 0 ? meta : undefined;
 }
 
 function nowIso() {
@@ -788,6 +906,9 @@ export class AgentRuntimeManager {
   private readonly memoryTracer: MemoryTracer;
   private readonly pendingAgentReaps = new Map<string, NodeJS.Timeout>();
   private reapSweepTimer: NodeJS.Timeout | null = null;
+  private resourcePressureTimer: NodeJS.Timeout | null = null;
+  private resourcePressureCheckInFlight = false;
+  private lastResourcePressureLevel: ResourcePressureLevel = "normal";
   private readonly poolMemberMaxAgeMs: number;
   private readonly agentIdleTimeoutMs: number;
   private readonly agentExitGraceMs: number;
@@ -796,6 +917,7 @@ export class AgentRuntimeManager {
     private readonly options: {
       config?: AgentRuntimeConfig;
       env?: EnvLike;
+      resourceSnapshotProvider?: SystemResourceSnapshotProvider;
     } = {},
   ) {
     const baseEnv = this.options.env || process.env;
@@ -827,6 +949,16 @@ export class AgentRuntimeManager {
     );
     this.reapSweepTimer = setInterval(() => this.runReapSweep(), sweepIntervalMs);
     this.reapSweepTimer.unref?.();
+    if (baseEnv.OMNIHARNESS_RESOURCE_PRESSURE !== "0") {
+      const pressureIntervalMs = readPositiveInteger(
+        baseEnv.OMNIHARNESS_RESOURCE_PRESSURE_INTERVAL_MS,
+        30_000,
+      );
+      this.resourcePressureTimer = setInterval(() => {
+        void this.runResourcePressureCheck();
+      }, pressureIntervalMs);
+      this.resourcePressureTimer.unref?.();
+    }
     this.memoryTracer = new MemoryTracer({
       env: baseEnv as Record<string, string | undefined>,
       getCounts: () => ({
@@ -834,6 +966,54 @@ export class AgentRuntimeManager {
         poolMembers: this.workerPool.countAll(),
       }),
     });
+  }
+
+  private async runResourcePressureCheck(): Promise<void> {
+    if (this.resourcePressureCheckInFlight) return;
+    this.resourcePressureCheckInFlight = true;
+    try {
+      const baseEnv = this.options.env || process.env;
+      const snapshot = this.options.resourceSnapshotProvider
+        ? await this.options.resourceSnapshotProvider()
+        : await readSystemResourceSnapshot(process.cwd());
+      const assessment = assessResourcePressure(snapshot, baseEnv);
+      if (assessment.level === "normal") {
+        this.lastResourcePressureLevel = "normal";
+        return;
+      }
+
+      const poolMembersBefore = this.workerPool.countAll();
+      const evictedPoolMembers = assessment.level === "critical"
+        ? this.workerPool.evictAll()
+        : 0;
+      const shouldSurface =
+        assessment.level !== this.lastResourcePressureLevel || evictedPoolMembers > 0;
+      this.lastResourcePressureLevel = assessment.level;
+      if (!shouldSurface) return;
+
+      emitNamedEvent({
+        kind: "runtime.resource_pressure",
+        level: assessment.level,
+        memoryFreePercent: snapshot.memoryFreePercent ?? null,
+        diskFreeMb: snapshot.diskFreeMb ?? null,
+        activeAgents: this.agents.size,
+        poolMembers: poolMembersBefore,
+        evictedPoolMembers,
+        reasons: assessment.reasons,
+      });
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "runtime.resource_pressure",
+        message: assessment.level === "critical"
+          ? `System resources are critically low. OmniHarness evicted ${evictedPoolMembers} prewarmed worker${evictedPoolMembers === 1 ? "" : "s"} and will refuse new workers until resources recover.`
+          : "System resources are low. OmniHarness will refuse new workers until resources recover.",
+        surface: "toast",
+      });
+    } catch (error) {
+      process.stderr.write(`[resource-pressure] check failed: ${describeUnknownError(error)}\n`);
+    } finally {
+      this.resourcePressureCheckInFlight = false;
+    }
   }
 
   private runReapSweep(): void {
@@ -1022,6 +1202,7 @@ export class AgentRuntimeManager {
       ...(configuredAgent?.env || {}),
       ...(input.env || {}),
     }, cwd);
+    applyProjectScopedCliStorage(type, cwd, finalEnv);
     const credentialProfile = await resolveCredentialProfile({
       type,
       cwd,
@@ -1443,6 +1624,7 @@ export class AgentRuntimeManager {
       ...(configuredAgent?.env || {}),
       ...(input.env || {}),
     }, cwd);
+    applyProjectScopedCliStorage(type, cwd, finalEnv);
     const credentialProfile = await resolveCredentialProfile({
       type,
       cwd,
@@ -1562,6 +1744,10 @@ export class AgentRuntimeManager {
       clearInterval(this.reapSweepTimer);
       this.reapSweepTimer = null;
     }
+    if (this.resourcePressureTimer) {
+      clearInterval(this.resourcePressureTimer);
+      this.resourcePressureTimer = null;
+    }
     for (const timer of this.pendingAgentReaps.values()) clearTimeout(timer);
     this.pendingAgentReaps.clear();
   }
@@ -1580,85 +1766,96 @@ export class AgentRuntimeManager {
     agentType?: string;
     spawnPurpose?: "run" | "prewarm";
   }) {
-    let child: ChildProcessWithoutNullStreams;
-    try {
-      child = spawn(input.command, input.args, {
-        cwd: input.cwd,
-        stdio: ["pipe", "pipe", "pipe"],
-        env: input.env,
-      });
-    } catch (error) {
-      throw new RuntimeHttpError(400, `failed to spawn agent process: ${describeUnknownError(error)}`);
-    }
-    this.memoryTracer.onSpawn(child, input.agentType ?? "unknown", {
-      command: input.command,
+    const resourceAdmission = await acquireWorkerSpawnResources({
       cwd: input.cwd,
-      purpose: input.spawnPurpose ?? "run",
-      resumed: Boolean(input.resumeSessionId),
+      env: input.env,
+      snapshotProvider: this.options.resourceSnapshotProvider,
     });
 
-    const processFailure = new Promise<never>((_, reject) => {
-      child.once("error", (error) => {
-        reject(new RuntimeHttpError(400, `failed to spawn agent process: ${error.message}`));
-      });
-      child.once("exit", (code, signal) => {
-        reject(new RuntimeHttpError(400, `agent process exited before ACP startup completed (code=${code}, signal=${signal})`));
-      });
-    });
-
-    child.stderr.on("data", (data) => {
-      const lines = data
-        .toString("utf8")
-        .split(/\r?\n/g)
-        .map((line: string) => line.trim())
-        .filter((line: string) => line.length > 0);
-      for (const line of lines) {
-        input.onStderrLine?.(line);
-      }
-    });
-
-    const stream = acp.ndJsonStream(
-      Writable.toWeb(child.stdin),
-      Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
-    );
-    const connection = new acp.ClientSideConnection(input.getClient, stream);
     try {
-      const initializeParams = {
-        protocolVersion: acp.PROTOCOL_VERSION,
-        clientCapabilities: {
-          fs: {
-            readTextFile: true,
-            writeTextFile: true,
-          },
-        },
-      } as Parameters<acp.ClientSideConnection["initialize"]>[0];
-      const init = await Promise.race([
-        suppressClosedPipeAcpWriteConsoleError(() => connection.initialize(initializeParams)),
-        processFailure,
-        startupTimeout("Agent ACP initialize", input.startupTimeoutMs),
-      ]);
-      const sessionSetupParams = {
+      let child: ChildProcessWithoutNullStreams;
+      try {
+        child = spawn(input.command, input.args, {
+          cwd: input.cwd,
+          stdio: ["pipe", "pipe", "pipe"],
+          env: input.env,
+        });
+      } catch (error) {
+        throw new RuntimeHttpError(400, `failed to spawn agent process: ${describeUnknownError(error)}`);
+      }
+      this.memoryTracer.onSpawn(child, input.agentType ?? "unknown", {
+        command: input.command,
         cwd: input.cwd,
-        mcpServers: input.mcpServers,
-        ...(input.skillRoots.length > 0 ? { _meta: { "omniharness/skillRoots": input.skillRoots } } : {}),
-      } as Parameters<acp.ClientSideConnection["newSession"]>[0];
-      const session = input.resumeSessionId
-        ? await this.resumeOrLoadSession(
-          connection,
-          input.resumeSessionId,
-          sessionSetupParams,
+        purpose: input.spawnPurpose ?? "run",
+        resumed: Boolean(input.resumeSessionId),
+      });
+
+      const processFailure = new Promise<never>((_, reject) => {
+        child.once("error", (error) => {
+          reject(new RuntimeHttpError(400, `failed to spawn agent process: ${error.message}`));
+        });
+        child.once("exit", (code, signal) => {
+          reject(new RuntimeHttpError(400, `agent process exited before ACP startup completed (code=${code}, signal=${signal})`));
+        });
+      });
+
+      child.stderr.on("data", (data) => {
+        const lines = data
+          .toString("utf8")
+          .split(/\r?\n/g)
+          .map((line: string) => line.trim())
+          .filter((line: string) => line.length > 0);
+        for (const line of lines) {
+          input.onStderrLine?.(line);
+        }
+      });
+
+      const stream = acp.ndJsonStream(
+        Writable.toWeb(child.stdin),
+        Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+      );
+      const connection = new acp.ClientSideConnection(input.getClient, sanitizeAcpStream(stream));
+      try {
+        const initializeParams = {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientCapabilities: {
+            fs: {
+              readTextFile: true,
+              writeTextFile: true,
+            },
+          },
+        } as Parameters<acp.ClientSideConnection["initialize"]>[0];
+        const init = await Promise.race([
+          suppressClosedPipeAcpWriteConsoleError(() => connection.initialize(initializeParams)),
           processFailure,
-          input.startupTimeoutMs,
-        )
-        : await Promise.race([
-          suppressClosedPipeAcpWriteConsoleError(() => connection.newSession(sessionSetupParams)),
-          processFailure,
-          startupTimeout("Agent ACP new session", input.startupTimeoutMs),
+          startupTimeout("Agent ACP initialize", input.startupTimeoutMs),
         ]);
-      return { child, connection, init, session };
-    } catch (error) {
-      child.kill("SIGTERM");
-      throw error;
+        const sessionMeta = buildSessionMeta(input.agentType, input.skillRoots);
+        const sessionSetupParams = {
+          cwd: input.cwd,
+          mcpServers: input.mcpServers,
+          ...(sessionMeta ? { _meta: sessionMeta } : {}),
+        } as Parameters<acp.ClientSideConnection["newSession"]>[0];
+        const session = input.resumeSessionId
+          ? await this.resumeOrLoadSession(
+            connection,
+            input.resumeSessionId,
+            sessionSetupParams,
+            processFailure,
+            input.startupTimeoutMs,
+          )
+          : await Promise.race([
+            suppressClosedPipeAcpWriteConsoleError(() => connection.newSession(sessionSetupParams)),
+            processFailure,
+            startupTimeout("Agent ACP new session", input.startupTimeoutMs),
+          ]);
+        return { child, connection, init, session };
+      } catch (error) {
+        child.kill("SIGTERM");
+        throw error;
+      }
+    } finally {
+      resourceAdmission.release();
     }
   }
 

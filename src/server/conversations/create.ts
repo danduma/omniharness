@@ -20,7 +20,7 @@ import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallba
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
-import { getAppRoot } from "@/server/app-root";
+import { getAppDataPath, getAppRoot } from "@/server/app-root";
 import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import {
   GIT_AUTO_COMMIT_MILESTONES_SETTING,
@@ -37,6 +37,7 @@ import { createBranchWorktree, validateWorkspaceTarget } from "@/server/git/work
 import { setProjectGitWorkspaceDefaultTarget } from "@/server/projects/config";
 import { pendingOrphanWorktreeError } from "@/server/git/orphan-recovery";
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
+import { isResourceAdmissionError } from "@/server/agent-runtime/resource-admission";
 
 
 function buildInitialWorkerPrompt(mode: ConversationMode, command: string, projectRoot: string) {
@@ -128,7 +129,9 @@ async function persistInitialWorkerSpawnFailure(args: {
   });
   emitNamedEvent({
     kind: "error.surfaced",
-    code: "worker.spawn.failed",
+    code: isResourceAdmissionError(args.error)
+      ? "worker.spawn.resource_exhausted"
+      : "worker.spawn.failed",
     message: `Failed to spawn worker for ${args.mode} conversation: ${cause.message}`,
     surface: "toast",
     runId: args.runId,
@@ -508,7 +511,9 @@ export async function createConversation(args: {
     const projectPath = resolvedWorkspace.projectPath;
     const attachments = normalizeChatAttachments(args.attachments ?? []);
     const attachmentsJson = serializeChatAttachments(attachments);
-    const workerPrompt = appendAttachmentContext(command, attachments);
+    const workerPrompt = appendAttachmentContext(command, attachments, {
+      resolvePath: (storagePath) => getAppDataPath(storagePath),
+    });
     const preferredWorkerType = args.preferredWorkerType?.trim()
       ? normalizeWorkerType(args.preferredWorkerType)
       : null;

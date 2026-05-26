@@ -16,6 +16,7 @@ import {
   __resetWorkerTurnChainsForTests,
   waitForConversationBackgroundTasksForTests,
 } from "@/server/conversations/worker-turn-gate";
+import { ResourceAdmissionError } from "@/server/agent-runtime/resource-admission";
 
 const {
   mockStartSupervisorRun,
@@ -759,6 +760,40 @@ describe("POST /api/conversations", () => {
       workerId,
     }));
     expect(mockAskAgent).not.toHaveBeenCalled();
+  });
+
+  it("emits a specific surfaced error when initial spawn is refused for low resources", async () => {
+    mockSpawnAgent.mockRejectedValueOnce(new ResourceAdmissionError(
+      "Cannot spawn worker because system resources are low (memory available 10%, below 25%). Try again after other workers finish.",
+      {
+        memoryFreePercent: 10,
+        minMemoryFreePercent: 25,
+      },
+    ));
+
+    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command: "Start a worker when resources are exhausted",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    const workerId = `${payload.runId}-worker-1`;
+
+    await waitForConversationBackgroundTasksForTests();
+
+    const namedEvents = getNamedEventsSince(0, { runId: payload.runId }).events.map((entry) => entry.event);
+    expect(namedEvents).toContainEqual(expect.objectContaining({
+      kind: "error.surfaced",
+      code: "worker.spawn.resource_exhausted",
+      runId: payload.runId,
+      workerId,
+    }));
   });
 
   it("starts a direct conversation with one direct worker and no supervisor", async () => {

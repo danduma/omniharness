@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { createServer, type Server } from "http";
@@ -102,6 +102,15 @@ process.stdin.on('data', (chunk) => {
           ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN || null,
           ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL || null,
           CUSTOM_EXTERNAL_CREDENTIAL: process.env.CUSTOM_EXTERNAL_CREDENTIAL || null,
+        },
+        selectedCliStorageEnv: {
+          CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR || null,
+          CODEX_SQLITE_HOME: process.env.CODEX_SQLITE_HOME || null,
+          GEMINI_CLI_HOME: process.env.GEMINI_CLI_HOME || null,
+          OPENCODE_CONFIG_DIR: process.env.OPENCODE_CONFIG_DIR || null,
+          XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || null,
+          XDG_DATA_HOME: process.env.XDG_DATA_HOME || null,
+          XDG_STATE_HOME: process.env.XDG_STATE_HOME || null,
         },
       });
       write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
@@ -762,6 +771,53 @@ exec /bin/sh "$@"
     expect(readdirSync(join(projectDir, ".agents", "skills")).some((entry) => entry.includes("reviewer"))).toBe(false);
   }, 120_000);
 
+  it("starts Claude ACP workers with summarized thinking display enabled", async () => {
+    const projectDir = createTempDir("omni-runtime-claude-project-");
+    const binDir = createTempDir("omni-runtime-claude-bin-");
+    const requestLog = join(projectDir, "requests.jsonl");
+    const fakeAgent = createExecutable(binDir, "fake-acp-agent", fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "claude",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "claude-worker",
+        env: { FAKE_ACP_REQUEST_LOG: requestLog },
+      }),
+    });
+
+    expect(spawnResponse.status).toBe(201);
+    const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
+    const sessionNew = events.find((event) => event.method === "session/new");
+    expect(sessionNew.params._meta).toMatchObject({
+      claudeCode: {
+        options: {
+          extraArgs: {
+            "thinking-display": "summarized",
+          },
+          settings: {
+            showThinkingSummaries: true,
+          },
+        },
+      },
+    });
+
+    const stopResponse = await fetch(`${baseUrl}/agents/claude-worker`, { method: "DELETE" });
+    expect(stopResponse.status).toBe(200);
+  }, 15_000);
+
   it("applies file-backed external credential profiles before spawning workers", async () => {
     const projectDir = createTempDir("omni-runtime-credential-project-");
     const binDir = createTempDir("omni-runtime-credential-bin-");
@@ -778,6 +834,7 @@ exec /bin/sh "$@"
     const server = createAgentRuntimeServer({
       env: {
         ...process.env,
+        OMNIHARNESS_CREDENTIAL_COMMAND_CLAUDE: "",
         OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
         OMNIHARNESS_CREDENTIAL_PROFILES_DIR: profilesDir,
         ANTHROPIC_API_KEY: "should-be-removed",
@@ -1518,8 +1575,188 @@ process.stdout.write(JSON.stringify({
     expect(managedConfig).toContain("remote_models = true");
     expect(initialize.applyPatchPath).toMatch(/omniharness-codex-tools-.+apply_patch$/);
     expect(initialize.path.split(":")[0]).toContain("omniharness-codex-tools-");
+    expect(initialize.selectedCliStorageEnv.CODEX_SQLITE_HOME).toBe(join(projectDir, ".omniharness", "cli-home", "codex", "sqlite"));
 
     await fetch(`${baseUrl}/agents/codex-worker`, { method: "DELETE" });
+  }, 15_000);
+
+  it("bridges Codex credentials into project-scoped CLI storage", async () => {
+    const projectDir = createTempDir("omni-runtime-codex-credentials-project-");
+    const binDir = createTempDir("omni-runtime-codex-credentials-bin-");
+    const fakeHome = createTempDir("omni-runtime-codex-credentials-home-");
+    const globalCodexHome = join(fakeHome, ".codex");
+    mkdirSync(globalCodexHome, { recursive: true });
+    writeFileSync(join(globalCodexHome, "auth.json"), "{\"token\":\"global-token\"}\n");
+    writeFileSync(join(globalCodexHome, "config.toml"), "model = \"gpt-5\"\n");
+    const requestLog = join(projectDir, "requests.jsonl");
+    createExecutable(binDir, "codex-acp", fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        HOME: fakeHome,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        OMNIHARNESS_RESOURCE_GUARD: "0",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "codex",
+        cwd: projectDir,
+        name: "codex-credential-worker",
+        env: { FAKE_ACP_REQUEST_LOG: requestLog },
+      }),
+    });
+
+    expect(spawnResponse.status).toBe(201);
+    const scopedCodexHome = join(projectDir, ".omniharness", "cli-home", "codex", "home");
+    expect(readFileSync(join(scopedCodexHome, "auth.json"), "utf8")).toContain("global-token");
+    expect(readFileSync(join(scopedCodexHome, "config.toml"), "utf8")).toContain("gpt-5");
+
+    await fetch(`${baseUrl}/agents/codex-credential-worker`, { method: "DELETE" });
+  }, 15_000);
+
+  it("pins Gemini CLI session storage under the project root", async () => {
+    const projectDir = createTempDir("omni-runtime-gemini-home-project-");
+    const binDir = createTempDir("omni-runtime-gemini-home-bin-");
+    const requestLog = join(projectDir, "requests.jsonl");
+    createExecutable(binDir, "gemini", fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "gemini",
+        cwd: projectDir,
+        name: "gemini-worker",
+        model: "gemini-3.5-flash",
+        env: { FAKE_ACP_REQUEST_LOG: requestLog },
+      }),
+    });
+
+    expect(spawnResponse.status).toBe(201);
+    const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
+    const initialize = events.find((event) => event.method === "initialize");
+    expect(initialize.argv).toEqual(["--experimental-acp", "--model", "gemini-3.5-flash"]);
+    expect(initialize.selectedCliStorageEnv.GEMINI_CLI_HOME).toBe(join(projectDir, ".omniharness", "cli-home", "gemini"));
+
+    await fetch(`${baseUrl}/agents/gemini-worker`, { method: "DELETE" });
+  }, 15_000);
+
+  it("bridges Gemini credentials into project-scoped CLI storage", async () => {
+    const projectDir = createTempDir("omni-runtime-gemini-credentials-project-");
+    const binDir = createTempDir("omni-runtime-gemini-credentials-bin-");
+    const fakeHome = createTempDir("omni-runtime-gemini-credentials-home-");
+    const globalGeminiHome = join(fakeHome, ".gemini");
+    mkdirSync(globalGeminiHome, { recursive: true });
+    writeFileSync(join(globalGeminiHome, "google_accounts.json"), "{\"accounts\":[\"global-account\"]}\n");
+    writeFileSync(join(globalGeminiHome, "google_account_id"), "global-account\n");
+    writeFileSync(join(globalGeminiHome, "settings.json"), "{\"theme\":\"dark\"}\n");
+    const requestLog = join(projectDir, "requests.jsonl");
+    createExecutable(binDir, "gemini", fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        HOME: fakeHome,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        OMNIHARNESS_RESOURCE_GUARD: "0",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "gemini",
+        cwd: projectDir,
+        name: "gemini-credential-worker",
+        env: { FAKE_ACP_REQUEST_LOG: requestLog },
+      }),
+    });
+
+    expect(spawnResponse.status).toBe(201);
+    const scopedGeminiConfigDir = join(projectDir, ".omniharness", "cli-home", "gemini", ".gemini");
+    expect(readFileSync(join(scopedGeminiConfigDir, "google_accounts.json"), "utf8")).toContain("global-account");
+    expect(readFileSync(join(scopedGeminiConfigDir, "google_account_id"), "utf8")).toContain("global-account");
+    expect(existsSync(join(scopedGeminiConfigDir, "settings.json"))).toBe(true);
+
+    await fetch(`${baseUrl}/agents/gemini-credential-worker`, { method: "DELETE" });
+  }, 15_000);
+
+  it.each([
+    {
+      type: "claude",
+      binary: "claude-agent-acp",
+      name: "claude-storage-worker",
+      storage: {
+        CLAUDE_CONFIG_DIR: ["claude"],
+      },
+      argv: [],
+    },
+    {
+      type: "opencode",
+      binary: "opencode",
+      name: "opencode-storage-worker",
+      storage: {
+        OPENCODE_CONFIG_DIR: ["opencode", "config"],
+        XDG_CACHE_HOME: ["opencode", "cache"],
+        XDG_DATA_HOME: ["opencode", "data"],
+        XDG_STATE_HOME: ["opencode", "state"],
+      },
+      argv: ["acp"],
+    },
+  ])("pins $type CLI session storage under the project root", async ({ type, binary, name, storage, argv }) => {
+    const projectDir = createTempDir(`omni-runtime-${type}-home-project-`);
+    const binDir = createTempDir(`omni-runtime-${type}-home-bin-`);
+    const requestLog = join(projectDir, "requests.jsonl");
+    createExecutable(binDir, binary, fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type,
+        cwd: projectDir,
+        name,
+        env: { FAKE_ACP_REQUEST_LOG: requestLog },
+      }),
+    });
+
+    expect(spawnResponse.status).toBe(201);
+    const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
+    const initialize = events.find((event) => event.method === "initialize");
+    expect(initialize.argv).toEqual(argv);
+    for (const [key, suffix] of Object.entries(storage)) {
+      expect(initialize.selectedCliStorageEnv[key]).toBe(join(projectDir, ".omniharness", "cli-home", ...suffix));
+    }
+
+    await fetch(`${baseUrl}/agents/${name}`, { method: "DELETE" });
   }, 15_000);
 
   it("treats duplicate saved-session resume requests as idempotent", async () => {
