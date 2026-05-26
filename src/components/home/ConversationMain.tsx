@@ -34,7 +34,7 @@ import { preflightConfirmationActionsManager } from "@/app/home/PreflightConfirm
 import { useWorkerStream } from "@/app/home/WorkerEntriesManager";
 import { useConversationTranscript } from "@/app/home/ConversationTranscriptManager";
 import { isTerminalRunStatus } from "@/lib/run-status";
-import { deriveConversationLoadState, resolveDirectWorkerStreamRefreshInterval, shouldShowDirectConversationLoading } from "@/app/home/direct-worker-stream-loading";
+import { deriveConversationLoadState, resolveDirectWorkerStreamRefreshInterval, selectDirectConversationEntries, shouldShowDirectConversationLoading } from "@/app/home/direct-worker-stream-loading";
 import { type PlanningReviewAgentSelection } from "@/server/planning/review-preferences";
 import { WORKER_TYPE_LABELS, type SupportedWorkerType } from "@/server/supervisor/worker-types";
 import type { WorkerEntry } from "@/server/workers/entries-types";
@@ -813,9 +813,10 @@ export function ConversationMain({
       }),
     },
   );
-  const conversationEntries = conversationTranscript.isLoaded
-    ? conversationTranscript.entries
-    : directWorkerStream.entries;
+  const conversationEntries = selectDirectConversationEntries({
+    transcriptEntries: conversationTranscript.entries,
+    directWorkerEntries: directWorkerStream.entries,
+  });
   const directConversationLoadState = deriveConversationLoadState({
     snapshotLoaded: isSelectedConversationPreviewAvailable,
     unifiedWorkerStreamEnabled,

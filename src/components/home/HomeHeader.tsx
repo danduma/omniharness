@@ -15,7 +15,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Switch } from "@/components/ui/switch";
 import { OmniHarnessMark } from "@/components/OmniHarnessMark";
 import { PRODUCT_NAME } from "@/app/home/constants";
-import type { AgentSnapshot, MessageRecord, RunRecord, SidebarGroup, SidebarRun, SupervisorInterventionRecord } from "@/app/home/types";
+import type { AgentSnapshot, ConversationSidebarTab, MessageRecord, RunRecord, SidebarGroup, SidebarRun, SupervisorInterventionRecord } from "@/app/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { t, useI18nSnapshot } from "@/lib/i18n";
@@ -33,6 +33,9 @@ interface HomeHeaderProps {
   leftSidebarOpen: boolean;
   setLeftSidebarOpen: (open: boolean) => void;
   filteredProjects: SidebarGroup[];
+  activeProjects: SidebarGroup[];
+  conversationSidebarTab: ConversationSidebarTab;
+  setConversationSidebarTab: (tab: ConversationSidebarTab) => void;
   isHydratingConversations: boolean;
   searchQuery: string;
   setSearchQuery: (value: string) => void;
@@ -103,6 +106,9 @@ export function HomeHeader({
   leftSidebarOpen,
   setLeftSidebarOpen,
   filteredProjects,
+  activeProjects,
+  conversationSidebarTab,
+  setConversationSidebarTab,
   isHydratingConversations,
   searchQuery,
   setSearchQuery,
@@ -257,6 +263,9 @@ export function HomeHeader({
             </SheetHeader>
             <ConversationSidebar
               filteredProjects={filteredProjects as SidebarGroup[]}
+              activeProjects={activeProjects as SidebarGroup[]}
+              conversationSidebarTab={conversationSidebarTab}
+              setConversationSidebarTab={setConversationSidebarTab}
               isHydratingConversations={isHydratingConversations}
               searchQuery={searchQuery}
               setSearchQuery={setSearchQuery}

@@ -56,7 +56,7 @@ test("conversation rows expose archive in the overflow menu and commit rows expo
   expect(sidebarSource).toContain("isCommitConversation");
   expect(sidebarSource).toContain("const canArchiveConversation = isArchivableRunStatus(run.status);");
   expect(sidebarSource).toContain('className: "border-[#c88b45]/30 bg-[#c88b45]/12 text-[#9e5f18] dark:border-[#f0b15d]/25 dark:bg-[#f0b15d]/10 dark:text-[#f0b15d]",');
-  expect(sidebarSource).toContain('aria-label={`Archive ${run.title}`}');
+  expect(sidebarSource).toContain('t("conversation.sidebar.archiveConversation", { title: run.title })');
   expect(sidebarSource).toContain("archiveRun(run)");
   expect(sidebarSource).toContain("{canArchiveConversation && isCommitConversation ? (");
   expect(sidebarSource).toContain("{canArchiveConversation ? (");
@@ -243,7 +243,7 @@ test("direct-control terminal user messages render attachment metadata", () => {
   expect(terminalSource).toContain('actions: entry.entry.type === "user_input" ? getUserMessageActions?.({');
   expect(terminalSource).toContain('id: entry.entry.id,');
   expect(terminalSource).toContain('content: entry.entry.text,');
-  expect(terminalSource).toContain('createdAt: entry.entry.timestamp,');
+  expect(terminalSource).toContain('createdAt: authoritativeTimestamp,');
   expect(terminalSource).toContain('activity.attachments.length > 0');
   expect(terminalSource).toContain('attachmentImagePreviewManager.open({ url, name: attachment.name, size: attachment.size })');
   expect(terminalSource).toContain('title={`Preview ${attachment.name}`}');
@@ -328,7 +328,8 @@ test("failed runs render a single persisted error in the conversation view", () 
   expect(pageSource).toContain("shouldRenderMessageInMainConversation");
   expect(pageSource).not.toContain('message.role === "system"');
   expect(pageSource).toContain('conversationTimelineItems.map((item: ConversationTimelineItem) => {');
-  expect(pageSource).toContain('action: workerFailureDetail ? "Worker setup" : staleFailure ? "Reconnecting" : "Run failed"');
+  expect(pageSource).toContain('action: workerFailureDetail');
+  expect(pageSource).toContain(': staleFailure || looksLikeStaleSession');
   expect(pageSource).toContain('message: workerFailureDetail || (staleFailure');
   expect(pageSource).toContain("Update the model or account, then resume.");
   expect(pageSource).toContain('`to ${workerLabel || "worker"}`');

@@ -2,6 +2,8 @@
 
 import { useMemo } from "react";
 import { buildConversationGroups } from "@/lib/conversations";
+import { buildActiveConversationGroups, filterActiveConversationGroups } from "./sidebar-activity";
+import { sidebarWorkerActivityManager } from "./SidebarWorkerActivityManager";
 import { isTerminalRunStatus, normalizeRunStatus } from "@/lib/run-status";
 import {
   buildWorkerLists,
@@ -15,7 +17,7 @@ import { buildDirectTerminalUserMessages } from "@/lib/worker-terminal-messages"
 import { resolveProjectScope } from "@/lib/project-scope";
 import { buildConversationTimelineItems, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterPromotedPlanningTranscriptMessages, extractWorkerFailureDetail, getConversationTranscriptRunIds, getLatestUnresolvedWorkerStuckEvent, getWorkerModelOptions, parseProjectList, parseWorkerType, parseWorkerTypes, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought } from "./utils";
 import { COMPOSER_WORKER_OPTIONS, WORKER_OPTIONS } from "./constants";
-import type { AgentSnapshot, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, RunMode, RunRecord, SupervisorInterventionRecord } from "./types";
+import type { AgentSnapshot, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, RunMode, RunRecord, SidebarGroup, SupervisorInterventionRecord } from "./types";
 import type { WorkerCatalogResponse } from "./types";
 import { sessionStateManager } from "./SessionStateManager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
@@ -31,6 +33,7 @@ export interface UseHomeViewModelParams {
   searchQuery: string;
   apiKeys: Record<string, string>;
   workerCatalogData: (WorkerCatalogResponse & { diagnostics?: unknown[] }) | undefined;
+  readMarkers?: Record<string, string>;
 }
 
 export function useHomeViewModel({
@@ -44,6 +47,7 @@ export function useHomeViewModel({
   searchQuery,
   apiKeys,
   workerCatalogData,
+  readMarkers = {},
 }: UseHomeViewModelParams) {
   const runs = (state.runs || []) as RunRecord[];
   const plans = (state.plans || []) as PlanRecord[];
@@ -157,6 +161,23 @@ export function useHomeViewModel({
     );
     return { ...group, runs: groupRuns };
   }).filter((group) => group.runs.length > 0 || group.name.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  const activeProjects = useMemo(() => {
+    const activeFilterNowMs = Date.now();
+    const workerOutputObservedAtByRunId = sidebarWorkerActivityManager.getRunOutputAtRecord();
+    const unsearched = buildActiveConversationGroups({
+      groups: groupedProjects as unknown as SidebarGroup[],
+      messages: (state.messages || []) as Array<{ runId: string; role: string; kind?: string | null; createdAt: string }>,
+      readMarkers,
+      workers: (state.workers || []) as Array<{ id: string; runId: string; status: string; updatedAt?: string }>,
+      agents: (state.agents || []) as Array<{ name: string; state: string; updatedAt?: string; lastText?: string; currentText?: string; displayText?: string }>,
+      queuedMessages: (state.queuedMessages || []) as Array<{ runId: string; createdAt: string; updatedAt: string; deliveredAt?: string | null }>,
+      workerOutputObservedAtByRunId,
+      nowMs: activeFilterNowMs,
+    });
+    return filterActiveConversationGroups(unsearched, searchQuery);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupedProjects, state.messages, state.workers, state.agents, state.queuedMessages, readMarkers, searchQuery]);
 
   const selectedRunMessages = useMemo(
     () => (selectedRunId
@@ -517,6 +538,7 @@ export function useHomeViewModel({
     settingsWorkers,
     groupedProjects,
     filteredProjects,
+    activeProjects,
     selectedRunMessages,
     filteredMessages,
     selectedRunWorkers,

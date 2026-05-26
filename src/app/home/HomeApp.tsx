@@ -41,6 +41,7 @@ import {
   parseProjectList,
   resolveRepoName,
   resolveSelectedWorkerModel,
+  shouldClearMissingSelectedRunFromAuthoritativeSnapshot,
   stripRunFailurePrefix,
   type CreatedConversationSnapshot,
 } from "./utils";
@@ -50,7 +51,7 @@ import { useHomeLifecycle } from "./useHomeLifecycle";
 import { shallowEqualRecord, useManagerSelector, useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { useRunRecoveryState } from "./useRunRecoveryState";
 import { useRunSelectionEffects } from "./useRunSelectionEffects";
-import type { EventStreamState, MessageRecord, SidebarGroup } from "./types";
+import type { ConversationSidebarTab, EventStreamState, MessageRecord, SidebarGroup } from "./types";
 import type { HomeBootstrapPayload } from "./bootstrap.server";
 import { useHomeQueries } from "./useHomeQueries";
 import { useHomeViewModel } from "./useHomeViewModel";
@@ -225,6 +226,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     pairRedeemAttempted,
     runtimeErrors,
     settingsDiagnostics,
+    conversationSidebarTab,
   } = useManagerSelector(homeUiStateManager, selectHomeAppState, shallowEqualRecord);
 
   const {
@@ -264,6 +266,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     setAuthError,
     setPairRedeemAttempted,
     setRuntimeErrors,
+    setConversationSidebarTab,
   } = homeUiSetters;
 
   // Event stream state
@@ -430,6 +433,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     searchQuery,
     apiKeys,
     workerCatalogData: workerCatalogQuery.data,
+    readMarkers: effectiveReadMarkers,
   });
 
   // Auto-expand project when a session or draft project is selected
@@ -458,6 +462,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     activeWorkerModelOptions,
     settingsWorkers,
     filteredProjects,
+    activeProjects,
     selectedRunWorkers: selectedRunWorkersForDisplay,
     conversationAgents,
     activeConversationAgents,
@@ -488,6 +493,25 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     conversationTimelineItems,
     conversationWorkerGroups,
   } = vm;
+
+  useEffect(() => {
+    if (shouldClearMissingSelectedRunFromAuthoritativeSnapshot({
+      selectedRunId,
+      selectedRunExists: Boolean(selectedRun),
+      snapshotSource: state.snapshotSource,
+      catalogComplete: state.snapshotScope?.catalog?.complete,
+      snapshotRunId: state.snapshotRunId,
+    })) {
+      setSelectedRunId(null);
+    }
+  }, [
+    selectedRunId,
+    selectedRun,
+    setSelectedRunId,
+    state.snapshotRunId,
+    state.snapshotScope?.catalog?.complete,
+    state.snapshotSource,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1059,6 +1083,9 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
 
   const sharedSidebarProps = {
     filteredProjects: filteredProjects as SidebarGroup[],
+    activeProjects: activeProjects as SidebarGroup[],
+    conversationSidebarTab: conversationSidebarTab as ConversationSidebarTab,
+    setConversationSidebarTab,
     isHydratingConversations,
     searchQuery,
     setSearchQuery,

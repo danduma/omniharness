@@ -89,7 +89,7 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('onPointerDown={layout.handleLeftSidebarResizeStart}');
   expect(pageSource).toContain('leftSidebarOpen ? "translate-x-0" : "-translate-x-3"');
   expect(pageSource).toContain('onCollapse={() => setLeftSidebarOpen(false)}');
-  expect(pageSource).toContain('title="Collapse conversations sidebar"');
+  expect(pageSource).toContain('t("conversation.sidebar.collapseAria")');
   expect(pageSource).toContain('title="Open conversations sidebar"');
   expect(pageSource).toContain('<PanelLeftClose');
   expect(pageSource).toContain('<PanelLeft className="h-4 w-4" />');
