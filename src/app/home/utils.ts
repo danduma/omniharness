@@ -35,6 +35,22 @@ export function buildInlineError(
   return normalizeAppError(error, fallback);
 }
 
+export function shouldClearMissingSelectedRunFromAuthoritativeSnapshot(args: {
+  selectedRunId: string | null | undefined;
+  selectedRunExists: boolean;
+  snapshotSource: EventStreamState["snapshotSource"];
+  catalogComplete: boolean | undefined;
+  snapshotRunId: string | null | undefined;
+}) {
+  return Boolean(
+    args.selectedRunId
+    && !args.selectedRunExists
+    && args.snapshotSource === "server"
+    && args.catalogComplete === true
+    && args.snapshotRunId !== args.selectedRunId,
+  );
+}
+
 export function removeRunFromHomeState(current: EventStreamState, runId: string): EventStreamState {
   const runToDelete = (current.runs || []).find((run: RunRecord) => run.id === runId);
   const workerIds = (current.workers || [])

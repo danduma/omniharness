@@ -342,6 +342,8 @@ export type EventStreamState = {
 };
 export type SettingsTab = "general" | "models" | "credentials" | "agents" | "runtime" | "memory";
 
+export type ConversationSidebarTab = "projects" | "active";
+
 export type SidebarRun = {
   id: string;
   title: string;
@@ -349,6 +351,7 @@ export type SidebarRun = {
   mode?: RunMode | null;
   status: string;
   createdAt: string;
+  updatedAt?: string | null;
   preferredWorkerType?: WorkerType | null;
 };
 export type SidebarGroup = { path: string; name: string; runs: SidebarRun[] };

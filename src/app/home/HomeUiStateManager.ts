@@ -2,7 +2,7 @@ import { chatAttachmentKindFromMimeType, type PendingChatAttachment } from "@/li
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { StateManager, type StateUpdate } from "@/lib/state-manager";
 import { DEFAULT_CONVERSATION_SIDEBAR_WIDTH, DEFAULT_SERVER_SETTINGS, DEFAULT_WORKERS_SIDEBAR_WIDTH, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "./constants";
-import type { ComposerWorkerOption, ConversationModeOption, EventStreamState, LlmProfileTab, MessageRecord, SettingsTab } from "./types";
+import type { ComposerWorkerOption, ConversationModeOption, ConversationSidebarTab, EventStreamState, LlmProfileTab, MessageRecord, SettingsTab } from "./types";
 import type { CreatedConversationSnapshot } from "./utils";
 
 export type ThemeMode = "day" | "night";
@@ -89,6 +89,7 @@ export type HomeUiState = {
   runtimeErrors: AppErrorDescriptor[];
   settingsDiagnostics: AppErrorDescriptor[];
   composerDraftsByRun: Record<string, ComposerDraft>;
+  conversationSidebarTab: ConversationSidebarTab;
 };
 
 const initialHomeUiState: HomeUiState = {
@@ -138,6 +139,7 @@ const initialHomeUiState: HomeUiState = {
   runtimeErrors: [],
   settingsDiagnostics: [],
   composerDraftsByRun: {},
+  conversationSidebarTab: "projects",
 };
 
 export class HomeUiStateManager extends StateManager<HomeUiState> {
@@ -343,6 +345,7 @@ export const homeUiSetters = {
   setPairRedeemAttempted: homeUiStateManager.createSetter("pairRedeemAttempted"),
   setRuntimeErrors: homeUiStateManager.createSetter("runtimeErrors"),
   setSettingsDiagnostics: homeUiStateManager.createSetter("settingsDiagnostics"),
+  setConversationSidebarTab: homeUiStateManager.createSetter("conversationSidebarTab"),
 };
 
 export type HomePendingCreatedConversationSnapshots = Map<string, CreatedConversationSnapshot>;

@@ -3,6 +3,7 @@ import {
   deriveConversationLoadState,
   isWorkerStreamCaughtUp,
   resolveDirectWorkerStreamRefreshInterval,
+  selectDirectConversationEntries,
   shouldShowDirectConversationLoading,
   shouldShowDirectWorkerStreamInitialLoading,
 } from "@/app/home/direct-worker-stream-loading";
@@ -118,6 +119,42 @@ describe("shouldShowDirectWorkerStreamInitialLoading", () => {
         status: "loading",
       }),
     })).toBe(false);
+  });
+
+  it("keeps merged multi-worker transcript visible while the replacement worker stream is empty", () => {
+    const previousWorkerEntry = {
+      ...entry(1),
+      id: "old-worker-output",
+      text: "previous worker output",
+      workerId: "worker-1",
+    };
+
+    expect(selectDirectConversationEntries({
+      transcriptEntries: [previousWorkerEntry],
+      directWorkerEntries: [],
+    })).toEqual([previousWorkerEntry]);
+  });
+
+  it("adds replacement worker entries without dropping the prior multi-worker transcript", () => {
+    const previousWorkerEntry = {
+      ...entry(1),
+      id: "old-worker-output",
+      text: "previous worker output",
+      workerId: "worker-1",
+    };
+    const replacementWorkerEntry = {
+      ...entry(2),
+      id: "new-worker-output",
+      text: "new worker output",
+    };
+
+    expect(selectDirectConversationEntries({
+      transcriptEntries: [previousWorkerEntry],
+      directWorkerEntries: [replacementWorkerEntry],
+    }).map((item) => item.id)).toEqual([
+      "old-worker-output",
+      "new-worker-output",
+    ]);
   });
 
   it("does not block rendering when the stream request failed", () => {

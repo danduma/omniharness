@@ -1,4 +1,6 @@
 import type { WorkerStreamState } from "./WorkerEntriesManager";
+import { coalesceWorkerEntriesById } from "./WorkerEntriesManager";
+import type { WorkerEntry } from "@/server/workers/entries-types";
 
 export type ConversationLoadState = {
   snapshotLoaded: boolean;
@@ -60,6 +62,20 @@ export function shouldShowDirectConversationLoading(args: ConversationLoadState)
     !args.fullyLoaded
     && args.loadingReason === "worker_stream"
   );
+}
+
+export function selectDirectConversationEntries<T extends WorkerEntry>(args: {
+  transcriptEntries: T[];
+  directWorkerEntries: T[];
+}) {
+  if (args.transcriptEntries.length === 0) {
+    return args.directWorkerEntries;
+  }
+
+  return coalesceWorkerEntriesById([
+    ...args.transcriptEntries,
+    ...args.directWorkerEntries,
+  ]) as T[];
 }
 
 export function resolveDirectWorkerStreamRefreshInterval(args: {

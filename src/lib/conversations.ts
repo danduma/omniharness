@@ -8,6 +8,7 @@ type RunRecord = {
   mode?: string | null;
   status: string;
   createdAt: string;
+  updatedAt?: string | null;
   projectPath?: string | null;
   title?: string | null;
   preferredWorkerType?: string | null;
@@ -23,6 +24,7 @@ export type ConversationGroup = {
     mode?: string | null;
     status: string;
     createdAt: string;
+    updatedAt?: string | null;
     preferredWorkerType?: string | null;
   }>;
 };
@@ -60,6 +62,7 @@ export function buildConversationGroups(args: {
         mode: run.mode,
         status: run.status,
         createdAt: run.createdAt,
+        updatedAt: run.updatedAt ?? null,
         preferredWorkerType: run.preferredWorkerType,
       };
     })
@@ -107,6 +110,7 @@ export function buildConversationGroups(args: {
         mode: run.mode,
         status: run.status,
         createdAt: run.createdAt,
+        updatedAt: run.updatedAt,
         preferredWorkerType: run.preferredWorkerType,
       })),
   }));
@@ -120,6 +124,7 @@ export function buildConversationGroups(args: {
       mode: run.mode,
       status: run.status,
       createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
       preferredWorkerType: run.preferredWorkerType,
     }));
 

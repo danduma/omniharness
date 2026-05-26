@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildOptimisticCreatedConversationSnapshot, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseBrowserConversationRoute, parseCollapsedProjectPaths, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowLatestRecoveryAction, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/app/home/utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildOptimisticCreatedConversationSnapshot, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseBrowserConversationRoute, parseCollapsedProjectPaths, shouldClearMissingSelectedRunFromAuthoritativeSnapshot, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowLatestRecoveryAction, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/app/home/utils";
 import type { EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord, SupervisorInterventionRecord } from "@/app/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 
@@ -85,6 +85,38 @@ describe("home utils", () => {
       draftProjectPath: "/tmp/app",
       pairTokenFromUrl: null,
     });
+  });
+
+  it("clears missing selected runs only after an authoritative complete server catalog excludes them", () => {
+    expect(shouldClearMissingSelectedRunFromAuthoritativeSnapshot({
+      selectedRunId: "archived-run",
+      selectedRunExists: false,
+      snapshotSource: "server",
+      catalogComplete: true,
+      snapshotRunId: null,
+    })).toBe(true);
+
+    expect(shouldClearMissingSelectedRunFromAuthoritativeSnapshot({
+      selectedRunId: "run-a",
+      selectedRunExists: true,
+      snapshotSource: "server",
+      catalogComplete: true,
+      snapshotRunId: "run-a",
+    })).toBe(false);
+    expect(shouldClearMissingSelectedRunFromAuthoritativeSnapshot({
+      selectedRunId: "run-a",
+      selectedRunExists: false,
+      snapshotSource: "cache",
+      catalogComplete: true,
+      snapshotRunId: null,
+    })).toBe(false);
+    expect(shouldClearMissingSelectedRunFromAuthoritativeSnapshot({
+      selectedRunId: "run-a",
+      selectedRunExists: false,
+      snapshotSource: "server",
+      catalogComplete: false,
+      snapshotRunId: null,
+    })).toBe(false);
   });
 
   it("uses ids as deterministic tie-breakers for equal timestamps", () => {
