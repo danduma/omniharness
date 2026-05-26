@@ -399,6 +399,22 @@ test("send queued now hides accepted direct messages from the queued drawer", ()
   expect(useHomeMutationsSource).toContain("busyMessageQueueManager.hideQueuedMessage(variables.messageId);");
 });
 
+test("editing or cancelling a queued message removes it optimistically and rolls back on failure", () => {
+  const useHomeMutationsSource = readSource("src/app/home/useHomeMutations.ts");
+  const cancelQueuedMessageIndex = useHomeMutationsSource.indexOf("const cancelQueuedMessage = useMutation({");
+  const onMutateIndex = useHomeMutationsSource.indexOf("onMutate: ({ messageId }) => {", cancelQueuedMessageIndex);
+  const hideIndex = useHomeMutationsSource.indexOf("busyMessageQueueManager.hideQueuedMessage(messageId);", onMutateIndex);
+  const mutationFnIndex = useHomeMutationsSource.indexOf("mutationFn:", cancelQueuedMessageIndex);
+  const onErrorIndex = useHomeMutationsSource.indexOf("onError: (_error, variables, context) => {", hideIndex);
+  const restoreIndex = useHomeMutationsSource.indexOf("busyMessageQueueManager.restoreQueuedMessage(context.previousQueuedMessage);", onErrorIndex);
+
+  expect(cancelQueuedMessageIndex).toBeGreaterThanOrEqual(0);
+  expect(onMutateIndex).toBeGreaterThan(cancelQueuedMessageIndex);
+  expect(hideIndex).toBeGreaterThan(onMutateIndex);
+  expect(onMutateIndex).toBeGreaterThan(mutationFnIndex);
+  expect(restoreIndex).toBeGreaterThan(onErrorIndex);
+});
+
 test("direct control conversations show a tiny animated working indicator while stoppable", () => {
   expect(terminalSource).toContain("function PendingAssistantActivity()");
   expect(terminalSource).toContain('const PENDING_ASSISTANT_TEXT = "Thinking..."');
@@ -480,4 +496,11 @@ test("dropdown menus size to fit action labels instead of the trigger width", ()
   expect(dropdownSource).not.toContain("w-(--anchor-width)");
   expect(dropdownSource).toContain("w-fit");
   expect(dropdownSource).toContain("min-w-[12rem]");
+});
+
+test("active direct conversations with no activity show a loading state", () => {
+  const conversationMainSource = readSource("src/components/home/ConversationMain.tsx");
+  expect(conversationMainSource).toContain("!isTerminalRunStatus(selectedRun.status)");
+  expect(conversationMainSource).toContain("directConversationMessages.length === 0");
+  expect(conversationMainSource).toContain("!directWorkerStream.entries || directWorkerStream.entries.length === 0");
 });

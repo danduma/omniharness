@@ -7,11 +7,13 @@ import { compareOldestByCreatedAtThenId } from "./utils";
 type BusyMessageQueueState = {
   queuedMessages: QueuedConversationMessageRecord[];
   cancellingMessageIds: Set<string>;
+  locallyHiddenMessageIds: Set<string>;
 };
 
 const initialBusyMessageQueueState: BusyMessageQueueState = {
   queuedMessages: [],
   cancellingMessageIds: new Set(),
+  locallyHiddenMessageIds: new Set(),
 };
 
 export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState> {
@@ -20,7 +22,18 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
   }
 
   setQueuedMessages(messages: QueuedConversationMessageRecord[], notify = true) {
-    this.setKey("queuedMessages", messages, notify);
+    this.update((current) => ({
+      ...current,
+      queuedMessages: messages.filter((message) => !current.locallyHiddenMessageIds.has(message.id)),
+    }), notify);
+  }
+
+  getQueuedMessagesForRun(runId: string | null | undefined) {
+    const normalizedRunId = runId?.trim();
+    if (!normalizedRunId) {
+      return [];
+    }
+    return this.getSnapshot().queuedMessages.filter((message) => message.runId === normalizedRunId);
   }
 
   upsertQueuedMessage(message: QueuedConversationMessageRecord) {
@@ -51,10 +64,31 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
   hideQueuedMessage(messageId: string) {
     this.patch((current) => {
       const cancellingMessageIds = new Set(current.cancellingMessageIds);
+      const locallyHiddenMessageIds = new Set(current.locallyHiddenMessageIds);
       cancellingMessageIds.delete(messageId);
+      locallyHiddenMessageIds.add(messageId);
       return {
         queuedMessages: current.queuedMessages.filter((message) => message.id !== messageId),
         cancellingMessageIds,
+        locallyHiddenMessageIds,
+      };
+    });
+  }
+
+  restoreQueuedMessage(message: QueuedConversationMessageRecord) {
+    this.patch((current) => {
+      const cancellingMessageIds = new Set(current.cancellingMessageIds);
+      const locallyHiddenMessageIds = new Set(current.locallyHiddenMessageIds);
+      cancellingMessageIds.delete(message.id);
+      locallyHiddenMessageIds.delete(message.id);
+      const existingIndex = current.queuedMessages.findIndex((entry) => entry.id === message.id);
+      const queuedMessages = existingIndex === -1
+        ? [...current.queuedMessages, message].sort(compareOldestByCreatedAtThenId)
+        : current.queuedMessages.map((entry) => entry.id === message.id ? message : entry);
+      return {
+        queuedMessages,
+        cancellingMessageIds,
+        locallyHiddenMessageIds,
       };
     });
   }

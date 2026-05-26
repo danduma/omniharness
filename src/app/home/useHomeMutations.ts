@@ -19,6 +19,7 @@ import type { PlanningReviewAgentSelection } from "@/server/planning/review-pref
 import {
   appendCreatedConversationSnapshot,
   appendSentConversationMessageSnapshot,
+  buildOptimisticCreatedConversationSnapshot,
   buildConversationPath,
   buildInlineError,
   removeRunFromHomeState,
@@ -706,13 +707,26 @@ export function useHomeMutations({
       const previousSelectedRunId = homeUiStateManager.getSnapshot().selectedRunId;
       const previousDraftProjectPath = homeUiStateManager.getSnapshot().draftProjectPath;
       const requestedRunId = payload.requestedRunId;
+      const previousPendingCreatedSnapshot = pendingCreatedConversationSnapshotsRef.current.get(requestedRunId);
+      const hadPendingCreatedSnapshot = pendingCreatedConversationSnapshotsRef.current.has(requestedRunId);
+      const optimisticSnapshot = buildOptimisticCreatedConversationSnapshot({
+        runId: requestedRunId,
+        content: payload.content,
+        projectPath: payload.projectPath,
+        mode: selectedConversationMode,
+        preferredWorkerType: selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent,
+      });
+      pendingCreatedConversationSnapshotsRef.current.set(requestedRunId, optimisticSnapshot);
       setCommand("");
       homeUiSetters.setCommandCursor(0);
       setSelectedRunId(requestedRunId);
       replaceBrowserConversationPath(requestedRunId, null);
+      setState((current) => appendCreatedConversationSnapshot(current, optimisticSnapshot));
       return {
         projectPath: payload.projectPath,
         requestedRunId,
+        previousPendingCreatedSnapshot,
+        hadPendingCreatedSnapshot,
         previousSelectedRunId,
         previousDraftProjectPath,
         previousCommand,
@@ -747,6 +761,14 @@ export function useHomeMutations({
       }
     },
     onError: (_error, _variables, context) => {
+      if (context) {
+        if (context.hadPendingCreatedSnapshot && context.previousPendingCreatedSnapshot) {
+          pendingCreatedConversationSnapshotsRef.current.set(context.requestedRunId, context.previousPendingCreatedSnapshot);
+        } else {
+          pendingCreatedConversationSnapshotsRef.current.delete(context.requestedRunId);
+        }
+        setState((current) => removeRunFromHomeState(current, context.requestedRunId));
+      }
       const ownsSelection = context
         ? ownsOptimisticRunSelection({
           requestedRunId: context.requestedRunId,
@@ -840,12 +862,16 @@ export function useHomeMutations({
       action: "Cancel queued message",
     }),
     onMutate: ({ messageId }) => {
+      const previousQueuedMessage = busyMessageQueueManager.getSnapshot().queuedMessages.find((message) => message.id === messageId) ?? null;
       busyMessageQueueManager.markCancelling(messageId);
+      busyMessageQueueManager.hideQueuedMessage(messageId);
+      return { previousQueuedMessage };
     },
-    onSuccess: (_data, variables) => {
-      busyMessageQueueManager.hideQueuedMessage(variables.messageId);
-    },
-    onError: (_error, variables) => {
+    onError: (_error, variables, context) => {
+      if (context?.previousQueuedMessage) {
+        busyMessageQueueManager.restoreQueuedMessage(context.previousQueuedMessage);
+        return;
+      }
       busyMessageQueueManager.unmarkCancelling(variables.messageId);
     },
   });

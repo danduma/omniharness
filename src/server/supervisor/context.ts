@@ -234,16 +234,18 @@ export async function buildSupervisorTurnContext(
   const allMessages = (await db.select().from(messages).where(eq(messages.runId, runId)))
     .sort((a, b) => compareByCreatedAtThenId(a, b));
   const userMessages = allMessages.filter((message) => message.role === "user");
+  const resolveAttachmentPath = (storagePath: string) => getAppDataPath(storagePath);
   const goal = userMessages.map((message) => appendAttachmentContext(
     message.content,
     parseChatAttachmentsJson(message.attachmentsJson),
+    { resolvePath: resolveAttachmentPath },
   )).join("\n\n").trim();
   const conversationTurns = allMessages
     .filter((message) => message.role === "user" || message.role === "supervisor")
     .map((message) => ({
       role: message.role,
       content: message.role === "user"
-        ? appendAttachmentContext(message.content, parseChatAttachmentsJson(message.attachmentsJson))
+        ? appendAttachmentContext(message.content, parseChatAttachmentsJson(message.attachmentsJson), { resolvePath: resolveAttachmentPath })
         : message.content,
       createdAt: message.createdAt.toISOString(),
       kind: message.kind ?? null,
@@ -377,6 +379,7 @@ export async function buildSupervisorTurnContext(
     recentUserMessages: userMessages.map((message) => appendAttachmentContext(
       message.content,
       parseChatAttachmentsJson(message.attachmentsJson),
+      { resolvePath: resolveAttachmentPath },
     )),
     conversationTurns,
     pendingClarifications,

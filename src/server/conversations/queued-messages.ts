@@ -9,6 +9,7 @@ import { startSupervisorRun } from "@/server/supervisor/start";
 import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
 import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
 import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
+import { getAppDataPath } from "@/server/app-root";
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
@@ -322,8 +323,16 @@ export async function cancelQueuedConversationMessage({
     .where(eq(queuedConversationMessages.id, messageId))
     .get();
 
-  if (!record || record.runId !== runId || (record.status !== "pending" && record.status !== "delivering")) {
+  if (!record || record.runId !== runId) {
     throw Object.assign(new Error("Queued message not found"), { status: 404 });
+  }
+
+  if (record.status === "delivered") {
+    throw Object.assign(new Error("Queued message was already delivered and cannot be cancelled"), { status: 409 });
+  }
+
+  if (record.status === "cancelled") {
+    return serializeQueuedConversationMessage(record);
   }
 
   const now = new Date();
@@ -525,7 +534,9 @@ export async function sendQueuedConversationMessageNow({
   }
 
   const normalizedAttachments = normalizeChatAttachments(record.attachmentsJson ? JSON.parse(record.attachmentsJson) : []);
-  const workerContent = appendAttachmentContext(record.content, normalizedAttachments);
+  const workerContent = appendAttachmentContext(record.content, normalizedAttachments, {
+    resolvePath: (storagePath) => getAppDataPath(storagePath),
+  });
   const startedAt = new Date();
 
   await db.update(queuedConversationMessages).set({
@@ -726,7 +737,9 @@ export async function drainQueuedImplementationMessages(runId: string) {
       }
 
       const normalizedAttachments = normalizeChatAttachments(record.attachmentsJson ? JSON.parse(record.attachmentsJson) : []);
-      const workerContent = appendAttachmentContext(record.content, normalizedAttachments);
+      const workerContent = appendAttachmentContext(record.content, normalizedAttachments, {
+        resolvePath: (storagePath) => getAppDataPath(storagePath),
+      });
       let interventionId: string | null = null;
 
       try {
@@ -876,7 +889,9 @@ export async function drainQueuedWorkerMessages({
 
   for (const record of records) {
     const normalizedAttachments = normalizeChatAttachments(record.attachmentsJson ? JSON.parse(record.attachmentsJson) : []);
-    const workerContent = appendAttachmentContext(record.content, normalizedAttachments);
+    const workerContent = appendAttachmentContext(record.content, normalizedAttachments, {
+      resolvePath: (storagePath) => getAppDataPath(storagePath),
+    });
     const startedAt = new Date();
 
     const userMessage = {

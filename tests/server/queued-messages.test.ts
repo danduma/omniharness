@@ -158,6 +158,37 @@ describe("queued conversation messages", () => {
     expect(events.some((event) => event.eventType === "queued_message_cancelled")).toBe(true);
   });
 
+  it("cancels failed queue entries so visible audit rows can be dismissed", async () => {
+    const runId = await createRun("direct");
+    const queued = await createQueuedConversationMessage({
+      runId,
+      action: "steer",
+      content: "This queued row already failed.",
+      attachments: [],
+    });
+    await db.update(queuedConversationMessages).set({
+      status: "failed",
+      lastError: "Agent stopped without producing output. Final state: idle.",
+      updatedAt: new Date(),
+    }).where(eq(queuedConversationMessages.id, queued.id));
+
+    const cancelled = await cancelQueuedConversationMessage({ runId, messageId: queued.id });
+
+    expect(cancelled).toMatchObject({
+      id: queued.id,
+      status: "cancelled",
+      lastError: "Agent stopped without producing output. Final state: idle.",
+    });
+    const stored = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queued.id)).get();
+    expect(stored).toMatchObject({
+      runId,
+      status: "cancelled",
+      lastError: "Agent stopped without producing output. Final state: idle.",
+    });
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(events.some((event) => event.eventType === "queued_message_cancelled")).toBe(true);
+  });
+
   it("drains implementation queue entries into user checkpoint messages in FIFO order", async () => {
     const runId = await createRun("implementation");
     await createQueuedConversationMessage({ runId, action: "queue", content: "First queued note", attachments: [] });
