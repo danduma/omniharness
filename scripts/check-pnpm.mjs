@@ -1,10 +1,22 @@
+import { readFile } from "node:fs/promises";
+
 const userAgent = process.env.npm_config_user_agent || "";
 const args = new Set(process.argv.slice(2));
 const expectedNodeMajor = Number(process.env.OMNIHARNESS_EXPECTED_NODE_MAJOR || "22");
 const currentNodeMajor = Number(process.versions.node.split(".")[0]);
+const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+const expectedPnpmVersion = String(packageJson.packageManager || "").match(/^pnpm@(.+)$/)?.[1];
+const currentPnpmVersion = userAgent.match(/^pnpm\/([^\s]+)/)?.[1];
 
 if (!userAgent.startsWith("pnpm/")) {
   console.error("This repository is pnpm-only. Please use pnpm.");
+  process.exit(1);
+}
+
+if (expectedPnpmVersion && currentPnpmVersion !== expectedPnpmVersion) {
+  console.error(`OmniHarness must be installed and run with pnpm ${expectedPnpmVersion}.`);
+  console.error(`Current pnpm: ${currentPnpmVersion || "unknown"}`);
+  console.error("Run `corepack enable`, then retry from the repo root so Corepack can select the pinned packageManager version.");
   process.exit(1);
 }
 
