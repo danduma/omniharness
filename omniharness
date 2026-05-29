@@ -34,6 +34,10 @@ fi
 
 node ./scripts/setup-auth.mjs
 
+if [ "${OMNIHARNESS_SKIP_AGENT_ACP_SETUP:-0}" != "1" ]; then
+  ./scripts/install-agent-acp.sh --ensure-only || echo "[omniharness] Agent ACP adapter setup reported issues; continuing." >&2
+fi
+
 WEB_PORT="${PORT:-3050}"
 LOCAL_URL="http://localhost:${WEB_PORT}"
 

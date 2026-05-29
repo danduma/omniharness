@@ -145,6 +145,52 @@ fi
     expect(result.stdout).toContain("codex: detected");
   });
 
+  it("skips refreshing an existing Codex ACP adapter when --ensure-only is set", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
+    const binDir = path.join(tempDir, "bin");
+    const cargoLogPath = path.join(tempDir, "cargo.log");
+    tempDirs.push(tempDir);
+    fs.mkdirSync(binDir, { recursive: true });
+
+    createFakeBin("codex", binDir);
+    createFakeBin("codex-acp", binDir);
+    createFakeBin("claude", binDir);
+    createFakeBin("claude-agent-acp", binDir);
+    createFakeBin(
+      "rustup",
+      binDir,
+      `#!/bin/sh
+echo "$@" >> "${cargoLogPath}"
+exit 0
+`,
+    );
+    createFakeBin("cargo", binDir);
+    createFakeBin("uname", binDir, `#!/bin/sh
+if [ "$1" = "-s" ]; then
+  echo "Darwin"
+elif [ "$1" = "-m" ]; then
+  echo "arm64"
+else
+  echo "Darwin"
+fi
+`);
+
+    const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh", "--ensure-only"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        PATH: `${binDir}:/usr/bin:/bin`,
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("`codex-acp` already installed");
+    expect(result.stdout).not.toContain("refreshing from the OmniHarness fork");
+    expect(result.stdout).toContain("`claude-agent-acp` already installed");
+    expect(fs.existsSync(cargoLogPath)).toBe(false);
+  });
+
   it("refreshes an existing Codex ACP adapter from the OmniHarness fork", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
     const binDir = path.join(tempDir, "bin");

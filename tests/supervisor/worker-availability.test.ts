@@ -163,6 +163,35 @@ describe("selectSpawnableWorkerType", () => {
     });
   });
 
+  it("detects claude keychain credentials even when the caller refuses CLI probes", async () => {
+    // The frontend catalog route injects a commandRunner that throws to avoid
+    // blocking on slow CLI probes. The macOS Keychain lookup is a fast native
+    // call and must still be performed via the real execFileSync.
+    mockExecFileSync.mockImplementation((command: string, args: string[]) => {
+      if (command === "security" && args[0] === "find-generic-password" && args[2] === "Claude Code-credentials") {
+        return Buffer.from("keychain: ...\nattributes: ...\n");
+      }
+      throw new Error("not found");
+    });
+
+    const { getWorkerAuthenticationInfo } = await import("@/server/supervisor/worker-availability");
+
+    const refusingRunner = (() => {
+      throw new Error("Frontend catalog requests skip blocking CLI probes.");
+    }) as unknown as NonNullable<Parameters<typeof getWorkerAuthenticationInfo>[1]>["commandRunner"];
+
+    expect(getWorkerAuthenticationInfo("claude", {
+      env: { HOME: "/Users/tester", PATH: "/usr/bin:/bin" },
+      homeDir: "/Users/tester",
+      fileExists: () => false,
+      platform: "darwin",
+      commandRunner: refusingRunner,
+    })).toMatchObject({
+      status: "authenticated",
+      method: "session_file",
+    });
+  });
+
   it("detects claude login from the legacy credentials file", async () => {
     mockExecFileSync.mockImplementation((command: string, args: string[]) => {
       if (command === "claude" && args[0] === "auth" && args[1] === "status") {

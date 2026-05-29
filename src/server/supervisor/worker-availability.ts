@@ -43,9 +43,13 @@ type WorkerAuthenticationDetectionOptions = {
   platform?: NodeJS.Platform;
 };
 
-function claudeKeychainCredentialsExist(commandRunner: WorkerCommandRunner, env: EnvLike) {
+function claudeKeychainCredentialsExist(env: EnvLike) {
+  // Always use the real execFileSync here: the keychain lookup is a fast
+  // native OS call, not a CLI agent probe, so it is safe even when a caller
+  // (such as the frontend catalog route) injects a runner that refuses to
+  // execute slower CLI probes.
   try {
-    commandRunner("security", ["find-generic-password", "-s", "Claude Code-credentials"], {
+    execFileSync("security", ["find-generic-password", "-s", "Claude Code-credentials"], {
       encoding: "utf8",
       env: withManagedPath(env, undefined, { loginShellPathMode: "cached" }) as NodeJS.ProcessEnv,
       timeout: 1_500,
@@ -378,7 +382,7 @@ export function getWorkerAuthenticationInfo(type: string, options: WorkerAuthent
       };
     }
 
-    if (platform === "darwin" && claudeKeychainCredentialsExist(commandRunner, env)) {
+    if (platform === "darwin" && claudeKeychainCredentialsExist(env)) {
       return {
         status: "authenticated",
         method: "session_file",

@@ -402,7 +402,12 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     runs: (state.runs || []) as import("./types").RunRecord[],
     explicitProjects,
   });
-  const shouldLoadWorkerCatalog = showOnboarding || (showSettings && activeSettingsTab === "agents");
+  // The composer's worker dropdown filters by catalog availability, so the
+  // catalog must load on initial mount — not just when the user opens
+  // onboarding or the Settings → Agents tab. Without this, the composer
+  // shows every supported agent regardless of install state until the user
+  // happens to open Settings.
+  const shouldLoadWorkerCatalog = true;
 
   // Queries
   const {
