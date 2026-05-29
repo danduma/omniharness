@@ -3,15 +3,19 @@
 set -euo pipefail
 
 DRY_RUN=0
+ENSURE_ONLY=0
 
 for arg in "$@"; do
   case "$arg" in
     --dry-run)
       DRY_RUN=1
       ;;
+    --ensure-only)
+      ENSURE_ONLY=1
+      ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: scripts/install-agent-acp.sh [--dry-run]" >&2
+      echo "Usage: scripts/install-agent-acp.sh [--dry-run] [--ensure-only]" >&2
       exit 1
       ;;
   esac
@@ -77,8 +81,13 @@ run_install_npm() {
     return 1
   fi
 
-  npm install -g "$package_name"
-  echo "  -> installed \`$package_name\`"
+  if npm install -g "$package_name"; then
+    echo "  -> installed \`$package_name\`"
+    return 0
+  fi
+
+  echo "  -> failed to install \`$package_name\` with npm" >&2
+  return 1
 }
 
 run_install_cargo_git() {
@@ -101,18 +110,37 @@ run_install_cargo_git() {
 
   ensure_native_cargo_toolchain
   # shellcheck disable=SC2086
-  $cargo_command install --locked --git "$git_url" --branch "$git_branch" "$binary_name"
-  echo "  -> installed \`$binary_name\`"
+  if $cargo_command install --locked --git "$git_url" --branch "$git_branch" "$binary_name"; then
+    echo "  -> installed \`$binary_name\`"
+    return 0
+  fi
+
+  echo "  -> failed to install \`$binary_name\` with cargo" >&2
+  return 1
 }
 
 echo "Detecting local coding agents and ACP adapters..."
 
+try_install() {
+  if [ "$ENSURE_ONLY" -eq 1 ]; then
+    "$@" || echo "  -> install step failed; continuing because --ensure-only was set" >&2
+  else
+    "$@"
+  fi
+}
+
 if have_command codex; then
   echo "codex: detected"
   if have_command codex-acp; then
-    echo "  -> \`codex-acp\` already installed; refreshing from the OmniHarness fork"
+    if [ "$ENSURE_ONLY" -eq 1 ]; then
+      echo "  -> \`codex-acp\` already installed"
+    else
+      echo "  -> \`codex-acp\` already installed; refreshing from the OmniHarness fork"
+      try_install run_install_cargo_git "codex-acp" "https://github.com/danduma/codex-acp.git" "main"
+    fi
+  else
+    try_install run_install_cargo_git "codex-acp" "https://github.com/danduma/codex-acp.git" "main"
   fi
-  run_install_cargo_git "codex-acp" "https://github.com/danduma/codex-acp.git" "main"
 else
   echo "codex: not detected"
 fi
@@ -122,7 +150,7 @@ if have_command claude; then
   if have_command claude-agent-acp; then
     echo "  -> \`claude-agent-acp\` already installed"
   else
-    run_install_npm "@agentclientprotocol/claude-agent-acp"
+    try_install run_install_npm "@agentclientprotocol/claude-agent-acp"
   fi
 else
   echo "claude: not detected"
