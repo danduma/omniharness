@@ -30,6 +30,30 @@ async function readJson<T = Record<string, unknown>>(req: IncomingMessage): Prom
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as T;
 }
 
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  if (error && typeof error === "object") {
+    const record = error as { message?: unknown; error?: unknown };
+    if (typeof record.message === "string" && record.message.trim()) {
+      return record.message;
+    }
+    if (typeof record.error === "string" && record.error.trim()) {
+      return record.error;
+    }
+    try {
+      return JSON.stringify(error);
+    } catch {
+      // fall through
+    }
+  }
+  return String(error);
+}
+
 function writeJson(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status;
   res.setHeader("content-type", "application/json; charset=utf-8");
@@ -191,7 +215,7 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
           if (error instanceof RuntimeHttpError) {
             writeSse(res, "error", { error: error.message, statusCode: error.statusCode });
           } else {
-            writeSse(res, "error", { error: error instanceof Error ? error.message : String(error), statusCode: 500 });
+            writeSse(res, "error", { error: describeError(error), statusCode: 500 });
           }
         } finally {
           clearInterval(progressTimer);
@@ -215,7 +239,7 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
         });
         return;
       }
-      writeJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+      writeJson(res, 500, { error: describeError(error) });
     }
   }
 

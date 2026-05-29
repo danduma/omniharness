@@ -40,11 +40,18 @@ export function AgentsSettingsPanel({
   useI18nSnapshot();
   const configuredAllowedWorkerTypes = parseWorkerTypes(settings.WORKER_ALLOWED_TYPES);
   const configuredAllowedWorkerSet = new Set(configuredAllowedWorkerTypes);
-  const defaultWorkerType = parseWorkerType(settings.WORKER_DEFAULT_TYPE) ?? configuredAllowedWorkerTypes[0] ?? "codex";
+  const availableWorkerTypes = new Set(
+    settingsWorkers
+      .filter((worker) => worker.availability.status === "ok")
+      .map((worker) => worker.type),
+  );
+  const displayedAllowedWorkerTypes = configuredAllowedWorkerTypes.filter((type) => availableWorkerTypes.has(type));
+  const displayedAllowedWorkerSet = new Set(displayedAllowedWorkerTypes);
+  const defaultWorkerType = parseWorkerType(settings.WORKER_DEFAULT_TYPE) ?? displayedAllowedWorkerTypes[0] ?? configuredAllowedWorkerTypes[0] ?? "codex";
   const yoloEnabled = parseBooleanSetting(settings.WORKER_YOLO_MODE, true);
   const memoryEnabled = parseBooleanSetting(settings.SUPERVISOR_MEMORY_ENABLED, true);
   const defaultWorkerOptions = WORKER_OPTIONS
-    .filter((option) => configuredAllowedWorkerSet.has(option.value))
+    .filter((option) => displayedAllowedWorkerSet.has(option.value))
     .map((option) => ({ value: option.value, label: option.label }));
   const orderedWorkers = [
     ...configuredAllowedWorkerTypes.flatMap((type) => settingsWorkers.find((worker) => worker.type === type) ?? []),
@@ -181,10 +188,10 @@ export function AgentsSettingsPanel({
         </div>
         {orderedWorkers.map((worker) => {
           const isAvailable = worker.availability.status === "ok";
-          const isChecked = configuredAllowedWorkerSet.has(worker.type);
-          const priorityIndex = configuredAllowedWorkerTypes.indexOf(worker.type);
+          const isChecked = displayedAllowedWorkerSet.has(worker.type);
+          const priorityIndex = displayedAllowedWorkerTypes.indexOf(worker.type);
           const canMoveUp = isChecked && priorityIndex > 0;
-          const canMoveDown = isChecked && priorityIndex >= 0 && priorityIndex < configuredAllowedWorkerTypes.length - 1;
+          const canMoveDown = isChecked && priorityIndex >= 0 && priorityIndex < displayedAllowedWorkerTypes.length - 1;
           const modelOptions = workerModels?.[worker.type] ?? [];
           const availabilityMessage = isAvailable ? null : getWorkerAvailabilityMessage(worker);
           const availabilityTone =
@@ -207,7 +214,7 @@ export function AgentsSettingsPanel({
                   aria-label={t("settings.agents.toggleWorker", { worker: worker.label })}
                   className="mt-0.5"
                   checked={isChecked}
-                  disabled={!isAvailable || (isChecked && configuredAllowedWorkerTypes.length === 1)}
+                  disabled={!isAvailable || (isChecked && displayedAllowedWorkerTypes.length === 1)}
                   onCheckedChange={(checked) => toggleAllowedWorker(worker.type, checked)}
                 />
                 <div className="min-w-0 space-y-1">
