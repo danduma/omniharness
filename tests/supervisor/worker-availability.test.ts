@@ -178,7 +178,7 @@ describe("selectSpawnableWorkerType", () => {
 
     const refusingRunner = (() => {
       throw new Error("Frontend catalog requests skip blocking CLI probes.");
-    }) as unknown as Parameters<typeof getWorkerAuthenticationInfo>[1]["commandRunner"];
+    }) as unknown as NonNullable<Parameters<typeof getWorkerAuthenticationInfo>[1]>["commandRunner"];
 
     expect(getWorkerAuthenticationInfo("claude", {
       env: { HOME: "/Users/tester", PATH: "/usr/bin:/bin" },
