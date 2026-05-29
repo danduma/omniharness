@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import { constants, accessSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, statSync, symlinkSync } from "fs";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { request as httpRequest } from "http";
@@ -127,6 +127,47 @@ function bridgeProjectScopedCliCredentials(type: string, env: EnvLike) {
     for (const fileName of ["auth.json", "config.toml"]) {
       bridgeCredentialFileIfMissing(join(globalHome, fileName), join(scopedHome, fileName));
     }
+  }
+}
+
+function applyClaudeKeychainOAuthToken(env: EnvLike) {
+  // omniharness spawns claude with a project-scoped CLAUDE_CONFIG_DIR, so the
+  // worker process does not see the user's global ~/.claude state and the
+  // underlying `claude` binary reports "Authentication required" on every
+  // session/prompt. The user's OAuth credentials live in the macOS Keychain
+  // entry "Claude Code-credentials"; extract the access token and forward it
+  // as CLAUDE_CODE_OAUTH_TOKEN (the env var Claude Code 2.x reads at startup)
+  // so OAuth-only users can talk to claude through ACP without configuring an
+  // explicit ANTHROPIC_API_KEY.
+  if (process.platform !== "darwin") {
+    return;
+  }
+  if (env.ANTHROPIC_API_KEY?.trim() || env.ANTHROPIC_AUTH_TOKEN?.trim() || env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) {
+    return;
+  }
+  let raw: string;
+  try {
+    raw = String(execFileSync("security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], {
+      encoding: "utf8",
+      timeout: 1_500,
+      maxBuffer: 64 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    })).trim();
+  } catch {
+    return;
+  }
+  if (!raw) {
+    return;
+  }
+  let token: string | undefined;
+  try {
+    const parsed = JSON.parse(raw) as { claudeAiOauth?: { accessToken?: string } };
+    token = parsed.claudeAiOauth?.accessToken?.trim();
+  } catch {
+    return;
+  }
+  if (token) {
+    env.CLAUDE_CODE_OAUTH_TOKEN = token;
   }
 }
 
@@ -1216,6 +1257,9 @@ export class AgentRuntimeManager {
       Object.assign(finalEnv, withCodexStandardTooling(finalEnv));
       Object.assign(finalEnv, applyCodexBridgeEnv(finalEnv, null));
     }
+    if (type === "claude") {
+      applyClaudeKeychainOAuthToken(finalEnv);
+    }
 
     const requestedMode = input.mode || configuredAgent?.mode;
     const defaultCommand = input.command || configuredAgent?.command || type;
@@ -1637,6 +1681,9 @@ export class AgentRuntimeManager {
     if (type === "codex") {
       Object.assign(finalEnv, withCodexStandardTooling(finalEnv));
       Object.assign(finalEnv, applyCodexBridgeEnv(finalEnv, null));
+    }
+    if (type === "claude") {
+      applyClaudeKeychainOAuthToken(finalEnv);
     }
 
     const requestedMode = input.mode || configuredAgent?.mode || null;
