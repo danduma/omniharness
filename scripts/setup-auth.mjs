@@ -75,10 +75,15 @@ async function promptHidden(input, output, message) {
     const wasRaw = input.isRaw;
     let value = "";
 
-    function finish(result) {
+    function restoreInput() {
       input.off("data", onData);
       input.setRawMode(wasRaw);
+      input.pause?.();
       output.write("\n");
+    }
+
+    function finish(result) {
+      restoreInput();
       resolve(result);
     }
 
@@ -86,8 +91,7 @@ async function promptHidden(input, output, message) {
       const text = String(chunk);
       for (const char of text) {
         if (char === "\u0003") {
-          input.setRawMode(wasRaw);
-          output.write("\n");
+          restoreInput();
           reject(new Error("Authentication setup cancelled."));
           return;
         }

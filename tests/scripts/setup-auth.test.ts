@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { EventEmitter } from "events";
 import { pathToFileURL } from "url";
 import { verify } from "@node-rs/argon2";
 import { describe, expect, it } from "vitest";
@@ -102,5 +103,47 @@ describe("setup-auth bootstrap", () => {
     expect(secondEnvText).toBe(firstEnvText);
     expect(secondEnvText.match(/OMNIHARNESS_AUTH_PASSWORD_HASH=/g)).toHaveLength(1);
     expect(secondEnvText).not.toContain("second-generated-password");
+  });
+
+  it("pauses TTY stdin after accepting an interactive generated password", async () => {
+    const rootDir = tempRoot();
+    const writes: string[] = [];
+    const rawModes: boolean[] = [];
+    const input = Object.assign(new EventEmitter(), {
+      isTTY: true,
+      isRaw: false,
+      paused: true,
+      setEncoding: () => undefined,
+      setRawMode: (value: boolean) => {
+        rawModes.push(value);
+        input.isRaw = value;
+      },
+      resume: () => {
+        input.paused = false;
+      },
+      pause: () => {
+        input.paused = true;
+      },
+    });
+
+    const setupPromise = setupAuth.ensureAuthConfig({
+      rootDir,
+      env: {},
+      input,
+      output: {
+        isTTY: true,
+        write: (text: string) => writes.push(text),
+      },
+      generatedPassword: "interactive-generated-password",
+    });
+
+    input.emit("data", "\r");
+    const result = await setupPromise;
+
+    expect(result.created).toBe(true);
+    expect(result.generated).toBe(true);
+    expect(input.paused).toBe(true);
+    expect(rawModes).toEqual([true, false]);
+    expect(writes.join("")).toContain("Password: interactive-generated-password");
   });
 });
