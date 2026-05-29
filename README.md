@@ -22,7 +22,7 @@ OmniHarness is early open-source software under active development. Expect sharp
 
 - macOS or Linux with a normal developer shell.
 - Node.js 22.x. If you use `nvm`, run `nvm use` from the repo root.
-- `pnpm` from the `packageManager` field in `package.json`. The easiest path is `corepack enable`, then let Corepack select the pinned pnpm version.
+- Corepack or `pnpm` from the `packageManager` field in `package.json`. The `./omniharness` script enables and prepares Corepack automatically when it is available.
 - At least one supported coding agent when you want to run real workers:
   - Codex CLI plus `codex-acp`
   - Claude CLI plus `claude-agent-acp`
@@ -37,12 +37,6 @@ Clone the repo, enter it, and select Node 22:
 git clone <repo-url> omniharness
 cd omniharness
 nvm use
-```
-
-Enable Corepack so the repo can use its pinned pnpm version:
-
-```bash
-corepack enable
 ```
 
 Start OmniHarness normally:
@@ -289,7 +283,7 @@ The command must print JSON:
 ## Troubleshooting Setup
 
 - **`This repository is pnpm-only`:** run commands with `pnpm`, not `npm install` or `yarn`.
-- **Wrong pnpm version:** run `corepack enable`, then retry from the repo root so Corepack can select the pinned `packageManager` version.
+- **Wrong pnpm version:** run `./omniharness` from the repo root so the bootstrap script can select the pinned `packageManager` version.
 - **Wrong Node major:** run `nvm use`, then retry. If you already installed dependencies with a different Node major, run `pnpm rebuild better-sqlite3`.
 - **Native SQLite binding errors:** run `pnpm rebuild better-sqlite3` under Node 22.
 - **No supported worker appears:** install or log into at least one supported agent CLI, then run `scripts/install-agent-acp.sh --dry-run` and inspect `curl http://127.0.0.1:7800/doctor`.

@@ -3,21 +3,36 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if ! command -v pnpm >/dev/null 2>&1; then
-  echo "OmniHarness requires pnpm. Install it with corepack or your package manager, then run omniharness again." >&2
+cd "$ROOT_DIR"
+
+PACKAGE_MANAGER="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; const packageJson = JSON.parse(readFileSync("package.json", "utf8")); if (!/^pnpm@/.test(packageJson.packageManager || "")) process.exit(1); process.stdout.write(packageJson.packageManager);')"
+PNPM_VERSION="${PACKAGE_MANAGER#pnpm@}"
+PNPM_CMD=()
+
+if command -v corepack >/dev/null 2>&1; then
+  corepack enable >/dev/null 2>&1 || true
+  corepack prepare "$PACKAGE_MANAGER" --activate >/dev/null 2>&1 || true
+  PNPM_CMD=(corepack pnpm)
+elif command -v pnpm >/dev/null 2>&1; then
+  CURRENT_PNPM_VERSION="$(pnpm --version 2>/dev/null || true)"
+  if [ "$CURRENT_PNPM_VERSION" != "$PNPM_VERSION" ]; then
+    echo "OmniHarness requires $PACKAGE_MANAGER, but found pnpm ${CURRENT_PNPM_VERSION:-unknown} and Corepack is unavailable." >&2
+    exit 1
+  fi
+  PNPM_CMD=(pnpm)
+else
+  echo "OmniHarness requires Corepack or pnpm $PNPM_VERSION, but neither is available on PATH." >&2
   exit 1
 fi
 
-cd "$ROOT_DIR"
-
 if [ ! -d "$ROOT_DIR/node_modules" ]; then
-  echo "[omniharness] Installing dependencies..."
-  pnpm install
+  echo "[omniharness] Installing dependencies with $PACKAGE_MANAGER..."
+  "${PNPM_CMD[@]}" install
 fi
 
 if [ ! -f "$ROOT_DIR/.next/BUILD_ID" ]; then
   echo "[omniharness] Building production server..."
-  pnpm build
+  "${PNPM_CMD[@]}" build
 fi
 
-exec pnpm start "$@"
+exec "${PNPM_CMD[@]}" start "$@"

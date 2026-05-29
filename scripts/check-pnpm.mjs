@@ -9,15 +9,27 @@ const currentNodeMajor = Number(process.versions.node.split(".")[0]);
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 const expectedPnpmVersion = String(packageJson.packageManager || "").match(/^pnpm@(.+)$/)?.[1];
 const currentPnpmVersion = userAgent.match(/^pnpm\/([^\s]+)/)?.[1] ?? readPnpmExecVersion();
-const isPnpm = userAgent.startsWith("pnpm/") || /(?:^|[/\\])pnpm(?:\.cjs|\.js|\.cmd)?$/.test(npmExecPath);
+const isPnpm = userAgent.startsWith("pnpm/") || isPnpmExecPath(npmExecPath);
+const isCorepackPnpm = /(?:^|[/\\])corepack(?:[/\\]|$)/.test(npmExecPath) || /[/\\]corepack[/\\]v\d+[/\\]pnpm[/\\]/.test(npmExecPath);
+
+function isPnpmExecPath(execPath) {
+  return /(?:^|[/\\])pnpm(?:\.cjs|\.js|\.mjs|\.cmd)?$/.test(execPath);
+}
 
 function readPnpmExecVersion() {
-  if (!/(?:^|[/\\])pnpm(?:\.cjs|\.js|\.cmd)?$/.test(npmExecPath)) {
+  if (!isPnpmExecPath(npmExecPath)) {
     return undefined;
   }
 
+  const corepackPathVersion = npmExecPath.match(/[/\\]corepack[/\\]v\d+[/\\]pnpm[/\\]([^/\\]+)[/\\]/)?.[1];
+  if (corepackPathVersion) {
+    return corepackPathVersion;
+  }
+
   try {
-    return execFileSync(npmExecPath, ["--version"], {
+    const command = /\.(?:c|m)?js$/.test(npmExecPath) ? process.execPath : npmExecPath;
+    const commandArgs = command === process.execPath ? [npmExecPath, "--version"] : ["--version"];
+    return execFileSync(command, commandArgs, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
@@ -31,10 +43,17 @@ if (!isPnpm) {
   process.exit(1);
 }
 
-if (expectedPnpmVersion && currentPnpmVersion !== expectedPnpmVersion) {
+if (expectedPnpmVersion && currentPnpmVersion && currentPnpmVersion !== expectedPnpmVersion) {
   console.error(`OmniHarness must be installed and run with pnpm ${expectedPnpmVersion}.`);
-  console.error(`Current pnpm: ${currentPnpmVersion || "unknown"}`);
-  console.error("Run `corepack enable`, then retry from the repo root so Corepack can select the pinned packageManager version.");
+  console.error(`Current pnpm: ${currentPnpmVersion}`);
+  console.error("Run `./omniharness` from the repo root so the bootstrap script can select the pinned packageManager version.");
+  process.exit(1);
+}
+
+if (expectedPnpmVersion && !currentPnpmVersion && !isCorepackPnpm) {
+  console.error(`OmniHarness must be installed and run with pnpm ${expectedPnpmVersion}.`);
+  console.error("Current pnpm: unknown");
+  console.error("Run `./omniharness` from the repo root so the bootstrap script can select the pinned packageManager version.");
   process.exit(1);
 }
 
