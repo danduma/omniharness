@@ -150,7 +150,14 @@ function getDefaultConversationTitle(mode: ConversationMode, command: string) {
 }
 
 function shouldGenerateConversationTitle(mode: ConversationMode, command: string) {
-  return mode !== "commit" && Boolean(command.trim());
+  // Direct and commit conversations are user-controlled; they should not
+  // trigger the supervisor LLM (mastra/OpenAI) just to summarize a title.
+  // The run already has the trimmed command as its title, which is fine
+  // for the sidebar.
+  if (mode === "commit" || mode === "direct") {
+    return false;
+  }
+  return Boolean(command.trim());
 }
 
 async function readCommitWorkflowSettings() {
