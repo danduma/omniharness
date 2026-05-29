@@ -1866,8 +1866,17 @@ export class AgentRuntimeManager {
     spawnError: Promise<never>,
     startupTimeoutMs: number,
   ) {
+    // Newer ACP adapter builds (e.g. @agentclientprotocol/claude-agent-acp)
+    // validate `session/resume` with a zod schema that requires `cwd` (and
+    // any other session-setup params) alongside `sessionId`; sending only
+    // `{ sessionId }` returns `-32602 Invalid params` with `cwd: { _errors }`
+    // even when the session is otherwise resumable. Pass the full setup
+    // payload to both `resume` and `load` so old and new adapters work.
     try {
-      const resumeParams = { sessionId } as Parameters<acp.ClientSideConnection["unstable_resumeSession"]>[0];
+      const resumeParams = {
+        sessionId,
+        ...sessionSetupParams,
+      } as Parameters<acp.ClientSideConnection["unstable_resumeSession"]>[0];
       return await Promise.race([
         suppressClosedPipeAcpWriteConsoleError(() => connection.unstable_resumeSession(resumeParams)),
         spawnError,
