@@ -25,14 +25,152 @@ else
   exit 1
 fi
 
-if [ ! -d "$ROOT_DIR/node_modules" ]; then
+if [ ! -d "$ROOT_DIR/node_modules" ] || [ ! -f "$ROOT_DIR/node_modules/.modules.yaml" ] || [ ! -d "$ROOT_DIR/node_modules/.pnpm" ]; then
   echo "[omniharness] Installing dependencies with $PACKAGE_MANAGER..."
   "${PNPM_CMD[@]}" install
+fi
+
+node ./scripts/setup-auth.mjs
+
+WEB_PORT="${PORT:-3050}"
+LOCAL_URL="http://localhost:${WEB_PORT}"
+
+local_omniharness_status() {
+  node --input-type=module - "$LOCAL_URL" <<'NODE'
+const localUrl = process.argv[2];
+const sessionUrl = new URL("/api/auth/session", localUrl).toString();
+
+try {
+  const response = await fetch(sessionUrl);
+  if (!response.ok) {
+    process.stdout.write("not_running");
+    process.exit(0);
+  }
+
+  const body = await response.json().catch(() => null);
+  if (!body || typeof body !== "object" || !("enabled" in body) || !("authenticated" in body)) {
+    process.stdout.write("not_running");
+    process.exit(0);
+  }
+
+  if (body.configurationError) {
+    process.stdout.write("configuration_error");
+    process.exit(0);
+  }
+
+  process.stdout.write("ready");
+} catch {
+  process.stdout.write("not_running");
+}
+NODE
+}
+
+open_browser_when_ready() {
+  if [ "${OMNIHARNESS_OPEN_BROWSER:-1}" = "0" ]; then
+    return
+  fi
+
+  (
+    node --input-type=module - "$LOCAL_URL" <<'NODE'
+import { spawn } from "node:child_process";
+
+const localUrl = process.argv[2];
+const sessionUrl = new URL("/api/auth/session", localUrl).toString();
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitUntilReady() {
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(sessionUrl);
+      if (response.ok) {
+        return true;
+      }
+    } catch {
+      // The server is still starting.
+    }
+    await sleep(750);
+  }
+  return false;
+}
+
+function openUrl(url) {
+  const command = process.platform === "darwin"
+    ? "open"
+    : process.platform === "win32"
+      ? "cmd"
+      : "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+}
+
+if (await waitUntilReady()) {
+  openUrl(localUrl);
+}
+NODE
+  ) >/dev/null 2>&1 &
+}
+
+print_tunnel_guidance() {
+  echo "[omniharness] Remote/tunnel setup:"
+  echo "  1. Expose only the web UI port, for example:"
+  echo "     cloudflared tunnel --url http://localhost:${WEB_PORT}"
+  echo "  2. Copy the generated https://... URL into .env:"
+  echo "     OMNIHARNESS_PUBLIC_ORIGIN=https://your-tunnel-url"
+  echo "  3. Restart ./omniharness so pairing links and public URLs use the tunnel."
+}
+
+print_start_guidance() {
+  echo ""
+  echo "[omniharness] Starting OmniHarness."
+  echo "[omniharness] Local URL: $LOCAL_URL"
+  if [ "${OMNIHARNESS_OPEN_BROWSER:-1}" = "0" ]; then
+    echo "[omniharness] Browser auto-open is disabled because OMNIHARNESS_OPEN_BROWSER=0."
+  else
+    echo "[omniharness] A browser window will open when the local server is ready."
+  fi
+  echo ""
+  print_tunnel_guidance
+  echo ""
+}
+
+CURRENT_STATUS="$(local_omniharness_status)"
+if [ "$CURRENT_STATUS" = "ready" ]; then
+  echo ""
+  echo "[omniharness] OmniHarness is already running at $LOCAL_URL."
+  if [ "${OMNIHARNESS_OPEN_BROWSER:-1}" = "0" ]; then
+    echo "[omniharness] Browser auto-open is disabled because OMNIHARNESS_OPEN_BROWSER=0."
+  else
+    echo "[omniharness] Opening the existing app."
+  fi
+  echo ""
+  print_tunnel_guidance
+  echo ""
+  open_browser_when_ready
+  exit 0
+fi
+
+if [ "$CURRENT_STATUS" = "configuration_error" ]; then
+  echo ""
+  echo "[omniharness] OmniHarness is already running at $LOCAL_URL, but that process still has no auth password configured."
+  echo "[omniharness] I created or found the password config for the next start. Stop the existing OmniHarness process, then run ./omniharness again."
+  echo ""
+  exit 1
 fi
 
 if [ ! -f "$ROOT_DIR/.next/BUILD_ID" ]; then
   echo "[omniharness] Building production server..."
   "${PNPM_CMD[@]}" build
 fi
+
+print_start_guidance
+open_browser_when_ready
 
 exec "${PNPM_CMD[@]}" start "$@"

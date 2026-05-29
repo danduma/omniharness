@@ -45,7 +45,14 @@ Start OmniHarness normally:
 ./omniharness
 ```
 
-Open [http://localhost:3050](http://localhost:3050).
+On first start, `./omniharness` asks you to create a web login password. Press
+Enter to have it generate one for you. Generated passwords are printed once in
+the terminal; save that password before continuing. The launcher stores only an
+Argon2 hash in `.env`.
+
+The launcher opens [http://localhost:3050](http://localhost:3050) when the local
+server is ready. Set `OMNIHARNESS_OPEN_BROWSER=0` if you do not want it to open a
+browser automatically.
 
 `./omniharness` installs dependencies when needed, builds the production server
 when needed, then starts both pieces OmniHarness needs:
@@ -102,17 +109,16 @@ Local agent CLIs that are already logged in usually work without API keys. If yo
 
 OmniHarness requires a password before the web UI can create an authenticated session or pair a phone.
 
-For the simplest local setup, add a password to `.env`:
+For the simplest local setup, run the launcher and follow the prompt:
 
 ```bash
-cp .env.example .env
-printf 'OMNIHARNESS_AUTH_PASSWORD=%s\n' 'choose-a-long-local-password' >> .env
 ./omniharness
 ```
 
-Then open [http://localhost:3050](http://localhost:3050) and log in with that password.
+If `.env` or the current shell already contains `OMNIHARNESS_AUTH_PASSWORD` or
+`OMNIHARNESS_AUTH_PASSWORD_HASH`, the launcher keeps that existing configuration.
 
-If you do not want the plaintext password in `.env`, store an Argon2 hash instead:
+To change the password manually, store an Argon2 hash in `.env`:
 
 ```bash
 read -rsp "OmniHarness password: " OMNI_PASSWORD; echo
@@ -128,12 +134,31 @@ OMNIHARNESS_AUTH_PASSWORD_HASH="$(
     }));
   '
 )"
-printf 'OMNIHARNESS_AUTH_PASSWORD_HASH=%s\n' "$OMNIHARNESS_AUTH_PASSWORD_HASH" >> .env
+printf 'OMNIHARNESS_AUTH_PASSWORD_HASH=%s\n' "${OMNIHARNESS_AUTH_PASSWORD_HASH//$/\\$}" >> .env
 unset OMNI_PASSWORD OMNIHARNESS_AUTH_PASSWORD_HASH
 ./omniharness
 ```
 
 Use either `OMNIHARNESS_AUTH_PASSWORD` or `OMNIHARNESS_AUTH_PASSWORD_HASH`; the hash wins if both are set. Restart OmniHarness after changing either value.
+
+## Remote Tunnel
+
+For phone or remote-browser access, expose only the web UI port through your
+tunnel provider. With Cloudflare Tunnel quick tunnels:
+
+```bash
+cloudflared tunnel --url http://localhost:3050
+```
+
+Copy the generated `https://...` URL into `.env` and restart OmniHarness:
+
+```bash
+printf 'OMNIHARNESS_PUBLIC_ORIGIN=%s\n' 'https://your-tunnel-url' >> .env
+./omniharness
+```
+
+Keep OmniHarness password auth enabled even when your tunnel provider also has
+its own access controls.
 
 The launcher does not require a global `omniharness` install. Run the app from
 the checkout with `./omniharness`, and run CLI conversations from the checkout
