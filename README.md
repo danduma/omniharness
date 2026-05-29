@@ -23,6 +23,7 @@ OmniHarness is early open-source software under active development. Expect sharp
 - macOS or Linux with a normal developer shell.
 - Node.js 22.x. If you use `nvm`, run `nvm use` from the repo root.
 - Corepack or `pnpm` from the `packageManager` field in `package.json`. The `./omniharness` script enables and prepares Corepack automatically when it is available.
+- `ripgrep` (`rg`) is recommended for fast agent repository search. The `./omniharness` launcher installs it automatically when a supported system package manager is available. Set `OMNIHARNESS_SKIP_RECOMMENDED_TOOLS=1` to skip recommended tool setup.
 - At least one supported coding agent when you want to run real workers:
   - Codex CLI plus `codex-acp`
   - Claude CLI plus `claude-agent-acp`

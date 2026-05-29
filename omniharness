@@ -30,6 +30,8 @@ if [ ! -d "$ROOT_DIR/node_modules" ] || [ ! -f "$ROOT_DIR/node_modules/.modules.
   "${PNPM_CMD[@]}" install
 fi
 
+./scripts/ensure-recommended-tools.sh
+
 node ./scripts/setup-auth.mjs
 
 WEB_PORT="${PORT:-3050}"
