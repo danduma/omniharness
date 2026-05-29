@@ -1,14 +1,32 @@
 import { readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 
 const userAgent = process.env.npm_config_user_agent || "";
+const npmExecPath = process.env.npm_execpath || "";
 const args = new Set(process.argv.slice(2));
 const expectedNodeMajor = Number(process.env.OMNIHARNESS_EXPECTED_NODE_MAJOR || "22");
 const currentNodeMajor = Number(process.versions.node.split(".")[0]);
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 const expectedPnpmVersion = String(packageJson.packageManager || "").match(/^pnpm@(.+)$/)?.[1];
-const currentPnpmVersion = userAgent.match(/^pnpm\/([^\s]+)/)?.[1];
+const currentPnpmVersion = userAgent.match(/^pnpm\/([^\s]+)/)?.[1] ?? readPnpmExecVersion();
+const isPnpm = userAgent.startsWith("pnpm/") || /(?:^|[/\\])pnpm(?:\.cjs|\.js|\.cmd)?$/.test(npmExecPath);
 
-if (!userAgent.startsWith("pnpm/")) {
+function readPnpmExecVersion() {
+  if (!/(?:^|[/\\])pnpm(?:\.cjs|\.js|\.cmd)?$/.test(npmExecPath)) {
+    return undefined;
+  }
+
+  try {
+    return execFileSync(npmExecPath, ["--version"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+if (!isPnpm) {
   console.error("This repository is pnpm-only. Please use pnpm.");
   process.exit(1);
 }
