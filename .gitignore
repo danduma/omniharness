@@ -46,6 +46,7 @@
 .tmp-*
 /tmp/
 /attachments/
+/docs/plans/
 /vibes/ad-hoc/
 /.agents/skills/impeccable/
 /system_message_renderer.patch
