@@ -177,6 +177,43 @@ describe("useHomeViewModel", () => {
     expect(viewModel.latestStuckEvent).toBeNull();
   });
 
+  it("uses a pending clarification row as the awaiting-user question when the message row is absent", () => {
+    const viewModel = useRenderViewModel(createState({
+      runs: [createRun({
+        mode: "implementation",
+        status: "awaiting_user",
+      })],
+      plans: [{ id: "plan-1", path: "/workspace/project" }],
+      messages: [{
+        id: "message-1",
+        runId: "run-1",
+        role: "user",
+        kind: "checkpoint",
+        content: "I have the photos named already",
+        createdAt: "2026-05-13T00:00:00.000Z",
+      }],
+      clarifications: [{
+        id: "clarification-1",
+        runId: "run-1",
+        question: "Which folder contains the photos?",
+        answer: null,
+        status: "pending",
+      }],
+    }));
+
+    expect(viewModel.awaitingUserQuestionMessage).toMatchObject({
+      id: "clarification-1",
+      runId: "run-1",
+      role: "supervisor",
+      kind: "clarification",
+      content: "Which folder contains the photos?",
+    });
+    expect(viewModel.visibleMessages.map((message) => message.content)).toEqual([
+      "I have the photos named already",
+      "Which folder contains the photos?",
+    ]);
+  });
+
   it("does not treat cached selected-run previews as authoritative conversation loads", () => {
     const viewModel = useRenderViewModel(createState({
       snapshotRunId: "run-1",

@@ -250,7 +250,7 @@ function ConversationProjectGroupList({
                       )}
                     >
                       <div className="min-w-0 flex-1">
-                        <div className="min-w-0 flex items-center justify-between gap-2" title={run.path}>
+                        <div className="min-w-0 flex items-center justify-between gap-2">
                           <div className="flex min-w-0 flex-1 items-center gap-2">
                             <span className="inline-flex h-5 w-3 shrink-0 items-center justify-center">
                               {showAwaitingUserIndicator && statusIndicatorLabel ? (
@@ -559,10 +559,10 @@ export function ConversationSidebar({
               </button>
               <button
                 type="button"
-                onClick={() => setConversationSidebarTab("active")}
+                onClick={() => setConversationSidebarTab("recent")}
                 className={cn(
                   "rounded px-2 py-0.5 text-xs font-semibold transition-colors",
-                  conversationSidebarTab === "active"
+                  conversationSidebarTab === "recent"
                     ? "bg-[#deddda] text-[#1f1f1f] dark:bg-white/[0.12] dark:text-zinc-100"
                     : "text-muted-foreground hover:text-foreground",
                 )}
@@ -570,11 +570,9 @@ export function ConversationSidebar({
                 {t("conversation.sidebar.tab.active")}
               </button>
             </div>
-            {conversationSidebarTab === "projects" && (
-              <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={openFolderPicker}>
-                <FolderPlus className="h-3.5 w-3.5" />
-              </Button>
-            )}
+            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={openFolderPicker}>
+              <FolderPlus className="h-3.5 w-3.5" />
+            </Button>
           </div>
 
           {conversationSidebarTab === "projects" ? (

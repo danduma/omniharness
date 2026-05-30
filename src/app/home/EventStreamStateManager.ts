@@ -173,18 +173,25 @@ function mergeScopedMessages(current: EventStreamState, incoming: EventStreamSta
 }
 
 function mergeScopedCachedState(current: EventStreamState, cached: EventStreamState): EventStreamState {
-  const currentRuns = current.runs ?? [];
-  const currentPlans = current.plans ?? [];
-  const currentAccounts = current.accounts ?? [];
-  const currentPlanIds = new Set(currentRuns.map((run) => run.planId));
-
+  // hydrateFromCacheScope swaps scopes (e.g. on session switch). The cached
+  // payload for the newly-selected scope only contains data that was
+  // observed while THAT scope was active — its messages/workers/agents/
+  // queuedMessages/executionEvents are a strict subset of what we already
+  // know across all runs. Replacing current collections with that subset
+  // briefly empties any cross-run sidebar view (notably the Active tab,
+  // whose filter is driven by messages+workers+agents+queuedMessages).
+  //
+  // Initial-mount cache hydration takes a different path (hydrateFromCaches
+  // → snapshotCache.hydrateState) that already prefers current values when
+  // present and falls back to cached when empty, so the only consumers of
+  // this merge are scope transitions where current is server-authoritative.
+  // Preserve current state and only adopt the scope-pointer metadata so
+  // consumers gating on snapshotRunId still recognize the switch.
   return {
-    ...cached,
-    runs: currentRuns.length > 0 ? currentRuns : cached.runs ?? [],
-    plans: currentPlans.length > 0
-      ? currentPlans
-      : (cached.plans ?? []).filter((plan) => currentPlanIds.size === 0 || currentPlanIds.has(plan.id)),
-    accounts: currentAccounts.length > 0 ? currentAccounts : cached.accounts ?? [],
+    ...current,
+    snapshotRunId: cached.snapshotRunId ?? current.snapshotRunId,
+    snapshotChecksum: cached.snapshotChecksum ?? current.snapshotChecksum,
+    snapshotScope: cached.snapshotScope ?? current.snapshotScope,
     frontendErrors: [],
   };
 }

@@ -207,7 +207,7 @@ describe("EventStreamStateManager", () => {
     ]);
   });
 
-  it("can switch to a selected conversation from the scoped frontend cache", () => {
+  it("adopts the new scope pointer when switching but preserves current cross-run state", () => {
     const cache = new EventStreamSnapshotCacheManager({ storage: memoryStorage() });
     cache.rememberState(state("run-a", "cached first conversation", "sha256:a"), "run-a");
     cache.rememberState(state("run-b", "cached second conversation", "sha256:b"), "run-b");
@@ -221,9 +221,12 @@ describe("EventStreamStateManager", () => {
     const hydrated = manager.hydrateFromCacheScope("run-b");
 
     expect(hydrated).toBe(true);
+    // Scope pointer follows the new selection so isSelectedConversationPreviewAvailable etc. flip.
     expect(manager.getSnapshot().snapshotRunId).toBe("run-b");
     expect(manager.getSnapshot().snapshotChecksum).toBe("sha256:b");
-    expect(manager.getSnapshot().messages.map((message) => message.content)).toEqual(["cached second conversation"]);
+    // Cross-run state (messages, workers, agents, queuedMessages, etc.) is preserved so the
+    // sidebar — especially the Active tab whose filter spans all runs — does not briefly empty.
+    expect(manager.getSnapshot().messages.map((message) => message.content)).toEqual(["current conversation"]);
   });
 
   it("marks scoped frontend cache hydration as a preview instead of authoritative server state", () => {
@@ -244,7 +247,11 @@ describe("EventStreamStateManager", () => {
     manager.updateFromServer(state("run-b", "fresh server conversation", "sha256:fresh"));
 
     expect(manager.getSnapshot().snapshotSource).toBe("server");
-    expect(manager.getSnapshot().messages.map((message) => message.content)).toEqual(["fresh server conversation"]);
+    // Fresh server data for run-b lands alongside run-a's preserved message — the scope
+    // switch is not a cross-run wipe.
+    const contents = manager.getSnapshot().messages.map((message) => message.content);
+    expect(contents).toContain("fresh server conversation");
+    expect(contents).toContain("current conversation");
   });
 
   it("does not demote selected server bootstrap state to a cached preview for the same run", () => {
@@ -513,7 +520,79 @@ describe("EventStreamStateManager", () => {
     expect(hydrated).toBe(true);
     expect(manager.getSnapshot().runs.map((item) => item.id)).toEqual(["run-a", "run-b"]);
     expect(manager.getSnapshot().plans.map((item) => item.id)).toEqual(["run-a-plan", "run-b-plan"]);
-    expect(manager.getSnapshot().messages.map((message) => message.content)).toEqual(["cached second conversation"]);
+    // Cross-run state is preserved on scope switch so the sidebar's Active tab does not flicker.
+    expect(manager.getSnapshot().messages.map((message) => message.content)).toEqual(["current first conversation"]);
+  });
+
+  it("preserves cross-run sidebar signals (workers, agents, queued messages, foreign messages) on scope switch", () => {
+    // Regression: switching the selected session used to wipe all the
+    // cross-run collections that drive the sidebar Active tab, making
+    // every session briefly disappear from the list until the next SSE
+    // frame restored them. The cached payload for the newly-selected
+    // scope only contains that scope's data, so a wholesale replace
+    // strips away every other run's signals.
+    const cache = new EventStreamSnapshotCacheManager({ storage: memoryStorage() });
+    cache.rememberState({
+      ...state("run-b", "cached second conversation", "sha256:b"),
+      // The cache for scope "run-b" only knows about run-b's workers /
+      // agents / queue; if hydration blindly trusts this, run-a's
+      // sidebar signals vanish.
+      workers: [],
+      agents: [],
+      queuedMessages: [],
+    }, "run-b");
+
+    const currentWorkers = [
+      { id: "worker-a", runId: "run-a", status: "working", updatedAt: new Date(0).toISOString(), type: "claude" },
+      { id: "worker-c", runId: "run-c", status: "idle", updatedAt: new Date(0).toISOString(), type: "claude" },
+    ];
+    const currentAgents = [
+      { name: "worker-a", state: "working", updatedAt: new Date(0).toISOString(), lastText: "", currentText: "thinking…" },
+    ];
+    const currentQueued = [{
+      id: "queued-a",
+      runId: "run-a",
+      targetWorkerId: "worker-a",
+      action: "steer" as const,
+      content: "queued for a",
+      status: "pending" as const,
+      lastError: null,
+      attachments: [],
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+      deliveredAt: null,
+    }];
+    const currentMessages = [
+      ...state("run-a", "current message in run-a", "sha256:current").messages,
+      { id: "extra-c", runId: "run-c", role: "user", content: "current message in run-c", createdAt: new Date(0).toISOString(), kind: "checkpoint", attachments: [] },
+    ];
+
+    const manager = new EventStreamStateManager({
+      ...state("run-a", "current message in run-a", "sha256:current"),
+      messages: currentMessages,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      workers: currentWorkers as any,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      agents: currentAgents as any,
+      queuedMessages: currentQueued,
+    }, {
+      snapshotCache: cache,
+      snapshotCacheScope: "run-a",
+      deferCacheHydration: true,
+      initialSnapshotSource: "server",
+    });
+
+    manager.hydrateFromCacheScope("run-b");
+
+    const snap = manager.getSnapshot();
+    expect(snap.snapshotRunId).toBe("run-b");
+    expect(snap.workers.map((w) => w.id)).toEqual(["worker-a", "worker-c"]);
+    expect(snap.agents.map((a) => a.name)).toEqual(["worker-a"]);
+    expect((snap.queuedMessages ?? []).map((q) => q.id)).toEqual(["queued-a"]);
+    expect(snap.messages.map((m) => m.content)).toEqual([
+      "current message in run-a",
+      "current message in run-c",
+    ]);
   });
 
   it("does not hydrate a stale scoped cache when an authoritative catalog excludes that run", () => {

@@ -397,6 +397,29 @@ describe("buildActiveConversationGroups", () => {
     });
     expect(result).toHaveLength(1);
   });
+
+  it("keeps selected run visible even when read, not working, and not recent", () => {
+    const groups = [makeGroup("/proj/a", [{ id: "run-1", status: "done", createdAt: ANCIENT }])];
+    const result = buildActiveConversationGroups({
+      ...BASE_ARGS,
+      groups,
+      readMarkers: { "run-1": NOW.toString() },
+      selectedRunId: "run-1",
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0].runs[0].id).toBe("run-1");
+  });
+
+  it("does not keep a non-selected stale read run visible", () => {
+    const groups = [makeGroup("/proj/a", [{ id: "run-1", status: "done", createdAt: ANCIENT }])];
+    const result = buildActiveConversationGroups({
+      ...BASE_ARGS,
+      groups,
+      readMarkers: { "run-1": NOW.toString() },
+      selectedRunId: "run-2",
+    });
+    expect(result).toHaveLength(0);
+  });
 });
 
 // ── filterActiveConversationGroups ───────────────────────────────────────────

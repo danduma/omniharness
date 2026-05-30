@@ -17,8 +17,8 @@ import { sideWindowManager } from "./SideWindowManager";
 import { parseBusyMessageAction } from "./busy-message-behavior";
 import {
   isMutationPendingForSelectedRun,
+  resolveDirectControlPendingAssistantStatus,
   resolvePendingConversationWorkerId,
-  shouldShowDirectControlPendingAssistant,
 } from "./direct-control-activity";
 import { cancelInactiveAutoResumeTimers, shouldFireAutoResumeTimer } from "./auto-resume-selection";
 import { EventStreamStateManager } from "./EventStreamStateManager";
@@ -991,7 +991,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     || WORKER_OPTIONS.find((o) => o.value === autoSelectedWorkerType)?.label
     || "Direct worker";
   const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct";
-  const showDirectControlWorkingIndicator = shouldShowDirectControlPendingAssistant({
+  const directControlPendingAssistantStatus = resolveDirectControlPendingAssistantStatus({
     isDirectConversation,
     pendingConversationWorkerId,
     busyConversationWorkerId,
@@ -1000,6 +1000,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     agentStates: conversationAgents.map((agent) => agent.state),
     hasAgentCurrentText: conversationAgents.some((agent) => Boolean(agent.currentText?.trim())),
   });
+  const showDirectControlWorkingIndicator = directControlPendingAssistantStatus !== null;
   const welcomeRepoName = resolveRepoName(currentProjectScope);
   const pairDeviceAvailabilityError = !authEnabled
     ? "Phone pairing requires OmniHarness auth. Set OMNIHARNESS_AUTH_PASSWORD or OMNIHARNESS_AUTH_PASSWORD_HASH and restart, then open Connect Phone again."
@@ -1252,6 +1253,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           isPreflightConfirmationAnswering={isSendingSelectedConversationMessage}
           conversationAgents={conversationAgents}
           showDirectControlWorkingIndicator={showDirectControlWorkingIndicator}
+          directControlPendingAssistantStatus={directControlPendingAssistantStatus}
           showConversationExecution={showConversationExecution}
           liveExecutionStatus={liveExecutionStatus}
           liveThoughts={liveThoughts}
