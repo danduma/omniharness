@@ -21,8 +21,8 @@ OmniHarness is early open-source software under active development. Expect sharp
 ## Requirements
 
 - macOS or Linux with a normal developer shell.
-- Node.js 22.x. If you use `nvm`, run `nvm use` from the repo root.
-- Corepack or `pnpm` from the `packageManager` field in `package.json`. The `./omniharness` script enables and prepares Corepack automatically when it is available.
+- Node.js 22.13 or newer, up to but not including Node.js 26. If you use `nvm`, run `nvm use` from the repo root to select the recommended local version.
+- pnpm 9 or newer. The `packageManager` field in `package.json` is a known-good Corepack default, not an exact-version requirement.
 - `ripgrep` (`rg`) is recommended for fast agent repository search. The `./omniharness` launcher installs it automatically when a supported system package manager is available. Set `OMNIHARNESS_SKIP_RECOMMENDED_TOOLS=1` to skip recommended tool setup.
 - At least one supported coding agent when you want to run real workers:
   - Codex CLI plus `codex-acp`
@@ -32,7 +32,7 @@ OmniHarness is early open-source software under active development. Expect sharp
 
 ## Quick Start
 
-Clone the repo, enter it, and select Node 22:
+Clone the repo, enter it, and select the recommended Node version:
 
 ```bash
 git clone <repo-url> omniharness
@@ -309,9 +309,9 @@ The command must print JSON:
 ## Troubleshooting Setup
 
 - **`This repository is pnpm-only`:** run commands with `pnpm`, not `npm install` or `yarn`.
-- **Wrong pnpm version:** run `./omniharness` from the repo root so the bootstrap script can select the pinned `packageManager` version.
-- **Wrong Node major:** run `nvm use`, then retry. If you already installed dependencies with a different Node major, run `pnpm rebuild better-sqlite3`.
-- **Native SQLite binding errors:** run `pnpm rebuild better-sqlite3` under Node 22.
+- **Unsupported pnpm version:** install pnpm 9 or newer, or run `./omniharness` from the repo root so the launcher can use Corepack's known-good default when available.
+- **Unsupported Node version:** use Node.js 22.13 or newer, but below Node.js 26. If you already installed dependencies with a different Node version, run `pnpm rebuild better-sqlite3 @node-rs/argon2 sharp`.
+- **Native SQLite binding errors:** run `pnpm rebuild better-sqlite3` under your current supported Node version.
 - **No supported worker appears:** install or log into at least one supported agent CLI, then run `scripts/install-agent-acp.sh --dry-run` and inspect `curl http://127.0.0.1:7800/doctor`.
 - **Port already in use:** stop the previous OmniHarness process, or set `PORT` and `OMNIHARNESS_AGENT_RUNTIME_PORT` before starting.
 - **Phone pairing asks for auth:** set `OMNIHARNESS_AUTH_PASSWORD` or `OMNIHARNESS_AUTH_PASSWORD_HASH` in `.env` and restart.

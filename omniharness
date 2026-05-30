@@ -7,22 +7,41 @@ cd "$ROOT_DIR"
 
 PACKAGE_MANAGER="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; const packageJson = JSON.parse(readFileSync("package.json", "utf8")); if (!/^pnpm@/.test(packageJson.packageManager || "")) process.exit(1); process.stdout.write(packageJson.packageManager);')"
 PNPM_VERSION="${PACKAGE_MANAGER#pnpm@}"
+MIN_PNPM_MAJOR="${OMNIHARNESS_MIN_PNPM_MAJOR:-9}"
 PNPM_CMD=()
 
-if command -v corepack >/dev/null 2>&1; then
+pnpm_major_ok() {
+  local version="$1"
+  local major="${version%%.*}"
+  [ -n "$major" ] && [ "$major" -ge "$MIN_PNPM_MAJOR" ] 2>/dev/null
+}
+
+if command -v pnpm >/dev/null 2>&1; then
+  CURRENT_PNPM_VERSION="$(COREPACK_ENABLE_PROJECT_SPEC=0 pnpm --version 2>/dev/null || true)"
+  if pnpm_major_ok "$CURRENT_PNPM_VERSION"; then
+    PNPM_CMD=(env COREPACK_ENABLE_PROJECT_SPEC=0 pnpm)
+  fi
+fi
+
+if [ "${#PNPM_CMD[@]}" -eq 0 ] && command -v corepack >/dev/null 2>&1; then
   corepack enable >/dev/null 2>&1 || true
   corepack prepare "$PACKAGE_MANAGER" --activate >/dev/null 2>&1 || true
-  PNPM_CMD=(corepack pnpm)
-elif command -v pnpm >/dev/null 2>&1; then
-  CURRENT_PNPM_VERSION="$(pnpm --version 2>/dev/null || true)"
-  if [ "$CURRENT_PNPM_VERSION" != "$PNPM_VERSION" ]; then
-    echo "OmniHarness requires $PACKAGE_MANAGER, but found pnpm ${CURRENT_PNPM_VERSION:-unknown} and Corepack is unavailable." >&2
-    exit 1
+  CURRENT_PNPM_VERSION="$(COREPACK_ENABLE_PROJECT_SPEC=0 corepack pnpm --version 2>/dev/null || true)"
+  if pnpm_major_ok "$CURRENT_PNPM_VERSION"; then
+    PNPM_CMD=(env COREPACK_ENABLE_PROJECT_SPEC=0 corepack pnpm)
   fi
-  PNPM_CMD=(pnpm)
-else
-  echo "OmniHarness requires Corepack or pnpm $PNPM_VERSION, but neither is available on PATH." >&2
+fi
+
+if [ "${#PNPM_CMD[@]}" -eq 0 ]; then
+  if [ -n "${CURRENT_PNPM_VERSION:-}" ]; then
+    echo "OmniHarness requires pnpm $MIN_PNPM_MAJOR or newer, but found pnpm $CURRENT_PNPM_VERSION." >&2
+  else
+    echo "OmniHarness requires pnpm $MIN_PNPM_MAJOR or newer. Install pnpm or enable Corepack, then run ./omniharness again." >&2
+  fi
+  echo "Corepack can use $PACKAGE_MANAGER as a known-good default when it is available." >&2
   exit 1
+else
+  echo "[omniharness] Using pnpm ${CURRENT_PNPM_VERSION:-unknown} (minimum supported major: $MIN_PNPM_MAJOR; known-good default: $PNPM_VERSION)."
 fi
 
 if [ ! -d "$ROOT_DIR/node_modules" ] || [ ! -f "$ROOT_DIR/node_modules/.modules.yaml" ] || [ ! -d "$ROOT_DIR/node_modules/.pnpm" ]; then
