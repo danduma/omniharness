@@ -417,16 +417,21 @@ test("editing or cancelling a queued message removes it optimistically and rolls
 });
 
 test("direct control conversations show a tiny animated working indicator while stoppable", () => {
-  expect(terminalSource).toContain("function PendingAssistantActivity()");
-  expect(terminalSource).toContain('const PENDING_ASSISTANT_TEXT = "Thinking..."');
+  expect(terminalSource).toContain("function PendingAssistantActivity({ status }");
+  expect(terminalSource).toContain('"terminal.pending.connecting"');
+  expect(terminalSource).toContain('"terminal.pending.thinking"');
+  expect(terminalSource).toContain('"terminal.pending.working"');
   expect(terminalSource).toContain('kind: "pending_assistant"');
-  expect(terminalSource).toContain('aria-label="Agent is thinking"');
-  expect(terminalSource).toContain("Array.from(PENDING_ASSISTANT_TEXT)");
+  expect(terminalSource).toContain("aria-label={text}");
+  expect(terminalSource).toContain("Array.from(text)");
   expect(terminalSource).toContain("text-[calc(var(--terminal-message-size)+1px)]");
   expect(pageSource).toContain("showDirectControlWorkingIndicator={showDirectControlWorkingIndicator}");
+  expect(pageSource).toContain("directControlPendingAssistantStatus={directControlPendingAssistantStatus}");
   expect(pageSource).toContain("showPendingAssistantIndicator={showDirectControlWorkingIndicator}");
+  expect(pageSource).toContain("pendingAssistantStatus={directControlPendingAssistantStatus ?? undefined}");
   expect(pageSource).toContain("const hasBusyConversation = isSupervisorRunning || Boolean(stoppableConversationWorkerId);");
-  expect(pageSource).toContain("const showDirectControlWorkingIndicator = shouldShowDirectControlPendingAssistant({");
+  expect(pageSource).toContain("const directControlPendingAssistantStatus = resolveDirectControlPendingAssistantStatus({");
+  expect(pageSource).toContain("const showDirectControlWorkingIndicator = directControlPendingAssistantStatus !== null;");
   expect(pageSource).toContain("workerStatuses: selectedRunWorkersForDisplay.map((worker) => worker.status)");
   expect(terminalSource).toContain("showPendingAssistantIndicator = false");
   expect(terminalSource).toContain("pendingAssistantActivity");

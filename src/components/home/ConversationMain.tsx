@@ -15,7 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MarkdownContent } from "@/components/MarkdownContent";
-import type { TerminalUserMessage } from "@/components/Terminal";
+import type { TerminalPendingAssistantStatus, TerminalUserMessage } from "@/components/Terminal";
 import { PlanningArtifactsPanel } from "@/components/PlanningArtifactsPanel";
 import { conversationCopyNoticeManager, conversationMainManager } from "@/components/component-state-managers";
 import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
@@ -620,6 +620,7 @@ interface ConversationMainProps {
   isPreflightConfirmationAnswering: boolean;
   conversationAgents: AgentSnapshot[];
   showDirectControlWorkingIndicator: boolean;
+  directControlPendingAssistantStatus: TerminalPendingAssistantStatus | null;
   showConversationExecution: boolean;
   liveExecutionStatus: ConversationExecutionStatusProps["liveExecutionStatus"];
   liveThoughts: ConversationExecutionStatusProps["liveThoughts"];
@@ -762,6 +763,7 @@ export function ConversationMain({
   isPreflightConfirmationAnswering,
   conversationAgents,
   showDirectControlWorkingIndicator,
+  directControlPendingAssistantStatus,
   showConversationExecution,
   liveExecutionStatus,
   liveThoughts,
@@ -999,6 +1001,7 @@ export function ConversationMain({
                 textSizeScope="conversation"
                 conversationMessageTextSize
                 showPendingAssistantIndicator={showDirectControlWorkingIndicator}
+                pendingAssistantStatus={directControlPendingAssistantStatus ?? undefined}
                 isLoading={isHydratingConversations || isDirectWorkerStreamLoading}
                 projectRoot={projectRoot}
                 onOpenProjectFile={onOpenProjectFile}

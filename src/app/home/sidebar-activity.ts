@@ -78,6 +78,7 @@ export interface SidebarRunActivityArgs {
   queuedMessages: QueuedMessageInput[];
   workerOutputObservedAtByRunId: Record<string, string>;
   nowMs: number;
+  selectedRunId?: string | null;
 }
 
 function getLatestUserInputAt(
@@ -176,7 +177,8 @@ export function classifySidebarRun(args: SidebarRunActivityArgs): RunActiveClass
     recentActivityAt !== null &&
     nowMs - parseTimestampMs(recentActivityAt) <= ACTIVE_SESSION_ACTIVITY_WINDOW_MS;
 
-  const isActive = isUnread || isWorking || isRecent;
+  const isSelected = args.selectedRunId != null && args.run.id === args.selectedRunId;
+  const isActive = isUnread || isWorking || isRecent || isSelected;
 
   let activeSortAt: string | null = recentActivityAt;
   if (isUnread && latestUnreadAt) {
@@ -210,10 +212,11 @@ export interface BuildActiveGroupsArgs {
   queuedMessages: QueuedMessageInput[];
   workerOutputObservedAtByRunId: Record<string, string>;
   nowMs: number;
+  selectedRunId?: string | null;
 }
 
 export function buildActiveConversationGroups(args: BuildActiveGroupsArgs): SidebarGroup[] {
-  const { groups, messages, readMarkers, workers, agents, queuedMessages, workerOutputObservedAtByRunId, nowMs } = args;
+  const { groups, messages, readMarkers, workers, agents, queuedMessages, workerOutputObservedAtByRunId, nowMs, selectedRunId } = args;
 
   const activeGroups: Array<{ group: SidebarGroup; latestActivityMs: number }> = [];
 
@@ -236,6 +239,7 @@ export function buildActiveConversationGroups(args: BuildActiveGroupsArgs): Side
         queuedMessages,
         workerOutputObservedAtByRunId,
         nowMs,
+        selectedRunId,
       });
 
       if (!result.isActive) continue;

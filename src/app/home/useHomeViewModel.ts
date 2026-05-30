@@ -17,7 +17,7 @@ import { buildDirectTerminalUserMessages } from "@/lib/worker-terminal-messages"
 import { resolveProjectScope } from "@/lib/project-scope";
 import { buildConversationTimelineItems, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterPromotedPlanningTranscriptMessages, extractWorkerFailureDetail, getConversationTranscriptRunIds, getLatestUnresolvedWorkerStuckEvent, getWorkerModelOptions, parseProjectList, parseWorkerType, parseWorkerTypes, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought } from "./utils";
 import { COMPOSER_WORKER_OPTIONS, WORKER_OPTIONS } from "./constants";
-import type { AgentSnapshot, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, RunMode, RunRecord, SidebarGroup, SupervisorInterventionRecord } from "./types";
+import type { AgentSnapshot, ClarificationRecord, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, RunMode, RunRecord, SidebarGroup, SupervisorInterventionRecord } from "./types";
 import type { WorkerCatalogResponse } from "./types";
 import { sessionStateManager } from "./SessionStateManager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
@@ -174,16 +174,24 @@ export function useHomeViewModel({
       queuedMessages: (state.queuedMessages || []) as Array<{ runId: string; createdAt: string; updatedAt: string; deliveredAt?: string | null }>,
       workerOutputObservedAtByRunId,
       nowMs: activeFilterNowMs,
+      selectedRunId,
     });
     return filterActiveConversationGroups(unsearched, searchQuery);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupedProjects, state.messages, state.workers, state.agents, state.queuedMessages, readMarkers, searchQuery]);
+  }, [groupedProjects, state.messages, state.workers, state.agents, state.queuedMessages, readMarkers, searchQuery, selectedRunId]);
 
   const selectedRunMessages = useMemo(
     () => (selectedRunId
       ? state.messages?.filter((m: { runId: string }) => m.runId === selectedRunId)
       : []),
     [selectedRunId, state.messages],
+  );
+
+  const selectedRunClarifications = useMemo(
+    () => (selectedRunId
+      ? ((state.clarifications || []) as ClarificationRecord[]).filter((clarification) => clarification.runId === selectedRunId)
+      : []),
+    [selectedRunId, state.clarifications],
   );
 
   const transcriptRunIds = useMemo(
@@ -394,10 +402,50 @@ export function useHomeViewModel({
     };
   }, [failedWorkerAvailability, selectedRun, workerFailureDetail]);
 
+  const awaitingUserQuestionMessage = useMemo(() => {
+    if (selectedRun?.status !== "awaiting_user") {
+      return null;
+    }
+    const messages = (selectedRunMessages || []) as MessageRecord[];
+    const latestUserAt = messages
+      .filter((m) => m.role === "user")
+      .reduce((max, m) => Math.max(max, new Date(m.createdAt).getTime()), 0);
+    const candidates = messages
+      .filter((m) => m.role === "supervisor"
+        && (m.kind === "clarification" || m.kind === "implementation_confirmation")
+        && new Date(m.createdAt).getTime() >= latestUserAt)
+      .sort(compareNewestByCreatedAtThenId);
+    if (candidates[0]) {
+      return candidates[0];
+    }
+
+    const fallbackCreatedAt = selectedRun?.updatedAt ?? selectedRun?.createdAt ?? new Date(0).toISOString();
+    const clarification = selectedRunClarifications
+      .filter((item) => item.status.trim().toLowerCase() === "pending" && item.question.trim().length > 0)
+      .map((item): MessageRecord => ({
+        id: item.id,
+        runId: item.runId,
+        role: "supervisor",
+        kind: "clarification",
+        content: item.question,
+        createdAt: item.createdAt ?? fallbackCreatedAt,
+      }))
+      .filter((item) => new Date(item.createdAt).getTime() >= latestUserAt)
+      .sort(compareNewestByCreatedAtThenId)[0];
+    return clarification ?? null;
+  }, [selectedRun?.createdAt, selectedRun?.status, selectedRun?.updatedAt, selectedRunClarifications, selectedRunMessages]);
+
   const visibleMessages = useMemo(() => {
     const messages = (filteredMessages || []) as MessageRecord[];
-    return messages.filter(shouldRenderMessageInMainConversation);
-  }, [filteredMessages]);
+    const renderedMessages = messages.filter(shouldRenderMessageInMainConversation);
+    if (
+      !awaitingUserQuestionMessage
+      || renderedMessages.some((message) => message.id === awaitingUserQuestionMessage.id)
+    ) {
+      return renderedMessages;
+    }
+    return [...renderedMessages, awaitingUserQuestionMessage].sort(compareOldestByCreatedAtThenId);
+  }, [awaitingUserQuestionMessage, filteredMessages]);
 
   const conversationTimelineItems = useMemo(() => buildConversationTimelineItems({
     messages: visibleMessages,
@@ -438,21 +486,6 @@ export function useHomeViewModel({
   const isSelectedConversationPreviewAvailable = !selectedRunId || state.snapshotRunId === selectedRunId;
   const isSelectedConversationLoaded = isSelectedConversationPreviewAvailable && state.snapshotSource === "server";
 
-  const awaitingUserQuestionMessage = useMemo(() => {
-    if (selectedRun?.status !== "awaiting_user") {
-      return null;
-    }
-    const messages = (selectedRunMessages || []) as MessageRecord[];
-    const latestUserAt = messages
-      .filter((m) => m.role === "user")
-      .reduce((max, m) => Math.max(max, new Date(m.createdAt).getTime()), 0);
-    const candidates = messages
-      .filter((m) => m.role === "supervisor"
-        && (m.kind === "clarification" || m.kind === "implementation_confirmation")
-        && new Date(m.createdAt).getTime() >= latestUserAt)
-      .sort(compareNewestByCreatedAtThenId);
-    return candidates[0] ?? null;
-  }, [selectedRun?.status, selectedRunMessages]);
   const latestStuckEvent = getLatestUnresolvedWorkerStuckEvent(selectedRunExecutionEvents);
 
   const canSurfaceWorkerRecovery = selectedRun?.status === "running";

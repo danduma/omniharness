@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isMutationPendingForSelectedRun,
+  resolveDirectControlPendingAssistantStatus,
   resolvePendingConversationWorkerId,
   shouldShowDirectControlPendingAssistant,
 } from "@/app/home/direct-control-activity";
@@ -19,7 +20,7 @@ describe("shouldShowDirectControlPendingAssistant", () => {
   });
 
   it("shows Thinking while direct worker work is actually active", () => {
-    expect(shouldShowDirectControlPendingAssistant({
+    const args = {
       isDirectConversation: true,
       pendingConversationWorkerId: null,
       busyConversationWorkerId: "run-1-worker-1",
@@ -27,7 +28,34 @@ describe("shouldShowDirectControlPendingAssistant", () => {
       workerStatuses: ["working"],
       agentStates: ["working"],
       hasAgentCurrentText: true,
-    })).toBe(true);
+    };
+
+    expect(shouldShowDirectControlPendingAssistant(args)).toBe(true);
+    expect(resolveDirectControlPendingAssistantStatus(args)).toBe("working");
+  });
+
+  it("labels pending direct-send handoff as connecting before the worker starts", () => {
+    expect(resolveDirectControlPendingAssistantStatus({
+      isDirectConversation: true,
+      pendingConversationWorkerId: "run-1-worker-1",
+      busyConversationWorkerId: null,
+      selectedRunStatus: "running",
+      workerStatuses: ["idle"],
+      agentStates: ["idle"],
+      hasAgentCurrentText: false,
+    })).toBe("connecting");
+  });
+
+  it("labels live assistant text without a working status as thinking", () => {
+    expect(resolveDirectControlPendingAssistantStatus({
+      isDirectConversation: true,
+      pendingConversationWorkerId: null,
+      busyConversationWorkerId: null,
+      selectedRunStatus: "running",
+      workerStatuses: ["idle"],
+      agentStates: ["idle"],
+      hasAgentCurrentText: true,
+    })).toBe("thinking");
   });
 
   it("does not show Thinking for a terminal direct run even if stale worker text remains", () => {

@@ -3,11 +3,13 @@ import { isTerminalRunStatus } from "@/lib/run-status";
 
 const DIRECT_WORKING_STATUSES = new Set(["starting", "working", "stuck", "recovering"]);
 
+export type DirectControlPendingAssistantStatus = "connecting" | "thinking" | "working";
+
 function hasWorkingStatus(statuses: readonly (string | null | undefined)[]) {
   return statuses.some((status) => DIRECT_WORKING_STATUSES.has(normalizeWorkerStatus(status)));
 }
 
-export function shouldShowDirectControlPendingAssistant(args: {
+export function resolveDirectControlPendingAssistantStatus(args: {
   isDirectConversation: boolean;
   pendingConversationWorkerId: string | null | undefined;
   busyConversationWorkerId: string | null | undefined;
@@ -17,20 +19,30 @@ export function shouldShowDirectControlPendingAssistant(args: {
   hasAgentCurrentText: boolean;
 }) {
   if (!args.isDirectConversation) {
-    return false;
+    return null;
   }
 
   if (isTerminalRunStatus(args.selectedRunStatus)) {
-    return false;
+    return null;
   }
 
-  return Boolean(
-    args.pendingConversationWorkerId
-      || args.busyConversationWorkerId
-      || hasWorkingStatus(args.workerStatuses)
-      || hasWorkingStatus(args.agentStates)
-    || args.hasAgentCurrentText,
-  );
+  if (args.busyConversationWorkerId || hasWorkingStatus(args.workerStatuses) || hasWorkingStatus(args.agentStates)) {
+    return "working";
+  }
+
+  if (args.hasAgentCurrentText) {
+    return "thinking";
+  }
+
+  if (args.pendingConversationWorkerId) {
+    return "connecting";
+  }
+
+  return null;
+}
+
+export function shouldShowDirectControlPendingAssistant(args: Parameters<typeof resolveDirectControlPendingAssistantStatus>[0]) {
+  return resolveDirectControlPendingAssistantStatus(args) !== null;
 }
 
 export function isMutationPendingForSelectedRun(args: {

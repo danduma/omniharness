@@ -64,7 +64,15 @@ export type RunRecord = {
   completionCommitSha?: string | null;
 };
 export type PlanItemRecord = { id: string; planId: string; title: string; phase: string | null; status: string };
-export type ClarificationRecord = { id: string; runId: string; question: string; answer: string | null; status: string };
+export type ClarificationRecord = {
+  id: string;
+  runId: string;
+  question: string;
+  answer: string | null;
+  status: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
 export type MessageRecord = {
   id: string;
   runId: string;
@@ -342,7 +350,7 @@ export type EventStreamState = {
 };
 export type SettingsTab = "general" | "models" | "credentials" | "agents" | "runtime" | "memory";
 
-export type ConversationSidebarTab = "projects" | "active";
+export type ConversationSidebarTab = "projects" | "recent";
 
 export type SidebarRun = {
   id: string;
