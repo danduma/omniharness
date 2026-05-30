@@ -135,10 +135,13 @@ test("user-initiated conversation sends reveal the appended turn", () => {
 
 test("project menus expose an auto commit action that starts a commit conversation", () => {
   expect(pageSource).toContain("AUTO_COMMIT_PROJECT_PROMPT");
+  expect(pageSource).toContain("MANUAL_COMMIT_PROJECT_PUSH_PROMPT");
   expect(pageSource).toContain("mode: \"commit\"");
   expect(pageSource).toContain("projectPath: payload.projectPath");
   expect(pageSource).toContain("autoCommitProject(group.path)");
+  expect(pageSource).toContain('autoCommitProject(group.path, "commit-push")');
   expect(pageSource).toContain("commit.menu.commitProjectNow");
+  expect(pageSource).toContain("commit.menu.commitAndPushProject");
 });
 
 test("deleting a conversation removes it optimistically before the request resolves", () => {
