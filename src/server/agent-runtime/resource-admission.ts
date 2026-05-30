@@ -57,6 +57,21 @@ function guardDisabled(env: EnvLike): boolean {
   return env.OMNIHARNESS_RESOURCE_GUARD === "0";
 }
 
+function buildResourceAdmissionMessage(failures: string[]): string {
+  const guidance: string[] = [];
+  if (failures.some((failure) => failure.startsWith("disk free "))) {
+    guidance.push("Free disk space before retrying.");
+  }
+  if (failures.some((failure) => failure.startsWith("memory available "))) {
+    guidance.push("Free memory before retrying.");
+  }
+  if (failures.some((failure) => failure.startsWith("memory headroom after pending spawns "))) {
+    guidance.push("Wait for in-flight worker spawns to settle before retrying.");
+  }
+  guidance.push("If other workers are running, you can also wait for them to finish.");
+  return `Cannot spawn worker because system resources are low (${failures.join("; ")}). ${guidance.join(" ")}`;
+}
+
 export function assessResourcePressure(
   snapshot: SystemResourceSnapshot,
   env: EnvLike,
@@ -232,7 +247,7 @@ export async function acquireWorkerSpawnResources(args: {
   }
 
   throw new ResourceAdmissionError(
-    `Cannot spawn worker because system resources are low (${failures.join("; ")}). Try again after other workers finish.`,
+    buildResourceAdmissionMessage(failures),
     {
       code: "worker.spawn.resource_exhausted",
       memoryFreePercent: snapshot.memoryFreePercent ?? null,

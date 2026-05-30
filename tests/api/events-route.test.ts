@@ -1323,6 +1323,50 @@ describe("GET /api/events", () => {
     ]);
   });
 
+  it("does not surface an invariant error when an awaiting-user snapshot has a pending clarification row", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/pending-clarification-row.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "awaiting_user",
+      title: "Pending clarification row",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(clarifications).values({
+      id: randomUUID(),
+      runId,
+      question: "Which image directory should I use?",
+      answer: null,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const payload = await response.json();
+
+    expect(payload.frontendErrors).toEqual([]);
+    expect(payload.clarifications).toEqual([
+      expect.objectContaining({
+        runId,
+        question: "Which image directory should I use?",
+        status: "pending",
+      }),
+    ]);
+  });
+
   it("does not require a supervisor question for direct worker awaiting-user snapshots", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

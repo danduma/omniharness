@@ -426,17 +426,17 @@ async function resumeDirectRunFromSavedSession(
   const worker = await selectDirectRecoveryWorker(run.id, targetMessage.id);
   const sessionId = worker?.bridgeSessionId?.trim();
   if (!worker || !sessionId) {
-    const message = "Direct retry could not locate persisted ACP session metadata for this conversation.";
-    emitNamedEvent({
-      kind: "error.surfaced",
-      code: "worker.resume.failed",
-      message,
-      surface: "banner",
+    await recordExecutionEvent({
       runId: run.id,
-      workerId: worker?.id,
-      cause: null,
+      workerId: worker?.id ?? null,
+      planItemId: null,
+      eventType: "direct_retry_session_metadata_missing",
+      details: {
+        summary: "Direct retry could not find saved ACP session metadata; starting a fresh worker instead.",
+        targetMessageId: targetMessage.id,
+      },
     });
-    throw Object.assign(new Error(message), { status: 500 });
+    return null;
   }
 
   const laterMessages = await db.select().from(messages).where(eq(messages.runId, run.id));

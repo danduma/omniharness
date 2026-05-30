@@ -1,10 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { db } from "@/server/db";
 import { eq } from "drizzle-orm";
-import { executionEvents, messages, plans, runs, settings, workerCounters, workers } from "@/server/db/schema";
+import { artifactStreams, executionEvents, messages, plans, runs, settings, workerCounters, workers } from "@/server/db/schema";
 import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
-import { getAppRoot } from "@/server/app-root";
+import { getAppDataPath, getAppRoot } from "@/server/app-root";
 import type { GitWorkspaceSnapshot, GitWorkspaceTarget } from "@/lib/git-workspace";
 import {
   __resetOutputStoreCachesForTests,
@@ -17,6 +17,7 @@ import {
   waitForConversationBackgroundTasksForTests,
 } from "@/server/conversations/worker-turn-gate";
 import { ResourceAdmissionError } from "@/server/agent-runtime/resource-admission";
+import { __resetArtifactStreamCachesForTests } from "@/server/artifacts/stream-metadata";
 
 const {
   mockStartSupervisorRun,
@@ -168,6 +169,7 @@ function buildWorkspaceTarget(overrides: Partial<GitWorkspaceTarget> = {}): GitW
 
 describe("POST /api/conversations", () => {
   beforeEach(async () => {
+    await waitForConversationBackgroundTasksForTests();
     mockStartSupervisorRun.mockClear();
     mockQueueConversationTitleGeneration.mockClear();
     mockEnsureSupervisorRuntimeStarted.mockClear();
@@ -180,14 +182,20 @@ describe("POST /api/conversations", () => {
     __resetOutputStoreCachesForTests();
     __resetNamedEventsForTests();
     __resetWorkerTurnChainsForTests();
+    __resetArtifactStreamCachesForTests();
 
     await db.delete(executionEvents);
+    await db.delete(artifactStreams);
     await db.delete(messages);
     await db.delete(workers);
     await db.delete(workerCounters);
     await db.delete(runs);
     await db.delete(plans);
     await db.delete(settings);
+  });
+
+  afterEach(async () => {
+    await waitForConversationBackgroundTasksForTests();
   });
 
   it("writes the direct initial prompt before bridge activity emitted during askAgent", async () => {
@@ -764,7 +772,7 @@ describe("POST /api/conversations", () => {
 
   it("emits a specific surfaced error when initial spawn is refused for low resources", async () => {
     mockSpawnAgent.mockRejectedValueOnce(new ResourceAdmissionError(
-      "Cannot spawn worker because system resources are low (memory available 10%, below 25%). Try again after other workers finish.",
+      "Cannot spawn worker because system resources are low (memory available 10%, below 25%). Free memory before retrying. If other workers are running, you can also wait for them to finish.",
       {
         memoryFreePercent: 10,
         minMemoryFreePercent: 25,
@@ -1317,7 +1325,10 @@ describe("POST /api/conversations", () => {
       (run) => run?.status === "failed",
     );
     const createdWorkers = await db.select().from(workers).where(eq(workers.runId, payload.runId));
-    const storedMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
+    const storedMessages = await waitFor(
+      () => db.select().from(messages).where(eq(messages.runId, payload.runId)),
+      (rows) => rows.some((message) => message.kind === "error" && message.content.includes("stopped without producing output")),
+    );
 
     expect(createdRun?.status).toBe("failed");
     expect(createdRun?.lastError).toContain("stopped without producing output");
@@ -1361,7 +1372,7 @@ describe("POST /api/conversations", () => {
       (calls) => calls.length > 0,
     );
     expect(mockAskAgent.mock.calls[0]?.[1]).toContain("Attached files available to inspect:");
-    expect(mockAskAgent.mock.calls[0]?.[1]).toContain("path: attachments/upload-1/attachment-1-screen.png");
+    expect(mockAskAgent.mock.calls[0]?.[1]).toContain(`path: ${getAppDataPath("attachments/upload-1/attachment-1-screen.png")}`);
   });
 
 });

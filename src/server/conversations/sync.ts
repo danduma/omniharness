@@ -496,11 +496,17 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       continue;
     }
 
-    if (isTerminalRunStatus(run.status) && !staleBusyFailure) {
+    const agent = agents.find((candidate) => candidate.name === worker.id);
+    const selectedTerminalDirectRunStillStreaming = Boolean(
+      options.selectedRunId === run.id
+      && isDirectRunMode(run.mode)
+      && agent
+      && isActiveLiveAgent(agent),
+    );
+    if (isTerminalRunStatus(run.status) && !staleBusyFailure && !selectedTerminalDirectRunStillStreaming) {
       continue;
     }
 
-    const agent = agents.find((candidate) => candidate.name === worker.id);
     if (!agent) {
       continue;
     }
@@ -595,8 +601,7 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
     }
 
     if (
-      isDirectRunMode(run.mode)
-      && options.selectedRunId === run.id
+      options.selectedRunId === run.id
       && isRecoverableMissingDirectWorkerStatus(worker.status)
     ) {
       const recoveryResult = await reconcileRunRecovery({

@@ -84,6 +84,32 @@ async function markNeedsUser(args: {
   reason: string;
   state: RecoveryState;
 }) {
+  if (
+    args.workerId
+    && (
+      args.state.kind === "lost_worker_resumable"
+      || args.state.kind === "lost_worker_rerunnable"
+      || args.state.kind === "needs_recovery"
+      || args.state.kind === "queue_blocked"
+    )
+  ) {
+    const worker = await db.select().from(workers).where(eq(workers.id, args.workerId)).get();
+    const normalized = normalizeRunStatus(worker?.status).split(":")[0]?.trim();
+    if (worker && normalized !== "lost") {
+      await db.update(workers).set({
+        status: "lost",
+        currentText: "",
+        updatedAt: new Date(),
+      }).where(eq(workers.id, worker.id));
+      emitNamedEvent({
+        kind: "worker.status",
+        runId: args.runId,
+        workerId: worker.id,
+        prev: worker.status,
+        next: "lost",
+      });
+    }
+  }
   await setRunNeedsRecovery({ runId: args.runId, reason: args.reason });
   await markRecoveryIncidentNeedsUser({
     incidentId: args.incidentId,
