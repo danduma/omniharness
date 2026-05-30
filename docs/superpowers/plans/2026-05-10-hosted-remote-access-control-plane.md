@@ -4,7 +4,7 @@
 
 **Goal:** Build the optional hosted OmniHarness control plane that owns registered accounts, paid remote-installation entitlements, memorable hostnames, Cloudflare Tunnel provisioning, DNS records, tunnel-token lifecycle, health, audit, and revocation for Omni-provided managed remote access.
 
-**Architecture:** Keep the existing Vercel landing page on `omniharness.dev` / `www.omniharness.dev`, and deploy a separate hosted API service at `control.omniharness.dev`. Use Supabase for Auth, Postgres persistence, RLS-aware account data, and audit/event storage; use a dedicated Node/TypeScript service for Cloudflare API orchestration, provisioning workflows, retries, diagnostics, and local-app handshakes. Local OmniHarness installations never receive Cloudflare account API credentials; they receive only an installation id, public origin, and scoped tunnel token.
+**Architecture:** Keep the existing Vercel landing page on `omniharness.dev` / `www.omniharness.dev`, and deploy a separate hosted API service at `panel.omniharness.dev`. Use Supabase for Auth, Postgres persistence, RLS-aware account data, and audit/event storage; use a dedicated Node/TypeScript service for Cloudflare API orchestration, provisioning workflows, retries, diagnostics, and local-app handshakes. Local OmniHarness installations never receive Cloudflare account API credentials; they receive only an installation id, public origin, and scoped tunnel token.
 
 **Tech Stack:** Node 22, TypeScript, Fastify, Zod, Supabase Auth, Supabase Postgres, Cloudflare Tunnel API, Cloudflare DNS API, Docker, Fly.io or another always-on container host, Vitest, Playwright or API-level journey tests, existing OmniHarness local app, `cloudflared`.
 
@@ -55,7 +55,7 @@ Cloudflare remains the authoritative DNS provider for `omniharness.dev`.
 ```text
 omniharness.dev              -> Vercel landing page
 www.omniharness.dev          -> Vercel landing page
-control.omniharness.dev      -> hosted control-plane API service
+panel.omniharness.dev        -> hosted control-plane API service
 <slug>.omniharness.dev      -> per-installation Cloudflare Tunnel DNS record
 ```
 
@@ -123,6 +123,19 @@ Repository isolation:
 
 ## Product Completeness Pass
 
+## Current Repository Audit
+
+This plan was re-checked against the repo on 2026-05-29.
+
+Current repo facts that affect implementation:
+
+- `pnpm-workspace.yaml` already exists, but currently only carries pnpm config such as overrides and `allowBuilds`; it does not yet define package globs. The plan must extend this file instead of creating it from scratch.
+- The local app uses Next.js App Router route files as thin adapters over the explicit runtime route registry in `src/runtime/http/routes/index.ts`. New local API behavior should follow that pattern when local integration is needed.
+- The hosted service should still be a separate Fastify service under `services/remote-control-plane`; it should not be implemented as local Next file-based routes.
+- Local auth/public-origin resolution currently lives in `src/server/auth/config.ts` and only checks `OMNIHARNESS_PUBLIC_ORIGIN`, forwarded headers, and request origin. The hosted remote-access origin precedence remains a real required change.
+- Local encrypted settings already exist in `src/server/settings/crypto.ts`, but `shouldEncryptSetting` currently encrypts generic secret-looking suffixes only. Remote tunnel token keys must be explicitly covered if their names do not match those patterns.
+- There is no dedicated local `/api/healthz` route today. The plan must add a tiny unauthenticated local health endpoint for Cloudflare reachability checks that proves "this is OmniHarness" without leaking conversations, prompts, auth state, or secrets.
+
 Baseline v1 surfaces:
 
 - hosted control-plane API,
@@ -161,11 +174,10 @@ Baseline v1 states:
 
 ### Create
 
-- `pnpm-workspace.yaml`: define the existing app and the new hosted control-plane package as workspace projects.
 - `services/remote-control-plane/package.json`: package scripts, dependencies, and test entry points for the hosted service.
 - `services/remote-control-plane/tsconfig.json`: TypeScript config for the service.
 - `services/remote-control-plane/Dockerfile`: container image for an always-on deployment target such as Fly.io.
-- `services/remote-control-plane/fly.toml.example`: deployment template for `control.omniharness.dev`.
+- `services/remote-control-plane/fly.toml.example`: deployment template for `panel.omniharness.dev`.
 - `services/remote-control-plane/src/server.ts`: Fastify server bootstrap and plugin registration.
 - `services/remote-control-plane/src/config.ts`: typed environment parsing and secret redaction helpers.
 - `services/remote-control-plane/src/auth/supabase-auth.ts`: Supabase JWT validation and account context derivation.
@@ -185,16 +197,21 @@ Baseline v1 states:
 - `services/remote-control-plane/scripts/check-installation.ts`: scriptable lookup for installation, DNS, tunnel, health, and audit state.
 - `services/remote-control-plane/tests/*.test.ts`: deterministic unit and integration tests for config, auth, slugs, provisioning, health, revocation, and error mapping.
 - `tests/remote-access/control-plane-client.test.ts`: local OmniHarness client tests for control-plane API contracts.
+- `src/runtime/http/routes/healthz.ts`: unauthenticated local app health proof used by the hosted control plane through the managed tunnel.
+- `src/app/api/healthz/route.ts`: thin Next adapter for the local health route, matching the existing runtime-route pattern.
+- `tests/api/healthz-route.test.ts` and `tests/runtime/http-routes.test.ts` coverage for the local health route.
 - `docs/remote-access-control-plane.md`: deployment, DNS, Supabase, Cloudflare, operations, and troubleshooting guide.
 
 ### Modify
 
+- `pnpm-workspace.yaml`: add workspace package globs for the root app and `services/remote-control-plane/**` while preserving the existing overrides and `allowBuilds`.
 - `package.json`: add workspace-aware scripts for testing and typechecking the hosted service without breaking existing local app scripts.
 - `pnpm-lock.yaml`: update dependencies.
 - `.gitignore`: ignore hosted service `.env*`, local Cloudflare credentials, generated diagnostics, logs, build output, and deployment artifacts.
 - `src/server/remote-access/local-state.ts`: if created by the Cloudflared plan, persist the hosted installation id, public origin, status, and encrypted tunnel token.
 - `src/server/remote-access/control-plane-client.ts`: local app API client for optional hosted claim/status/heartbeat/token-rotation calls.
 - `src/server/auth/config.ts`: prefer healthy remote-access public origin before `OMNIHARNESS_PUBLIC_ORIGIN`, forwarded headers, and request origin.
+- `src/runtime/http/routes/index.ts`: register the local `/api/healthz` handler if the runtime registry is the active API source for that route.
 - `src/components/PairDeviceDialog.tsx`: show hosted remote-access origin and degraded-state warnings when the control plane reports stale or unhealthy access.
 - `src/components/home/SettingsDialog.tsx` or the eventual remote-access panel: expose three modes without forcing account registration: offline/local, bring-your-own tunnel, and paid Omni managed tunnel.
 - `docs/superpowers/plans/2026-05-07-memorable-cloudflared-subdomains.md`: link this hosted control-plane plan as the prerequisite for managed named-tunnel delivery.
@@ -210,6 +227,7 @@ Baseline v1 states:
 - `services/remote-control-plane/tests/revoke.test.ts`
 - `services/remote-control-plane/tests/health.test.ts`
 - `services/remote-control-plane/tests/routes.test.ts`
+- `tests/api/healthz-route.test.ts`
 - `tests/remote-access/control-plane-client.test.ts`
 - `tests/e2e/remote-access-control-plane.spec.ts` gated behind real Supabase, Cloudflare, and `cloudflared` credentials.
 
@@ -217,7 +235,7 @@ Baseline v1 states:
 
 These require explicit user approval before running:
 
-- **Managed setup journey:** start local OmniHarness, sign in, claim remote access through `control.omniharness.dev`, start `cloudflared`, open the public hostname in a separate browser context, log in, and redeem a phone pairing link.
+- **Managed setup journey:** start local OmniHarness, sign in, claim remote access through `panel.omniharness.dev`, start `cloudflared`, open the public hostname in a separate browser context, log in, and redeem a phone pairing link.
 - **Revocation journey:** revoke an installation from the control plane, verify the local connector can no longer expose the app, and verify the public hostname no longer reaches OmniHarness.
 - **Degraded tunnel journey:** kill `cloudflared`, verify heartbeat/reachability degradation in the control plane and local UI, then reconnect and verify recovery.
 
@@ -300,7 +318,7 @@ RLS expectations:
 Required environment:
 
 ```text
-CONTROL_PLANE_PUBLIC_ORIGIN=https://control.omniharness.dev
+CONTROL_PLANE_PUBLIC_ORIGIN=https://panel.omniharness.dev
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
@@ -313,19 +331,27 @@ REMOTE_HOSTNAME_SUFFIX=.omniharness.dev
 
 Cloudflare API token permissions:
 
-- Cloudflare Tunnel edit for the OmniHarness account,
+- Cloudflare One Connector: `cloudflared` Write, Cloudflare One Connectors Write, or Cloudflare Tunnel Write for the OmniHarness account,
 - DNS edit for `omniharness.dev`,
 - no broader account permissions than required.
 
 Cloudflare workflow:
 
 1. Reserve slug in Supabase transaction.
-2. Create or reuse named tunnel `omni-<installation-id>`.
-3. Configure tunnel ingress for `https://<slug>.omniharness.dev` to local service `http://127.0.0.1:3050`.
+2. Create or reuse a remotely-managed named tunnel `omni-<installation-id>`.
+3. Configure tunnel ingress for `https://<slug>.omniharness.dev` to the reported local web service, defaulting to `http://127.0.0.1:3050` for `./omniharness`, using Cloudflare-managed tunnel configuration.
 4. Create DNS CNAME to `<tunnel-id>.cfargotunnel.com`.
-5. Issue scoped tunnel token.
+5. Issue/read the tunnel token and give only that token to the local app, which runs `cloudflared tunnel --no-autoupdate run --token <token>`.
 6. Persist resource ids and token version.
 7. Mark active only after connector heartbeat and public reachability succeed.
+
+Current Cloudflare account limits to design around:
+
+- Default `cloudflared` tunnels per account: 1,000.
+- Default Cloudflare Tunnel hostname/CIDR routes per account: 1,000.
+- Active `cloudflared` replicas per tunnel: 25.
+
+For v1, assume one tunnel and one hostname route per remote installation. Treat the 1,000-installation account ceiling as an operational limit: add admin visibility, graceful provisioning refusal when approaching quota, and a note that a public-scale service needs a Cloudflare limit increase or account/zone sharding before broad rollout.
 
 ## Implementation Checklist
 
@@ -340,7 +366,7 @@ Cloudflare workflow:
   ```text
   omniharness.dev         -> Vercel
   www.omniharness.dev     -> Vercel
-  control.omniharness.dev -> hosted control-plane service
+  panel.omniharness.dev   -> hosted control-plane service
   ```
 
   Verification:
@@ -348,7 +374,7 @@ Cloudflare workflow:
   ```bash
   dig omniharness.dev
   dig www.omniharness.dev
-  dig control.omniharness.dev
+  dig panel.omniharness.dev
   ```
 
 - [ ] **Step 0.2: Confirm deployment target**
@@ -383,7 +409,15 @@ Cloudflare workflow:
 
 - [ ] **Step 1.1: Add workspace package structure**
 
-  Create `pnpm-workspace.yaml` and `services/remote-control-plane/**`.
+  Extend the existing `pnpm-workspace.yaml` with workspace package globs and create `services/remote-control-plane/**`.
+
+  Preserve the current `pnpm-workspace.yaml` overrides and `allowBuilds` entries. Add package globs without changing dependency override behavior:
+
+  ```yaml
+  packages:
+    - "."
+    - "services/*"
+  ```
 
   Keep existing root scripts working exactly as before:
 
@@ -530,7 +564,7 @@ Cloudflare workflow:
   - create named tunnel,
   - get named tunnel,
   - delete or disable named tunnel,
-  - configure tunnel ingress,
+  - configure remotely-managed tunnel ingress,
   - create DNS CNAME,
   - get DNS record,
   - delete DNS record,
@@ -572,6 +606,28 @@ Cloudflare workflow:
 
 ### Phase 5: Local Connector Handshake And Health
 
+- [ ] **Step 5.0: Add local OmniHarness health proof**
+
+  Add unauthenticated `GET /api/healthz` to the local app via `src/runtime/http/routes/healthz.ts`, the runtime route registry, and a thin Next adapter at `src/app/api/healthz/route.ts`.
+
+  The response must be small, cache-resistant, and safe to expose publicly:
+
+  ```json
+  {
+    "ok": true,
+    "app": "omniharness",
+    "version": "0.1.0"
+  }
+  ```
+
+  It must not expose auth status, project paths, conversation ids, worker output, environment variables, machine usernames, or token material.
+
+  Verification:
+
+  ```bash
+  pnpm test -- tests/api/healthz-route.test.ts tests/runtime/http-routes.test.ts
+  ```
+
 - [ ] **Step 5.1: Implement installation status endpoint**
 
   `GET /v1/installations/:id` returns:
@@ -590,11 +646,11 @@ Cloudflare workflow:
 
   `POST /v1/installations/:id/heartbeat` accepts connector version, local app version, token version, local web port, and connector-observed status.
 
-  It must reject revoked installations and stale token versions.
+  It must reject revoked installations and stale token versions. If the reported local web port differs from the persisted tunnel service target, the service must update the remotely-managed tunnel ingress config before marking the installation healthy.
 
 - [ ] **Step 5.3: Implement public reachability checks**
 
-  The control plane marks an installation healthy only when `https://<slug>.omniharness.dev` reaches the expected OmniHarness app health route through Cloudflare.
+  The control plane marks an installation healthy only when `https://<slug>.omniharness.dev/api/healthz` reaches the expected OmniHarness app health proof through Cloudflare.
 
   Distinguish:
 
@@ -698,9 +754,10 @@ Cloudflare workflow:
   In `docs/remote-access-control-plane.md`, document:
 
   - keeping Vercel on apex/www,
-  - adding `control.omniharness.dev`,
+  - adding `panel.omniharness.dev`,
   - creating per-installation CNAME records,
   - Cloudflare token permissions,
+  - default Cloudflare account limits and what happens near the 1,000 tunnel/route ceiling,
   - why local apps never receive Cloudflare account API tokens.
 
 - [ ] **Step 9.3: Document operational runbooks**
@@ -745,7 +802,7 @@ Cloudflare workflow:
   - bring-your-own tunnel mode works without registration and uses only a validated user-provided public/LAN origin,
   - hosted registration and login work for users who opt into account-backed features,
   - signed-in users without paid managed-tunnel entitlement cannot provision an Omni-hosted tunnel and receive an actionable error,
-  - `control.omniharness.dev` health and readiness endpoints pass,
+  - `panel.omniharness.dev` health and readiness endpoints pass,
   - signed-in account with paid managed-tunnel entitlement can claim a remote installation,
   - Supabase stores installation, slug, token metadata, health, and audit events,
   - Cloudflare named tunnel and DNS record are real,
