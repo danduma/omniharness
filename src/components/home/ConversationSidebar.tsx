@@ -184,6 +184,13 @@ function ConversationProjectGroupList({
                       >
                         <GitCommitHorizontal className="mr-2 h-4 w-4" /> {t("commit.menu.commitProjectNow")}
                       </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="cursor-pointer whitespace-nowrap"
+                        disabled={isAutoCommitProjectPending}
+                        onClick={() => autoCommitProject(group.path, "commit-push")}
+                      >
+                        <GitCommitHorizontal className="mr-2 h-4 w-4" /> {t("commit.menu.commitAndPushProject")}
+                      </DropdownMenuItem>
                       <DropdownMenuItem className="cursor-pointer whitespace-nowrap text-destructive focus:bg-destructive/10 focus:text-destructive" onClick={() => handleRemoveProject(group.path)}>
                         <Trash2 className="mr-2 h-4 w-4" /> {t("conversation.sidebar.removeProject")}
                       </DropdownMenuItem>
