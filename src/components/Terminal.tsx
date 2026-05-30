@@ -49,6 +49,7 @@ interface TerminalProps {
   className?: string;
   showTextSizeControl?: boolean;
   showPendingAssistantIndicator?: boolean;
+  pendingAssistantStatus?: TerminalPendingAssistantStatus;
   activityFilter?: (activity: TerminalActivityItem) => boolean;
   thoughtsDefaultOpen?: boolean;
   toolGroupsDefaultOpen?: boolean;
@@ -104,10 +105,12 @@ export type TerminalActivityItem = AgentActivityItem | {
 } | {
   id: string;
   kind: "pending_assistant";
+  status: TerminalPendingAssistantStatus;
   timestamp: string;
 };
 type TerminalActivityItemWithOrder = TerminalActivityItem & { streamSeq?: number };
 export type TerminalActivityKind = TerminalActivityItem["kind"];
+export type TerminalPendingAssistantStatus = "connecting" | "thinking" | "working";
 
 const TOOL_OUTPUT_PREVIEW_LINES = 3;
 const TOOL_OUTPUT_COLLAPSED_MAX_HEIGHT = "calc(var(--terminal-pane-size) * 4.65 + 1rem)";
@@ -118,7 +121,6 @@ const TERMINAL_REVEAL_CLOSED_CLASS = "grid-rows-[0fr] opacity-0 -translate-y-1 p
 const TERMINAL_TOOL_STATUSES = new Set(["completed", "done", "failed", "error", "cancelled"]);
 const TERMINAL_BOTTOM_THRESHOLD_PX = 1;
 const TERMINAL_TOP_THRESHOLD_PX = 4;
-const PENDING_ASSISTANT_TEXT = "Thinking...";
 export { TERMINAL_TEXT_SIZE_LEVELS };
 export type TerminalZoomLevel = TerminalTextSizeLevel;
 export const getTerminalZoomStyle = getTerminalTextSizeStyle;
@@ -144,7 +146,7 @@ export function getTerminalActivityVersion(activity: TerminalActivityItem[]) {
   return activity.map((item) => {
     switch (item.kind) {
       case "pending_assistant":
-        return `${item.id}:${item.kind}`;
+        return `${item.id}:${item.kind}:${item.status}`;
       case "thinking":
         return `${item.id}:${item.kind}:${item.timestamp}:${item.inProgress}:${item.thoughts.join("\n").length}`;
       case "tool":
@@ -991,13 +993,20 @@ function ThinkingDots({ variant }: { variant: "terminal" | "native" }) {
   );
 }
 
-function PendingAssistantActivity() {
+const PENDING_ASSISTANT_LABEL_KEYS: Record<TerminalPendingAssistantStatus, string> = {
+  connecting: "terminal.pending.connecting",
+  thinking: "terminal.pending.thinking",
+  working: "terminal.pending.working",
+};
+
+function PendingAssistantActivity({ status }: { status: TerminalPendingAssistantStatus }) {
+  const text = t(PENDING_ASSISTANT_LABEL_KEYS[status]);
   return (
     <div
       className="inline-flex items-baseline text-[calc(var(--terminal-message-size)+1px)] font-medium leading-5 text-muted-foreground/55"
-      aria-label="Agent is thinking"
+      aria-label={text}
     >
-      {Array.from(PENDING_ASSISTANT_TEXT).map((character, index) => (
+      {Array.from(text).map((character, index) => (
         <span
           key={index}
           className="inline-block animate-pulse text-foreground/80"
@@ -1825,7 +1834,7 @@ function ActivityRow({
   if (activity.kind === "pending_assistant") {
     return (
       <div className="relative z-10 mt-3 flex w-full justify-start px-1" aria-live="polite">
-        <PendingAssistantActivity />
+        <PendingAssistantActivity status={activity.status} />
       </div>
     );
   }
@@ -1959,6 +1968,7 @@ export function Terminal({
   className,
   showTextSizeControl = true,
   showPendingAssistantIndicator = false,
+  pendingAssistantStatus = "thinking",
   activityFilter,
   thoughtsDefaultOpen = false,
   toolGroupsDefaultOpen = false,
@@ -2118,6 +2128,7 @@ export function Terminal({
       ? [{
           id: "pending-assistant",
           kind: "pending_assistant",
+          status: pendingAssistantStatus,
           timestamp: new Date((latestActivityTimestamp || Date.now()) + 1).toISOString(),
         }]
       : [];
@@ -2157,7 +2168,7 @@ export function Terminal({
       return activityKindOrder(a) - activityKindOrder(b) || a.id.localeCompare(b.id);
     });
     return summarizeWorkBlocks ? summarizeWorkIntervals(sorted) : sorted;
-  }, [agent, allowUserMessageFallback, entries, getUserMessageActions, showPendingAssistantIndicator, summarizeWorkBlocks, userMessages]);
+  }, [agent, allowUserMessageFallback, entries, getUserMessageActions, pendingAssistantStatus, showPendingAssistantIndicator, summarizeWorkBlocks, userMessages]);
   const filteredActivity = useMemo(
     () => activityFilter ? activity.filter(activityFilter) : activity,
     [activity, activityFilter],

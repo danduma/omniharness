@@ -285,9 +285,9 @@ test("terminal only follows live output while the viewport is already near the b
 
 test("terminal activity version ignores pending assistant timestamp churn", () => {
   expect(getTerminalActivityVersion([
-    { id: "pending-assistant", kind: "pending_assistant", timestamp: "2026-05-09T00:00:00.000Z" },
+    { id: "pending-assistant", kind: "pending_assistant", status: "thinking", timestamp: "2026-05-09T00:00:00.000Z" },
   ])).toBe(getTerminalActivityVersion([
-    { id: "pending-assistant", kind: "pending_assistant", timestamp: "2026-05-09T00:00:01.000Z" },
+    { id: "pending-assistant", kind: "pending_assistant", status: "thinking", timestamp: "2026-05-09T00:00:01.000Z" },
   ]));
 
   expect(getTerminalActivityVersion([
