@@ -288,6 +288,40 @@ describe("AgentRuntimeManager resource admission", () => {
     }
   });
 
+  it("explains disk-only resource refusal without assuming other workers are running", async () => {
+    const dir = createTempDir("omni-resource-disk-message-");
+    const env = {
+      ...process.env,
+      OMNIHARNESS_MIN_MEMORY_FREE_PERCENT: "12",
+      OMNIHARNESS_MIN_DISK_FREE_MB: "8192",
+    } as Record<string, string>;
+
+    await expect(acquireWorkerSpawnResources({
+      cwd: dir,
+      env,
+      snapshotProvider: () => ({
+        memoryFreePercent: 40,
+        totalMemoryMb: 16_384,
+        diskFreeMb: 3_939,
+      }),
+    })).rejects.toMatchObject({
+      statusCode: 503,
+      message: expect.stringContaining("Free disk space before retrying."),
+    });
+
+    await expect(acquireWorkerSpawnResources({
+      cwd: dir,
+      env,
+      snapshotProvider: () => ({
+        memoryFreePercent: 40,
+        totalMemoryMb: 16_384,
+        diskFreeMb: 3_939,
+      }),
+    })).rejects.toMatchObject({
+      message: expect.stringContaining("If other workers are running, you can also wait for them to finish."),
+    });
+  });
+
   it("allows a spawn when memory is above the configured stability margin", async () => {
     const dir = createTempDir("omni-resource-allow-margin-");
     createExecutable(dir, "gemini", minimalAcpScript);

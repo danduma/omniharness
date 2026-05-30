@@ -327,6 +327,7 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
   const lifecycleErrors = buildAwaitingUserQuestionInvariantErrors({
     runs: allRuns,
     messages: msgs,
+    clarifications: allClarifications,
     selectedRunId,
   });
   const readMarkers = Object.fromEntries(

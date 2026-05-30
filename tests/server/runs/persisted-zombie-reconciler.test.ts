@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { plans, recoveryIncidents, runs, workers } from "@/server/db/schema";
+import { appendWorkerSessionMetadata } from "@/server/workers/session-metadata";
 
 const { mockResumeMissingDirectWorker } = vi.hoisted(() => ({
   mockResumeMissingDirectWorker: vi.fn(),
@@ -22,6 +23,7 @@ async function setupStaleStartingWorker(opts: {
   runStatus?: string;
   workerUpdatedAt?: Date;
   bridgeSessionId?: string | null;
+  streamSessionId?: string | null;
 } = {}) {
   const planId = randomUUID();
   const runId = randomUUID();
@@ -53,6 +55,15 @@ async function setupStaleStartingWorker(opts: {
     createdAt: stale,
     updatedAt: stale,
   });
+  if (opts.streamSessionId) {
+    await appendWorkerSessionMetadata({
+      runId,
+      workerId,
+      sessionId: opts.streamSessionId,
+      sessionMode: "full-access",
+      source: "test",
+    });
+  }
   return { runId, workerId };
 }
 
@@ -66,7 +77,9 @@ afterEach(() => {
 
 describe("reconcilePersistedReloadZombies — auto-recovery path", () => {
   it("calls resumeMissingDirectWorker and reports 'recovered' when the respawn succeeds", async () => {
-    const { runId, workerId } = await setupStaleStartingWorker();
+    const { runId, workerId } = await setupStaleStartingWorker({
+      streamSessionId: "saved-session-id",
+    });
     mockResumeMissingDirectWorker.mockResolvedValue({ name: workerId, state: "idle" });
 
     const outcome = await reconcilePersistedReloadZombies({ selectedRunId: runId });
@@ -91,7 +104,9 @@ describe("reconcilePersistedReloadZombies — auto-recovery path", () => {
   });
 
   it("falls through to needs_user incident when auto-recovery throws", async () => {
-    const { runId, workerId } = await setupStaleStartingWorker();
+    const { runId, workerId } = await setupStaleStartingWorker({
+      streamSessionId: "saved-session-id",
+    });
     mockResumeMissingDirectWorker.mockRejectedValue(new Error("agent CLI not on PATH"));
 
     const outcome = await reconcilePersistedReloadZombies({ selectedRunId: runId });
@@ -149,11 +164,15 @@ describe("reconcilePersistedReloadZombies — auto-recovery path", () => {
 });
 
 describe("reconcilePersistedReloadZombies — bridge-orphaned working workers", () => {
-  async function setupWorkingWorkerOrphanedByBridge(opts: { workerStatus?: string } = {}) {
+  async function setupWorkingWorkerOrphanedByBridge(opts: {
+    workerStatus?: string;
+    bridgeSessionId?: string | null;
+    updatedAt?: Date;
+  } = {}) {
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = `${runId}-worker-1`;
-    const recent = new Date(Date.now() - 500); // very recent — orphan check doesn't gate on grace window
+    const recent = opts.updatedAt ?? new Date(Date.now() - 60_000);
     await db.insert(plans).values({
       id: planId,
       path: "docs/example.md",
@@ -176,7 +195,7 @@ describe("reconcilePersistedReloadZombies — bridge-orphaned working workers", 
       cwd: "/tmp",
       status: opts.workerStatus ?? "working",
       workerNumber: 1,
-      bridgeSessionId: "saved-session-id",
+      bridgeSessionId: opts.bridgeSessionId === undefined ? "saved-session-id" : opts.bridgeSessionId,
       createdAt: recent,
       updatedAt: recent,
     });
@@ -240,5 +259,60 @@ describe("reconcilePersistedReloadZombies — bridge-orphaned working workers", 
 
     expect(outcome.action).toBe("none");
     expect(mockResumeMissingDirectWorker).not.toHaveBeenCalled();
+  });
+
+  it("does not recover a fresh worker before the runtime list has caught up", async () => {
+    const { runId } = await setupWorkingWorkerOrphanedByBridge({
+      updatedAt: new Date(),
+    });
+
+    const outcome = await reconcilePersistedReloadZombies({
+      selectedRunId: runId,
+      bridgeAgentNames: new Set<string>(),
+    });
+
+    expect(outcome.action).toBe("none");
+    expect(mockResumeMissingDirectWorker).not.toHaveBeenCalled();
+  });
+
+  it("surfaces needs_user for an old working worker missing from the bridge without session metadata", async () => {
+    const { runId, workerId } = await setupWorkingWorkerOrphanedByBridge({
+      bridgeSessionId: null,
+    });
+    const outcome = await reconcilePersistedReloadZombies({
+      selectedRunId: runId,
+      bridgeAgentNames: new Set<string>(),
+    });
+
+    expect(outcome.action).toBe("needs_user");
+    expect(mockResumeMissingDirectWorker).not.toHaveBeenCalled();
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const incidents = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
+
+    expect(run?.status).toBe("needs_recovery");
+    expect(worker?.status).toBe("lost");
+    expect(incidents).toHaveLength(1);
+    expect(incidents[0]).toMatchObject({
+      workerId,
+      kind: "worker_lost",
+      status: "needs_user",
+    });
+  });
+
+  it("recovers an old starting worker with a saved session when the bridge no longer has it", async () => {
+    const { runId, workerId } = await setupStaleStartingWorker({
+      bridgeSessionId: "starting-session-id",
+    });
+    mockResumeMissingDirectWorker.mockResolvedValue({ name: workerId, state: "working" });
+
+    const outcome = await reconcilePersistedReloadZombies({
+      selectedRunId: runId,
+      bridgeAgentNames: new Set<string>(),
+    });
+
+    expect(outcome.action).toBe("recovered");
+    expect(mockResumeMissingDirectWorker).toHaveBeenCalledTimes(1);
   });
 });

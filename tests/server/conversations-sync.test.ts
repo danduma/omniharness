@@ -138,6 +138,60 @@ describe("syncConversationSessions", () => {
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
   });
 
+  it("marks a selected planning run for recovery when its active worker is missing without a saved session", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const old = new Date(0);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/plan.md",
+      status: "running",
+      createdAt: old,
+      updatedAt: old,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "planning",
+      status: "working",
+      title: "Planning recovery",
+      createdAt: old,
+      updatedAt: old,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      workerNumber: 1,
+      createdAt: old,
+      updatedAt: old,
+    });
+
+    await syncConversationSessions([], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const incidents = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
+
+    expect(run?.status).toBe("needs_recovery");
+    expect(worker?.status).toBe("lost");
+    expect(incidents).toHaveLength(1);
+    expect(incidents[0]).toMatchObject({
+      workerId,
+      kind: "worker_lost",
+      status: "needs_user",
+    });
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
   it("recovers the latest non-cancelled direct worker instead of completing from an older cancelled worker", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

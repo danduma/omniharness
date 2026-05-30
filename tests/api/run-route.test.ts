@@ -1632,6 +1632,117 @@ describe("POST /api/runs/[id]", () => {
     }));
   });
 
+  it("retries a direct conversation with a fresh worker when saved session metadata is missing", async () => {
+    __resetNamedEventsForTests();
+    mockAskAgent.mockClear();
+    mockCancelAgent.mockClear();
+    mockGetAgent.mockClear();
+    mockSpawnAgent.mockClear();
+    mockStartSupervisorRun.mockClear();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const oldWorkerId = `${runId}-worker-1`;
+    const newWorkerId = `${runId}-worker-2`;
+    const userMessageId = randomUUID();
+    const adHocRelativePath = path.join("vibes", "ad-hoc", `${randomUUID()}.md`);
+    const adHocAbsolutePath = getAppDataPath(adHocRelativePath);
+
+    fs.mkdirSync(path.dirname(adHocAbsolutePath), { recursive: true });
+    fs.writeFileSync(adHocAbsolutePath, "# temp\ncontinue without the missing ACP session");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: adHocRelativePath,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Direct fresh retry",
+      projectPath: "/workspace/app",
+      preferredWorkerType: "codex",
+      preferredWorkerModel: "gpt-5.4",
+      preferredWorkerEffort: "medium",
+      status: "failed",
+      lastError: `Ask failed: Agent not found: ${oldWorkerId}`,
+      failedAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(workers).values({
+      id: oldWorkerId,
+      runId,
+      type: "codex",
+      status: "lost",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      workerNumber: 1,
+      createdAt: new Date("2026-05-24T18:57:46Z"),
+      updatedAt: new Date("2026-05-24T19:02:33Z"),
+    });
+    await db.insert(messages).values({
+      id: userMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "continue without the missing ACP session",
+      createdAt: new Date("2026-05-24T18:57:46Z"),
+    });
+
+    mockSpawnAgent.mockResolvedValueOnce({
+      name: newWorkerId,
+      type: "codex",
+      state: "idle",
+      cwd: "/workspace/app",
+      sessionId: "fresh-session",
+      sessionMode: "full-access",
+      lastText: "",
+      currentText: "",
+      outputEntries: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+    mockAskAgent.mockResolvedValueOnce({
+      response: "Fresh retry completed.",
+      state: "idle",
+    });
+    mockGetAgent.mockRejectedValueOnce(new Error("Agent already ended"));
+
+    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
+    }), { params: Promise.resolve({ id: runId }) });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, runId });
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      name: newWorkerId,
+      type: "codex",
+      cwd: "/workspace/app",
+    }));
+    expect(mockSpawnAgent.mock.calls[0]?.[0]).not.toHaveProperty("resumeSessionId");
+    expect(mockAskAgent).toHaveBeenCalledWith(newWorkerId, "continue without the missing ACP session");
+
+    const workersAfter = await db.select().from(workers).where(eq(workers.runId, runId));
+    const oldWorker = workersAfter.find((worker) => worker.id === oldWorkerId);
+    const newWorker = workersAfter.find((worker) => worker.id === newWorkerId);
+    const surfacedErrors = getNamedEventsSince(0, { runId }).events
+      .map((entry) => entry.event)
+      .filter((event) => event.kind === "error.surfaced");
+
+    expect(oldWorker?.status).toBe("cancelled");
+    expect(newWorker?.bridgeSessionId).toBe("fresh-session");
+    expect(surfacedErrors).not.toContainEqual(expect.objectContaining({
+      code: "worker.resume.failed",
+    }));
+  });
+
   it("starts a fresh direct worker when an empty saved session is rejected", async () => {
     __resetNamedEventsForTests();
     mockAskAgent.mockClear();

@@ -448,6 +448,7 @@ function buildEventPayload(
   const lifecycleErrors = buildAwaitingUserQuestionInvariantErrors({
     runs: records.allRuns,
     messages: records.msgs,
+    clarifications: records.allClarifications,
     selectedRunId: options.selectedRunId,
   });
   const processSessionsByRunId = new Map<string, PersistedEventRecords["allProcessSessions"][number]>(

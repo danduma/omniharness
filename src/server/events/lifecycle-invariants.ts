@@ -14,6 +14,12 @@ type MessageLike = {
   content: string;
 };
 
+type ClarificationLike = {
+  runId: string;
+  status: string;
+  question: string;
+};
+
 const AWAITING_USER_MESSAGE_KINDS = new Set(["clarification", "implementation_confirmation"]);
 
 function hasAwaitingUserQuestion(messages: MessageLike[], runId: string) {
@@ -25,13 +31,23 @@ function hasAwaitingUserQuestion(messages: MessageLike[], runId: string) {
   ));
 }
 
+function hasPendingClarification(clarifications: ClarificationLike[], runId: string) {
+  return clarifications.some((clarification) => (
+    clarification.runId === runId
+    && clarification.status.trim().toLowerCase() === "pending"
+    && clarification.question.trim().length > 0
+  ));
+}
+
 export function buildAwaitingUserQuestionInvariantErrors({
   runs,
   messages,
+  clarifications = [],
   selectedRunId,
 }: {
   runs: RunLike[];
   messages: MessageLike[];
+  clarifications?: ClarificationLike[];
   selectedRunId?: string | null;
 }): AppErrorDescriptor[] {
   const runId = selectedRunId?.trim();
@@ -46,6 +62,7 @@ export function buildAwaitingUserQuestionInvariantErrors({
     || run.mode === "direct"
     || run.mode === "commit"
     || hasAwaitingUserQuestion(messages, run.id)
+    || hasPendingClarification(clarifications, run.id)
   ) {
     return [];
   }

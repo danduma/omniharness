@@ -23,7 +23,7 @@ type WorkerOutputSource = {
 const USER_INPUT_REQUEST_PATTERNS = [
   /\bwhich\s+(?:approach|option|path|one|choice|of these)\b.{0,120}\b(?:do you want|would you like|should i|should we)\b/i,
   /\b(?:what|how)\b.{0,120}\b(?:do you want|would you like)\b/i,
-  /\b(?:should|shall)\s+(?:i|we)\b/i,
+  /\bshould\s+(?:i|we)\b/i,
   /\bdo you want me to\b/i,
   /\bwould you like me to\b/i,
   /\bplease\s+(?:confirm|choose|pick|select|tell me|let me know)\b/i,
