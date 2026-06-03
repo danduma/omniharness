@@ -26,7 +26,7 @@ jobs:
           - runner: macos-15
             target: aarch64-apple-darwin
             asset_suffix: darwin-arm64
-          - runner: macos-13
+          - runner: macos-15-intel
             target: x86_64-apple-darwin
             asset_suffix: darwin-x64
           - runner: ubuntu-24.04-arm
