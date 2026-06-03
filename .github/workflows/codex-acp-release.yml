@@ -1,0 +1,97 @@
+name: Build codex-acp binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      codex_acp_ref:
+        description: Git ref from danduma/codex-acp to build
+        required: true
+        default: main
+      release_tag:
+        description: Release tag to publish assets to
+        required: true
+        default: codex-acp-latest
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset_suffix }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            asset_suffix: darwin-arm64
+          - runner: macos-13
+            target: x86_64-apple-darwin
+            asset_suffix: darwin-x64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            asset_suffix: linux-arm64
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            asset_suffix: linux-x64
+
+    steps:
+      - name: Checkout codex-acp
+        uses: actions/checkout@v4
+        with:
+          repository: danduma/codex-acp
+          ref: ${{ inputs.codex_acp_ref }}
+          path: codex-acp
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build codex-acp
+        working-directory: codex-acp
+        run: cargo build --locked --release --target "${{ matrix.target }}" --bin codex-acp
+
+      - name: Package binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "codex-acp/target/${{ matrix.target }}/release/codex-acp" "dist/codex-acp-${{ matrix.asset_suffix }}"
+          chmod +x "dist/codex-acp-${{ matrix.asset_suffix }}"
+          strip "dist/codex-acp-${{ matrix.asset_suffix }}" 2>/dev/null || true
+          shasum -a 256 "dist/codex-acp-${{ matrix.asset_suffix }}" > "dist/codex-acp-${{ matrix.asset_suffix }}.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-acp-${{ matrix.asset_suffix }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release assets
+    runs-on: ubuntu-24.04
+    needs: build
+    steps:
+      - name: Checkout OmniHarness
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          CODEX_ACP_REF: ${{ inputs.codex_acp_ref }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --title "codex-acp prebuilt binaries" \
+              --notes "Prebuilt codex-acp binaries from danduma/codex-acp ref ${CODEX_ACP_REF}."
+          fi
+          gh release upload "$RELEASE_TAG" dist/* --clobber
