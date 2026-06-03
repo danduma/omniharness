@@ -26,7 +26,7 @@ jobs:
           - runner: macos-15
             target: aarch64-apple-darwin
             asset_suffix: darwin-arm64
-          - runner: macos-15-intel
+          - runner: macos-15-large
             target: x86_64-apple-darwin
             asset_suffix: darwin-x64
           - runner: ubuntu-24.04-arm
@@ -57,7 +57,16 @@ jobs:
 
       - name: Build codex-acp
         working-directory: codex-acp
-        run: cargo build --locked --release --target "${{ matrix.target }}" --bin codex-acp
+        shell: bash
+        run: |
+          while true; do
+            sleep 60
+            echo "Still building codex-acp for ${{ matrix.target }}..."
+          done &
+          heartbeat_pid=$!
+          trap 'kill "$heartbeat_pid" 2>/dev/null || true' EXIT
+
+          cargo build --locked --release --target "${{ matrix.target }}" --bin codex-acp
 
       - name: Package binary
         shell: bash
