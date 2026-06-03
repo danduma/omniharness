@@ -6,6 +6,7 @@ import { GET as getSessionRoute, DELETE as deleteSessionRoute } from "@/app/api/
 import { POST as loginRoute } from "@/app/api/auth/login/route";
 import { POST as logoutRoute } from "@/app/api/auth/logout/route";
 import { resetLoginRateLimitsForTests } from "@/server/auth/rate-limit";
+import { hashPasswordForTests } from "@/server/auth/password";
 
 function readCookie(response: Response) {
   return response.headers.get("set-cookie")?.split(";")[0] ?? "";
@@ -171,6 +172,45 @@ describe("auth routes", () => {
         message: expect.stringContaining("OMNIHARNESS_AUTH_PASSWORD"),
       }),
     });
+  });
+
+  it("reports malformed password hashes as configuration errors", async () => {
+    delete process.env.OMNIHARNESS_AUTH_PASSWORD;
+    process.env.OMNIHARNESS_AUTH_PASSWORD_HASH = "v=19$m=19456,t=2,p=1$bad";
+
+    const loginResponse = await loginRoute(new NextRequest("http://localhost/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ password: "anything" }),
+      headers: {
+        origin: "http://localhost",
+        "content-type": "application/json",
+      },
+    }));
+
+    expect(loginResponse.status).toBe(503);
+    await expect(loginResponse.json()).resolves.toEqual({
+      error: expect.objectContaining({
+        source: "Auth",
+        action: "Log in",
+        message: expect.stringContaining("OMNIHARNESS_AUTH_PASSWORD_HASH"),
+      }),
+    });
+  });
+
+  it("accepts dotenv-escaped Argon2 password hashes", async () => {
+    delete process.env.OMNIHARNESS_AUTH_PASSWORD;
+    process.env.OMNIHARNESS_AUTH_PASSWORD_HASH = (await hashPasswordForTests("escaped-secret")).replace(/\$/g, "\\$");
+
+    const loginResponse = await loginRoute(new NextRequest("http://localhost/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ password: "escaped-secret" }),
+      headers: {
+        origin: "http://localhost",
+        "content-type": "application/json",
+      },
+    }));
+
+    expect(loginResponse.status).toBe(200);
   });
 
   it("locks out repeated failed password attempts and does not verify the password during lockout", async () => {
