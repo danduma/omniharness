@@ -29,6 +29,8 @@ OmniHarness is early open-source software under active development. Expect sharp
   - Claude CLI plus `claude-agent-acp`
   - Gemini CLI with native ACP mode
   - OpenCode with native ACP mode
+- Docker, if you want OmniHarness to run `codex-acp` from a container instead
+  of compiling the Rust adapter on the host.
 
 ## Quick Start
 
@@ -178,7 +180,92 @@ Then run the installer directly when you are ready:
 scripts/install-agent-acp.sh
 ```
 
-The setup script detects supported local coding agents and installs or refreshes the ACP adapters they need. It also checks common agent tools including `rg`, `git`, `node`, shell/file utilities, package managers, Python, `jq`, `gh`, `cargo`, `uv`, `fd`, and `make`.
+The setup script detects supported local coding agents and installs or refreshes
+the ACP adapters they need. Codex uses a prebuilt `codex-acp` binary by default
+for macOS/Linux on arm64/x64. Claude's adapter is installed from npm, while
+Gemini and OpenCode expose native ACP commands and do not need separate adapter
+installs. The setup script also checks common agent tools including `rg`, `git`,
+`node`, shell/file utilities, package managers, Python, `jq`, `gh`, `cargo`,
+`uv`, `fd`, and `make`.
+
+### Prebuilt Codex ACP
+
+OmniHarness avoids compiling `codex-acp` with host Rust by default. In `auto`
+mode, the installer downloads the matching release asset:
+
+```text
+codex-acp-darwin-arm64
+codex-acp-darwin-x64
+codex-acp-linux-arm64
+codex-acp-linux-x64
+```
+
+Useful overrides:
+
+```bash
+OMNIHARNESS_CODEX_ACP_INSTALL=binary
+OMNIHARNESS_CODEX_ACP_RELEASE_REPO=danduma/omniharness
+OMNIHARNESS_CODEX_ACP_RELEASE_TAG=codex-acp-latest
+OMNIHARNESS_CODEX_ACP_DOWNLOAD_BASE_URL=https://github.com/danduma/omniharness/releases/download/codex-acp-latest
+OMNIHARNESS_CODEX_ACP_INSTALL_DIR=/custom/bin
+```
+
+For local development against the Rust source, force Cargo mode:
+
+```bash
+scripts/install-agent-acp.sh --codex-acp=cargo
+```
+
+### Docker-backed Codex ACP
+
+If the prebuilt binary cannot run on a machine, install a Docker-backed wrapper
+instead:
+
+```bash
+OMNIHARNESS_CODEX_ACP_INSTALL=docker ./omniharness
+```
+
+Or run the adapter installer directly:
+
+```bash
+scripts/install-agent-acp.sh --codex-acp=docker
+```
+
+This builds the local image `omniharness/codex-acp:local`, installs a
+`codex-acp` wrapper into `~/.local/bin`, and runs the ACP adapter inside Docker
+while mounting the current project and Codex credential/config paths. The normal
+OmniHarness worker `PATH` already includes `~/.local/bin`, so no extra PATH
+setup is usually needed.
+
+Useful overrides:
+
+```bash
+OMNIHARNESS_CODEX_ACP_DOCKER_IMAGE=ghcr.io/your-org/codex-acp:latest
+OMNIHARNESS_CODEX_ACP_INSTALL_DIR=/custom/bin
+OMNIHARNESS_DOCKER_BIN=podman
+OMNIHARNESS_CODEX_ACP_DOCKER_AS_ROOT=1
+```
+
+On Podman machines, start the VM first if needed:
+
+```bash
+podman machine start
+OMNIHARNESS_CODEX_ACP_INSTALL=docker OMNIHARNESS_DOCKER_BIN=podman ./omniharness
+```
+
+If you build the image locally instead of using a prebuilt image, give the
+Podman VM more than the default 2 GiB memory:
+
+```bash
+podman machine stop
+podman machine set --memory 8192
+podman machine start
+```
+
+The container includes Node.js, Codex CLI, `codex-acp`, `git`, `rg`, Python,
+`jq`, `make`, and common shell tools. Project commands run inside the Linux
+container, so host-only tools still need to be installed in the image or run via
+a non-Docker adapter.
 
 ## Development
 
