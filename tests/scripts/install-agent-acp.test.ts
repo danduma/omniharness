@@ -367,6 +367,56 @@ fi
     expect(result.stdout).not.toContain("cargo install --locked");
   });
 
+  it("installs the Windows prebuilt Codex ACP adapter as an exe under Git Bash", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
+    const binDir = path.join(tempDir, "bin");
+    const installDir = path.join(tempDir, "install");
+    const curlLogPath = path.join(tempDir, "curl.log");
+    tempDirs.push(tempDir);
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.mkdirSync(installDir, { recursive: true });
+
+    createFakeBin("codex", binDir);
+    createFakeBin("curl", binDir, `#!/bin/sh
+echo "$@" >> "${curlLogPath}"
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    out="$1"
+  fi
+  shift
+done
+printf 'fake windows exe\\n' > "$out"
+exit 0
+`);
+    createFakeBin("uname", binDir, `#!/bin/sh
+if [ "$1" = "-s" ]; then
+  echo "MINGW64_NT-10.0"
+elif [ "$1" = "-m" ]; then
+  echo "x86_64"
+else
+  echo "MINGW64_NT-10.0"
+fi
+`);
+
+    const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh", "--codex-acp=binary"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        OMNIHARNESS_CODEX_ACP_INSTALL_DIR: installDir,
+        PATH: `${binDir}:/usr/bin:/bin`,
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(curlLogPath, "utf8")).toContain("codex-acp-windows-x64.exe");
+    expect(fs.existsSync(path.join(installDir, "codex-acp.exe"))).toBe(true);
+    expect(result.stdout).toContain("downloading prebuilt `codex-acp` for windows-x64");
+    expect(result.stdout).toContain("installed prebuilt `codex-acp`");
+  });
+
   it("refreshes the Docker-backed wrapper in ensure-only mode when Docker mode is explicit", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
     const binDir = path.join(tempDir, "bin");

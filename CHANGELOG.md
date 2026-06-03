@@ -7,9 +7,11 @@ here.
 
 ### Added
 
-- Added binary-first `codex-acp` installation for macOS/Linux on arm64 and x64.
+- Added binary-first `codex-acp` installation for macOS/Linux on arm64 and x64,
+  plus Windows x64.
 - Added a GitHub Actions workflow to build and publish prebuilt `codex-acp`
   release assets.
+- Added a Windows PowerShell installer for prebuilt `codex-acp.exe`.
 - Added explicit Codex ACP installer modes: `binary`, `cargo`, and `docker`.
 - Added Docker/Podman-backed `codex-acp` wrapper support as a fallback.
 

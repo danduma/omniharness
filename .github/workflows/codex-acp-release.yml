@@ -25,16 +25,29 @@ jobs:
         include:
           - runner: macos-15
             target: aarch64-apple-darwin
+            executable_name: codex-acp
             asset_suffix: darwin-arm64
+            asset_name: codex-acp-darwin-arm64
           - runner: macos-15-large
             target: x86_64-apple-darwin
+            executable_name: codex-acp
             asset_suffix: darwin-x64
+            asset_name: codex-acp-darwin-x64
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            executable_name: codex-acp
             asset_suffix: linux-arm64
+            asset_name: codex-acp-linux-arm64
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
+            executable_name: codex-acp
             asset_suffix: linux-x64
+            asset_name: codex-acp-linux-x64
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            executable_name: codex-acp.exe
+            asset_suffix: windows-x64
+            asset_name: codex-acp-windows-x64.exe
 
     steps:
       - name: Checkout codex-acp
@@ -72,12 +85,16 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp "codex-acp/target/${{ matrix.target }}/release/codex-acp" "dist/codex-acp-${{ matrix.asset_suffix }}"
-          chmod +x "dist/codex-acp-${{ matrix.asset_suffix }}"
-          strip "dist/codex-acp-${{ matrix.asset_suffix }}" 2>/dev/null || true
+          cp "codex-acp/target/${{ matrix.target }}/release/${{ matrix.executable_name }}" "dist/${{ matrix.asset_name }}"
+          chmod +x "dist/${{ matrix.asset_name }}"
+          strip "dist/${{ matrix.asset_name }}" 2>/dev/null || true
           (
             cd dist
-            shasum -a 256 "codex-acp-${{ matrix.asset_suffix }}" > "codex-acp-${{ matrix.asset_suffix }}.sha256"
+            if command -v shasum >/dev/null 2>&1; then
+              shasum -a 256 "${{ matrix.asset_name }}" > "${{ matrix.asset_name }}.sha256"
+            else
+              sha256sum "${{ matrix.asset_name }}" > "${{ matrix.asset_name }}.sha256"
+            fi
           )
 
       - name: Upload artifact

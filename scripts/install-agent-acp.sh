@@ -174,16 +174,51 @@ codex_acp_target() {
     Linux:x86_64|Linux:amd64)
       echo "linux-x64"
       ;;
+    MINGW64_NT*:x86_64|MSYS_NT*:x86_64|CYGWIN_NT*:x86_64)
+      echo "windows-x64"
+      ;;
     *)
       return 1
       ;;
   esac
 }
 
+codex_acp_binary_name() {
+  local target="$1"
+
+  case "$target" in
+    windows-*)
+      echo "codex-acp.exe"
+      ;;
+    *)
+      echo "codex-acp"
+      ;;
+  esac
+}
+
+codex_acp_asset_name() {
+  local target="$1"
+
+  case "$target" in
+    windows-*)
+      echo "codex-acp-$target.exe"
+      ;;
+    *)
+      echo "codex-acp-$target"
+      ;;
+  esac
+}
+
+have_codex_acp() {
+  have_command codex-acp || have_command codex-acp.exe
+}
+
 run_install_codex_acp_binary() {
   local target
+  local asset_name
   local download_url
   local install_path
+  local binary_name
   local tmp_path
 
   if ! target="$(codex_acp_target)"; then
@@ -191,14 +226,16 @@ run_install_codex_acp_binary() {
     return 1
   fi
 
-  download_url="$CODEX_ACP_DOWNLOAD_BASE_URL/codex-acp-$target"
+  asset_name="$(codex_acp_asset_name "$target")"
+  binary_name="$(codex_acp_binary_name "$target")"
+  download_url="$CODEX_ACP_DOWNLOAD_BASE_URL/$asset_name"
 
   if [ -z "$CODEX_ACP_WRAPPER_DIR" ]; then
     echo "  -> cannot install prebuilt \`codex-acp\`: HOME is not set and OMNIHARNESS_CODEX_ACP_INSTALL_DIR was not provided" >&2
     return 1
   fi
 
-  install_path="$CODEX_ACP_WRAPPER_DIR/codex-acp"
+  install_path="$CODEX_ACP_WRAPPER_DIR/$binary_name"
 
   if [ "$DRY_RUN" -eq 1 ]; then
     echo "  -> would install prebuilt \`codex-acp\` from \`$download_url\` to $install_path"
@@ -431,7 +468,7 @@ try_install() {
 
 if have_command codex; then
   echo "codex: detected"
-  if have_command codex-acp; then
+  if have_codex_acp; then
     if [ "$CODEX_ACP_INSTALL_MODE" = "docker" ]; then
       echo "  -> \`codex-acp\` already installed; refreshing Docker-backed \`codex-acp\` wrapper"
       try_install install_codex_acp
