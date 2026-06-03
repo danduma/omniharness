@@ -39,11 +39,31 @@ export function getAuthKey() {
 }
 
 export function getConfiguredAuthPasswordHash() {
-  return process.env.OMNIHARNESS_AUTH_PASSWORD_HASH?.trim() || null;
+  return normalizeEnvValue(process.env.OMNIHARNESS_AUTH_PASSWORD_HASH);
 }
 
 export function getConfiguredAuthPassword() {
-  return process.env.OMNIHARNESS_AUTH_PASSWORD?.trim() || null;
+  return normalizeEnvValue(process.env.OMNIHARNESS_AUTH_PASSWORD);
+}
+
+function normalizeEnvValue(value: string | undefined) {
+  let normalized = value?.trim() || "";
+  if (
+    (normalized.startsWith("\"") && normalized.endsWith("\""))
+    || (normalized.startsWith("'") && normalized.endsWith("'"))
+  ) {
+    normalized = normalized.slice(1, -1).trim();
+  }
+  normalized = normalized.replace(/\\\$/g, "$");
+  return normalized || null;
+}
+
+function isArgon2PasswordHash(value: string) {
+  const fields = value.split("$");
+  return fields.length === 6
+    && fields[0] === ""
+    && ["argon2d", "argon2i", "argon2id"].includes(fields[1] ?? "")
+    && fields.every((field, index) => index === 0 || field.length > 0);
 }
 
 export function isAuthConfigured() {
@@ -68,11 +88,20 @@ export function isAutomationAuthBypassEnabled() {
 }
 
 export function getAuthConfigurationError() {
-  if (!isAuthRequired() || isAuthConfigured()) {
+  if (!isAuthRequired()) {
     return null;
   }
 
-  return "Authentication is required. Set OMNIHARNESS_AUTH_PASSWORD or OMNIHARNESS_AUTH_PASSWORD_HASH before starting OmniHarness.";
+  const configuredHash = getConfiguredAuthPasswordHash();
+  if (configuredHash && !isArgon2PasswordHash(configuredHash)) {
+    return "OMNIHARNESS_AUTH_PASSWORD_HASH is not a valid Argon2 password hash. Regenerate it with scripts/setup-auth.mjs or escape dollar signs in .env files as \\$ so dotenv does not expand them.";
+  }
+
+  if (!isAuthConfigured()) {
+    return "Authentication is required. Set OMNIHARNESS_AUTH_PASSWORD or OMNIHARNESS_AUTH_PASSWORD_HASH before starting OmniHarness.";
+  }
+
+  return null;
 }
 
 export function getPublicOriginFromUrl(url: string) {
