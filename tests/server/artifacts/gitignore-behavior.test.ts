@@ -27,6 +27,26 @@ function gitCheckIgnore(targetPath: string): boolean {
 }
 
 describe(".gitignore — project-local artifact tree", () => {
+  it("ignores nested .omniharness local state directories", () => {
+    const probes = [
+      path.join(REPO_ROOT, "tmp-gitignore-probe", "project", ".omniharness", "config.json"),
+      path.join(REPO_ROOT, "tmp-gitignore-probe", "project", ".omniharness", "cli-home", "codex", "home", "config.toml"),
+      path.join(REPO_ROOT, "tmp-gitignore-probe", "project", ".omniharness", "credential-profiles", "claude", "env"),
+      path.join(REPO_ROOT, "tmp-gitignore-probe", "project", ".omniharness", "memory", "decisions.md"),
+      path.join(REPO_ROOT, "tmp-gitignore-probe", "project", ".omniharness", "agent-runtime-output", "worker.jsonl"),
+    ];
+
+    try {
+      for (const probe of probes) {
+        mkdirSync(path.dirname(probe), { recursive: true });
+        writeFileSync(probe, "");
+        expect(gitCheckIgnore(probe)).toBe(true);
+      }
+    } finally {
+      rmSync(path.join(REPO_ROOT, "tmp-gitignore-probe"), { recursive: true, force: true });
+    }
+  });
+
   it("ignores **/.omniharness/run-data/<runId>/* (nested case)", () => {
     // Use a path under a tmp directory inside the repo so git can
     // check it. We can't run `git check-ignore` on a path outside the

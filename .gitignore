@@ -39,8 +39,9 @@
 *.sqlite3-journal
 *.sqlite3-shm
 *.sqlite3-wal
-/.omniharness/
+**/.omniharness/
 .omniharness-auth.key
+/session-*-omniharness-*.jsonl
 .node-version
 .npmrc
 .tmp-*
@@ -75,9 +76,6 @@ next-env.d.ts
 # read-only/migration-source after append-only artifact migration).
 run-data/
 
-# Project-local append-only artifact streams (any nested project
-# checkout that omniharness drives). Ignores per-run artifact data
-# under .omniharness/run-data/ specifically; intentional source-
-# controlled files elsewhere under a .omniharness/ tree are not
-# affected.
+# Project-local append-only artifact streams (kept explicit for
+# older Git clients and tests that probe this path directly).
 **/.omniharness/run-data/
