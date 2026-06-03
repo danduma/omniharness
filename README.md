@@ -182,7 +182,7 @@ scripts/install-agent-acp.sh
 
 The setup script detects supported local coding agents and installs or refreshes
 the ACP adapters they need. Codex uses a prebuilt `codex-acp` binary by default
-for macOS/Linux on arm64/x64. Claude's adapter is installed from npm, while
+for macOS/Linux on arm64/x64 and Windows x64. Claude's adapter is installed from npm, while
 Gemini and OpenCode expose native ACP commands and do not need separate adapter
 installs. The setup script also checks common agent tools including `rg`, `git`,
 `node`, shell/file utilities, package managers, Python, `jq`, `gh`, `cargo`,
@@ -198,6 +198,7 @@ codex-acp-darwin-arm64
 codex-acp-darwin-x64
 codex-acp-linux-arm64
 codex-acp-linux-x64
+codex-acp-windows-x64.exe
 ```
 
 Useful overrides:
@@ -209,6 +210,16 @@ OMNIHARNESS_CODEX_ACP_RELEASE_TAG=codex-acp-latest
 OMNIHARNESS_CODEX_ACP_DOWNLOAD_BASE_URL=https://github.com/danduma/omniharness/releases/download/codex-acp-latest
 OMNIHARNESS_CODEX_ACP_INSTALL_DIR=/custom/bin
 ```
+
+On Windows, use the PowerShell installer to download `codex-acp.exe` into
+`%LOCALAPPDATA%\OmniHarness\bin`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-agent-acp.ps1 -AddToPath
+```
+
+Git Bash/MSYS users can also run `scripts/install-agent-acp.sh`; it installs
+the Windows release asset as `codex-acp.exe`.
 
 For local development against the Rust source, force Cargo mode:
 
