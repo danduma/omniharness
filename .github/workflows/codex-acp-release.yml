@@ -28,7 +28,7 @@ jobs:
             executable_name: codex-acp
             asset_suffix: darwin-arm64
             asset_name: codex-acp-darwin-arm64
-          - runner: macos-15-large
+          - runner: macos-15-intel
             target: x86_64-apple-darwin
             executable_name: codex-acp
             asset_suffix: darwin-x64
