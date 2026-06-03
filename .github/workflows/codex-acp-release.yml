@@ -44,6 +44,12 @@ jobs:
           ref: ${{ inputs.codex_acp_ref }}
           path: codex-acp
 
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libcap-dev
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
