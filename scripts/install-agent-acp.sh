@@ -209,8 +209,37 @@ codex_acp_asset_name() {
   esac
 }
 
+# Locate an existing codex-acp on PATH or in well-known install dirs. The restart
+# controller (and other launchers) can run with a minimal PATH that omits
+# ~/.cargo/bin, so a source-built codex-acp would otherwise look "missing" and get
+# clobbered by a prebuilt download. Checking standard locations keeps an existing
+# build authoritative.
+codex_acp_location() {
+  if command -v codex-acp >/dev/null 2>&1; then
+    command -v codex-acp
+    return 0
+  fi
+  if command -v codex-acp.exe >/dev/null 2>&1; then
+    command -v codex-acp.exe
+    return 0
+  fi
+  local dir
+  for dir in "$CODEX_ACP_WRAPPER_DIR" "${CARGO_HOME:-$HOME/.cargo}/bin" "$HOME/.local/bin"; do
+    [ -n "$dir" ] || continue
+    if [ -x "$dir/codex-acp" ]; then
+      echo "$dir/codex-acp"
+      return 0
+    fi
+    if [ -x "$dir/codex-acp.exe" ]; then
+      echo "$dir/codex-acp.exe"
+      return 0
+    fi
+  done
+  return 1
+}
+
 have_codex_acp() {
-  have_command codex-acp || have_command codex-acp.exe
+  codex_acp_location >/dev/null 2>&1
 }
 
 run_install_codex_acp_binary() {
@@ -472,13 +501,16 @@ if have_command codex; then
     if [ "$CODEX_ACP_INSTALL_MODE" = "docker" ]; then
       echo "  -> \`codex-acp\` already installed; refreshing Docker-backed \`codex-acp\` wrapper"
       try_install install_codex_acp
-    elif [ "$ENSURE_ONLY" -eq 1 ]; then
-      echo "  -> \`codex-acp\` already installed"
+    elif [ "$ENSURE_ONLY" -eq 1 ] || [ "$CODEX_ACP_INSTALL_MODE" = "auto" ]; then
+      # Default/auto + ensure-only: never overwrite an existing install (it may be
+      # a source build). Only an explicit --codex-acp=binary|cargo reinstalls.
+      echo "  -> \`codex-acp\` already installed at $(codex_acp_location); leaving it as-is"
+      echo "     (reinstall explicitly with: scripts/install-agent-acp.sh --codex-acp=binary | --codex-acp=cargo)"
     else
       if [ "$CODEX_ACP_INSTALL_MODE" = "cargo" ]; then
-        echo "  -> \`codex-acp\` already installed; refreshing from the OmniHarness fork"
+        echo "  -> \`codex-acp\` already installed; reinstalling from the OmniHarness fork"
       else
-        echo "  -> \`codex-acp\` already installed; refreshing from the prebuilt release"
+        echo "  -> \`codex-acp\` already installed; reinstalling from the prebuilt release"
       fi
       try_install install_codex_acp
     fi
