@@ -6,7 +6,7 @@ import type { ConversationModeOption } from "@/components/ConversationModePicker
 import {
   clampConversationSidebarWidth,
   clampWorkersSidebarWidth,
-  COMPOSER_EFFORT_STORAGE_KEY,
+  getEffortStorageKey,
   COMPOSER_MODE_STORAGE_KEY,
   COMPOSER_MODEL_STORAGE_KEY,
   COMPOSER_WORKER_STORAGE_KEY,
@@ -126,6 +126,7 @@ export function useHomeLifecycle({
   const didSkipConversationSidebarInitialPersistRef = useRef(false);
   const didHydrateWorkersSidebarWidthRef = useRef(false);
   const didSkipWorkersSidebarInitialPersistRef = useRef(false);
+  const didHydrateEffortRef = useRef(false);
 
   useEffect(() => {
     if (!shouldStartLiveEventConnection({ appUnlocked, routeReady })) {
@@ -189,7 +190,7 @@ export function useHomeLifecycle({
     const savedMode = window.localStorage.getItem(COMPOSER_MODE_STORAGE_KEY)?.trim() || "";
     const savedWorker = window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)?.trim() || "";
     const savedModel = window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)?.trim() || "";
-    const savedEffort = window.localStorage.getItem(COMPOSER_EFFORT_STORAGE_KEY)?.trim() || "";
+    const savedEffort = window.localStorage.getItem(getEffortStorageKey(savedWorker, savedModel))?.trim() || "";
 
     setPairTokenFromUrl(route.pairTokenFromUrl);
 
@@ -523,8 +524,24 @@ export function useHomeLifecycle({
       return;
     }
 
-    window.localStorage.setItem(COMPOSER_EFFORT_STORAGE_KEY, selectedEffort);
-  }, [selectedEffort]);
+    window.localStorage.setItem(getEffortStorageKey(selectedCliAgent, selectedModel), selectedEffort);
+  }, [selectedCliAgent, selectedModel, selectedEffort]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!didHydrateEffortRef.current) {
+      didHydrateEffortRef.current = true;
+      return;
+    }
+
+    const saved = window.localStorage.getItem(getEffortStorageKey(selectedCliAgent, selectedModel))?.trim() || "";
+    if (EFFORT_OPTIONS.includes(saved)) {
+      setSelectedEffort(saved);
+    }
+  }, [selectedCliAgent, selectedModel, setSelectedEffort]);
 
 }
 
