@@ -139,10 +139,12 @@ export const handleAgentsCatalogRequest: OmniHttpHandler = async (request) => {
 
     const requestUrl = new URL(request.url);
     const forceRefresh = requestUrl.searchParams.get("refresh") === "1";
-    const [allSettings, doctorSnapshot, workerModelSnapshot] = await Promise.all([
+    const [allSettings, doctorSnapshot, workerModelResult] = await Promise.all([
       db.select().from(settings),
       readRuntimeDoctorSnapshot({ refresh: forceRefresh }),
-      workerModelCatalogManager.getCatalogSnapshot({ refreshOnFirstLoad: true }),
+      forceRefresh
+        ? workerModelCatalogManager.refreshCatalog().then((catalog) => ({ catalog, refreshing: false }))
+        : workerModelCatalogManager.getCatalogSnapshot({ refreshOnFirstLoad: true }),
     ]);
 
     const byType = new Map(doctorSnapshot.results.map((result) => [result.type, result]));
@@ -163,8 +165,8 @@ export const handleAgentsCatalogRequest: OmniHttpHandler = async (request) => {
         )),
         ...(doctorSnapshot.diagnostic ? [doctorSnapshot.diagnostic] : []),
       ],
-      workerModels: workerModelSnapshot.catalog,
-      workerModelsRefreshing: workerModelSnapshot.refreshing,
+      workerModels: workerModelResult.catalog,
+      workerModelsRefreshing: workerModelResult.refreshing,
       workers: SUPPORTED_WORKER_TYPES.map((type) => {
         const detectionOptions = {
           env: workerDetectionEnv,
