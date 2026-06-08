@@ -140,6 +140,7 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
     { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
   ],
   claude: [
+    { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
     { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
     { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
     { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
@@ -186,6 +187,7 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
     { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
   ],
   anthropic: [
+    { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
     { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
     { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
     { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
@@ -203,6 +205,7 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
     { value: "o3-mini", label: "o3-mini" },
   ],
   openrouter: [
+    { value: "anthropic/claude-opus-4-8", label: "Claude Opus 4.8" },
     { value: "anthropic/claude-opus-4-7", label: "Claude Opus 4.7" },
     { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
     { value: "openai/gpt-5.5", label: "GPT-5.5" },
@@ -213,10 +216,10 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
 
 export const LLM_DEFAULT_MODEL: Record<LlmProviderId, string> = {
   gemini: "gemini-3.5-flash",
-  anthropic: "claude-opus-4-7",
+  anthropic: "claude-opus-4-8",
   openai: "gpt-5.5",
   codex: "gpt-5.4",
-  openrouter: "anthropic/claude-opus-4-7",
+  openrouter: "anthropic/claude-opus-4-8",
   "openai-compatible": "",
 };
 
