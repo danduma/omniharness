@@ -66,6 +66,10 @@ fi
       cwd: process.cwd(),
       env: {
         ...process.env,
+        // Isolate HOME/CARGO_HOME so codex-acp detection cannot reach a real
+        // ~/.cargo/bin or ~/.local/bin install on the host running the tests.
+        HOME: tempDir,
+        CARGO_HOME: path.join(tempDir, ".cargo"),
         PATH: `${binDir}:/usr/bin:/bin`,
       },
       encoding: "utf8",
@@ -139,6 +143,7 @@ fi
       env: {
         ...process.env,
         HOME: homeDir,
+        CARGO_HOME: path.join(homeDir, ".cargo"),
         PATH: `${binDir}:/usr/bin:/bin`,
       },
       encoding: "utf8",
@@ -199,7 +204,50 @@ fi
     expect(fs.existsSync(cargoLogPath)).toBe(false);
   });
 
-  it("refreshes an existing Codex ACP adapter from the prebuilt release", () => {
+  it("leaves an existing Codex ACP adapter untouched in auto mode", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
+    const binDir = path.join(tempDir, "bin");
+    const homeDir = path.join(tempDir, "home");
+    const curlLogPath = path.join(tempDir, "curl.log");
+    tempDirs.push(tempDir);
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.mkdirSync(homeDir, { recursive: true });
+
+    createFakeBin("codex", binDir);
+    createFakeBin("codex-acp", binDir);
+    createFakeBin("curl", binDir, `#!/bin/sh
+echo "$@" >> "${curlLogPath}"
+exit 0
+`);
+    createFakeBin("uname", binDir, `#!/bin/sh
+if [ "$1" = "-s" ]; then
+  echo "Darwin"
+elif [ "$1" = "-m" ]; then
+  echo "arm64"
+else
+  echo "Darwin"
+fi
+`);
+
+    const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        CARGO_HOME: path.join(homeDir, ".cargo"),
+        PATH: `${binDir}:/usr/bin:/bin`,
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("`codex-acp` already installed");
+    expect(result.stdout).toContain("leaving it as-is");
+    expect(result.stdout).not.toContain("downloading prebuilt");
+    expect(fs.existsSync(curlLogPath)).toBe(false);
+  });
+
+  it("reinstalls an existing Codex ACP adapter when binary mode is explicit", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
     const binDir = path.join(tempDir, "bin");
     const homeDir = path.join(tempDir, "home");
@@ -233,19 +281,65 @@ else
 fi
 `);
 
-    const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh"], {
+    const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh", "--codex-acp=binary"], {
       cwd: process.cwd(),
       env: {
         ...process.env,
         HOME: homeDir,
+        CARGO_HOME: path.join(homeDir, ".cargo"),
         PATH: `${binDir}:/usr/bin:/bin`,
       },
       encoding: "utf8",
     });
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("`codex-acp` already installed; refreshing from the prebuilt release");
+    expect(result.stdout).toContain("`codex-acp` already installed; reinstalling from the prebuilt release");
     expect(fs.readFileSync(curlLogPath, "utf8")).toContain("codex-acp-darwin-arm64");
+  });
+
+  it("detects a source-built codex-acp outside PATH and does not download", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
+    const binDir = path.join(tempDir, "bin");
+    const homeDir = path.join(tempDir, "home");
+    const cargoBinDir = path.join(homeDir, ".cargo", "bin");
+    const curlLogPath = path.join(tempDir, "curl.log");
+    tempDirs.push(tempDir);
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.mkdirSync(cargoBinDir, { recursive: true });
+
+    createFakeBin("codex", binDir);
+    // The source build lives only in ~/.cargo/bin, which is NOT on PATH — the
+    // same situation as the restart controller's minimal PATH.
+    createFakeBin("codex-acp", cargoBinDir);
+    createFakeBin("curl", binDir, `#!/bin/sh
+echo "$@" >> "${curlLogPath}"
+exit 0
+`);
+    createFakeBin("uname", binDir, `#!/bin/sh
+if [ "$1" = "-s" ]; then
+  echo "Darwin"
+elif [ "$1" = "-m" ]; then
+  echo "arm64"
+else
+  echo "Darwin"
+fi
+`);
+
+    const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh", "--ensure-only"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        CARGO_HOME: path.join(homeDir, ".cargo"),
+        PATH: `${binDir}:/usr/bin:/bin`,
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("`codex-acp` already installed");
+    expect(result.stdout).toContain(path.join(cargoBinDir, "codex-acp"));
+    expect(fs.existsSync(curlLogPath)).toBe(false);
   });
 
   it("can install Codex ACP from Cargo when Cargo mode is explicit", () => {
