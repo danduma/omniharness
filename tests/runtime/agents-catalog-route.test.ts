@@ -3,8 +3,9 @@ import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
 import { createOmniRuntimeHttpRegistry } from "@/runtime/http/routes";
 
-const { mockGetCatalogSnapshot, mockGetWorkerAuthenticationInfo, mockGetWorkerInstallationInfo, mockGetWorkerTokenQuotaInfo, mockIsSpawnableWorkerType } = vi.hoisted(() => ({
+const { mockGetCatalogSnapshot, mockRefreshCatalog, mockGetWorkerAuthenticationInfo, mockGetWorkerInstallationInfo, mockGetWorkerTokenQuotaInfo, mockIsSpawnableWorkerType } = vi.hoisted(() => ({
   mockGetCatalogSnapshot: vi.fn(),
+  mockRefreshCatalog: vi.fn(),
   mockGetWorkerAuthenticationInfo: vi.fn(),
   mockGetWorkerInstallationInfo: vi.fn(),
   mockGetWorkerTokenQuotaInfo: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock("@/server/supervisor/worker-availability", () => ({
 vi.mock("@/server/worker-models", () => ({
   WorkerModelCatalogManager: vi.fn().mockImplementation(() => ({
     getCatalogSnapshot: mockGetCatalogSnapshot,
+    refreshCatalog: mockRefreshCatalog,
   })),
 }));
 
@@ -36,6 +38,17 @@ describe("portable GET /api/agents/catalog", () => {
         ],
       },
       refreshing: false,
+    });
+    mockRefreshCatalog.mockReset();
+    mockRefreshCatalog.mockResolvedValue({
+      codex: [
+        { value: "gpt-5.5", label: "GPT-5.5" },
+      ],
+      claude: [
+        { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
+      ],
+      gemini: [],
+      opencode: [],
     });
     mockGetWorkerAuthenticationInfo.mockReset();
     mockGetWorkerAuthenticationInfo.mockImplementation((type: string) => ({
@@ -128,5 +141,28 @@ describe("portable GET /api/agents/catalog", () => {
         codex: [{ value: "gpt-5.4", label: "GPT-5.4" }],
       }),
     }));
+  });
+
+  it("forces a worker model catalog refresh when requested", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ results: [] }),
+    }));
+
+    const response = await handleAgentsCatalogRequest(
+      new Request("http://localhost/api/agents/catalog?refresh=1"),
+      { surface: "test" },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      workerModels: expect.objectContaining({
+        claude: [{ value: "claude-opus-4-8", label: "Claude Opus 4.8" }],
+      }),
+      workerModelsRefreshing: false,
+    }));
+    expect(mockRefreshCatalog).toHaveBeenCalledTimes(1);
+    expect(mockGetCatalogSnapshot).not.toHaveBeenCalled();
   });
 });
