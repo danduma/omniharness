@@ -160,7 +160,10 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
 export const EFFORT_OPTIONS = ["Low", "Medium", "High", "Extra High", "Max"];
 export const COMPOSER_WORKER_STORAGE_KEY = "omni-composer-worker";
 export const COMPOSER_MODEL_STORAGE_KEY = "omni-composer-model";
-export const COMPOSER_EFFORT_STORAGE_KEY = "omni-composer-effort";
+const COMPOSER_EFFORT_STORAGE_KEY_PREFIX = "omni-composer-effort";
+export function getEffortStorageKey(worker: string, model: string): string {
+  return `${COMPOSER_EFFORT_STORAGE_KEY_PREFIX}:${worker}:${model}`;
+}
 export const COMPOSER_MODE_STORAGE_KEY = "omni-composer-mode";
 export const RUN_PATH_PATTERN = /^\/session\/([0-9a-fA-F]{12}|[0-9a-fA-F-]{36})\/?$/;
 
