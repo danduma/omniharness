@@ -80,7 +80,12 @@ export function resolveRestartControlConfig(repoRoot: string, env: Record<string
       env.OMNIHARNESS_REMOTE_RESTART_DEV_COMMAND ?? env.OMNIHARNESS_REMOTE_RESTART_COMMAND,
       { command: "pnpm", args: ["run", "dev"] },
     ),
-    prod: parseCommand(env.OMNIHARNESS_REMOTE_RESTART_PROD_COMMAND, { command: "./omniharness", args: [] }),
+    // A restart is not first-time setup: run the lean production entry
+    // (build-if-needed + bridge + `next start`) rather than ./omniharness, which
+    // is the first-run launcher (auth setup, agent ACP install, browser open,
+    // tunnel guidance). Re-running that on every prod restart re-downloads
+    // codex-acp and clobbers a source-built install.
+    prod: parseCommand(env.OMNIHARNESS_REMOTE_RESTART_PROD_COMMAND, { command: "pnpm", args: ["run", "start"] }),
   };
 
   return {

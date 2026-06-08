@@ -24,7 +24,7 @@ describe("restart control config", () => {
     expect(config.pidFile).toBe("/repo/.omniharness/remote-restart.pid.json");
     expect(config.logFile).toBe("/repo/.omniharness/remote-restart.log");
     expect(config.commands.dev).toEqual({ command: "pnpm", args: ["run", "dev"] });
-    expect(config.commands.prod).toEqual({ command: "./omniharness", args: [] });
+    expect(config.commands.prod).toEqual({ command: "pnpm", args: ["run", "start"] });
   });
 });
 
@@ -167,8 +167,8 @@ describe("restart controller", () => {
 
     const result = await controller.start("prod", "test");
 
-    expect(result).toMatchObject({ pid: 999, mode: "prod", command: ["./omniharness"] });
-    expect(actions).toContain("spawn:./omniharness ");
+    expect(result).toMatchObject({ pid: 999, mode: "prod", command: ["pnpm", "run", "start"] });
+    expect(actions).toContain("spawn:pnpm run start");
     expect(actions).toContain("write:prod:999");
   });
 
@@ -252,7 +252,7 @@ describe("restart controller", () => {
     const result = await controller.restartCurrent("test");
 
     expect(result.mode).toBe("prod");
-    expect(actions).toContain("spawn:./omniharness ");
+    expect(actions).toContain("spawn:pnpm run start");
     expect(actions).toContain("write:prod:999");
   });
 
