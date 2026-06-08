@@ -190,7 +190,25 @@ if [ "$CURRENT_STATUS" = "configuration_error" ]; then
   exit 1
 fi
 
-if [ ! -f "$ROOT_DIR/.next/BUILD_ID" ]; then
+# A production `next start` needs a complete production build in .next. Running
+# `pnpm dev` (next dev --turbo) writes dev-shaped manifests into the same .next
+# directory, leaving BUILD_ID intact but clobbering routes-manifest.json so it
+# lacks `dataRoutes` -> `next start` then crashes with
+# "routesManifest.dataRoutes is not iterable". So validate the manifest, not just
+# the presence of BUILD_ID, before deciding whether to skip the build.
+needs_production_build() {
+  [ -f "$ROOT_DIR/.next/BUILD_ID" ] || return 0
+  node --input-type=module -e '
+    import { readFileSync } from "node:fs";
+    try {
+      const m = JSON.parse(readFileSync(process.argv[1], "utf8"));
+      process.exit(Array.isArray(m.dataRoutes) ? 0 : 1);
+    } catch { process.exit(1); }
+  ' "$ROOT_DIR/.next/routes-manifest.json" || return 0
+  return 1
+}
+
+if needs_production_build; then
   echo "[omniharness] Building production server..."
   "${PNPM_CMD[@]}" build
 fi
