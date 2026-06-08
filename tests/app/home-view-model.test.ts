@@ -8,6 +8,7 @@ vi.mock("react", () => ({
 }));
 
 import { useHomeViewModel } from "@/app/home/useHomeViewModel";
+import { getWorkerModelOptions } from "@/app/home/utils";
 
 function createState(overrides: Partial<EventStreamState> = {}): EventStreamState {
   return {
@@ -58,6 +59,13 @@ function useRenderViewModel(state: EventStreamState) {
 }
 
 describe("useHomeViewModel", () => {
+  it("offers Claude Opus 4.8 from the frontend fallback worker model options", () => {
+    expect(getWorkerModelOptions(undefined, "claude").slice(0, 2)).toEqual([
+      { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
+      { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
+    ]);
+  });
+
   it("does not keep a completed direct conversation busy just because its worker is idle", () => {
     const viewModel = useRenderViewModel(createState({
       runs: [createRun()],

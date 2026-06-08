@@ -43,6 +43,17 @@ describe("worker model catalog", () => {
     ]);
   });
 
+  it("offers the latest Claude Code Opus model before older Opus options", async () => {
+    const catalog = await buildWorkerModelCatalog({
+      runCommand: async () => "",
+    });
+
+    expect(catalog.claude.slice(0, 2)).toEqual([
+      { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
+      { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
+    ]);
+  });
+
   it("returns the cached catalog immediately while refreshing models in the background", async () => {
     let resolveCodexModels: (output: string) => void = () => {};
     let resolveOpenCodeModels: (output: string) => void = () => {};

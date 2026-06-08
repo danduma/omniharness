@@ -49,8 +49,8 @@ function defaultModelForProvider(provider: string) {
   if (provider === DEFAULT_PROVIDER) return DEFAULT_MODEL;
   if (provider === DEFAULT_FALLBACK_PROVIDER) return DEFAULT_FALLBACK_MODEL;
   if (provider === "codex") return "gpt-5.4";
-  if (provider === "anthropic") return "claude-opus-4-7";
-  if (provider === "openrouter") return "anthropic/claude-opus-4-7";
+  if (provider === "anthropic") return "claude-opus-4-8";
+  if (provider === "openrouter") return "anthropic/claude-opus-4-8";
   return "";
 }
 
