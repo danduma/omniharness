@@ -1,6 +1,7 @@
 import { db } from "@/server/db";
 import { accounts } from "@/server/db/schema";
 import { requireApiSession } from "@/server/auth/guards";
+import { toAccountDto } from "@/server/accounts/dto";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { toNextRequest } from "./next-request";
 
@@ -13,5 +14,6 @@ export const handleAccountsRequest: OmniHttpHandler = async (request) => {
     return auth.response;
   }
 
-  return Response.json(await db.select().from(accounts));
+  const rows = await db.select().from(accounts);
+  return Response.json(rows.map(toAccountDto));
 };

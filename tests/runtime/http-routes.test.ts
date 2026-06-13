@@ -500,7 +500,7 @@ describe("portable runtime HTTP routes", () => {
     });
   });
 
-  it("serves accounts through a Fetch-compatible handler", async () => {
+  it("serves redacted accounts through a Fetch-compatible handler", async () => {
     await db.insert(accounts).values({
       id: "account-1",
       provider: "openai",
@@ -514,11 +514,18 @@ describe("portable runtime HTTP routes", () => {
     const response = await handleAccountsRequest(new Request("http://localhost/api/accounts"), { surface: "test" });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual([expect.objectContaining({
+    const payload = await response.json();
+    expect(payload).toEqual([expect.objectContaining({
       id: "account-1",
       provider: "openai",
-      authRef: "secret-ref",
+      type: "api",
+      capacity: 100,
+      resetSchedule: "daily",
+      createdAt: expect.any(String),
     })]);
+    expect(JSON.stringify(payload)).not.toContain("secret-ref");
+    expect(payload[0]).not.toHaveProperty("authRef");
+    expect(payload[0]).not.toHaveProperty("auth_ref");
   });
 
   it("serves normalized runtime agents through a Fetch-compatible handler", async () => {
