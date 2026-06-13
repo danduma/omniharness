@@ -274,12 +274,23 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     setConversationSidebarTab,
   } = homeUiSetters;
 
-  // Event stream state
-  const stateManager = useMemo(() => new EventStreamStateManager(initialEventState, {
-    snapshotCacheScope: initialSnapshotScope,
-    deferCacheHydration: true,
-    initialSnapshotSource: bootstrap?.initialEventState ? "server" : undefined,
-  }), [initialEventState, initialSnapshotScope]);
+  // Event stream state. The manager must be created exactly once per mount:
+  // it is the accumulated client view of runs/messages/workers. It used to be
+  // keyed on the run id parsed from window.location, which meant every
+  // history.replaceState on session switch or session create rebuilt it from
+  // the page-load bootstrap payload — wiping minutes of live state, flashing
+  // stale sidebar entries, clearing the selected run ("new session form"
+  // flash), and forcing an SSE reconnect storm. Scope changes are handled by
+  // the hydrateFromCacheScope effect below, never by rebuilding the manager.
+  const stateManagerRef = useRef<EventStreamStateManager | null>(null);
+  if (stateManagerRef.current === null) {
+    stateManagerRef.current = new EventStreamStateManager(initialEventState, {
+      snapshotCacheScope: initialSnapshotScope,
+      deferCacheHydration: true,
+      initialSnapshotSource: bootstrap?.initialEventState ? "server" : undefined,
+    });
+  }
+  const stateManager = stateManagerRef.current;
   useEffect(() => {
     stateManager.hydrateFromCaches();
   }, [stateManager]);
@@ -492,7 +503,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     latestWaitEvent,
     latestPromptDeferredEvent,
     awaitingUserQuestionMessage,
-    isSelectedConversationPreviewAvailable,
+    isSelectedConversationPreviewAvailable: isSnapshotScopedToSelectedConversation,
     isSelectedConversationLoaded,
     latestStuckEvent,
     hasStuckWorker,
@@ -503,6 +514,14 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     conversationTimelineItems,
     conversationWorkerGroups,
   } = vm;
+
+  // A conversation created optimistically in this session is fully known to
+  // the client (the run plus the message the user just typed), so it must
+  // never hide behind "Loading conversation" while the run-scoped server
+  // snapshot catches up — on mobile that round trip can lose to the
+  // POST /api/conversations race and leave the spinner up for seconds.
+  const isSelectedConversationPreviewAvailable = isSnapshotScopedToSelectedConversation
+    || (selectedRunId !== null && pendingCreatedConversationSnapshotsRef.current.has(selectedRunId));
 
   useEffect(() => {
     if (shouldClearMissingSelectedRunFromAuthoritativeSnapshot({
