@@ -445,6 +445,7 @@ export interface ConversationSidebarProps {
   openPairDeviceDialog: () => void;
   logout: () => void;
   onCollapse?: () => void;
+  onOpenExternalSessions?: () => void;
 }
 
 export function ConversationSidebar({
@@ -484,6 +485,7 @@ export function ConversationSidebar({
   openPairDeviceDialog,
   logout,
   onCollapse,
+  onOpenExternalSessions,
 }: ConversationSidebarProps) {
   useI18nSnapshot();
   const mounted = useSyncExternalStore(
@@ -532,9 +534,26 @@ export function ConversationSidebar({
             </Button>
           ) : null}
         </div>
-        <Button variant="ghost" className="h-9 w-full shrink-0 justify-start px-2 text-sm text-[#333333] hover:bg-[#deddda] hover:text-[#1f1f1f] dark:text-zinc-200 dark:hover:bg-muted/70 dark:hover:text-zinc-100" onClick={startNewPlan}>
-          <Plus className="mr-2 h-4 w-4" /> {t("conversation.sidebar.newSession")}
-        </Button>
+        <div className="flex items-stretch gap-0">
+          <Button variant="ghost" className="h-9 min-w-0 flex-1 justify-start px-2 text-sm text-[#333333] hover:bg-[#deddda] hover:text-[#1f1f1f] dark:text-zinc-200 dark:hover:bg-muted/70 dark:hover:text-zinc-100" onClick={startNewPlan}>
+            <Plus className="mr-2 h-4 w-4 shrink-0" /> {t("conversation.sidebar.newSession")}
+          </Button>
+          {onOpenExternalSessions && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                className="inline-flex h-9 w-8 shrink-0 items-center justify-center rounded-md text-[#333333]/60 transition-colors hover:bg-[#deddda] hover:text-[#1f1f1f] focus-visible:outline-none dark:text-zinc-400 dark:hover:bg-muted/70 dark:hover:text-zinc-100"
+                aria-label={t("externalSessions.moreOptionsAria")}
+              >
+                <ChevronDown className="h-3.5 w-3.5" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuItem className="cursor-pointer whitespace-nowrap" onClick={onOpenExternalSessions}>
+                  <SquareTerminal className="mr-2 h-4 w-4" /> {t("externalSessions.title")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
         <div className="relative">
           <Search className="absolute left-2 top-2.5 h-4 w-4 text-[#333333] dark:text-zinc-300" />
           <Input

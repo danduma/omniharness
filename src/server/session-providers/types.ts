@@ -63,6 +63,7 @@ export type CreateSessionInput = {
   allowedWorkerTypes?: string[] | string | null;
   requestedRunId?: string | null;
   attachments?: ChatAttachment[];
+  externalClaudeSessionId?: string | null;
   process?: {
     argv?: string[];
     command?: string;

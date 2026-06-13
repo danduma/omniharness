@@ -28,6 +28,7 @@ export const omniSessionProvider: SessionProvider = {
       allowedWorkerTypes: input.allowedWorkerTypes,
       requestedRunId: input.requestedRunId,
       attachments: input.attachments,
+      externalClaudeSessionId: input.externalClaudeSessionId,
     });
   },
 

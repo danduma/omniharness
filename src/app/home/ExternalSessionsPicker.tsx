@@ -1,0 +1,197 @@
+"use client";
+
+import type React from "react";
+import { useState, useMemo } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { FolderOpen, Search, SquareTerminal } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { requestJson } from "@/lib/app-errors";
+import { t, useI18nSnapshot } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
+
+interface ExternalSession {
+  sessionId: string;
+  projectDir: string;
+  projectPath: string;
+  sessionFilePath: string;
+  lastModified: string;
+  title: string | null;
+  recentOutput: string | null;
+  messageCount: number;
+}
+
+interface ExternalSessionsResponse {
+  sessions: ExternalSession[];
+}
+
+interface ExternalSessionsPickerProps {
+  open: boolean;
+  onClose: () => void;
+  onResumed: (runId: string) => void;
+}
+
+function formatRelativeTime(isoDate: string): string {
+  const ms = Date.now() - new Date(isoDate).getTime();
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 1) return t("externalSessions.relative.justNow");
+  if (minutes < 60) return t("externalSessions.relative.minutesAgo", { count: minutes });
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return t("externalSessions.relative.hoursAgo", { count: hours });
+  const days = Math.floor(hours / 24);
+  if (days < 30) return t("externalSessions.relative.daysAgo", { count: days });
+  const months = Math.floor(days / 30);
+  return t("externalSessions.relative.monthsAgo", { count: months });
+}
+
+function shortProjectPath(full: string): string {
+  const parts = full.split("/").filter(Boolean);
+  if (parts.length <= 2) return full;
+  return `…/${parts.slice(-2).join("/")}`;
+}
+
+export function ExternalSessionsPicker({ open, onClose, onResumed }: ExternalSessionsPickerProps) {
+  useI18nSnapshot();
+  const [resumingId, setResumingId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+
+  const { data, isLoading, isError, refetch } = useQuery<ExternalSessionsResponse>({
+    queryKey: ["external-sessions"],
+    queryFn: () => requestJson<ExternalSessionsResponse>("/api/external-sessions", undefined, {
+      source: t("externalSessions.errorSource"),
+      action: t("externalSessions.listAction"),
+    }),
+    enabled: open,
+    staleTime: 30_000,
+  });
+
+  const resumeMutation = useMutation({
+    mutationFn: async (session: ExternalSession) =>
+      requestJson<{ runId: string }>("/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          externalClaudeSessionId: session.sessionId,
+          projectPath: session.projectPath,
+          command: "",
+        }),
+      }, {
+        source: t("externalSessions.errorSource"),
+        action: t("externalSessions.resumeAction"),
+      }),
+    onSuccess: (result) => {
+      setResumingId(null);
+      if (result.runId) onResumed(result.runId);
+      onClose();
+    },
+    onError: () => setResumingId(null),
+  });
+
+  function handleResume(session: ExternalSession) {
+    if (resumingId) return;
+    setResumingId(session.sessionId);
+    resumeMutation.mutate(session);
+  }
+
+  const allSessions = data?.sessions ?? [];
+  const sessions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return allSessions;
+    return allSessions.filter((s) =>
+      s.title?.toLowerCase().includes(q) ||
+      s.projectPath.toLowerCase().includes(q) ||
+      s.recentOutput?.toLowerCase().includes(q),
+    );
+  }, [allSessions, query]);
+  const isEmpty = !isLoading && !isError && allSessions.length === 0;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) { setQuery(""); onClose(); } }}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <SquareTerminal className="h-5 w-5" />
+            {t("externalSessions.title")}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="relative">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder={t("externalSessions.filterPlaceholder")}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="pl-8"
+            autoFocus
+          />
+        </div>
+
+        <ScrollArea className="max-h-[520px]">
+          {isLoading && (
+            <div className="py-10 text-center text-sm text-muted-foreground">{t("externalSessions.loading")}</div>
+          )}
+          {isError && (
+            <div className="space-y-3 py-8 text-center">
+              <p className="text-sm text-muted-foreground">{t("externalSessions.failed")}</p>
+              <Button variant="ghost" size="sm" onClick={() => refetch()}>{t("common.retry")}</Button>
+            </div>
+          )}
+          {isEmpty && (
+            <div className="py-10 text-center text-sm text-muted-foreground">
+              {t("externalSessions.empty", { path: "" })}{" "}
+              <code className="rounded bg-muted px-1 py-0.5 text-xs">~/.claude/projects/</code>
+            </div>
+          )}
+          {!isLoading && !isError && !isEmpty && sessions.length === 0 && (
+            <div className="py-10 text-center text-sm text-muted-foreground">{t("externalSessions.noFilterResults")}</div>
+          )}
+          {sessions.length > 0 && (
+            <div className="space-y-px pr-1">
+              <div className="mb-2 flex items-center gap-1.5 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <SquareTerminal className="h-3.5 w-3.5" />
+                {t("externalSessions.provider.claudeCode")}
+              </div>
+              {sessions.map((session) => {
+                const isResuming = resumingId === session.sessionId;
+                const title = session.title?.trim() || t("externalSessions.untitled");
+                return (
+                  <button
+                    key={session.sessionId}
+                    type="button"
+                    disabled={resumingId !== null}
+                    onClick={() => handleResume(session)}
+                    className={cn(
+                      "group w-full rounded-md px-3 py-2.5 text-left transition-colors",
+                      "hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none",
+                      isResuming && "opacity-60",
+                    )}
+                  >
+                    <div className="flex items-baseline justify-between gap-3">
+                      <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                        {isResuming ? t("externalSessions.resuming") : title}
+                      </p>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {formatRelativeTime(session.lastModified)}
+                      </span>
+                    </div>
+                    {session.recentOutput && (
+                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                        {session.recentOutput}
+                      </p>
+                    )}
+                    <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground/70">
+                      <FolderOpen className="h-3 w-3 shrink-0" />
+                      <span className="truncate font-mono">{shortProjectPath(session.projectPath)}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  );
+}
