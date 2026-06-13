@@ -1,6 +1,6 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import dynamic from "next/dynamic";
-import { ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, Menu, MoreHorizontal, PanelLeft, PanelRight, Pencil, RotateCw } from "lucide-react";
+import { Bug, ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, Menu, MoreHorizontal, PanelLeft, PanelRight, Pencil, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import {
@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { OmniHarnessMark } from "@/components/OmniHarnessMark";
+import { requestBugDropOpen } from "@/components/BugDropBootstrap";
 import { PRODUCT_NAME } from "@/app/home/constants";
 import type { AgentSnapshot, ConversationSidebarTab, MessageRecord, RunRecord, SidebarGroup, SidebarRun, SupervisorInterventionRecord } from "@/app/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
@@ -299,6 +300,8 @@ export function HomeHeader({
               authEnabled={authEnabled}
               openPairDeviceDialog={openPairDeviceDialog}
               logout={logout}
+              themeMode={themeMode}
+              setThemeMode={setThemeMode}
               onOpenExternalSessions={onOpenExternalSessions}
             />
           </SheetContent>
@@ -407,6 +410,15 @@ export function HomeHeader({
                     <RotateCw className="h-4 w-4" />
                     <span>{t("session.menu.reload")}</span>
                   </DropdownMenuItem>
+                  <DropdownMenuSeparator className="sm:hidden" />
+                  <DropdownMenuItem onClick={onCommitNow} disabled={isAutoCommitChatPending} className="sm:hidden">
+                    <GitCommitHorizontal className="h-4 w-4" />
+                    <span>{t("commit.menu.commitNow")}</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={onCommitAndPushNow} disabled={isAutoCommitChatPending} className="sm:hidden">
+                    <GitCommitHorizontal className="h-4 w-4" />
+                    <span>{t("commit.menu.commitAndPushNow")}</span>
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : null}
@@ -422,7 +434,7 @@ export function HomeHeader({
 
     <div className="flex items-center gap-2">
       {selectedRunId ? (
-        <ButtonGroup aria-label={t("commit.menu.label")}>
+        <ButtonGroup aria-label={t("commit.menu.label")} className="hidden sm:flex">
           <Button
             variant="ghost"
             size="icon-sm"
@@ -499,7 +511,32 @@ export function HomeHeader({
           </DropdownMenu>
         </ButtonGroup>
       ) : null}
-      <ThemeModeToggle themeMode={themeMode} setThemeMode={setThemeMode} />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8 text-muted-foreground hover:text-foreground sm:hidden"
+        aria-label={t("mainMenu.reportBug")}
+        title={t("mainMenu.reportBug")}
+        onClick={requestBugDropOpen}
+      >
+        <Bug className="h-4 w-4" />
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="hidden sm:inline-flex h-8 text-muted-foreground hover:text-foreground"
+        aria-label={t("mainMenu.reportBug")}
+        title={t("mainMenu.reportBug")}
+        onClick={requestBugDropOpen}
+      >
+        <Bug className="h-3.5 w-3.5" />
+        <span>{t("mainMenu.reportBug")}</span>
+      </Button>
+      <div className="hidden sm:block">
+        <ThemeModeToggle themeMode={themeMode} setThemeMode={setThemeMode} />
+      </div>
       {workspaceSideWindowAvailable && !rightSidebarOpen ? (
         <Button
           variant="ghost"

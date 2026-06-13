@@ -1128,6 +1128,8 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     authEnabled,
     openPairDeviceDialog: () => setShowPairDeviceDialog(true),
     logout: () => logoutMutation.mutate(),
+    themeMode,
+    setThemeMode,
     onOpenExternalSessions: () => setShowExternalSessionsPicker(true),
   };
 

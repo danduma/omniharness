@@ -1,7 +1,9 @@
 import type React from "react";
+import { Bug } from "lucide-react";
 import { appearancePreferencesManager } from "@/app/home/AppearancePreferencesManager";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { requestBugDropOpen } from "@/components/BugDropBootstrap";
 import type { SettingsDraftState } from "@/app/home/SettingsDraftManager";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { appErrorKey } from "@/lib/app-errors";
@@ -202,11 +204,17 @@ export function SettingsDialog({
           </div>
         </div>
 
-        <DialogFooter className="shrink-0">
-          <Button variant="ghost" onClick={handleCancel}>{t("common.cancel")}</Button>
-          <Button onClick={handleSave} disabled={saveSettings.isPending || !isDirty}>
-            {isDirty ? t("common.save") : t("common.saved")}
+        <DialogFooter className="shrink-0 sm:justify-between">
+          <Button variant="outline" onClick={requestBugDropOpen}>
+            <Bug className="h-4 w-4" />
+            <span>{t("settings.feedback.reportIssue")}</span>
           </Button>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row">
+            <Button variant="ghost" onClick={handleCancel}>{t("common.cancel")}</Button>
+            <Button onClick={handleSave} disabled={saveSettings.isPending || !isDirty}>
+              {isDirty ? t("common.save") : t("common.saved")}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

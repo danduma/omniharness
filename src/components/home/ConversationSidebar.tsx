@@ -1,6 +1,6 @@
 import type React from "react";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
-import { Archive, Bug, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Trash2, TriangleAlert, Wand2 } from "lucide-react";
+import { Archive, Bug, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Sun, Trash2, TriangleAlert, Wand2 } from "lucide-react";
 import type { ConversationSidebarTab } from "@/app/home/types";
 import { Button } from "@/components/ui/button";
 import { requestBugDropOpen } from "@/components/BugDropBootstrap";
@@ -444,6 +444,8 @@ export interface ConversationSidebarProps {
   authEnabled: boolean;
   openPairDeviceDialog: () => void;
   logout: () => void;
+  themeMode: "day" | "night";
+  setThemeMode: React.Dispatch<React.SetStateAction<"day" | "night">>;
   onCollapse?: () => void;
   onOpenExternalSessions?: () => void;
 }
@@ -484,10 +486,13 @@ export function ConversationSidebar({
   authEnabled,
   openPairDeviceDialog,
   logout,
+  themeMode,
+  setThemeMode,
   onCollapse,
   onOpenExternalSessions,
 }: ConversationSidebarProps) {
   useI18nSnapshot();
+  const themeModeLabel = t(themeMode === "night" ? "theme.mode.switchDay" : "theme.mode.switchNight");
   const mounted = useSyncExternalStore(
     useCallback((listener) => conversationSidebarHydrationManager.subscribe(listener), []),
     useCallback(() => conversationSidebarHydrationManager.getSnapshot(), []),
@@ -676,6 +681,13 @@ export function ConversationSidebar({
             </DropdownMenuItem>
             <DropdownMenuItem className="cursor-pointer whitespace-nowrap max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5" onClick={() => setShowSettings(true)}>
               <Settings className="mr-2 h-4 w-4" /> {t("mainMenu.settings")}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="cursor-pointer whitespace-nowrap max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5"
+              onClick={() => setThemeMode((current) => (current === "day" ? "night" : "day"))}
+            >
+              {themeMode === "night" ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
+              {themeModeLabel}
             </DropdownMenuItem>
             <DropdownMenuItem className="cursor-pointer whitespace-nowrap max-lg:h-12 max-lg:gap-3 max-lg:px-3 max-lg:text-base max-lg:[&_svg]:h-5 max-lg:[&_svg]:w-5" onClick={openOnboarding}>
               <Wand2 className="mr-2 h-4 w-4" /> {t("mainMenu.setupClis")}
