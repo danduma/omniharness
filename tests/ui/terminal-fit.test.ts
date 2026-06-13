@@ -215,9 +215,9 @@ test("UI text size also scales compact icon button tap targets", () => {
 
 test("terminal aligns timeline markers with row text and connects the rail", () => {
   expect(terminalSource).toContain("items-start gap-3");
-  expect(terminalSource).toContain("mt-[0.32rem]");
-  expect(terminalSource).toContain("absolute left-2 top-0 h-[0.57rem] w-px");
-  expect(terminalSource).toContain("absolute -bottom-2 left-2 top-[0.57rem] w-px");
+  expect(terminalSource).toContain("mt-[0.43rem]");
+  expect(terminalSource).toContain("absolute left-2 top-0 h-[0.68rem] w-px");
+  expect(terminalSource).toContain("absolute -bottom-2 left-2 top-[0.68rem] w-px");
   expect(terminalSource).toContain("shouldTerminalConnectorExtend(entry.kind, previousEntry?.kind)");
   expect(terminalSource).toContain("shouldTerminalConnectorExtend(entry.kind, nextEntry?.kind)");
   expect(terminalSource).not.toContain('previousEntry?.kind !== "user_message"');

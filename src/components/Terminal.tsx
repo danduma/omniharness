@@ -585,7 +585,7 @@ function TimelineMarker({
     <div className="relative z-10 flex w-4 shrink-0 justify-center">
       <div
         className={cn(
-          "mt-[0.32rem] h-2 w-2 rounded-full border",
+          "mt-[0.43rem] h-2 w-2 rounded-full border",
           running ? runningClass : toneClass,
         )}
       />
@@ -1325,20 +1325,20 @@ function NestedToolActivityRow({
     <div className="relative flex items-start gap-2.5">
       {!isFirst ? (
         <div className={cn(
-          "absolute left-1.5 top-0 h-[0.54rem] w-px",
+          "absolute left-1.5 top-0 h-[0.61rem] w-px",
           variant === "native" ? "bg-border/70" : "bg-border/70 dark:bg-white/12",
         )} />
       ) : null}
       {!isLast ? (
         <div className={cn(
-          "absolute -bottom-2 left-1.5 top-[0.54rem] w-px",
+          "absolute -bottom-2 left-1.5 top-[0.61rem] w-px",
           variant === "native" ? "bg-border/70" : "bg-border/70 dark:bg-white/12",
         )} />
       ) : null}
       <div className="relative z-10 flex w-3 shrink-0 justify-center">
         <div
           className={cn(
-            "mt-[0.34rem] h-1.5 w-1.5 rounded-full border",
+            "mt-[0.42rem] h-1.5 w-1.5 rounded-full border",
             running
               ? markerTone === "error"
                 ? variant === "native" ? "border-destructive/80 bg-transparent" : "border-red-500/80 bg-transparent dark:border-red-400/80"
@@ -1560,18 +1560,18 @@ function WorkSummaryNestedItem({
     <div className="relative flex items-start gap-2.5">
       {!isFirst ? (
         <div className={cn(
-          "absolute left-1.5 top-0 h-[0.54rem] w-px",
+          "absolute left-1.5 top-0 h-[0.61rem] w-px",
           variant === "native" ? "bg-border/70" : "bg-border/70 dark:bg-white/12",
         )} />
       ) : null}
       {!isLast ? (
         <div className={cn(
-          "absolute -bottom-2 left-1.5 top-[0.54rem] w-px",
+          "absolute -bottom-2 left-1.5 top-[0.61rem] w-px",
           variant === "native" ? "bg-border/70" : "bg-border/70 dark:bg-white/12",
         )} />
       ) : null}
       <div className="relative z-10 flex w-3 shrink-0 justify-center">
-        <div className={cn("mt-[0.34rem] h-1.5 w-1.5 rounded-full border", markerColorClass)} />
+        <div className={cn("mt-[0.42rem] h-1.5 w-1.5 rounded-full border", markerColorClass)} />
       </div>
       <div className="min-w-0 flex-1 pb-0.5">
         {item.kind === "thinking" ? (
@@ -1852,13 +1852,13 @@ function ActivityRow({
     <div className="relative flex items-start gap-3">
       {connectorExtendsBefore ? (
         <div className={cn(
-          "absolute left-2 top-0 h-[0.57rem] w-px",
+          "absolute left-2 top-0 h-[0.68rem] w-px",
           variant === "native" ? "bg-border/80" : "bg-border/80 dark:bg-white/14",
         )} />
       ) : null}
       {connectorExtendsAfter ? (
         <div className={cn(
-          "absolute -bottom-2 left-2 top-[0.57rem] w-px",
+          "absolute -bottom-2 left-2 top-[0.68rem] w-px",
           variant === "native" ? "bg-border/80" : "bg-border/80 dark:bg-white/14",
         )} />
       ) : null}
