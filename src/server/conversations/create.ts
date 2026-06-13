@@ -38,6 +38,7 @@ import { setProjectGitWorkspaceDefaultTarget } from "@/server/projects/config";
 import { pendingOrphanWorktreeError } from "@/server/git/orphan-recovery";
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
 import { isResourceAdmissionError } from "@/server/agent-runtime/resource-admission";
+import { globalClaudeConfigDir } from "@/server/external-sessions/discovery";
 
 
 function buildInitialWorkerPrompt(mode: ConversationMode, command: string, projectRoot: string) {
@@ -436,18 +437,23 @@ async function startDirectWorkerConversation(args: {
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
   command: string;
+  externalClaudeSessionId?: string | null;
 }) {
   let agent: AgentRecord;
   try {
     const { env: envParams } = await readRuntimeEnvFromSettings();
+    const externalEnv = args.externalClaudeSessionId
+      ? { ...envParams, CLAUDE_CONFIG_DIR: globalClaudeConfigDir() }
+      : envParams;
     agent = await spawnAgent({
       type: args.workerType,
       cwd: args.cwd,
       name: args.workerId,
       ...(args.mode ? { mode: args.mode } : {}),
-      env: envParams,
+      env: externalEnv,
       model: args.preferredWorkerModel?.trim() || undefined,
       effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
+      ...(args.externalClaudeSessionId ? { resumeSessionId: args.externalClaudeSessionId } : {}),
     });
   } catch (error) {
     await persistInitialWorkerSpawnFailure({
@@ -457,6 +463,25 @@ async function startDirectWorkerConversation(args: {
       error,
     });
     console.error("Initial direct conversation worker spawn failed:", error);
+    return;
+  }
+
+  // When resuming an external session with no initial command, just connect the
+  // agent and leave the worker in awaiting_user state for the next message.
+  if (args.externalClaudeSessionId && !args.command) {
+    await db.update(workers).set({
+      status: "awaiting_user",
+      type: agent.type || args.workerType,
+      cwd: agent.cwd || args.cwd,
+      bridgeSessionId: agent.sessionId ?? null,
+      bridgeSessionMode: agent.sessionMode ?? null,
+      updatedAt: new Date(),
+    }).where(eq(workers.id, args.workerId));
+    await db.update(runs).set({
+      status: "running",
+      updatedAt: new Date(),
+    }).where(eq(runs.id, args.runId));
+    notifyEventStreamSubscribers();
     return;
   }
 
@@ -501,6 +526,7 @@ export async function createConversation(args: {
   allowedWorkerTypes?: string[] | string | null;
   requestedRunId?: string | null;
   attachments?: ChatAttachment[];
+  externalClaudeSessionId?: string | null;
 }) {
   const mode = normalizeConversationMode(args.mode);
   const command = args.command.trim();
@@ -636,20 +662,22 @@ export async function createConversation(args: {
         createdAt: new Date(),
         updatedAt: new Date(),
       });
-      await appendUserInputOnDelivery({
-        id: initialMessageId,
-        runId,
-        workerId,
-        text: command,
-        deliveredAt: initialMessageCreatedAt,
-        attachments: attachments.map((attachment) => ({
-          id: attachment.id,
-          filename: attachment.name,
-          mimeType: attachment.mimeType,
-          sizeBytes: attachment.size,
-        })),
-      });
-      await db.insert(dbMessages).values(initialMessage);
+      if (!args.externalClaudeSessionId || command) {
+        await appendUserInputOnDelivery({
+          id: initialMessageId,
+          runId,
+          workerId,
+          text: command,
+          deliveredAt: initialMessageCreatedAt,
+          attachments: attachments.map((attachment) => ({
+            id: attachment.id,
+            filename: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.size,
+          })),
+        });
+        await db.insert(dbMessages).values(initialMessage);
+      }
       notifyEventStreamSubscribers();
       emitNamedEvent({ kind: "worker.spawned", runId, workerId, workerType });
       await appendLifecycleEntry({
@@ -671,6 +699,7 @@ export async function createConversation(args: {
           preferredWorkerModel: args.preferredWorkerModel,
           preferredWorkerEffort: args.preferredWorkerEffort,
           command: workerPrompt,
+          externalClaudeSessionId: args.externalClaudeSessionId,
         });
         trackConversationBackgroundTask(initialDirectTurn).catch((error) => {
           console.error("Initial direct conversation worker failed:", error);

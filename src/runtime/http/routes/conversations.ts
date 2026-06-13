@@ -9,6 +9,19 @@ import type { GitWorkspaceTarget } from "@/lib/git-workspace";
 import { GitWorkspaceError } from "@/server/git/workspaces";
 import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
 import { RUN_ID_PATTERN } from "@/server/runs/ids";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function readExternalClaudeSessionId(value: unknown): string | null {
+  if (value == null || value === "") {
+    return null;
+  }
+  const id = String(value).trim();
+  if (UUID_RE.test(id)) {
+    return id;
+  }
+  throw Object.assign(new Error("Invalid external session id."), { status: 400 });
+}
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { toNextRequest } from "./next-request";
 
@@ -127,9 +140,10 @@ export const handleConversationsRequest: OmniHttpHandler = async (request) => {
     const mode = normalizeConversationMode(body?.mode);
     const command = String(body?.command ?? "").trim();
     const attachments = normalizeChatAttachments(body?.attachments);
+    const externalClaudeSessionId = readExternalClaudeSessionId(body?.externalClaudeSessionId);
     const hasProcessArgv = sessionType === "process" && Array.isArray(body?.process?.argv) && body.process.argv.length > 0;
     const hasProcessCommand = sessionType === "process" && typeof body?.process?.command === "string" && body.process.command.trim();
-    if (!command && attachments.length === 0 && !hasProcessArgv && !hasProcessCommand) {
+    if (!command && attachments.length === 0 && !hasProcessArgv && !hasProcessCommand && !externalClaudeSessionId) {
       return errorResponse("Command or attachment is required", {
         status: 400,
         source: "Conversations",
@@ -159,6 +173,7 @@ export const handleConversationsRequest: OmniHttpHandler = async (request) => {
         : null,
       requestedRunId: readRequestedRunId(body?.requestedRunId),
       attachments,
+      externalClaudeSessionId,
       process: sessionType === "process" && body?.process && typeof body.process === "object"
         ? {
           argv: Array.isArray(body.process.argv) ? body.process.argv : undefined,

@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
 import { BootShell } from "@/components/BootShell";
 import { LoginShell } from "@/components/LoginShell";
@@ -82,6 +82,10 @@ const OnboardingSetupDialog = dynamic(
 );
 const SideWindow = dynamic(
   () => import("@/components/home/SideWindow").then((m) => m.SideWindow),
+  { ssr: false },
+);
+const ExternalSessionsPicker = dynamic(
+  () => import("@/app/home/ExternalSessionsPicker").then((m) => m.ExternalSessionsPicker),
   { ssr: false },
 );
 
@@ -178,6 +182,7 @@ function applyHomeBootstrap(bootstrap: HomeBootstrapPayload | null | undefined, 
 
 export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null }) {
   applyHomeBootstrap(bootstrap, false);
+  const [showExternalSessionsPicker, setShowExternalSessionsPicker] = useState(false);
   const initialEventState = bootstrap?.initialEventState ?? INITIAL_EVENT_STREAM_STATE;
   const initialRoute = typeof window === "undefined"
     ? bootstrap?.route
@@ -1123,6 +1128,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     authEnabled,
     openPairDeviceDialog: () => setShowPairDeviceDialog(true),
     logout: () => logoutMutation.mutate(),
+    onOpenExternalSessions: () => setShowExternalSessionsPicker(true),
   };
 
   return (
@@ -1352,6 +1358,12 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
       />
 
       <AttachmentImagePreviewDialog />
+
+      <ExternalSessionsPicker
+        open={showExternalSessionsPicker}
+        onClose={() => setShowExternalSessionsPicker(false)}
+        onResumed={(runId) => actions.handleSelectRun(runId)}
+      />
     </div>
   );
 }

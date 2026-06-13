@@ -98,6 +98,7 @@ interface HomeHeaderProps {
   onForkSessionIntoWorktree: () => void;
   canForkSession: boolean;
   onReload: () => void;
+  onOpenExternalSessions?: () => void;
 }
 
 export function HomeHeader({
@@ -171,6 +172,7 @@ export function HomeHeader({
   onForkSessionIntoWorktree,
   canForkSession,
   onReload,
+  onOpenExternalSessions,
 }: HomeHeaderProps) {
   useI18nSnapshot();
   const conversationTitle = selectedRun?.title?.trim() || "New conversation";
@@ -297,6 +299,7 @@ export function HomeHeader({
               authEnabled={authEnabled}
               openPairDeviceDialog={openPairDeviceDialog}
               logout={logout}
+              onOpenExternalSessions={onOpenExternalSessions}
             />
           </SheetContent>
         ) : null}
