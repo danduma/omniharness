@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
-import { normalizeAgentRecord, type AgentRecord } from "@/server/bridge-client";
+import { listAgents, normalizeAgentRecord, type AgentRecord } from "@/server/bridge-client";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -379,6 +379,40 @@ async function clearMatchingRunFailureMessage(run: typeof runs.$inferSelect) {
     eq(messages.kind, "error"),
     eq(messages.content, `Run failed: ${run.lastError}`),
   ));
+}
+
+let bridgeSyncInFlight: Promise<void> | null = null;
+
+/**
+ * Watchdog-driven reconciliation between the bridge runtime and persisted
+ * worker/run state. Turn completions are normally persisted by the awaiting
+ * send-message call, or by the SSE-driven sync that runs while a client is
+ * connected — but both die with their in-flight request (server restart,
+ * dropped ACP roundtrip, phone backgrounded the tab). A worker then sits at
+ * status='working' forever while the bridge agent finished its turn long
+ * ago, and the stuck-worker reaper keeps cancelling and re-delivering the
+ * same prompt every timeout window. This sweep closes the gap from the 15s
+ * watchdog without requiring any connected client.
+ */
+export function syncConversationSessionsFromBridge(): Promise<void> {
+  if (bridgeSyncInFlight) {
+    return bridgeSyncInFlight;
+  }
+
+  bridgeSyncInFlight = (async () => {
+    let rawAgents: unknown[];
+    try {
+      rawAgents = await listAgents({ retryIndefinitely: false });
+    } catch {
+      // Bridge down or unreachable — there is no live state to reconcile
+      // against; the next sweep will retry.
+      return;
+    }
+    await syncConversationSessions(rawAgents);
+  })().finally(() => {
+    bridgeSyncInFlight = null;
+  });
+  return bridgeSyncInFlight;
 }
 
 export async function syncConversationSessions(rawAgents: unknown[], options: { selectedRunId?: string | null } = {}) {
