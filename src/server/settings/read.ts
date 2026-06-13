@@ -3,6 +3,7 @@ import { settings } from "@/server/db/schema";
 import { buildAppError } from "@/server/api-errors";
 import { decryptSettingValue, shouldEncryptSetting } from "@/server/settings/crypto";
 import { canonicalizePersistedProjectRoots } from "@/server/projects/canonicalize";
+import { readSystemResourceSnapshot } from "@/server/agent-runtime/resource-admission";
 import type { SettingsResponse } from "@/app/home/types";
 
 function isInternalSettingKey(key: string) {
@@ -16,6 +17,15 @@ function buildSecretPreview(value: string): string {
     return "•".repeat(Math.max(4, trimmed.length));
   }
   return `${trimmed.slice(0, 4)}••••${trimmed.slice(-4)}`;
+}
+
+function normalizeResourceSnapshot(snapshot: Awaited<ReturnType<typeof readSystemResourceSnapshot>>): NonNullable<SettingsResponse["resourceSnapshot"]> {
+  return {
+    memoryFreePercent: snapshot.memoryFreePercent ?? null,
+    totalMemoryMb: snapshot.totalMemoryMb ?? null,
+    diskFreeMb: snapshot.diskFreeMb ?? null,
+    diskTotalMb: snapshot.diskTotalMb ?? null,
+  };
 }
 
 export async function readSettingsState(): Promise<SettingsResponse> {
@@ -62,5 +72,7 @@ export async function readSettingsState(): Promise<SettingsResponse> {
     }]];
   }));
 
-  return { values, secrets, diagnostics };
+  const resourceSnapshot = normalizeResourceSnapshot(await readSystemResourceSnapshot(process.cwd()));
+
+  return { values, secrets, diagnostics, resourceSnapshot };
 }

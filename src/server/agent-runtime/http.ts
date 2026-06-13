@@ -78,6 +78,14 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
         return;
       }
 
+      if (method === "POST" && parts.length === 2 && parts[0] === "runtime" && parts[1] === "settings") {
+        const body = await readJson<{ env?: Record<string, string> }>(req);
+        writeJson(res, 200, manager.applyRuntimeSettings(
+          body && typeof body.env === "object" && body.env !== null ? body.env : {},
+        ));
+        return;
+      }
+
       if (method === "POST" && parts.length === 1 && parts[0] === "agents") {
         const body = await readJson<StartAgentInput>(req);
         writeJson(res, 201, await manager.startAgent(body));

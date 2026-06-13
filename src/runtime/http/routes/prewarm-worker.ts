@@ -1,6 +1,7 @@
 import { prewarmWorker } from "@/server/bridge-client";
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
+import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { toNextRequest } from "./next-request";
 
@@ -31,11 +32,13 @@ export const handlePrewarmWorkerRequest: OmniHttpHandler = async (request) => {
         action: "Prewarm worker",
       });
     }
+    const { env: envParams } = await readRuntimeEnvFromSettings();
     const result = await prewarmWorker({
       type,
       cwd,
       model: typeof body.model === "string" ? body.model : null,
       mode: typeof body.mode === "string" ? body.mode : null,
+      env: envParams,
     });
     return Response.json(result);
   } catch (error: unknown) {

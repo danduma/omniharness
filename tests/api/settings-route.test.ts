@@ -96,6 +96,10 @@ describe("/api/settings", () => {
       updatedAt: expect.any(String),
     });
     expect(payload.diagnostics).toEqual([]);
+    expect(payload.resourceSnapshot).toHaveProperty("memoryFreePercent");
+    expect(payload.resourceSnapshot).toHaveProperty("totalMemoryMb");
+    expect(payload.resourceSnapshot).toHaveProperty("diskFreeMb");
+    expect(payload.resourceSnapshot).toHaveProperty("diskTotalMb");
   });
 
   it("does not fail the whole response when an old encrypted secret cannot be decrypted", async () => {

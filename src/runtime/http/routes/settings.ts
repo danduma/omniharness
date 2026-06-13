@@ -5,11 +5,19 @@ import { buildAppError, errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { canonicalizePersistedProjectRoots } from "@/server/projects/canonicalize";
 import { encryptSettingValue, shouldEncryptSetting } from "@/server/settings/crypto";
+import { updateRuntimeSettings } from "@/server/bridge-client";
+import { emitNamedEvent } from "@/server/events/named-events";
+import { readSystemResourceSnapshot } from "@/server/agent-runtime/resource-admission";
+import { RUNTIME_RESOURCE_SETTING_KEYS } from "@/lib/runtime-resource-settings";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { toNextRequest } from "./next-request";
 
 function isInternalSettingKey(key: string) {
   return key.startsWith("__");
+}
+
+function describeError(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function getSettings(request: Request) {
@@ -55,7 +63,9 @@ async function getSettings(request: Request) {
     }]];
   }));
 
-  return Response.json({ values, secrets, diagnostics });
+  const resourceSnapshot = await readSystemResourceSnapshot(process.cwd());
+
+  return Response.json({ values, secrets, diagnostics, resourceSnapshot });
 }
 
 async function postSettings(request: Request) {
@@ -70,6 +80,8 @@ async function postSettings(request: Request) {
 
   const body = await request.json();
   let projectSettingValue: string | null = null;
+  const runtimeResourceSettings: Record<string, string> = {};
+  const runtimeResourceKeys = new Set<string>(Object.values(RUNTIME_RESOURCE_SETTING_KEYS));
   for (const [key, value] of Object.entries(body)) {
     if (isInternalSettingKey(key)) {
       continue;
@@ -78,6 +90,9 @@ async function postSettings(request: Request) {
     if (typeof value === "string") {
       if (key === "PROJECTS") {
         projectSettingValue = value;
+      }
+      if (runtimeResourceKeys.has(key)) {
+        runtimeResourceSettings[key] = value;
       }
       const isSecret = shouldEncryptSetting(key);
       if (isSecret && value.trim() === "") {
@@ -95,6 +110,21 @@ async function postSettings(request: Request) {
   }
   if (projectSettingValue !== null) {
     await canonicalizePersistedProjectRoots(projectSettingValue);
+  }
+  if (Object.keys(runtimeResourceSettings).length > 0) {
+    try {
+      await updateRuntimeSettings(runtimeResourceSettings);
+    } catch (error) {
+      const keys = Object.keys(runtimeResourceSettings);
+      const reason = describeError(error);
+      emitNamedEvent({ kind: "runtime.settings_apply_failed", keys, reason });
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "runtime.settings_apply_failed",
+        message: `Runtime settings were saved, but the running agent runtime did not apply them yet: ${reason}`,
+        surface: "log",
+      });
+    }
   }
   return Response.json({ ok: true });
 }

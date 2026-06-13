@@ -38,6 +38,10 @@ import {
 } from "./worker-pool";
 import { MemoryTracer } from "./memory-trace";
 import {
+  resolveRuntimeResourceSettings,
+  RUNTIME_RESOURCE_SETTING_KEYS,
+} from "@/lib/runtime-resource-settings";
+import {
   acquireWorkerSpawnResources,
   assessResourcePressure,
   readSystemResourceSnapshot,
@@ -950,6 +954,9 @@ export class AgentRuntimeManager {
   private resourcePressureTimer: NodeJS.Timeout | null = null;
   private resourcePressureCheckInFlight = false;
   private lastResourcePressureLevel: ResourcePressureLevel = "normal";
+  private readonly runtimeStartedAt = Date.now();
+  private lastAgentUseAt = this.runtimeStartedAt;
+  private runtimeSettingsEnv: EnvLike = {};
   private readonly poolMemberMaxAgeMs: number;
   private readonly agentIdleTimeoutMs: number;
   private readonly agentExitGraceMs: number;
@@ -1009,11 +1016,42 @@ export class AgentRuntimeManager {
     });
   }
 
+  applyRuntimeSettings(env: EnvLike, options: { emit?: boolean } = {}): { ok: true; keys: string[] } {
+    const settingKeys = Object.values(RUNTIME_RESOURCE_SETTING_KEYS);
+    const nextEnv = { ...this.runtimeSettingsEnv };
+    const changed: string[] = [];
+
+    for (const key of settingKeys) {
+      const value = env[key];
+      if (typeof value !== "string") continue;
+      if (nextEnv[key] === value) continue;
+      nextEnv[key] = value;
+      changed.push(key);
+    }
+
+    if (changed.length > 0) {
+      this.runtimeSettingsEnv = nextEnv;
+      if (options.emit !== false) {
+        emitNamedEvent({ kind: "runtime.settings_updated", keys: changed });
+      }
+    }
+
+    return { ok: true, keys: changed };
+  }
+
+  private getRuntimeEnv(overrides: EnvLike = {}): EnvLike {
+    return {
+      ...(this.options.env || process.env),
+      ...this.runtimeSettingsEnv,
+      ...overrides,
+    };
+  }
+
   private async runResourcePressureCheck(): Promise<void> {
     if (this.resourcePressureCheckInFlight) return;
     this.resourcePressureCheckInFlight = true;
     try {
-      const baseEnv = this.options.env || process.env;
+      const baseEnv = this.getRuntimeEnv();
       const snapshot = this.options.resourceSnapshotProvider
         ? await this.options.resourceSnapshotProvider()
         : await readSystemResourceSnapshot(process.cwd());
@@ -1075,6 +1113,35 @@ export class AgentRuntimeManager {
         );
       });
     }
+    this.runIdleCleanupSweep(now);
+  }
+
+  private runIdleCleanupSweep(now: number): void {
+    const settings = resolveRuntimeResourceSettings(this.getRuntimeEnv());
+    if (!settings.idleCleanupEnabled) return;
+
+    const activeAgents = Array.from(this.agents.values())
+      .filter((record) => record.state !== "stopped" && record.state !== "error")
+      .length;
+    if (activeAgents > 0) return;
+
+    const poolMembers = this.workerPool.countAll();
+    if (poolMembers === 0) return;
+
+    const quietSince = Math.max(this.runtimeStartedAt, this.lastAgentUseAt);
+    const idleMs = now - quietSince;
+    if (idleMs < settings.idleCleanupAfterMs) return;
+
+    const evictedPoolMembers = this.workerPool.evictAll();
+    if (evictedPoolMembers === 0) return;
+
+    this.lastAgentUseAt = now;
+    emitNamedEvent({
+      kind: "runtime.idle_cleanup",
+      idleMs,
+      activeAgents,
+      evictedPoolMembers,
+    });
   }
 
   private scheduleAgentRecordReap(name: string): void {
@@ -1190,6 +1257,8 @@ export class AgentRuntimeManager {
   }
 
   async startAgent(input: StartAgentInput) {
+    this.applyRuntimeSettings(input.env ?? {}, { emit: false });
+    this.lastAgentUseAt = Date.now();
     const type = input.type?.trim() || "opencode";
     const name = input.name?.trim();
     if (!name) {
@@ -1214,7 +1283,7 @@ export class AgentRuntimeManager {
     const requestedEffort = input.effort?.trim().toLowerCase() || null;
     const resumeSessionId = input.resumeSessionId?.trim() || null;
     const configuredAgent = this.options.config?.agents?.[type];
-    const baseEnv = this.options.env || process.env;
+    const baseEnv = this.getRuntimeEnv();
     const skillRoots = [
       ...asStringArray(configuredAgent?.skillRoots, `agents.${type}.skillRoots`),
       ...asStringArray(input.skillRoots, "skillRoots"),
@@ -1652,11 +1721,12 @@ export class AgentRuntimeManager {
     env?: Record<string, string>;
     mcpServers?: acp.McpServer[];
   }): Promise<{ ok: true; key: string; size: number; warmed: boolean }> {
+    this.applyRuntimeSettings(input.env ?? {}, { emit: false });
     const type = input.type;
     const cwd = input.cwd || process.cwd();
     const requestedModel = input.model?.trim() || null;
     const configuredAgent = this.options.config?.agents?.[type];
-    const baseEnv = this.options.env || process.env;
+    const baseEnv = this.getRuntimeEnv();
     const mcpServers = [
       ...normalizeMcpServers(configuredAgent?.mcpServers, `agents.${type}.mcpServers`),
       ...normalizeMcpServers(input.mcpServers, "mcpServers"),

@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import type { SettingsDraftState } from "@/app/home/SettingsDraftManager";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { appErrorKey } from "@/lib/app-errors";
-import type { LlmProfileTab, SettingsTab, WorkerAvailability, WorkerCatalogResponse } from "@/app/home/types";
+import type { LlmProfileTab, SettingsResponse, SettingsTab, WorkerAvailability, WorkerCatalogResponse } from "@/app/home/types";
 import { cn } from "@/lib/utils";
 import { ErrorNotice } from "@/components/home/ErrorNotice";
 import { buildInlineError } from "@/app/home/utils";
@@ -49,6 +49,7 @@ interface SettingsDialogProps {
   onRefreshWorkerCatalog: () => void;
   workerCatalogRefreshing: boolean;
   settingsDiagnostics: AppErrorDescriptor[];
+  resourceSnapshot?: SettingsResponse["resourceSnapshot"];
   saveSettings: {
     error: unknown;
     isPending: boolean;
@@ -73,6 +74,7 @@ export function SettingsDialog({
   onRefreshWorkerCatalog,
   workerCatalogRefreshing,
   settingsDiagnostics,
+  resourceSnapshot,
   saveSettings,
   activeProjectPath,
 }: SettingsDialogProps) {
@@ -160,7 +162,11 @@ export function SettingsDialog({
               />
             ) : null}
             {activeSettingsTab === "runtime" ? (
-              <RuntimeSettingsPanel settings={settingsDraft.draft} setSetting={setSetting} />
+              <RuntimeSettingsPanel
+                settings={settingsDraft.draft}
+                setSetting={setSetting}
+                resourceSnapshot={resourceSnapshot}
+              />
             ) : null}
             {activeSettingsTab === "memory" ? (
               <ProjectMemorySettingsPanel

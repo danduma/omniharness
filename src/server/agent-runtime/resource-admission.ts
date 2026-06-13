@@ -3,12 +3,10 @@ import { readFile } from "fs/promises";
 import { freemem, platform, totalmem } from "os";
 import { promisify } from "util";
 import { RuntimeHttpError } from "./types";
+import { resolveRuntimeResourceSettings } from "@/lib/runtime-resource-settings";
 
 const execFileAsync = promisify(execFile);
 
-const DEFAULT_MIN_MEMORY_FREE_PERCENT = 12;
-const DEFAULT_MIN_DISK_FREE_MB = 8192;
-const DEFAULT_ESTIMATED_WORKER_MEMORY_MB = 1536;
 const RESOURCE_CHECK_TIMEOUT_MS = 1000;
 let pendingSpawnReservationMb = 0;
 
@@ -18,6 +16,7 @@ export type SystemResourceSnapshot = {
   memoryFreePercent?: number | null;
   totalMemoryMb?: number | null;
   diskFreeMb?: number | null;
+  diskTotalMb?: number | null;
 };
 
 export type ResourcePressureLevel = "normal" | "warning" | "critical";
@@ -46,15 +45,15 @@ export function isResourceAdmissionError(error: unknown): error is ResourceAdmis
   return error instanceof ResourceAdmissionError;
 }
 
+function guardDisabled(env: EnvLike): boolean {
+  return env.OMNIHARNESS_RESOURCE_GUARD === "0";
+}
+
 function readNumber(env: EnvLike, key: string, fallback: number): number {
   const raw = env[key];
   if (!raw?.trim()) return fallback;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
-
-function guardDisabled(env: EnvLike): boolean {
-  return env.OMNIHARNESS_RESOURCE_GUARD === "0";
 }
 
 function buildResourceAdmissionMessage(failures: string[]): string {
@@ -76,21 +75,14 @@ export function assessResourcePressure(
   snapshot: SystemResourceSnapshot,
   env: EnvLike,
 ): ResourcePressureAssessment {
-  const minMemoryFreePercent = readNumber(
-    env,
-    "OMNIHARNESS_MIN_MEMORY_FREE_PERCENT",
-    DEFAULT_MIN_MEMORY_FREE_PERCENT,
-  );
+  const settings = resolveRuntimeResourceSettings(env);
+  const minMemoryFreePercent = settings.minMemoryFreePercent;
   const criticalMemoryFreePercent = readNumber(
     env,
     "OMNIHARNESS_CRITICAL_MEMORY_FREE_PERCENT",
     Math.max(1, Math.floor(minMemoryFreePercent * 0.6)),
   );
-  const minDiskFreeMb = readNumber(
-    env,
-    "OMNIHARNESS_MIN_DISK_FREE_MB",
-    DEFAULT_MIN_DISK_FREE_MB,
-  );
+  const minDiskFreeMb = settings.minDiskFreeMb;
   const criticalDiskFreeMb = Math.max(512, Math.floor(minDiskFreeMb / 2));
   const reasons: string[] = [];
   let level: ResourcePressureLevel = "normal";
@@ -156,30 +148,35 @@ async function readMemoryFreePercent(): Promise<number | null> {
   return total > 0 ? Math.round((freemem() / total) * 100) : null;
 }
 
-async function readDiskFreeMb(cwd: string): Promise<number | null> {
+async function readDiskSnapshot(cwd: string): Promise<{ diskFreeMb: number | null; diskTotalMb: number | null }> {
   try {
     const { stdout } = await execFileAsync("df", ["-Pk", cwd], {
       timeout: RESOURCE_CHECK_TIMEOUT_MS,
     });
     const line = stdout.trim().split(/\r?\n/)[1];
-    if (!line) return null;
+    if (!line) return { diskFreeMb: null, diskTotalMb: null };
     const columns = line.trim().split(/\s+/);
+    const totalKb = Number.parseInt(columns[1] ?? "", 10);
     const availableKb = Number.parseInt(columns[3] ?? "", 10);
-    return Number.isFinite(availableKb) ? Math.floor(availableKb / 1024) : null;
+    return {
+      diskFreeMb: Number.isFinite(availableKb) ? Math.floor(availableKb / 1024) : null,
+      diskTotalMb: Number.isFinite(totalKb) ? Math.floor(totalKb / 1024) : null,
+    };
   } catch {
-    return null;
+    return { diskFreeMb: null, diskTotalMb: null };
   }
 }
 
 export async function readSystemResourceSnapshot(cwd: string): Promise<SystemResourceSnapshot> {
-  const [memoryFreePercent, diskFreeMb] = await Promise.all([
+  const [memoryFreePercent, disk] = await Promise.all([
     readMemoryFreePercent(),
-    readDiskFreeMb(cwd),
+    readDiskSnapshot(cwd),
   ]);
   return {
     memoryFreePercent,
     totalMemoryMb: Math.round(totalmem() / 1024 / 1024),
-    diskFreeMb,
+    diskFreeMb: disk.diskFreeMb,
+    diskTotalMb: disk.diskTotalMb,
   };
 }
 
@@ -190,21 +187,10 @@ export async function acquireWorkerSpawnResources(args: {
 }): Promise<{ release: () => void }> {
   if (guardDisabled(args.env)) return { release: () => undefined };
 
-  const minMemoryFreePercent = readNumber(
-    args.env,
-    "OMNIHARNESS_MIN_MEMORY_FREE_PERCENT",
-    DEFAULT_MIN_MEMORY_FREE_PERCENT,
-  );
-  const minDiskFreeMb = readNumber(
-    args.env,
-    "OMNIHARNESS_MIN_DISK_FREE_MB",
-    DEFAULT_MIN_DISK_FREE_MB,
-  );
-  const estimatedWorkerMemoryMb = readNumber(
-    args.env,
-    "OMNIHARNESS_ESTIMATED_WORKER_MEMORY_MB",
-    DEFAULT_ESTIMATED_WORKER_MEMORY_MB,
-  );
+  const settings = resolveRuntimeResourceSettings(args.env);
+  const minMemoryFreePercent = settings.minMemoryFreePercent;
+  const minDiskFreeMb = settings.minDiskFreeMb;
+  const estimatedWorkerMemoryMb = settings.estimatedWorkerMemoryMb;
   const snapshot = args.snapshotProvider
     ? await args.snapshotProvider()
     : await readSystemResourceSnapshot(args.cwd);

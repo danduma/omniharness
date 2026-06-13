@@ -281,6 +281,12 @@ export type SettingsResponse = {
   values: Record<string, string>;
   secrets?: Record<string, { configured: boolean; updatedAt: string; preview?: string }>;
   diagnostics?: AppErrorDescriptor[];
+  resourceSnapshot?: {
+    memoryFreePercent: number | null;
+    totalMemoryMb: number | null;
+    diskFreeMb: number | null;
+    diskTotalMb: number | null;
+  };
 };
 export type AuthSessionRecord = {
   id: string;
