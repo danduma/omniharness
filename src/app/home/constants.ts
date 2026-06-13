@@ -140,6 +140,7 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
     { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
   ],
   claude: [
+    { value: "claude-fable-5", label: "Claude Fable 5" },
     { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
     { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
     { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
@@ -187,6 +188,7 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
     { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
   ],
   anthropic: [
+    { value: "claude-fable-5", label: "Claude Fable 5" },
     { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
     { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
     { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
@@ -205,6 +207,7 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
     { value: "o3-mini", label: "o3-mini" },
   ],
   openrouter: [
+    { value: "anthropic/claude-fable-5", label: "Claude Fable 5" },
     { value: "anthropic/claude-opus-4-8", label: "Claude Opus 4.8" },
     { value: "anthropic/claude-opus-4-7", label: "Claude Opus 4.7" },
     { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
