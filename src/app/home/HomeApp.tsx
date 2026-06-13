@@ -1332,6 +1332,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
         onRefreshWorkerCatalog={() => refreshWorkerCatalog.mutate()}
         workerCatalogRefreshing={refreshWorkerCatalog.isPending || workerCatalogQuery.isFetching}
         settingsDiagnostics={settingsDiagnostics}
+        resourceSnapshot={settingsQuery.data?.resourceSnapshot}
         saveSettings={saveSettings}
         activeProjectPath={activeConversationCwd ?? null}
       />

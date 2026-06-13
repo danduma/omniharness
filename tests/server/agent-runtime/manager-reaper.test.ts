@@ -475,4 +475,50 @@ describe("AgentRuntimeManager resource admission", () => {
       manager.shutdownPools();
     }
   });
+
+  it("cleans prewarmed workers after a quiet period with no active agents", async () => {
+    const dir = createTempDir("omni-resource-idle-cleanup-");
+    createExecutable(dir, "gemini", minimalAcpScript);
+    const manager = new AgentRuntimeManager({
+      env: {
+        ...process.env,
+        PATH: `${dir}:${process.env.PATH ?? ""}`,
+        OMNIHARNESS_MEMORY_TRACE: "0",
+        OMNIHARNESS_WORKER_POOL_MAX_AGE_MS: "999999",
+        OMNIHARNESS_RUNTIME_SWEEP_INTERVAL_MS: "30",
+        OMNIHARNESS_RUNTIME_IDLE_CLEANUP_ENABLED: "false",
+        OMNIHARNESS_RUNTIME_IDLE_CLEANUP_AFTER_MS: "60",
+      } as Record<string, string>,
+    } as ConstructorParameters<typeof AgentRuntimeManager>[0]);
+
+    try {
+      await manager.prewarmWorker({ type: "gemini", cwd: dir });
+      expect((manager as any).workerPool.countAll()).toBe(1);
+
+      await sleep(120);
+      expect((manager as any).workerPool.countAll()).toBe(1);
+
+      manager.applyRuntimeSettings({
+        OMNIHARNESS_RUNTIME_IDLE_CLEANUP_ENABLED: "true",
+        OMNIHARNESS_RUNTIME_IDLE_CLEANUP_AFTER_MS: "60000",
+      });
+      (manager as any).runtimeStartedAt = Date.now() - 120_000;
+      (manager as any).lastAgentUseAt = Date.now() - 120_000;
+      (manager as any).runReapSweep();
+
+      expect((manager as any).workerPool.countAll()).toBe(0);
+      const events = getNamedEventsSince(0).events.map((entry) => entry.event);
+      expect(events).toContainEqual(expect.objectContaining({
+        kind: "runtime.settings_updated",
+        keys: expect.arrayContaining(["OMNIHARNESS_RUNTIME_IDLE_CLEANUP_ENABLED"]),
+      }));
+      expect(events).toContainEqual(expect.objectContaining({
+        kind: "runtime.idle_cleanup",
+        activeAgents: 0,
+        evictedPoolMembers: 1,
+      }));
+    } finally {
+      manager.shutdownPools();
+    }
+  });
 });

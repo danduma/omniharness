@@ -1,5 +1,6 @@
 import type { ComposerWorkerOption, WorkerModelCatalog, WorkerType } from "./types";
 import { GIT_AUTO_COMMIT_MILESTONES_SETTING, GIT_PUSH_ON_COMMIT_SETTING } from "@/lib/commit-workflow";
+import { DEFAULT_RUNTIME_RESOURCE_SETTINGS, runtimeResourceSettingsToEnv } from "@/lib/runtime-resource-settings";
 
 export const PRODUCT_NAME = "OmniHarness";
 export const DEFAULT_CONVERSATION_SIDEBAR_WIDTH = 280;
@@ -118,6 +119,7 @@ export const DEFAULT_SERVER_SETTINGS: Record<string, string> = {
     preserveQueuedMessages: true,
   }),
   PROJECTS: "[]",
+  ...runtimeResourceSettingsToEnv(DEFAULT_RUNTIME_RESOURCE_SETTINGS),
 };
 export const WORKER_OPTIONS: Array<{ value: WorkerType; label: string }> = [
   { value: "codex", label: "Codex" },

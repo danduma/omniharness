@@ -37,6 +37,7 @@ export type SurfacedErrorCode =
   | "recovery.needs_user"
   | "recovery.run_failed"
   | "runtime.resource_pressure"
+  | "runtime.settings_apply_failed"
   | "runtime.start_failed"
   | "session.provider.unknown"
   | "session.action.unsupported"
@@ -102,6 +103,21 @@ export type RuntimeEvent =
       poolMembers: number;
       evictedPoolMembers: number;
       reasons: string[];
+    }
+  | {
+      kind: "runtime.settings_updated";
+      keys: string[];
+    }
+  | {
+      kind: "runtime.settings_apply_failed";
+      keys: string[];
+      reason: string;
+    }
+  | {
+      kind: "runtime.idle_cleanup";
+      idleMs: number;
+      activeAgents: number;
+      evictedPoolMembers: number;
     }
   | {
       kind: "surface.connected";

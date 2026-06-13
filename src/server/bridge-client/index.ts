@@ -460,6 +460,19 @@ export type PrewarmWorkerResult = {
   warmed: boolean;
 };
 
+export async function updateRuntimeSettings(env: Record<string, string>) {
+  return requestBridge<{ ok: true; keys: string[] }>(
+    "/runtime/settings",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ env }),
+    },
+    "Update runtime settings",
+    { retryIndefinitely: false },
+  );
+}
+
 export async function prewarmWorker(params: {
   type: string;
   cwd: string;
