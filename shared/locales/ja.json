@@ -29,6 +29,7 @@
   "mainMenu.connectPhone": "電話を接続",
   "mainMenu.signOut": "サインアウト",
   "settings.dialog.title": "OmniHarness 設定",
+  "settings.feedback.reportIssue": "問題を報告",
   "settings.tabs.general": "一般",
   "settings.tabs.models": "モデル",
   "settings.tabs.agents": "エージェント",

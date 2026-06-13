@@ -29,6 +29,7 @@
   "mainMenu.connectPhone": "连接手机",
   "mainMenu.signOut": "退出登录",
   "settings.dialog.title": "OmniHarness 设置",
+  "settings.feedback.reportIssue": "报告问题",
   "settings.tabs.general": "常规",
   "settings.tabs.models": "模型",
   "settings.tabs.agents": "代理",

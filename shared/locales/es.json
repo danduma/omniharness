@@ -29,6 +29,7 @@
   "mainMenu.connectPhone": "Conectar teléfono",
   "mainMenu.signOut": "Cerrar sesión",
   "settings.dialog.title": "Configuración de OmniHarness",
+  "settings.feedback.reportIssue": "Reportar problema",
   "settings.tabs.general": "General",
   "settings.tabs.models": "Modelos",
   "settings.tabs.agents": "Agentes",

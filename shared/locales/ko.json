@@ -29,6 +29,7 @@
   "mainMenu.connectPhone": "전화 연결",
   "mainMenu.signOut": "로그아웃",
   "settings.dialog.title": "OmniHarness 설정",
+  "settings.feedback.reportIssue": "문제 신고",
   "settings.tabs.general": "일반",
   "settings.tabs.models": "모델",
   "settings.tabs.agents": "에이전트",
