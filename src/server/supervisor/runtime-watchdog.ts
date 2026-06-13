@@ -8,6 +8,7 @@ import { cancelDurableSupervisorWakesForTerminalRuns, rehydrateDurableSupervisor
 import { compactStaleWorkerOutputs } from "@/server/workers/output-store";
 import { compactStaleArtifactStreams } from "@/server/artifacts/compaction";
 import { reapStuckDirectWorkers } from "@/server/workers/stuck-worker-reaper";
+import { syncConversationSessionsFromBridge } from "@/server/conversations/sync";
 
 const WATCHDOG_INTERVAL_MS = 15_000;
 
@@ -60,7 +61,14 @@ export async function syncRunningSupervision() {
   void compactStaleArtifactStreams().catch((error) => {
     console.warn("Artifact stream compaction sweep failed:", error);
   });
-  void reapStuckDirectWorkers().then((result) => {
+  // Reconcile bridge state into the DB BEFORE the stuck-worker sweep. A turn
+  // whose completion was lost (server restart, dropped ask roundtrip, no
+  // connected client) leaves the worker at status='working' even though the
+  // bridge agent finished; reconciling first turns those into idle/done so
+  // the reaper never cancels and re-delivers already-completed work.
+  void syncConversationSessionsFromBridge().catch((error) => {
+    process.stderr.write(`[bridge-sync] sweep failed: ${error instanceof Error ? error.message : String(error)}\n`);
+  }).then(() => reapStuckDirectWorkers()).then((result) => {
     if (result.ok && result.recovered > 0) {
       process.stderr.write(`[stuck-reaper] recovered ${result.recovered} stuck direct worker(s)\n`);
     } else if (!result.ok) {

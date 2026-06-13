@@ -575,6 +575,11 @@ export async function getAgent(name: string, options: { retryIndefinitely?: bool
   return normalizeAgentRecord(agent);
 }
 
+export async function listAgents(options: { retryIndefinitely?: boolean } = {}) {
+  const agents = await requestBridge<unknown>("/agents", {}, "List agents", options);
+  return Array.isArray(agents) ? agents : [];
+}
+
 export async function getAgentOutput(name: string, options: { cursor?: number; limit?: number } = {}) {
   const params = new URLSearchParams();
   if (options.cursor !== undefined) {
