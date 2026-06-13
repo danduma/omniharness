@@ -43,14 +43,14 @@ describe("worker model catalog", () => {
     ]);
   });
 
-  it("offers the latest Claude Code Opus model before older Opus options", async () => {
+  it("offers Claude Fable 5 before older Claude Code options", async () => {
     const catalog = await buildWorkerModelCatalog({
       runCommand: async () => "",
     });
 
     expect(catalog.claude.slice(0, 2)).toEqual([
+      { value: "claude-fable-5", label: "Claude Fable 5" },
       { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
-      { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
     ]);
   });
 

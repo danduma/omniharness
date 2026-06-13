@@ -59,10 +59,10 @@ function useRenderViewModel(state: EventStreamState) {
 }
 
 describe("useHomeViewModel", () => {
-  it("offers Claude Opus 4.8 from the frontend fallback worker model options", () => {
+  it("offers Claude Fable 5 from the frontend fallback worker model options", () => {
     expect(getWorkerModelOptions(undefined, "claude").slice(0, 2)).toEqual([
+      { value: "claude-fable-5", label: "Claude Fable 5" },
       { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
-      { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
     ]);
   });
 
