@@ -98,7 +98,7 @@ describe("supporting API read routes", () => {
     }
   });
 
-  it("returns accounts without requiring lower-level callers to touch the database", async () => {
+  it("returns accounts without leaking credential references", async () => {
     await db.insert(accounts).values({
       id: "account-1",
       provider: "openai",
@@ -112,11 +112,18 @@ describe("supporting API read routes", () => {
     const response = await getAccounts(getRequest("http://localhost/api/accounts"));
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual([expect.objectContaining({
+    const payload = await response.json();
+    expect(payload).toEqual([expect.objectContaining({
       id: "account-1",
       provider: "openai",
-      authRef: "secret-ref",
+      type: "api",
+      capacity: 100,
+      resetSchedule: "daily",
+      createdAt: expect.any(String),
     })]);
+    expect(JSON.stringify(payload)).not.toContain("secret-ref");
+    expect(payload[0]).not.toHaveProperty("authRef");
+    expect(payload[0]).not.toHaveProperty("auth_ref");
   });
 
   it("returns plans in newest-first order at the route boundary", async () => {
