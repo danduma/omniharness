@@ -437,6 +437,25 @@ function collectPermissionContextParts(
     .filter(Boolean);
 }
 
+// A `switch_mode` permission asks to change the agent's operating mode (e.g. the
+// plan-mode → code-mode "Ready to code?" handoff). It is always the user's call and
+// must never be auto-approved, independent of the request-text classification.
+function isModeSwitchPermission(
+  snapshot: WorkerBridgeSnapshot,
+  permission: NonNullable<WorkerBridgeSnapshot["pendingPermissions"]>[number],
+) {
+  const matchingEntry = [...(snapshot.outputEntries ?? [])]
+    .reverse()
+    .filter((entry) => entry.type === "permission")
+    .find((entry) => {
+      const raw = asRecord(entry.raw);
+      return typeof raw?.requestId === "number" && raw.requestId === permission.requestId;
+    });
+  const raw = asRecord(matchingEntry?.raw);
+  const toolCall = asRecord(raw?.toolCall);
+  return typeof toolCall?.kind === "string" && toolCall.kind === "switch_mode";
+}
+
 function pickApprovalOption(
   permission: NonNullable<WorkerBridgeSnapshot["pendingPermissions"]>[number],
 ) {
@@ -461,6 +480,9 @@ async function autoApproveSafePermissions(
   const autoApprovedRequestIds: number[] = [];
 
   for (const permission of pendingPermissions) {
+    if (isModeSwitchPermission(snapshot, permission)) {
+      continue;
+    }
     const contextParts = collectPermissionContextParts(snapshot, permission);
     const requestSummary = contextParts.join("\n").trim();
     if (!requestSummary || !shouldAutoApprove(requestSummary)) {
