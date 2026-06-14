@@ -373,6 +373,58 @@ process.stdin.on('data', (chunk) => {
 });
 `;
 
+const fakeModeSwitchAcpAgentScript = `#!/usr/bin/env node
+process.stdin.setEncoding('utf8');
+let buffer = '';
+let promptRequestId = null;
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + '\\n');
+}
+
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\\r?\\n/g);
+  buffer = lines.pop() ?? '';
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === 'initialize') {
+      write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+    } else if (message.method === 'session/new') {
+      write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-1' } });
+    } else if (message.method === 'session/set_mode') {
+      write({ jsonrpc: '2.0', id: message.id, result: {} });
+    } else if (message.method === 'session/prompt') {
+      promptRequestId = message.id;
+      write({
+        jsonrpc: '2.0',
+        id: 7002,
+        method: 'session/request_permission',
+        params: {
+          sessionId: message.params.sessionId,
+          toolCall: {
+            toolCallId: 'mode-switch-call-1',
+            title: 'Ready to code?',
+            kind: 'switch_mode',
+            status: 'pending',
+          },
+          options: [
+            { optionId: 'allow_always', kind: 'allow_always', name: 'Yes, and auto-accept edits' },
+            { optionId: 'allow_once', kind: 'allow_once', name: 'Yes' },
+            { optionId: 'reject_once', kind: 'reject_once', name: 'No, keep planning' },
+          ],
+        },
+      });
+      // The permission must stay pending until a human responds; the turn only
+      // ends once that response arrives (see the message.id === 7002 branch).
+    } else if (message.id === 7002) {
+      write({ jsonrpc: '2.0', id: promptRequestId, result: { stopReason: 'end_turn' } });
+    }
+  }
+});
+`;
+
 const fakeTerminalAcpAgentScript = `#!/usr/bin/env node
 const { spawn } = require('node:child_process');
 process.stdin.setEncoding('utf8');
@@ -1340,6 +1392,71 @@ process.stdout.write(JSON.stringify({
       },
     ]);
     expect(permissionEntries[1].text).toMatch(/^Permission approved for request \d+: allow_always Always Allow$/);
+  }, 30_000);
+
+  it("does not auto-approve a switch_mode permission even when the session is full-access", async () => {
+    const projectDir = createTempDir("omni-runtime-mode-switch-project-");
+    const binDir = createTempDir("omni-runtime-mode-switch-bin-");
+    const fakeAgent = createExecutable(binDir, "fake-mode-switch-acp-agent", fakeModeSwitchAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "mode-switch-worker",
+        mode: "full-access",
+      }),
+    });
+    expect(spawnResponse.status).toBe(201);
+
+    // `/ask` blocks until the turn ends, so fire it without awaiting and poll for
+    // the surfaced permission instead.
+    const askPromise = fetch(`${baseUrl}/agents/mode-switch-worker/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "let me plan" }),
+    });
+
+    // The mode switch must stay pending rather than being auto-approved by the
+    // full-access bypass.
+    const pendingAgent = await waitFor(
+      async () => {
+        const response = await fetch(`${baseUrl}/agents/mode-switch-worker`);
+        expect(response.status).toBe(200);
+        return response.json() as Promise<{
+          pendingPermissions?: Array<{ toolCall?: { kind?: string; title?: string } | null }>;
+          outputEntries?: Array<{ type: string; status?: string }>;
+        }>;
+      },
+      (agent) => (agent.pendingPermissions?.length ?? 0) === 1,
+    );
+    expect(pendingAgent.pendingPermissions?.[0]?.toolCall).toMatchObject({
+      kind: "switch_mode",
+      title: "Ready to code?",
+    });
+    // No approval/decision outcome entry should have been written.
+    expect(pendingAgent.outputEntries?.some((entry) => entry.type === "permission" && entry.status === "approved")).toBe(false);
+
+    // Answer the permission so the turn completes and the server can close cleanly.
+    const rejectResponse = await fetch(`${baseUrl}/agents/mode-switch-worker/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ optionId: "reject_once" }),
+    });
+    expect(rejectResponse.status).toBe(200);
+    expect(await askPromise.then((response) => response.status)).toBe(200);
   }, 30_000);
 
   it("keeps nonfatal agent stderr diagnostics out of lastError", async () => {

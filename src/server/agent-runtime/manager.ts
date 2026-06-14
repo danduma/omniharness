@@ -757,7 +757,10 @@ class RuntimeClient implements acp.Client {
       status: "pending",
       raw: { ...params, requestId },
     });
-    if (isFullAccessPermissionMode(record.sessionMode)) {
+    // Mode switches (e.g. exiting plan mode via "Ready to code?") change how the
+    // agent operates and are always the user's call — never auto-approve them, even
+    // in full-access/YOLO mode where every other permission is bypassed.
+    if (isFullAccessPermissionMode(record.sessionMode) && !isModeSwitchPermission(params)) {
       const optionId = findAutoApprovePermissionOptionId(params);
       appendPermissionOutcomeEntry(record, requestId, params, "approve", optionId);
       record.updatedAt = nowIso();
@@ -882,6 +885,14 @@ function buildPermissionRequestText(params: acp.RequestPermissionRequest) {
 
 function isFullAccessPermissionMode(mode: string | null) {
   return mode === "full-access" || mode === "danger-full-access";
+}
+
+// A `switch_mode` permission asks to change the agent's operating mode (the
+// plan-mode → code-mode "Ready to code?" handoff). This is a deliberate user
+// gate and must never be auto-approved, regardless of session permission mode.
+function isModeSwitchPermission(params: acp.RequestPermissionRequest) {
+  const toolCall = asRecord(params.toolCall);
+  return asNonEmptyString(toolCall?.kind) === "switch_mode";
 }
 
 function findPermissionOptionId(params: acp.RequestPermissionRequest, mode: "approve" | "deny", explicitOptionId?: string) {
