@@ -133,6 +133,9 @@ describe("selectSpawnableWorkerType", () => {
 
     expect(getWorkerAuthenticationInfo("claude", {
       env: { HOME: "/Users/tester", PATH: "/usr/bin:/bin" },
+      // Isolate from any ambient credential-profile dir under the test cwd so
+      // this case exercises the CLI status probe, not profile detection.
+      fileExists: () => false,
     })).toMatchObject({
       status: "authenticated",
       method: "status_command",
@@ -225,6 +228,75 @@ describe("selectSpawnableWorkerType", () => {
 
     expect(getWorkerAuthenticationInfo("claude", {
       env: {},
+      homeDir: "/Users/tester",
+      fileExists: () => false,
+      platform: "darwin",
+    })).toMatchObject({
+      status: "not_authenticated",
+      method: "missing",
+    });
+  });
+
+  it("treats a command-backed credential profile as authenticated without login", async () => {
+    // No CLI login, no API key, no session files — only a configured provider
+    // script. The agent gets its credentials at spawn time, so the wizard must
+    // not demand an interactive login.
+    mockExecFileSync.mockImplementation(() => {
+      throw new Error("not found");
+    });
+
+    const { getWorkerAuthenticationInfo } = await import("@/server/supervisor/worker-availability");
+
+    expect(getWorkerAuthenticationInfo("claude", {
+      env: {
+        HOME: "/Users/tester",
+        PATH: "/usr/bin:/bin",
+        OMNIHARNESS_CREDENTIAL_COMMAND_CLAUDE: "/Users/tester/.local/bin/baton",
+        OMNIHARNESS_CREDENTIAL_COMMAND_ARGS_CLAUDE: '["credential-profile"]',
+      },
+      homeDir: "/Users/tester",
+      fileExists: () => false,
+      platform: "darwin",
+    })).toMatchObject({
+      status: "authenticated",
+      method: "credential_profile",
+    });
+  });
+
+  it("treats a credential profile directory as authenticated without login", async () => {
+    mockExecFileSync.mockImplementation(() => {
+      throw new Error("not found");
+    });
+
+    const { getWorkerAuthenticationInfo } = await import("@/server/supervisor/worker-availability");
+
+    expect(getWorkerAuthenticationInfo("claude", {
+      env: { HOME: "/Users/tester", PATH: "/usr/bin:/bin" },
+      homeDir: "/Users/tester",
+      // Simulate a `.omniharness/credential-profiles/claude` profile dir.
+      fileExists: (filePath) => filePath.endsWith("/credential-profiles/claude"),
+      platform: "linux",
+    })).toMatchObject({
+      status: "authenticated",
+      method: "credential_profile",
+    });
+  });
+
+  it("ignores credential profiles when OMNIHARNESS_CREDENTIAL_PROFILES=0", async () => {
+    mockExecFileSync.mockImplementation((command: string, args: string[]) => {
+      if (command === "claude" && args[0] === "auth" && args[1] === "status") {
+        return Buffer.from(JSON.stringify({ loggedIn: false, authMethod: "none" }));
+      }
+      throw new Error("not found");
+    });
+
+    const { getWorkerAuthenticationInfo } = await import("@/server/supervisor/worker-availability");
+
+    expect(getWorkerAuthenticationInfo("claude", {
+      env: {
+        OMNIHARNESS_CREDENTIAL_PROFILES: "0",
+        OMNIHARNESS_CREDENTIAL_COMMAND_CLAUDE: "/Users/tester/.local/bin/baton",
+      },
       homeDir: "/Users/tester",
       fileExists: () => false,
       platform: "darwin",
