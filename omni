@@ -8,13 +8,33 @@ fi
 ROOT_DIR="$(cd "$(dirname "$REAL_SCRIPT")" && pwd)"
 
 if ! command -v pnpm >/dev/null 2>&1; then
-  echo "OmniHarness CLI requires pnpm. Install it with corepack or your package manager, then run omni again." >&2
-  exit 1
+  echo "OmniHarness CLI: pnpm not found, attempting to install it automatically..." >&2
+
+  # Prefer corepack (ships with Node) — no separate package manager needed.
+  if command -v corepack >/dev/null 2>&1; then
+    corepack enable pnpm >/dev/null 2>&1 || corepack enable >/dev/null 2>&1 || true
+    corepack prepare pnpm@latest --activate >/dev/null 2>&1 || true
+  fi
+
+  # Fall back to a global npm install if corepack didn't provide pnpm.
+  if ! command -v pnpm >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+    npm install -g pnpm >/dev/null 2>&1 || true
+  fi
+
+  if ! command -v pnpm >/dev/null 2>&1; then
+    echo "OmniHarness CLI: could not install pnpm automatically. Install it manually (e.g. 'npm install -g pnpm' or enable corepack), then run omni again." >&2
+    exit 1
+  fi
+
+  echo "OmniHarness CLI: pnpm $(pnpm --version 2>/dev/null) is ready." >&2
 fi
 
 if [ ! -d "$ROOT_DIR/node_modules" ]; then
-  echo "OmniHarness dependencies are not installed. Run pnpm install from $ROOT_DIR first." >&2
-  exit 1
+  echo "OmniHarness CLI: dependencies not installed, running pnpm install..." >&2
+  (cd "$ROOT_DIR" && pnpm install) || {
+    echo "OmniHarness CLI: pnpm install failed. Run it manually from $ROOT_DIR." >&2
+    exit 1
+  }
 fi
 
 cd "$ROOT_DIR"
