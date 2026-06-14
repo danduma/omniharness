@@ -24,11 +24,24 @@ if command -v pnpm >/dev/null 2>&1; then
 fi
 
 if [ "${#PNPM_CMD[@]}" -eq 0 ] && command -v corepack >/dev/null 2>&1; then
+  echo "[omniharness] pnpm not usable; enabling it via Corepack..." >&2
   corepack enable >/dev/null 2>&1 || true
   corepack prepare "$PACKAGE_MANAGER" --activate >/dev/null 2>&1 || true
   CURRENT_PNPM_VERSION="$(COREPACK_ENABLE_PROJECT_SPEC=0 corepack pnpm --version 2>/dev/null || true)"
   if pnpm_major_ok "$CURRENT_PNPM_VERSION"; then
     PNPM_CMD=(env COREPACK_ENABLE_PROJECT_SPEC=0 corepack pnpm)
+  fi
+fi
+
+# Last-resort auto-install: a global npm install of pnpm (no Corepack, no brew needed).
+if [ "${#PNPM_CMD[@]}" -eq 0 ] && command -v npm >/dev/null 2>&1; then
+  echo "[omniharness] pnpm not usable; installing it globally via npm..." >&2
+  npm install -g pnpm >/dev/null 2>&1 || true
+  if command -v pnpm >/dev/null 2>&1; then
+    CURRENT_PNPM_VERSION="$(COREPACK_ENABLE_PROJECT_SPEC=0 pnpm --version 2>/dev/null || true)"
+    if pnpm_major_ok "$CURRENT_PNPM_VERSION"; then
+      PNPM_CMD=(env COREPACK_ENABLE_PROJECT_SPEC=0 pnpm)
+    fi
   fi
 fi
 
