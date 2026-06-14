@@ -3,6 +3,7 @@ import { existsSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import { withManagedPath } from "@/server/agent-runtime/tool-env";
+import { isCredentialProfileConfigured } from "@/server/agent-runtime/external-credentials";
 import { SUPPORTED_WORKER_TYPES, type SupportedWorkerType, normalizeWorkerType } from "./worker-types";
 
 type EnvLike = Record<string, string | undefined>;
@@ -17,7 +18,7 @@ const WORKER_BINARY_COMMANDS: Record<SupportedWorkerType, string> = {
 };
 
 export type WorkerAuthenticationStatus = "authenticated" | "not_authenticated" | "unknown" | "not_applicable";
-export type WorkerAuthenticationMethod = "api_key" | "session_file" | "status_command" | "missing" | "unknown" | "not_applicable";
+export type WorkerAuthenticationMethod = "api_key" | "session_file" | "status_command" | "credential_profile" | "missing" | "unknown" | "not_applicable";
 export type WorkerAuthenticationInfo = {
   status: WorkerAuthenticationStatus;
   method: WorkerAuthenticationMethod;
@@ -309,6 +310,19 @@ export function getWorkerAuthenticationInfo(type: string, options: WorkerAuthent
       status: "not_applicable",
       method: "not_applicable",
       message: `Unsupported worker type "${type}".`,
+      setupCommand: null,
+    };
+  }
+
+  // A configured custom credential profile (provider script or named profile)
+  // supplies this agent's credentials at spawn time, so the user does not need
+  // to log in interactively. Treat it as authenticated regardless of CLI login
+  // state — this is the authoritative, explicit configuration.
+  if (isCredentialProfileConfigured({ type: supportedType, env, fileExists })) {
+    return {
+      status: "authenticated",
+      method: "credential_profile",
+      message: "Using the custom credentials configured for this agent.",
       setupCommand: null,
     };
   }

@@ -389,6 +389,47 @@ export async function resolveCredentialProfile(input: ResolveCredentialProfileIn
   };
 }
 
+/**
+ * Cheap, side-effect-free check for whether a credential profile is configured
+ * for a worker type. Unlike `resolveCredentialProfile`, this never runs the
+ * provider command — it only inspects configuration so callers (e.g. the agent
+ * catalog / onboarding wizard) can report "uses custom credentials" without
+ * paying the cost or risk of executing the provider.
+ */
+export function isCredentialProfileConfigured(input: {
+  type: string;
+  env: EnvLike;
+  cwd?: string;
+  fileExists?: (filePath: string) => boolean;
+}): boolean {
+  const env = input.env;
+  if (env.OMNIHARNESS_CREDENTIAL_PROFILES === "0") {
+    return false;
+  }
+
+  // Command-backed profile (Settings → Credentials → provider script).
+  if (env[credentialCommandEnvKey(input.type)]?.trim()) {
+    return true;
+  }
+
+  // Explicitly named profile selected via env.
+  if (env[profileEnvKey(input.type)]?.trim()) {
+    return true;
+  }
+
+  // Convention: a profile directory named after the worker type.
+  const name = input.type.trim();
+  if (PROFILE_NAME_PATTERN.test(name)) {
+    const fileExists = input.fileExists ?? existsSync;
+    const profilesDir = resolveProfilesDir(env, input.cwd ?? process.cwd());
+    if (fileExists(join(profilesDir, name))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function applyCredentialProfileEnv<T extends EnvLike>(env: T, resolved: CredentialProfileResolution): T {
   for (const key of resolved.unset) {
     delete env[key];
