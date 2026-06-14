@@ -5,6 +5,60 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 cd "$ROOT_DIR"
 
+# --- Ensure a supported Node.js version (>=22.13 <26) ---
+# Native deps (better-sqlite3, @node-rs/argon2, sharp) only build on this range,
+# so if the active Node is outside it, switch via nvm (installing nvm if needed)
+# rather than failing. Set OMNIHARNESS_SKIP_NODE_AUTOINSTALL=1 to opt out.
+MIN_NODE="${OMNIHARNESS_MIN_NODE_VERSION:-22.13.0}"
+MAX_NODE_EXCL="${OMNIHARNESS_MAX_NODE_VERSION_EXCLUSIVE:-26.0.0}"
+
+node_version_ok() {
+  command -v node >/dev/null 2>&1 || return 1
+  node -e '
+    const cmp = (a, b) => {
+      a = String(a).replace(/^v/, "").split(".").map(Number);
+      b = String(b).replace(/^v/, "").split(".").map(Number);
+      for (let i = 0; i < 3; i += 1) {
+        const x = a[i] || 0, y = b[i] || 0;
+        if (x !== y) return x - y;
+      }
+      return 0;
+    };
+    const cur = process.versions.node;
+    process.exit(cmp(cur, process.argv[1]) >= 0 && cmp(cur, process.argv[2]) < 0 ? 0 : 1);
+  ' "$MIN_NODE" "$MAX_NODE_EXCL" 2>/dev/null
+}
+
+if ! node_version_ok && [ "${OMNIHARNESS_SKIP_NODE_AUTOINSTALL:-0}" != "1" ]; then
+  echo "[omniharness] Node $(node --version 2>/dev/null || echo 'missing') is unsupported (need >=$MIN_NODE <$MAX_NODE_EXCL); switching via nvm..." >&2
+
+  NODE_TARGET="22"
+  [ -f "$ROOT_DIR/.nvmrc" ] && NODE_TARGET="$(tr -d ' \t\r\n' < "$ROOT_DIR/.nvmrc")"
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+
+  if [ ! -s "$NVM_DIR/nvm.sh" ] && command -v curl >/dev/null 2>&1; then
+    echo "[omniharness] Installing nvm into $NVM_DIR..." >&2
+    curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | bash >/dev/null 2>&1 || true
+  fi
+
+  # nvm.sh is not written for `set -euo pipefail`; relax it while sourcing/using.
+  if [ -s "$NVM_DIR/nvm.sh" ]; then
+    set +eu
+    . "$NVM_DIR/nvm.sh"
+    nvm install "$NODE_TARGET" >/dev/null 2>&1
+    nvm use "$NODE_TARGET" >/dev/null 2>&1
+    set -eu
+  fi
+fi
+
+if ! node_version_ok; then
+  echo "OmniHarness requires Node.js >=$MIN_NODE <$MAX_NODE_EXCL, but the active Node is $(node --version 2>/dev/null || echo 'missing')." >&2
+  echo "Auto-switch failed. Install a supported Node (e.g. 'nvm install ${NODE_TARGET:-22}'), then run ./omniharness again." >&2
+  exit 1
+elif [ -n "${NODE_TARGET:-}" ]; then
+  echo "[omniharness] Using Node $(node --version)." >&2
+fi
+
 PACKAGE_MANAGER="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; const packageJson = JSON.parse(readFileSync("package.json", "utf8")); if (!/^pnpm@/.test(packageJson.packageManager || "")) process.exit(1); process.stdout.write(packageJson.packageManager);')"
 PNPM_VERSION="${PACKAGE_MANAGER#pnpm@}"
 MIN_PNPM_MAJOR="${OMNIHARNESS_MIN_PNPM_MAJOR:-9}"
