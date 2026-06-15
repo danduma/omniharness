@@ -1,5 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { readFile, chmod, readdir, stat } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
+import path from "node:path";
 
 const userAgent = process.env.npm_config_user_agent || "";
 const npmExecPath = process.env.npm_execpath || "";
@@ -66,14 +68,60 @@ if (!isVersionAtLeast(process.versions.node, minimumNodeVersion) || !isVersionLe
 }
 
 if (args.has("--verify-native")) {
+  // node-pty ships prebuilt binaries, but pnpm extracts them without the
+  // executable bit on the `spawn-helper` shim, so `pty.spawn` fails with
+  // "posix_spawnp failed". Repair the perms before loading. See
+  // src/server/terminal/terminal-manager.ts.
+  await ensureNodePtySpawnHelperExecutable();
+
+  for (const nativeModule of ["better-sqlite3", "node-pty"]) {
+    try {
+      await import(nativeModule);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Failed to load ${nativeModule} with Node ${process.version} (${process.arch}).`);
+      console.error(message);
+      console.error(`Run \`pnpm rebuild ${nativeModule}\`, or reinstall dependencies under the current Node version, then retry.`);
+      process.exit(1);
+    }
+  }
+}
+
+async function ensureNodePtySpawnHelperExecutable() {
+  if (process.platform === "win32") {
+    return;
+  }
+  let packageRoot;
   try {
-    await import("better-sqlite3");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`Failed to load better-sqlite3 with Node ${process.version} (${process.arch}).`);
-    console.error(message);
-    console.error("Run `pnpm rebuild better-sqlite3`, or reinstall dependencies under the current Node version, then retry.");
-    process.exit(1);
+    const require = createRequire(import.meta.url);
+    // node-pty's entry is lib/index.js; walk up to the package root.
+    packageRoot = path.dirname(path.dirname(require.resolve("node-pty")));
+  } catch {
+    return;
+  }
+  for (const subdir of ["prebuilds", "build/Release"]) {
+    const dir = path.join(packageRoot, subdir);
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    // prebuilds nests one level deep (e.g. prebuilds/darwin-arm64/spawn-helper).
+    const candidates = [path.join(dir, "spawn-helper")];
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        candidates.push(path.join(dir, entry.name, "spawn-helper"));
+      }
+    }
+    for (const helper of candidates) {
+      try {
+        await stat(helper);
+        await chmod(helper, 0o755);
+      } catch {
+        // Helper absent for this platform/layout; ignore.
+      }
+    }
   }
 }
 

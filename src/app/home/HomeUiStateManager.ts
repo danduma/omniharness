@@ -1,7 +1,7 @@
 import { chatAttachmentKindFromMimeType, type PendingChatAttachment } from "@/lib/chat-attachments";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { StateManager, type StateUpdate } from "@/lib/state-manager";
-import { DEFAULT_CONVERSATION_SIDEBAR_WIDTH, DEFAULT_SERVER_SETTINGS, DEFAULT_WORKERS_SIDEBAR_WIDTH, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "./constants";
+import { DEFAULT_CONVERSATION_SIDEBAR_WIDTH, DEFAULT_SERVER_SETTINGS, DEFAULT_TERMINAL_PANEL_WIDTH, DEFAULT_WORKERS_SIDEBAR_WIDTH, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "./constants";
 import type { ComposerWorkerOption, ConversationModeOption, ConversationSidebarTab, EventStreamState, LlmProfileTab, MessageRecord, SettingsTab } from "./types";
 import type { CreatedConversationSnapshot } from "./utils";
 
@@ -59,8 +59,12 @@ export type HomeUiState = {
   rightSidebarWidth: number;
   isResizingLeftSidebar: boolean;
   isResizingRightSidebar: boolean;
+  terminalPanelOpen: boolean;
+  terminalPanelWidth: number;
+  isResizingTerminalPanel: boolean;
   mobileNavOpen: boolean;
   mobileWorkersOpen: boolean;
+  mobileTerminalOpen: boolean;
   searchQuery: string;
   draftProjectPath: string | null;
   commandCursor: number;
@@ -109,8 +113,12 @@ const initialHomeUiState: HomeUiState = {
   rightSidebarWidth: DEFAULT_WORKERS_SIDEBAR_WIDTH,
   isResizingLeftSidebar: false,
   isResizingRightSidebar: false,
+  terminalPanelOpen: false,
+  terminalPanelWidth: DEFAULT_TERMINAL_PANEL_WIDTH,
+  isResizingTerminalPanel: false,
   mobileNavOpen: false,
   mobileWorkersOpen: false,
+  mobileTerminalOpen: false,
   searchQuery: "",
   draftProjectPath: null,
   commandCursor: 0,
@@ -283,6 +291,34 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
     });
   }
 
+  collapseProjects(projectPaths: string[]) {
+    if (projectPaths.length === 0) return;
+
+    this.update((current) => {
+      const collapsedProjectPaths = new Set(current.collapsedProjectPaths);
+      let changed = false;
+      for (const projectPath of projectPaths) {
+        if (!collapsedProjectPaths.has(projectPath)) {
+          collapsedProjectPaths.add(projectPath);
+          changed = true;
+        }
+      }
+
+      if (!changed) return current;
+
+      const visibleProjectSessionCounts = { ...current.visibleProjectSessionCounts };
+      for (const projectPath of projectPaths) {
+        delete visibleProjectSessionCounts[projectPath];
+      }
+
+      return {
+        ...current,
+        collapsedProjectPaths,
+        visibleProjectSessionCounts,
+      };
+    });
+  }
+
   createSetter<TKey extends keyof HomeUiState>(key: TKey) {
     return (value: StateUpdate<HomeUiState[TKey]>) => {
       this.setKey(key, value);
@@ -309,8 +345,12 @@ export const homeUiSetters = {
   setRightSidebarWidth: homeUiStateManager.createSetter("rightSidebarWidth"),
   setIsResizingLeftSidebar: homeUiStateManager.createSetter("isResizingLeftSidebar"),
   setIsResizingRightSidebar: homeUiStateManager.createSetter("isResizingRightSidebar"),
+  setTerminalPanelOpen: homeUiStateManager.createSetter("terminalPanelOpen"),
+  setTerminalPanelWidth: homeUiStateManager.createSetter("terminalPanelWidth"),
+  setIsResizingTerminalPanel: homeUiStateManager.createSetter("isResizingTerminalPanel"),
   setMobileNavOpen: homeUiStateManager.createSetter("mobileNavOpen"),
   setMobileWorkersOpen: homeUiStateManager.createSetter("mobileWorkersOpen"),
+  setMobileTerminalOpen: homeUiStateManager.createSetter("mobileTerminalOpen"),
   setSearchQuery: homeUiStateManager.createSetter("searchQuery"),
   setDraftProjectPath: homeUiStateManager.createSetter("draftProjectPath"),
   setCommandCursor: homeUiStateManager.createSetter("commandCursor"),
@@ -318,6 +358,7 @@ export const homeUiSetters = {
   setReadMarkers: homeUiStateManager.createSetter("readMarkers"),
   setCollapsedProjectPaths: homeUiStateManager.createSetter("collapsedProjectPaths"),
   setProjectExpanded: (projectPath: string, expanded: boolean) => homeUiStateManager.setProjectExpanded(projectPath, expanded),
+  collapseProjects: (projectPaths: string[]) => homeUiStateManager.collapseProjects(projectPaths),
   setVisibleProjectSessionCounts: homeUiStateManager.createSetter("visibleProjectSessionCounts"),
   revealMoreProjectSessions: (projectPath: string) => homeUiStateManager.revealMoreProjectSessions(projectPath),
   resetProjectSessionDisplayLimit: (projectPath: string) => homeUiStateManager.resetProjectSessionDisplayLimit(projectPath),

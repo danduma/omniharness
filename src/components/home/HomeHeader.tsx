@@ -1,6 +1,6 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import dynamic from "next/dynamic";
-import { Bug, ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, Menu, MoreHorizontal, PanelLeft, PanelRight, Pencil, RotateCw } from "lucide-react";
+import { Bug, ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, Menu, MoreHorizontal, PanelLeft, PanelRight, Pencil, RotateCw, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import {
@@ -28,6 +28,11 @@ const SideWindow = dynamic(
   { ssr: false },
 );
 
+const InteractiveTerminal = dynamic(
+  () => import("@/components/InteractiveTerminal").then((m) => m.InteractiveTerminal),
+  { ssr: false },
+);
+
 interface HomeHeaderProps {
   mobileNavOpen: boolean;
   setMobileNavOpen: (open: boolean) => void;
@@ -46,6 +51,7 @@ interface HomeHeaderProps {
   collapsedProjectPaths: Set<string>;
   visibleProjectSessionCounts: Record<string, number>;
   onProjectOpenChange: (projectPath: string, open: boolean) => void;
+  onCollapseAllProjects: (projectPaths: string[]) => void;
   onShowMoreProjectSessions: (projectPath: string) => void;
   setShowSettings: Dispatch<SetStateAction<boolean>>;
   openOnboarding: () => void;
@@ -77,8 +83,12 @@ interface HomeHeaderProps {
   setThemeMode: Dispatch<SetStateAction<"day" | "night">>;
   rightSidebarOpen: boolean;
   setRightSidebarOpen: (open: boolean) => void;
+  terminalPanelOpen: boolean;
+  setTerminalPanelOpen: (open: boolean) => void;
   mobileWorkersOpen: boolean;
   setMobileWorkersOpen: (open: boolean) => void;
+  mobileTerminalOpen: boolean;
+  setMobileTerminalOpen: (open: boolean) => void;
   selectedRunWorkers: ConversationWorkerRecord[];
   conversationAgents: AgentSnapshot[];
   supervisorInterventions: SupervisorInterventionRecord[];
@@ -132,6 +142,7 @@ export function HomeHeader({
   collapsedProjectPaths,
   visibleProjectSessionCounts,
   onProjectOpenChange,
+  onCollapseAllProjects,
   onShowMoreProjectSessions,
   setShowSettings,
   openOnboarding,
@@ -163,8 +174,12 @@ export function HomeHeader({
   setThemeMode,
   rightSidebarOpen,
   setRightSidebarOpen,
+  terminalPanelOpen,
+  setTerminalPanelOpen,
   mobileWorkersOpen,
   setMobileWorkersOpen,
+  mobileTerminalOpen,
+  setMobileTerminalOpen,
   selectedRunWorkers,
   conversationAgents,
   supervisorInterventions,
@@ -292,6 +307,7 @@ export function HomeHeader({
               collapsedProjectPaths={collapsedProjectPaths}
               visibleProjectSessionCounts={visibleProjectSessionCounts}
               onProjectOpenChange={onProjectOpenChange}
+              onCollapseAllProjects={onCollapseAllProjects}
               onShowMoreProjectSessions={onShowMoreProjectSessions}
               setShowSettings={setShowSettings}
               openOnboarding={openOnboarding}
@@ -551,6 +567,42 @@ export function HomeHeader({
       <div className="hidden sm:block">
         <ThemeModeToggle themeMode={themeMode} setThemeMode={setThemeMode} />
       </div>
+      <Button
+        variant="ghost"
+        size="icon"
+        className={`hidden h-8 w-8 hover:text-foreground lg:inline-flex ${terminalPanelOpen ? "text-foreground" : "text-muted-foreground"}`}
+        aria-label={t("terminal.open")}
+        title={t("terminal.open")}
+        aria-pressed={terminalPanelOpen}
+        onClick={() => setTerminalPanelOpen(!terminalPanelOpen)}
+      >
+        <SquareTerminal className="h-4 w-4" />
+      </Button>
+      <Sheet open={mobileTerminalOpen} onOpenChange={setMobileTerminalOpen} disablePointerDismissal>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground hover:text-foreground lg:hidden"
+          aria-label={t("terminal.open")}
+          onClick={() => setMobileTerminalOpen(true)}
+        >
+          <SquareTerminal className="h-4 w-4" />
+        </Button>
+        {mobileTerminalOpen ? (
+          <SheetContent side="right" className="!inset-0 flex h-[100dvh] !w-screen !max-w-none flex-col gap-0 !border-0 bg-black p-0 sm:!max-w-none lg:hidden" showCloseButton={false}>
+            <SheetTitle className="sr-only">{t("terminal.title")}</SheetTitle>
+            <div className="flex items-center justify-between border-b border-border/40 bg-background px-3 py-2">
+              <span className="text-sm font-medium">{t("terminal.title")}</span>
+              <Button variant="ghost" size="sm" className="h-7" onClick={() => setMobileTerminalOpen(false)}>
+                {t("terminal.close")}
+              </Button>
+            </div>
+            <div className="min-h-0 flex-1 p-1">
+              <InteractiveTerminal conversationId={selectedRunId} />
+            </div>
+          </SheetContent>
+        ) : null}
+      </Sheet>
       {workspaceSideWindowAvailable && !rightSidebarOpen ? (
         <Button
           variant="ghost"
