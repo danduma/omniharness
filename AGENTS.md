@@ -1,5 +1,6 @@
 CRITICAL!!: 
 - NEVER EVER EVER create a branch!!! branches are FORBIDDEN!!!
+- NEVER EVER EVER delete the `bugdrop-screenshots` branch, locally or remotely. It is protected project history.
 - NEVER create a worktree, UNLESS the user has specifically asked for it!
 - NEVER delete files unless the user has specifically asked for it. If you think a file is misplaced, unrelated, or stale, that is an entirely separate request — ask first. "Looks unrelated to this task" is not authorization to delete.
 
