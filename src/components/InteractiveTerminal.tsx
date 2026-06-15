@@ -36,10 +36,30 @@ export function InteractiveTerminal({ conversationId, className }: InteractiveTe
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify(body),
-        keepalive: true,
       }).catch(() => {
         // best-effort; the stream will surface a closed pty
       });
+
+    // Coalescing input pump: send the first keystroke immediately, and batch
+    // anything typed during the in-flight round trip into the next POST. This
+    // adds no artificial delay but collapses bursts (held keys, paste, fast
+    // typing) from one POST per char into one POST per round trip.
+    let pendingInput = "";
+    let inputInFlight = false;
+    const flushInput = () => {
+      if (inputInFlight || pendingInput === "" || !terminalId) {
+        return;
+      }
+      inputInFlight = true;
+      const data = pendingInput;
+      pendingInput = "";
+      void post("/input", { data }).finally(() => {
+        inputInFlight = false;
+        if (pendingInput !== "") {
+          flushInput();
+        }
+      });
+    };
 
     (async () => {
       const container = containerRef.current;
@@ -89,7 +109,8 @@ export function InteractiveTerminal({ conversationId, className }: InteractiveTe
       terminalId = created.terminalId;
 
       term.onData((data: string) => {
-        void post("/input", { data });
+        pendingInput += data;
+        flushInput();
       });
       term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
         void post("/resize", { cols, rows });
