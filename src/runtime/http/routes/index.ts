@@ -8,7 +8,7 @@ import { handleSettingsRequest } from "./settings";
 import { handleAccountsRequest } from "./accounts";
 import { handleAgentsRequest } from "./agents";
 import { handleAgentsCatalogRequest } from "./agents-catalog";
-import { handleAgentDetailRequest } from "./agent-detail";
+import { handleAgentDetailRequest, handleAgentElicitationRequest, handleAgentPermissionRequest } from "./agent-detail";
 import { handlePrewarmWorkerRequest } from "./prewarm-worker";
 import { handleLlmModelsRequest } from "./llm-models";
 import { handleCodexAuthStatusRequest } from "./codex-auth-status";
@@ -25,6 +25,8 @@ import { handleConversationsRequest } from "./conversations";
 import {
   handleConversationMessagesRequest,
   handleQueuedConversationMessageRequest,
+  handleQueuedConversationMessageInterruptRequest,
+  handleQueuedConversationMessageInterruptNextRequest,
 } from "./conversation-messages";
 import { handleWorkerEntriesRequest } from "./worker-entries";
 import { handleConversationTranscriptRequest } from "./conversation-transcript";
@@ -51,6 +53,8 @@ export function createOmniRuntimeHttpRegistry() {
     .route("GET", "/api/accounts", handleAccountsRequest)
     .route("GET", "/api/agents", handleAgentsRequest)
     .route("GET", "/api/agents/:name", handleAgentDetailRequest)
+    .route("POST", "/api/agents/:name/elicitation", handleAgentElicitationRequest)
+    .route("POST", "/api/agents/:name/permission", handleAgentPermissionRequest)
     .route("GET", "/api/agents/catalog", handleAgentsCatalogRequest)
     .route("POST", "/api/agents/prewarm-worker", handlePrewarmWorkerRequest)
     .route("POST", "/api/llm-models", handleLlmModelsRequest)
@@ -73,6 +77,8 @@ export function createOmniRuntimeHttpRegistry() {
     .route("POST", "/api/conversations/:id/messages", handleConversationMessagesRequest)
     .route("PATCH", "/api/conversations/:id/queued-messages/:messageId", handleQueuedConversationMessageRequest)
     .route("DELETE", "/api/conversations/:id/queued-messages/:messageId", handleQueuedConversationMessageRequest)
+    .route("POST", "/api/conversations/:id/queued-messages/interrupt-next", handleQueuedConversationMessageInterruptNextRequest)
+    .route("POST", "/api/conversations/:id/queued-messages/:messageId/interrupt", handleQueuedConversationMessageInterruptRequest)
     .route("GET", "/api/workers/:workerId/entries", handleWorkerEntriesRequest)
     .route("GET", "/api/conversations/:id/transcript", handleConversationTranscriptRequest)
     .route("GET", "/api/events/log", handleEventsLogRequest)
@@ -95,7 +101,7 @@ export { handleSettingsRequest } from "./settings";
 export { handleAccountsRequest } from "./accounts";
 export { handleAgentsRequest } from "./agents";
 export { handleAgentsCatalogRequest } from "./agents-catalog";
-export { handleAgentDetailRequest } from "./agent-detail";
+export { handleAgentDetailRequest, handleAgentElicitationRequest, handleAgentPermissionRequest } from "./agent-detail";
 export { handlePrewarmWorkerRequest } from "./prewarm-worker";
 export { handleLlmModelsRequest } from "./llm-models";
 export { handleCodexAuthStatusRequest } from "./codex-auth-status";
@@ -112,6 +118,8 @@ export { handleConversationsRequest } from "./conversations";
 export {
   handleConversationMessagesRequest,
   handleQueuedConversationMessageRequest,
+  handleQueuedConversationMessageInterruptRequest,
+  handleQueuedConversationMessageInterruptNextRequest,
 } from "./conversation-messages";
 export { handleWorkerEntriesRequest } from "./worker-entries";
 export { handleEventsLogRequest } from "./events-log";

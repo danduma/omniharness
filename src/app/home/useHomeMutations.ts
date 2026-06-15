@@ -2,13 +2,14 @@
 
 import type React from "react";
 import { useMutation } from "@tanstack/react-query";
-import type { ChatAttachment } from "@/lib/chat-attachments";
 import type { PendingChatAttachment } from "@/lib/chat-attachments";
 import { mergeAppErrors, requestJson } from "@/lib/app-errors";
 import { getManualCommitPrompt, getManualProjectCommitPrompt, type ManualCommitAction } from "@/lib/commit-workflow";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
+import { useQueuedMessageMutations } from "./useQueuedMessageMutations";
+import { uploadPendingChatAttachments } from "./upload-attachments";
 import { shouldSelectRecoveredRunAfterSuccess } from "./auto-resume-selection";
 import { homeUiSetters, homeUiStateManager } from "./HomeUiStateManager";
 import { appearancePreferencesManager } from "./AppearancePreferencesManager";
@@ -36,24 +37,6 @@ import type {
   RunRecord,
   WorkerType,
 } from "./types";
-
-async function uploadPendingChatAttachments(attachments: PendingChatAttachment[]): Promise<ChatAttachment[]> {
-  if (attachments.length === 0) {
-    return [];
-  }
-
-  const formData = new FormData();
-  attachments.forEach((attachment) => formData.append("files", attachment.file, attachment.name));
-  const response = await requestJson<{ ok: true; attachments: ChatAttachment[] }>("/api/attachments", {
-    method: "POST",
-    body: formData,
-  }, {
-    source: "Attachments",
-    action: "Upload attachments",
-  });
-
-  return response.attachments;
-}
 
 function isOptimisticallyStoppableWorkerStatus(status: string | null | undefined) {
   const normalized = (status ?? "").trim().toLowerCase().split(":")[0]?.trim() ?? "";
@@ -204,6 +187,7 @@ export function mergeLoadedWorkerHistoryAgent(
     lastError: current.lastError,
     recentStderr: current.recentStderr,
     pendingPermissions: current.pendingPermissions,
+    pendingElicitations: current.pendingElicitations,
     contextUsage: current.contextUsage,
     bridgeLastError: current.bridgeLastError,
     runLastError: current.runLastError,
@@ -311,6 +295,34 @@ function applyStopSupervisorOptimisticUpdate(current: EventStreamState, runId: s
       }),
       ...(current.executionEvents || []),
     ],
+  };
+}
+
+function applyElicitationOptimisticUpdate(current: EventStreamState, workerId: string, requestId: number) {
+  return {
+    ...current,
+    agents: (current.agents || []).map((agent) =>
+      agent.name === workerId
+        ? {
+            ...agent,
+            pendingElicitations: (agent.pendingElicitations || []).filter((elicitation) => elicitation.requestId !== requestId),
+          }
+        : agent,
+    ),
+  };
+}
+
+function applyPermissionOptimisticUpdate(current: EventStreamState, workerId: string, requestId: number) {
+  return {
+    ...current,
+    agents: (current.agents || []).map((agent) =>
+      agent.name === workerId
+        ? {
+            ...agent,
+            pendingPermissions: (agent.pendingPermissions || []).filter((permission) => permission.requestId !== requestId),
+          }
+        : agent,
+    ),
   };
 }
 
@@ -854,71 +866,10 @@ export function useHomeMutations({
     },
   });
 
-  const cancelQueuedMessage = useMutation({
-    mutationFn: async ({ runId, messageId }: { runId: string; messageId: string }) => requestJson<{ ok: true }>(`/api/conversations/${runId}/queued-messages/${messageId}`, {
-      method: "DELETE",
-    }, {
-      source: "Conversations",
-      action: "Cancel queued message",
-    }),
-    onMutate: ({ messageId }) => {
-      const previousQueuedMessage = busyMessageQueueManager.getSnapshot().queuedMessages.find((message) => message.id === messageId) ?? null;
-      busyMessageQueueManager.markCancelling(messageId);
-      busyMessageQueueManager.hideQueuedMessage(messageId);
-      return { previousQueuedMessage };
-    },
-    onError: (_error, variables, context) => {
-      if (context?.previousQueuedMessage) {
-        busyMessageQueueManager.restoreQueuedMessage(context.previousQueuedMessage);
-        return;
-      }
-      busyMessageQueueManager.unmarkCancelling(variables.messageId);
-    },
-  });
-
-  const sendQueuedMessageNow = useMutation({
-    mutationFn: async ({ runId, messageId }: { runId: string; messageId: string }) => requestJson<{
-      ok: true;
-      message?: MessageRecord;
-      queuedMessage?: NonNullable<EventStreamState["queuedMessages"]>[number];
-    }>(`/api/conversations/${runId}/queued-messages/${messageId}`, {
-      method: "PATCH",
-    }, {
-      source: "Conversations",
-      action: "Send queued message now",
-    }),
-    onMutate: ({ messageId }) => {
-      busyMessageQueueManager.markCancelling(messageId);
-    },
-    onSuccess: (data, variables) => {
-      const ownsSideEffects = ownsConversationSideEffects({
-        runId: variables.runId,
-        currentSelectedRunId: homeUiStateManager.getSnapshot().selectedRunId,
-      });
-      if (data.message) {
-        pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
-        setState((current) => appendSentConversationMessageSnapshot(current, data.message));
-        if (ownsSideEffects) {
-          scrollConversationToBottom();
-        }
-      }
-
-      if (data.message && data.queuedMessage?.status === "delivering") {
-        busyMessageQueueManager.hideQueuedMessage(variables.messageId);
-        return;
-      }
-
-      if (data.queuedMessage && (data.queuedMessage.status === "pending" || data.queuedMessage.status === "delivering")) {
-        busyMessageQueueManager.upsertQueuedMessage(data.queuedMessage);
-        busyMessageQueueManager.unmarkCancelling(variables.messageId);
-        return;
-      }
-
-      busyMessageQueueManager.hideQueuedMessage(variables.messageId);
-    },
-    onError: (_error, variables) => {
-      busyMessageQueueManager.unmarkCancelling(variables.messageId);
-    },
+  const { cancelQueuedMessage, sendQueuedMessageNow, interruptQueuedMessage } = useQueuedMessageMutations({
+    setState,
+    pendingSentConversationMessagesRef,
+    scrollConversationToBottom,
   });
 
   const autoCommitChat = useMutation({
@@ -1062,6 +1013,70 @@ export function useHomeMutations({
     }),
   });
 
+  const respondElicitation = useMutation({
+    onMutate: (variables: {
+      workerId: string;
+      requestId: number;
+      action: "accept" | "decline" | "cancel";
+      content?: Record<string, string | number | boolean | string[]>;
+    }) => {
+      const previousState = state;
+      setState((current) => applyElicitationOptimisticUpdate(current, variables.workerId, variables.requestId));
+      return { previousState };
+    },
+    mutationFn: async ({ workerId, action, content }) => requestJson<{ ok: true }>(`/api/agents/${encodeURIComponent(workerId)}/elicitation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(action === "accept" ? { action, content: content ?? {} } : { action }),
+    }, {
+      source: "Agent runtime",
+      action: "Respond to worker question",
+    }),
+    onError: (error, _variables, context) => {
+      if (context?.previousState) {
+        setState(context.previousState);
+      }
+      setRuntimeErrors((current) => mergeAppErrors(current, [
+        buildInlineError(error, {
+          source: "Agent runtime",
+          action: "Respond to worker question",
+        }),
+      ]));
+    },
+  });
+
+  const respondPermission = useMutation({
+    onMutate: (variables: {
+      workerId: string;
+      requestId: number;
+      decision: "approve" | "deny";
+      optionId?: string;
+    }) => {
+      const previousState = state;
+      setState((current) => applyPermissionOptimisticUpdate(current, variables.workerId, variables.requestId));
+      return { previousState };
+    },
+    mutationFn: async ({ workerId, decision, optionId }) => requestJson<{ ok: true }>(`/api/agents/${encodeURIComponent(workerId)}/permission`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(optionId ? { decision, optionId } : { decision }),
+    }, {
+      source: "Agent runtime",
+      action: "Respond to permission request",
+    }),
+    onError: (error, _variables, context) => {
+      if (context?.previousState) {
+        setState(context.previousState);
+      }
+      setRuntimeErrors((current) => mergeAppErrors(current, [
+        buildInlineError(error, {
+          source: "Agent runtime",
+          action: "Respond to permission request",
+        }),
+      ]));
+    },
+  });
+
   const promotePlanningConversation = useMutation({
     onMutate: (_payload: { runId: string; planPath: string | null }) => ({
       selectedRunIdAtStart: homeUiStateManager.getSnapshot().selectedRunId,
@@ -1150,11 +1165,14 @@ export function useHomeMutations({
     sendConversationMessage,
     cancelQueuedMessage,
     sendQueuedMessageNow,
+    interruptQueuedMessage,
     autoCommitChat,
     autoCommitProject,
     stopSupervisor,
     stopWorker,
     stopWorkerTerminalProcess,
+    respondElicitation,
+    respondPermission,
     promotePlanningConversation,
     startPlanningReview,
     handleLoadWorkerHistory,
