@@ -12,6 +12,9 @@ export const WORKERS_SIDEBAR_MIN_WIDTH = 320;
 export const WORKERS_SIDEBAR_MIN_MAIN_WIDTH = 360;
 export const WORKERS_SIDEBAR_MAX_WIDTH_FALLBACK = 1120;
 export const DEFAULT_WORKERS_SIDEBAR_WIDTH = 580;
+export const DEFAULT_TERMINAL_PANEL_WIDTH = 520;
+export const TERMINAL_PANEL_MIN_WIDTH = 320;
+export const TERMINAL_PANEL_MIN_MAIN_WIDTH = 360;
 
 function isFiniteViewportWidth(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value);
@@ -33,6 +36,13 @@ export function clampWorkersSidebarWidth(width: number, viewportWidth?: number |
     getWorkersSidebarMaxWidth(viewportWidth),
     Math.max(WORKERS_SIDEBAR_MIN_WIDTH, Math.round(width)),
   );
+}
+
+export function clampTerminalPanelWidth(width: number, viewportWidth?: number | null) {
+  const max = isFiniteViewportWidth(viewportWidth)
+    ? Math.max(TERMINAL_PANEL_MIN_WIDTH, Math.round(viewportWidth - TERMINAL_PANEL_MIN_MAIN_WIDTH))
+    : Math.max(TERMINAL_PANEL_MIN_WIDTH, 1120);
+  return Math.min(max, Math.max(TERMINAL_PANEL_MIN_WIDTH, Math.round(width)));
 }
 
 export function getConversationSidebarMaxWidth(viewportWidth?: number | null) {

@@ -37,6 +37,13 @@ import { handleRunAnswerRequest } from "./run-answer";
 import { handleRunResumeRequest } from "./run-resume";
 import { handleRunDeleteRequest, handleRunPatchRequest, handleRunPostRequest } from "./runs";
 import { handleExternalSessionsRequest } from "./external-sessions";
+import {
+  handleTerminalCreateRequest,
+  handleTerminalDeleteRequest,
+  handleTerminalInputRequest,
+  handleTerminalResizeRequest,
+  handleTerminalStreamRequest,
+} from "./terminals";
 
 export function createOmniRuntimeHttpRegistry() {
   return createOmniHttpRegistry()
@@ -89,7 +96,12 @@ export function createOmniRuntimeHttpRegistry() {
     .route("DELETE", "/api/runs/:id", handleRunDeleteRequest)
     .route("POST", "/api/runs/:id/answer", handleRunAnswerRequest)
     .route("POST", "/api/runs/:id/resume", handleRunResumeRequest)
-    .route("GET", "/api/external-sessions", handleExternalSessionsRequest);
+    .route("GET", "/api/external-sessions", handleExternalSessionsRequest)
+    .route("POST", "/api/terminals", handleTerminalCreateRequest)
+    .route("GET", "/api/terminals/:id/stream", handleTerminalStreamRequest)
+    .route("POST", "/api/terminals/:id/input", handleTerminalInputRequest)
+    .route("POST", "/api/terminals/:id/resize", handleTerminalResizeRequest)
+    .route("DELETE", "/api/terminals/:id", handleTerminalDeleteRequest);
 }
 
 export { handleAuthSessionRequest } from "./auth-session";
@@ -129,3 +141,10 @@ export { handleRunAnswerRequest } from "./run-answer";
 export { handleRunResumeRequest } from "./run-resume";
 export { handleRunDeleteRequest, handleRunPatchRequest, handleRunPostRequest } from "./runs";
 export { handleExternalSessionsRequest } from "./external-sessions";
+export {
+  handleTerminalCreateRequest,
+  handleTerminalDeleteRequest,
+  handleTerminalInputRequest,
+  handleTerminalResizeRequest,
+  handleTerminalStreamRequest,
+} from "./terminals";

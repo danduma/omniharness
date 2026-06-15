@@ -8,6 +8,7 @@ export function useHomeLayoutController() {
     setLeftSidebarOpen,
     setIsResizingLeftSidebar,
     setIsResizingRightSidebar,
+    setIsResizingTerminalPanel,
     setRightSidebarOpen,
     setMobileNavOpen,
     setMobileWorkersOpen,
@@ -21,6 +22,11 @@ export function useHomeLayoutController() {
   const handleRightSidebarResizeStart = (event: React.PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     setIsResizingRightSidebar(true);
+  };
+
+  const handleTerminalPanelResizeStart = (event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    setIsResizingTerminalPanel(true);
   };
 
   const handleCollapseLeftSidebar = () => {
@@ -42,6 +48,7 @@ export function useHomeLayoutController() {
   return {
     handleLeftSidebarResizeStart,
     handleRightSidebarResizeStart,
+    handleTerminalPanelResizeStart,
     handleCollapseLeftSidebar,
     handleToggleMobileNav,
     handleToggleMobileWorkers,

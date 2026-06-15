@@ -3,6 +3,7 @@
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
+import { X } from "lucide-react";
 import { BootShell } from "@/components/BootShell";
 import { LoginShell } from "@/components/LoginShell";
 import { AttachmentImagePreviewDialog } from "@/components/AttachmentImagePreviewDialog";
@@ -59,6 +60,7 @@ import { useFrozenRecentOrder } from "./useFrozenRecentOrder";
 import { useHomeMutations } from "./useHomeMutations";
 import { useConversationActions } from "./useConversationActions";
 import { useHomeLayoutController } from "./useHomeLayoutController";
+import { useTerminalPanelResize } from "./useTerminalPanelResize";
 import { ComposerContainer } from "./ComposerContainer";
 import { sessionStateManager } from "./SessionStateManager";
 import { t } from "@/lib/i18n";
@@ -87,6 +89,10 @@ const SideWindow = dynamic(
 );
 const ExternalSessionsPicker = dynamic(
   () => import("@/app/home/ExternalSessionsPicker").then((m) => m.ExternalSessionsPicker),
+  { ssr: false },
+);
+const InteractiveTerminal = dynamic(
+  () => import("@/components/InteractiveTerminal").then((m) => m.InteractiveTerminal),
   { ssr: false },
 );
 
@@ -206,8 +212,12 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     rightSidebarWidth,
     isResizingLeftSidebar,
     isResizingRightSidebar,
+    terminalPanelOpen,
+    terminalPanelWidth,
+    isResizingTerminalPanel,
     mobileNavOpen,
     mobileWorkersOpen,
+    mobileTerminalOpen,
     searchQuery,
     draftProjectPath,
     readMarkers,
@@ -251,13 +261,16 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     setRightSidebarWidth,
     setIsResizingLeftSidebar,
     setIsResizingRightSidebar,
+    setTerminalPanelOpen,
     setMobileNavOpen,
     setMobileWorkersOpen,
+    setMobileTerminalOpen,
     setSearchQuery,
     setDraftProjectPath,
     setReadMarkers,
     setCollapsedProjectPaths,
     setProjectExpanded,
+    collapseProjects,
     setRenameValue,
     setEditingMessageValue,
     setExpandedDirectMessageIds,
@@ -647,6 +660,8 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
 
   // Layout controller
   const layout = useHomeLayoutController();
+  const terminalPaneRef = useRef<HTMLDivElement | null>(null);
+  useTerminalPanelResize(isResizingTerminalPanel, terminalPaneRef);
 
   // Lifecycle
   useHomeLifecycle({
@@ -1146,6 +1161,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     collapsedProjectPaths,
     visibleProjectSessionCounts,
     onProjectOpenChange: actions.handleProjectOpenChange,
+    onCollapseAllProjects: collapseProjects,
     onShowMoreProjectSessions: actions.handleShowMoreProjectSessions,
     setShowSettings,
     openOnboarding: () => setShowOnboarding(true),
@@ -1212,8 +1228,12 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           setThemeMode={setThemeMode}
           rightSidebarOpen={rightSidebarOpen}
           setRightSidebarOpen={setRightSidebarOpen}
+          terminalPanelOpen={terminalPanelOpen}
+          setTerminalPanelOpen={setTerminalPanelOpen}
           mobileWorkersOpen={mobileWorkersOpen}
           setMobileWorkersOpen={setMobileWorkersOpen}
+          mobileTerminalOpen={mobileTerminalOpen}
+          setMobileTerminalOpen={setMobileTerminalOpen}
           selectedRunWorkers={selectedRunWorkersForDisplay}
           conversationAgents={conversationAgents}
           supervisorInterventions={selectedRunSupervisorInterventions}
@@ -1316,6 +1336,38 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
         />
 
         {selectedRunId ? renderComposer("w-full") : null}
+      </div>
+
+      <div
+        ref={terminalPaneRef}
+        className={`relative hidden h-full shrink-0 overflow-hidden border-l bg-background transition-[width,opacity] duration-150 ease-out lg:flex motion-reduce:transition-none ${terminalPanelOpen ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}
+        style={{ width: terminalPanelOpen ? terminalPanelWidth : 0 }}
+        aria-hidden={!terminalPanelOpen}
+        inert={!terminalPanelOpen ? true : undefined}
+      >
+        <button
+          type="button"
+          className="absolute inset-y-0 left-0 z-10 w-3 -translate-x-1/2 cursor-col-resize bg-transparent"
+          aria-label={t("terminal.resize")}
+          onPointerDown={layout.handleTerminalPanelResizeStart}
+        />
+        <div className="flex h-full min-w-0 flex-1 flex-col pl-2">
+          <div className="flex items-center justify-between border-b px-3 py-1.5">
+            <span className="text-xs font-medium text-muted-foreground">{t("terminal.title")}</span>
+            <button
+              type="button"
+              className="rounded p-1 text-muted-foreground hover:text-foreground"
+              aria-label={t("terminal.close")}
+              title={t("terminal.close")}
+              onClick={() => setTerminalPanelOpen(false)}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 bg-black p-1">
+            {terminalPanelOpen ? <InteractiveTerminal conversationId={selectedRunId} /> : null}
+          </div>
+        </div>
       </div>
 
       {workspaceSideWindowAvailable ? (
