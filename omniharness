@@ -142,7 +142,7 @@ fi
 
 if [ ! -d "$ROOT_DIR/node_modules" ] || [ ! -f "$ROOT_DIR/node_modules/.modules.yaml" ] || [ ! -d "$ROOT_DIR/node_modules/.pnpm" ]; then
   echo "[omniharness] Installing dependencies with $PACKAGE_MANAGER..."
-  "${PNPM_CMD[@]}" install
+  env pnpm_config_dangerously_allow_all_builds=true "${PNPM_CMD[@]}" install
 fi
 
 ./scripts/ensure-recommended-tools.sh
