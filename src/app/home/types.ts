@@ -8,7 +8,14 @@ import type { BusyMessageAction } from "./busy-message-behavior";
 
 export type { ConversationModeOption };
 
-export type RunMode = ConversationModeOption | "commit";
+// Stored run modes (runs.mode). Distinct from the picker's ConversationModeOption
+// ("omni" | "direct"): an Omni run is stored as "implementation" with a phase.
+export type RunMode = "implementation" | "planning" | "direct" | "commit";
+
+// The composer's effective mode. For a new conversation it mirrors the picker
+// (omni | direct); for an active run it reflects the run's stage so the
+// placeholder/steer behavior stays correct (planning | implementation | direct).
+export type ComposerMode = ConversationModeOption | "planning" | "implementation";
 
 export type SessionType = "omni" | "process";
 export type SessionCapability =
@@ -115,6 +122,16 @@ export type QueuedConversationMessageRecord = {
   updatedAt: string;
   deliveredAt?: string | null;
 };
+export type QueuedMessageInterruptResponse = {
+  ok: true;
+  message?: MessageRecord;
+  queuedMessage: QueuedConversationMessageRecord;
+  interruption: {
+    status: "delivering" | "deferred";
+    workerId: string;
+    cancelDurationMs: number;
+  };
+};
 export type RecoveryIncidentRecord = {
   id: string;
   runId: string;
@@ -212,6 +229,18 @@ export type AgentSnapshot = {
       status?: string | null;
     } | null;
     options?: Array<{ optionId: string; kind: string; name: string }>;
+  }>;
+  pendingElicitations?: Array<{
+    requestId: number;
+    requestedAt: string;
+    sessionId?: string | null;
+    toolCallId?: string | null;
+    message?: string | null;
+    requestedSchema?: {
+      type?: string;
+      properties?: Record<string, unknown>;
+      required?: string[];
+    } | null;
   }>;
   createdAt?: string;
   updatedAt?: string;

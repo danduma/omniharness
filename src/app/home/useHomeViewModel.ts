@@ -17,7 +17,7 @@ import { buildDirectTerminalUserMessages } from "@/lib/worker-terminal-messages"
 import { resolveProjectScope } from "@/lib/project-scope";
 import { buildConversationTimelineItems, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterPromotedPlanningTranscriptMessages, extractWorkerFailureDetail, getConversationTranscriptRunIds, getLatestUnresolvedWorkerStuckEvent, getWorkerModelOptions, parseProjectList, parseWorkerType, parseWorkerTypes, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought } from "./utils";
 import { COMPOSER_WORKER_OPTIONS, WORKER_OPTIONS } from "./constants";
-import type { AgentSnapshot, ClarificationRecord, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, RunMode, RunRecord, SidebarGroup, SupervisorInterventionRecord } from "./types";
+import type { AgentSnapshot, ClarificationRecord, ComposerMode, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, RunMode, RunRecord, SidebarGroup, SupervisorInterventionRecord } from "./types";
 import type { WorkerCatalogResponse } from "./types";
 import { sessionStateManager } from "./SessionStateManager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
@@ -60,13 +60,19 @@ export function useHomeViewModel({
   const selectedRunIsTerminal = isTerminalRunStatus(selectedRun?.status);
   const selectedRunNeedsRecovery = normalizeRunStatus(selectedRun?.status) === "needs_recovery";
 
-  const isSupervisorRunning = Boolean(selectedRun && selectedRun.mode === "implementation" && selectedRun.status === "running");
+  const selectedRunPhase = selectedRun?.phase ?? null;
+  const isSupervisorRunning = Boolean(
+    selectedRun && selectedRun.mode === "implementation" && selectedRunPhase !== "planning" && selectedRun.status === "running",
+  );
   const selectedRunMode: RunMode = selectedRun?.mode || "implementation";
-  const isImplementationConversation = selectedRunMode === "implementation";
-  const isPlanningConversation = selectedRunMode === "planning";
+  // An Omni run is stored as mode "implementation"; its phase decides whether it
+  // is still planning or being supervised.
+  const isPlanningConversation = selectedRunMode === "planning"
+    || (selectedRunMode === "implementation" && selectedRunPhase === "planning");
+  const isImplementationConversation = selectedRunMode === "implementation" && selectedRunPhase !== "planning";
   const isDirectConversation = selectedRunMode === "direct" || selectedRunMode === "commit";
-  const activeComposerMode: ConversationModeOption = selectedRun
-    ? selectedRunMode === "commit" ? "direct" : selectedRunMode
+  const activeComposerMode: ComposerMode = selectedRun
+    ? isPlanningConversation ? "planning" : isDirectConversation ? "direct" : "implementation"
     : selectedConversationMode;
 
   const catalogWorkers = useMemo(
@@ -470,6 +476,7 @@ export function useHomeViewModel({
   }, [filteredMessages, isDirectConversation, primaryConversationAgent, selectedRunWorkers]);
 
   const pendingPermissionAgent = activeConversationAgents.find((agent) => (agent.pendingPermissions?.length ?? 0) > 0) ?? null;
+  const pendingElicitationAgent = activeConversationAgents.find((agent) => (agent.pendingElicitations?.length ?? 0) > 0) ?? null;
 
   const erroredAgent = activeConversationAgents.find((agent) => {
     if (agent.state === "error") {
@@ -504,6 +511,7 @@ export function useHomeViewModel({
     selectedRun,
     latestUserCheckpoint,
     hasPendingPermission: Boolean(pendingPermissionAgent),
+    hasPendingElicitation: Boolean(pendingElicitationAgent),
     hasActiveWorker,
     hasStuckWorker,
     activeWorkerCount: conversationWorkerGroups.active.length,
@@ -513,6 +521,7 @@ export function useHomeViewModel({
   const isConversationThinking = isSupervisorRunning
     || hasActiveWorker
     || Boolean(pendingPermissionAgent)
+    || Boolean(pendingElicitationAgent)
     || hasStuckWorker
     || showRecoverableRunningState
     || Boolean(latestPromptDeferredEvent)
@@ -597,6 +606,7 @@ export function useHomeViewModel({
     conversationTimelineActivityCount,
     directConversationMessages,
     pendingPermissionAgent,
+    pendingElicitationAgent,
     erroredAgent,
     latestWaitEvent,
     latestPromptDeferredEvent,
