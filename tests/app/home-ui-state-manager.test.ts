@@ -28,8 +28,36 @@ describe("HomeUiStateManager", () => {
     expect(manager.getSnapshot().visibleProjectSessionCounts).toEqual({});
   });
 
+  it("collapses projects without resetting session counts for unrelated groups", () => {
+    const manager = new HomeUiStateManager();
+    manager.revealMoreProjectSessions("/workspace/app");
+    manager.revealMoreProjectSessions("/workspace/other");
+
+    manager.collapseProjects(["/workspace/app"]);
+
+    const snapshot = manager.getSnapshot();
+    expect(snapshot.collapsedProjectPaths).toEqual(new Set(["/workspace/app"]));
+    expect(snapshot.visibleProjectSessionCounts).toEqual({
+      "/workspace/other": PROJECT_SESSION_DISPLAY_BATCH_SIZE * 2,
+    });
+  });
+
   it("defaults selectedConversationMode to 'direct'", () => {
     const manager = new HomeUiStateManager();
     expect(manager.getSnapshot().selectedConversationMode).toBe("direct");
+  });
+
+  it("updates composer command and cursor with a single notification", () => {
+    const manager = new HomeUiStateManager();
+    let notifications = 0;
+    manager.subscribe(() => {
+      notifications += 1;
+    });
+
+    manager.setComposerDraft({ command: "hello", commandCursor: 5 });
+
+    expect(manager.getSnapshot().command).toBe("hello");
+    expect(manager.getSnapshot().commandCursor).toBe(5);
+    expect(notifications).toBe(1);
   });
 });

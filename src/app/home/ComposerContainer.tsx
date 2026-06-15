@@ -17,6 +17,7 @@ import {
 } from "./busy-message-behavior";
 import { homeUiSetters, homeUiStateManager, type HomeUiState } from "./HomeUiStateManager";
 import type {
+  ComposerMode,
   ComposerWorkerOption,
   ConversationModeOption,
   ProjectFilesResponse,
@@ -39,7 +40,7 @@ export interface ComposerContainerProps {
   className: string;
   commandInputRef: React.RefObject<HTMLTextAreaElement | null>;
   selectedRunId: string | null;
-  selectedConversationMode: ConversationModeOption;
+  selectedConversationMode: ComposerMode;
   setSelectedConversationMode: (value: ConversationModeOption) => void;
   currentProjectScope: string | null;
   projectFiles: string[];
@@ -63,9 +64,11 @@ export interface ComposerContainerProps {
   busyMessageAction: BusyMessageAction;
   queuedMessages: QueuedConversationMessageRecord[];
   cancellingQueuedMessageIds: Set<string>;
+  interruptingQueuedMessageIds: Set<string>;
   onEditQueuedMessage: (message: QueuedConversationMessageRecord) => void;
-  onSendQueuedMessageNow: (messageId: string) => void;
+  onInterruptQueuedMessage: (messageId: string) => void;
   onCancelQueuedMessage: (messageId: string) => void;
+  onInterruptConversation: (draft: { content: string; attachments: PendingChatAttachment[] } | null) => void;
   onSendConversationMessage: (content: string, attachments: PendingChatAttachment[], busyAction?: BusyMessageAction) => void;
   onRunCommand: (content: string, attachments: PendingChatAttachment[]) => void;
   onStopConversation: () => void;
@@ -100,14 +103,16 @@ export function ComposerContainer({
   busyMessageAction,
   queuedMessages,
   cancellingQueuedMessageIds,
+  interruptingQueuedMessageIds,
   onEditQueuedMessage,
-  onSendQueuedMessageNow,
+  onInterruptQueuedMessage,
   onCancelQueuedMessage,
+  onInterruptConversation,
   onSendConversationMessage,
   onRunCommand,
   onStopConversation,
 }: ComposerContainerProps) {
-  const { setCommand, setCommandCursor, setMentionIndex, addAttachmentFiles, addPastedImages, removeAttachment } = homeUiSetters;
+  const { setCommandCursor, setMentionIndex, setComposerDraft, addAttachmentFiles, addPastedImages, removeAttachment } = homeUiSetters;
 
   const { command, commandCursor, mentionIndex, attachments } = useManagerSelector(
     homeUiStateManager,
@@ -160,8 +165,7 @@ export function ComposerContainer({
     if (!activeMention) return;
     const nextValue = replaceActiveMention(command, activeMention, filePath);
     const nextCursor = activeMention.start + filePath.length + 2;
-    setCommand(nextValue);
-    setCommandCursor(nextCursor);
+    setComposerDraft({ command: nextValue, commandCursor: nextCursor });
     requestAnimationFrame(() => {
       commandInputRef.current?.focus();
       commandInputRef.current?.setSelectionRange(nextCursor, nextCursor);
@@ -173,7 +177,7 @@ export function ComposerContainer({
     if (composerBehavior.submitAction === "stop") { onStopConversation(); return; }
     if (!command.trim() && attachments.length === 0) return;
     if (selectedRunId && attachments.length === 0 && isManualStopCommand(command)) {
-      homeUiSetters.setCommand("");
+      homeUiSetters.setComposerDraft({ command: "", commandCursor: 0 });
       onStopConversation();
       return;
     }
@@ -188,8 +192,8 @@ export function ComposerContainer({
     <ConversationComposer
       className={className}
       command={command}
-      setCommand={setCommand}
       setCommandCursor={setCommandCursor}
+      setComposerDraft={setComposerDraft}
       commandInputRef={commandInputRef}
       handleSubmit={handleSubmit}
       selectedRunId={selectedRunId}
@@ -224,9 +228,14 @@ export function ComposerContainer({
       composerBehavior={composerBehavior}
       queuedMessages={queuedMessages}
       cancellingQueuedMessageIds={cancellingQueuedMessageIds}
+      interruptingQueuedMessageIds={interruptingQueuedMessageIds}
       onEditQueuedMessage={onEditQueuedMessage}
-      onSendQueuedMessageNow={onSendQueuedMessageNow}
+      onInterruptQueuedMessage={onInterruptQueuedMessage}
       onCancelQueuedMessage={onCancelQueuedMessage}
+      onInterruptComposer={() => {
+        const hasDraft = Boolean(command.trim() || attachments.length > 0);
+        onInterruptConversation(hasDraft ? { content: command, attachments } : null);
+      }}
       onSendConversationMessage={(content, busyAction) => onSendConversationMessage(content, attachments, busyAction)}
       onRunCommand={(content) => onRunCommand(content, attachments)}
       onStopConversation={onStopConversation}

@@ -464,4 +464,51 @@ describe("bridge client", () => {
     expect(warnSpy.mock.calls[0]?.[0]).toContain("max delay 900000ms");
     expect(warnSpy.mock.calls[0]).toHaveLength(1);
   });
+
+  it("cancels the active turn via POST /agents/:name/cancel", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, name: "worker-1", cancelledPermissions: 2 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { cancelAgentTurn } = await import("@/server/bridge-client");
+    const result = await cancelAgentTurn("worker-1");
+
+    expect(result).toEqual({ ok: true, name: "worker-1", cancelledPermissions: 2 });
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(String(url)).toContain("/agents/worker-1/cancel");
+    expect(init?.method).toBe("POST");
+  });
+
+  it("normalizes bridge errors with a turn-cancel action label", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "Agent session did not include a session id" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { cancelAgentTurn } = await import("@/server/bridge-client");
+
+    await expect(cancelAgentTurn("worker-1")).rejects.toThrow(/^Cancel turn failed:/i);
+  });
+
+  it("surfaces a clear runtime message when the runtime is down during a turn cancel", async () => {
+    const refused = new TypeError(
+      "fetch failed",
+      { cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:7800"), { code: "ECONNREFUSED" }) },
+    );
+    const fetchMock = vi.fn().mockRejectedValue(refused);
+    global.fetch = fetchMock as typeof fetch;
+
+    const { cancelAgentTurn } = await import("@/server/bridge-client");
+
+    await expect(cancelAgentTurn("worker-1")).rejects.toThrow(/agent runtime is not running/i);
+    // retryIndefinitely:false means a single attempt for a connection refusal.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

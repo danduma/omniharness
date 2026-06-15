@@ -15,6 +15,7 @@ import { sideWindowManager } from "./SideWindowManager";
 import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "./GitWorkspaceManager";
 import { shouldOpenMobileSideWindow } from "./side-window-viewport";
 import type { MessageRecord, RunRecord, SidebarRun } from "./types";
+import { parseProjectList, reorderExplicitProjectPaths, type ProjectDropPlacement } from "./utils";
 
 type MutationsRef = {
   renameRun: { mutate: (vars: { runId: string; title: string }) => void };
@@ -102,6 +103,31 @@ export function useConversationActions({
   const handleRemoveProject = (pathToRemove: string) => {
     const newProjects = explicitProjects.filter((p: string) => p !== pathToRemove);
     const updatedKeys = { ...apiKeys, PROJECTS: JSON.stringify(newProjects) };
+    setApiKeys(updatedKeys);
+    void fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updatedKeys),
+    });
+  };
+
+  const handleReorderProjects = (
+    draggedPath: string,
+    targetPath: string,
+    placement: ProjectDropPlacement,
+  ) => {
+    const currentKeys = homeUiStateManager.getSnapshot().apiKeys;
+    const currentProjects = parseProjectList(currentKeys.PROJECTS);
+    const newProjects = reorderExplicitProjectPaths(currentProjects, {
+      draggedPath,
+      targetPath,
+      placement,
+    });
+    if (newProjects === currentProjects) {
+      return;
+    }
+
+    const updatedKeys = { ...currentKeys, PROJECTS: JSON.stringify(newProjects) };
     setApiKeys(updatedKeys);
     void fetch("/api/settings", {
       method: "POST",
@@ -328,6 +354,7 @@ export function useConversationActions({
     handleStartNewPlan,
     handleAddProject,
     handleRemoveProject,
+    handleReorderProjects,
     updateCommitWorkflowSetting,
     handleManualCommitChat,
     handleManualCommitProject,

@@ -48,6 +48,7 @@ export type RunRecord = {
   planId: string;
   sessionType?: SessionType | null;
   mode?: RunMode | null;
+  phase?: "planning" | "implementing" | null;
   status: string;
   createdAt: string;
   updatedAt?: string | null;

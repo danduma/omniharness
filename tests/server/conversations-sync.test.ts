@@ -6,8 +6,10 @@ import { clarifications, conversationReadMarkers, creditEvents, executionEvents,
 import { getEventStreamNotificationVersion } from "@/server/events/live-updates";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
 
-const { mockAskAgent, mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
+const { mockAskAgent, mockGetAgent, mockRespondElicitation, mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
   mockAskAgent: vi.fn(),
+  mockGetAgent: vi.fn(),
+  mockRespondElicitation: vi.fn(),
   mockSpawnAgent: vi.fn(),
   mockStartSupervisorRun: vi.fn(),
 }));
@@ -21,6 +23,8 @@ vi.mock("@/server/bridge-client", async (importOriginal) => {
   return {
     ...actual,
     askAgent: mockAskAgent,
+    getAgent: mockGetAgent,
+    respondElicitation: mockRespondElicitation,
     spawnAgent: mockSpawnAgent,
   };
 });
@@ -34,6 +38,10 @@ describe("syncConversationSessions", () => {
       response: "Queued continue delivered.",
       state: "idle",
     });
+    mockGetAgent.mockReset();
+    mockGetAgent.mockResolvedValue(null);
+    mockRespondElicitation.mockReset();
+    mockRespondElicitation.mockResolvedValue({ ok: true });
     mockSpawnAgent.mockReset();
     mockStartSupervisorRun.mockReset();
     await db.delete(planningReviewFindings);
@@ -555,7 +563,6 @@ describe("syncConversationSessions", () => {
       createdAt: new Date(now.getTime() + 3),
       updatedAt: new Date(now.getTime() + 3),
     });
-
     await syncConversationSessions([
       {
         name: workerId,
@@ -609,6 +616,160 @@ describe("syncConversationSessions", () => {
         workerId,
       }),
     ]));
+  });
+
+  it("answers a pending direct worker elicitation instead of leaving the queued reply stuck behind working status", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+    const question = "The terminal feature is done and tested, but unrelated WIP is interleaved in some files. How should I commit?";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-elicitation-queued-drain.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Direct elicitation queued drain",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: question,
+      lastText: question,
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(queuedConversationMessages).values({
+      id: "queued-answer",
+      runId,
+      targetWorkerId: workerId,
+      action: "steer",
+      status: "pending",
+      content: "just group files and commit them",
+      attachmentsJson: "[]",
+      createdAt: new Date(now.getTime() + 3),
+      updatedAt: new Date(now.getTime() + 3),
+    });
+    mockGetAgent.mockResolvedValue({
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "working",
+      currentText: question,
+      lastText: question,
+      renderedOutput: question,
+      outputEntries: [],
+      pendingElicitations: [
+        {
+          requestId: 2,
+          requestedAt: now.toISOString(),
+          sessionId: "elicitation-session",
+          toolCallId: "ask-tool",
+          message: question,
+          requestedSchema: {
+            type: "object",
+            properties: {
+              customAnswer: { type: "string", title: "Other" },
+            },
+          },
+        },
+      ],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "claude",
+        cwd: process.cwd(),
+        state: "working",
+        sessionId: "elicitation-session",
+        sessionMode: "full-access",
+        currentText: question,
+        lastText: question,
+        renderedOutput: question,
+        outputEntries: [
+          {
+            id: "ask-start",
+            type: "tool_call",
+            text: "Asking for your input",
+            toolCallId: "ask-tool",
+            toolKind: "other",
+            status: "pending",
+            timestamp: now.toISOString(),
+            raw: {
+              _meta: { claudeCode: { toolName: "AskUserQuestion" } },
+              kind: "other",
+              title: "Asking for your input",
+            },
+          },
+          {
+            id: "elicitation-1",
+            type: "elicitation",
+            text: `Question for user: ${question}`,
+            status: "pending",
+            timestamp: new Date(now.getTime() + 1).toISOString(),
+            raw: {
+              requestId: 2,
+              message: question,
+              requestedSchema: {
+                type: "object",
+                properties: {
+                  customAnswer: { type: "string", title: "Other" },
+                },
+              },
+            },
+          },
+        ],
+        pendingElicitations: [
+          {
+            requestId: 2,
+            requestedAt: now.toISOString(),
+            sessionId: "elicitation-session",
+            toolCallId: "ask-tool",
+            message: question,
+            requestedSchema: {
+              type: "object",
+              properties: {
+                customAnswer: { type: "string", title: "Other" },
+              },
+            },
+          },
+        ],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    ], { selectedRunId: runId });
+
+    const queued = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, "queued-answer")).get();
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+
+    expect(mockAskAgent).not.toHaveBeenCalled();
+    expect(mockRespondElicitation).toHaveBeenCalledWith(workerId, {
+      action: "accept",
+      content: { customAnswer: "just group files and commit them" },
+    });
+    expect(queued?.status).toBe("delivered");
+    expect(run?.status).toBe("running");
+    expect(worker?.status).toBe("working");
   });
 
   it("keeps a direct run running when the live worker only has a partial streaming message", async () => {

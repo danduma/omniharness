@@ -54,10 +54,30 @@ describe("setup-auth bootstrap", () => {
     expect(envText).toContain("OMNIHARNESS_AUTH_PASSWORD_HASH=");
     expect(envText).not.toContain("generated-test-password");
     expect(writes.join("")).toContain("Password: generated-test-password");
+    expect(writes.join("")).toContain("\u001b[1;31mPassword: generated-test-password\u001b[0m");
 
     const hashLine = envText.split(/\r?\n/g).find((line) => line.startsWith("OMNIHARNESS_AUTH_PASSWORD_HASH="));
     const storedHash = unescapeDotenvValue(hashLine!.split("=").slice(1).join("="));
     await expect(verify(storedHash, "generated-test-password", ARGON_OPTIONS)).resolves.toBe(true);
+  });
+
+  it("can defer the generated password notice to a protected launcher-owned file", async () => {
+    const rootDir = tempRoot();
+    const noticeFile = path.join(rootDir, "auth-notice.txt");
+    const writes: string[] = [];
+    const result = await setupAuth.ensureAuthConfig({
+      rootDir,
+      env: { OMNIHARNESS_AUTH_PASSWORD_NOTICE_FILE: noticeFile },
+      input: { isTTY: false },
+      output: { write: (text: string) => writes.push(text) },
+      generatedPassword: "deferred-generated-password",
+    });
+
+    expect(result.created).toBe(true);
+    expect(writes.join("")).not.toContain("deferred-generated-password");
+    const notice = fs.readFileSync(noticeFile, "utf8");
+    expect(notice).toContain("\u001b[1;31mPassword: deferred-generated-password\u001b[0m");
+    expect(fs.statSync(noticeFile).mode & 0o777).toBe(0o600);
   });
 
   it("leaves an existing auth configuration untouched", async () => {

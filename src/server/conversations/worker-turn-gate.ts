@@ -1,3 +1,7 @@
+import { eq, sql } from "drizzle-orm";
+import { db } from "@/server/db";
+import { workers } from "@/server/db/schema";
+
 const workerTurnChains = new Map<string, Promise<void>>();
 const conversationMutationChains = new Map<string, Promise<void>>();
 const backgroundTasks = new Set<Promise<void>>();
@@ -20,6 +24,62 @@ function runOnChain<T>(
 
 export function runWorkerTurn<T>(workerId: string, task: () => Promise<T>): Promise<T> {
   return runOnChain(workerTurnChains, workerId, task);
+}
+
+/**
+ * Read the worker's current turn fence value. Returns 0 when the worker
+ * row is missing (treated as the default generation).
+ */
+export async function readWorkerTurnGeneration(workerId: string): Promise<number> {
+  const record = await db
+    .select({ turnGeneration: workers.turnGeneration })
+    .from(workers)
+    .where(eq(workers.id, workerId))
+    .get();
+  return record?.turnGeneration ?? 0;
+}
+
+/**
+ * Atomically advance the worker turn fence and (optionally) reset persisted
+ * worker state into a delivery-safe shape in the SAME mutation, so an
+ * immediate queued delivery cannot observe stale `working` state after a
+ * successful cancel. Returns the new generation value.
+ *
+ * Callers capture the returned generation for the new delivery; any older
+ * in-flight completion that captured a smaller value must refuse to persist
+ * terminal updates (see `isWorkerTurnGenerationCurrent`).
+ */
+export async function advanceWorkerTurnGeneration(
+  workerId: string,
+  reset?: { status?: string; clearCurrentText?: boolean; updatedAt?: Date },
+): Promise<number> {
+  await db.update(workers).set({
+    turnGeneration: sql`${workers.turnGeneration} + 1`,
+    ...(reset?.status !== undefined ? { status: reset.status } : {}),
+    ...(reset?.clearCurrentText ? { currentText: "" } : {}),
+    ...(reset?.updatedAt ? { updatedAt: reset.updatedAt } : {}),
+  }).where(eq(workers.id, workerId));
+  return readWorkerTurnGeneration(workerId);
+}
+
+/**
+ * True when `capturedGeneration` still matches the worker's persisted fence,
+ * i.e. no newer interrupt delivery has superseded the captured turn. A missing
+ * worker row reports `false` so stale callers stop persisting.
+ */
+export async function isWorkerTurnGenerationCurrent(
+  workerId: string,
+  capturedGeneration: number,
+): Promise<boolean> {
+  const record = await db
+    .select({ turnGeneration: workers.turnGeneration })
+    .from(workers)
+    .where(eq(workers.id, workerId))
+    .get();
+  if (!record) {
+    return false;
+  }
+  return record.turnGeneration === capturedGeneration;
 }
 
 export function runConversationMutation<T>(runId: string, task: () => Promise<T>): Promise<T> {

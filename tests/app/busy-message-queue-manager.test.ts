@@ -42,4 +42,57 @@ describe("BusyMessageQueueManager", () => {
 
     expect(manager.getQueuedMessagesForRun("run-a").map((message) => message.id)).toEqual(["queued-editing"]);
   });
+
+  it("does not revive an active row after an authoritative server snapshot removes it", () => {
+    const manager = new BusyMessageQueueManager();
+    const queuedMessage = buildQueuedMessage({
+      id: "queued-interrupted",
+      runId: "run-a",
+      status: "delivering",
+    });
+
+    manager.setQueuedMessages([queuedMessage], false);
+    manager.setQueuedMessages([], false);
+    manager.upsertQueuedMessage(queuedMessage);
+
+    expect(manager.getQueuedMessagesForRun("run-a")).toEqual([]);
+  });
+
+  it("allows a server snapshot to restore a row that became pending again", () => {
+    const manager = new BusyMessageQueueManager();
+    const queuedMessage = buildQueuedMessage({
+      id: "queued-deferred",
+      runId: "run-a",
+      status: "delivering",
+    });
+    const pendingAgain = buildQueuedMessage({
+      ...queuedMessage,
+      status: "pending",
+      lastError: "Worker is busy",
+    });
+
+    manager.setQueuedMessages([queuedMessage], false);
+    manager.setQueuedMessages([], false);
+    manager.setQueuedMessages([pendingAgain], false);
+
+    expect(manager.getQueuedMessagesForRun("run-a")).toEqual([pendingAgain]);
+  });
+
+  it("removes terminal rows supplied by a mutation response", () => {
+    const manager = new BusyMessageQueueManager();
+    const queuedMessage = buildQueuedMessage({
+      id: "queued-delivered",
+      runId: "run-a",
+      status: "delivering",
+    });
+
+    manager.setQueuedMessages([queuedMessage], false);
+    manager.upsertQueuedMessage({
+      ...queuedMessage,
+      status: "delivered",
+      deliveredAt: "2026-05-25T00:00:01.000Z",
+    });
+
+    expect(manager.getQueuedMessagesForRun("run-a")).toEqual([]);
+  });
 });

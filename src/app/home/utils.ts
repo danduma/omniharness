@@ -3,7 +3,7 @@ import { formatHumanDuration, type ConversationWorkerRecord } from "@/lib/conver
 import { isTerminalRunStatus } from "@/lib/run-status";
 import { getLatestUnresolvedWorkerStuckEvent } from "@/lib/worker-stuck-events";
 import { RUN_PATH_PATTERN, WORKER_OPTIONS, FALLBACK_WORKER_MODEL_OPTIONS } from "./constants";
-import type { AgentSnapshot, EventStreamState, ExecutionEventRecord, MessageRecord, PlanItemRecord, PlanRecord, RunRecord, SupervisorInterventionRecord, WorkerModelCatalog, WorkerType } from "./types";
+import type { AgentSnapshot, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, PlanItemRecord, PlanRecord, RunRecord, SupervisorInterventionRecord, WorkerModelCatalog, WorkerType } from "./types";
 import { t } from "@/lib/i18n";
 
 export { getLatestUnresolvedWorkerStuckEvent };
@@ -242,13 +242,15 @@ export function buildOptimisticCreatedConversationSnapshot(args: {
   runId: string;
   content?: string;
   projectPath: string | null;
-  mode: RunRecord["mode"];
+  mode: ConversationModeOption;
   preferredWorkerType?: string | null;
   createdAt?: string;
   now?: Date;
 }): CreatedConversationSnapshot {
   const timestamp = args.createdAt ?? (args.now ?? new Date()).toISOString();
   const planId = `${args.runId}:optimistic-plan`;
+  const storedMode: RunRecord["mode"] = args.mode === "omni" ? "implementation" : args.mode;
+  const phase: RunRecord["phase"] = args.mode === "omni" ? "planning" : null;
   return {
     plan: {
       id: planId,
@@ -259,7 +261,8 @@ export function buildOptimisticCreatedConversationSnapshot(args: {
     run: {
       id: args.runId,
       planId,
-      mode: args.mode,
+      mode: storedMode,
+      phase,
       status: "starting",
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -389,6 +392,7 @@ export function shouldShowRecoverableRunningState({
   selectedRun,
   latestUserCheckpoint,
   hasPendingPermission,
+  hasPendingElicitation,
   hasActiveWorker,
   hasStuckWorker,
   activeWorkerCount,
@@ -398,6 +402,7 @@ export function shouldShowRecoverableRunningState({
   selectedRun: RunRecord | null;
   latestUserCheckpoint: MessageRecord | null;
   hasPendingPermission: boolean;
+  hasPendingElicitation: boolean;
   hasActiveWorker: boolean;
   hasStuckWorker: boolean;
   activeWorkerCount: number;
@@ -408,6 +413,7 @@ export function shouldShowRecoverableRunningState({
     selectedRun?.status !== "running"
     || !latestUserCheckpoint
     || hasPendingPermission
+    || hasPendingElicitation
     || hasActiveWorker
   ) {
     return false;
@@ -798,6 +804,43 @@ export function parseProjectList(value: string | null | undefined) {
   } catch {
     return [];
   }
+}
+
+export type ProjectDropPlacement = "before" | "after";
+
+export function reorderExplicitProjectPaths(
+  projectPaths: string[],
+  args: {
+    draggedPath: string;
+    targetPath: string;
+    placement: ProjectDropPlacement;
+  },
+) {
+  if (args.draggedPath === args.targetPath) {
+    return projectPaths;
+  }
+
+  const draggedIndex = projectPaths.indexOf(args.draggedPath);
+  const targetIndex = projectPaths.indexOf(args.targetPath);
+  if (draggedIndex === -1 || targetIndex === -1) {
+    return projectPaths;
+  }
+
+  const next = [...projectPaths];
+  const [draggedPath] = next.splice(draggedIndex, 1);
+  const targetIndexAfterRemoval = next.indexOf(args.targetPath);
+  if (targetIndexAfterRemoval === -1) {
+    return projectPaths;
+  }
+
+  const insertIndex = args.placement === "after"
+    ? targetIndexAfterRemoval + 1
+    : targetIndexAfterRemoval;
+  next.splice(insertIndex, 0, draggedPath);
+
+  return next.every((projectPath, index) => projectPath === projectPaths[index])
+    ? projectPaths
+    : next;
 }
 
 export function parseCollapsedProjectPaths(value: string | null | undefined) {

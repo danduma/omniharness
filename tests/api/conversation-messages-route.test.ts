@@ -23,12 +23,13 @@ import {
 } from "@/server/workers/output-store";
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 
-const { mockAskAgent, mockCancelAgent, mockGetAgent, mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
+const { mockAskAgent, mockCancelAgent, mockCancelAgentTurn, mockGetAgent, mockRespondElicitation, mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
   mockAskAgent: vi.fn().mockResolvedValue({
     response: "Here is the next planning step.",
     state: "working",
   }),
   mockCancelAgent: vi.fn().mockResolvedValue(undefined),
+  mockCancelAgentTurn: vi.fn().mockResolvedValue({ ok: true, name: "worker", cancelledPermissions: 0 }),
   mockGetAgent: vi.fn().mockResolvedValue(null),
   mockSpawnAgent: vi.fn().mockResolvedValue({
     name: "worker-1",
@@ -41,13 +42,16 @@ const { mockAskAgent, mockCancelAgent, mockGetAgent, mockSpawnAgent, mockStartSu
     currentText: "",
     lastText: "",
   }),
+  mockRespondElicitation: vi.fn().mockResolvedValue({ ok: true }),
   mockStartSupervisorRun: vi.fn(),
 }));
 
 vi.mock("@/server/bridge-client", () => ({
   askAgent: mockAskAgent,
   cancelAgent: mockCancelAgent,
+  cancelAgentTurn: mockCancelAgentTurn,
   getAgent: mockGetAgent,
+  respondElicitation: mockRespondElicitation,
   spawnAgent: mockSpawnAgent,
 }));
 
@@ -57,6 +61,13 @@ vi.mock("@/server/supervisor/start", () => ({
 
 import { POST } from "@/app/api/conversations/[id]/messages/route";
 import { PATCH as SEND_QUEUED_NOW } from "@/app/api/conversations/[id]/queued-messages/[messageId]/route";
+import { POST as INTERRUPT_QUEUED } from "@/app/api/conversations/[id]/queued-messages/[messageId]/interrupt/route";
+import { POST as INTERRUPT_NEXT } from "@/app/api/conversations/[id]/queued-messages/interrupt-next/route";
+import { createQueuedConversationMessage } from "@/server/conversations/queued-messages";
+import {
+  __resetWorkerTurnChainsForTests,
+  waitForConversationBackgroundTasksForTests,
+} from "@/server/conversations/worker-turn-gate";
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -87,8 +98,12 @@ describe("POST /api/conversations/[id]/messages", () => {
     });
     mockCancelAgent.mockReset();
     mockCancelAgent.mockResolvedValue(undefined);
+    mockCancelAgentTurn.mockReset();
+    mockCancelAgentTurn.mockResolvedValue({ ok: true, name: "worker", cancelledPermissions: 0 });
     mockGetAgent.mockReset();
     mockGetAgent.mockResolvedValue(null);
+    mockRespondElicitation.mockReset();
+    mockRespondElicitation.mockResolvedValue({ ok: true });
     mockSpawnAgent.mockReset();
     mockSpawnAgent.mockResolvedValue({
       name: "worker-1",
@@ -978,6 +993,100 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(systemErrors.filter((message) => message.kind === "error")).toHaveLength(0);
   });
 
+  it("answers a direct worker elicitation from the main composer instead of queuing it as busy work", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+    const question = "The terminal feature is done and tested. How should I commit?";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-elicitation.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "awaiting_user",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "awaiting_user",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: question,
+      lastText: question,
+      createdAt: now,
+      updatedAt: now,
+    });
+    mockGetAgent.mockResolvedValueOnce({
+      name: workerId,
+      type: "claude",
+      cwd: "/workspace/app",
+      state: "working",
+      sessionId: "elicitation-session",
+      sessionMode: "full-access",
+      outputEntries: [],
+      currentText: question,
+      lastText: question,
+      pendingElicitations: [
+        {
+          requestId: 2,
+          requestedAt: now.toISOString(),
+          sessionId: "elicitation-session",
+          toolCallId: "ask-tool",
+          message: question,
+          requestedSchema: {
+            type: "object",
+            properties: {
+              customAnswer: { type: "string", title: "Other" },
+            },
+          },
+        },
+      ],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    const response = await POST(new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        content: "just group files and commit them",
+        busyAction: "steer",
+      }),
+    }), { params: Promise.resolve({ id: runId }) });
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.message).toMatchObject({
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "just group files and commit them",
+    });
+    expect(mockRespondElicitation).toHaveBeenCalledWith(workerId, {
+      action: "accept",
+      content: { customAnswer: "just group files and commit them" },
+    });
+    expect(mockAskAgent).not.toHaveBeenCalled();
+
+    const queued = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId));
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(queued).toHaveLength(0);
+    expect(updatedRun?.status).toBe("running");
+    expect(updatedWorker?.status).toBe("working");
+  });
+
   it("shows a direct fire-and-forget follow-up in the worker stream before the bridge turn finishes", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -1735,5 +1844,131 @@ describe("POST /api/conversations/[id]/messages", () => {
 
     expect(updatedWorker?.status).toBe("cancelled");
     expect(workerMessages).toHaveLength(0);
+  });
+});
+
+describe("POST /api/conversations/[id]/queued-messages interrupt routes", () => {
+  beforeEach(async () => {
+    mockAskAgent.mockReset();
+    mockAskAgent.mockResolvedValue({ response: "Acknowledged the interrupt.", state: "idle" });
+    mockCancelAgentTurn.mockReset();
+    mockCancelAgentTurn.mockResolvedValue({ ok: true, name: "worker", cancelledPermissions: 0 });
+    mockGetAgent.mockReset();
+    mockGetAgent.mockResolvedValue({
+      name: "worker",
+      type: "codex",
+      cwd: "/workspace/app",
+      state: "idle",
+      outputEntries: [],
+      renderedOutput: null,
+      lastText: "",
+      currentText: "",
+      stderrBuffer: [],
+      stopReason: null,
+    });
+    __resetOutputStoreCachesForTests();
+    __resetNamedEventsForTests();
+    __resetWorkerTurnChainsForTests();
+    await db.delete(executionEvents);
+    await db.delete(queuedConversationMessages);
+    await db.delete(messages);
+    await db.delete(workers);
+    await db.delete(runs);
+    await db.delete(plans);
+  });
+
+  async function seedBusyDirectRun() {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    await db.insert(plans).values({ id: planId, path: "vibes/ad-hoc/direct.md", status: "running", createdAt: new Date(), updatedAt: new Date() });
+    await db.insert(runs).values({ id: runId, planId, mode: "direct", status: "running", createdAt: new Date(), updatedAt: new Date() });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "Busy on the previous turn...",
+      lastText: "",
+      createdAt: new Date(Date.now() - 1000),
+      updatedAt: new Date(),
+    });
+    return { runId, workerId };
+  }
+
+  it("interrupts the active turn and delivers a specific queued message", async () => {
+    const { runId, workerId } = await seedBusyDirectRun();
+    const queued = await createQueuedConversationMessage({ runId, targetWorkerId: workerId, action: "queue", content: "Focus on the failing test.", attachments: [] });
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/queued-messages/${queued.id}/interrupt`, { method: "POST" });
+    const response = await INTERRUPT_QUEUED(request, { params: Promise.resolve({ id: runId, messageId: queued.id }) });
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.interruption.status).toBe("delivering");
+    expect(mockCancelAgentTurn).toHaveBeenCalledWith(workerId);
+
+    await waitForConversationBackgroundTasksForTests();
+
+    const stored = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queued.id)).get();
+    expect(stored?.status).toBe("delivered");
+
+    const events = getNamedEventsSince(null).events.map((entry) => entry.event.kind);
+    expect(events).toContain("queue.interrupt_requested");
+    expect(events).toContain("queue.interrupt_cancelled_turn");
+    expect(events).toContain("queue.interrupt_delivery_started");
+  });
+
+  it("interrupt-next delivers the oldest pending queued message", async () => {
+    const { runId, workerId } = await seedBusyDirectRun();
+    const first = await createQueuedConversationMessage({ runId, targetWorkerId: workerId, action: "queue", content: "First note", attachments: [] });
+    await createQueuedConversationMessage({ runId, targetWorkerId: workerId, action: "queue", content: "Second note", attachments: [] });
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/queued-messages/interrupt-next`, { method: "POST", body: JSON.stringify({}) });
+    const response = await INTERRUPT_NEXT(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    await waitForConversationBackgroundTasksForTests();
+
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "First note");
+    const stored = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, first.id)).get();
+    expect(stored?.status).toBe("delivered");
+  });
+
+  it("interrupt-next with a draft body creates and delivers exactly one queued row", async () => {
+    const { runId, workerId } = await seedBusyDirectRun();
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/queued-messages/interrupt-next`, {
+      method: "POST",
+      body: JSON.stringify({ content: "Stop and run the linter." }),
+    });
+    const response = await INTERRUPT_NEXT(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    await waitForConversationBackgroundTasksForTests();
+
+    const rows = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.status).toBe("delivered");
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "Stop and run the linter.");
+  });
+
+  it("refuses interrupt-next when there is no queued message and no draft", async () => {
+    const { runId } = await seedBusyDirectRun();
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/queued-messages/interrupt-next`, { method: "POST", body: JSON.stringify({}) });
+    const response = await INTERRUPT_NEXT(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(409);
+    expect(mockCancelAgentTurn).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-POST methods on the interrupt route", async () => {
+    const { runId, workerId } = await seedBusyDirectRun();
+    const queued = await createQueuedConversationMessage({ runId, targetWorkerId: workerId, action: "queue", content: "x", attachments: [] });
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/queued-messages/${queued.id}/interrupt`, { method: "GET" });
+    const response = await INTERRUPT_QUEUED(request, { params: Promise.resolve({ id: runId, messageId: queued.id }) });
+    expect(response.status).toBe(405);
   });
 });

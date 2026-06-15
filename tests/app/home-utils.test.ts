@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildOptimisticCreatedConversationSnapshot, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseBrowserConversationRoute, parseCollapsedProjectPaths, shouldClearMissingSelectedRunFromAuthoritativeSnapshot, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowLatestRecoveryAction, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/app/home/utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildOptimisticCreatedConversationSnapshot, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseBrowserConversationRoute, parseCollapsedProjectPaths, reorderExplicitProjectPaths, shouldClearMissingSelectedRunFromAuthoritativeSnapshot, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowLatestRecoveryAction, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/app/home/utils";
 import type { EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord, SupervisorInterventionRecord } from "@/app/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 
@@ -67,6 +67,28 @@ function buildWorker(overrides: Partial<ConversationWorkerRecord>): Conversation
 }
 
 describe("home utils", () => {
+  it("reorders explicit projects without adding or removing configured roots", () => {
+    const projects = ["/workspace/api", "/workspace/web", "/workspace/docs"];
+
+    expect(reorderExplicitProjectPaths(projects, {
+      draggedPath: "/workspace/docs",
+      targetPath: "/workspace/api",
+      placement: "before",
+    })).toEqual(["/workspace/docs", "/workspace/api", "/workspace/web"]);
+
+    expect(reorderExplicitProjectPaths(projects, {
+      draggedPath: "/workspace/api",
+      targetPath: "/workspace/docs",
+      placement: "after",
+    })).toEqual(["/workspace/web", "/workspace/docs", "/workspace/api"]);
+
+    expect(reorderExplicitProjectPaths(projects, {
+      draggedPath: "/workspace/api",
+      targetPath: "other",
+      placement: "before",
+    })).toBe(projects);
+  });
+
   it("parses the browser route as the source of truth for selected sessions", () => {
     expect(parseBrowserConversationRoute({
       pathname: "/session/12345678-1234-1234-1234-123456789abc",
@@ -741,6 +763,7 @@ describe("home utils", () => {
         createdAt: "2026-04-27T00:00:00.000Z",
       },
       hasPendingPermission: false,
+      hasPendingElicitation: false,
       hasActiveWorker: false,
       hasStuckWorker: false,
       activeWorkerCount: 0,
@@ -764,12 +787,37 @@ describe("home utils", () => {
         createdAt: "2026-04-27T00:00:00.000Z",
       },
       hasPendingPermission: false,
+      hasPendingElicitation: false,
       hasActiveWorker: false,
       hasStuckWorker: false,
       activeWorkerCount: 0,
       latestExecutionEventCreatedAt: null,
       nowMs: new Date("2026-04-27T00:00:31.000Z").getTime(),
     })).toBe(true);
+  });
+
+  it("does not show recovery while a worker question is pending", () => {
+    expect(shouldShowRecoverableRunningState({
+      selectedRun: buildRun({
+        status: "running",
+        createdAt: "2026-04-27T00:00:00.000Z",
+      }),
+      latestUserCheckpoint: {
+        id: "message-1",
+        runId: "run-1",
+        role: "user",
+        kind: "checkpoint",
+        content: "Start this",
+        createdAt: "2026-04-27T00:00:00.000Z",
+      },
+      hasPendingPermission: false,
+      hasPendingElicitation: true,
+      hasActiveWorker: false,
+      hasStuckWorker: false,
+      activeWorkerCount: 0,
+      latestExecutionEventCreatedAt: null,
+      nowMs: new Date("2026-04-27T00:00:31.000Z").getTime(),
+    })).toBe(false);
   });
 
   it("does not show recovery right after a fresh user checkpoint even when execution events are stale", () => {
@@ -787,6 +835,7 @@ describe("home utils", () => {
         createdAt: "2026-04-27T00:15:00.000Z",
       },
       hasPendingPermission: false,
+      hasPendingElicitation: false,
       hasActiveWorker: false,
       hasStuckWorker: false,
       activeWorkerCount: 0,

@@ -45,6 +45,18 @@ export interface AgentRecord {
     } | null;
     options?: Array<{ optionId: string; kind: string; name: string }>;
   }>;
+  pendingElicitations?: Array<{
+    requestId: number;
+    requestedAt: string;
+    sessionId?: string | null;
+    toolCallId?: string | null;
+    message?: string | null;
+    requestedSchema?: {
+      type?: string;
+      properties?: Record<string, unknown>;
+      required?: string[];
+    } | null;
+  }>;
   outputEntries?: AgentOutputEntry[];
   outputArchive?: {
     totalEntries: number;
@@ -60,19 +72,19 @@ export interface AgentRecord {
   stopReason: string | null;
 }
 
-export interface TaskRecord {
-  id: string;
-  name: string;
-  state: string;
-  subtasks: unknown[];
-}
-
 export interface AgentOutputPage {
   name: string;
   cursor: number;
   nextCursor: number | null;
   totalEntries: number;
   entries: NonNullable<AgentRecord["outputEntries"]>;
+}
+
+export interface TaskRecord {
+  id: string;
+  name: string;
+  state: string;
+  subtasks: unknown[];
 }
 
 export type BridgeMcpServer =
@@ -195,6 +207,27 @@ function asPendingPermissions(value: unknown): AgentRecord["pendingPermissions"]
     .filter((item) => item.requestId >= 0 && item.requestedAt);
 }
 
+function asPendingElicitations(value: unknown): AgentRecord["pendingElicitations"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+    .map((item) => ({
+      requestId: typeof item.requestId === "number" ? item.requestId : -1,
+      requestedAt: asString(item.requestedAt),
+      sessionId: typeof item.sessionId === "string" ? item.sessionId : null,
+      toolCallId: typeof item.toolCallId === "string" ? item.toolCallId : null,
+      message: typeof item.message === "string" ? item.message : null,
+      requestedSchema:
+        typeof item.requestedSchema === "object" && item.requestedSchema !== null
+          ? (item.requestedSchema as NonNullable<AgentRecord["pendingElicitations"]>[number]["requestedSchema"])
+          : null,
+    }))
+    .filter((item) => item.requestId >= 0 && item.requestedAt);
+}
+
 function asOutputEntries(value: unknown): NonNullable<AgentRecord["outputEntries"]> {
   if (!Array.isArray(value)) {
     return [];
@@ -263,6 +296,7 @@ export function normalizeAgentRecord(value: unknown): AgentRecord {
     lastError: asNullableString(record.lastError),
     contextUsage,
     pendingPermissions: asPendingPermissions(record.pendingPermissions),
+    pendingElicitations: asPendingElicitations(record.pendingElicitations),
     outputEntries: asOutputEntries(record.outputEntries),
     outputArchive: typeof record.outputArchive === "object" && record.outputArchive !== null
       ? record.outputArchive as AgentRecord["outputArchive"]
@@ -602,6 +636,25 @@ export async function cancelAgent(name: string) {
   );
 }
 
+/**
+ * Cancel only the worker's active turn (and any pending permissions) while
+ * keeping the worker process and ACP session alive. This is the control-plane
+ * primitive behind Escape-to-interrupt: the current turn stops but the worker
+ * stays ready to receive the queued/draft follow-up immediately.
+ *
+ * Distinct from `cancelAgent`, which fully stops the worker via DELETE.
+ */
+export async function cancelAgentTurn(name: string) {
+  return requestBridge<{ ok: boolean; name: string; cancelledPermissions: number }>(
+    `/agents/${name}/cancel`,
+    {
+      method: "POST",
+    },
+    "Cancel turn",
+    { retryIndefinitely: false },
+  );
+}
+
 export async function cancelAgentTerminalProcess(name: string, processId: string, toolCallId?: string | null) {
   return requestBridge<unknown>(
     `/agents/${name}/terminals/${encodeURIComponent(processId)}/cancel`,
@@ -614,7 +667,7 @@ export async function cancelAgentTerminalProcess(name: string, processId: string
   );
 }
 
-export async function createTask(body: { name: string, subtasks: unknown[] }) {
+export async function createTask(body: { name: string; subtasks: unknown[] }) {
   return requestBridge<TaskRecord>(
     "/tasks",
     {
@@ -651,6 +704,23 @@ export async function denyPermission(name: string, optionId?: string) {
       body: JSON.stringify(optionId ? { optionId } : {}),
     },
     "Deny",
+  );
+}
+
+export type ElicitationAnswer =
+  | { action: "accept"; content: Record<string, string | number | boolean | string[]> }
+  | { action: "decline" }
+  | { action: "cancel" };
+
+export async function respondElicitation(name: string, answer: ElicitationAnswer) {
+  return requestBridge<unknown>(
+    `/agents/${name}/elicitation`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(answer),
+    },
+    "Respond elicitation",
   );
 }
 

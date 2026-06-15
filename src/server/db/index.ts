@@ -4,7 +4,7 @@ import * as schema from './schema';
 import { getAppDataPath } from '@/server/app-root';
 
 const dbPath = getAppDataPath('sqlite.db');
-const DB_SCHEMA_VERSION = 2;
+const DB_SCHEMA_VERSION = 3;
 type DbClient = ReturnType<typeof createClient>;
 
 async function tableColumns(client: DbClient, table: string): Promise<Set<string>> {
@@ -16,14 +16,6 @@ async function initializeSchema(client: DbClient) {
 await client.execute('PRAGMA busy_timeout = 15000');
 const versionResult = await client.execute('PRAGMA user_version');
 const currentSchemaVersion = Number((versionResult.rows[0] as Record<string, unknown> | undefined)?.user_version ?? 0);
-if (Number.isFinite(currentSchemaVersion) && currentSchemaVersion >= DB_SCHEMA_VERSION) {
-  await client.execute('PRAGMA synchronous = NORMAL');
-  await client.execute('PRAGMA wal_autocheckpoint = 1000');
-  await client.execute('PRAGMA cache_size = -20000');
-  await client.execute('PRAGMA temp_store = MEMORY');
-  await client.execute('PRAGMA foreign_keys = ON');
-  return;
-}
 
 await client.execute('PRAGMA journal_mode = WAL');
 await client.execute('PRAGMA synchronous = NORMAL');
@@ -46,6 +38,7 @@ CREATE TABLE IF NOT EXISTS runs (
   plan_id text NOT NULL,
   session_type text NOT NULL DEFAULT 'omni',
   mode text NOT NULL DEFAULT 'implementation',
+  phase text,
   project_path text,
   title text,
   preferred_worker_type text,
@@ -91,6 +84,7 @@ CREATE TABLE IF NOT EXISTS workers (
   last_text text NOT NULL DEFAULT '',
   bridge_session_id text,
   bridge_session_mode text,
+  turn_generation integer NOT NULL DEFAULT 0,
   active_work_started_at integer,
   active_work_duration_ms integer NOT NULL DEFAULT 0,
   created_at integer NOT NULL,
@@ -413,46 +407,6 @@ CREATE TABLE IF NOT EXISTS artifact_streams (
 );
 `);
 
-await client.executeMultiple(`
-CREATE INDEX IF NOT EXISTS messages_run_created_idx ON messages(run_id, created_at);
-CREATE INDEX IF NOT EXISTS messages_run_created_id_idx ON messages(run_id, created_at, id);
-CREATE INDEX IF NOT EXISTS conversation_read_markers_last_read_idx ON conversation_read_markers(last_read_at);
-CREATE INDEX IF NOT EXISTS workers_run_idx ON workers(run_id);
-CREATE INDEX IF NOT EXISTS workers_run_created_id_idx ON workers(run_id, created_at, id);
-CREATE INDEX IF NOT EXISTS workers_created_id_idx ON workers(created_at, id);
-CREATE INDEX IF NOT EXISTS process_sessions_worker_idx ON process_sessions(worker_id);
-CREATE INDEX IF NOT EXISTS process_sessions_status_idx ON process_sessions(status);
-CREATE INDEX IF NOT EXISTS plan_items_plan_idx ON plan_items(plan_id);
-CREATE INDEX IF NOT EXISTS clarifications_run_created_idx ON clarifications(run_id, created_at);
-CREATE INDEX IF NOT EXISTS clarifications_run_created_id_desc_idx ON clarifications(run_id, created_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS execution_events_run_created_idx ON execution_events(run_id, created_at);
-CREATE INDEX IF NOT EXISTS execution_events_run_created_id_desc_idx ON execution_events(run_id, created_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS supervisor_interventions_run_created_idx ON supervisor_interventions(run_id, created_at);
-CREATE INDEX IF NOT EXISTS supervisor_interventions_run_created_id_desc_idx ON supervisor_interventions(run_id, created_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS planning_review_runs_run_idx ON planning_review_runs(run_id);
-CREATE INDEX IF NOT EXISTS planning_review_runs_run_created_id_desc_idx ON planning_review_runs(run_id, created_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS planning_review_rounds_run_idx ON planning_review_rounds(run_id);
-CREATE INDEX IF NOT EXISTS planning_review_rounds_run_round_number_idx ON planning_review_rounds(run_id, round_number);
-CREATE INDEX IF NOT EXISTS planning_review_findings_run_idx ON planning_review_findings(run_id);
-CREATE INDEX IF NOT EXISTS planning_review_findings_run_created_id_desc_idx ON planning_review_findings(run_id, created_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS queued_conversation_messages_run_status_created_idx ON queued_conversation_messages(run_id, status, created_at);
-CREATE INDEX IF NOT EXISTS queued_conversation_messages_run_status_created_id_desc_idx ON queued_conversation_messages(run_id, status, created_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS queued_conversation_messages_pending_run_created_id_desc_idx
-  ON queued_conversation_messages(run_id, created_at DESC, id DESC)
-  WHERE status IN ('pending', 'delivering');
-CREATE INDEX IF NOT EXISTS recovery_incidents_run_status_updated_idx ON recovery_incidents(run_id, status, updated_at);
-CREATE INDEX IF NOT EXISTS recovery_incidents_run_updated_id_desc_idx ON recovery_incidents(run_id, updated_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS supervisor_scheduled_wakes_wake_at_idx ON supervisor_scheduled_wakes(wake_at);
-CREATE INDEX IF NOT EXISTS runs_created_idx ON runs(created_at);
-CREATE INDEX IF NOT EXISTS runs_archived_created_id_desc_idx ON runs(archived_at, created_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS plans_created_idx ON plans(created_at);
-CREATE INDEX IF NOT EXISTS plans_created_id_desc_idx ON plans(created_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS notification_subscriptions_revoked_idx ON notification_subscriptions(revoked_at);
-CREATE UNIQUE INDEX IF NOT EXISTS artifact_streams_identity_idx ON artifact_streams(run_id, kind, owner_id);
-CREATE INDEX IF NOT EXISTS artifact_streams_kind_updated_idx ON artifact_streams(kind, updated_at);
-CREATE INDEX IF NOT EXISTS artifact_streams_project_run_idx ON artifact_streams(project_path, run_id);
-`);
-
 // Legacy cleanup: validation is now performed by supervisor tool use and checker workers,
 // not persisted heuristic rows inferred from plan prose.
 await client.execute("DROP TABLE IF EXISTS validation_runs;");
@@ -469,6 +423,10 @@ if (!runColumnNames.has("project_path")) {
 
 if (!runColumnNames.has("mode")) {
   await client.execute("ALTER TABLE runs ADD COLUMN mode text NOT NULL DEFAULT 'implementation';");
+}
+
+if (!runColumnNames.has("phase")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN phase text;");
 }
 
 if (!runColumnNames.has("title")) {
@@ -603,6 +561,10 @@ if (!workerColumnNames.has("bridge_session_mode")) {
   await client.execute("ALTER TABLE workers ADD COLUMN bridge_session_mode text;");
 }
 
+if (!workerColumnNames.has("turn_generation")) {
+  await client.execute("ALTER TABLE workers ADD COLUMN turn_generation integer NOT NULL DEFAULT 0;");
+}
+
 if (!workerColumnNames.has("active_work_started_at")) {
   await client.execute("ALTER TABLE workers ADD COLUMN active_work_started_at integer;");
 }
@@ -716,6 +678,46 @@ if (!planningReviewFindingColumnNames.has("recommendation_preview")) {
 await relaxNotNullColumn(client, "supervisor_interventions", "prompt");
 await relaxNotNullColumn(client, "planning_review_findings", "details");
 await relaxNotNullColumn(client, "planning_review_findings", "recommendation");
+
+await client.executeMultiple(`
+CREATE INDEX IF NOT EXISTS messages_run_created_idx ON messages(run_id, created_at);
+CREATE INDEX IF NOT EXISTS messages_run_created_id_idx ON messages(run_id, created_at, id);
+CREATE INDEX IF NOT EXISTS conversation_read_markers_last_read_idx ON conversation_read_markers(last_read_at);
+CREATE INDEX IF NOT EXISTS workers_run_idx ON workers(run_id);
+CREATE INDEX IF NOT EXISTS workers_run_created_id_idx ON workers(run_id, created_at, id);
+CREATE INDEX IF NOT EXISTS workers_created_id_idx ON workers(created_at, id);
+CREATE INDEX IF NOT EXISTS process_sessions_worker_idx ON process_sessions(worker_id);
+CREATE INDEX IF NOT EXISTS process_sessions_status_idx ON process_sessions(status);
+CREATE INDEX IF NOT EXISTS plan_items_plan_idx ON plan_items(plan_id);
+CREATE INDEX IF NOT EXISTS clarifications_run_created_idx ON clarifications(run_id, created_at);
+CREATE INDEX IF NOT EXISTS clarifications_run_created_id_desc_idx ON clarifications(run_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS execution_events_run_created_idx ON execution_events(run_id, created_at);
+CREATE INDEX IF NOT EXISTS execution_events_run_created_id_desc_idx ON execution_events(run_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS supervisor_interventions_run_created_idx ON supervisor_interventions(run_id, created_at);
+CREATE INDEX IF NOT EXISTS supervisor_interventions_run_created_id_desc_idx ON supervisor_interventions(run_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS planning_review_runs_run_idx ON planning_review_runs(run_id);
+CREATE INDEX IF NOT EXISTS planning_review_runs_run_created_id_desc_idx ON planning_review_runs(run_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS planning_review_rounds_run_idx ON planning_review_rounds(run_id);
+CREATE INDEX IF NOT EXISTS planning_review_rounds_run_round_number_idx ON planning_review_rounds(run_id, round_number);
+CREATE INDEX IF NOT EXISTS planning_review_findings_run_idx ON planning_review_findings(run_id);
+CREATE INDEX IF NOT EXISTS planning_review_findings_run_created_id_desc_idx ON planning_review_findings(run_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS queued_conversation_messages_run_status_created_idx ON queued_conversation_messages(run_id, status, created_at);
+CREATE INDEX IF NOT EXISTS queued_conversation_messages_run_status_created_id_desc_idx ON queued_conversation_messages(run_id, status, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS queued_conversation_messages_pending_run_created_id_desc_idx
+  ON queued_conversation_messages(run_id, created_at DESC, id DESC)
+  WHERE status IN ('pending', 'delivering');
+CREATE INDEX IF NOT EXISTS recovery_incidents_run_status_updated_idx ON recovery_incidents(run_id, status, updated_at);
+CREATE INDEX IF NOT EXISTS recovery_incidents_run_updated_id_desc_idx ON recovery_incidents(run_id, updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS supervisor_scheduled_wakes_wake_at_idx ON supervisor_scheduled_wakes(wake_at);
+CREATE INDEX IF NOT EXISTS runs_created_idx ON runs(created_at);
+CREATE INDEX IF NOT EXISTS runs_archived_created_id_desc_idx ON runs(archived_at, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS plans_created_idx ON plans(created_at);
+CREATE INDEX IF NOT EXISTS plans_created_id_desc_idx ON plans(created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS notification_subscriptions_revoked_idx ON notification_subscriptions(revoked_at);
+CREATE UNIQUE INDEX IF NOT EXISTS artifact_streams_identity_idx ON artifact_streams(run_id, kind, owner_id);
+CREATE INDEX IF NOT EXISTS artifact_streams_kind_updated_idx ON artifact_streams(kind, updated_at);
+CREATE INDEX IF NOT EXISTS artifact_streams_project_run_idx ON artifact_streams(project_path, run_id);
+`);
 
 await client.execute(`PRAGMA user_version = ${DB_SCHEMA_VERSION}`);
 }

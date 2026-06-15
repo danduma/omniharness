@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { and, asc, eq } from "drizzle-orm";
-import { askAgent, cancelAgent, getAgent, spawnAgent } from "@/server/bridge-client";
+import { askAgent, cancelAgent, getAgent, respondElicitation, spawnAgent } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { clarifications, messages, runs, workers } from "@/server/db/schema";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
@@ -33,9 +33,25 @@ import { stopRunObserver } from "@/server/supervisor/observer";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
+type DirectWorkerSnapshot = Awaited<ReturnType<typeof getAgent>>;
+type ElicitationSchema = NonNullable<DirectWorkerSnapshot["pendingElicitations"]>[number]["requestedSchema"];
+type ElicitationContent = Record<string, string | number | boolean | string[]>;
 
 function isDirectRunMode(mode: string | null | undefined) {
   return mode === "direct" || mode === "commit";
+}
+
+// An Omni run is stored as mode "implementation" for its whole life; its
+// `phase` distinguishes the interactive planning stage (planner worker, no
+// supervisor) from the supervised implementation stage. Route follow-up
+// messages by phase, not raw mode, so a reply during planning reaches the
+// planner instead of being treated as a supervisor steer.
+function isPlanningRun(run: { mode?: string | null; phase?: string | null }) {
+  return run.mode === "planning" || (run.mode === "implementation" && run.phase === "planning");
+}
+
+function isSupervisedRun(run: { mode?: string | null; phase?: string | null }) {
+  return run.mode === "implementation" && run.phase !== "planning";
 }
 
 function isAgentBusyError(error: unknown) {
@@ -92,6 +108,96 @@ async function selectConversationWorker(runId: string) {
   const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
   const sortedWorkers = [...runWorkers].sort(compareWorkersForFollowUp);
   return sortedWorkers.find((worker) => !isWorkerCancelled(worker)) ?? sortedWorkers[0] ?? null;
+}
+
+function elicitationAnswerContent(text: string, requestedSchema: ElicitationSchema | null | undefined): ElicitationContent {
+  const properties = requestedSchema?.properties ?? {};
+  const propertyNames = Object.keys(properties);
+  if (propertyNames.includes("customAnswer")) {
+    return { customAnswer: text };
+  }
+
+  const nonCustomFields = propertyNames.filter((name) => name !== "customAnswer");
+  if (nonCustomFields.length === 1 && nonCustomFields[0]) {
+    return { [nonCustomFields[0]]: text };
+  }
+
+  return { response: text };
+}
+
+async function answerDirectWorkerElicitation(args: {
+  run: RunRecord;
+  worker: WorkerRecord;
+  userText: string;
+  workerText: string;
+  attachments: ChatAttachment[];
+  attachmentsJson: string | null;
+}) {
+  const snapshot = await Promise.resolve(getAgent(args.worker.id)).catch(() => null);
+  const elicitation = snapshot?.pendingElicitations?.[0] ?? null;
+  if (!elicitation) {
+    return null;
+  }
+
+  const createdAt = new Date();
+  const userMessage = {
+    id: randomUUID(),
+    runId: args.run.id,
+    role: "user",
+    kind: "checkpoint",
+    content: args.userText,
+    attachmentsJson: args.attachmentsJson,
+    createdAt,
+  };
+
+  await appendUserInputOnDelivery({
+    id: userMessage.id,
+    runId: args.run.id,
+    workerId: args.worker.id,
+    text: args.userText,
+    deliveredAt: createdAt,
+    attachments: args.attachments.map((attachment) => ({
+      id: attachment.id,
+      filename: attachment.name,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.size,
+    })),
+  });
+  await db.insert(messages).values(userMessage);
+  await respondElicitation(args.worker.id, {
+    action: "accept",
+    content: elicitationAnswerContent(args.workerText || args.userText, elicitation.requestedSchema),
+  });
+  await db.update(workers).set({
+    status: "working",
+    updatedAt: createdAt,
+  }).where(eq(workers.id, args.worker.id));
+  await db.update(runs).set({
+    status: "running",
+    failedAt: null,
+    lastError: null,
+    updatedAt: createdAt,
+  }).where(eq(runs.id, args.run.id));
+  emitNamedEvent({
+    kind: "worker.status",
+    runId: args.run.id,
+    workerId: args.worker.id,
+    prev: args.worker.status,
+    next: "working",
+  });
+  await recordExecutionEvent({
+    runId: args.run.id,
+    workerId: args.worker.id,
+    planItemId: null,
+    eventType: "direct_worker_elicitation_answered",
+    details: {
+      summary: `Answered pending worker question for ${args.worker.id}.`,
+      requestId: elicitation.requestId,
+    },
+    createdAt,
+  });
+  notifyEventStreamSubscribers();
+  return userMessage;
 }
 
 /**
@@ -491,7 +597,7 @@ async function continueWorkerConversation({
     // bridge entries written by persistWorkerSnapshot above carry the
     // response text. The legacy role:"worker" messages row is gone.
 
-    if (run.mode === "planning") {
+    if (isPlanningRun(run)) {
       const latestRun = await db.select().from(runs).where(eq(runs.id, run.id)).get();
       const latestWorker = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
       if (latestRun) {
@@ -529,7 +635,7 @@ async function continueWorkerConversation({
         updatedAt: now,
       }).where(eq(workers.id, worker.id));
       await db.update(runs).set({
-        status: run.mode === "planning" ? "working" : "running",
+        status: isPlanningRun(run) ? "working" : "running",
         failedAt: null,
         lastError: null,
         updatedAt: now,
@@ -670,7 +776,7 @@ async function stopConversationFromManualStopCommand(run: RunRecord) {
     };
   }
 
-  if (run.mode === "implementation") {
+  if (isSupervisedRun(run)) {
     cancelSupervisorWake(run.id);
     stopRunObserver(run.id);
     await clearSupervisorWakeLease(run.id);
@@ -832,11 +938,11 @@ async function sendConversationMessageUnlocked({
     allowedWorkerTypes,
   });
 
-  if (run.mode === "planning" && (run.status === "reviewing_plan" || run.status === "revising_plan")) {
+  if (isPlanningRun(run) && (run.status === "reviewing_plan" || run.status === "revising_plan")) {
     throw Object.assign(new Error("Plan review is in progress. Please wait for the review to complete before sending further messages."), { status: 409 });
   }
 
-  if (run.mode === "implementation" && (busyAction === "queue" || busyAction === "steer")) {
+  if (isSupervisedRun(run) && (busyAction === "queue" || busyAction === "steer")) {
     const queuedMessage = await createQueuedConversationMessage({
       runId,
       action: "steer",
@@ -852,7 +958,7 @@ async function sendConversationMessageUnlocked({
     if (!worker) {
       throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
     }
-    if (isDirectRunMode(run.mode) || run.mode === "planning") {
+    if (isDirectRunMode(run.mode) || isPlanningRun(run)) {
       await reconcileWorkerUserMessagesInStream(runId, worker.id);
     }
 
@@ -866,7 +972,7 @@ async function sendConversationMessageUnlocked({
     return { ok: true, queuedMessage };
   }
 
-  if (run.mode === "implementation") {
+  if (isSupervisedRun(run)) {
     const pendingClarification = await db
       .select()
       .from(clarifications)
@@ -915,8 +1021,25 @@ async function sendConversationMessageUnlocked({
   if (!worker) {
     throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
   }
-  if (isDirectRunMode(run.mode) || run.mode === "planning") {
+  if (isDirectRunMode(run.mode) || isPlanningRun(run)) {
     await reconcileWorkerUserMessagesInStream(runId, worker.id);
+  }
+
+  if (isDirectRunMode(run.mode) && run.status === "awaiting_user") {
+    const elicitationAnswer = await answerDirectWorkerElicitation({
+      run,
+      worker,
+      userText: trimmedContent,
+      workerText: workerContent,
+      attachments: normalizedAttachments,
+      attachmentsJson,
+    });
+    if (elicitationAnswer) {
+      return {
+        ok: true,
+        message: serializeMessageRecord({ ...elicitationAnswer, attachmentsJson }),
+      };
+    }
   }
 
   if (busyAction === "steer" && ["starting", "working", "stuck"].includes(worker.status.trim().toLowerCase().split(":")[0] ?? "")) {
@@ -965,7 +1088,7 @@ async function sendConversationMessageUnlocked({
 
   await db.insert(messages).values(userMessage);
   await db.update(runs).set({
-    status: run.mode === "planning" ? "working" : "running",
+    status: isPlanningRun(run) ? "working" : "running",
     failedAt: null,
     lastError: null,
     updatedAt: userMessageCreatedAt,

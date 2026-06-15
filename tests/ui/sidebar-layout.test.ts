@@ -7,6 +7,7 @@ import {
   hasMeaningfulConversationOverflow,
   shouldConversationFollowLatest,
   shouldConversationKeepFollowingLatest,
+  shouldConversationRetryInitialLatestPosition,
   shouldConversationShowOutputBelow,
 } from "@/app/home/useRunSelectionEffects";
 
@@ -99,7 +100,7 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('space-y-3 pb-4 pt-0.5');
   expect(pageSource).not.toContain('space-y-4 py-4');
   expect(pageSource).toContain('hidden min-w-0 flex-1 items-center gap-2 lg:flex');
-  expect(pageSource).toContain('h-9 w-full shrink-0 justify-start px-2 text-sm text-[#333333]');
+  expect(pageSource).toContain('h-9 min-w-0 flex-1 justify-start px-2 text-sm text-[#333333]');
   expect(pageSource).toContain('min-h-0 flex-1 overflow-hidden');
   expect(pageSource).toContain('mt-auto shrink-0 border-t border-border/60 bg-background/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-background/80');
   expect(pageSource).toContain('"group flex min-w-0 cursor-pointer overflow-hidden rounded-xl py-1.5 pl-2.5 pr-2 text-sm transition-colors"');
@@ -184,8 +185,9 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('agents={selectedRunId ? conversationAgents : []}');
   expect(pageSource).toContain('workersSidebarManager');
   expect(pageSource).toContain('activeTab: "active"');
-  expect(pageSource).toContain("Active ({workerGroups.active.length})");
-  expect(pageSource).toContain("Finished ({workerGroups.finished.length})");
+  expect(pageSource).toContain('t("workers.sidebar.activeTab", { count: workerGroups.active.length })');
+  expect(pageSource).toContain('t("workers.sidebar.finishedTab", { count: workerGroups.finished.length })');
+  expect(pageSource).toContain('activeTab === "active" ? t("workers.sidebar.emptyActive") : t("workers.sidebar.emptyFinished")');
   expect(pageSource).toContain('const liveAgentsById = new Map(');
   expect(pageSource).toContain('preferredModel={selectedRun?.preferredWorkerModel ?? null}');
   expect(pageSource).toContain('preferredEffort={selectedRun?.preferredWorkerEffort ?? null}');
@@ -353,7 +355,7 @@ test("conversation output only follows live worker updates when already near the
   expect(pageSource).toContain("const selectedRunHasOutput = hasSelectedRunMessageOutput(selectedRunId, state.messages);");
   expect(pageSource).toContain("const shouldRestoreInstantly = runChanged");
   expect(pageSource).toContain('const scrollBehavior: ScrollBehavior = shouldRestoreInstantly ? "auto" : "smooth";');
-  expect(pageSource).toContain("if (hasMeaningfulConversationOverflow(viewport)) {");
+  expect(pageSource).toContain("shouldConversationRetryInitialLatestPosition({");
   expect(pageSource).toContain("const outputVersion = getConversationOutputVersion(selectedRunId, state.messages, state.agents);");
   expect(pageSource).toContain("if (!runChanged && !outputChanged) {");
   expect(pageSource).toContain("}, [scrollRef, outputVersion, selectedRunHasOutput, selectedRunId]);");
@@ -403,6 +405,39 @@ test("conversation output only follows live worker updates when already near the
   expect(hasMeaningfulConversationOverflow({
     clientHeight: 900,
     scrollHeight: 990,
+  })).toBe(false);
+
+  expect(shouldConversationRetryInitialLatestPosition({
+    selectedRunId: "run-1",
+    positionedRunId: null,
+    selectedRunHasOutput: true,
+    shouldFollowLatest: true,
+    metrics: {
+      clientHeight: 300,
+      scrollHeight: 1000,
+    },
+  })).toBe(true);
+
+  expect(shouldConversationRetryInitialLatestPosition({
+    selectedRunId: "run-1",
+    positionedRunId: "run-1",
+    selectedRunHasOutput: true,
+    shouldFollowLatest: true,
+    metrics: {
+      clientHeight: 300,
+      scrollHeight: 1000,
+    },
+  })).toBe(false);
+
+  expect(shouldConversationRetryInitialLatestPosition({
+    selectedRunId: "run-1",
+    positionedRunId: null,
+    selectedRunHasOutput: true,
+    shouldFollowLatest: false,
+    metrics: {
+      clientHeight: 300,
+      scrollHeight: 1000,
+    },
   })).toBe(false);
 
   expect(shouldConversationShowOutputBelow({
@@ -701,10 +736,30 @@ test("project group collapsed state survives page reloads", () => {
   expect(pageSource).toContain('window.localStorage.setItem("omni-collapsed-projects", JSON.stringify(Array.from(collapsedProjectPaths)))');
   expect(pageSource).toContain("collapsedProjectPaths={collapsedProjectPaths}");
   expect(pageSource).toContain("onProjectOpenChange: actions.handleProjectOpenChange,");
+  expect(pageSource).toContain("collapseProjects: (projectPaths: string[]) => homeUiStateManager.collapseProjects(projectPaths)");
+  expect(pageSource).toContain("onCollapseAllProjects: collapseProjects,");
+  expect(pageSource).toContain('t("conversation.sidebar.collapseAllProjects")');
+  expect(pageSource).toContain('t("conversation.sidebar.addProject")');
+  expect(pageSource).toContain("ListChevronsDownUp");
+  expect(pageSource).toContain("<TooltipContent side=\"bottom\" align=\"end\">");
+  expect(pageSource).toContain("onClick={() => onCollapseAllProjects(visibleProjectGroups.map((group) => group.path))}");
   expect(pageSource).toContain("const projectOpen = !collapsedProjectPaths.has(group.path);");
   expect(pageSource).toContain("open={projectOpen}");
   expect(pageSource).toContain("COLLAPSIBLE_PANEL_TRANSITION_CLASS");
   expect(pageSource).toContain('projectOpen && "rotate-180"');
+});
+
+test("project groups can be reordered from the projects tab without replacing the collapse trigger", () => {
+  expect(pageSource).toContain("reorderExplicitProjectPaths");
+  expect(pageSource).toContain("onReorderProjects: actions.handleReorderProjects,");
+  expect(pageSource).toContain("onReorderProjects={onReorderProjects}");
+  expect(pageSource).toContain('const canDragProject = canReorderProjects && group.path !== "other";');
+  expect(pageSource).toContain("draggable={canDragProject}");
+  expect(pageSource).toContain("event.dataTransfer.setData(PROJECT_DRAG_DATA_TYPE, group.path);");
+  expect(pageSource).toContain("onDrop={(event) => handleProjectDrop(event, group.path)}");
+  expect(pageSource).toContain("conversationSidebarTab === \"projects\"");
+  expect(pageSource).toContain("GripVertical");
+  expect(pageSource).toContain('t("conversation.sidebar.dragProject", { project: group.name })');
 });
 
 test("project groups reveal sessions ten at a time and reset on project toggles", () => {
@@ -797,12 +852,11 @@ test("planning artifacts are shown as relative file links without card chrome", 
 test("new conversations expose a mode picker and only existing direct runs lock the worker type", () => {
   expect(pageSource).toContain('import { ConversationModePicker, type ConversationModeOption } from "@/components/ConversationModePicker"');
   expect(pageSource).toContain('selectedConversationMode={activeComposerMode}');
-  expect(pageSource).toContain('value={selectedConversationMode}');
-  expect(conversationModePickerSource).toContain("conversation.mode.planning.label");
-  expect(conversationModePickerSource).toContain("conversation.mode.implementation.label");
+  expect(pageSource).toContain('value={selectedConversationMode as ConversationModeOption}');
+  expect(conversationModePickerSource).toContain("conversation.mode.omni.label");
   expect(conversationModePickerSource).toContain("conversation.mode.direct.label");
   expect(conversationModePickerSource).toContain("useI18nSnapshot()");
-  expect(conversationModePickerSource).toContain('const MODE_ORDER: ConversationModeOption[] = ["direct", "planning", "implementation"]');
+  expect(conversationModePickerSource).toContain('const MODE_ORDER: ConversationModeOption[] = ["omni", "direct"]');
   expect(conversationModePickerSource).toContain("w-fit max-w-full");
   expect(conversationModePickerSource).toContain("break-words hyphens-auto");
   expect(conversationModePickerSource).not.toContain("overflow-x-auto");

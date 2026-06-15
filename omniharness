@@ -5,6 +5,26 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 cd "$ROOT_DIR"
 
+AUTH_PASSWORD_NOTICE_FILE=""
+
+print_auth_password_notice() {
+  if [ -n "$AUTH_PASSWORD_NOTICE_FILE" ] && [ -s "$AUTH_PASSWORD_NOTICE_FILE" ]; then
+    printf '\n'
+    cat "$AUTH_PASSWORD_NOTICE_FILE"
+    printf '\n'
+    rm -f "$AUTH_PASSWORD_NOTICE_FILE"
+    AUTH_PASSWORD_NOTICE_FILE=""
+  fi
+}
+
+cleanup_auth_password_notice() {
+  if [ -n "$AUTH_PASSWORD_NOTICE_FILE" ]; then
+    rm -f "$AUTH_PASSWORD_NOTICE_FILE"
+  fi
+}
+
+trap 'print_auth_password_notice; cleanup_auth_password_notice' EXIT
+
 # --- Ensure a supported Node.js version (>=22.13 <26) ---
 # Native deps (better-sqlite3, @node-rs/argon2, sharp) only build on this range,
 # so if the active Node is outside it, switch via nvm (installing nvm if needed)
@@ -147,7 +167,9 @@ fi
 
 ./scripts/ensure-recommended-tools.sh
 
-node ./scripts/setup-auth.mjs
+AUTH_PASSWORD_NOTICE_FILE="$(mktemp "${TMPDIR:-/tmp}/omniharness-auth-password.XXXXXX")"
+rm -f "$AUTH_PASSWORD_NOTICE_FILE"
+OMNIHARNESS_AUTH_PASSWORD_NOTICE_FILE="$AUTH_PASSWORD_NOTICE_FILE" node ./scripts/setup-auth.mjs
 
 if [ "${OMNIHARNESS_SKIP_AGENT_ACP_SETUP:-0}" != "1" ]; then
   ./scripts/install-agent-acp.sh --ensure-only || echo "[omniharness] Agent ACP adapter setup reported issues; continuing." >&2
@@ -310,6 +332,7 @@ if needs_production_build; then
 fi
 
 print_start_guidance
+print_auth_password_notice
 open_browser_when_ready
 
 exec "${PNPM_CMD[@]}" start "$@"

@@ -1,13 +1,15 @@
 import type React from "react";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
-import { Archive, Bug, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, LoaderCircle, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Sun, Trash2, TriangleAlert, Wand2 } from "lucide-react";
+import { Archive, Bug, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, GripVertical, ListChevronsDownUp, LoaderCircle, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Sun, Trash2, TriangleAlert, Wand2 } from "lucide-react";
 import type { ConversationSidebarTab } from "@/app/home/types";
+import type { ProjectDropPlacement } from "@/app/home/utils";
 import { Button } from "@/components/ui/button";
 import { requestBugDropOpen } from "@/components/BugDropBootstrap";
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { OmniHarnessMark } from "@/components/OmniHarnessMark";
 import { CliBrandIcon } from "@/components/cli-brand-icons";
 import { PRODUCT_NAME, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "@/app/home/constants";
@@ -31,6 +33,7 @@ class ConversationSidebarHydrationManager extends StateManager<boolean> {
 }
 
 const conversationSidebarHydrationManager = new ConversationSidebarHydrationManager();
+const PROJECT_DRAG_DATA_TYPE = "application/x-omniharness-project-path";
 
 type ConversationVisualIconProps = {
   className?: string;
@@ -87,7 +90,9 @@ interface ConversationProjectGroupListProps {
   readMarkers: Record<string, string>;
   collapsedProjectPaths: Set<string>;
   visibleProjectSessionCounts: Record<string, number>;
+  canReorderProjects: boolean;
   onProjectOpenChange: (projectPath: string, open: boolean) => void;
+  onReorderProjects: (draggedPath: string, targetPath: string, placement: ProjectDropPlacement) => void;
   onShowMoreProjectSessions: (projectPath: string) => void;
   beginConversationInProject: (projectPath: string) => void;
   autoCommitProject: (projectPath: string, action?: import("@/lib/commit-workflow").ManualCommitAction) => void;
@@ -114,7 +119,9 @@ function ConversationProjectGroupList({
   readMarkers,
   collapsedProjectPaths,
   visibleProjectSessionCounts,
+  canReorderProjects,
   onProjectOpenChange,
+  onReorderProjects,
   onShowMoreProjectSessions,
   beginConversationInProject,
   autoCommitProject,
@@ -136,10 +143,25 @@ function ConversationProjectGroupList({
     return <>{emptyState}</>;
   }
 
+  const handleProjectDrop = (event: React.DragEvent<HTMLElement>, targetPath: string) => {
+    const draggedPath = event.dataTransfer.getData(PROJECT_DRAG_DATA_TYPE)
+      || event.dataTransfer.getData("text/plain");
+    if (!draggedPath || draggedPath === targetPath) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const placement: ProjectDropPlacement = event.clientY > rect.top + rect.height / 2 ? "after" : "before";
+    onReorderProjects(draggedPath, targetPath, placement);
+  };
+
   return (
     <>
       {groups.map((group) => {
         const projectOpen = !collapsedProjectPaths.has(group.path);
+        const canDragProject = canReorderProjects && group.path !== "other";
         const visibleSessionCount = visibleProjectSessionCounts[group.path] ?? PROJECT_SESSION_DISPLAY_BATCH_SIZE;
         const visibleRuns = group.runs.slice(0, visibleSessionCount);
         const hiddenSessionCount = Math.max(0, group.runs.length - visibleRuns.length);
@@ -151,7 +173,31 @@ function ConversationProjectGroupList({
             open={projectOpen}
             onOpenChange={(open) => onProjectOpenChange(group.path, open)}
           >
-            <div className="group mb-1 flex items-center justify-between gap-0.5 rounded px-2 hover:bg-muted/30">
+            <div
+              className="group mb-1 flex items-center justify-between gap-0.5 rounded px-2 hover:bg-muted/30"
+              onDragOver={(event) => {
+                if (!canDragProject) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+              }}
+              onDrop={(event) => handleProjectDrop(event, group.path)}
+            >
+              {canDragProject ? (
+                <span
+                  draggable={canDragProject}
+                  className="flex h-6 w-4 shrink-0 cursor-grab items-center justify-center text-muted-foreground/55 transition-colors hover:text-muted-foreground active:cursor-grabbing"
+                  aria-label={t("conversation.sidebar.dragProject", { project: group.name })}
+                  title={t("conversation.sidebar.dragProject", { project: group.name })}
+                  onClick={(event) => event.stopPropagation()}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData(PROJECT_DRAG_DATA_TYPE, group.path);
+                    event.dataTransfer.setData("text/plain", group.path);
+                  }}
+                >
+                  <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
+                </span>
+              ) : null}
               <CollapsibleTrigger className="flex flex-1 items-center gap-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
                 <Folder className="h-4 w-4 shrink-0 text-primary/70" />
                 <span className="truncate">{group.name}</span>
@@ -161,7 +207,7 @@ function ConversationProjectGroupList({
                 />
               </CollapsibleTrigger>
 
-              {group.path !== "other" && (
+              {group.path !== "other" ? (
                 <div className="flex shrink-0 items-center gap-0.5">
                   <Button
                     variant="ghost"
@@ -197,6 +243,8 @@ function ConversationProjectGroupList({
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
+              ) : (
+                <div className="h-6 w-[3.875rem] shrink-0" aria-hidden="true" />
               )}
             </div>
 
@@ -422,6 +470,8 @@ export interface ConversationSidebarProps {
   collapsedProjectPaths: Set<string>;
   visibleProjectSessionCounts: Record<string, number>;
   onProjectOpenChange: (projectPath: string, open: boolean) => void;
+  onReorderProjects: (draggedPath: string, targetPath: string, placement: ProjectDropPlacement) => void;
+  onCollapseAllProjects: (projectPaths: string[]) => void;
   onShowMoreProjectSessions: (projectPath: string) => void;
   setShowSettings: React.Dispatch<React.SetStateAction<boolean>>;
   openOnboarding: () => void;
@@ -464,6 +514,8 @@ export function ConversationSidebar({
   collapsedProjectPaths,
   visibleProjectSessionCounts,
   onProjectOpenChange,
+  onReorderProjects,
+  onCollapseAllProjects,
   onShowMoreProjectSessions,
   setShowSettings,
   openOnboarding,
@@ -493,6 +545,8 @@ export function ConversationSidebar({
 }: ConversationSidebarProps) {
   useI18nSnapshot();
   const themeModeLabel = t(themeMode === "night" ? "theme.mode.switchDay" : "theme.mode.switchNight");
+  const visibleProjectGroups = conversationSidebarTab === "projects" ? filteredProjects : activeProjects;
+  const hasExpandedVisibleProjectGroup = visibleProjectGroups.some((group) => !collapsedProjectPaths.has(group.path));
   const mounted = useSyncExternalStore(
     useCallback((listener) => conversationSidebarHydrationManager.subscribe(listener), []),
     useCallback(() => conversationSidebarHydrationManager.getSnapshot(), []),
@@ -601,9 +655,43 @@ export function ConversationSidebar({
                 {t("conversation.sidebar.tab.active")}
               </button>
             </div>
-            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={openFolderPicker}>
-              <FolderPlus className="h-3.5 w-3.5" />
-            </Button>
+            <div className="flex items-center gap-0.5">
+              <Tooltip>
+                <TooltipTrigger render={<span className="inline-flex" />}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                    disabled={!hasExpandedVisibleProjectGroup}
+                    aria-label={t("conversation.sidebar.collapseAllProjects")}
+                    title={t("conversation.sidebar.collapseAllProjects")}
+                    onClick={() => onCollapseAllProjects(visibleProjectGroups.map((group) => group.path))}
+                  >
+                    <ListChevronsDownUp className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" align="end">
+                  {t("conversation.sidebar.collapseAllProjects")}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger render={<span className="inline-flex" />}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                    aria-label={t("conversation.sidebar.addProject")}
+                    title={t("conversation.sidebar.addProject")}
+                    onClick={openFolderPicker}
+                  >
+                    <FolderPlus className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" align="end">
+                  {t("conversation.sidebar.addProject")}
+                </TooltipContent>
+              </Tooltip>
+            </div>
           </div>
 
           {conversationSidebarTab === "projects" ? (
@@ -615,7 +703,9 @@ export function ConversationSidebar({
               readMarkers={readMarkers}
               collapsedProjectPaths={collapsedProjectPaths}
               visibleProjectSessionCounts={visibleProjectSessionCounts}
+              canReorderProjects={conversationSidebarTab === "projects"}
               onProjectOpenChange={onProjectOpenChange}
+              onReorderProjects={onReorderProjects}
               onShowMoreProjectSessions={onShowMoreProjectSessions}
               beginConversationInProject={beginConversationInProject}
               autoCommitProject={autoCommitProject}
@@ -642,7 +732,9 @@ export function ConversationSidebar({
               readMarkers={readMarkers}
               collapsedProjectPaths={collapsedProjectPaths}
               visibleProjectSessionCounts={visibleProjectSessionCounts}
+              canReorderProjects={false}
               onProjectOpenChange={onProjectOpenChange}
+              onReorderProjects={onReorderProjects}
               onShowMoreProjectSessions={onShowMoreProjectSessions}
               beginConversationInProject={beginConversationInProject}
               autoCommitProject={autoCommitProject}

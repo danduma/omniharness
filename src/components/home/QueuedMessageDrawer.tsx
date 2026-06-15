@@ -1,4 +1,4 @@
-import { ArrowUp, Pencil, X } from "lucide-react";
+import { ArrowUp, LoaderCircle, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { QueuedConversationMessageRecord } from "@/app/home/types";
@@ -7,16 +7,18 @@ import { t, useI18nSnapshot } from "@/lib/i18n";
 export function QueuedMessageDrawer({
   messages,
   cancellingMessageIds,
+  interruptingMessageIds,
   themeMode,
   onEdit,
-  onSendNow,
+  onInterruptSendNow,
   onCancel,
 }: {
   messages: QueuedConversationMessageRecord[];
   cancellingMessageIds: Set<string>;
+  interruptingMessageIds: Set<string>;
   themeMode: "day" | "night";
   onEdit: (message: QueuedConversationMessageRecord) => void;
-  onSendNow: (messageId: string) => void;
+  onInterruptSendNow: (messageId: string) => void;
   onCancel: (messageId: string) => void;
 }) {
   useI18nSnapshot();
@@ -40,6 +42,7 @@ export function QueuedMessageDrawer({
       <div className="max-h-32 space-y-1 overflow-y-auto">
         {visibleMessages.map((message) => {
           const isCancelling = cancellingMessageIds.has(message.id);
+          const isInterrupting = interruptingMessageIds.has(message.id);
           const isDelivering = message.status === "delivering";
           return (
             <div
@@ -73,13 +76,17 @@ export function QueuedMessageDrawer({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  disabled={isCancelling || isDelivering}
-                  onClick={() => onSendNow(message.id)}
+                  disabled={isCancelling || isInterrupting || isDelivering}
+                  onClick={() => onInterruptSendNow(message.id)}
                   className="h-6 w-6 rounded-full text-muted-foreground hover:text-foreground"
-                  aria-label={t("queued.message.sendNowAria")}
-                  title={t("queued.message.sendNowAria")}
+                  aria-label={t("queued.message.interruptSendAria")}
+                  title={t("queued.message.interruptSendTitle")}
                 >
-                  <ArrowUp className="h-[17px] w-[17px]" />
+                  {isInterrupting || isDelivering ? (
+                    <LoaderCircle className="h-[14px] w-[14px] animate-spin" />
+                  ) : (
+                    <ArrowUp className="h-[17px] w-[17px]" />
+                  )}
                 </Button>
                 <Button
                   type="button"

@@ -8,6 +8,9 @@ import { hash } from "@node-rs/argon2";
 
 const AUTH_HASH_KEY = "OMNIHARNESS_AUTH_PASSWORD_HASH";
 const AUTH_PASSWORD_KEY = "OMNIHARNESS_AUTH_PASSWORD";
+const AUTH_PASSWORD_NOTICE_FILE_KEY = "OMNIHARNESS_AUTH_PASSWORD_NOTICE_FILE";
+const ANSI_BOLD_RED = "\u001b[1;31m";
+const ANSI_RESET = "\u001b[0m";
 const ARGON_OPTIONS = {
   algorithm: 2,
   memoryCost: 19_456,
@@ -131,16 +134,31 @@ function appendAuthHash(envPath, passwordHash) {
   fs.chmodSync(envPath, 0o600);
 }
 
-function printGeneratedPassword(output, password, envPath) {
-  output.write(`\n`);
-  output.write(`============================================================\n`);
-  output.write(`OmniHarness generated your web login password\n`);
-  output.write(`\n`);
-  output.write(`Password: ${password}\n`);
-  output.write(`\n`);
-  output.write(`Save this now. It is shown only once.\n`);
-  output.write(`Stored: ${envPath} contains ${AUTH_HASH_KEY}\n`);
-  output.write(`============================================================\n\n`);
+function formatGeneratedPasswordNotice(password, envPath) {
+  return [
+    `${ANSI_BOLD_RED}============================================================${ANSI_RESET}`,
+    `${ANSI_BOLD_RED}OmniHarness generated your web login password${ANSI_RESET}`,
+    "",
+    `${ANSI_BOLD_RED}Password: ${password}${ANSI_RESET}`,
+    "",
+    `${ANSI_BOLD_RED}Save this now. It is shown only once.${ANSI_RESET}`,
+    `Stored: ${envPath} contains ${AUTH_HASH_KEY}`,
+    `${ANSI_BOLD_RED}============================================================${ANSI_RESET}`,
+    "",
+  ].join("\n");
+}
+
+function writeGeneratedPasswordNotice(output, env, password, envPath) {
+  const noticeFile = env[AUTH_PASSWORD_NOTICE_FILE_KEY]?.trim();
+  const notice = formatGeneratedPasswordNotice(password, envPath);
+  if (!noticeFile) {
+    output.write(`\n${notice}\n`);
+    return;
+  }
+
+  fs.mkdirSync(path.dirname(noticeFile), { recursive: true });
+  fs.writeFileSync(noticeFile, notice, { mode: 0o600 });
+  fs.chmodSync(noticeFile, 0o600);
 }
 
 function printCustomPasswordSaved(output, envPath) {
@@ -175,7 +193,7 @@ export async function ensureAuthConfig(options = {}) {
   appendAuthHash(envPath, passwordHash);
 
   if (generated) {
-    printGeneratedPassword(output, password, envPath);
+    writeGeneratedPasswordNotice(output, env, password, envPath);
   } else {
     printCustomPasswordSaved(output, envPath);
   }
