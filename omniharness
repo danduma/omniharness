@@ -62,6 +62,7 @@ fi
 PACKAGE_MANAGER="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; const packageJson = JSON.parse(readFileSync("package.json", "utf8")); if (!/^pnpm@/.test(packageJson.packageManager || "")) process.exit(1); process.stdout.write(packageJson.packageManager);')"
 PNPM_VERSION="${PACKAGE_MANAGER#pnpm@}"
 MIN_PNPM_MAJOR="${OMNIHARNESS_MIN_PNPM_MAJOR:-9}"
+PNPM_ENV=(COREPACK_ENABLE_PROJECT_SPEC=0 pnpm_config_pm_on_fail=warn)
 PNPM_CMD=()
 
 pnpm_major_ok() {
@@ -70,31 +71,59 @@ pnpm_major_ok() {
   [ -n "$major" ] && [ "$major" -ge "$MIN_PNPM_MAJOR" ] 2>/dev/null
 }
 
-if command -v pnpm >/dev/null 2>&1; then
-  CURRENT_PNPM_VERSION="$(COREPACK_ENABLE_PROJECT_SPEC=0 pnpm --version 2>/dev/null || true)"
+running_under_wsl() {
+  [ -r /proc/version ] && grep -qiE "microsoft|wsl" /proc/version
+}
+
+is_windows_interop_command() {
+  local command_path="$1"
+  case "$command_path" in
+    /mnt/[a-zA-Z] | /mnt/[a-zA-Z]/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+find_usable_command() {
+  local command_name="$1"
+  local command_path
+  while IFS= read -r command_path; do
+    [ -n "$command_path" ] || continue
+    if running_under_wsl && is_windows_interop_command "$command_path"; then
+      echo "[omniharness] Ignoring Windows $command_name shim at $command_path under WSL; using Linux tooling instead." >&2
+      continue
+    fi
+    printf '%s' "$command_path"
+    return 0
+  done < <(type -P -a "$command_name" 2>/dev/null || true)
+
+  return 1
+}
+
+if PNPM_PATH="$(find_usable_command pnpm)"; then
+  CURRENT_PNPM_VERSION="$(env "${PNPM_ENV[@]}" "$PNPM_PATH" --version 2>/dev/null || true)"
   if pnpm_major_ok "$CURRENT_PNPM_VERSION"; then
-    PNPM_CMD=(env COREPACK_ENABLE_PROJECT_SPEC=0 pnpm)
+    PNPM_CMD=(env "${PNPM_ENV[@]}" "$PNPM_PATH")
   fi
 fi
 
-if [ "${#PNPM_CMD[@]}" -eq 0 ] && command -v corepack >/dev/null 2>&1; then
+if [ "${#PNPM_CMD[@]}" -eq 0 ] && COREPACK_PATH="$(find_usable_command corepack)"; then
   echo "[omniharness] pnpm not usable; enabling it via Corepack..." >&2
-  corepack enable >/dev/null 2>&1 || true
-  corepack prepare "$PACKAGE_MANAGER" --activate >/dev/null 2>&1 || true
-  CURRENT_PNPM_VERSION="$(COREPACK_ENABLE_PROJECT_SPEC=0 corepack pnpm --version 2>/dev/null || true)"
+  "$COREPACK_PATH" enable >/dev/null 2>&1 || true
+  "$COREPACK_PATH" prepare "$PACKAGE_MANAGER" --activate >/dev/null 2>&1 || true
+  CURRENT_PNPM_VERSION="$(env "${PNPM_ENV[@]}" "$COREPACK_PATH" pnpm --version 2>/dev/null || true)"
   if pnpm_major_ok "$CURRENT_PNPM_VERSION"; then
-    PNPM_CMD=(env COREPACK_ENABLE_PROJECT_SPEC=0 corepack pnpm)
+    PNPM_CMD=(env "${PNPM_ENV[@]}" "$COREPACK_PATH" pnpm)
   fi
 fi
 
 # Last-resort auto-install: a global npm install of pnpm (no Corepack, no brew needed).
-if [ "${#PNPM_CMD[@]}" -eq 0 ] && command -v npm >/dev/null 2>&1; then
+if [ "${#PNPM_CMD[@]}" -eq 0 ] && NPM_PATH="$(find_usable_command npm)"; then
   echo "[omniharness] pnpm not usable; installing it globally via npm..." >&2
-  npm install -g pnpm >/dev/null 2>&1 || true
-  if command -v pnpm >/dev/null 2>&1; then
-    CURRENT_PNPM_VERSION="$(COREPACK_ENABLE_PROJECT_SPEC=0 pnpm --version 2>/dev/null || true)"
+  "$NPM_PATH" install -g pnpm >/dev/null 2>&1 || true
+  if PNPM_PATH="$(find_usable_command pnpm)"; then
+    CURRENT_PNPM_VERSION="$(env "${PNPM_ENV[@]}" "$PNPM_PATH" --version 2>/dev/null || true)"
     if pnpm_major_ok "$CURRENT_PNPM_VERSION"; then
-      PNPM_CMD=(env COREPACK_ENABLE_PROJECT_SPEC=0 pnpm)
+      PNPM_CMD=(env "${PNPM_ENV[@]}" "$PNPM_PATH")
     fi
   fi
 fi
