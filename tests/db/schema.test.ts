@@ -1,5 +1,23 @@
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createClient } from "@libsql/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as schema from "@/server/db/schema";
+
+const originalRoot = process.env.OMNIHARNESS_ROOT;
+const tempRoots: string[] = [];
+
+afterEach(() => {
+  if (originalRoot === undefined) {
+    delete process.env.OMNIHARNESS_ROOT;
+  } else {
+    process.env.OMNIHARNESS_ROOT = originalRoot;
+  }
+  for (const tempRoot of tempRoots.splice(0)) {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
 
 describe("db schema", () => {
   it("defines autonomous execution tables", () => {
@@ -60,5 +78,39 @@ describe("db schema", () => {
     expect(schema.processSessions).toHaveProperty("commandJson");
     expect(schema.processSessions).toHaveProperty("commandPreview");
     expect(schema.processSessions).toHaveProperty("status");
+  });
+
+  it("backfills additive columns even when user_version is current", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "omni-schema-"));
+    tempRoots.push(tempRoot);
+    process.env.OMNIHARNESS_ROOT = tempRoot;
+    vi.resetModules();
+
+    const client = createClient({ url: `file:${path.join(tempRoot, "sqlite.db")}` });
+    await client.executeMultiple(`
+CREATE TABLE plans (
+  id text PRIMARY KEY NOT NULL,
+  path text NOT NULL,
+  status text NOT NULL,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL
+);
+CREATE TABLE runs (
+  id text PRIMARY KEY NOT NULL,
+  plan_id text NOT NULL,
+  status text NOT NULL,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  mode text NOT NULL DEFAULT 'implementation',
+  session_type text NOT NULL DEFAULT 'omni'
+);
+PRAGMA user_version = 3;
+`);
+
+    const { dbReady } = await import("@/server/db");
+    await dbReady;
+
+    const columns = await client.execute("PRAGMA table_info(runs)");
+    expect(columns.rows.map((row) => String((row as Record<string, unknown>).name))).toContain("phase");
   });
 });

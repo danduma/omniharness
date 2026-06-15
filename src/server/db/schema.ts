@@ -13,6 +13,10 @@ export const runs = sqliteTable('runs', {
   planId: text('plan_id').references(() => plans.id).notNull(),
   sessionType: text('session_type').notNull().default('omni'),
   mode: text('mode').notNull().default('implementation'),
+  // For Omni runs (mode === 'implementation'): 'planning' = interactive
+  // planner phase with the supervisor dormant; 'implementing' (or null for
+  // legacy rows) = supervisor-driven implementation phase.
+  phase: text('phase'),
   projectPath: text('project_path'),
   title: text('title'),
   preferredWorkerType: text('preferred_worker_type'),
@@ -57,6 +61,11 @@ export const workers = sqliteTable('workers', {
   lastText: text('last_text').notNull().default(''),
   bridgeSessionId: text('bridge_session_id'),
   bridgeSessionMode: text('bridge_session_mode'),
+  // Monotonic fence advanced every time a turn is interrupted. A delivery
+  // captures the generation it started under; stale completions from an
+  // interrupted (older) turn compare their captured value and refuse to
+  // persist terminal status/queue/response updates when it no longer matches.
+  turnGeneration: integer('turn_generation').notNull().default(0),
   activeWorkStartedAt: integer('active_work_started_at', { mode: 'timestamp' }),
   activeWorkDurationMs: integer('active_work_duration_ms').notNull().default(0),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),

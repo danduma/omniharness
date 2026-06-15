@@ -1161,6 +1161,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     collapsedProjectPaths,
     visibleProjectSessionCounts,
     onProjectOpenChange: actions.handleProjectOpenChange,
+    onReorderProjects: actions.handleReorderProjects,
     onCollapseAllProjects: collapseProjects,
     onShowMoreProjectSessions: actions.handleShowMoreProjectSessions,
     setShowSettings,

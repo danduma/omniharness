@@ -6,12 +6,13 @@ import { Button } from "@/components/ui/button";
 import { ComposerModelPicker } from "@/components/composer/ComposerModelPicker";
 import { ComposerSelect } from "@/components/composer/ComposerSelect";
 import { ConversationModePicker, type ConversationModeOption } from "@/components/ConversationModePicker";
+import type { ComposerMode } from "@/app/home/types";
 import { QueuedMessageDrawer } from "./QueuedMessageDrawer";
 import { BranchWorkspaceButton } from "./BranchWorkspaceButton";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { EFFORT_OPTIONS } from "@/app/home/constants";
 import { isManualStopCommand, resolveBusyMessageActionForSubmitAction, type BusyComposerBehavior, type BusyMessageAction } from "@/app/home/busy-message-behavior";
-import { getComposerSubmitShortcutLabel, isAppleComposerShortcutPlatform, shouldSubmitComposerKeyDown, shouldUseAlternateComposerSubmitKeyDown } from "@/app/home/composer-keyboard";
+import { getComposerSubmitShortcutLabel, isAppleComposerShortcutPlatform, shouldInterruptQueuedMessageKeyDown, shouldSubmitComposerKeyDown, shouldUseAlternateComposerSubmitKeyDown } from "@/app/home/composer-keyboard";
 import type { ComposerWorkerOption, QueuedConversationMessageRecord, WorkerModelOption } from "@/app/home/types";
 import { formatBytes, type PendingChatAttachment } from "@/lib/chat-attachments";
 import { t, useI18nSnapshot } from "@/lib/i18n";
@@ -22,12 +23,12 @@ import { cn } from "@/lib/utils";
 interface ConversationComposerProps {
   className: string;
   command: string;
-  setCommand: (value: string) => void;
   setCommandCursor: (value: number) => void;
+  setComposerDraft: (patch: { command?: string; commandCursor?: number }) => void;
   commandInputRef: React.RefObject<HTMLTextAreaElement | null>;
   handleSubmit: (event: React.FormEvent) => void;
   selectedRunId: string | null;
-  selectedConversationMode: ConversationModeOption;
+  selectedConversationMode: ComposerMode;
   setSelectedConversationMode: (value: ConversationModeOption) => void;
   showMentionPicker: boolean;
   currentProjectScope: string | null;
@@ -58,9 +59,11 @@ interface ConversationComposerProps {
   composerBehavior: BusyComposerBehavior;
   queuedMessages: QueuedConversationMessageRecord[];
   cancellingQueuedMessageIds: Set<string>;
+  interruptingQueuedMessageIds: Set<string>;
   onEditQueuedMessage: (message: QueuedConversationMessageRecord) => void;
-  onSendQueuedMessageNow: (messageId: string) => void;
+  onInterruptQueuedMessage: (messageId: string) => void;
   onCancelQueuedMessage: (messageId: string) => void;
+  onInterruptComposer: () => void;
   onSendConversationMessage: (content: string, busyAction?: BusyMessageAction) => void;
   onRunCommand: (content: string) => void;
   onStopConversation: () => void;
@@ -79,8 +82,8 @@ const composerUiManager = new ComposerUiManager();
 export function ConversationComposer({
   className,
   command,
-  setCommand,
   setCommandCursor,
+  setComposerDraft,
   commandInputRef,
   handleSubmit,
   selectedRunId,
@@ -115,9 +118,11 @@ export function ConversationComposer({
   composerBehavior,
   queuedMessages,
   cancellingQueuedMessageIds,
+  interruptingQueuedMessageIds,
   onEditQueuedMessage,
-  onSendQueuedMessageNow,
+  onInterruptQueuedMessage,
   onCancelQueuedMessage,
+  onInterruptComposer,
   onSendConversationMessage,
   onRunCommand,
   onStopConversation,
@@ -175,7 +180,9 @@ export function ConversationComposer({
     >
       {!selectedRunId ? (
         <ConversationModePicker
-          value={selectedConversationMode}
+          // Only rendered for a new conversation, where the composer mode is
+          // always a pickable option ("omni" | "direct").
+          value={selectedConversationMode as ConversationModeOption}
           onChange={setSelectedConversationMode}
           disabled={isComposerSubmitting}
         />
@@ -183,9 +190,10 @@ export function ConversationComposer({
       <QueuedMessageDrawer
         messages={queuedMessages}
         cancellingMessageIds={cancellingQueuedMessageIds}
+        interruptingMessageIds={interruptingQueuedMessageIds}
         themeMode={themeMode}
         onEdit={onEditQueuedMessage}
-        onSendNow={onSendQueuedMessageNow}
+        onInterruptSendNow={onInterruptQueuedMessage}
         onCancel={onCancelQueuedMessage}
       />
       <div className="relative">
@@ -249,8 +257,10 @@ export function ConversationComposer({
           ref={commandInputRef}
           value={command}
           onChange={(e) => {
-            setCommand(e.target.value);
-            setCommandCursor(e.target.selectionStart ?? e.target.value.length);
+            setComposerDraft({
+              command: e.target.value,
+              commandCursor: e.target.selectionStart ?? e.target.value.length,
+            });
           }}
           onClick={(e) => setCommandCursor(e.currentTarget.selectionStart ?? 0)}
           onKeyUp={(e) => setCommandCursor(e.currentTarget.selectionStart ?? 0)}
@@ -294,6 +304,32 @@ export function ConversationComposer({
               }
             }
 
+            // Claude Code-style Escape: interrupt the active turn and deliver
+            // the busy-composer draft or oldest pending queued message. The
+            // mention picker (handled above) keeps Escape priority.
+            if (shouldInterruptQueuedMessageKeyDown({
+              key: e.key,
+              shiftKey: e.shiftKey,
+              metaKey: e.metaKey,
+              ctrlKey: e.ctrlKey,
+              altKey: e.altKey,
+              isComposing: e.nativeEvent.isComposing,
+            })) {
+              const hasDraft = Boolean(trimmedCommand || hasAttachments);
+              const hasPendingQueued = queuedMessages.some((message) => message.status === "pending");
+              const canInterrupt = Boolean(selectedRunId)
+                && isConversationStoppable
+                && !showMentionPicker
+                && !isComposerSubmitting
+                && !isStopConversationPending
+                && (hasDraft || hasPendingQueued);
+              if (canInterrupt) {
+                e.preventDefault();
+                onInterruptComposer();
+                return;
+              }
+            }
+
             if (shouldSubmitComposerKeyDown({
               key: e.key,
               shiftKey: e.shiftKey,
@@ -316,7 +352,7 @@ export function ConversationComposer({
 
               if (!isComposerSubmitting && (trimmedCommand || hasAttachments)) {
                 if (selectedRunId && !hasAttachments && isManualStopCommand(command)) {
-                  setCommand("");
+                  setComposerDraft({ command: "", commandCursor: 0 });
                   onStopConversation();
                   return;
                 }

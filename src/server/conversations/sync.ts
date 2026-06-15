@@ -264,24 +264,34 @@ async function drainQueuedWorkerMessagesWithObservation(args: {
   workerId: string;
   workerStatus: string;
   source: string;
+  snapshot?: ReturnType<typeof normalizeAgentRecord> | null;
 }) {
   const pendingCount = await pendingWorkerQueueCount(args.runId, args.workerId);
   if (pendingCount === 0) {
     return 0;
   }
 
-  const drainable = isWorkerQueueDrainableStatus(args.workerStatus);
+  const hasPendingElicitation = (args.snapshot?.pendingElicitations?.length ?? 0) > 0;
+  const drainable = hasPendingElicitation || isWorkerQueueDrainableStatus(args.workerStatus);
   await recordQueueDrainDecision({
     ...args,
     pendingCount,
     decision: drainable ? "drain" : "skip",
-    reason: drainable ? "worker_drainable" : "worker_not_drainable",
+    reason: hasPendingElicitation
+      ? "pending_elicitation"
+      : drainable
+        ? "worker_drainable"
+        : "worker_not_drainable",
   });
   if (!drainable) {
     return 0;
   }
 
-  const deliveredCount = await drainQueuedWorkerMessages({ runId: args.runId, workerId: args.workerId });
+  const deliveredCount = await drainQueuedWorkerMessages({
+    runId: args.runId,
+    workerId: args.workerId,
+    snapshot: args.snapshot,
+  });
   emitNamedEvent({
     kind: "queue.drain_finished",
     runId: args.runId,
@@ -567,13 +577,23 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
     await writeWorkerOutputEntries(run.id, worker.id, agent.outputEntries);
     const nextRunState = resolveSyncedRunState(run, agent);
     const quiescedDirectWorker = isDirectRunMode(run.mode) && directLiveAgentHasCompletedTurn(agent);
+    const nextWorkerStatus = quiescedDirectWorker ? "idle" : agent.state;
     await db.update(workers).set({
-      status: quiescedDirectWorker ? "idle" : agent.state,
+      status: nextWorkerStatus,
       cwd: agent.cwd || worker.cwd,
       currentText: quiescedDirectWorker ? "" : agent.currentText,
       lastText: agent.lastText,
       updatedAt: new Date(),
     }).where(eq(workers.id, worker.id));
+    if (worker.status !== nextWorkerStatus) {
+      emitNamedEvent({
+        kind: "worker.status",
+        runId: run.id,
+        workerId: worker.id,
+        prev: worker.status,
+        next: nextWorkerStatus,
+      });
+    }
 
     if (run.mode === "planning") {
       const result = await refreshPlanningArtifactsForRun({
@@ -614,12 +634,12 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
     if (staleBusyFailure && nextRunState !== "failed") {
       await clearMatchingRunFailureMessage(run);
     }
-    const effectiveWorkerStatus = quiescedDirectWorker ? "idle" : agent.state;
     await drainQueuedWorkerMessagesWithObservation({
       runId: run.id,
       workerId: worker.id,
-      workerStatus: effectiveWorkerStatus,
+      workerStatus: nextWorkerStatus,
       source: "live_worker_sync",
+      snapshot: agent,
     });
   }
 

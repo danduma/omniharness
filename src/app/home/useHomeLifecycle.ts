@@ -197,8 +197,12 @@ export function useHomeLifecycle({
     if (route.selectedRunId) {
       setSelectedRunId(route.selectedRunId);
       setDraftProjectPath(null);
-      if (savedMode === "planning" || savedMode === "implementation" || savedMode === "direct") {
-        setSelectedConversationMode(savedMode);
+      // Legacy persisted values ("planning"/"implementation") collapse into the
+      // single "omni" picker option.
+      if (savedMode === "direct") {
+        setSelectedConversationMode("direct");
+      } else if (savedMode === "omni" || savedMode === "planning" || savedMode === "implementation") {
+        setSelectedConversationMode("omni");
       }
     } else {
       if (route.draftProjectPath) {

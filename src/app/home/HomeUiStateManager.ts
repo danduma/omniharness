@@ -222,6 +222,32 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
     this.setKey("attachments", []);
   }
 
+  setComposerDraft(patch: Partial<ComposerDraft>) {
+    this.update((current) => {
+      const command = patch.command ?? current.command;
+      const commandCursor = patch.commandCursor ?? current.commandCursor;
+      const mentionIndex = patch.mentionIndex ?? current.mentionIndex;
+      const attachments = patch.attachments ?? current.attachments;
+
+      if (
+        Object.is(command, current.command)
+        && Object.is(commandCursor, current.commandCursor)
+        && Object.is(mentionIndex, current.mentionIndex)
+        && Object.is(attachments, current.attachments)
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        command,
+        commandCursor,
+        mentionIndex,
+        attachments,
+      };
+    });
+  }
+
   selectRun(nextRunId: string | null) {
     this.update((current) => {
       if (current.selectedRunId === nextRunId) return current;
@@ -376,6 +402,7 @@ export const homeUiSetters = {
   setSelectedEffort: homeUiStateManager.createSetter("selectedEffort"),
   setHydratedRunSelectionId: homeUiStateManager.createSetter("hydratedRunSelectionId"),
   setAttachments: homeUiStateManager.createSetter("attachments"),
+  setComposerDraft: (patch: Partial<ComposerDraft>) => homeUiStateManager.setComposerDraft(patch),
   addAttachmentFiles: (files: File[]) => homeUiStateManager.addAttachmentFiles(files),
   addPastedImages: (files: File[]) => homeUiStateManager.addPastedImages(files),
   removeAttachment: (id: string) => homeUiStateManager.removeAttachment(id),

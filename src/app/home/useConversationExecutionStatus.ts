@@ -8,6 +8,7 @@ interface UseConversationExecutionStatusProps {
   latestExecutionEvent: ExecutionEventRecord | null;
   erroredAgent: AgentSnapshot | null;
   pendingPermissionAgent: AgentSnapshot | null;
+  pendingElicitationAgent?: AgentSnapshot | null;
   hasStuckWorker: boolean;
   latestStuckEvent: ExecutionEventRecord | null;
   showRecoverableRunningState: boolean;
@@ -26,6 +27,7 @@ export function useConversationExecutionStatus({
   latestExecutionEvent,
   erroredAgent,
   pendingPermissionAgent,
+  pendingElicitationAgent = null,
   hasStuckWorker,
   latestStuckEvent,
   showRecoverableRunningState,
@@ -76,13 +78,22 @@ export function useConversationExecutionStatus({
       };
     }
 
+    if (pendingElicitationAgent) {
+      const requestCount = pendingElicitationAgent.pendingElicitations?.length ?? 0;
+      return {
+        label: t("conversation.status.awaitingInput"),
+        detail: t("conversation.status.workerAwaitingAnswer", { worker: pendingElicitationAgent.name, count: requestCount }),
+        tone: "warning" as const,
+      };
+    }
+
     if (selectedRun?.status === "awaiting_user") {
       if (
         (selectedRun.mode === "direct" || selectedRun.mode === "commit")
         && latestExecutionEvent?.eventType === "direct_worker_awaiting_user"
       ) {
         return {
-          label: "Awaiting input",
+          label: t("conversation.status.awaitingInput"),
           detail: t("conversation.status.awaitingWorkerInput"),
           tone: "warning" as const,
         };
@@ -95,7 +106,7 @@ export function useConversationExecutionStatus({
         };
       }
       return {
-        label: "Awaiting input",
+        label: t("conversation.status.awaitingInput"),
         detail: "Omni asked for clarification before continuing.",
         tone: "warning" as const,
       };
@@ -191,6 +202,6 @@ export function useConversationExecutionStatus({
       detail: [durationLabel, latestExecutionEvent ? summarizeExecutionEvent(latestExecutionEvent) : "Omni is still checking the run."].filter(Boolean).join(". "),
       tone: "active" as const,
     };
-  }, [activeConversationAgents, awaitingUserQuestionMessage, completionEvent, erroredAgent, hasStuckWorker, isSelectedConversationLoaded, latestExecutionEvent, latestPromptDeferredEvent, latestStuckEvent, latestWaitEvent, liveThoughts, pendingPermissionAgent, queuedMessageCount, selectedRun, showRecoverableRunningState]);
+  }, [activeConversationAgents, awaitingUserQuestionMessage, completionEvent, erroredAgent, hasStuckWorker, isSelectedConversationLoaded, latestExecutionEvent, latestPromptDeferredEvent, latestStuckEvent, latestWaitEvent, liveThoughts, pendingElicitationAgent, pendingPermissionAgent, queuedMessageCount, selectedRun, showRecoverableRunningState]);
   return { liveExecutionStatus };
 }

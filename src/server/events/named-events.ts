@@ -41,6 +41,9 @@ export type SurfacedErrorCode =
   | "runtime.start_failed"
   | "session.provider.unknown"
   | "session.action.unsupported"
+  | "queue.interrupt.refused"
+  | "queue.interrupt.cancel_failed"
+  | "queue.interrupt.delivery_failed"
   | "supervisor.gave_up"
   | "supervisor.wake.failed"
   | "surface.bridge_failed"
@@ -252,6 +255,57 @@ export type ConversationEvent =
       source: string;
       pendingCount: number;
       deliveredCount: number;
+    }
+  // Escape / force-send interruption control plane. See
+  // docs/architecture/lifecycle-observability-and-testing.md.
+  | {
+      kind: "queue.interrupt_requested";
+      runId: string;
+      workerId: string | null;
+      queuedMessageId: string | null;
+      source: string;
+    }
+  | {
+      kind: "queue.interrupt_refused";
+      runId: string;
+      workerId: string | null;
+      queuedMessageId: string | null;
+      reason: string;
+      source: string;
+    }
+  | {
+      kind: "queue.interrupt_cancelled_turn";
+      runId: string;
+      workerId: string;
+      queuedMessageId: string;
+      cancelDurationMs: number;
+      source: string;
+    }
+  | {
+      kind: "queue.interrupt_delivery_started";
+      runId: string;
+      workerId: string;
+      queuedMessageId: string;
+      totalInterruptLatencyMs: number;
+      source: string;
+    }
+  | {
+      kind: "queue.interrupt_delivery_finished";
+      runId: string;
+      workerId: string;
+      queuedMessageId: string;
+      totalInterruptLatencyMs: number;
+      source: string;
+    }
+  | {
+      kind: "queue.interrupt_delivery_failed";
+      runId: string;
+      workerId: string | null;
+      queuedMessageId: string;
+      reason: string;
+      deferred: boolean;
+      totalInterruptLatencyMs: number;
+      source: string;
     };
 
 export type SessionEvent =

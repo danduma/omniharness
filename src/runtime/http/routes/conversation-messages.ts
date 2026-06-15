@@ -12,6 +12,12 @@ import {
   parseBusyMessageAction,
   sendQueuedConversationMessageNow,
 } from "@/server/conversations/queued-messages";
+import {
+  interruptAndSendNextQueuedConversationMessage,
+  interruptAndSendQueuedConversationMessageNow,
+  interruptWithDraftMessage,
+} from "@/server/conversations/queued-message-interrupt";
+import { emitNamedEvent } from "@/server/events/named-events";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { startSlowProbe } from "@/server/slow-probe";
 import { toNextRequest } from "./next-request";
@@ -143,6 +149,104 @@ export const handleQueuedConversationMessageRequest: OmniHttpHandler = async (re
 
     const queuedMessage = await cancelQueuedConversationMessage({ runId, messageId });
     return Response.json({ ok: true, queuedMessage });
+  } catch (error) {
+    return errorResponse(error, {
+      status: statusFromError(error),
+      source: "Conversations",
+      action,
+    });
+  }
+};
+
+async function assertOmniInterruptSupported(runId: string, action: string) {
+  const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+  if (!run) {
+    throw Object.assign(new Error("Conversation not found"), { status: 404 });
+  }
+  const sessionType = normalizeSessionType(run.sessionType);
+  if (sessionType !== "omni") {
+    emitNamedEvent({
+      kind: "queue.interrupt_refused",
+      runId,
+      workerId: null,
+      queuedMessageId: null,
+      reason: "unsupported_session_provider",
+      source: "api",
+    });
+    throw Object.assign(new Error(`${action} is not supported for ${sessionType} sessions.`), { status: 409 });
+  }
+}
+
+export const handleQueuedConversationMessageInterruptRequest: OmniHttpHandler = async (request, context) => {
+  const action = "Interrupt and send queued message";
+  try {
+    if (request.method !== "POST") {
+      return Response.json({ error: { code: "method_not_allowed", message: "Method not allowed." } }, {
+        status: 405,
+        headers: { allow: "POST" },
+      });
+    }
+
+    const auth = await requireApiSession(toNextRequest(request), {
+      source: "Conversations",
+      action,
+      enforceSameOrigin: true,
+    });
+    if (auth.response) {
+      return auth.response;
+    }
+
+    const runId = requireParam(context.params, "id");
+    const messageId = requireParam(context.params, "messageId");
+    await assertOmniInterruptSupported(runId, action);
+    return Response.json(await interruptAndSendQueuedConversationMessageNow({ runId, messageId, source: "drawer" }));
+  } catch (error) {
+    return errorResponse(error, {
+      status: statusFromError(error),
+      source: "Conversations",
+      action,
+    });
+  }
+};
+
+export const handleQueuedConversationMessageInterruptNextRequest: OmniHttpHandler = async (request, context) => {
+  const action = "Interrupt and send next queued message";
+  try {
+    if (request.method !== "POST") {
+      return Response.json({ error: { code: "method_not_allowed", message: "Method not allowed." } }, {
+        status: 405,
+        headers: { allow: "POST" },
+      });
+    }
+
+    const auth = await requireApiSession(toNextRequest(request), {
+      source: "Conversations",
+      action,
+      enforceSameOrigin: true,
+    });
+    if (auth.response) {
+      return auth.response;
+    }
+
+    const runId = requireParam(context.params, "id");
+    await assertOmniInterruptSupported(runId, action);
+
+    const body = await request.json().catch(() => ({}));
+    const content = String(body?.content ?? "").trim();
+    const attachments = normalizeChatAttachments(body?.attachments);
+    const targetWorkerId = typeof body?.targetWorkerId === "string" ? body.targetWorkerId : null;
+
+    if (content || attachments.length > 0) {
+      return Response.json(await interruptWithDraftMessage({
+        runId,
+        content,
+        attachments,
+        targetWorkerId,
+        source: "escape",
+      }));
+    }
+
+    return Response.json(await interruptAndSendNextQueuedConversationMessage({ runId, source: "escape" }));
   } catch (error) {
     return errorResponse(error, {
       status: statusFromError(error),

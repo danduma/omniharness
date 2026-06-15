@@ -16,7 +16,9 @@ import { Switch } from "@/components/ui/switch";
 import { OmniHarnessMark } from "@/components/OmniHarnessMark";
 import { requestBugDropOpen } from "@/components/BugDropBootstrap";
 import { PRODUCT_NAME } from "@/app/home/constants";
+import type { ProjectDropPlacement } from "@/app/home/utils";
 import type { AgentSnapshot, ConversationSidebarTab, MessageRecord, RunRecord, SidebarGroup, SidebarRun, SupervisorInterventionRecord } from "@/app/home/types";
+import type { ManualCommitAction } from "@/lib/commit-workflow";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { t, useI18nSnapshot } from "@/lib/i18n";
@@ -51,6 +53,7 @@ interface HomeHeaderProps {
   collapsedProjectPaths: Set<string>;
   visibleProjectSessionCounts: Record<string, number>;
   onProjectOpenChange: (projectPath: string, open: boolean) => void;
+  onReorderProjects: (draggedPath: string, targetPath: string, placement: ProjectDropPlacement) => void;
   onCollapseAllProjects: (projectPaths: string[]) => void;
   onShowMoreProjectSessions: (projectPath: string) => void;
   setShowSettings: Dispatch<SetStateAction<boolean>>;
@@ -58,7 +61,7 @@ interface HomeHeaderProps {
   openFolderPicker: () => void;
   startNewPlan: () => void;
   beginConversationInProject: (projectPath: string) => void;
-  autoCommitProject: (projectPath: string) => void;
+  autoCommitProject: (projectPath: string, action?: ManualCommitAction) => void;
   isAutoCommitProjectPending: boolean;
   handleRemoveProject: (pathToRemove: string) => void;
   selectRun: (runId: string) => void;
@@ -142,6 +145,7 @@ export function HomeHeader({
   collapsedProjectPaths,
   visibleProjectSessionCounts,
   onProjectOpenChange,
+  onReorderProjects,
   onCollapseAllProjects,
   onShowMoreProjectSessions,
   setShowSettings,
@@ -307,6 +311,7 @@ export function HomeHeader({
               collapsedProjectPaths={collapsedProjectPaths}
               visibleProjectSessionCounts={visibleProjectSessionCounts}
               onProjectOpenChange={onProjectOpenChange}
+              onReorderProjects={onReorderProjects}
               onCollapseAllProjects={onCollapseAllProjects}
               onShowMoreProjectSessions={onShowMoreProjectSessions}
               setShowSettings={setShowSettings}

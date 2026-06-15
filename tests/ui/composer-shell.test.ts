@@ -76,10 +76,10 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(composerSelectSource).toContain("options.map");
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)');
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)');
-  expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_EFFORT_STORAGE_KEY)');
+  expect(pageSource).toContain('window.localStorage.getItem(getEffortStorageKey(savedWorker, savedModel))');
   expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_WORKER_STORAGE_KEY, selectedCliAgent)');
   expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_MODEL_STORAGE_KEY, selectedModel)');
-  expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_EFFORT_STORAGE_KEY, selectedEffort)');
+  expect(pageSource).toContain('window.localStorage.setItem(getEffortStorageKey(selectedCliAgent, selectedModel), selectedEffort)');
   expect(pageSource).toContain("const activeWorkerModelOptions = useMemo(");
   expect(pageSource).toContain("options={activeWorkerModelOptions}");
   expect(composerModelPickerSource).toContain("options.map");
@@ -161,7 +161,10 @@ test("composer draft state is isolated from the root home app subscription", () 
 });
 
 test("composer submit button sends text, stops live conversations, and disables when idle empty", () => {
-  expect(pageSource).toContain("const isSupervisorRunning = Boolean(selectedRun && selectedRun.mode === \"implementation\" && selectedRun.status === \"running\")");
+  expect(pageSource).toContain("const isSupervisorRunning = Boolean(");
+  expect(pageSource).toContain('selectedRunMode === "implementation"');
+  expect(pageSource).toContain('selectedRunPhase !== "planning"');
+  expect(pageSource).toContain('selectedRun.status === "running"');
   expect(pageSource).toContain("const busyConversationWorkerId = !isImplementationConversation");
   expect(pageSource).toContain("const isSendingSelectedConversationMessage = isMutationPendingForSelectedRun({");
   expect(pageSource).toContain("mutationRunId: sendConversationMessage.variables?.runId");
@@ -194,19 +197,19 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain("<Square className=\"h-[13.6px] w-[13.6px] fill-current\" />");
 });
 
-test("queued message drawer can send a pending item immediately as steering", () => {
+test("queued message drawer force-send arrow interrupts the active turn", () => {
   const drawerSource = fs.readFileSync(
     path.resolve(process.cwd(), "src/components/home/QueuedMessageDrawer.tsx"),
     "utf8"
   );
   const editIndex = drawerSource.indexOf('queued.message.editAria');
-  const sendNowIndex = drawerSource.indexOf('queued.message.sendNowAria');
+  const sendNowIndex = drawerSource.indexOf('queued.message.interruptSendAria');
   const cancelIndex = drawerSource.indexOf('queued.message.cancelAria');
 
-  expect(pageSource).toContain("onSendQueuedMessageNow");
-  expect(pageSource).toContain("sendQueuedMessageNow.mutate({ runId: selectedRunId, messageId })");
-  expect(drawerSource).toContain("onSendNow: (messageId: string) => void;");
-  expect(drawerSource).toContain("onClick={() => onSendNow(message.id)}");
+  expect(pageSource).toContain("onInterruptQueuedMessage");
+  expect(pageSource).toContain("interruptQueuedMessage.mutate({ runId: selectedRunId, messageId })");
+  expect(drawerSource).toContain("onInterruptSendNow: (messageId: string) => void;");
+  expect(drawerSource).toContain("onClick={() => onInterruptSendNow(message.id)}");
   expect(drawerSource).toContain('<ArrowUp className="h-[17px] w-[17px]" />');
   expect(drawerSource).not.toContain("SendHorizontal");
   expect(sendNowIndex).toBeGreaterThan(editIndex);

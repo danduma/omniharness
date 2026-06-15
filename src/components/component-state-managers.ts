@@ -250,10 +250,18 @@ export const workersSidebarManager = new class extends StateManager<{
 export const workerCardManager = new class extends StateManager<{
   openByWorkerId: Record<string, boolean>;
   permissionOpenByWorkerId: Record<string, boolean>;
+  elicitationOpenByWorkerId: Record<string, boolean>;
+  elicitationDraftsByKey: Record<string, string>;
   terminalProcessesOpenByWorkerId: Record<string, boolean>;
 }> {
   constructor() {
-    super({ openByWorkerId: {}, permissionOpenByWorkerId: {}, terminalProcessesOpenByWorkerId: {} });
+    super({
+      openByWorkerId: {},
+      permissionOpenByWorkerId: {},
+      elicitationOpenByWorkerId: {},
+      elicitationDraftsByKey: {},
+      terminalProcessesOpenByWorkerId: {},
+    });
   }
 
   setOpen = (workerId: string, open: boolean) => this.setKey("openByWorkerId", (current) => ({
@@ -270,6 +278,31 @@ export const workerCardManager = new class extends StateManager<{
     ...current,
     [workerId]: false,
   }));
+
+  toggleElicitation = (workerId: string) => this.setKey("elicitationOpenByWorkerId", (current) => ({
+    ...current,
+    [workerId]: !current[workerId],
+  }));
+
+  closeElicitation = (workerId: string) => this.setKey("elicitationOpenByWorkerId", (current) => ({
+    ...current,
+    [workerId]: false,
+  }));
+
+  setElicitationDraft = (key: string, value: string) => this.setKey("elicitationDraftsByKey", (current) => ({
+    ...current,
+    [key]: value,
+  }));
+
+  clearElicitationDrafts = (prefix: string) => this.setKey("elicitationDraftsByKey", (current) => {
+    const next = { ...current };
+    for (const key of Object.keys(next)) {
+      if (key.startsWith(prefix)) {
+        delete next[key];
+      }
+    }
+    return next;
+  });
 
   setTerminalProcessesOpen = (workerId: string, open: boolean) => this.setKey("terminalProcessesOpenByWorkerId", (current) => ({
     ...current,

@@ -1,9 +1,10 @@
 import { randomUUID } from "crypto";
 import { asc, desc, eq } from "drizzle-orm";
-import { askAgent, getAgent } from "@/server/bridge-client";
+import { askAgent, getAgent, respondElicitation } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { messages, queuedConversationMessages, runs, supervisorInterventions, workers } from "@/server/db/schema";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
+import { emitNamedEvent } from "@/server/events/named-events";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
@@ -26,11 +27,13 @@ import {
 export type { BusyMessageAction, QueuedConversationMessageStatus } from "./queued-message-records";
 
 type QueuedConversationMessageRecord = typeof queuedConversationMessages.$inferSelect;
-type WorkerAskResponse = Awaited<ReturnType<typeof askAgent>>;
+export type WorkerAskResponse = Awaited<ReturnType<typeof askAgent>>;
 type WorkerSnapshot = Awaited<ReturnType<typeof getAgent>>;
-type WorkerResponseRun = Pick<typeof runs.$inferSelect, "id" | "mode">;
+export type WorkerResponseRun = Pick<typeof runs.$inferSelect, "id" | "mode">;
+type ElicitationSchema = NonNullable<WorkerSnapshot["pendingElicitations"]>[number]["requestedSchema"];
+type ElicitationContent = Record<string, string | number | boolean | string[]>;
 
-class EmptyQueuedWorkerOutputError extends Error {
+export class EmptyQueuedWorkerOutputError extends Error {
   constructor(
     readonly runId: string,
     readonly workerId: string,
@@ -51,12 +54,12 @@ export function parseBusyMessageAction(value: unknown): BusyMessageAction | null
   return value === "queue" || value === "steer" ? value : null;
 }
 
-function isAgentBusyError(error: unknown) {
+export function isAgentBusyError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   return /\bagent is busy\b/i.test(message);
 }
 
-function errorMessage(error: unknown) {
+export function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -96,11 +99,11 @@ async function queuedMessageStatus(messageId: string) {
   return record?.status ?? null;
 }
 
-function isAgentNotFoundError(error: unknown) {
+export function isAgentNotFoundError(error: unknown) {
   return /\bagent not found\b/i.test(errorMessage(error));
 }
 
-function isEmptyQueuedWorkerOutputError(error: unknown): error is EmptyQueuedWorkerOutputError {
+export function isEmptyQueuedWorkerOutputError(error: unknown): error is EmptyQueuedWorkerOutputError {
   return error instanceof EmptyQueuedWorkerOutputError;
 }
 
@@ -150,7 +153,7 @@ async function assertQueuedDeliveryProducedOutput({
   );
 }
 
-async function getLatestRunWorker(runId: string, excludedWorkerId?: string | null) {
+export async function getLatestRunWorker(runId: string, excludedWorkerId?: string | null) {
   const records = await db
     .select()
     .from(workers)
@@ -160,7 +163,7 @@ async function getLatestRunWorker(runId: string, excludedWorkerId?: string | nul
   return records.find((worker) => worker.id !== excludedWorkerId) ?? null;
 }
 
-function isCancelledWorkerStatus(status: string | null | undefined) {
+export function isCancelledWorkerStatus(status: string | null | undefined) {
   const normalized = status?.trim().toLowerCase().split(":")[0]?.trim() ?? "";
   return normalized === "cancelled" || normalized === "canceled";
 }
@@ -178,7 +181,7 @@ function hasVisibleWorkerProgress(worker: typeof workers.$inferSelect) {
   );
 }
 
-function isWorkerClearlyBusy(worker: typeof workers.$inferSelect) {
+export function isWorkerClearlyBusy(worker: typeof workers.$inferSelect) {
   return isActiveWorkerStatus(worker.status) && hasVisibleWorkerProgress(worker);
 }
 
@@ -191,7 +194,58 @@ function formatWorkerLabel(worker: typeof workers.$inferSelect) {
   return match ? `worker ${match[1]}` : "the active worker";
 }
 
-async function persistDeliveredWorkerResponse({
+function elicitationAnswerContent(text: string, requestedSchema: ElicitationSchema | null | undefined): ElicitationContent {
+  const properties = requestedSchema?.properties ?? {};
+  const propertyNames = Object.keys(properties);
+  if (propertyNames.includes("customAnswer")) {
+    return { customAnswer: text };
+  }
+
+  const nonCustomFields = propertyNames.filter((name) => name !== "customAnswer");
+  if (nonCustomFields.length === 1 && nonCustomFields[0]) {
+    return { [nonCustomFields[0]]: text };
+  }
+
+  return { response: text };
+}
+
+async function answerPendingWorkerElicitation(args: {
+  run: typeof runs.$inferSelect;
+  worker: typeof workers.$inferSelect;
+  snapshot: WorkerSnapshot | null;
+  content: string;
+  deliveredAt: Date;
+}) {
+  const elicitation = args.snapshot?.pendingElicitations?.[0] ?? null;
+  if (!elicitation) {
+    return false;
+  }
+
+  await respondElicitation(args.worker.id, {
+    action: "accept",
+    content: elicitationAnswerContent(args.content, elicitation.requestedSchema),
+  });
+  await db.update(workers).set({
+    status: "working",
+    updatedAt: args.deliveredAt,
+  }).where(eq(workers.id, args.worker.id));
+  await db.update(runs).set({
+    status: "running",
+    failedAt: null,
+    lastError: null,
+    updatedAt: args.deliveredAt,
+  }).where(eq(runs.id, args.run.id));
+  emitNamedEvent({
+    kind: "worker.status",
+    runId: args.run.id,
+    workerId: args.worker.id,
+    prev: args.worker.status,
+    next: "working",
+  });
+  return true;
+}
+
+export async function persistDeliveredWorkerResponse({
   run,
   workerId,
   response,
@@ -394,7 +448,7 @@ async function deliverQueuedWorkerSteering(args: {
       return;
     }
 
-    const response = await askAgent(args.worker.id, args.content);
+    const snapshotBeforeAsk = await Promise.resolve(getAgent(args.worker.id)).catch(() => null);
     const deliveredAt = new Date();
     if (await queuedMessageStatus(args.messageId) !== "delivering") {
       notifyEventStreamSubscribers();
@@ -405,6 +459,30 @@ async function deliverQueuedWorkerSteering(args: {
       // choose not to pre-anchor the prompt before bridge output streams.
       await appendQueuedUserInput(deliveredAt);
     }
+    if (await answerPendingWorkerElicitation({
+      run: args.run,
+      worker: args.worker,
+      snapshot: snapshotBeforeAsk,
+      content: args.userText,
+      deliveredAt,
+    })) {
+      await db.update(queuedConversationMessages).set({
+        status: "delivered",
+        lastError: null,
+        updatedAt: deliveredAt,
+        deliveredAt,
+      }).where(eq(queuedConversationMessages.id, args.messageId));
+      await insertQueueExecutionEvent(args.run.id, "queued_message_delivered", {
+        summary: `Delivered queued answer to ${args.worker.id}'s pending question.`,
+        queuedMessageId: args.messageId,
+        action: "steer",
+        delivery: "elicitation",
+      }, args.worker.id);
+      notifyEventStreamSubscribers();
+      return;
+    }
+
+    const response = await askAgent(args.worker.id, args.content);
     await persistDeliveredWorkerResponse({
       run: args.run,
       workerId: args.worker.id,
@@ -870,9 +948,11 @@ export async function drainQueuedImplementationMessages(runId: string) {
 export async function drainQueuedWorkerMessages({
   runId,
   workerId,
+  snapshot,
 }: {
   runId: string;
   workerId: string;
+  snapshot?: WorkerSnapshot | null;
 }) {
   const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
   if (!worker || worker.runId !== runId) {
@@ -921,7 +1001,7 @@ export async function drainQueuedWorkerMessages({
           status: "working",
           updatedAt: startedAt,
         }).where(eq(workers.id, workerId));
-        const response = await askAgent(workerId, workerContent);
+        const snapshotBeforeAsk = snapshot ?? await Promise.resolve(getAgent(workerId)).catch(() => null);
         const deliveredAt = new Date();
         await appendUserInputOnDelivery({
           id: userMessage.id,
@@ -937,6 +1017,28 @@ export async function drainQueuedWorkerMessages({
           })),
         });
         await db.insert(messages).values(userMessage);
+        if (await answerPendingWorkerElicitation({
+          run,
+          worker,
+          snapshot: snapshotBeforeAsk,
+          content: record.content,
+          deliveredAt,
+        })) {
+          await db.update(queuedConversationMessages).set({
+            status: "delivered",
+            lastError: null,
+            updatedAt: deliveredAt,
+            deliveredAt,
+          }).where(eq(queuedConversationMessages.id, record.id));
+          await insertQueueExecutionEvent(runId, "queued_message_delivered", {
+            summary: `Delivered queued answer to ${workerId}'s pending question.`,
+            queuedMessageId: record.id,
+            delivery: "elicitation",
+          }, workerId);
+          return;
+        }
+
+        const response = await askAgent(workerId, workerContent);
         await persistDeliveredWorkerResponse({
           run,
           workerId,
