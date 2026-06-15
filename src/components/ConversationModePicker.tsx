@@ -3,16 +3,12 @@
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
-export type ConversationModeOption = "implementation" | "planning" | "direct";
+export type ConversationModeOption = "omni" | "direct";
 
 const MODE_COPY_KEYS: Record<ConversationModeOption, { label: string; description: string }> = {
-  planning: {
-    label: "conversation.mode.planning.label",
-    description: "conversation.mode.planning.description",
-  },
-  implementation: {
-    label: "conversation.mode.implementation.label",
-    description: "conversation.mode.implementation.description",
+  omni: {
+    label: "conversation.mode.omni.label",
+    description: "conversation.mode.omni.description",
   },
   direct: {
     label: "conversation.mode.direct.label",
@@ -20,7 +16,7 @@ const MODE_COPY_KEYS: Record<ConversationModeOption, { label: string; descriptio
   },
 };
 
-const MODE_ORDER: ConversationModeOption[] = ["direct", "planning", "implementation"];
+const MODE_ORDER: ConversationModeOption[] = ["omni", "direct"];
 
 export function getConversationModeCopy(mode: ConversationModeOption) {
   const copy = MODE_COPY_KEYS[mode];

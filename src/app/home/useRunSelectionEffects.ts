@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import type React from "react";
 import { conversationMainManager } from "@/components/component-state-managers";
 import { getRunLatestUnreadTimestamp } from "@/lib/conversation-state";
-import type { ConversationModeOption } from "@/components/ConversationModePicker";
+import type { ComposerMode } from "./types";
 import type { AgentSnapshot, ComposerWorkerOption, MessageRecord, RunRecord, WorkerType } from "./types";
 import { parseWorkerType, resolveComposerEffortLabel, resolveComposerModelValue } from "./utils";
 
@@ -38,6 +38,28 @@ export function shouldConversationKeepFollowingLatest(
   }
 
   return shouldConversationFollowLatest(metrics);
+}
+
+export function shouldConversationRetryInitialLatestPosition({
+  selectedRunId,
+  positionedRunId,
+  selectedRunHasOutput,
+  shouldFollowLatest,
+  metrics,
+}: {
+  selectedRunId: string | null;
+  positionedRunId: string | null;
+  selectedRunHasOutput: boolean;
+  shouldFollowLatest: boolean;
+  metrics: Pick<HTMLDivElement, "clientHeight" | "scrollHeight">;
+}) {
+  return Boolean(
+    selectedRunId
+    && selectedRunHasOutput
+    && positionedRunId !== selectedRunId
+    && shouldFollowLatest
+    && hasMeaningfulConversationOverflow(metrics),
+  );
 }
 
 export function getConversationOutputVersion(
@@ -83,7 +105,7 @@ interface UseRunSelectionEffectsProps {
   state: { messages?: MessageRecord[]; agents?: AgentSnapshot[] };
   selectedRunId: string | null;
   selectedRun: RunRecord | null;
-  activeComposerMode: ConversationModeOption;
+  activeComposerMode: ComposerMode;
   selectedCliAgent: ComposerWorkerOption;
   setSelectedCliAgent: React.Dispatch<React.SetStateAction<ComposerWorkerOption>>;
   autoSelectedWorkerType: WorkerType | null;
@@ -141,7 +163,26 @@ export function useRunSelectionEffects({
       return;
     }
 
+    const positionAtLatest = (behavior: ScrollBehavior) => {
+      viewport.scrollTo({
+        top: viewport.scrollHeight,
+        behavior,
+      });
+      previousScrollTopRef.current = viewport.scrollTop;
+      shouldFollowLatestRef.current = true;
+      instantPositionedRunIdRef.current = selectedRunId;
+    };
+
     const updateOutputBelowState = () => {
+      if (shouldConversationRetryInitialLatestPosition({
+        selectedRunId,
+        positionedRunId: instantPositionedRunIdRef.current,
+        selectedRunHasOutput,
+        shouldFollowLatest: shouldFollowLatestRef.current,
+        metrics: viewport,
+      })) {
+        positionAtLatest("auto");
+      }
       conversationMainManager.setHasOutputBelow(shouldConversationShowOutputBelow(viewport));
     };
 
@@ -167,7 +208,7 @@ export function useRunSelectionEffects({
       resizeObserver.disconnect();
       conversationMainManager.setHasOutputBelow(false);
     };
-  }, [scrollRef, selectedRunId]);
+  }, [scrollRef, selectedRunHasOutput, selectedRunId]);
 
   useLayoutEffect(() => {
     const viewport = scrollRef.current?.querySelector(SCROLL_AREA_VIEWPORT_SELECTOR) as HTMLDivElement | null;
@@ -195,16 +236,13 @@ export function useRunSelectionEffects({
       || (selectedRunHasOutput && instantPositionedRunIdRef.current !== selectedRunId);
     const scrollBehavior: ScrollBehavior = shouldRestoreInstantly ? "auto" : "smooth";
 
-    if (hasMeaningfulConversationOverflow(viewport)) {
-      viewport.scrollTo({
-        top: viewport.scrollHeight,
-        behavior: scrollBehavior,
-      });
-      previousScrollTopRef.current = viewport.scrollHeight;
-    } else {
-      previousScrollTopRef.current = viewport.scrollTop;
-    }
-    if (selectedRunHasOutput) {
+    const hasOverflow = hasMeaningfulConversationOverflow(viewport);
+    viewport.scrollTo({
+      top: viewport.scrollHeight,
+      behavior: scrollBehavior,
+    });
+    previousScrollTopRef.current = viewport.scrollTop;
+    if (selectedRunHasOutput && hasOverflow) {
       instantPositionedRunIdRef.current = selectedRunId;
     }
     shouldFollowLatestRef.current = true;
