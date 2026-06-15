@@ -1,9 +1,10 @@
 import { eq } from "drizzle-orm";
-import { getAgent, getAgentOutput, type AgentRecord } from "@/server/bridge-client";
+import { approvePermission, denyPermission, getAgent, getAgentOutput, respondElicitation, type AgentRecord, type ElicitationAnswer } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { runs, workers } from "@/server/db/schema";
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
+import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { buildLiveWorkerSnapshot } from "@/server/workers/live-snapshots";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
 import { formatErrorMessage } from "@/server/runs/failures";
@@ -169,6 +170,125 @@ export const handleAgentDetailRequest: OmniHttpHandler = async (request, context
       status: 500,
       source: "Agent runtime",
       action: "Load worker details",
+    });
+  }
+};
+
+function normalizeElicitationContent(value: unknown): Record<string, string | number | boolean | string[]> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return {};
+  }
+  const normalized: Record<string, string | number | boolean | string[]> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
+      normalized[key] = item;
+    } else if (Array.isArray(item) && item.every((entry) => typeof entry === "string")) {
+      normalized[key] = item;
+    }
+  }
+  return normalized;
+}
+
+export const handleAgentElicitationRequest: OmniHttpHandler = async (request, context) => {
+  if (request.method !== "POST") {
+    return Response.json({ error: { code: "method_not_allowed", message: "Method not allowed." } }, {
+      status: 405,
+      headers: { allow: "POST" },
+    });
+  }
+
+  const auth = await requireApiSession(toNextRequest(request), {
+    source: "Agent runtime",
+    action: "Respond to worker question",
+    enforceSameOrigin: true,
+  });
+  if (auth.response) {
+    return auth.response;
+  }
+
+  const name = context.params?.name;
+  if (!name) {
+    return errorResponse("Worker name is required.", {
+      status: 400,
+      source: "Agent runtime",
+      action: "Respond to worker question",
+    });
+  }
+
+  const body = await request.json();
+  const action = body?.action;
+  if (action !== "accept" && action !== "decline" && action !== "cancel") {
+    return errorResponse("action must be one of 'accept', 'decline', 'cancel'.", {
+      status: 400,
+      source: "Agent runtime",
+      action: "Respond to worker question",
+    });
+  }
+
+  const answer: ElicitationAnswer = action === "accept"
+    ? { action, content: normalizeElicitationContent(body?.content) }
+    : { action };
+  try {
+    const result = await respondElicitation(name, answer);
+    notifyEventStreamSubscribers();
+    return Response.json(result);
+  } catch (error) {
+    return errorResponse(error, {
+      status: 500,
+      source: "Agent runtime",
+      action: "Respond to worker question",
+    });
+  }
+};
+
+export const handleAgentPermissionRequest: OmniHttpHandler = async (request, context) => {
+  if (request.method !== "POST") {
+    return Response.json({ error: { code: "method_not_allowed", message: "Method not allowed." } }, {
+      status: 405,
+      headers: { allow: "POST" },
+    });
+  }
+
+  const auth = await requireApiSession(toNextRequest(request), {
+    source: "Agent runtime",
+    action: "Respond to permission request",
+    enforceSameOrigin: true,
+  });
+  if (auth.response) {
+    return auth.response;
+  }
+
+  const name = context.params?.name;
+  if (!name) {
+    return errorResponse("Worker name is required.", {
+      status: 400,
+      source: "Agent runtime",
+      action: "Respond to permission request",
+    });
+  }
+
+  const body = await request.json();
+  const decision = body?.decision;
+  if (decision !== "approve" && decision !== "deny") {
+    return errorResponse("decision must be one of 'approve', 'deny'.", {
+      status: 400,
+      source: "Agent runtime",
+      action: "Respond to permission request",
+    });
+  }
+  const optionId = typeof body?.optionId === "string" && body.optionId.trim() ? body.optionId : undefined;
+
+  try {
+    const result = decision === "approve"
+      ? await approvePermission(name, optionId)
+      : await denyPermission(name, optionId);
+    notifyEventStreamSubscribers();
+    return Response.json(result);
+  } catch (error) {
+    return errorResponse(error, {
+      status: 500,
+      source: "Agent runtime",
+      action: "Respond to permission request",
     });
   }
 };

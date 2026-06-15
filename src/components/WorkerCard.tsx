@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { AlertTriangle, Bot, ChevronDown, Clock, Cpu, Hash, Maximize2, Minimize2, Square, SquareTerminal } from "lucide-react";
+import { AlertTriangle, Bot, Check, ChevronDown, Clock, Cpu, Hash, HelpCircle, Maximize2, Minimize2, Square, SquareTerminal, X } from "lucide-react";
 import { Terminal, TerminalTextSizeControl, type AgentTerminalPayload, type TerminalUserMessage } from "@/components/Terminal";
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -17,6 +17,7 @@ import {
   deriveVisibleWorkerTerminalProcesses,
   type WorkerTerminalProcess,
 } from "@/lib/worker-terminal-processes";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 
 export type WorkerCardAgent = AgentTerminalPayload & {
   name: string;
@@ -36,6 +37,18 @@ export type WorkerCardAgent = AgentTerminalPayload & {
     } | null;
     options?: Array<{ optionId: string; kind: string; name: string }>;
   }>;
+  pendingElicitations?: Array<{
+    requestId: number;
+    requestedAt: string;
+    sessionId?: string | null;
+    toolCallId?: string | null;
+    message?: string | null;
+    requestedSchema?: {
+      type?: string;
+      properties?: Record<string, unknown>;
+      required?: string[];
+    } | null;
+  }>;
   contextUsage?: {
     inputTokens?: number | null;
     outputTokens?: number | null;
@@ -46,6 +59,7 @@ export type WorkerCardAgent = AgentTerminalPayload & {
 };
 
 type PendingPermissionRecord = NonNullable<WorkerCardAgent["pendingPermissions"]>[number];
+type PendingElicitationRecord = NonNullable<WorkerCardAgent["pendingElicitations"]>[number];
 
 export type WorkerCardProps = {
   workerId: string;
@@ -61,6 +75,19 @@ export type WorkerCardProps = {
   userMessages?: TerminalUserMessage[];
   projectRoot?: string | null;
   pendingPermissions: PendingPermissionRecord[];
+  pendingElicitations?: PendingElicitationRecord[];
+  onRespondElicitation?: (input: {
+    workerId: string;
+    requestId: number;
+    action: "accept" | "decline" | "cancel";
+    content?: Record<string, string | number | boolean | string[]>;
+  }) => void;
+  onRespondPermission?: (input: {
+    workerId: string;
+    requestId: number;
+    decision: "approve" | "deny";
+    optionId?: string;
+  }) => void;
   terminalHeightClass: string;
   fillAvailable?: boolean;
   compact?: boolean;
@@ -318,12 +345,29 @@ function WorkerExpandedFooter({
   );
 }
 
-function PermissionWarning({ workerId, pendingPermissions }: { workerId: string; pendingPermissions: PendingPermissionRecord[] }) {
+function isDenyPermissionOption(option: { optionId: string; kind: string }) {
+  return /^reject/i.test(option.kind) || /^(reject|deny|cancel)/i.test(option.optionId);
+}
+
+function PermissionWarning({
+  workerId,
+  pendingPermissions,
+  onRespondPermission,
+}: {
+  workerId: string;
+  pendingPermissions: PendingPermissionRecord[];
+  onRespondPermission?: WorkerCardProps["onRespondPermission"];
+}) {
   const { permissionOpenByWorkerId } = useManagerSnapshot(workerCardManager);
   const open = Boolean(permissionOpenByWorkerId[workerId]);
   const popupRef = useRef<HTMLDivElement>(null);
   const permissionCount = pendingPermissions.length;
   const summary = `${permissionCount} permission request${permissionCount === 1 ? "" : "s"} waiting`;
+
+  const respond = (requestId: number, decision: "approve" | "deny", optionId?: string) => {
+    onRespondPermission?.({ workerId, requestId, decision, optionId });
+    workerCardManager.closePermission(workerId);
+  };
 
   useEffect(() => {
     if (!open) {
@@ -374,18 +418,243 @@ function PermissionWarning({ workerId, pendingPermissions }: { workerId: string;
                 ) : null}
                 {permission.options?.length ? (
                   <div className="mt-2 space-y-1">
-                    {permission.options.map((option) => (
-                      <div key={option.optionId} className="rounded-lg bg-muted/40 px-2 py-1.5 dark:bg-white/[0.04]">
-                        <span className="font-medium text-foreground dark:text-zinc-100">{option.kind}</span>
-                        <span className="text-muted-foreground dark:text-zinc-400"> {option.name}</span>
-                      </div>
-                    ))}
+                    {permission.options.map((option) => {
+                      const deny = isDenyPermissionOption(option);
+                      return (
+                        <button
+                          key={option.optionId}
+                          type="button"
+                          disabled={!onRespondPermission}
+                          onClick={() => respond(permission.requestId, deny ? "deny" : "approve", option.optionId)}
+                          className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                            deny
+                              ? "bg-muted/40 text-muted-foreground hover:bg-muted/70 hover:text-foreground dark:bg-white/[0.04] dark:hover:bg-white/[0.08]"
+                              : "bg-emerald-500/10 text-emerald-800 hover:bg-emerald-500/20 dark:bg-emerald-400/10 dark:text-emerald-100 dark:hover:bg-emerald-400/20"
+                          }`}
+                        >
+                          {deny ? <X className="h-3 w-3 shrink-0" /> : <Check className="h-3 w-3 shrink-0" />}
+                          <span className="font-medium">{option.name}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 ) : (
-                  <div className="mt-2 text-muted-foreground dark:text-zinc-400">No option details available yet.</div>
+                  <div className="mt-2 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      disabled={!onRespondPermission}
+                      onClick={() => respond(permission.requestId, "deny")}
+                      className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] font-medium text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <X className="h-3 w-3" />
+                      No
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!onRespondPermission}
+                      onClick={() => respond(permission.requestId, "approve")}
+                      className="inline-flex h-7 items-center gap-1 rounded-md bg-primary px-2 text-[11px] font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Check className="h-3 w-3" />
+                      Yes
+                    </button>
+                  </div>
                 )}
               </div>
             ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function schemaFieldLabel(fieldName: string, index: number) {
+  const fallback = t("worker.elicitation.fieldFallback", { number: index + 1 });
+  return fieldName.replace(/^question_/, "").replace(/[_-]+/g, " ").trim() || fallback;
+}
+
+function asSchemaProperty(value: unknown) {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function optionValue(value: unknown) {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return null;
+}
+
+function fieldOptions(property: Record<string, unknown>) {
+  const oneOf = Array.isArray(property.oneOf) ? property.oneOf : [];
+  const oneOfOptions = oneOf
+    .map((item) => {
+      const record = asSchemaProperty(item);
+      const value = optionValue(record.const);
+      if (value === null) return null;
+      return {
+        value,
+        label: typeof record.title === "string" && record.title.trim() ? record.title : value,
+      };
+    })
+    .filter((item): item is { value: string; label: string } => Boolean(item));
+  if (oneOfOptions.length > 0) {
+    return oneOfOptions;
+  }
+  const enumValues = Array.isArray(property.enum) ? property.enum : [];
+  return enumValues
+    .map(optionValue)
+    .filter((value): value is string => value !== null)
+    .map((value) => ({ value, label: value }));
+}
+
+function elicitationFields(elicitation: PendingElicitationRecord) {
+  const properties = elicitation.requestedSchema?.properties ?? {};
+  const entries = Object.entries(properties);
+  if (entries.length === 0) {
+    return [{
+      name: "response",
+      label: t("worker.elicitation.responseLabel"),
+      options: [] as Array<{ value: string; label: string }>,
+      required: true,
+    }];
+  }
+  const required = new Set(elicitation.requestedSchema?.required ?? []);
+  return entries.map(([name, rawProperty], index) => {
+    const property = asSchemaProperty(rawProperty);
+    return {
+      name,
+      label: typeof property.title === "string" && property.title.trim()
+        ? property.title
+        : schemaFieldLabel(name, index),
+      options: fieldOptions(property),
+      required: required.has(name),
+    };
+  });
+}
+
+function ElicitationWarning({
+  workerId,
+  pendingElicitations,
+  onRespondElicitation,
+}: {
+  workerId: string;
+  pendingElicitations: PendingElicitationRecord[];
+  onRespondElicitation?: WorkerCardProps["onRespondElicitation"];
+}) {
+  const { elicitationOpenByWorkerId, elicitationDraftsByKey } = useManagerSnapshot(workerCardManager);
+  const open = Boolean(elicitationOpenByWorkerId[workerId]);
+  const popupRef = useRef<HTMLDivElement>(null);
+  const current = pendingElicitations[0];
+  const summary = t("worker.elicitation.summary", { count: pendingElicitations.length });
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!popupRef.current?.contains(event.target as Node)) {
+        workerCardManager.closeElicitation(workerId);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [open, workerId]);
+
+  if (!current) {
+    return null;
+  }
+
+  const fields = elicitationFields(current);
+  const draftPrefix = `${workerId}:${current.requestId}:`;
+  const content = Object.fromEntries(fields.map((field) => [
+    field.name,
+    elicitationDraftsByKey[`${draftPrefix}${field.name}`] ?? "",
+  ]));
+  const missingRequired = fields.some((field) => field.required && !String(content[field.name] ?? "").trim());
+  const submit = (action: "accept" | "decline" | "cancel") => {
+    onRespondElicitation?.({
+      workerId,
+      requestId: current.requestId,
+      action,
+      ...(action === "accept" ? { content } : {}),
+    });
+    workerCardManager.clearElicitationDrafts(draftPrefix);
+    workerCardManager.closeElicitation(workerId);
+  };
+
+  return (
+    <div ref={popupRef} className="relative">
+      <button
+        type="button"
+        aria-label={summary}
+        title={summary}
+        className="group relative flex h-8 w-8 items-center justify-center rounded-full border border-sky-500/25 bg-sky-500/10 text-sky-700 transition-colors hover:bg-sky-500/15 dark:border-sky-200/12 dark:bg-sky-50/[0.04] dark:text-sky-100/85 dark:hover:bg-sky-50/[0.08]"
+        onClick={() => workerCardManager.toggleElicitation(workerId)}
+      >
+        <HelpCircle className="h-3.5 w-3.5" />
+        {!open ? (
+          <div className="pointer-events-none absolute right-0 top-10 hidden min-w-max rounded-full border border-border bg-popover px-2.5 py-1 text-[10px] font-medium text-popover-foreground shadow-lg group-hover:block dark:border-white/10 dark:bg-[#181513] dark:text-zinc-200">
+            {t("worker.elicitation.hover")}
+          </div>
+        ) : null}
+      </button>
+      {open ? (
+        <div className="absolute right-0 top-10 z-30 w-96 max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-popover p-3.5 text-popover-foreground shadow-[0_22px_70px_rgba(15,23,42,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#131517] dark:shadow-[0_22px_70px_rgba(0,0,0,0.45)]">
+          <div className="mb-1 text-[11px] font-medium text-foreground dark:text-zinc-100">{t("worker.elicitation.title")}</div>
+          <div className="text-[11px] leading-5 text-muted-foreground dark:text-zinc-400">{current.message || t("worker.elicitation.defaultQuestion")}</div>
+          <div className="mt-3 space-y-2.5">
+            {fields.map((field) => {
+              const draftKey = `${draftPrefix}${field.name}`;
+              const value = elicitationDraftsByKey[draftKey] ?? "";
+              return (
+                <label key={field.name} className="block space-y-1.5 text-[11px]">
+                  <span className="font-medium text-foreground dark:text-zinc-100">{field.label}</span>
+                  {field.options.length > 0 ? (
+                    <select
+                      className="h-8 w-full rounded-md border border-border bg-background px-2 text-[11px] text-foreground outline-none focus:border-primary"
+                      value={value}
+                      onChange={(event) => workerCardManager.setElicitationDraft(draftKey, event.target.value)}
+                    >
+                      <option value="">{t("worker.elicitation.selectPlaceholder")}</option>
+                      {field.options.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      className="h-8 w-full rounded-md border border-border bg-background px-2 text-[11px] text-foreground outline-none focus:border-primary"
+                      value={value}
+                      placeholder={t("worker.elicitation.inputPlaceholder")}
+                      onChange={(event) => workerCardManager.setElicitationDraft(draftKey, event.target.value)}
+                    />
+                  )}
+                </label>
+              );
+            })}
+          </div>
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+              onClick={() => submit("decline")}
+            >
+              <X className="h-3 w-3" />
+              {t("worker.elicitation.skip")}
+            </button>
+            <button
+              type="button"
+              className="inline-flex h-7 items-center gap-1 rounded-md bg-primary px-2 text-[11px] font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!onRespondElicitation || missingRequired}
+              onClick={() => submit("accept")}
+            >
+              <Check className="h-3 w-3" />
+              {t("worker.elicitation.submit")}
+            </button>
           </div>
         </div>
       ) : null}
@@ -407,6 +676,9 @@ export function WorkerCard({
   userMessages = [],
   projectRoot,
   pendingPermissions,
+  pendingElicitations = [],
+  onRespondElicitation,
+  onRespondPermission,
   terminalHeightClass,
   fillAvailable = false,
   compact = false,
@@ -419,6 +691,7 @@ export function WorkerCard({
   isStopping,
   stoppingTerminalProcessId,
 }: WorkerCardProps) {
+  useI18nSnapshot();
   const { openByWorkerId } = useManagerSnapshot(workerCardManager);
   const workerStream = useWorkerStream(workerId);
   const open = isFocused || (openByWorkerId[workerId] ?? defaultOpen);
@@ -534,7 +807,14 @@ export function WorkerCard({
   );
   const actionControls = (
     <div className="flex shrink-0 items-center gap-1.5">
-      {pendingPermissions.length > 0 ? <PermissionWarning workerId={workerId} pendingPermissions={pendingPermissions} /> : null}
+      {pendingElicitations.length > 0 ? (
+        <ElicitationWarning
+          workerId={workerId}
+          pendingElicitations={pendingElicitations}
+          onRespondElicitation={onRespondElicitation}
+        />
+      ) : null}
+      {pendingPermissions.length > 0 ? <PermissionWarning workerId={workerId} pendingPermissions={pendingPermissions} onRespondPermission={onRespondPermission} /> : null}
       {showFocusControl ? (
         <button
           type="button"

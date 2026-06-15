@@ -22,6 +22,8 @@ export function SideWindow({
   preferredEffort,
   onStopWorker,
   onStopTerminalProcess,
+  onRespondElicitation,
+  onRespondPermission,
   onLoadWorkerHistory,
   stoppingWorkerId,
   stoppingTerminalProcess,
@@ -36,6 +38,18 @@ export function SideWindow({
   preferredEffort: string | null;
   onStopWorker?: (workerId: string) => void;
   onStopTerminalProcess?: (workerId: string, terminalProcess: WorkerTerminalProcess) => void;
+  onRespondElicitation?: (input: {
+    workerId: string;
+    requestId: number;
+    action: "accept" | "decline" | "cancel";
+    content?: Record<string, string | number | boolean | string[]>;
+  }) => void;
+  onRespondPermission?: (input: {
+    workerId: string;
+    requestId: number;
+    decision: "approve" | "deny";
+    optionId?: string;
+  }) => void;
   onLoadWorkerHistory?: (workerId: string) => void;
   stoppingWorkerId?: string | null;
   stoppingTerminalProcess?: { workerId: string; terminalProcessId: string } | null;
@@ -144,6 +158,8 @@ export function SideWindow({
             projectRoot={projectRoot}
             onStopWorker={onStopWorker}
             onStopTerminalProcess={onStopTerminalProcess}
+            onRespondElicitation={onRespondElicitation}
+            onRespondPermission={onRespondPermission}
             onLoadWorkerHistory={onLoadWorkerHistory}
             stoppingWorkerId={stoppingWorkerId}
             stoppingTerminalProcess={stoppingTerminalProcess}

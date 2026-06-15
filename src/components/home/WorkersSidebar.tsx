@@ -22,6 +22,18 @@ export interface WorkersSidebarProps {
   projectRoot?: string | null;
   onStopWorker?: (workerId: string) => void;
   onStopTerminalProcess?: (workerId: string, terminalProcess: WorkerTerminalProcess) => void;
+  onRespondElicitation?: (input: {
+    workerId: string;
+    requestId: number;
+    action: "accept" | "decline" | "cancel";
+    content?: Record<string, string | number | boolean | string[]>;
+  }) => void;
+  onRespondPermission?: (input: {
+    workerId: string;
+    requestId: number;
+    decision: "approve" | "deny";
+    optionId?: string;
+  }) => void;
   onLoadWorkerHistory?: (workerId: string) => void;
   stoppingWorkerId?: string | null;
   stoppingTerminalProcess?: { workerId: string; terminalProcessId: string } | null;
@@ -50,6 +62,8 @@ export function ConversationWorkerCard({
   supervisorInterventions = [],
   onStopWorker,
   onStopTerminalProcess,
+  onRespondElicitation,
+  onRespondPermission,
   onLoadWorkerHistory,
   isStopping,
   stoppingTerminalProcessId,
@@ -70,6 +84,8 @@ export function ConversationWorkerCard({
   supervisorInterventions?: SupervisorInterventionRecord[];
   onStopWorker?: (workerId: string) => void;
   onStopTerminalProcess?: (workerId: string, terminalProcess: WorkerTerminalProcess) => void;
+  onRespondElicitation?: WorkersSidebarProps["onRespondElicitation"];
+  onRespondPermission?: WorkersSidebarProps["onRespondPermission"];
   onLoadWorkerHistory?: (workerId: string) => void;
   isStopping?: boolean;
   stoppingTerminalProcessId?: string | null;
@@ -83,6 +99,7 @@ export function ConversationWorkerCard({
   const activeModel = agent?.effectiveModel || configuredModel;
   const activeEffort = agent?.effectiveEffort || configuredEffort;
   const pendingPermissions = agent?.pendingPermissions ?? [];
+  const pendingElicitations = agent?.pendingElicitations ?? [];
   const runtimeLabel = formatWorkerRuntime(agent?.type || worker.type);
   const runtimeDurationLabel = getWorkerRuntimeLabel(worker);
   const fallbackAgent = useMemo(() => agent ?? {
@@ -114,6 +131,9 @@ export function ConversationWorkerCard({
       userMessages={userMessages}
       projectRoot={projectRoot}
       pendingPermissions={pendingPermissions}
+      pendingElicitations={pendingElicitations}
+      onRespondElicitation={onRespondElicitation}
+      onRespondPermission={onRespondPermission}
       terminalHeightClass={terminalHeightClass}
       fillAvailable={fillAvailable}
       compact={compact}
@@ -129,7 +149,7 @@ export function ConversationWorkerCard({
   );
 }
 
-export function WorkersSidebar({ workers, agents, supervisorInterventions, preferredModel, preferredEffort, projectRoot, onStopWorker, onStopTerminalProcess, onLoadWorkerHistory, stoppingWorkerId, stoppingTerminalProcess, onClose, showHeader = true }: WorkersSidebarProps) {
+export function WorkersSidebar({ workers, agents, supervisorInterventions, preferredModel, preferredEffort, projectRoot, onStopWorker, onStopTerminalProcess, onRespondElicitation, onRespondPermission, onLoadWorkerHistory, stoppingWorkerId, stoppingTerminalProcess, onClose, showHeader = true }: WorkersSidebarProps) {
   useI18nSnapshot();
   const { activeTab: requestedActiveTab, focusedWorkerId } = useManagerSnapshot(workersSidebarManager);
   const workerGroups = buildWorkerLists(workers);
@@ -178,6 +198,8 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
         onToggleFocus={() => workersSidebarManager.toggleFocusedWorker(worker.id)}
         onStopWorker={onStopWorker}
         onStopTerminalProcess={onStopTerminalProcess}
+        onRespondElicitation={onRespondElicitation}
+        onRespondPermission={onRespondPermission}
         onLoadWorkerHistory={onLoadWorkerHistory}
         isStopping={stoppingWorkerId === worker.id}
         stoppingTerminalProcessId={stoppingTerminalProcess?.workerId === worker.id ? stoppingTerminalProcess.terminalProcessId : null}
@@ -225,7 +247,7 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
             )}
             onClick={() => workersSidebarManager.setActiveTab("active")}
           >
-            Active ({workerGroups.active.length})
+            {t("workers.sidebar.activeTab", { count: workerGroups.active.length })}
           </button>
           <button
             type="button"
@@ -237,7 +259,7 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
             )}
             onClick={() => workersSidebarManager.setActiveTab("finished")}
           >
-            Finished ({workerGroups.finished.length})
+            {t("workers.sidebar.finishedTab", { count: workerGroups.finished.length })}
           </button>
         </div>
       </div>
@@ -257,7 +279,7 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
             ) : (
               <div className="flex h-full min-h-[16rem] flex-1 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground">
                 <TerminalIcon className="mb-2 h-6 w-6 opacity-30" />
-                {activeTab === "active" ? "No active workers for this conversation." : "No finished workers for this conversation."}
+                {activeTab === "active" ? t("workers.sidebar.emptyActive") : t("workers.sidebar.emptyFinished")}
               </div>
             )}
           </div>

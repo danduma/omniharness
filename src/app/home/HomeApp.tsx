@@ -55,6 +55,7 @@ import type { ConversationSidebarTab, EventStreamState, MessageRecord, SidebarGr
 import type { HomeBootstrapPayload } from "./bootstrap.server";
 import { useHomeQueries } from "./useHomeQueries";
 import { useHomeViewModel } from "./useHomeViewModel";
+import { useFrozenRecentOrder } from "./useFrozenRecentOrder";
 import { useHomeMutations } from "./useHomeMutations";
 import { useConversationActions } from "./useConversationActions";
 import { useHomeLayoutController } from "./useHomeLayoutController";
@@ -499,6 +500,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     conversationFailure: rawConversationFailure,
     directConversationMessages,
     pendingPermissionAgent,
+    pendingElicitationAgent,
     erroredAgent,
     latestWaitEvent,
     latestPromptDeferredEvent,
@@ -514,6 +516,13 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     conversationTimelineItems,
     conversationWorkerGroups,
   } = vm;
+
+  // Freeze the Recent ("Active") tab's order while it's open so rows don't
+  // reshuffle on every turn; it re-sorts by latest activity only on (re)open.
+  const stableActiveProjects = useFrozenRecentOrder(
+    activeProjects as SidebarGroup[],
+    conversationSidebarTab === "recent",
+  );
 
   // A conversation created optimistically in this session is fully known to
   // the client (the run plus the message the user just typed), so it must
@@ -600,11 +609,14 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     sendConversationMessage,
     cancelQueuedMessage,
     sendQueuedMessageNow,
+    interruptQueuedMessage,
     autoCommitChat,
     autoCommitProject,
     stopSupervisor,
     stopWorker,
     stopWorkerTerminalProcess,
+    respondElicitation,
+    respondPermission,
     promotePlanningConversation,
     startPlanningReview,
     handleLoadWorkerHistory,
@@ -916,6 +928,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     latestExecutionEvent,
     erroredAgent,
     pendingPermissionAgent,
+    pendingElicitationAgent,
     hasStuckWorker,
     latestStuckEvent,
     showRecoverableRunningState,
@@ -968,6 +981,10 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   const isSendingSelectedQueuedMessage = isMutationPendingForSelectedRun({
     isPending: sendQueuedMessageNow.isPending,
     mutationRunId: sendQueuedMessageNow.variables?.runId,
+    selectedRunId,
+  }) || isMutationPendingForSelectedRun({
+    isPending: interruptQueuedMessage.isPending,
+    mutationRunId: interruptQueuedMessage.variables?.runId,
     selectedRunId,
   });
   const isStoppingSelectedSupervisor = isMutationPendingForSelectedRun({
@@ -1075,12 +1092,16 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
       busyMessageAction={busyMessageAction}
       queuedMessages={selectedQueuedMessages}
       cancellingQueuedMessageIds={busyMessageQueueState.cancellingMessageIds}
+      interruptingQueuedMessageIds={busyMessageQueueState.interruptingMessageIds}
       onEditQueuedMessage={actions.handleEditQueuedMessage}
-      onSendQueuedMessageNow={(messageId) => {
-        if (selectedRunId) sendQueuedMessageNow.mutate({ runId: selectedRunId, messageId });
+      onInterruptQueuedMessage={(messageId) => {
+        if (selectedRunId) interruptQueuedMessage.mutate({ runId: selectedRunId, messageId });
       }}
       onCancelQueuedMessage={(messageId) => {
         if (selectedRunId) cancelQueuedMessage.mutate({ runId: selectedRunId, messageId });
+      }}
+      onInterruptConversation={(draft) => {
+        if (selectedRunId) interruptQueuedMessage.mutate({ runId: selectedRunId, draft: draft ?? undefined });
       }}
       onSendConversationMessage={(content, attachments, busyAction) => {
         if (selectedRunId) sendConversationMessage.mutate({ runId: selectedRunId, content, attachments, busyAction });
@@ -1113,7 +1134,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
 
   const sharedSidebarProps = {
     filteredProjects: filteredProjects as SidebarGroup[],
-    activeProjects: activeProjects as SidebarGroup[],
+    activeProjects: stableActiveProjects,
     conversationSidebarTab: conversationSidebarTab as ConversationSidebarTab,
     setConversationSidebarTab,
     isHydratingConversations,
@@ -1212,6 +1233,8 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
               stopWorkerTerminalProcess.mutate({ runId: selectedRunId, workerId, terminalProcess });
             }
           }}
+          onRespondElicitation={(input) => respondElicitation.mutate(input)}
+          onRespondPermission={(input) => respondPermission.mutate(input)}
           onLoadWorkerHistory={handleLoadWorkerHistory}
           stoppingWorkerId={stopWorker.variables?.workerId ?? null}
           stoppingTerminalProcess={stopWorkerTerminalProcess.variables ? {
@@ -1322,6 +1345,8 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
                   stopWorkerTerminalProcess.mutate({ runId: selectedRunId, workerId, terminalProcess });
                 }
               }}
+              onRespondElicitation={(input) => respondElicitation.mutate(input)}
+              onRespondPermission={(input) => respondPermission.mutate(input)}
               onLoadWorkerHistory={handleLoadWorkerHistory}
               stoppingWorkerId={stopWorker.variables?.workerId ?? null}
               stoppingTerminalProcess={stopWorkerTerminalProcess.variables ? {
