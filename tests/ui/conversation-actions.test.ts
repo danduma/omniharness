@@ -116,10 +116,12 @@ test("conversation rows show left-side status attention indicators", () => {
 });
 
 test("top bar exposes an auto commit action for the selected chat", () => {
+  const commitWorkflowSource = readSource("src/lib/commit-workflow.ts");
+
   expect(pageSource).toContain("MANUAL_COMMIT_CHAT_PROMPT");
   expect(pageSource).toContain("MANUAL_COMMIT_CHAT_PUSH_PROMPT");
-  expect(pageSource).toContain('"Group the modified files from this conversation into logical git commits. Do not run tests. Do not modify files or do anything else. Only inspect the modified files as needed, create commits, and stop."');
-  expect(pageSource).toContain('"Group the modified files from this conversation into logical git commits, then push the current branch. Do not run tests. Do not modify files or do anything else. Only inspect the modified files as needed, create commits, push, and stop."');
+  expect(commitWorkflowSource).toContain("Commit ONLY the files you touched during this conversation/session.");
+  expect(commitWorkflowSource).toContain("Commit ONLY the files you touched during this conversation/session, then push the current branch.");
   expect(pageSource).toContain("mutations.autoCommitChat.mutate({ runId: selectedRunId, action })");
   expect(pageSource).toContain("ButtonGroup");
   expect(pageSource).toContain("DropdownMenu");
@@ -425,20 +427,20 @@ test("send queued now failures do not leak into every conversation notice stack"
 });
 
 test("send queued now hides accepted direct messages from the queued drawer", () => {
-  const useHomeMutationsSource = readSource("src/app/home/useHomeMutations.ts");
+  const queuedMutationsSource = readSource("src/app/home/useQueuedMessageMutations.ts");
 
-  expect(useHomeMutationsSource).toContain('if (data.message && data.queuedMessage?.status === "delivering")');
-  expect(useHomeMutationsSource).toContain("busyMessageQueueManager.hideQueuedMessage(variables.messageId);");
+  expect(queuedMutationsSource).toContain('if (data.message && data.queuedMessage?.status === "delivering")');
+  expect(queuedMutationsSource).toContain("busyMessageQueueManager.hideQueuedMessage(variables.messageId);");
 });
 
 test("editing or cancelling a queued message removes it optimistically and rolls back on failure", () => {
-  const useHomeMutationsSource = readSource("src/app/home/useHomeMutations.ts");
-  const cancelQueuedMessageIndex = useHomeMutationsSource.indexOf("const cancelQueuedMessage = useMutation({");
-  const onMutateIndex = useHomeMutationsSource.indexOf("onMutate: ({ messageId }) => {", cancelQueuedMessageIndex);
-  const hideIndex = useHomeMutationsSource.indexOf("busyMessageQueueManager.hideQueuedMessage(messageId);", onMutateIndex);
-  const mutationFnIndex = useHomeMutationsSource.indexOf("mutationFn:", cancelQueuedMessageIndex);
-  const onErrorIndex = useHomeMutationsSource.indexOf("onError: (_error, variables, context) => {", hideIndex);
-  const restoreIndex = useHomeMutationsSource.indexOf("busyMessageQueueManager.restoreQueuedMessage(context.previousQueuedMessage);", onErrorIndex);
+  const queuedMutationsSource = readSource("src/app/home/useQueuedMessageMutations.ts");
+  const cancelQueuedMessageIndex = queuedMutationsSource.indexOf("const cancelQueuedMessage = useMutation({");
+  const onMutateIndex = queuedMutationsSource.indexOf("onMutate: ({ messageId }) => {", cancelQueuedMessageIndex);
+  const hideIndex = queuedMutationsSource.indexOf("busyMessageQueueManager.hideQueuedMessage(messageId);", onMutateIndex);
+  const mutationFnIndex = queuedMutationsSource.indexOf("mutationFn:", cancelQueuedMessageIndex);
+  const onErrorIndex = queuedMutationsSource.indexOf("onError: (_error, variables, context) => {", hideIndex);
+  const restoreIndex = queuedMutationsSource.indexOf("busyMessageQueueManager.restoreQueuedMessage(context.previousQueuedMessage);", onErrorIndex);
 
   expect(cancelQueuedMessageIndex).toBeGreaterThanOrEqual(0);
   expect(onMutateIndex).toBeGreaterThan(cancelQueuedMessageIndex);
