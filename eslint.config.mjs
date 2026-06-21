@@ -42,6 +42,8 @@ const eslintConfig = [
       "next-env.d.ts",
       ".agents/**",
       ".claude/**",
+      ".omniharness/**",
+      "**/.omniharness/**",
       ".runner/**",
       "coverage/**",
       "test-results/**",
