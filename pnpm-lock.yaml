@@ -29,8 +29,8 @@ importers:
         specifier: ^1.4.1
         version: 1.4.1(@types/react@19.2.14)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@danduma/i18n':
-        specifier: github:danduma/i18n#5684747b61b748173d0c1e1fb1e0d241083e3de0
-        version: https://codeload.github.com/danduma/i18n/tar.gz/5684747b61b748173d0c1e1fb1e0d241083e3de0
+        specifier: github:danduma/i18n#ab2a85dddd2e176b61bec18d55736dbdd151fe41
+        version: https://codeload.github.com/danduma/i18n/tar.gz/ab2a85dddd2e176b61bec18d55736dbdd151fe41
       '@libsql/client':
         specifier: ^0.17.3
         version: 0.17.3
@@ -423,8 +423,8 @@ packages:
     resolution: {integrity: sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ==}
     engines: {node: '>=0.1.90'}
 
-  '@danduma/i18n@https://codeload.github.com/danduma/i18n/tar.gz/5684747b61b748173d0c1e1fb1e0d241083e3de0':
-    resolution: {gitHosted: true, tarball: https://codeload.github.com/danduma/i18n/tar.gz/5684747b61b748173d0c1e1fb1e0d241083e3de0}
+  '@danduma/i18n@https://codeload.github.com/danduma/i18n/tar.gz/ab2a85dddd2e176b61bec18d55736dbdd151fe41':
+    resolution: {gitHosted: true, integrity: sha512-GxkSm/Jzi1NPmFLBg9mldZLh6+W9sCbYjVgtl8fB8FVPvg38k7im9sNtrclHkP2NLFBcWETf5rGZeDVdyg8ZyQ==, tarball: https://codeload.github.com/danduma/i18n/tar.gz/ab2a85dddd2e176b61bec18d55736dbdd151fe41}
     version: 0.1.0
 
   '@dotenvx/dotenvx@1.61.1':
@@ -5364,7 +5364,7 @@ snapshots:
   '@colors/colors@1.5.0':
     optional: true
 
-  '@danduma/i18n@https://codeload.github.com/danduma/i18n/tar.gz/5684747b61b748173d0c1e1fb1e0d241083e3de0': {}
+  '@danduma/i18n@https://codeload.github.com/danduma/i18n/tar.gz/ab2a85dddd2e176b61bec18d55736dbdd151fe41': {}
 
   '@dotenvx/dotenvx@1.61.1':
     dependencies:

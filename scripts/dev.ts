@@ -7,10 +7,13 @@ import { describeBridgeToolingProblem } from "../src/server/dev/bridge-health";
 import { bridgeNeedsBuild, resolveBridgeDir, resolveBridgeUrl, shouldAutoStartBridge } from "../src/server/dev/managed-bridge";
 import { detectNextDevRouteEnoent, type NextDevRouteEnoentRecovery } from "./dev-web-recovery";
 import { isNextDevReadyLine, prewarmDevPaths, resolveDevPrewarmBaseUrl, resolveDevPrewarmPaths } from "./dev-prewarm";
+import { resolvePnpmArgs, resolvePnpmCommand } from "./package-manager-command";
 
 const repoRoot = process.cwd();
 const serverMode = process.env.OMNIHARNESS_SERVER_MODE === "production" ? "production" : "development";
 const logLabel = serverMode === "production" ? "start" : "dev";
+const pnpmCommand = resolvePnpmCommand();
+const pnpmArgs = (args: readonly string[]) => resolvePnpmArgs(args);
 const webPort = process.env.PORT || "3050";
 process.env.PORT = webPort;
 const webHost = process.env.OMNIHARNESS_WEB_HOST?.trim() || "0.0.0.0";
@@ -23,13 +26,13 @@ const bridgeDir = resolveBridgeDir(repoRoot, process.env);
 const bridgeLockPath = resolveBridgeLockPath(repoRoot);
 const BRIDGE_READY_TIMEOUT_MS = 90_000;
 const webCommand = serverMode === "production"
-  ? ["pnpm", ["exec", "next", "start", "-H", webHost, "-p", webPort]] as const
-  : ["pnpm", ["run", "dev:web", "--hostname", webHost, "--port", webPort]] as const;
-const proxyCommand = ["pnpm", ["run", "dev:proxy"]] as const;
-const bridgeCommand = ["pnpm", ["exec", "tsx", "scripts/agent-runtime.ts"]] as const;
+  ? [pnpmCommand, pnpmArgs(["exec", "next", "start", "-H", webHost, "-p", webPort])] as const
+  : [pnpmCommand, pnpmArgs(["run", "dev:web", "--hostname", webHost, "--port", webPort])] as const;
+const proxyCommand = [pnpmCommand, pnpmArgs(["run", "dev:proxy"])] as const;
+const bridgeCommand = [pnpmCommand, pnpmArgs(["exec", "tsx", "scripts/agent-runtime.ts"])] as const;
 const setupCommands = [
-  { label: "runtime install", command: "pnpm", args: ["install"] },
-  { label: "runtime build", command: "pnpm", args: ["build"] },
+  { label: "runtime install", command: pnpmCommand, args: pnpmArgs(["install"]) },
+  { label: "runtime build", command: pnpmCommand, args: pnpmArgs(["build"]) },
 ] as const;
 
 let managedBridgeChild: ChildProcess | null = null;
