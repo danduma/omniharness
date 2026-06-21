@@ -20,6 +20,8 @@ export interface ConversationTranscriptEntry extends WorkerEntry {
 export interface ConversationTranscriptState {
   entries: ConversationTranscriptEntry[];
   latestToken: string | null;
+  oldestToken: string | null;
+  hasOlder: boolean;
   status: "idle" | "loading" | "loaded" | "error";
   lastError: string | null;
   workerIds: string[];
@@ -28,12 +30,18 @@ export interface ConversationTranscriptState {
 interface TranscriptFetchResponse {
   entries: ConversationTranscriptEntry[];
   latestToken: string;
+  oldestToken?: string;
+  hasOlder?: boolean;
   workerIds: string[];
 }
+
+const DEFAULT_TRANSCRIPT_LIMIT = 100;
 
 const EMPTY: ConversationTranscriptState = Object.freeze({
   entries: [],
   latestToken: null,
+  oldestToken: null,
+  hasOlder: false,
   status: "idle",
   lastError: null,
   workerIds: [],
@@ -44,6 +52,15 @@ export const EMPTY_CONVERSATION_TRANSCRIPT_STATE = EMPTY;
 function endpoint(runId: string, afterToken: string | null) {
   const base = `/api/conversations/${encodeURIComponent(runId)}/transcript`;
   return afterToken ? `${base}?afterToken=${encodeURIComponent(afterToken)}` : base;
+}
+
+function tailEndpoint(runId: string, limit: number) {
+  return `/api/conversations/${encodeURIComponent(runId)}/transcript?limit=${limit}`;
+}
+
+function beforeEndpoint(runId: string, beforeToken: string, limit: number) {
+  const base = `/api/conversations/${encodeURIComponent(runId)}/transcript`;
+  return `${base}?beforeToken=${encodeURIComponent(beforeToken)}&limit=${limit}`;
 }
 
 export interface ConversationTranscriptManagerOptions {
@@ -83,14 +100,26 @@ export class ConversationTranscriptManager {
     if (state.status === "loaded" || state.status === "loading") {
       return this.inFlightByRunId.get(runId) ?? Promise.resolve();
     }
-    return this.fetch(runId);
+    return this.fetchTail(runId);
   }
 
   refresh(runId: string): Promise<void> {
     if (this.inFlightByRunId.has(runId)) {
       return this.inFlightByRunId.get(runId)!;
     }
-    return this.fetch(runId);
+    const state = this.getState(runId);
+    return state.latestToken ? this.fetchForward(runId, state.latestToken) : this.fetchTail(runId);
+  }
+
+  loadOlder(runId: string, limit: number = DEFAULT_TRANSCRIPT_LIMIT): Promise<void> {
+    if (this.inFlightByRunId.has(runId)) {
+      return this.inFlightByRunId.get(runId)!;
+    }
+    const state = this.getState(runId);
+    if (!state.hasOlder || !state.oldestToken) {
+      return Promise.resolve();
+    }
+    return this.fetchOlder(runId, state.oldestToken, limit);
   }
 
   reset(): void {
@@ -109,24 +138,90 @@ export class ConversationTranscriptManager {
     }
   }
 
-  private async fetch(runId: string): Promise<void> {
+  private async fetchTail(runId: string, limit: number = DEFAULT_TRANSCRIPT_LIMIT): Promise<void> {
     const previous = this.getState(runId);
     this.updateState(runId, { ...previous, status: "loading", lastError: null });
-    const url = endpoint(runId, previous.latestToken);
+    const url = tailEndpoint(runId, limit);
     const promise = this.requestJson<TranscriptFetchResponse>(url, undefined, {
       source: "Conversation transcript",
       action: "Load conversation transcript",
     }).then(
       (response) => {
+        const current = this.getState(runId);
         const next: ConversationTranscriptState = {
-          // Merge new entries onto the existing window. The server only
-          // returns entries with seq > the per-worker cursor in the
-          // token, so duplicates are not possible by id+seq, but we
-          // still coalesce defensively for the rendering layer (same
-          // logical entry id can have multiple seq rows under the
-          // streaming-revision protocol).
-          entries: coalesceWorkerEntriesById([...previous.entries, ...response.entries]) as ConversationTranscriptEntry[],
+          ...current,
+          entries: coalesceWorkerEntriesById(response.entries) as ConversationTranscriptEntry[],
           latestToken: response.latestToken,
+          oldestToken: response.oldestToken ?? null,
+          hasOlder: Boolean(response.hasOlder),
+          workerIds: response.workerIds,
+          status: "loaded",
+          lastError: null,
+        };
+        this.updateState(runId, next);
+      },
+      (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        const failing = this.getState(runId);
+        this.updateState(runId, { ...failing, status: "error", lastError: message });
+      },
+    ).finally(() => {
+      this.inFlightByRunId.delete(runId);
+    });
+    this.inFlightByRunId.set(runId, promise);
+    return promise;
+  }
+
+  private async fetchForward(runId: string, latestToken: string): Promise<void> {
+    const previous = this.getState(runId);
+    this.updateState(runId, { ...previous, status: "loading", lastError: null });
+    const url = endpoint(runId, latestToken);
+    const promise = this.requestJson<TranscriptFetchResponse>(url, undefined, {
+      source: "Conversation transcript",
+      action: "Load conversation transcript",
+    }).then(
+      (response) => {
+        const current = this.getState(runId);
+        const next: ConversationTranscriptState = {
+          ...current,
+          entries: coalesceWorkerEntriesById([...current.entries, ...response.entries]) as ConversationTranscriptEntry[],
+          latestToken: response.latestToken,
+          oldestToken: current.oldestToken ?? response.oldestToken ?? null,
+          hasOlder: current.hasOlder || Boolean(response.hasOlder),
+          workerIds: response.workerIds,
+          status: "loaded",
+          lastError: null,
+        };
+        this.updateState(runId, next);
+      },
+      (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        const failing = this.getState(runId);
+        this.updateState(runId, { ...failing, status: "error", lastError: message });
+      },
+    ).finally(() => {
+      this.inFlightByRunId.delete(runId);
+    });
+    this.inFlightByRunId.set(runId, promise);
+    return promise;
+  }
+
+  private async fetchOlder(runId: string, oldestToken: string, limit: number): Promise<void> {
+    const previous = this.getState(runId);
+    this.updateState(runId, { ...previous, status: "loading", lastError: null });
+    const url = beforeEndpoint(runId, oldestToken, limit);
+    const promise = this.requestJson<TranscriptFetchResponse>(url, undefined, {
+      source: "Conversation transcript",
+      action: "Load older conversation transcript",
+    }).then(
+      (response) => {
+        const current = this.getState(runId);
+        const next: ConversationTranscriptState = {
+          ...current,
+          entries: coalesceWorkerEntriesById([...response.entries, ...current.entries]) as ConversationTranscriptEntry[],
+          latestToken: current.latestToken ?? response.latestToken,
+          oldestToken: response.oldestToken ?? current.oldestToken,
+          hasOlder: Boolean(response.hasOlder),
           workerIds: response.workerIds,
           status: "loaded",
           lastError: null,
@@ -190,10 +285,17 @@ export function useConversationTranscript(
 
   const entries = useMemo(() => state.entries, [state.entries]);
 
+  const loadOlder = useCallback((limit?: number) => {
+    if (!runId) return Promise.resolve();
+    return conversationTranscriptManager.loadOlder(runId, limit);
+  }, [runId]);
+
   return {
     state,
     entries,
     isLoaded: state.status === "loaded",
+    hasOlder: state.hasOlder,
+    loadOlder,
     workerIds: state.workerIds,
   };
 }

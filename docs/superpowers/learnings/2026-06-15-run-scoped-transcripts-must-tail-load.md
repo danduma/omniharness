@@ -1,0 +1,10 @@
+# Run-Scoped Transcripts Must Tail Load
+
+**Date:** 2026-06-15
+**Context:** OmniHarness direct conversation transcript loading with the unified worker stream.
+**Symptom:** Loading a long saved direct session opened at the beginning of the conversation instead of the latest messages, forcing the user through a huge transcript before reaching current work.
+**Root Cause:** `ConversationTranscriptManager` used the run-scoped `/api/conversations/:runId/transcript` endpoint for merged worker history, but that endpoint only understood forward pagination. A cold request had no cursor, so the server treated it as `afterSeq=0` for every worker and returned the oldest stream rows. The single-worker `WorkerEntriesManager` already had the correct tail-first plus scroll-back model, but the run-scoped sibling did not preserve that invariant.
+**Fix:** Add explicit run-scoped transcript modes: cold `?limit=100` tail load, `?beforeToken=...&limit=100` scroll-back, and existing `?afterToken=...` forward refresh. Track both `latestToken` and `oldestToken` in `ConversationTranscriptManager`, prepend older pages, and route Terminal scroll-back to the same transcript source that is currently rendered.
+**Verification:** `node_modules/.bin/vitest run tests/api/conversation-transcript-route.test.ts tests/app/conversation-transcript-manager.test.ts tests/app/worker-entries-manager.test.ts`; targeted `eslint` on the touched route, manager, component, and tests; `git diff --check` on the same files.
+**Prevention:** Any transcript loader over append-only worker streams must declare which edge it owns. Cold UI loads must be bounded tail reads, forward refreshes must use latest cursors, and scroll-back must use an explicit oldest cursor. Do not introduce a run-scoped transcript path by copying only the forward `afterSeq` half of `WorkerEntriesManager`.
+**Skill/Doc Updates:** No global skill update needed; this is a project-specific transcript ownership invariant and is captured here next to the existing OmniHarness lifecycle/transcript lessons.
