@@ -154,6 +154,107 @@ describe("PATCH /api/runs/[id]", () => {
     const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     expect(updatedRun?.title).toBe("Fix mobile header");
   });
+
+  it("moves a conversation to another project", async () => {
+    __resetNamedEventsForTests();
+    const planId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/move-project-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      title: "Move me",
+      status: "done",
+      projectPath: "/workspace/old-project",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(settings).values({
+      key: "PROJECTS",
+      value: JSON.stringify(["/workspace/old-project", "/workspace/new-project"]),
+      updatedAt: new Date(),
+    }).onConflictDoUpdate({
+      target: settings.key,
+      set: {
+        value: JSON.stringify(["/workspace/old-project", "/workspace/new-project"]),
+        updatedAt: new Date(),
+      },
+    });
+
+    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ projectPath: "/workspace/new-project" }),
+    });
+
+    const response = await PATCH(request, { params: Promise.resolve({ id: runId }) });
+    const payload = await response.json();
+
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const events = getNamedEventsSince(0).events.map((entry) => entry.event);
+
+    expect(response.status).toBe(200);
+    expect(payload).toMatchObject({ ok: true, runId, projectPath: "/workspace/new-project" });
+    expect(updatedRun?.projectPath).toBe("/workspace/new-project");
+    expect(events).toContainEqual({
+      kind: "conversation.project_moved",
+      runId,
+      previousProjectPath: "/workspace/old-project",
+      projectPath: "/workspace/new-project",
+    });
+  });
+
+  it("rejects moving a conversation that is not terminal", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/reject-running-move.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      title: "Still running",
+      status: "running",
+      projectPath: "/workspace/old-project",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(settings).values({
+      key: "PROJECTS",
+      value: JSON.stringify(["/workspace/old-project", "/workspace/new-project"]),
+      updatedAt: new Date(),
+    }).onConflictDoUpdate({
+      target: settings.key,
+      set: {
+        value: JSON.stringify(["/workspace/old-project", "/workspace/new-project"]),
+        updatedAt: new Date(),
+      },
+    });
+
+    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ projectPath: "/workspace/new-project" }),
+    });
+
+    const response = await PATCH(request, { params: Promise.resolve({ id: runId }) });
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+
+    expect(response.status).toBe(409);
+    expect(updatedRun?.projectPath).toBe("/workspace/old-project");
+  });
 });
 
 describe("POST /api/runs/[id]", () => {

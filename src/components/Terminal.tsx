@@ -226,12 +226,13 @@ function getTerminalScrollElement(container: HTMLDivElement, variant: "terminal"
 
 function scrollTerminalToBottom(container: HTMLDivElement, behavior: ScrollBehavior = "smooth") {
   if (container.scrollHeight <= container.clientHeight) {
-    return;
+    return false;
   }
   container.scrollTo({
     top: container.scrollHeight,
     behavior,
   });
+  return true;
 }
 
 export function shouldTerminalScrollToLatest({
@@ -2241,18 +2242,22 @@ export function Terminal({
       return;
     }
 
-    shouldFollowLatestRef.current = true;
-    if (filteredActivity.length > 0) {
-      hasPositionedFirstActivityRef.current = true;
-    }
     const scrollBehavior: ScrollBehavior = isFirstRenderedActivity ? "auto" : "smooth";
 
     if (isFirstRenderedActivity) {
-      scrollTerminalToBottom(container, "auto");
+      const didScroll = scrollTerminalToBottom(container, "auto");
+      if (didScroll) {
+        shouldFollowLatestRef.current = true;
+        hasPositionedFirstActivityRef.current = true;
+      }
       previousScrollTopRef.current = container.scrollTop;
       return;
     }
 
+    shouldFollowLatestRef.current = true;
+    if (filteredActivity.length > 0) {
+      hasPositionedFirstActivityRef.current = true;
+    }
     requestAnimationFrame(() => {
       if (previousActivityVersion === null) {
         scrollTerminalToBottom(container, "auto");

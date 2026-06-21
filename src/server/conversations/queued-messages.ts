@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { askAgent, getAgent, respondElicitation } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { messages, queuedConversationMessages, runs, supervisorInterventions, workers } from "@/server/db/schema";
@@ -983,11 +983,17 @@ export async function drainQueuedWorkerMessages({
       attachmentsJson: record.attachmentsJson,
       createdAt: startedAt,
     };
-    await db.update(queuedConversationMessages).set({
+    const claimed = await db.update(queuedConversationMessages).set({
       status: "delivering",
       updatedAt: startedAt,
       lastError: null,
-    }).where(eq(queuedConversationMessages.id, record.id));
+    }).where(and(
+      eq(queuedConversationMessages.id, record.id),
+      eq(queuedConversationMessages.status, "pending"),
+    )).returning({ id: queuedConversationMessages.id });
+    if (claimed.length === 0) {
+      continue;
+    }
     await db.update(runs).set({
       status: run.mode === "planning" ? "working" : "running",
       failedAt: null,
@@ -1087,7 +1093,9 @@ export async function drainQueuedWorkerMessages({
         });
       }
 
-      if (!isAgentBusyError(error)) {
+      if (isAgentBusyError(error)) {
+        await db.delete(messages).where(eq(messages.id, userMessage.id));
+      } else {
         break;
       }
     }

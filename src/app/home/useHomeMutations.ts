@@ -202,7 +202,9 @@ export function mergeLoadedWorkerHistoryAgent(
 function applyStopWorkerOptimisticUpdate(current: EventStreamState, runId: string, workerId: string) {
   const now = new Date().toISOString();
   const run = current.runs.find((candidate) => candidate.id === runId) ?? null;
-  const isImplementationRun = run?.mode === "implementation";
+  // Only a supervised run cascades a stop across its workers; an Omni run still
+  // in its planning phase has a single planner worker like a direct run.
+  const isImplementationRun = run?.mode === "implementation" && run?.phase !== "planning";
   const stoppedWorkerIds = new Set<string>();
 
   const workers = (current.workers || []).map((worker) => {
@@ -371,6 +373,8 @@ export function useHomeMutations({
     setRenamingRunId,
     setRenameValue,
     setRenameSource,
+    setMovingRunId,
+    setMoveRunProjectPath,
     setEditingMessageId,
     setEditingMessageValue,
     setSelectedRunId,
@@ -501,6 +505,42 @@ export function useHomeMutations({
       setRenamingRunId(null);
       setRenameValue("");
       setRenameSource(null);
+    },
+  });
+
+  const moveRunToProject = useMutation({
+    onMutate: (variables: { runId: string; projectPath: string }) => {
+      const previousState = state;
+      setState((current: typeof state) => ({
+        ...current,
+        runs: (current.runs || []).map((run: RunRecord) =>
+          run.id === variables.runId ? { ...run, projectPath: variables.projectPath } : run,
+        ),
+      }));
+      return { previousState };
+    },
+    mutationFn: async ({ runId, projectPath }: { runId: string; projectPath: string }) => requestJson<{ ok: true; runId: string; projectPath: string }>(`/api/runs/${runId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectPath }),
+    }, {
+      source: "Runs",
+      action: "Move to project",
+    }),
+    onSuccess: (data, variables) => {
+      const nextProjectPath = data.projectPath || variables.projectPath;
+      setState((current: typeof state) => ({
+        ...current,
+        runs: (current.runs || []).map((run: RunRecord) =>
+          run.id === variables.runId ? { ...run, projectPath: nextProjectPath } : run,
+        ),
+      }));
+      setMovingRunId(null);
+      setMoveRunProjectPath("");
+    },
+    onError: (_error, _variables, context) => {
+      if (!context) return;
+      setState(context.previousState);
     },
   });
 
@@ -1157,6 +1197,7 @@ export function useHomeMutations({
     saveSettings,
     commitWorkflowSettings,
     renameRun,
+    moveRunToProject,
     deleteRun,
     archiveRun,
     recoverRun,

@@ -653,13 +653,13 @@ export function buildConversationTimelineItems({
   executionEvents,
   supervisorInterventions = [],
   workers = [],
-  runMode = null,
+  isPlanningRun = false,
 }: {
   messages: MessageRecord[];
   executionEvents: ExecutionEventRecord[];
   supervisorInterventions?: SupervisorInterventionRecord[];
   workers?: ConversationWorkerRecord[];
-  runMode?: RunRecord["mode"] | null;
+  isPlanningRun?: boolean;
 }): ConversationTimelineItem[] {
   const items: ConversationTimelineItem[] = messages
     .filter(shouldRenderMessageInMainConversation)
@@ -688,7 +688,7 @@ export function buildConversationTimelineItems({
       type: "activity",
       id: `worker-start:${worker.id}`,
       createdAt: worker.createdAt,
-      text: summarizeWorkerStartRecord(worker, runMode),
+      text: summarizeWorkerStartRecord(worker, isPlanningRun),
     });
   }
 
@@ -698,7 +698,7 @@ export function buildConversationTimelineItems({
     }
 
     const text = (event.eventType === "worker_spawned"
-      ? summarizeWorkerSpawnEvent(event, runMode)
+      ? summarizeWorkerSpawnEvent(event, isPlanningRun)
       : summarizeInlineEvent(event))?.trim() ?? "";
     if (!text) {
       continue;
@@ -958,12 +958,8 @@ function summarizeTaskText(value: string) {
   return normalizeSentence(truncated);
 }
 
-function isPlanningRunMode(runMode: RunRecord["mode"] | null | undefined) {
-  return runMode === "planning";
-}
-
-function summarizeWorkerSpawnEvent(event: ExecutionEventRecord, runMode?: RunRecord["mode"] | null) {
-  if (isPlanningRunMode(runMode)) {
+function summarizeWorkerSpawnEvent(event: ExecutionEventRecord, isPlanningRun = false) {
+  if (isPlanningRun) {
     return t("conversation.activity.startPlanningAgent");
   }
 
@@ -981,8 +977,8 @@ function summarizeWorkerSpawnEvent(event: ExecutionEventRecord, runMode?: RunRec
     : `Starting ${workerLabel}.`;
 }
 
-function summarizeWorkerStartRecord(worker: ConversationWorkerRecord, runMode?: RunRecord["mode"] | null) {
-  if (isPlanningRunMode(runMode)) {
+function summarizeWorkerStartRecord(worker: ConversationWorkerRecord, isPlanningRun = false) {
+  if (isPlanningRun) {
     return t("conversation.activity.startPlanningAgent");
   }
 

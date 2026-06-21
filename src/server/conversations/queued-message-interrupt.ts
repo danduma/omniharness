@@ -60,6 +60,14 @@ async function queuedRowStatus(messageId: string) {
   return record?.status ?? null;
 }
 
+function timestampMs(value: Date | string | number | null | undefined) {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+  const parsed = new Date(value ?? 0).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 async function loadRun(runId: string): Promise<RunRecord> {
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
   if (!run) {
@@ -445,7 +453,7 @@ async function handleInterruptDeliveryError(args: {
   run: RunRecord;
   worker: WorkerRecord;
   record: QueuedRecord;
-  userMessage: { id: string };
+  userMessage: { id: string; createdAt: Date };
   error: unknown;
   generation: number;
   source: InterruptSource;
@@ -462,8 +470,15 @@ async function handleInterruptDeliveryError(args: {
     return;
   }
   if (!(await isWorkerTurnGenerationCurrent(worker.id, generation))) {
-    notifyEventStreamSubscribers();
-    return;
+    const currentRecord = await db
+      .select({ updatedAt: queuedConversationMessages.updatedAt })
+      .from(queuedConversationMessages)
+      .where(eq(queuedConversationMessages.id, record.id))
+      .get();
+    if (timestampMs(currentRecord?.updatedAt) > timestampMs(userMessage.createdAt)) {
+      notifyEventStreamSubscribers();
+      return;
+    }
   }
 
   const busy = isAgentBusyError(error);

@@ -38,6 +38,34 @@ test("conversation rows expose rename and delete actions", () => {
   expect(pageSource).toContain('requestJson(`/api/runs/${runId}`');
 });
 
+test("conversation rows expose a move-to-project dialog action", () => {
+  const sidebarSource = readSource("src/components/home/ConversationSidebar.tsx");
+  const uiStateSource = readSource("src/app/home/HomeUiStateManager.ts");
+  const actionsSource = readSource("src/app/home/useConversationActions.ts");
+  const mutationsSource = readSource("src/app/home/useHomeMutations.ts");
+  const localeSource = readSource("shared/locales/en.json");
+
+  expect(sidebarSource).toContain("FolderInput");
+  expect(sidebarSource).toContain("isTerminalRunStatus");
+  expect(sidebarSource).toContain("const canMoveConversation = isTerminalRunStatus(run.status);");
+  expect(sidebarSource).toContain("{canMoveConversation ? (");
+  expect(sidebarSource).toContain('t("conversation.sidebar.moveToProject")');
+  expect(sidebarSource).toContain('t("conversation.moveProject.title")');
+  expect(sidebarSource).toContain('t("conversation.moveProject.ok")');
+  expect(sidebarSource).toContain('moveRunToProjectOptions');
+  expect(sidebarSource).toContain('value={moveRunProjectPath}');
+  expect(sidebarSource).toContain('onChange={(event) => setMoveRunProjectPath(event.target.value)}');
+  expect(sidebarSource).toContain('disabled={!moveRunProjectPath || isMoveRunToProjectPending}');
+  expect(sidebarSource).toContain("startMovingRun(run)");
+  expect(uiStateSource).toContain("movingRunId: string | null;");
+  expect(uiStateSource).toContain("moveRunProjectPath: string;");
+  expect(actionsSource).toContain("handleStartMovingRun");
+  expect(actionsSource).toContain("handleConfirmMoveRunToProject");
+  expect(mutationsSource).toContain("const moveRunToProject = useMutation({");
+  expect(mutationsSource).toContain('body: JSON.stringify({ projectPath })');
+  expect(localeSource).toContain('"conversation.sidebar.moveToProject": "Move to Project"');
+});
+
 test("double clicking a conversation row starts sidebar renaming for that row", () => {
   const sidebarSource = readSource("src/components/home/ConversationSidebar.tsx");
   const rowIndex = sidebarSource.indexOf("key={run.id}");

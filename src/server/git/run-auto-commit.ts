@@ -52,7 +52,7 @@ function resultSummary(result: AutoCommitResult) {
 
 export async function runMilestoneAutoCommit(runId: string, summary: string) {
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
-  if (!run || run.mode !== "implementation" || !run.projectPath) {
+  if (!run || (run.mode !== "implementation" && run.mode !== "direct") || !run.projectPath) {
     return null;
   }
 

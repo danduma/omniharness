@@ -69,6 +69,14 @@ interface HomeHeaderProps {
   renameValue: string;
   renameSource: "sidebar" | "topbar" | null;
   setRenameValue: (value: string) => void;
+  movingRunId: string | null;
+  moveRunProjectPath: string;
+  moveRunToProjectOptions: string[];
+  setMoveRunProjectPath: (value: string) => void;
+  startMovingRun: (run: SidebarRun) => void;
+  confirmMoveRunToProject: () => void;
+  cancelMovingRun: () => void;
+  isMoveRunToProjectPending: boolean;
   startRenamingRun: (run: SidebarRun) => void;
   commitRenamingRun: (runId: string) => void;
   cancelRenamingRun: () => void;
@@ -161,6 +169,14 @@ export function HomeHeader({
   renameValue,
   renameSource,
   setRenameValue,
+  movingRunId,
+  moveRunProjectPath,
+  moveRunToProjectOptions,
+  setMoveRunProjectPath,
+  startMovingRun,
+  confirmMoveRunToProject,
+  cancelMovingRun,
+  isMoveRunToProjectPending,
   startRenamingRun,
   commitRenamingRun,
   cancelRenamingRun,
@@ -327,6 +343,14 @@ export function HomeHeader({
               renameValue={renameValue}
               renameSource={renameSource}
               setRenameValue={setRenameValue}
+              movingRunId={movingRunId}
+              moveRunProjectPath={moveRunProjectPath}
+              moveRunToProjectOptions={moveRunToProjectOptions}
+              setMoveRunProjectPath={setMoveRunProjectPath}
+              startMovingRun={startMovingRun}
+              confirmMoveRunToProject={confirmMoveRunToProject}
+              cancelMovingRun={cancelMovingRun}
+              isMoveRunToProjectPending={isMoveRunToProjectPending}
               startRenamingRun={startRenamingRun}
               commitRenamingRun={commitRenamingRun}
               cancelRenamingRun={cancelRenamingRun}

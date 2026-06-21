@@ -4,6 +4,7 @@ import { db } from "@/server/db";
 import { eq } from "drizzle-orm";
 import { artifactStreams, executionEvents, messages, plans, runs, settings, workerCounters, workers } from "@/server/db/schema";
 import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
+import { GIT_AUTO_COMMIT_MILESTONES_SETTING, GIT_PUSH_ON_COMMIT_SETTING } from "@/lib/commit-workflow";
 import { getAppDataPath, getAppRoot } from "@/server/app-root";
 import type { GitWorkspaceSnapshot, GitWorkspaceTarget } from "@/lib/git-workspace";
 import {
@@ -261,6 +262,33 @@ describe("POST /api/conversations", () => {
     expect(userIndex).toBe(0);
     expect(userIndex).toBeLessThan(bridgeIndex);
     expect(entries[userIndex]?.text).toBe(command);
+  });
+
+  it("captures commit workflow metadata for direct conversations", async () => {
+    const now = new Date();
+    await db.insert(settings).values([
+      { key: GIT_AUTO_COMMIT_MILESTONES_SETTING, value: "true", updatedAt: now },
+      { key: GIT_PUSH_ON_COMMIT_SETTING, value: "true", updatedAt: now },
+    ]);
+
+    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command: "Update the settings panel.",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+
+    expect(createdRun?.mode).toBe("direct");
+    expect(createdRun?.autoCommitMilestones).toBe(true);
+    expect(createdRun?.pushOnCommit).toBe(true);
+    expect(createdRun?.gitBaselineJson).toBeTruthy();
   });
 
   it("persists the direct initial worker response when the bridge snapshot has no output entries", async () => {
@@ -828,6 +856,32 @@ describe("POST /api/conversations", () => {
     await waitFor(() => mockAskAgent.mock.calls.length, (count) => count > 0);
     expect(mockAskAgent).toHaveBeenCalledTimes(1);
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+  });
+
+  it("queues title generation for direct Claude conversations", async () => {
+    const command = [
+      "session ef25debddace keeps showing a spinner even tho it finishd",
+      "and we can see that on clicking on it to load it",
+    ].join(" ");
+    const request = new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command,
+        projectPath: "/workspace/app",
+        preferredWorkerType: "claude",
+        allowedWorkerTypes: ["claude"],
+      }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+
+    expect(payload.run.mode).toBe("direct");
+    expect(payload.run.title).toBe("session ef25debddace keeps showing a spinner even tho it finishd and we can s...");
+    expect(mockQueueConversationTitleGeneration).toHaveBeenCalledWith({ runId: payload.runId, command });
   });
 
   it("passes runtime credential settings into direct worker spawns", async () => {

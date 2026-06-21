@@ -819,6 +819,7 @@ export function ConversationMain({
     transcriptEntries: conversationTranscript.entries,
     directWorkerEntries: directWorkerStream.entries,
   });
+  const isUsingConversationTranscriptEntries = conversationTranscript.entries.length > 0;
   const directConversationLoadState = deriveConversationLoadState({
     snapshotLoaded: isSelectedConversationPreviewAvailable,
     unifiedWorkerStreamEnabled,
@@ -1008,14 +1009,22 @@ export function ConversationMain({
                 scrollAnchorKey={selectedRunId}
                 summarizeWorkBlocks={isDirectConversation}
                 hasMoreHistory={
-                  unifiedWorkerStreamEnabled && primaryConversationWorkerId
-                    ? directWorkerStream.hasOlder
-                    : undefined
+                  !unifiedWorkerStreamEnabled
+                    ? undefined
+                    : isUsingConversationTranscriptEntries
+                      ? conversationTranscript.hasOlder
+                      : primaryConversationWorkerId
+                        ? directWorkerStream.hasOlder
+                        : undefined
                 }
                 onRequestMoreHistory={
-                  unifiedWorkerStreamEnabled && primaryConversationWorkerId
-                    ? () => { void directWorkerStream.loadOlder(); }
-                    : undefined
+                  !unifiedWorkerStreamEnabled
+                    ? undefined
+                    : isUsingConversationTranscriptEntries
+                      ? () => { void conversationTranscript.loadOlder(); }
+                      : primaryConversationWorkerId
+                        ? () => { void directWorkerStream.loadOlder(); }
+                        : undefined
                 }
               />
             </DirectControlTerminalColumn>

@@ -126,7 +126,11 @@ export async function startPlanningReview(args: {
   console.log("[planning/review] start", { runId: args.runId, agentSelection: args.agentSelection, rounds: args.rounds });
   const initialRun = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
   console.log("[planning/review] initialRun", { found: Boolean(initialRun), mode: initialRun?.mode, status: initialRun?.status });
-  if (!initialRun || initialRun.mode !== "planning") {
+  // Accept both legacy planning-mode runs and Omni runs still in their
+  // planning phase (stored as mode "implementation").
+  const isPlanningRun = initialRun
+    && (initialRun.mode === "planning" || (initialRun.mode === "implementation" && initialRun.phase === "planning"));
+  if (!isPlanningRun) {
     throw new Error("Invalid run for planning review.");
   }
 

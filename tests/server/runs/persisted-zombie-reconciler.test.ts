@@ -21,6 +21,8 @@ import { reconcilePersistedReloadZombies } from "@/server/runs/persisted-zombie-
 async function setupStaleStartingWorker(opts: {
   runMode?: "direct" | "implementation";
   runStatus?: string;
+  runProjectPath?: string | null;
+  workerCwd?: string;
   workerUpdatedAt?: Date;
   bridgeSessionId?: string | null;
   streamSessionId?: string | null;
@@ -41,6 +43,7 @@ async function setupStaleStartingWorker(opts: {
     planId,
     mode: opts.runMode ?? "direct",
     status: opts.runStatus ?? "running",
+    projectPath: opts.runProjectPath ?? null,
     createdAt: stale,
     updatedAt: stale,
   });
@@ -48,7 +51,7 @@ async function setupStaleStartingWorker(opts: {
     id: workerId,
     runId,
     type: "codex",
-    cwd: "/tmp",
+    cwd: opts.workerCwd ?? "/tmp",
     status: "starting",
     workerNumber: 1,
     bridgeSessionId: opts.bridgeSessionId ?? null,
@@ -158,6 +161,19 @@ describe("reconcilePersistedReloadZombies — auto-recovery path", () => {
     const { runId } = await setupStaleStartingWorker({ runStatus: "done" });
 
     const outcome = await reconcilePersistedReloadZombies({ selectedRunId: runId });
+    expect(outcome.action).toBe("none");
+    expect(mockResumeMissingDirectWorker).not.toHaveBeenCalled();
+  });
+
+  it("does not auto-resume a stale worker whose cwd is outside the run project", async () => {
+    const { runId } = await setupStaleStartingWorker({
+      runProjectPath: "/workspace/new-project",
+      workerCwd: "/workspace/old-project",
+      streamSessionId: "saved-session-id",
+    });
+
+    const outcome = await reconcilePersistedReloadZombies({ selectedRunId: runId });
+
     expect(outcome.action).toBe("none");
     expect(mockResumeMissingDirectWorker).not.toHaveBeenCalled();
   });

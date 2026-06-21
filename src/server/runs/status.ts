@@ -1,6 +1,7 @@
 export {
   isActiveImplementationRun,
   isArchivableRunStatus,
+  isPlanningPhaseRun,
   isRunnableImplementationRun,
   isTerminalRunStatus,
   normalizeRunStatus,

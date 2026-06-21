@@ -1,7 +1,11 @@
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { db } from "@/server/db";
+import { runs } from "@/server/db/schema";
+import { eq } from "drizzle-orm";
 import { promotePlanningRun } from "@/server/planning/promote";
+import { startImplementationPhase } from "@/server/planning/transition";
 import { startPlanningReview } from "@/server/planning/review";
 import { parsePlanningReviewPreferences } from "@/server/planning/review-preferences";
 import type { OmniHttpHandler, OmniRequestContext } from "@/runtime/http/registry";
@@ -82,10 +86,15 @@ export const handlePlanningPromoteRequest: OmniHttpHandler = async (request, con
     }
 
     const body = await request.json().catch(() => ({}));
-    const result = await promotePlanningRun({
-      runId: requirePlanningRunId(context),
-      planPath: typeof body?.planPath === "string" ? body.planPath : null,
-    });
+    const runId = requirePlanningRunId(context);
+    const planPath = typeof body?.planPath === "string" ? body.planPath : null;
+
+    // Omni runs transition in place (same run); legacy planning-mode runs are
+    // promoted into a separate implementation run.
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const result = run?.mode === "implementation" && run.phase === "planning"
+      ? await startImplementationPhase({ runId, planPath })
+      : await promotePlanningRun({ runId, planPath });
     notifyEventStreamSubscribers();
 
     return Response.json({ ok: true, ...result });
