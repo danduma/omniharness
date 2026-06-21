@@ -7,7 +7,7 @@ import { db } from "@/server/db";
 import { executionEvents, runs, workers } from "@/server/db/schema";
 import { shouldAutoApprove } from "@/server/permissions";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
-import { isActiveImplementationRun } from "@/server/runs/status";
+import { isActiveImplementationRun, isPlanningPhaseRun } from "@/server/runs/status";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { extractQuotaResetInfo, parseQuotaResetText } from "@/server/quota/reset-parser";
 import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
@@ -51,6 +51,13 @@ interface WorkerBridgeSnapshot {
     requestedAt: string;
     sessionId?: string | null;
     options?: Array<{ optionId: string; kind: string; name: string }>;
+  }>;
+  pendingElicitations?: Array<{
+    requestId: number;
+    requestedAt: string;
+    sessionId?: string | null;
+    toolCallId?: string | null;
+    message?: string | null;
   }>;
   outputEntries?: NonNullable<bridge.AgentRecord["outputEntries"]>;
   stderrBuffer: string[];
@@ -260,6 +267,7 @@ function normalizeSnapshot(snapshot: WorkerBridgeSnapshot | bridge.AgentRecord) 
       sessionId: typeof snapshot.sessionId === "string" ? snapshot.sessionId : null,
       sessionMode: typeof snapshot.sessionMode === "string" ? snapshot.sessionMode : null,
       pendingPermissions: snapshot.pendingPermissions ?? [],
+      pendingElicitations: snapshot.pendingElicitations ?? [],
       outputEntries: Array.isArray(snapshot.outputEntries) ? snapshot.outputEntries : [],
       stderrBuffer: Array.isArray(snapshot.stderrBuffer) ? snapshot.stderrBuffer : [],
       stopReason: typeof snapshot.stopReason === "string" ? snapshot.stopReason : null,
@@ -269,11 +277,13 @@ function normalizeSnapshot(snapshot: WorkerBridgeSnapshot | bridge.AgentRecord) 
 }
 
 function snapshotFingerprint(snapshot: WorkerBridgeSnapshot) {
+  const pendingElicitations = snapshot.pendingElicitations ?? [];
   return JSON.stringify({
     state: snapshot.state,
     currentText: snapshot.currentText,
     lastText: snapshot.lastText,
     pendingPermissions: snapshot.pendingPermissions ?? [],
+    ...(pendingElicitations.length > 0 ? { pendingElicitations } : {}),
     stopReason: snapshot.stopReason,
     stderrTail: snapshot.stderrBuffer.slice(-10),
   });
@@ -284,11 +294,13 @@ function normalizeProgressText(value: string) {
 }
 
 function progressSignature(snapshot: WorkerBridgeSnapshot) {
+  const pendingElicitations = snapshot.pendingElicitations ?? [];
   return JSON.stringify({
     state: snapshot.state,
     currentText: normalizeProgressText(snapshot.currentText),
     lastText: normalizeProgressText(snapshot.lastText),
     pendingPermissions: snapshot.pendingPermissions ?? [],
+    ...(pendingElicitations.length > 0 ? { pendingElicitations } : {}),
     stopReason: snapshot.stopReason,
   });
 }
@@ -529,13 +541,17 @@ export function deriveWorkerEvents(args: {
   const changed = !previous || previous.fingerprint !== fingerprint;
   const currentProgressSignature = progressSignature(args.snapshot);
   const currentPendingFingerprint = JSON.stringify(args.snapshot.pendingPermissions ?? []);
+  const currentElicitationFingerprint = JSON.stringify(args.snapshot.pendingElicitations ?? []);
   let previousPendingFingerprint = "[]";
+  let previousElicitationFingerprint = "[]";
   if (previous) {
     try {
-      const parsed = JSON.parse(previous.fingerprint) as { pendingPermissions?: unknown };
+      const parsed = JSON.parse(previous.fingerprint) as { pendingPermissions?: unknown; pendingElicitations?: unknown };
       previousPendingFingerprint = JSON.stringify(parsed.pendingPermissions ?? []);
+      previousElicitationFingerprint = JSON.stringify(parsed.pendingElicitations ?? []);
     } catch {
       previousPendingFingerprint = "[]";
+      previousElicitationFingerprint = "[]";
     }
   }
   const lastChangedAt = changed ? args.now : previous.lastChangedAt;
@@ -590,6 +606,18 @@ export function deriveWorkerEvents(args: {
     events.push({
       type: "worker_permission_requested",
       summary: `${args.workerId} is waiting on a permission decision`,
+      shouldWakeSupervisor: true,
+      updatesActivity: false,
+    });
+  }
+
+  if (
+    currentElicitationFingerprint !== previousElicitationFingerprint &&
+    (args.snapshot.pendingElicitations?.length ?? 0) > 0
+  ) {
+    events.push({
+      type: "worker_elicitation_requested",
+      summary: `${args.workerId} is waiting on user input`,
       shouldWakeSupervisor: true,
       updatesActivity: false,
     });
@@ -743,6 +771,11 @@ async function insertExecutionEvent(
 
 async function loadActiveRun(runId: string) {
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+  // During the Omni planning phase the supervisor stays dormant — a stray
+  // observer must self-terminate rather than treat the run as supervisable.
+  if (isPlanningPhaseRun(run)) {
+    return null;
+  }
   return isActiveImplementationRun(run) ? run : null;
 }
 

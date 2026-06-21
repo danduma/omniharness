@@ -10,9 +10,40 @@ export type PendingPermission = {
   resolve: (response: acp.RequestPermissionResponse) => void;
 };
 
+// The SDK pinned here (@agentclientprotocol/sdk@0.14.1) predates the
+// `elicitation/create` method, so its types don't model it. The
+// claude-agent-acp adapter speaks it (to surface the built-in AskUserQuestion
+// tool as a form), and reaches us through the `extMethod` escape hatch. These
+// minimal shapes mirror the adapter's CreateElicitationRequest / Response.
+export type ElicitationCreateParams = {
+  mode?: string;
+  sessionId?: string;
+  toolCallId?: string;
+  message?: string;
+  requestedSchema?: {
+    type?: string;
+    properties?: Record<string, unknown>;
+    required?: string[];
+  };
+};
+
+export type ElicitationContentValue = string | number | boolean | string[];
+
+export type ElicitationResponse =
+  | { action: "accept"; content: Record<string, ElicitationContentValue> }
+  | { action: "decline" }
+  | { action: "cancel" };
+
+export type PendingElicitation = {
+  requestId: number;
+  params: ElicitationCreateParams;
+  requestedAt: string;
+  resolve: (response: ElicitationResponse) => void;
+};
+
 export type OutputEntry = {
   id: string;
-  type: "message" | "thought" | "tool_call" | "tool_call_update" | "permission";
+  type: "message" | "thought" | "tool_call" | "tool_call_update" | "permission" | "elicitation";
   text: string;
   timestamp: string;
   toolCallId?: string;
@@ -82,6 +113,7 @@ export type AgentRecord = {
   outputArchive: AgentOutputArchiveHandle;
   stopReason: string | null;
   pendingPermissions: PendingPermission[];
+  pendingElicitations: PendingElicitation[];
   activeTask: { taskId: string; subtaskId: string } | null;
   managedSkillLinks: string[];
   createdAt: string;

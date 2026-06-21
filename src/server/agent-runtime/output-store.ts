@@ -118,7 +118,7 @@ function compactRawValue(
 }
 
 function createArchiveEntry(input: OutputEntryInput): OutputEntry {
-  const isToolEntry = input.type === "tool_call" || input.type === "tool_call_update" || input.type === "permission";
+  const isToolEntry = input.type === "tool_call" || input.type === "tool_call_update" || input.type === "permission" || input.type === "elicitation";
   return {
     id: randomUUID(),
     timestamp: input.timestamp ?? nowIso(),

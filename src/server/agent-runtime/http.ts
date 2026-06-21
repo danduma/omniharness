@@ -167,6 +167,25 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
         return;
       }
 
+      if (parts.length === 3 && parts[0] === "agents" && method === "POST" && parts[2] === "elicitation") {
+        const body = await readJson<{ action?: unknown; content?: unknown }>(req);
+        const action = body.action;
+        if (action !== "accept" && action !== "decline" && action !== "cancel") {
+          writeJson(res, 400, { error: "action must be one of 'accept', 'decline', 'cancel'" });
+          return;
+        }
+        const response: Parameters<typeof manager.respondElicitation>[1] = action === "accept"
+          ? {
+              action: "accept",
+              content: (typeof body.content === "object" && body.content !== null
+                ? body.content
+                : {}) as Record<string, string | number | boolean | string[]>,
+            }
+          : { action };
+        writeJson(res, 200, manager.respondElicitation(parts[1], response));
+        return;
+      }
+
       if (parts.length === 3 && parts[0] === "agents" && method === "POST" && parts[2] === "mode") {
         const body = await readJson(req);
         if (typeof body.mode !== "string" || body.mode.trim().length === 0) {

@@ -373,6 +373,65 @@ process.stdin.on('data', (chunk) => {
 });
 `;
 
+const fakeElicitationAcpAgentScript = `#!/usr/bin/env node
+process.stdin.setEncoding('utf8');
+let buffer = '';
+let promptRequestId = null;
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + '\\n');
+}
+
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\\r?\\n/g);
+  buffer = lines.pop() ?? '';
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === 'initialize') {
+      write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+    } else if (message.method === 'session/new') {
+      write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-1' } });
+    } else if (message.method === 'session/set_mode') {
+      write({ jsonrpc: '2.0', id: message.id, result: {} });
+    } else if (message.method === 'session/prompt') {
+      promptRequestId = message.id;
+      write({
+        jsonrpc: '2.0',
+        id: 8001,
+        method: 'elicitation/create',
+        params: {
+          mode: 'form',
+          sessionId: message.params.sessionId,
+          toolCallId: 'ask-call-1',
+          message: 'Which option do you want?',
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              question_0: { type: 'string', oneOf: [{ const: 'A' }, { const: 'B' }] },
+            },
+          },
+        },
+      });
+    } else if (message.id === 8001) {
+      write({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'elicitation response ' + JSON.stringify(message.result) },
+          },
+        },
+      });
+      write({ jsonrpc: '2.0', id: promptRequestId, result: { stopReason: 'end_turn' } });
+    }
+  }
+});
+`;
+
 const fakeModeSwitchAcpAgentScript = `#!/usr/bin/env node
 process.stdin.setEncoding('utf8');
 let buffer = '';
@@ -1333,6 +1392,146 @@ process.stdout.write(JSON.stringify({
     ]);
   }, 30_000);
 
+  it("surfaces an AskUserQuestion elicitation and returns the accepted answer to the agent", async () => {
+    const projectDir = createTempDir("omni-runtime-elicitation-project-");
+    const binDir = createTempDir("omni-runtime-elicitation-bin-");
+    const fakeAgent = createExecutable(binDir, "fake-elicitation-acp-agent", fakeElicitationAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "elicitation-worker",
+      }),
+    });
+    expect(spawnResponse.status).toBe(201);
+
+    const askPromise = fetch(`${baseUrl}/agents/elicitation-worker/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "ask me something" }),
+    });
+
+    const pendingAgent = await waitFor(
+      async () => {
+        const response = await fetch(`${baseUrl}/agents/elicitation-worker`);
+        expect(response.status).toBe(200);
+        return response.json() as Promise<{
+          pendingElicitations?: Array<{ message?: string | null; toolCallId?: string | null }>;
+        }>;
+      },
+      (agent) => (agent.pendingElicitations?.length ?? 0) === 1,
+    );
+    expect(pendingAgent.pendingElicitations?.[0]).toMatchObject({
+      message: "Which option do you want?",
+      toolCallId: "ask-call-1",
+    });
+
+    const respondResponse = await fetch(`${baseUrl}/agents/elicitation-worker/elicitation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "accept", content: { question_0: "A" } }),
+    });
+    expect(respondResponse.status).toBe(200);
+    expect(await respondResponse.json()).toMatchObject({ action: "accept", requestId: 1 });
+    expect(await askPromise.then((response) => response.status)).toBe(200);
+
+    const agentResponse = await fetch(`${baseUrl}/agents/elicitation-worker`);
+    const agent = await agentResponse.json() as {
+      lastText: string;
+      outputEntries: Array<{ type: string; text: string; status?: string }>;
+    };
+    // The agent echoes back the answer the client returned over elicitation/create.
+    expect(agent.lastText).toContain('"question_0":"A"');
+    const elicitationEntries = agent.outputEntries.filter((entry) => entry.type === "elicitation");
+    expect(elicitationEntries.map((entry) => entry.status)).toEqual(["pending", "answered"]);
+  }, 30_000);
+
+  it("keeps AskUserQuestion elicitation pending in full-access mode until a human answers", async () => {
+    const projectDir = createTempDir("omni-runtime-full-access-elicitation-project-");
+    const binDir = createTempDir("omni-runtime-full-access-elicitation-bin-");
+    const fakeAgent = createExecutable(binDir, "fake-full-access-elicitation-acp-agent", fakeElicitationAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "full-access-elicitation-worker",
+        mode: "full-access",
+      }),
+    });
+    expect(spawnResponse.status).toBe(201);
+
+    const askPromise = fetch(`${baseUrl}/agents/full-access-elicitation-worker/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "ask me something" }),
+    });
+
+    const pendingAgent = await waitFor(
+      async () => {
+        const response = await fetch(`${baseUrl}/agents/full-access-elicitation-worker`);
+        expect(response.status).toBe(200);
+        return response.json() as Promise<{
+          pendingElicitations?: Array<{ message?: string | null; toolCallId?: string | null }>;
+          outputEntries?: Array<{ type: string; status?: string }>;
+        }>;
+      },
+      (agent) => (agent.pendingElicitations?.length ?? 0) === 1,
+    );
+    expect(pendingAgent.pendingElicitations?.[0]).toMatchObject({
+      message: "Which option do you want?",
+      toolCallId: "ask-call-1",
+    });
+    expect(pendingAgent.outputEntries?.filter((entry) => entry.type === "elicitation").map((entry) => entry.status)).toEqual(["pending"]);
+
+    const raceResult = await Promise.race([
+      askPromise.then(() => "completed" as const),
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 250)),
+    ]);
+    expect(raceResult).toBe("pending");
+
+    const respondResponse = await fetch(`${baseUrl}/agents/full-access-elicitation-worker/elicitation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "accept", content: { question_0: "B" } }),
+    });
+    expect(respondResponse.status).toBe(200);
+    expect(await askPromise.then((response) => response.status)).toBe(200);
+
+    const agentResponse = await fetch(`${baseUrl}/agents/full-access-elicitation-worker`);
+    const agent = await agentResponse.json() as {
+      lastText: string;
+      outputEntries: Array<{ type: string; status?: string }>;
+    };
+    expect(agent.lastText).toContain('"question_0":"B"');
+    expect(agent.outputEntries.filter((entry) => entry.type === "elicitation").map((entry) => entry.status)).toEqual(["pending", "answered"]);
+  }, 30_000);
+
   it("auto-approves permission requests when the session is full-access", async () => {
     const projectDir = createTempDir("omni-runtime-permission-yolo-project-");
     const binDir = createTempDir("omni-runtime-permission-yolo-bin-");
@@ -2015,6 +2214,7 @@ process.stdout.write(JSON.stringify({
       readTextFile: true,
       writeTextFile: true,
     });
+    expect(initialize.params.clientCapabilities.elicitation).toEqual({ form: {} });
     expect(events.find((event) => event.method === "fs/read_text_file/response").result).toEqual({ content: "before\n" });
     expect(events.find((event) => event.method === "fs/write_text_file/response").result).toEqual({});
 

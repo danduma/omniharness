@@ -184,8 +184,12 @@ export function buildLiveWorkerSnapshot(args: {
   const runLastError = run?.lastError ?? null;
 
   if (normalizedAgent) {
+    const terminalRun = isTerminalRun(run);
+    const effectiveState = terminalRun
+      ? isFailedRun(run) ? "error" : "idle"
+      : normalizedAgent.state;
     const structuredOutput = cleanStructuredOutput(normalizedAgent.renderedOutput);
-    const liveText = isAgentActive(normalizedAgent.state) && normalizedAgent.currentText.length > 0
+    const liveText = isAgentActive(effectiveState) && normalizedAgent.currentText.length > 0
       ? normalizedAgent.currentText
       : "";
     const outputEntries = mergeOutputEntries(persistedOutputEntries, normalizedAgent.outputEntries ?? []);
@@ -200,7 +204,9 @@ export function buildLiveWorkerSnapshot(args: {
 
     return {
       ...normalizedAgent,
-      pendingPermissions: isTerminalRun(run) ? [] : normalizedAgent.pendingPermissions,
+      state: effectiveState,
+      pendingPermissions: terminalRun ? [] : normalizedAgent.pendingPermissions,
+      pendingElicitations: terminalRun ? [] : normalizedAgent.pendingElicitations,
       type: normalizedAgent.type || worker?.type || "",
       cwd: normalizedAgent.cwd || worker?.cwd || "",
       sessionId: normalizedAgent.sessionId ?? worker?.bridgeSessionId ?? null,
@@ -254,6 +260,7 @@ export function buildLiveWorkerSnapshot(args: {
     lastText,
     stderrBuffer: [],
     pendingPermissions: [],
+    pendingElicitations: [],
     stopReason: null,
     bridgeMissing: true,
     updatedAt: worker?.updatedAt ?? null,

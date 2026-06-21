@@ -2,6 +2,67 @@ import { describe, expect, it } from "vitest";
 import { buildAgentOutputActivity, extractLatestPlainTextTurn, type AgentOutputEntry } from "@/lib/agent-output";
 
 describe("agent output normalization", () => {
+  it("does not classify AskUserQuestion updates as bash commands when the prompt mentions terminal work", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        {
+          id: "ask-start",
+          type: "tool_call",
+          text: "Asking for your input",
+          timestamp: "2026-06-15T13:56:43.944Z",
+          toolCallId: "ask-tool",
+          toolKind: "other",
+          status: "pending",
+          raw: {
+            _meta: { claudeCode: { toolName: "AskUserQuestion" } },
+            kind: "other",
+            rawInput: {},
+            status: "pending",
+            title: "Asking for your input",
+            toolCallId: "ask-tool",
+            sessionUpdate: "tool_call",
+          },
+        },
+        {
+          id: "ask-update",
+          type: "tool_call_update",
+          text: "Tool call ask-tool updated: The terminal feature is done and tested, but unrelated WIP is interleaved. How should I commit?",
+          timestamp: "2026-06-15T13:56:48.652Z",
+          toolCallId: "ask-tool",
+          status: null,
+          raw: {
+            _meta: { claudeCode: { toolName: "AskUserQuestion" } },
+            kind: "other",
+            rawInput: {
+              questions: [
+                {
+                  question: "The terminal feature is done and tested, but unrelated WIP is interleaved. How should I commit?",
+                  header: "Commit",
+                  options: [
+                    { label: "Commit everything together", description: "Includes terminal files and existing WIP." },
+                  ],
+                },
+              ],
+            },
+            title: "The terminal feature is done and tested, but unrelated WIP is interleaved. How should I commit?",
+            toolCallId: "ask-tool",
+            sessionUpdate: "tool_call_update",
+          },
+        },
+      ],
+    });
+
+    expect(activity).toEqual([
+      expect.objectContaining({
+        kind: "tool",
+        actionKind: "tool",
+        label: "Tool",
+        title: "Asking for your input",
+        inputPane: undefined,
+      }),
+    ]);
+  });
+
   it("coalesces token-sized assistant message fragments into one activity", () => {
     const activity = buildAgentOutputActivity({
       outputEntries: [

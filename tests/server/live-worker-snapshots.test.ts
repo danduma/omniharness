@@ -74,6 +74,78 @@ describe("buildLiveWorkerSnapshot", () => {
     }));
   });
 
+  it("does not publish stale active bridge state for completed runs", () => {
+    const snapshot = buildLiveWorkerSnapshot({
+      agent: {
+        name: "worker-done",
+        type: "claude",
+        cwd: "/repo",
+        state: "working",
+        currentText: "Stale live bridge text that should not make the UI active",
+        lastText: "Final answer",
+        outputEntries: [
+          {
+            id: "entry-final",
+            type: "message",
+            text: "Final answer",
+            timestamp: new Date(0).toISOString(),
+          },
+        ],
+        pendingPermissions: [],
+      },
+      worker: {
+        id: "worker-done",
+        runId: "run-done",
+        type: "claude",
+        status: "idle",
+        cwd: "/repo",
+        outputLog: "",
+        outputEntries: [
+          {
+            id: "entry-final",
+            type: "message",
+            text: "Final answer",
+            timestamp: new Date(0).toISOString(),
+          },
+        ],
+        currentText: "",
+        lastText: "Final answer",
+        bridgeSessionId: "session-done",
+        bridgeSessionMode: "full-access",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      run: {
+        id: "run-done",
+        planId: "plan-done",
+        mode: "direct",
+        projectPath: "/repo",
+        title: "Completed direct run",
+        preferredWorkerType: "claude",
+        preferredWorkerModel: "claude-sonnet",
+        preferredWorkerEffort: "medium",
+        allowedWorkerTypes: "claude",
+        specPath: null,
+        artifactPlanPath: null,
+        plannerArtifactsJson: null,
+        parentRunId: null,
+        forkedFromMessageId: null,
+        status: "done",
+        failedAt: null,
+        lastError: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+
+    expect(snapshot).toEqual(expect.objectContaining({
+      state: "idle",
+      currentText: "",
+      lastText: "Final answer",
+      displayText: "Final answer",
+    }));
+  });
+
   it("drops stale bridge permission requests from completed runs", () => {
     const snapshot = buildLiveWorkerSnapshot({
       agent: {

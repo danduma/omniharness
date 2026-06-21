@@ -798,6 +798,22 @@ function normalizeToolKind(toolKind: string | null | undefined, title: string): 
   return "tool";
 }
 
+function isAskUserQuestionEntry(entry: AgentOutputEntry) {
+  const raw = asRecord(entry.raw);
+  const meta = asRecord(raw?._meta);
+  const claudeCode = asRecord(meta?.claudeCode);
+  return asNonEmptyString(claudeCode?.toolName) === "AskUserQuestion";
+}
+
+function normalizeToolKindForEntry(entry: AgentOutputEntry, title: string): AgentToolActivityKind {
+  if (isAskUserQuestionEntry(entry)) {
+    return "tool";
+  }
+
+  const raw = asRecord(entry.raw);
+  return normalizeToolKind(entry.toolKind ?? asNonEmptyString(raw?.kind), title);
+}
+
 function toolLabel(kind: AgentToolActivityKind): string {
   switch (kind) {
     case "read":
@@ -819,7 +835,7 @@ function deriveToolTitle(entry: AgentOutputEntry): string {
   const raw = asRecord(entry.raw);
   const rawTitle = asNonEmptyString(raw?.title);
   const baseTitle = rawTitle || entry.text || "Tool activity";
-  const kind = normalizeToolKind(entry.toolKind ?? asNonEmptyString(raw?.kind), baseTitle);
+  const kind = normalizeToolKindForEntry(entry, baseTitle);
   const primaryPath = extractPrimaryPath(raw);
   const promptLike = extractDescriptionLikeInput(raw) || summarizePromptLikeInput(raw);
 
@@ -845,7 +861,7 @@ function deriveToolTitle(entry: AgentOutputEntry): string {
 
 function deriveToolInputPane(entry: AgentOutputEntry): AgentOutputPane | undefined {
   const raw = asRecord(entry.raw);
-  const kind = normalizeToolKind(entry.toolKind ?? asNonEmptyString(raw?.kind), asNonEmptyString(raw?.title) || entry.text || "");
+  const kind = normalizeToolKindForEntry(entry, asNonEmptyString(raw?.title) || entry.text || "");
   const promptLike = extractCommandLikeInput(raw) || summarizePromptLikeInput(raw);
 
   if (!promptLike) {
@@ -870,7 +886,7 @@ function extractSummaryTail(entry: AgentOutputEntry): string | null {
 
 function deriveToolOutputPane(entry: AgentOutputEntry): AgentOutputPane | undefined {
   const raw = asRecord(entry.raw);
-  const kind = normalizeToolKind(entry.toolKind ?? asNonEmptyString(raw?.kind), asNonEmptyString(raw?.title) || entry.text || "");
+  const kind = normalizeToolKindForEntry(entry, asNonEmptyString(raw?.title) || entry.text || "");
   const meta = asRecord(raw?._meta);
   const claudeCode = asRecord(meta?.claudeCode);
   const toolResponse = asRecord(claudeCode?.toolResponse);
@@ -982,7 +998,7 @@ function isReplaceableToolTitle(value: string): boolean {
 function createToolActivity(entry: AgentOutputEntry): MutableToolActivity {
   const raw = asRecord(entry.raw);
   const baseTitle = asNonEmptyString(raw?.title) || entry.text || "Tool activity";
-  const kind = normalizeToolKind(entry.toolKind ?? asNonEmptyString(raw?.kind), baseTitle);
+  const kind = normalizeToolKindForEntry(entry, baseTitle);
 
   return {
     id: entry.toolCallId || entry.id,
@@ -1002,7 +1018,7 @@ function applyToolUpdate(target: MutableToolActivity, entry: AgentOutputEntry): 
   target.status = mergeToolStatus(target.status, entry.status);
   const raw = asRecord(entry.raw);
   const baseTitle = asNonEmptyString(raw?.title) || entry.text || "Tool activity";
-  const incomingKind = normalizeToolKind(entry.toolKind ?? asNonEmptyString(raw?.kind), baseTitle);
+  const incomingKind = normalizeToolKindForEntry(entry, baseTitle);
   const incomingLabel = toolLabel(incomingKind);
   if (target.label === "Tool" && incomingLabel !== "Tool") {
     target.label = incomingLabel;
