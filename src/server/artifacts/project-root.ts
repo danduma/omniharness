@@ -17,7 +17,7 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import { getAppDataPath } from "@/server/app-root";
-import { getProjectOmniharnessDir } from "@/server/projects/config";
+import { ensureProjectOmniharnessDir, getProjectOmniharnessDir } from "@/server/projects/config";
 
 const RUN_DATA_SUBDIR = "run-data";
 const OMNIHARNESS_DIR = ".omniharness";
@@ -88,6 +88,7 @@ export async function resolveArtifactRoot(
       // missing project root — that would silently scatter artifacts
       // through unrelated filesystems on misconfigured runs.
       try {
+        ensureProjectOmniharnessDir(projectRoot);
         await fs.mkdir(runRoot, { recursive: true });
         return {
           absolutePath: runRoot,

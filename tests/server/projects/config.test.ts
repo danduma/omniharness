@@ -39,6 +39,28 @@ describe("project config", () => {
     expect(config.supervisor?.memoryEnabled).toBe(false);
   });
 
+  it("creates a project .gitignore entry when .omniharness/ is first created", () => {
+    writeProjectConfig(projectPath, { version: 1, supervisor: { memoryEnabled: false } });
+
+    expect(fs.readFileSync(path.join(projectPath, ".gitignore"), "utf8")).toBe(".omniharness/\n");
+  });
+
+  it("adds .omniharness/ to an existing project .gitignore on first creation", () => {
+    fs.writeFileSync(path.join(projectPath, ".gitignore"), "node_modules/\n", "utf8");
+
+    writeProjectConfig(projectPath, { version: 1, supervisor: { memoryEnabled: false } });
+
+    expect(fs.readFileSync(path.join(projectPath, ".gitignore"), "utf8")).toBe("node_modules/\n.omniharness/\n");
+  });
+
+  it("does not duplicate an existing project .gitignore entry", () => {
+    fs.writeFileSync(path.join(projectPath, ".gitignore"), "node_modules/\n.omniharness/\n", "utf8");
+
+    writeProjectConfig(projectPath, { version: 1, supervisor: { memoryEnabled: false } });
+
+    expect(fs.readFileSync(path.join(projectPath, ".gitignore"), "utf8")).toBe("node_modules/\n.omniharness/\n");
+  });
+
   it("treats malformed JSON as empty config", () => {
     fs.mkdirSync(path.join(projectPath, ".omniharness"), { recursive: true });
     fs.writeFileSync(getProjectConfigPath(projectPath), "not json", "utf8");

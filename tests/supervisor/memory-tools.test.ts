@@ -27,6 +27,11 @@ describe("memory-tools", () => {
     expect(fs.readFileSync(path.join(getMemoryRoot(projectPath), "overview.md"), "utf8")).toBe("# Overview");
   });
 
+  it("gitignores .omniharness/ when memory writes first create it", () => {
+    writeMemory(projectPath, "overview.md", "# Overview");
+    expect(fs.readFileSync(path.join(projectPath, ".gitignore"), "utf8")).toBe(".omniharness/\n");
+  });
+
   it("lists files after writes, sorted alphabetically", () => {
     writeMemory(projectPath, "zeta.md", "z");
     writeMemory(projectPath, "alpha.md", "a");
