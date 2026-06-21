@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { SupervisorProtocolError } from "@/server/supervisor/protocol";
-import { getProjectOmniharnessDir } from "@/server/projects/config";
+import { ensureProjectOmniharnessDir, getProjectOmniharnessDir } from "@/server/projects/config";
 
 const MEMORY_DIRNAME = "memory";
 const ALLOWED_EXTENSIONS = new Set([".md", ".txt", ".json"]);
@@ -11,6 +11,7 @@ export function getMemoryRoot(projectPath: string) {
 }
 
 export function ensureMemoryRoot(projectPath: string) {
+  ensureProjectOmniharnessDir(projectPath);
   const root = getMemoryRoot(projectPath);
   if (!fs.existsSync(root)) {
     fs.mkdirSync(root, { recursive: true });

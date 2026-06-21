@@ -26,6 +26,8 @@ export interface ProjectConfig {
 export const PROJECT_CONFIG_VERSION = 1;
 const PROJECT_CONFIG_DIRNAME = ".omniharness";
 const PROJECT_CONFIG_FILENAME = "config.json";
+const PROJECT_GITIGNORE_FILENAME = ".gitignore";
+const PROJECT_OMNIHARNESS_GITIGNORE_ENTRY = ".omniharness/";
 
 export function getProjectOmniharnessDir(projectPath: string) {
   return path.join(projectPath, PROJECT_CONFIG_DIRNAME);
@@ -33,6 +35,41 @@ export function getProjectOmniharnessDir(projectPath: string) {
 
 export function getProjectConfigPath(projectPath: string) {
   return path.join(getProjectOmniharnessDir(projectPath), PROJECT_CONFIG_FILENAME);
+}
+
+function hasOmniharnessGitignoreEntry(content: string): boolean {
+  return content.split(/\r?\n/g).some((line) => {
+    const trimmed = line.trim();
+    return trimmed === ".omniharness" || trimmed === ".omniharness/" || trimmed === ".omniharness/**";
+  });
+}
+
+function ensureProjectGitignoreOmniharnessEntry(projectPath: string) {
+  const gitignorePath = path.join(projectPath, PROJECT_GITIGNORE_FILENAME);
+  const existing = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf8") : "";
+  if (hasOmniharnessGitignoreEntry(existing)) {
+    return;
+  }
+
+  const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+  fs.writeFileSync(
+    gitignorePath,
+    `${existing}${prefix}${PROJECT_OMNIHARNESS_GITIGNORE_ENTRY}\n`,
+    "utf8",
+  );
+}
+
+export function ensureProjectOmniharnessDir(projectPath: string) {
+  if (!projectPath) {
+    throw new Error("ensureProjectOmniharnessDir requires a non-empty projectPath");
+  }
+
+  const dir = getProjectOmniharnessDir(projectPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    ensureProjectGitignoreOmniharnessEntry(projectPath);
+  }
+  return dir;
 }
 
 export function readProjectConfig(projectPath: string): ProjectConfig {
@@ -71,10 +108,7 @@ export function writeProjectConfig(projectPath: string, next: ProjectConfig) {
     throw new Error("writeProjectConfig requires a non-empty projectPath");
   }
 
-  const dir = getProjectOmniharnessDir(projectPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  ensureProjectOmniharnessDir(projectPath);
 
   const configPath = getProjectConfigPath(projectPath);
   const serialized = JSON.stringify({ ...next, version: PROJECT_CONFIG_VERSION }, null, 2);
