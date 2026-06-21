@@ -162,28 +162,31 @@ For the simplest local setup, run the launcher and follow the prompt:
 If `.env` or the current shell already contains `OMNIHARNESS_AUTH_PASSWORD` or
 `OMNIHARNESS_AUTH_PASSWORD_HASH`, the launcher keeps that existing configuration.
 
-To change the password manually, store an Argon2 hash in `.env`:
+Change or reset the password from the repo root:
 
 ```bash
-read -rsp "OmniHarness password: " OMNI_PASSWORD; echo
-OMNIHARNESS_AUTH_PASSWORD_HASH="$(
-  OMNI_PASSWORD="$OMNI_PASSWORD" node --input-type=module -e '
-    import { hash } from "@node-rs/argon2";
-    console.log(await hash(process.env.OMNI_PASSWORD, {
-      algorithm: 2,
-      memoryCost: 19456,
-      timeCost: 2,
-      parallelism: 1,
-      outputLen: 32
-    }));
-  '
-)"
-printf 'OMNIHARNESS_AUTH_PASSWORD_HASH=%s\n' "${OMNIHARNESS_AUTH_PASSWORD_HASH//$/\\$}" >> .env
-unset OMNI_PASSWORD OMNIHARNESS_AUTH_PASSWORD_HASH
-./omniharness
+pnpm auth:password set
 ```
 
-Use either `OMNIHARNESS_AUTH_PASSWORD` or `OMNIHARNESS_AUTH_PASSWORD_HASH`; the hash wins if both are set. Restart OmniHarness after changing either value.
+Pass the password as an argument when you need a one-line command:
+
+```bash
+pnpm auth:password set "new-password"
+```
+
+The command removes active `OMNIHARNESS_AUTH_PASSWORD` and
+`OMNIHARNESS_AUTH_PASSWORD_HASH` lines from `.env`, then writes one fresh
+Argon2 hash. Restart OmniHarness after changing the password.
+
+Check or test the configured password:
+
+```bash
+pnpm auth:password status
+pnpm auth:password verify "new-password"
+```
+
+Hash-only passwords cannot be printed back out. If `status` says the password is
+hash-only and you do not know it, run `pnpm auth:password set` to replace it.
 
 ## Remote Tunnel
 
