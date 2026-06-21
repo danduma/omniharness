@@ -1,0 +1,10 @@
+# Input-Ready State Must Not Render As Working
+
+**Date:** 2026-06-15
+**Context:** OmniHarness direct worker permissions, elicitations, queue interruption, direct terminal activity, and execution status
+**Symptom:** A worker showed a pending `switch_mode` permission request, the conversation still said `Working`, the direct terminal rendered its own `Working...` indicator, and a user reply stayed stuck in queued/delivering state.
+**Root Cause:** The status and direct-terminal activity layers only trusted live metadata and ignored pending permission or elicitation entries already present in the worker stream. The shared worker-entry type also omitted the runtime's `elicitation` entry type. Interrupt delivery returned early when its worker turn generation became stale, which could leave the queued row in `delivering` if no newer delivery owner updated it.
+**Fix:** Treat pending permission and elicitation stream entries as authoritative input-ready signals for the status banner and direct terminal pending-assistant indicator, add `elicitation` to the shared worker-entry type, and allow stale interrupt delivery failures to restore the row to `pending` or `failed` when the row is still the same delivering attempt.
+**Verification:** Regression tests were added for permission-stream status, elicitation-stream status, direct-terminal working suppression while human input is pending, and stale interrupt delivery. Affected suites passed with `node_modules/.bin/vitest run tests/app/direct-control-activity.test.ts tests/app/conversation-execution-status.test.ts tests/api/conversation-messages-route.test.ts tests/lib/agent-output.test.ts tests/server/conversations-sync.test.ts`.
+**Prevention:** Any state that renders a pending input card must also feed every activity/status model and be represented in shared stream types. Delivery fences should prevent stale overwrites, but they must not orphan user intent in an in-flight state with no owner.
+**Skill/Doc Updates:** No shared skill update needed; this note captures a project-specific invariant alongside the tests.

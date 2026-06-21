@@ -17,6 +17,7 @@ import { conversationNotificationManager } from "./ConversationNotificationManag
 import { sideWindowManager } from "./SideWindowManager";
 import { parseBusyMessageAction } from "./busy-message-behavior";
 import {
+  hasPendingHumanInputSignal,
   isMutationPendingForSelectedRun,
   resolveDirectControlPendingAssistantStatus,
   resolvePendingConversationWorkerId,
@@ -226,6 +227,8 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     renamingRunId,
     renameValue,
     renameSource,
+    movingRunId,
+    moveRunProjectPath,
     editingMessageId,
     editingMessageValue,
     expandedDirectMessageIds,
@@ -272,6 +275,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     setProjectExpanded,
     collapseProjects,
     setRenameValue,
+    setMoveRunProjectPath,
     setEditingMessageValue,
     setExpandedDirectMessageIds,
     setRouteReady,
@@ -614,6 +618,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     saveSettings,
     commitWorkflowSettings,
     renameRun,
+    moveRunToProject,
     deleteRun,
     archiveRun,
     recoverRun,
@@ -639,6 +644,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   const actions = useConversationActions({
     mutations: {
       renameRun,
+      moveRunToProject,
       deleteRun,
       archiveRun,
       recoverRun,
@@ -1055,6 +1061,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     workerStatuses: selectedRunWorkersForDisplay.map((worker) => worker.status),
     agentStates: conversationAgents.map((agent) => agent.state),
     hasAgentCurrentText: conversationAgents.some((agent) => Boolean(agent.currentText?.trim())),
+    hasPendingHumanInput: conversationAgents.some(hasPendingHumanInputSignal),
   });
   const showDirectControlWorkingIndicator = directControlPendingAssistantStatus !== null;
   const welcomeRepoName = resolveRepoName(currentProjectScope);
@@ -1177,6 +1184,14 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     renameValue,
     renameSource,
     setRenameValue,
+    movingRunId,
+    moveRunProjectPath,
+    setMoveRunProjectPath,
+    moveRunToProjectOptions: explicitProjects,
+    startMovingRun: actions.handleStartMovingRun,
+    confirmMoveRunToProject: actions.handleConfirmMoveRunToProject,
+    cancelMovingRun: actions.handleCancelMovingRun,
+    isMoveRunToProjectPending: moveRunToProject.isPending,
     startRenamingRun: actions.handleStartRenamingRun,
     commitRenamingRun: (runId: string) => actions.handleCommitRenamingRun(runId, renameValue, state),
     cancelRenamingRun: actions.handleCancelRenamingRun,

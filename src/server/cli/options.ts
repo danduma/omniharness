@@ -1,8 +1,12 @@
-import { CONVERSATION_MODES, type ConversationMode } from "@/server/conversations/modes";
+import {
+  REQUESTED_CONVERSATION_MODES,
+  type RequestedConversationMode,
+} from "@/server/conversations/modes";
+import { looksLikePlanPath } from "@/lib/plan-path";
 
 export interface OmniCliOptions {
   command: string;
-  mode: ConversationMode;
+  mode: RequestedConversationMode;
   projectPath: string;
   preferredWorkerType: string | null;
   preferredWorkerModel: string | null;
@@ -27,19 +31,15 @@ function readOptionValue(args: string[], index: number, flag: string) {
   return value;
 }
 
-function normalizeMode(value: string): ConversationMode {
-  if (CONVERSATION_MODES.includes(value as ConversationMode)) {
-    return value as ConversationMode;
+function normalizeMode(value: string): RequestedConversationMode {
+  if (REQUESTED_CONVERSATION_MODES.includes(value as RequestedConversationMode)) {
+    return value as RequestedConversationMode;
   }
-  throw new OmniCliUsageError(`Unsupported mode "${value}". Use one of: ${CONVERSATION_MODES.join(", ")}.`);
-}
-
-function looksLikePlanPath(value: string) {
-  return value.includes("/") || value.endsWith(".md") || value.endsWith(".txt");
+  throw new OmniCliUsageError(`Unsupported mode "${value}". Use one of: ${REQUESTED_CONVERSATION_MODES.join(", ")}.`);
 }
 
 export function parseOmniCliArgs(argv: string[]): OmniCliOptions {
-  let mode: ConversationMode = "direct";
+  let mode: RequestedConversationMode = "direct";
   let modeWasSpecified = false;
   let projectPath: string = process.cwd();
   let preferredWorkerType: string | null = null;
@@ -60,6 +60,11 @@ export function parseOmniCliArgs(argv: string[]): OmniCliOptions {
       mode = normalizeMode(readOptionValue(argv, index, arg));
       modeWasSpecified = true;
       index += 1;
+      continue;
+    }
+    if (arg === "-o" || arg === "--omni") {
+      mode = "omni";
+      modeWasSpecified = true;
       continue;
     }
     if (arg === "-i") {
@@ -130,7 +135,7 @@ export function parseOmniCliArgs(argv: string[]): OmniCliOptions {
     && positional.length === 1
     && looksLikePlanPath(rawCommand)
     && !rawCommand.toLowerCase().startsWith("implement ")
-    && (mode === "implementation" || !modeWasSpecified);
+    && (mode === "implementation" || mode === "omni" || !modeWasSpecified);
   const command = shouldExpandPlanPath ? `implement ${rawCommand}` : rawCommand;
   if (shouldExpandPlanPath && !modeWasSpecified) {
     mode = "implementation";
@@ -155,8 +160,9 @@ export function omniCliUsage() {
     "       omni acp",
     "",
     "Options:",
-    "  -i                            Implementation mode",
-    "  -p                            Planning mode",
+    "  -o, --omni                    Omni: plan interactively when needed, then supervise implementation",
+    "  -i                            Implementation mode (supervise an existing plan)",
+    "  -p                            Planning mode (legacy: create a plan to promote later)",
     "      --cwd <path>              Project directory for spawned workers",
     "  -w, --worker, --agent <type>  Preferred worker type, e.g. codex, claude, gemini, opencode",
     "      --model <model>           Preferred worker model",

@@ -754,8 +754,11 @@ test("project groups can be reordered from the projects tab without replacing th
   expect(pageSource).toContain("onReorderProjects: actions.handleReorderProjects,");
   expect(pageSource).toContain("onReorderProjects={onReorderProjects}");
   expect(pageSource).toContain('const canDragProject = canReorderProjects && group.path !== "other";');
+  expect(pageSource).toContain('data-project-drag-row="true"');
   expect(pageSource).toContain("draggable={canDragProject}");
   expect(pageSource).toContain("event.dataTransfer.setData(PROJECT_DRAG_DATA_TYPE, group.path);");
+  expect(pageSource).toContain('event.currentTarget.closest<HTMLElement>(\'[data-project-drag-row="true"]\')');
+  expect(pageSource).toContain("event.dataTransfer.setDragImage(projectDragRow, 16, projectDragRow.offsetHeight / 2);");
   expect(pageSource).toContain("onDrop={(event) => handleProjectDrop(event, group.path)}");
   expect(pageSource).toContain("conversationSidebarTab === \"projects\"");
   expect(pageSource).toContain("GripVertical");

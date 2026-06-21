@@ -35,7 +35,7 @@ export interface UseComposerControllerParams {
   onStopConversation: () => void;
   onEditQueuedMessage: (message: QueuedConversationMessageRecord) => void;
   onCancelQueuedMessage: (messageId: string) => void;
-  onSendQueuedMessageNow: (messageId: string) => void;
+  onInterruptQueuedMessage: (messageId: string) => void;
 }
 
 export function useComposerController({
@@ -51,7 +51,7 @@ export function useComposerController({
   onRunCommand,
   onStopConversation,
 }: UseComposerControllerParams) {
-  const { setCommand, setCommandCursor, setMentionIndex } = homeUiSetters;
+  const { setCommand, setCommandCursor, setMentionIndex, setComposerDraft } = homeUiSetters;
 
   const { command, commandCursor, mentionIndex, attachments } = useManagerSelector(
     homeUiStateManager,
@@ -89,8 +89,7 @@ export function useComposerController({
 
     const nextValue = replaceActiveMention(command, activeMention, filePath);
     const nextCursor = activeMention.start + filePath.length + 2;
-    setCommand(nextValue);
-    setCommandCursor(nextCursor);
+    setComposerDraft({ command: nextValue, commandCursor: nextCursor });
     requestAnimationFrame(() => {
       commandInputRef.current?.focus();
       commandInputRef.current?.setSelectionRange(nextCursor, nextCursor);

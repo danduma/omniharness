@@ -17,6 +17,7 @@ let watchdogInterval: ReturnType<typeof setInterval> | null = null;
 
 function isRecoverableFailedImplementationRun(run: typeof runs.$inferSelect) {
   return run.mode === "implementation"
+    && run.phase !== "planning"
     && run.status === "failed"
     && Boolean(run.lastError?.trim())
     && isTransientSupervisorError(new Error(run.lastError ?? ""));
@@ -82,6 +83,12 @@ export async function syncRunningSupervision() {
     eq(runs.mode, "implementation"),
   ));
   for (const run of activeRuns) {
+    // Omni runs still in their interactive planning phase keep the supervisor
+    // dormant — never auto-wake or auto-resume them here.
+    if (run.phase === "planning") {
+      continue;
+    }
+
     if (run.status === "quota_waiting") {
       continue;
     }

@@ -1709,7 +1709,30 @@ export class Supervisor {
         case "read_file": {
           const requestedPath = asString(action.args.path, "path");
           const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
-          const { absolutePath, content, truncated } = readSupervisorFile(requestedPath, run?.projectPath);
+          let absolutePath: string;
+          let content: string;
+          let truncated: boolean;
+          try {
+            ({ absolutePath, content, truncated } = readSupervisorFile(requestedPath, run?.projectPath));
+          } catch (error) {
+            // A missing or unreadable context file must not crash the whole
+            // supervised run. Ad-hoc plan files (vibes/ad-hoc/*.md) are
+            // ephemeral scratch files that can be gone by the time a run is
+            // resumed, and readSupervisorFile's bare statSync would otherwise
+            // throw a raw ENOENT that propagates out of run() and permanently
+            // fails the resume. Surface the read failure back to the
+            // supervisor so it can continue without that file.
+            const reason = formatSupervisorError(error);
+            await insertExecutionEvent(this.runId, "supervisor_file_read", {
+              summary: `Could not read ${requestedPath}: ${reason}`,
+              path: requestedPath,
+              content: `File could not be read: ${reason}`,
+              truncated: false,
+              error: reason,
+              missing: true,
+            });
+            continue;
+          }
           const parsedPlan = requestedPath.endsWith(".md") || absolutePath.endsWith(".md")
             ? parsePlan(content)
             : null;

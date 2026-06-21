@@ -1,11 +1,12 @@
 import type React from "react";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
-import { Archive, Bug, ChevronDown, Folder, FolderPlus, GitCommitHorizontal, GripVertical, ListChevronsDownUp, LoaderCircle, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Sun, Trash2, TriangleAlert, Wand2 } from "lucide-react";
+import { Archive, Bug, ChevronDown, Folder, FolderInput, FolderPlus, GitCommitHorizontal, GripVertical, ListChevronsDownUp, LoaderCircle, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Sun, Trash2, TriangleAlert, Wand2 } from "lucide-react";
 import type { ConversationSidebarTab } from "@/app/home/types";
 import type { ProjectDropPlacement } from "@/app/home/utils";
 import { Button } from "@/components/ui/button";
 import { requestBugDropOpen } from "@/components/BugDropBootstrap";
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -17,7 +18,7 @@ import { getRunLatestUnreadTimestamp, isRunUnread } from "@/lib/conversation-sta
 import { getConversationVisualKind, type ConversationVisualKind } from "@/lib/conversation-visuals";
 import type { ManualCommitAction } from "@/lib/commit-workflow";
 import { t, useI18nSnapshot } from "@/lib/i18n";
-import { isArchivableRunStatus, normalizeRunStatus } from "@/lib/run-status";
+import { isArchivableRunStatus, isTerminalRunStatus, normalizeRunStatus } from "@/lib/run-status";
 import { cn } from "@/lib/utils";
 import { StateManager } from "@/lib/state-manager";
 import type { SidebarGroup, SidebarRun } from "@/app/home/types";
@@ -104,6 +105,7 @@ interface ConversationProjectGroupListProps {
   renameSource: "sidebar" | "topbar" | null;
   setRenameValue: (value: string) => void;
   startRenamingRun: (run: SidebarRun) => void;
+  startMovingRun: (run: SidebarRun) => void;
   commitRenamingRun: (runId: string) => void;
   cancelRenamingRun: () => void;
   archiveRun: (run: SidebarRun) => void;
@@ -133,6 +135,7 @@ function ConversationProjectGroupList({
   renameSource,
   setRenameValue,
   startRenamingRun,
+  startMovingRun,
   commitRenamingRun,
   cancelRenamingRun,
   archiveRun,
@@ -174,6 +177,7 @@ function ConversationProjectGroupList({
             onOpenChange={(open) => onProjectOpenChange(group.path, open)}
           >
             <div
+              data-project-drag-row="true"
               className="group mb-1 flex items-center justify-between gap-0.5 rounded px-2 hover:bg-muted/30"
               onDragOver={(event) => {
                 if (!canDragProject) return;
@@ -193,6 +197,10 @@ function ConversationProjectGroupList({
                     event.dataTransfer.effectAllowed = "move";
                     event.dataTransfer.setData(PROJECT_DRAG_DATA_TYPE, group.path);
                     event.dataTransfer.setData("text/plain", group.path);
+                    const projectDragRow = event.currentTarget.closest<HTMLElement>('[data-project-drag-row="true"]');
+                    if (projectDragRow) {
+                      event.dataTransfer.setDragImage(projectDragRow, 16, projectDragRow.offsetHeight / 2);
+                    }
                   }}
                 >
                   <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
@@ -270,6 +278,7 @@ function ConversationProjectGroupList({
                   const visualKind = getConversationVisualKind(run);
                   const isCommitConversation = visualKind === "commit";
                   const canArchiveConversation = isArchivableRunStatus(run.status);
+                  const canMoveConversation = isTerminalRunStatus(run.status);
                   const normalizedRunStatus = normalizeRunStatus(run.status);
                   const runIsUnread = isRunUnread({
                     latestMessageAt: getRunLatestUnreadTimestamp(run, messages || []),
@@ -401,6 +410,17 @@ function ConversationProjectGroupList({
                                 >
                                   <Pencil className="mr-2 h-4 w-4" /> {t("conversation.sidebar.rename")}
                                 </DropdownMenuItem>
+                                {canMoveConversation ? (
+                                  <DropdownMenuItem
+                                    className="cursor-pointer whitespace-nowrap"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      startMovingRun(run);
+                                    }}
+                                  >
+                                    <FolderInput className="mr-2 h-4 w-4" /> {t("conversation.sidebar.moveToProject")}
+                                  </DropdownMenuItem>
+                                ) : null}
                                 {canArchiveConversation ? (
                                   <DropdownMenuItem
                                     className="cursor-pointer whitespace-nowrap"
@@ -456,6 +476,84 @@ function ConversationProjectGroupList({
   );
 }
 
+interface MoveRunToProjectDialogProps {
+  open: boolean;
+  moveRunProjectPath: string;
+  moveRunToProjectOptions: string[];
+  isMoveRunToProjectPending: boolean;
+  setMoveRunProjectPath: (value: string) => void;
+  confirmMoveRunToProject: () => void;
+  cancelMovingRun: () => void;
+}
+
+function MoveRunToProjectDialog({
+  open,
+  moveRunProjectPath,
+  moveRunToProjectOptions,
+  isMoveRunToProjectPending,
+  setMoveRunProjectPath,
+  confirmMoveRunToProject,
+  cancelMovingRun,
+}: MoveRunToProjectDialogProps) {
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          cancelMovingRun();
+        }
+      }}
+    >
+      <DialogContent showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>{t("conversation.moveProject.title")}</DialogTitle>
+          <DialogDescription>
+            {moveRunToProjectOptions.length > 0
+              ? t("conversation.moveProject.description")
+              : t("conversation.moveProject.empty")}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-2">
+          <label className="text-xs font-medium text-muted-foreground" htmlFor="move-run-project-select">
+            {t("conversation.moveProject.projectLabel")}
+          </label>
+          <select
+            id="move-run-project-select"
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+            value={moveRunProjectPath}
+            onChange={(event) => setMoveRunProjectPath(event.target.value)}
+            disabled={isMoveRunToProjectPending || moveRunToProjectOptions.length === 0}
+          >
+            <option value="">{t("conversation.moveProject.placeholder")}</option>
+            {moveRunToProjectOptions.map((projectPath) => (
+              <option key={projectPath} value={projectPath}>
+                {projectPath}
+              </option>
+            ))}
+          </select>
+        </div>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={cancelMovingRun}
+            disabled={isMoveRunToProjectPending}
+          >
+            {t("common.cancel")}
+          </Button>
+          <Button
+            type="button"
+            onClick={confirmMoveRunToProject}
+            disabled={!moveRunProjectPath || isMoveRunToProjectPending}
+          >
+            {t("conversation.moveProject.ok")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export interface ConversationSidebarProps {
   filteredProjects: SidebarGroup[];
   activeProjects: SidebarGroup[];
@@ -486,6 +584,14 @@ export interface ConversationSidebarProps {
   renameValue: string;
   renameSource: "sidebar" | "topbar" | null;
   setRenameValue: (value: string) => void;
+  movingRunId: string | null;
+  moveRunProjectPath: string;
+  moveRunToProjectOptions: string[];
+  setMoveRunProjectPath: (value: string) => void;
+  startMovingRun: (run: SidebarRun) => void;
+  confirmMoveRunToProject: () => void;
+  cancelMovingRun: () => void;
+  isMoveRunToProjectPending: boolean;
   startRenamingRun: (run: SidebarRun) => void;
   commitRenamingRun: (runId: string) => void;
   cancelRenamingRun: () => void;
@@ -530,6 +636,14 @@ export function ConversationSidebar({
   renameValue,
   renameSource,
   setRenameValue,
+  movingRunId,
+  moveRunProjectPath,
+  moveRunToProjectOptions,
+  setMoveRunProjectPath,
+  startMovingRun,
+  confirmMoveRunToProject,
+  cancelMovingRun,
+  isMoveRunToProjectPending,
   startRenamingRun,
   commitRenamingRun,
   cancelRenamingRun,
@@ -716,6 +830,7 @@ export function ConversationSidebar({
               renameValue={renameValue}
               renameSource={renameSource}
               setRenameValue={setRenameValue}
+              startMovingRun={startMovingRun}
               startRenamingRun={startRenamingRun}
               commitRenamingRun={commitRenamingRun}
               cancelRenamingRun={cancelRenamingRun}
@@ -745,6 +860,7 @@ export function ConversationSidebar({
               renameValue={renameValue}
               renameSource={renameSource}
               setRenameValue={setRenameValue}
+              startMovingRun={startMovingRun}
               startRenamingRun={startRenamingRun}
               commitRenamingRun={commitRenamingRun}
               cancelRenamingRun={cancelRenamingRun}
@@ -756,6 +872,16 @@ export function ConversationSidebar({
           </div>
         </ScrollArea>
       </div>
+
+      <MoveRunToProjectDialog
+        open={Boolean(movingRunId)}
+        moveRunProjectPath={moveRunProjectPath}
+        moveRunToProjectOptions={moveRunToProjectOptions}
+        isMoveRunToProjectPending={isMoveRunToProjectPending}
+        setMoveRunProjectPath={setMoveRunProjectPath}
+        confirmMoveRunToProject={confirmMoveRunToProject}
+        cancelMovingRun={cancelMovingRun}
+      />
 
       <div className="mt-auto shrink-0 border-t border-border/60 bg-background/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <DropdownMenu>

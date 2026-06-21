@@ -236,6 +236,7 @@ export type RecoveryEvent =
 export type ConversationEvent =
   | { kind: "conversation.awaiting_user"; runId: string; workerId?: string; reason: "worker_requested_input" }
   | { kind: "conversation.read"; runId: string; lastReadAt: string }
+  | { kind: "conversation.project_moved"; runId: string; previousProjectPath: string | null; projectPath: string }
   | { kind: "conversation.deleted"; runId: string }
   | { kind: "conversation.delete_failed"; runId: string; blockingTable: string | null }
   | {

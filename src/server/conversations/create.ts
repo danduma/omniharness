@@ -8,7 +8,7 @@ import { createAdHocPlan } from "@/server/runs/ad-hoc-plan";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { askAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
 import { queueConversationTitleGeneration } from "@/server/conversation-title";
-import { normalizeConversationMode, type ConversationMode } from "./modes";
+import { resolveOmniRequest, type ConversationMode } from "./modes";
 import { normalizeWorkerType, parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
 import { buildPlannerSystemPrompt } from "@/server/prompts";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
@@ -151,14 +151,16 @@ function getDefaultConversationTitle(mode: ConversationMode, command: string) {
 }
 
 function shouldGenerateConversationTitle(mode: ConversationMode, command: string) {
-  // Direct and commit conversations are user-controlled; they should not
-  // trigger the supervisor LLM (mastra/OpenAI) just to summarize a title.
-  // The run already has the trimmed command as its title, which is fine
-  // for the sidebar.
-  if (mode === "commit" || mode === "direct") {
+  // Commit conversations have a stable product label; other modes can replace
+  // the first-line fallback with a generated sidebar title.
+  if (mode === "commit") {
     return false;
   }
   return Boolean(command.trim());
+}
+
+function shouldCaptureCommitWorkflowForMode(mode: ConversationMode) {
+  return mode === "implementation" || mode === "direct";
 }
 
 async function readCommitWorkflowSettings() {
@@ -528,8 +530,13 @@ export async function createConversation(args: {
   attachments?: ChatAttachment[];
   externalClaudeSessionId?: string | null;
 }) {
-  const mode = normalizeConversationMode(args.mode);
   const command = args.command.trim();
+  // Resolve the client request (which may be the "omni" alias) into the stored
+  // run mode plus phase. `usePlanner` is true whenever the opening turn should
+  // run the interactive planner worker rather than the supervisor: legacy
+  // planning runs, or an Omni run that still needs a plan.
+  const { runMode: mode, phase } = resolveOmniRequest(args.mode, command);
+  const usePlanner = phase === "planning" || mode === "planning";
   const requestedProjectPath = args.projectPath?.trim() || getAppRoot();
   let createdWorktree: { projectPath: string; target: GitWorkspaceTarget } | null = null;
   let runCreated = false;
@@ -561,10 +568,14 @@ export async function createConversation(args: {
     );
 
     const planPath = createAdHocPlan(command, attachments);
-    const commitWorkflowSettings = mode === "implementation"
+    // During the Omni planning phase no implementation has begun, so defer the
+    // git baseline + commit-workflow capture until the run transitions into
+    // implementation (see startImplementationPhase).
+    const capturesImplementationWorkflow = shouldCaptureCommitWorkflowForMode(mode) && !usePlanner;
+    const commitWorkflowSettings = capturesImplementationWorkflow
       ? await readCommitWorkflowSettings()
       : { autoCommitMilestones: false, pushOnCommit: false };
-    const gitBaseline = mode === "implementation" && commitWorkflowSettings.autoCommitMilestones
+    const gitBaseline = capturesImplementationWorkflow && commitWorkflowSettings.autoCommitMilestones
       ? captureGitBaseline(projectPath)
       : null;
     const planId = randomUUID();
@@ -575,7 +586,7 @@ export async function createConversation(args: {
     await db.insert(plans).values({
       id: planId,
       path: planPath,
-      status: mode === "planning" ? "starting" : "running",
+      status: usePlanner ? "starting" : "running",
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -585,6 +596,7 @@ export async function createConversation(args: {
       id: runId,
       planId,
       mode,
+      phase,
       projectPath,
       title: defaultTitle,
       preferredWorkerType,
@@ -596,7 +608,7 @@ export async function createConversation(args: {
       gitBaselineJson: gitBaseline ? JSON.stringify(gitBaseline) : null,
       gitWorkspaceJson: resolvedWorkspace.runSnapshot ? JSON.stringify(resolvedWorkspace.runSnapshot) : null,
       completionCommitSha: null,
-      status: mode === "planning" ? "starting" : "running",
+      status: usePlanner ? "starting" : "running",
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -632,7 +644,7 @@ export async function createConversation(args: {
       createdAt: initialMessageCreatedAt,
     };
 
-    if (mode === "implementation") {
+    if (phase === "implementing") {
       await db.insert(dbMessages).values(initialMessage);
       notifyEventStreamSubscribers();
       startSupervisorRun(runId);
@@ -689,7 +701,7 @@ export async function createConversation(args: {
 
       const response = await buildCreatedConversationResponse({ planId, runId, messageId: initialMessageId, mode });
 
-      if (mode === "direct" || mode === "commit") {
+      if (!usePlanner) {
         const initialDirectTurn = startDirectWorkerConversation({
           runId,
           workerId,
@@ -727,10 +739,10 @@ export async function createConversation(args: {
             await persistInitialWorkerSpawnFailure({
               runId,
               workerId,
-              mode,
+              mode: "planning",
               error,
             });
-            console.error(`Spawn for ${mode} conversation failed:`, error);
+            console.error(`Spawn for planning conversation failed:`, error);
             return;
           }
 
@@ -741,14 +753,14 @@ export async function createConversation(args: {
               workerType,
               cwd,
               agent,
-              mode,
+              mode: "planning",
               command: workerPrompt,
             }));
           } catch (error) {
             if (isAgentBusyError(error)) {
               return;
             }
-            console.error(`Initial ${mode} conversation turn failed:`, error);
+            console.error(`Initial planning conversation turn failed:`, error);
           }
         })();
         void trackConversationBackgroundTask(initialPlanningTurn);

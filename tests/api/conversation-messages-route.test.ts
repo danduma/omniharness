@@ -66,6 +66,7 @@ import { POST as INTERRUPT_NEXT } from "@/app/api/conversations/[id]/queued-mess
 import { createQueuedConversationMessage } from "@/server/conversations/queued-messages";
 import {
   __resetWorkerTurnChainsForTests,
+  advanceWorkerTurnGeneration,
   waitForConversationBackgroundTasksForTests,
 } from "@/server/conversations/worker-turn-gate";
 
@@ -1953,6 +1954,31 @@ describe("POST /api/conversations/[id]/queued-messages interrupt routes", () => 
     expect(rows).toHaveLength(1);
     expect(rows[0]?.status).toBe("delivered");
     expect(mockAskAgent).toHaveBeenCalledWith(workerId, "Stop and run the linter.");
+  });
+
+  it("returns an interrupted queued message to pending when busy delivery loses the turn fence", async () => {
+    const { runId, workerId } = await seedBusyDirectRun();
+    const queued = await createQueuedConversationMessage({
+      runId,
+      targetWorkerId: workerId,
+      action: "queue",
+      content: "Send this after the permission clears.",
+      attachments: [],
+    });
+    mockAskAgent.mockImplementationOnce(async () => {
+      await advanceWorkerTurnGeneration(workerId);
+      throw new Error(`Ask failed: Agent is busy: ${workerId}`);
+    });
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/queued-messages/${queued.id}/interrupt`, { method: "POST" });
+    const response = await INTERRUPT_QUEUED(request, { params: Promise.resolve({ id: runId, messageId: queued.id }) });
+    expect(response.status).toBe(200);
+
+    await waitForConversationBackgroundTasksForTests();
+
+    const stored = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queued.id)).get();
+    expect(stored?.status).toBe("pending");
+    expect(stored?.lastError).toContain("Agent is busy");
   });
 
   it("refuses interrupt-next when there is no queued message and no draft", async () => {

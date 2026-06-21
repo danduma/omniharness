@@ -17,7 +17,7 @@ import { getRunLatestUnreadTimestamp } from "@/lib/conversation-state";
 import { compactRunOutputs } from "@/server/workers/output-store";
 import { cleanupRunArtifacts } from "@/server/artifacts/cleanup";
 import { pauseForClarifications } from "@/server/clarifications/loop";
-import { isArchivableRunStatus } from "@/server/runs/status";
+import { isArchivableRunStatus, isTerminalRunStatus } from "@/server/runs/status";
 import {
   plans,
   runs,
@@ -31,6 +31,7 @@ import {
   recoveryIncidents,
   supervisorScheduledWakes,
   creditEvents,
+  settings,
   workerCounters,
   workerAssignments,
   planningReviewRuns,
@@ -52,6 +53,18 @@ import { toNextRequest } from "./next-request";
 
 function normalizeTitle(input: unknown) {
   return String(input ?? "").trim().replace(/\s+/g, " ");
+}
+
+function parseConfiguredProjectPaths(value: string | null | undefined) {
+  if (!value?.trim()) {
+    return [] as string[];
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 function normalizeWorkerStatus(status: string | null | undefined) {
@@ -290,6 +303,7 @@ async function markRunRead(runId: string, run: typeof runs.$inferSelect) {
 }
 
 export const handleRunPatchRequest: OmniHttpHandler = async (request, context) => {
+  let patchActionLabel = "Update";
   try {
     if (request.method !== "PATCH") {
       return Response.json({ error: { code: "method_not_allowed", message: "Method not allowed." } }, {
@@ -300,7 +314,7 @@ export const handleRunPatchRequest: OmniHttpHandler = async (request, context) =
 
     const auth = await requireApiSession(toNextRequest(request), {
       source: "Runs",
-      action: "Rename",
+      action: "Update",
       enforceSameOrigin: true,
     });
     if (auth.response) {
@@ -309,28 +323,96 @@ export const handleRunPatchRequest: OmniHttpHandler = async (request, context) =
 
     const runId = requireRunId(context);
     const body = await request.json();
-    const title = normalizeTitle(body?.title);
+    const hasTitlePatch = body && Object.prototype.hasOwnProperty.call(body, "title");
+    const hasProjectPathPatch = body && Object.prototype.hasOwnProperty.call(body, "projectPath");
 
-    if (!title) {
-      return errorResponse("Title cannot be empty", {
+    if (!hasTitlePatch && !hasProjectPathPatch) {
+      return errorResponse("No supported run changes provided", {
         status: 400,
         source: "Runs",
-        action: "Rename",
+        action: patchActionLabel,
       });
     }
 
+    const existingRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    if (!existingRun) {
+      return errorResponse("Run not found", {
+        status: 404,
+        source: "Runs",
+        action: patchActionLabel,
+      });
+    }
+
+    const updates: { title?: string; projectPath?: string } = {};
+    const responsePayload: Record<string, unknown> = { ok: true, runId };
+
+    if (hasTitlePatch) {
+      patchActionLabel = "Rename";
+      const title = normalizeTitle(body?.title);
+      if (!title) {
+        return errorResponse("Title cannot be empty", {
+          status: 400,
+          source: "Runs",
+          action: patchActionLabel,
+        });
+      }
+      updates.title = title;
+      responsePayload.title = title;
+    }
+
+    if (hasProjectPathPatch) {
+      patchActionLabel = "Move to project";
+      if (!isTerminalRunStatus(existingRun.status)) {
+        return errorResponse("Only finished conversations can be moved between projects", {
+          status: 409,
+          source: "Runs",
+          action: patchActionLabel,
+          details: [`Current status: ${existingRun.status}`],
+        });
+      }
+      const projectPath = typeof body?.projectPath === "string" ? body.projectPath.trim() : "";
+      if (!projectPath) {
+        return errorResponse("Project path cannot be empty", {
+          status: 400,
+          source: "Runs",
+          action: patchActionLabel,
+        });
+      }
+      const projectSetting = await db.select().from(settings).where(eq(settings.key, "PROJECTS")).get();
+      const configuredProjectPaths = parseConfiguredProjectPaths(projectSetting?.value);
+      if (!configuredProjectPaths.includes(projectPath)) {
+        return errorResponse("Project is not configured", {
+          status: 400,
+          source: "Runs",
+          action: patchActionLabel,
+        });
+      }
+      updates.projectPath = projectPath;
+      responsePayload.projectPath = projectPath;
+    }
+
+    const updatedAt = new Date();
     await db
       .update(runs)
-      .set({ title, updatedAt: new Date() })
+      .set({ ...updates, updatedAt })
       .where(eq(runs.id, runId));
+
+    if (typeof updates.projectPath === "string") {
+      emitNamedEvent({
+        kind: "conversation.project_moved",
+        runId,
+        previousProjectPath: existingRun.projectPath,
+        projectPath: updates.projectPath,
+      });
+    }
     notifyEventStreamSubscribers();
 
-    return Response.json({ ok: true, runId, title });
+    return Response.json(responsePayload);
   } catch (error) {
     return errorResponse(error, {
       status: 500,
       source: "Runs",
-      action: "Rename",
+      action: patchActionLabel,
     });
   }
 };

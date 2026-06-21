@@ -38,21 +38,19 @@ function parseArtifactsJson(value: string | null | undefined): PlannerArtifactsS
   }
 }
 
-export async function promotePlanningRun(args: {
+/**
+ * Validate that a planning run has a plan ready to implement, and resolve the
+ * concrete plan + spec paths. Shared by the legacy child-run promotion and the
+ * in-run Omni planning→implementing transition (startImplementationPhase).
+ */
+export async function validatePlanForImplementation(args: {
   runId: string;
+  run: typeof runs.$inferSelect;
   planPath?: string | null;
-}) {
-  const planningRun = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
-  if (!planningRun) {
-    throw new Error(`Planning run ${args.runId} not found`);
-  }
-
-  if (planningRun.mode !== "planning") {
-    throw new Error("Only planning conversations can be promoted");
-  }
-
-  const artifacts = parseArtifactsJson(planningRun.plannerArtifactsJson);
-  const selectedPlanPath = args.planPath?.trim() || planningRun.artifactPlanPath || artifacts.planPath || null;
+}): Promise<{ selectedPlanPath: string; specPath: string | null }> {
+  const { run } = args;
+  const artifacts = parseArtifactsJson(run.plannerArtifactsJson);
+  const selectedPlanPath = args.planPath?.trim() || run.artifactPlanPath || artifacts.planPath || null;
   if (!selectedPlanPath) {
     throw new Error("No verified plan is available to promote");
   }
@@ -82,6 +80,28 @@ export async function promotePlanningRun(args: {
   if (!record?.verdict && !artifactAlreadyReady && !readiness.ready) {
     throw new Error("The selected plan is not ready for implementation");
   }
+
+  return { selectedPlanPath, specPath: run.specPath || artifacts.specPath || null };
+}
+
+export async function promotePlanningRun(args: {
+  runId: string;
+  planPath?: string | null;
+}) {
+  const planningRun = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
+  if (!planningRun) {
+    throw new Error(`Planning run ${args.runId} not found`);
+  }
+
+  if (planningRun.mode !== "planning") {
+    throw new Error("Only planning conversations can be promoted");
+  }
+
+  const { selectedPlanPath, specPath } = await validatePlanForImplementation({
+    runId: args.runId,
+    run: planningRun,
+    planPath: args.planPath,
+  });
 
   const sourceMessages = await db.select().from(messages)
     .where(eq(messages.runId, args.runId))
@@ -153,7 +173,7 @@ export async function promotePlanningRun(args: {
 
   await db.update(runs).set({
     status: "promoted",
-    specPath: planningRun.specPath || artifacts.specPath || null,
+    specPath,
     artifactPlanPath: selectedPlanPath,
     updatedAt: new Date(),
   }).where(eq(runs.id, planningRun.id));

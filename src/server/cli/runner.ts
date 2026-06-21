@@ -114,7 +114,7 @@ async function printRunUpdates(runId: string, state: WatchState, io: OmniCliIo) 
   };
 }
 
-function shouldContinueWatching(options: OmniCliOptions, snapshot: Awaited<ReturnType<typeof printRunUpdates>>) {
+function shouldContinueWatching(snapshot: Awaited<ReturnType<typeof printRunUpdates>>) {
   const run = snapshot.run;
   if (!run) {
     return false;
@@ -122,14 +122,17 @@ function shouldContinueWatching(options: OmniCliOptions, snapshot: Awaited<Retur
   if (run.status === "done" || run.status === "failed") {
     return false;
   }
-  if (options.mode === "implementation") {
+  // Supervisor-driven runs (implementation mode, past any planning phase) keep
+  // streaming until terminal. Planning-phase Omni runs and direct/planning runs
+  // watch their single worker instead.
+  if (run.mode === "implementation" && run.phase !== "planning") {
     return true;
   }
 
   return snapshot.workers.some((worker) => ["starting", "working", "running"].includes(worker.status));
 }
 
-async function watchRun(runId: string, options: OmniCliOptions, io: OmniCliIo) {
+async function watchRun(runId: string, io: OmniCliIo) {
   const state: WatchState = {
     messageIds: new Set(),
     eventIds: new Set(),
@@ -139,7 +142,7 @@ async function watchRun(runId: string, options: OmniCliOptions, io: OmniCliIo) {
 
   while (true) {
     const snapshot = await printRunUpdates(runId, state, io);
-    if (!shouldContinueWatching(options, snapshot)) {
+    if (!shouldContinueWatching(snapshot)) {
       return;
     }
     await waitForEventStreamNotification(1_000);
@@ -191,7 +194,7 @@ export async function runOmniCli(argv: string[], io: OmniCliIo = process) {
     }
 
     if (options.watch) {
-      await watchRun(created.runId, options, io);
+      await watchRun(created.runId, io);
     }
 
     return 0;

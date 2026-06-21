@@ -1,4 +1,5 @@
 import { asc, eq } from "drizzle-orm";
+import path from "path";
 import { db } from "@/server/db";
 import { runs, workers } from "@/server/db/schema";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -23,6 +24,20 @@ function isPastGrace(worker: typeof workers.$inferSelect, nowMs: number) {
     ? STARTING_WORKER_RELOAD_GRACE_MS
     : ACTIVE_WORKER_RELOAD_GRACE_MS;
   return nowMs - worker.updatedAt.getTime() >= graceMs;
+}
+
+function isPathInside(root: string, candidate: string) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function workerMatchesRunProject(run: typeof runs.$inferSelect, worker: typeof workers.$inferSelect) {
+  if (!run.projectPath?.trim()) {
+    return true;
+  }
+  const projectPath = path.resolve(run.projectPath);
+  const workerCwd = path.resolve(worker.cwd);
+  return isPathInside(projectPath, workerCwd);
 }
 
 function isRunEligible(status: string | null | undefined) {
@@ -172,6 +187,9 @@ export async function reconcilePersistedReloadZombies(args: {
     ?? runWorkers.find((worker) => isStaleStartingWorker(worker, nowMs));
 
   if (!staleWorker) {
+    return { action: "none" as const };
+  }
+  if (!workerMatchesRunProject(run, staleWorker)) {
     return { action: "none" as const };
   }
 

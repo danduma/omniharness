@@ -69,6 +69,7 @@ describe("BusyMessageQueueManager", () => {
       ...queuedMessage,
       status: "pending",
       lastError: "Worker is busy",
+      updatedAt: "2026-05-25T00:00:02.000Z",
     });
 
     manager.setQueuedMessages([queuedMessage], false);
@@ -76,6 +77,22 @@ describe("BusyMessageQueueManager", () => {
     manager.setQueuedMessages([pendingAgain], false);
 
     expect(manager.getQueuedMessagesForRun("run-a")).toEqual([pendingAgain]);
+  });
+
+  it("ignores older authoritative server snapshots after the server removed an active row", () => {
+    const manager = new BusyMessageQueueManager();
+    const queuedMessage = buildQueuedMessage({
+      id: "queued-late-server-frame",
+      runId: "run-a",
+      status: "pending",
+      updatedAt: "2026-05-25T00:00:01.000Z",
+    });
+
+    manager.setQueuedMessages([queuedMessage], false);
+    manager.setQueuedMessages([], false);
+    manager.setQueuedMessages([queuedMessage], false);
+
+    expect(manager.getQueuedMessagesForRun("run-a")).toEqual([]);
   });
 
   it("removes terminal rows supplied by a mutation response", () => {

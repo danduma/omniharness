@@ -11,7 +11,7 @@ type BusyMessageQueueState = {
   // UI only — server queue rows from /api/events remain authoritative.
   interruptingMessageIds: Set<string>;
   locallyHiddenMessageIds: Set<string>;
-  serverAbsentMessageIds: Set<string>;
+  serverAbsentMessageUpdatedAtById: Map<string, number>;
 };
 
 const initialBusyMessageQueueState: BusyMessageQueueState = {
@@ -19,11 +19,30 @@ const initialBusyMessageQueueState: BusyMessageQueueState = {
   cancellingMessageIds: new Set(),
   interruptingMessageIds: new Set(),
   locallyHiddenMessageIds: new Set(),
-  serverAbsentMessageIds: new Set(),
+  serverAbsentMessageUpdatedAtById: new Map(),
 };
 
 function isActiveQueuedMessage(message: QueuedConversationMessageRecord) {
   return message.status === "pending" || message.status === "delivering";
+}
+
+function timestampMs(value: string | null | undefined) {
+  if (!value) {
+    return 0;
+  }
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isStaleServerAbsentActiveMessage(
+  message: QueuedConversationMessageRecord,
+  serverAbsentMessageUpdatedAtById: Map<string, number>,
+) {
+  if (!isActiveQueuedMessage(message)) {
+    return false;
+  }
+  const absentUpdatedAt = serverAbsentMessageUpdatedAtById.get(message.id);
+  return absentUpdatedAt !== undefined && timestampMs(message.updatedAt) <= absentUpdatedAt;
 }
 
 export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState> {
@@ -33,18 +52,21 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
 
   setQueuedMessages(messages: QueuedConversationMessageRecord[], notify = true) {
     this.update((current) => {
-      const incomingIds = new Set(messages.map((message) => message.id));
+      const incomingMessages = messages.filter(
+        (message) => !isStaleServerAbsentActiveMessage(message, current.serverAbsentMessageUpdatedAtById),
+      );
+      const incomingIds = new Set(incomingMessages.map((message) => message.id));
       const newlyAbsentActiveIds = current.queuedMessages
         .filter((message) => isActiveQueuedMessage(message) && !incomingIds.has(message.id))
-        .map((message) => message.id);
+        .map((message) => [message.id, timestampMs(message.updatedAt)] as const);
       // Server rows are authoritative: clear optimistic interrupt/cancel flags
       // for any row that has left a pending/delivering state.
       const settledIds = new Set(
         [
-          ...messages
+          ...incomingMessages
             .filter((message) => !isActiveQueuedMessage(message))
             .map((message) => message.id),
-          ...newlyAbsentActiveIds,
+          ...newlyAbsentActiveIds.map(([id]) => id),
         ],
       );
       const clearSettled = (ids: Set<string>) => {
@@ -60,19 +82,19 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
         }
         return changed ? next : ids;
       };
-      const serverAbsentMessageIds = new Set(current.serverAbsentMessageIds);
-      for (const id of newlyAbsentActiveIds) {
-        serverAbsentMessageIds.add(id);
+      const serverAbsentMessageUpdatedAtById = new Map(current.serverAbsentMessageUpdatedAtById);
+      for (const [id, updatedAt] of newlyAbsentActiveIds) {
+        serverAbsentMessageUpdatedAtById.set(id, updatedAt);
       }
-      for (const id of incomingIds) {
-        serverAbsentMessageIds.delete(id);
+      for (const message of incomingMessages) {
+        serverAbsentMessageUpdatedAtById.delete(message.id);
       }
       return {
         ...current,
-        queuedMessages: messages.filter((message) => !current.locallyHiddenMessageIds.has(message.id)),
+        queuedMessages: incomingMessages.filter((message) => !current.locallyHiddenMessageIds.has(message.id)),
         cancellingMessageIds: clearSettled(current.cancellingMessageIds),
         interruptingMessageIds: clearSettled(current.interruptingMessageIds),
-        serverAbsentMessageIds,
+        serverAbsentMessageUpdatedAtById,
       };
     }, notify);
   }
@@ -87,8 +109,8 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
 
   upsertQueuedMessage(message: QueuedConversationMessageRecord) {
     this.update((current) => {
-      const serverAbsentMessageIds = new Set(current.serverAbsentMessageIds);
-      if (isActiveQueuedMessage(message) && serverAbsentMessageIds.has(message.id)) {
+      const serverAbsentMessageUpdatedAtById = new Map(current.serverAbsentMessageUpdatedAtById);
+      if (isStaleServerAbsentActiveMessage(message, serverAbsentMessageUpdatedAtById)) {
         return current;
       }
 
@@ -97,23 +119,23 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
       if (!isActiveQueuedMessage(message)) {
         cancellingMessageIds.delete(message.id);
         interruptingMessageIds.delete(message.id);
-        serverAbsentMessageIds.add(message.id);
+        serverAbsentMessageUpdatedAtById.set(message.id, timestampMs(message.updatedAt));
         return {
           ...current,
           queuedMessages: current.queuedMessages.filter((entry) => entry.id !== message.id),
           cancellingMessageIds,
           interruptingMessageIds,
-          serverAbsentMessageIds,
+          serverAbsentMessageUpdatedAtById,
         };
       }
 
-      serverAbsentMessageIds.delete(message.id);
+      serverAbsentMessageUpdatedAtById.delete(message.id);
       const existingIndex = current.queuedMessages.findIndex((entry) => entry.id === message.id);
       if (existingIndex === -1) {
         return {
           ...current,
           queuedMessages: [...current.queuedMessages, message].sort(compareOldestByCreatedAtThenId),
-          serverAbsentMessageIds,
+          serverAbsentMessageUpdatedAtById,
         };
       }
 
@@ -122,7 +144,7 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
       return {
         ...current,
         queuedMessages: next,
-        serverAbsentMessageIds,
+        serverAbsentMessageUpdatedAtById,
       };
     });
   }
@@ -159,14 +181,15 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
       cancellingMessageIds.delete(messageId);
       interruptingMessageIds.delete(messageId);
       locallyHiddenMessageIds.add(messageId);
-      const serverAbsentMessageIds = new Set(current.serverAbsentMessageIds);
-      serverAbsentMessageIds.add(messageId);
+      const serverAbsentMessageUpdatedAtById = new Map(current.serverAbsentMessageUpdatedAtById);
+      const existing = current.queuedMessages.find((message) => message.id === messageId);
+      serverAbsentMessageUpdatedAtById.set(messageId, timestampMs(existing?.updatedAt));
       return {
         queuedMessages: current.queuedMessages.filter((message) => message.id !== messageId),
         cancellingMessageIds,
         interruptingMessageIds,
         locallyHiddenMessageIds,
-        serverAbsentMessageIds,
+        serverAbsentMessageUpdatedAtById,
       };
     });
   }
@@ -176,11 +199,11 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
       const cancellingMessageIds = new Set(current.cancellingMessageIds);
       const interruptingMessageIds = new Set(current.interruptingMessageIds);
       const locallyHiddenMessageIds = new Set(current.locallyHiddenMessageIds);
-      const serverAbsentMessageIds = new Set(current.serverAbsentMessageIds);
+      const serverAbsentMessageUpdatedAtById = new Map(current.serverAbsentMessageUpdatedAtById);
       cancellingMessageIds.delete(message.id);
       interruptingMessageIds.delete(message.id);
       locallyHiddenMessageIds.delete(message.id);
-      serverAbsentMessageIds.delete(message.id);
+      serverAbsentMessageUpdatedAtById.delete(message.id);
       const existingIndex = current.queuedMessages.findIndex((entry) => entry.id === message.id);
       const queuedMessages = existingIndex === -1
         ? [...current.queuedMessages, message].sort(compareOldestByCreatedAtThenId)
@@ -190,7 +213,7 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
         cancellingMessageIds,
         interruptingMessageIds,
         locallyHiddenMessageIds,
-        serverAbsentMessageIds,
+        serverAbsentMessageUpdatedAtById,
       };
     });
   }

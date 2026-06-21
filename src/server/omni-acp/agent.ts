@@ -192,7 +192,12 @@ export async function waitForOmniConversationTurn(args: WaitForTurnArgs): Promis
       return { stopReason: "end_turn" };
     }
 
-    if (snapshot.run.mode !== "implementation" && !snapshot.workerRecords.some((worker) => activeWorkerStatus(worker.status))) {
+    // An Omni run is mode === "implementation" for its whole life, so keying
+    // off mode alone would hang the ACP turn on the dormant supervisor during
+    // the planning phase. Treat a planning-phase run like a single-worker run:
+    // end the turn once its worker goes idle.
+    const supervised = snapshot.run.mode === "implementation" && snapshot.run.phase !== "planning";
+    if (!supervised && !snapshot.workerRecords.some((worker) => activeWorkerStatus(worker.status))) {
       return { stopReason: "end_turn" };
     }
 

@@ -19,6 +19,7 @@ import { parseProjectList, reorderExplicitProjectPaths, type ProjectDropPlacemen
 
 type MutationsRef = {
   renameRun: { mutate: (vars: { runId: string; title: string }) => void };
+  moveRunToProject: { mutate: (vars: { runId: string; projectPath: string }) => void };
   deleteRun: { mutate: (vars: { runId: string }) => void };
   archiveRun: { mutate: (vars: { runId: string }) => void };
   recoverRun: {
@@ -64,6 +65,8 @@ export function useConversationActions({
     setRenamingRunId,
     setRenameValue,
     setRenameSource,
+    setMovingRunId,
+    setMoveRunProjectPath,
     setEditingMessageId,
     setEditingMessageValue,
     setExpandedDirectMessageIds,
@@ -198,6 +201,31 @@ export function useConversationActions({
     }
 
     mutations.renameRun.mutate({ runId, title: nextTitle });
+  };
+
+  const handleStartMovingRun = (run: SidebarRun) => {
+    setMovingRunId(run.id);
+    setMoveRunProjectPath("");
+  };
+
+  const handleCancelMovingRun = () => {
+    setMovingRunId(null);
+    setMoveRunProjectPath("");
+  };
+
+  const handleConfirmMoveRunToProject = () => {
+    const snap = homeUiStateManager.getSnapshot();
+    const runId = snap.movingRunId;
+    const projectPath = snap.moveRunProjectPath.trim();
+    if (!runId || !projectPath || !explicitProjects.includes(projectPath)) {
+      return;
+    }
+    const existingRun = runs.find((run: RunRecord) => run.id === runId);
+    if (existingRun?.projectPath === projectPath) {
+      handleCancelMovingRun();
+      return;
+    }
+    mutations.moveRunToProject.mutate({ runId, projectPath });
   };
 
   const handleDeleteRun = (run: SidebarRun) => {
@@ -364,6 +392,9 @@ export function useConversationActions({
     handleStartTopBarRenamingRun,
     handleCancelRenamingRun,
     handleCommitRenamingRun,
+    handleStartMovingRun,
+    handleCancelMovingRun,
+    handleConfirmMoveRunToProject,
     handleDeleteRun,
     handleArchiveRun,
     handleRetryMessage,

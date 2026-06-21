@@ -458,8 +458,8 @@ export function useHomeViewModel({
     executionEvents: selectedRunExecutionEvents,
     supervisorInterventions: selectedRunSupervisorInterventions,
     workers: selectedRunWorkersForDisplay,
-    runMode: selectedRun?.mode ?? null,
-  }), [selectedRun?.mode, selectedRunExecutionEvents, selectedRunSupervisorInterventions, selectedRunWorkersForDisplay, visibleMessages]);
+    isPlanningRun: isPlanningConversation,
+  }), [isPlanningConversation, selectedRunExecutionEvents, selectedRunSupervisorInterventions, selectedRunWorkersForDisplay, visibleMessages]);
 
   const conversationTimelineActivityCount = conversationTimelineItems.filter((item) => item.type === "activity").length;
 

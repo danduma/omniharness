@@ -4,6 +4,7 @@ import { runs } from "@/server/db/schema";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
+import { runMilestoneAutoCommit } from "@/server/git/run-auto-commit";
 
 type OutputEntryLike = {
   type?: string | null;
@@ -123,6 +124,17 @@ export async function updateDirectRunStatusFromWorkerOutput(args: WorkerOutputSo
       details: { reason: "worker_requested_input" },
       createdAt: now,
     });
+  } else if (run.mode === "direct" && nextStatus === "done" && run.status !== "done") {
+    await runMilestoneAutoCommit(args.runId, firstNonEmptyText([
+      args.responseText,
+      args.currentText,
+      args.lastText,
+      latestVisibleEntryText(args.outputEntries),
+      latestVisibleEntryText(parseOutputEntriesJson(args.outputEntriesJson)),
+      args.renderedOutput,
+      args.outputLog,
+    ]));
+    notifyEventStreamSubscribers();
   } else if (nextStatus !== run.status || run.failedAt || run.lastError) {
     notifyEventStreamSubscribers();
   }

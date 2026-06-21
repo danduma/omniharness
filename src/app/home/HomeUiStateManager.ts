@@ -75,6 +75,8 @@ export type HomeUiState = {
   renamingRunId: string | null;
   renameValue: string;
   renameSource: RenameSource | null;
+  movingRunId: string | null;
+  moveRunProjectPath: string;
   editingMessageId: string | null;
   editingMessageValue: string;
   expandedDirectMessageIds: Set<string>;
@@ -129,6 +131,8 @@ const initialHomeUiState: HomeUiState = {
   renamingRunId: null,
   renameValue: "",
   renameSource: null,
+  movingRunId: null,
+  moveRunProjectPath: "",
   editingMessageId: null,
   editingMessageValue: "",
   expandedDirectMessageIds: new Set(),
@@ -391,6 +395,8 @@ export const homeUiSetters = {
   setRenamingRunId: homeUiStateManager.createSetter("renamingRunId"),
   setRenameValue: homeUiStateManager.createSetter("renameValue"),
   setRenameSource: homeUiStateManager.createSetter("renameSource"),
+  setMovingRunId: homeUiStateManager.createSetter("movingRunId"),
+  setMoveRunProjectPath: homeUiStateManager.createSetter("moveRunProjectPath"),
   setEditingMessageId: homeUiStateManager.createSetter("editingMessageId"),
   setEditingMessageValue: homeUiStateManager.createSetter("editingMessageValue"),
   setExpandedDirectMessageIds: homeUiStateManager.createSetter("expandedDirectMessageIds"),
