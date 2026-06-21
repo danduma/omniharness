@@ -17,6 +17,7 @@
     "predev": "node ./scripts/check-pnpm.mjs --verify-native",
     "dev": "pnpm exec tsx scripts/dev.ts",
     "dev:proxy": "pnpm exec tsx scripts/dev-compression-proxy.ts",
+    "auth:password": "node ./scripts/auth-password.mjs",
     "restart:control": "pnpm exec tsx scripts/remote-restart.ts",
     "prebuild": "node ./scripts/check-pnpm.mjs --verify-native",
     "dev:web": "next dev --turbo",
