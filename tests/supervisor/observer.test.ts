@@ -525,6 +525,61 @@ describe("deriveWorkerEvents", () => {
     ]));
   });
 
+  it("wakes the supervisor immediately when a worker asks the user a question", () => {
+    const elicitation = {
+      requestId: 4,
+      requestedAt: new Date(0).toISOString(),
+      toolCallId: "ask-call-1",
+      message: "Which option should I use?",
+    };
+
+    const { events } = deriveWorkerEvents({
+      workerId: "worker-1",
+      snapshot: {
+        state: "working",
+        currentText: "waiting for answer",
+        lastText: "waiting for answer",
+        pendingPermissions: [],
+        pendingElicitations: [elicitation],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+      previous: {
+        fingerprint: JSON.stringify({
+          state: "working",
+          currentText: "waiting for answer",
+          lastText: "waiting for answer",
+          pendingPermissions: [],
+          pendingElicitations: [],
+          stopReason: null,
+          stderrTail: [],
+        }),
+        lastChangedAt: 0,
+        lastMeaningfulActivityAt: 0,
+        progressSignature: JSON.stringify({
+          state: "working",
+          currentText: "waiting for answer",
+          lastText: "waiting for answer",
+          pendingPermissions: [],
+          pendingElicitations: [],
+          stopReason: null,
+        }),
+        idleNotified: false,
+        stuckNotified: false,
+      },
+      now: 1_000,
+    });
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "worker_elicitation_requested",
+        summary: "worker-1 is waiting on user input",
+        shouldWakeSupervisor: true,
+        updatesActivity: false,
+      }),
+    ]));
+  });
+
   it("marks a worker stuck after prolonged churn without meaningful progress", () => {
     const { nextState, events } = deriveWorkerEvents({
       workerId: "worker-1",

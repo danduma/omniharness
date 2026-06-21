@@ -378,7 +378,7 @@ function refreshLoginShellPath(cacheKey: string, shell: string, env: EnvLike) {
 }
 
 function getLoginShell(env: EnvLike): string | null {
-  if (env.OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH === "1" || env.ACP_BRIDGE_DISABLE_LOGIN_PATH === "1") {
+  if (env.OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH === "1") {
     return null;
   }
 

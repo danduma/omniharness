@@ -27,6 +27,9 @@ import type {
   AskResult,
   CancelTerminalProcessResult,
   DoctorResult,
+  ElicitationCreateParams,
+  ElicitationResponse,
+  PendingElicitation,
   PendingPermission,
   StartAgentInput,
 } from "./types";
@@ -778,6 +781,47 @@ class RuntimeClient implements acp.Client {
     });
   }
 
+  // The pinned SDK doesn't route `elicitation/create`, so it arrives through the
+  // generic ext-method escape hatch. This is how the claude-agent-acp adapter
+  // presents the built-in AskUserQuestion tool once we advertise
+  // `elicitation.form` — see startup `clientCapabilities`.
+  async extMethod(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (method === ELICITATION_CREATE_METHOD) {
+      return this.createElicitation(params as ElicitationCreateParams);
+    }
+    throw acp.RequestError.methodNotFound(method);
+  }
+
+  private async createElicitation(params: ElicitationCreateParams): Promise<ElicitationResponse> {
+    const record = this.getRecord();
+    if (!record) {
+      return { action: "cancel" };
+    }
+    // URL-mode elicitations need a browser surface we don't advertise; only form
+    // mode (AskUserQuestion) is supported. Decline anything else so the turn
+    // proceeds instead of hanging.
+    if (params.mode && params.mode !== "form") {
+      return { action: "decline" };
+    }
+    const requestId = nextElicitationRequestId++;
+    record.updatedAt = nowIso();
+    record.state = "working";
+    appendOutputEntry(record, {
+      type: "elicitation",
+      text: buildElicitationRequestText(params),
+      status: "pending",
+      raw: { ...params, requestId },
+    });
+    return new Promise((resolve) => {
+      record.pendingElicitations.push({
+        requestId,
+        params,
+        requestedAt: nowIso(),
+        resolve,
+      });
+    });
+  }
+
   async readTextFile(params: acp.ReadTextFileRequest): Promise<acp.ReadTextFileResponse> {
     const content = await readFile(params.path, "utf8");
     return {
@@ -859,6 +903,38 @@ class RuntimeClient implements acp.Client {
 }
 
 let nextPermissionRequestId = 1;
+
+// JSON-RPC method the claude-agent-acp adapter calls to present a form
+// elicitation (the built-in AskUserQuestion tool). Not modeled by the pinned
+// SDK, so we match on the raw method string.
+const ELICITATION_CREATE_METHOD = "elicitation/create";
+let nextElicitationRequestId = 1;
+
+function buildElicitationRequestText(params: ElicitationCreateParams) {
+  const message = asNonEmptyString(params.message);
+  const fieldNames = params.requestedSchema?.properties
+    ? Object.keys(params.requestedSchema.properties)
+    : [];
+  const fieldsSuffix = fieldNames.length > 0 ? ` (${fieldNames.length} field${fieldNames.length === 1 ? "" : "s"})` : "";
+  return message ? `Question for user: ${message}${fieldsSuffix}` : `Question for user${fieldsSuffix}`;
+}
+
+function appendElicitationOutcomeEntry(record: AgentRecord, requestId: number, response: ElicitationResponse) {
+  const status = response.action === "accept" ? "answered" : response.action === "decline" ? "skipped" : "cancelled";
+  const summary = response.action === "accept"
+    ? Object.entries(response.content)
+        .map(([key, value]) => `${key}=${Array.isArray(value) ? value.join("/") : String(value)}`)
+        .join(", ")
+    : "";
+  appendOutputEntry(record, {
+    type: "elicitation",
+    text: summary
+      ? `Question ${status} for request ${requestId}: ${summary}`
+      : `Question ${status} for request ${requestId}`,
+    status,
+    raw: { requestId, action: response.action, ...(response.action === "accept" ? { content: response.content } : {}) },
+  });
+}
 
 function describePermissionToolCall(params: acp.RequestPermissionRequest) {
   const toolCall = asRecord(params.toolCall);
@@ -1217,6 +1293,14 @@ export class AgentRuntimeManager {
           name: option.name,
         })),
       })),
+      pendingElicitations: record.pendingElicitations.map((item) => ({
+        requestId: item.requestId,
+        requestedAt: item.requestedAt,
+        sessionId: item.params.sessionId ?? null,
+        toolCallId: item.params.toolCallId ?? null,
+        message: item.params.message ?? null,
+        requestedSchema: item.params.requestedSchema ?? null,
+      })),
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
     };
@@ -1504,6 +1588,7 @@ export class AgentRuntimeManager {
       }),
       stopReason: null,
       pendingPermissions: [],
+      pendingElicitations: [],
       activeTask: null,
       managedSkillLinks,
       createdAt: created,
@@ -1518,6 +1603,7 @@ export class AgentRuntimeManager {
         return;
       }
       this.cancelAllPendingPermissions(target);
+      this.cancelAllPendingElicitations(target);
       cleanupSkillLinks(target.managedSkillLinks);
       target.updatedAt = nowIso();
       target.state = target.state === "error" ? "error" : "stopped";
@@ -1552,6 +1638,7 @@ export class AgentRuntimeManager {
       const cancelParams = { sessionId: record.sessionId } as Parameters<acp.ClientSideConnection["cancel"]>[0];
       void record.connection.cancel(cancelParams).catch(() => undefined);
       this.cancelAllPendingPermissions(record);
+      this.cancelAllPendingElicitations(record);
       cleanupSkillLinks(record.managedSkillLinks);
       record.state = "stopped";
       record.updatedAt = nowIso();
@@ -1635,11 +1722,12 @@ export class AgentRuntimeManager {
     const cancelParams = { sessionId: record.sessionId } as Parameters<acp.ClientSideConnection["cancel"]>[0];
     await this.runAgentRequest(record, () => record.connection.cancel(cancelParams));
     const cancelledPermissions = this.cancelAllPendingPermissions(record);
+    const cancelledElicitations = this.cancelAllPendingElicitations(record);
     record.updatedAt = nowIso();
     if (record.state === "working") {
       record.state = "idle";
     }
-    return { ok: true, name: record.name, cancelledPermissions };
+    return { ok: true, name: record.name, cancelledPermissions, cancelledElicitations };
   }
 
   cancelTerminalProcess(name: string, processId: string, toolCallId?: string | null): CancelTerminalProcessResult {
@@ -1701,7 +1789,17 @@ export class AgentRuntimeManager {
     await this.runAgentRequest(record, () => record.connection.setSessionMode(setModeParams));
     record.sessionMode = mode;
     record.updatedAt = nowIso();
-    return { ok: true, name: record.name, mode };
+    // Switching into a full-access mode means every *new* permission request is
+    // auto-approved (see requestPermission). Permission requests that queued up
+    // while the session was in an interactive mode would otherwise linger in
+    // pendingPermissions forever: the agent's tool call stays blocked on a
+    // promise no one will resolve, and the UI keeps showing the permission
+    // warning even though the mode now grants everything automatically. Drain
+    // them with the same auto-approve decision a live request would have gotten.
+    const autoApprovedPending = isFullAccessPermissionMode(mode)
+      ? this.autoApproveAllPendingPermissions(record)
+      : 0;
+    return { ok: true, name: record.name, mode, autoApprovedPending };
   }
 
   approvePermission(name: string, optionId?: string) {
@@ -1710,6 +1808,24 @@ export class AgentRuntimeManager {
 
   denyPermission(name: string, optionId?: string) {
     return this.resolvePermission(name, "deny", optionId);
+  }
+
+  respondElicitation(name: string, response: ElicitationResponse) {
+    const record = this.agents.get(name);
+    if (!record) {
+      throw new RuntimeHttpError(404, "not_found");
+    }
+    const pending = this.resolvePendingElicitation(record, response);
+    if (!pending) {
+      throw new RuntimeHttpError(409, "no_pending_elicitations");
+    }
+    return {
+      ok: true,
+      name: record.name,
+      action: response.action,
+      requestId: pending.requestId,
+      pendingElicitations: record.pendingElicitations.length,
+    };
   }
 
   async doctor(options: { refresh?: boolean } = {}) {
@@ -1951,6 +2067,12 @@ export class AgentRuntimeManager {
               readTextFile: true,
               writeTextFile: true,
             },
+            // Advertise form elicitation so the claude-agent-acp adapter
+            // re-enables the built-in AskUserQuestion tool (it disables it for
+            // clients that can't render a form). Handled via RuntimeClient.extMethod.
+            elicitation: {
+              form: {},
+            },
           },
         } as Parameters<acp.ClientSideConnection["initialize"]>[0];
         const init = await Promise.race([
@@ -2052,6 +2174,46 @@ export class AgentRuntimeManager {
   private cancelAllPendingPermissions(record: AgentRecord) {
     let count = 0;
     while (this.resolvePendingPermission(record, "cancel")) {
+      count += 1;
+    }
+    return count;
+  }
+
+  // Approve every queued permission using the auto-approve option a live
+  // full-access request would select (allow_always, falling back to any
+  // allow). Mirrors the full-access branch of RuntimeClient.requestPermission
+  // so draining a backlog and handling a fresh request behave identically.
+  private autoApproveAllPendingPermissions(record: AgentRecord) {
+    let count = 0;
+    let pending: PendingPermission | undefined;
+    while ((pending = record.pendingPermissions.shift())) {
+      const optionId = findAutoApprovePermissionOptionId(pending.params);
+      pending.resolve(optionId
+        ? { outcome: { outcome: "selected", optionId } }
+        : { outcome: { outcome: "cancelled" } });
+      appendPermissionOutcomeEntry(record, pending.requestId, pending.params, "approve", optionId);
+      count += 1;
+    }
+    if (count > 0) {
+      record.updatedAt = nowIso();
+    }
+    return count;
+  }
+
+  private resolvePendingElicitation(record: AgentRecord, response: ElicitationResponse): PendingElicitation | null {
+    const pending = record.pendingElicitations.shift();
+    if (!pending) {
+      return null;
+    }
+    pending.resolve(response);
+    appendElicitationOutcomeEntry(record, pending.requestId, response);
+    record.updatedAt = nowIso();
+    return pending;
+  }
+
+  private cancelAllPendingElicitations(record: AgentRecord) {
+    let count = 0;
+    while (this.resolvePendingElicitation(record, { action: "cancel" })) {
       count += 1;
     }
     return count;

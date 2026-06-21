@@ -249,6 +249,129 @@ describe("useConversationExecutionStatus", () => {
     });
   });
 
+  it("shows a pending worker question as awaiting input", () => {
+    const { liveExecutionStatus } = useConversationExecutionStatus({
+      selectedRun: buildRun({ status: "running" }),
+      latestExecutionEvent: null,
+      erroredAgent: null,
+      pendingPermissionAgent: null,
+      pendingElicitationAgent: {
+        name: "run-1-worker-1",
+        type: "claude",
+        state: "working",
+        pendingElicitations: [{
+          requestId: 1,
+          requestedAt: "2026-05-08T00:01:00.000Z",
+          message: "Which option should I use?",
+        }],
+      },
+      hasStuckWorker: false,
+      latestStuckEvent: null,
+      showRecoverableRunningState: true,
+      latestWaitEvent: null,
+      latestPromptDeferredEvent: null,
+      completionEvent: null,
+      queuedMessageCount: 0,
+      activeConversationAgents: [],
+      liveThoughts: [],
+      awaitingUserQuestionMessage: null,
+      isSelectedConversationLoaded: true,
+    });
+
+    expect(liveExecutionStatus).toMatchObject({
+      label: "Awaiting input",
+      detail: "run-1-worker-1 is waiting on 1 answer(s).",
+      tone: "warning",
+    });
+  });
+
+  it("shows pending permission output as awaiting permission even when live permission metadata is absent", () => {
+    const { liveExecutionStatus } = useConversationExecutionStatus({
+      selectedRun: buildRun({ status: "running" }),
+      latestExecutionEvent: null,
+      erroredAgent: null,
+      pendingPermissionAgent: null,
+      hasStuckWorker: false,
+      latestStuckEvent: null,
+      showRecoverableRunningState: false,
+      latestWaitEvent: null,
+      latestPromptDeferredEvent: null,
+      completionEvent: null,
+      queuedMessageCount: 1,
+      activeConversationAgents: [{
+        name: "run-1-worker-1",
+        type: "claude",
+        state: "working",
+        currentText: "Ready to code?",
+        outputEntries: [{
+          id: "permission-1",
+          type: "permission",
+          text: "Permission requested for switch_mode: Ready to code?",
+          status: "pending",
+          timestamp: "2026-05-08T00:01:00.000Z",
+        }],
+      }],
+      liveThoughts: [{
+        agentName: "run-1-worker-1",
+        text: "Ready to code?",
+        snippet: "Ready to code?",
+        isLive: true,
+      }],
+      awaitingUserQuestionMessage: null,
+      isSelectedConversationLoaded: true,
+    });
+
+    expect(liveExecutionStatus).toMatchObject({
+      label: "Awaiting permission",
+      detail: "run-1-worker-1 is waiting on 1 permission decision.",
+      tone: "warning",
+    });
+  });
+
+  it("shows pending elicitation output as awaiting input even when live elicitation metadata is absent", () => {
+    const { liveExecutionStatus } = useConversationExecutionStatus({
+      selectedRun: buildRun({ status: "running" }),
+      latestExecutionEvent: null,
+      erroredAgent: null,
+      pendingPermissionAgent: null,
+      pendingElicitationAgent: null,
+      hasStuckWorker: false,
+      latestStuckEvent: null,
+      showRecoverableRunningState: false,
+      latestWaitEvent: null,
+      latestPromptDeferredEvent: null,
+      completionEvent: null,
+      queuedMessageCount: 1,
+      activeConversationAgents: [{
+        name: "run-1-worker-1",
+        type: "claude",
+        state: "working",
+        currentText: "How should I proceed?",
+        outputEntries: [{
+          id: "elicitation-1",
+          type: "elicitation",
+          text: "Question for user: How should I proceed?",
+          status: "pending",
+          timestamp: "2026-05-08T00:01:00.000Z",
+        }],
+      }],
+      liveThoughts: [{
+        agentName: "run-1-worker-1",
+        text: "How should I proceed?",
+        snippet: "How should I proceed?",
+        isLive: true,
+      }],
+      awaitingUserQuestionMessage: null,
+      isSelectedConversationLoaded: true,
+    });
+
+    expect(liveExecutionStatus).toMatchObject({
+      label: "Awaiting input",
+      detail: "run-1-worker-1 is waiting on 1 answer(s).",
+      tone: "warning",
+    });
+  });
+
   it("shows a loading state when the selected conversation snapshot has not arrived", () => {
     const { liveExecutionStatus } = useConversationExecutionStatus({
       selectedRun: buildRun({ status: "running" }),

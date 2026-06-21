@@ -26,7 +26,8 @@ export type BridgeWorkerEntryType =
   | "thought"
   | "tool_call"
   | "tool_call_update"
-  | "permission";
+  | "permission"
+  | "elicitation";
 
 export type ServerWorkerEntryType =
   | "user_input"
@@ -60,6 +61,7 @@ const BRIDGE_TYPES: ReadonlySet<WorkerEntryType> = new Set<WorkerEntryType>([
   "tool_call",
   "tool_call_update",
   "permission",
+  "elicitation",
 ]);
 
 const SERVER_TYPES: ReadonlySet<WorkerEntryType> = new Set<WorkerEntryType>([

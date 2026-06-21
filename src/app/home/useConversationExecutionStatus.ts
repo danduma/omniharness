@@ -22,6 +22,34 @@ interface UseConversationExecutionStatusProps {
   isSelectedConversationLoaded: boolean;
 }
 
+function pendingPermissionEntryCount(agent: AgentSnapshot | null | undefined) {
+  return agent?.outputEntries?.filter((entry) => (
+    entry.type === "permission"
+    && !["approved", "cancelled", "canceled", "completed", "denied", "failed", "rejected"].includes(
+      (entry.status ?? "pending").trim().toLowerCase(),
+    )
+  )).length ?? 0;
+}
+
+function pendingPermissionCount(agent: AgentSnapshot | null | undefined) {
+  const liveCount = agent?.pendingPermissions?.length ?? 0;
+  return liveCount > 0 ? liveCount : pendingPermissionEntryCount(agent);
+}
+
+function pendingElicitationEntryCount(agent: AgentSnapshot | null | undefined) {
+  return agent?.outputEntries?.filter((entry) => (
+    entry.type === "elicitation"
+    && !["answered", "cancelled", "canceled", "completed", "declined", "failed", "rejected"].includes(
+      (entry.status ?? "pending").trim().toLowerCase(),
+    )
+  )).length ?? 0;
+}
+
+function pendingElicitationCount(agent: AgentSnapshot | null | undefined) {
+  const liveCount = agent?.pendingElicitations?.length ?? 0;
+  return liveCount > 0 ? liveCount : pendingElicitationEntryCount(agent);
+}
+
 export function useConversationExecutionStatus({
   selectedRun,
   latestExecutionEvent,
@@ -42,6 +70,12 @@ export function useConversationExecutionStatus({
 }: UseConversationExecutionStatusProps) {
   const liveExecutionStatus = useMemo(() => {
     const durationLabel = getRunDurationLabel(selectedRun, completionEvent?.createdAt);
+    const permissionAgent = pendingPermissionAgent
+      ?? activeConversationAgents.find((agent) => pendingPermissionEntryCount(agent) > 0)
+      ?? null;
+    const elicitationAgent = pendingElicitationAgent
+      ?? activeConversationAgents.find((agent) => pendingElicitationEntryCount(agent) > 0)
+      ?? null;
 
     if (selectedRun && !isSelectedConversationLoaded) {
       return {
@@ -69,20 +103,20 @@ export function useConversationExecutionStatus({
       };
     }
 
-    if (pendingPermissionAgent) {
-      const requestCount = pendingPermissionAgent.pendingPermissions?.length ?? 0;
+    if (permissionAgent) {
+      const requestCount = pendingPermissionCount(permissionAgent);
       return {
         label: "Awaiting permission",
-        detail: `${pendingPermissionAgent.name} is waiting on ${requestCount} permission ${requestCount === 1 ? "decision" : "decisions"}.`,
+        detail: `${permissionAgent.name} is waiting on ${requestCount} permission ${requestCount === 1 ? "decision" : "decisions"}.`,
         tone: "warning" as const,
       };
     }
 
-    if (pendingElicitationAgent) {
-      const requestCount = pendingElicitationAgent.pendingElicitations?.length ?? 0;
+    if (elicitationAgent) {
+      const requestCount = pendingElicitationCount(elicitationAgent);
       return {
         label: t("conversation.status.awaitingInput"),
-        detail: t("conversation.status.workerAwaitingAnswer", { worker: pendingElicitationAgent.name, count: requestCount }),
+        detail: t("conversation.status.workerAwaitingAnswer", { worker: elicitationAgent.name, count: requestCount }),
         tone: "warning" as const,
       };
     }

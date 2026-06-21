@@ -34,6 +34,19 @@ describe("shouldShowDirectControlPendingAssistant", () => {
     expect(resolveDirectControlPendingAssistantStatus(args)).toBe("working");
   });
 
+  it("does not show Working while the direct worker is waiting on human input", () => {
+    expect(resolveDirectControlPendingAssistantStatus({
+      isDirectConversation: true,
+      pendingConversationWorkerId: null,
+      busyConversationWorkerId: "run-1-worker-1",
+      selectedRunStatus: "running",
+      workerStatuses: ["working"],
+      agentStates: ["working"],
+      hasAgentCurrentText: true,
+      hasPendingHumanInput: true,
+    })).toBe(null);
+  });
+
   it("labels pending direct-send handoff as connecting before the worker starts", () => {
     expect(resolveDirectControlPendingAssistantStatus({
       isDirectConversation: true,

@@ -4,7 +4,7 @@ export function resolveCodexUpstreamBaseUrl(env: Record<string, string | undefin
 }
 
 export function shouldEnableCodexModelRewriteProxy(env: Record<string, string | undefined>) {
-  const configured = env.ACP_BRIDGE_ENABLE_CODEX_MODEL_REWRITE_PROXY?.trim().toLowerCase();
+  const configured = env.OMNIHARNESS_RUNTIME_ENABLE_CODEX_MODEL_REWRITE_PROXY?.trim().toLowerCase();
   return configured === "1" || configured === "true" || configured === "yes" || configured === "on";
 }
 

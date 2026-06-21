@@ -21,6 +21,13 @@ export interface WorkerObservationForPrompt {
     sessionId?: string | null;
     options?: Array<{ optionId: string; kind: string; name: string }>;
   }>;
+  pendingElicitations?: Array<{
+    requestId: number;
+    requestedAt: string;
+    sessionId?: string | null;
+    toolCallId?: string | null;
+    message?: string | null;
+  }>;
   currentText: string;
   lastText: string;
   stderrTail: string;
@@ -413,6 +420,11 @@ function summarizeWorker(worker: WorkerObservationForPrompt, workerTextLimit: nu
       requestId: permission.requestId,
       requestedAt: permission.requestedAt,
       options: permission.options?.map((option) => `${option.kind}:${option.name}`) ?? [],
+    })) ?? [],
+    pendingElicitations: worker.pendingElicitations?.map((elicitation) => ({
+      requestId: elicitation.requestId,
+      requestedAt: elicitation.requestedAt,
+      message: elicitation.message ?? null,
     })) ?? [],
     usefulCurrentText: workerTextLimit > 0 ? extractUsefulText(worker.currentText || "", workerTextLimit) : "",
     usefulLastText: workerTextLimit > 0 ? extractUsefulText(worker.lastText || "", Math.min(workerTextLimit, 500)) : "",
