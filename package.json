@@ -36,7 +36,7 @@
     "@agentclientprotocol/sdk": "^0.14.1",
     "@ai-sdk/openai": "^3.0.64",
     "@base-ui/react": "^1.4.1",
-    "@danduma/i18n": "github:danduma/i18n#5684747b61b748173d0c1e1fb1e0d241083e3de0",
+    "@danduma/i18n": "github:danduma/i18n#ab2a85dddd2e176b61bec18d55736dbdd151fe41",
     "@libsql/client": "^0.17.3",
     "@mastra/core": "^1.28.0",
     "@node-rs/argon2": "^2.0.2",

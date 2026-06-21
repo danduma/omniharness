@@ -20,7 +20,7 @@ OmniHarness is early open-source software under active development. Expect sharp
 
 ## Requirements
 
-- macOS or Linux with a normal developer shell.
+- macOS, Linux, or Windows with a normal developer shell. On Windows, use PowerShell for the setup commands below.
 - Node.js 22.13 or newer, up to but not including Node.js 26. If you use `nvm`, run `nvm use` from the repo root to select the recommended local version.
 - pnpm 9 or newer. The `packageManager` field in `package.json` is a known-good Corepack default, not an exact-version requirement.
 - `ripgrep` (`rg`) is recommended for fast agent repository search. The `./omniharness` launcher installs it automatically when a supported system package manager is available. Set `OMNIHARNESS_SKIP_RECOMMENDED_TOOLS=1` to skip recommended tool setup.
@@ -62,6 +62,47 @@ when needed, then starts both pieces OmniHarness needs:
 
 - the Next.js web UI on `http://localhost:3050`
 - the in-repo agent runtime on `http://127.0.0.1:7800`
+
+### Windows Quick Start
+
+Use PowerShell from the repo root. If Corepack can write to your Node.js
+installation, enable the repo's package manager normally:
+
+```powershell
+corepack enable
+corepack prepare pnpm@11.2.2 --activate
+```
+
+If Corepack fails with an `EPERM` error under `C:\Program Files\nodejs`, install
+pnpm into the user npm prefix instead:
+
+```powershell
+$prefix = Join-Path $env:APPDATA "npm"
+New-Item -ItemType Directory -Force -Path $prefix | Out-Null
+npm config set prefix $prefix
+$env:Path = "$prefix;$env:Path"
+[Environment]::SetEnvironmentVariable("Path", "$prefix;$([Environment]::GetEnvironmentVariable("Path", "User"))", "User")
+npm install -g pnpm@11.2.2
+```
+
+Then clone, install, build, and start:
+
+```powershell
+git clone <repo-url> omniharness
+cd omniharness
+pnpm install
+Copy-Item .env.example .env
+# Set OMNIHARNESS_AUTH_PASSWORD or OMNIHARNESS_AUTH_PASSWORD_HASH in .env.
+pnpm build
+$env:OMNIHARNESS_OPEN_BROWSER = "0"
+pnpm start
+```
+
+The web UI listens on `http://localhost:3050` and the runtime listens on
+`http://127.0.0.1:7800`. For browser access from another machine, allow inbound
+TCP traffic to the web port in Windows Firewall and in any provider firewall, or
+put OmniHarness behind a tunnel or reverse proxy. Do not expose the runtime port
+directly to the public internet.
 
 Run the separate restart control app if you want a small remote escape hatch
 with its own password-gated interface:
@@ -410,8 +451,13 @@ The command must print JSON:
 - **Unsupported pnpm version:** install pnpm 9 or newer, or run `./omniharness` from the repo root so the launcher can use Corepack's known-good default when available.
 - **Unsupported Node version:** use Node.js 22.13 or newer, but below Node.js 26. If you already installed dependencies with a different Node version, run `pnpm rebuild better-sqlite3 @node-rs/argon2 sharp`.
 - **Native SQLite binding errors:** run `pnpm rebuild better-sqlite3` under your current supported Node version.
+- **Windows Corepack `EPERM` under `C:\Program Files\nodejs`:** install pnpm into the user npm prefix with the PowerShell commands in Windows Quick Start, then open a new shell or update `$env:Path` for the current one.
+- **Windows install fails with `'cp' is not recognized` while building `@danduma/i18n`:** update to a checkout that pins `@danduma/i18n` to the Windows-compatible commit in `package.json`, then rerun `pnpm install`.
+- **`ERR_PNPM_IGNORED_BUILDS` mentions `node-pty`:** current checkouts allow the `node-pty` build in `pnpm-workspace.yaml`. If you are upgrading an older checkout, make sure `allowBuilds.node-pty` is `true`, then rerun `pnpm install`; use `pnpm approve-builds node-pty` only if pnpm still reports the build as pending approval.
+- **Windows startup fails with `spawn pnpm ENOENT` or `spawn EINVAL`:** update to a checkout that runs pnpm through the Windows command shell from the start scripts. As a temporary workaround, start the runtime and web server from separate PowerShell windows with `pnpm exec tsx scripts/agent-runtime.ts` and `pnpm exec next start -H 0.0.0.0 -p 3050`.
 - **No supported worker appears:** install or log into at least one supported agent CLI, then run `scripts/install-agent-acp.sh --dry-run` and inspect `curl http://127.0.0.1:7800/doctor`.
 - **Port already in use:** stop the previous OmniHarness process, or set `PORT` and `OMNIHARNESS_AGENT_RUNTIME_PORT` before starting.
+- **`http://HOST:3050` times out from another machine:** confirm OmniHarness is listening on `0.0.0.0`, then allow inbound TCP traffic to that port in Windows Firewall and any hosting-provider firewall. Local `http://localhost:3050` can work even when external access is blocked.
 - **Phone pairing asks for auth:** set `OMNIHARNESS_AUTH_PASSWORD` or `OMNIHARNESS_AUTH_PASSWORD_HASH` in `.env` and restart.
 
 ## Repository Layout
