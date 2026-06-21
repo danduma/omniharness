@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { createAgentRuntimeServer } from "../src/server/agent-runtime/http";
 
-const port = Number(process.env.OMNIHARNESS_AGENT_RUNTIME_PORT || process.env.ACP_BRIDGE_PORT || "7800");
-const host = process.env.OMNIHARNESS_AGENT_RUNTIME_HOST || process.env.ACP_BRIDGE_HOST || "127.0.0.1";
+const port = Number(process.env.OMNIHARNESS_AGENT_RUNTIME_PORT || "7800");
+const host = process.env.OMNIHARNESS_AGENT_RUNTIME_HOST || "127.0.0.1";
 
 const server = createAgentRuntimeServer({
   env: process.env,
