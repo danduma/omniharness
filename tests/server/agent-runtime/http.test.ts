@@ -929,6 +929,49 @@ exec /bin/sh "$@"
     expect(stopResponse.status).toBe(200);
   }, 15_000);
 
+  it("bridges global Claude skills into project-scoped Claude config", async () => {
+    const projectDir = createTempDir("omni-runtime-claude-skills-project-");
+    const homeDir = createTempDir("omni-runtime-claude-skills-home-");
+    const binDir = createTempDir("omni-runtime-claude-skills-bin-");
+    const globalSkillDir = join(homeDir, ".claude", "skills", "improve");
+    mkdirSync(globalSkillDir, { recursive: true });
+    writeFileSync(join(globalSkillDir, "SKILL.md"), "---\nname: improve\ndescription: Improve a codebase.\n---\n");
+    const requestLog = join(projectDir, "requests.jsonl");
+    const fakeAgent = createExecutable(binDir, "fake-acp-agent", fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "claude",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "claude-skills-worker",
+        env: { FAKE_ACP_REQUEST_LOG: requestLog },
+      }),
+    });
+
+    expect(spawnResponse.status).toBe(201);
+    const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
+    const initialize = events.find((event) => event.method === "initialize");
+    const scopedClaudeConfigDir = initialize.selectedCliStorageEnv.CLAUDE_CONFIG_DIR;
+    expect(scopedClaudeConfigDir).toBe(join(projectDir, ".omniharness", "cli-home", "claude"));
+    expect(existsSync(join(scopedClaudeConfigDir, "skills", "improve", "SKILL.md"))).toBe(true);
+
+    const stopResponse = await fetch(`${baseUrl}/agents/claude-skills-worker`, { method: "DELETE" });
+    expect(stopResponse.status).toBe(200);
+  }, 15_000);
+
   it("applies file-backed external credential profiles before spawning workers", async () => {
     const projectDir = createTempDir("omni-runtime-credential-project-");
     const binDir = createTempDir("omni-runtime-credential-bin-");

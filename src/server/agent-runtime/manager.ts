@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "child_process";
-import { constants, accessSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, statSync, symlinkSync } from "fs";
+import { constants, accessSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, statSync, symlinkSync } from "fs";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { request as httpRequest } from "http";
 import { request as httpsRequest } from "https";
@@ -110,6 +110,21 @@ function bridgeCredentialFileIfMissing(source: string, target: string) {
   }
 }
 
+function bridgeDirectoryIfMissing(source: string, target: string) {
+  if (!existsSync(source) || existsSync(target)) {
+    return;
+  }
+  if (!statSync(source).isDirectory()) {
+    return;
+  }
+  mkdirSync(dirname(target), { recursive: true });
+  try {
+    symlinkSync(source, target, "dir");
+  } catch {
+    cpSync(source, target, { recursive: true });
+  }
+}
+
 function bridgeProjectScopedCliCredentials(type: string, env: EnvLike) {
   if (type === "gemini") {
     const scopedHome = env.GEMINI_CLI_HOME?.trim();
@@ -134,6 +149,13 @@ function bridgeProjectScopedCliCredentials(type: string, env: EnvLike) {
     for (const fileName of ["auth.json", "config.toml"]) {
       bridgeCredentialFileIfMissing(join(globalHome, fileName), join(scopedHome, fileName));
     }
+  }
+
+  if (type === "claude") {
+    const scopedConfigDir = env.CLAUDE_CONFIG_DIR?.trim();
+    if (!scopedConfigDir) return;
+    const globalHome = join(userHomeFromEnv(env), ".claude");
+    bridgeDirectoryIfMissing(join(globalHome, "skills"), join(scopedConfigDir, "skills"));
   }
 }
 
@@ -197,6 +219,7 @@ function applyProjectScopedCliStorage(type: string, cwd: string, env: EnvLike) {
   }
   if (type === "claude" && !env.CLAUDE_CONFIG_DIR?.trim()) {
     env.CLAUDE_CONFIG_DIR = join(cliHome, "claude");
+    shouldBridgeCredentials = true;
   }
   if (type === "opencode") {
     const opencodeHome = join(cliHome, "opencode");
