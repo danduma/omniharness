@@ -137,10 +137,10 @@ export const handleConversationsRequest: OmniHttpHandler = async (request) => {
 
     const body = await request.json();
     const sessionType = readSessionType(body?.sessionType);
-    const mode = normalizeConversationMode(body?.mode);
     const command = String(body?.command ?? "").trim();
     const attachments = normalizeChatAttachments(body?.attachments);
     const externalClaudeSessionId = readExternalClaudeSessionId(body?.externalClaudeSessionId);
+    const mode = externalClaudeSessionId ? "direct" : normalizeConversationMode(body?.mode);
     const hasProcessArgv = sessionType === "process" && Array.isArray(body?.process?.argv) && body.process.argv.length > 0;
     const hasProcessCommand = sessionType === "process" && typeof body?.process?.command === "string" && body.process.command.trim();
     if (!command && attachments.length === 0 && !hasProcessArgv && !hasProcessCommand && !externalClaudeSessionId) {
@@ -165,7 +165,9 @@ export const handleConversationsRequest: OmniHttpHandler = async (request) => {
       projectPath: typeof body?.projectPath === "string" ? body.projectPath : null,
       gitWorkspaceTarget: readGitWorkspaceTarget(body?.gitWorkspaceTarget),
       gitWorkspaceLaunch: readGitWorkspaceLaunch(body?.gitWorkspaceLaunch),
-      preferredWorkerType: typeof body?.preferredWorkerType === "string" ? body.preferredWorkerType : null,
+      preferredWorkerType: externalClaudeSessionId
+        ? "claude"
+        : typeof body?.preferredWorkerType === "string" ? body.preferredWorkerType : null,
       preferredWorkerModel: typeof body?.preferredWorkerModel === "string" ? body.preferredWorkerModel : null,
       preferredWorkerEffort: typeof body?.preferredWorkerEffort === "string" ? body.preferredWorkerEffort : null,
       allowedWorkerTypes: Array.isArray(body?.allowedWorkerTypes) || typeof body?.allowedWorkerTypes === "string"
