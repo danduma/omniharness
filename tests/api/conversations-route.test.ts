@@ -858,6 +858,56 @@ describe("POST /api/conversations", () => {
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
   });
 
+  it("resumes an external Claude session as a direct Claude worker when the picker omits mode", async () => {
+    const externalClaudeSessionId = "12345678-1234-4234-9234-123456789abc";
+    mockSpawnAgent.mockResolvedValueOnce({
+      name: "worker-1",
+      type: "claude",
+      state: "idle",
+      cwd: "/workspace/app",
+      sessionId: "resumed-external-session",
+      sessionMode: "full-access",
+      lastText: "",
+      currentText: "",
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        externalClaudeSessionId,
+        projectPath: "/workspace/app",
+        command: "",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+
+    expect(payload.run.mode).toBe("direct");
+    expect(mockEnsureSupervisorRuntimeStarted).not.toHaveBeenCalled();
+    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+    await waitFor(() => mockSpawnAgent.mock.calls.length, (count) => count > 0);
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      type: "claude",
+      cwd: "/workspace/app",
+      resumeSessionId: externalClaudeSessionId,
+    }));
+    expect(mockAskAgent).not.toHaveBeenCalled();
+
+    const createdWorker = await waitFor(
+      () => db.select().from(workers).where(eq(workers.runId, payload.runId)).get(),
+      (worker) => worker?.status === "awaiting_user",
+    );
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
+    expect(createdWorker).toEqual(expect.objectContaining({
+      type: "claude",
+      bridgeSessionId: "resumed-external-session",
+    }));
+    expect(storedMessages).toHaveLength(0);
+  });
+
   it("queues title generation for direct Claude conversations", async () => {
     const command = [
       "session ef25debddace keeps showing a spinner even tho it finishd",

@@ -535,8 +535,11 @@ export async function createConversation(args: {
   // run mode plus phase. `usePlanner` is true whenever the opening turn should
   // run the interactive planner worker rather than the supervisor: legacy
   // planning runs, or an Omni run that still needs a plan.
-  const { runMode: mode, phase } = resolveOmniRequest(args.mode, command);
-  const usePlanner = phase === "planning" || mode === "planning";
+  const resolvedRequest = resolveOmniRequest(args.mode, command);
+  const isExternalClaudeResume = Boolean(args.externalClaudeSessionId?.trim());
+  const mode = isExternalClaudeResume ? "direct" : resolvedRequest.runMode;
+  const phase = isExternalClaudeResume ? null : resolvedRequest.phase;
+  const usePlanner = !isExternalClaudeResume && (phase === "planning" || mode === "planning");
   const requestedProjectPath = args.projectPath?.trim() || getAppRoot();
   let createdWorktree: { projectPath: string; target: GitWorkspaceTarget } | null = null;
   let runCreated = false;
@@ -554,9 +557,11 @@ export async function createConversation(args: {
     const workerPrompt = appendAttachmentContext(command, attachments, {
       resolvePath: (storagePath) => getAppDataPath(storagePath),
     });
-    const preferredWorkerType = args.preferredWorkerType?.trim()
-      ? normalizeWorkerType(args.preferredWorkerType)
-      : null;
+    const preferredWorkerType = isExternalClaudeResume
+      ? "claude"
+      : args.preferredWorkerType?.trim()
+        ? normalizeWorkerType(args.preferredWorkerType)
+        : null;
     const defaultTitle = getDefaultConversationTitle(mode, command);
     const generateTitle = shouldGenerateConversationTitle(mode, command);
     const allowedWorkerTypes = parseAllowedWorkerTypes(
