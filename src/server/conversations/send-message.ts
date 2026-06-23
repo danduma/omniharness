@@ -508,6 +508,7 @@ async function continueWorkerConversation({
   userInputId,
   attachments,
   appendUserInputBeforeAsk = false,
+  allowCancelledWorkerResume = false,
   onUserInputAppended,
 }: {
   run: RunRecord;
@@ -517,11 +518,12 @@ async function continueWorkerConversation({
   userInputId?: string;
   attachments: ChatAttachment[];
   appendUserInputBeforeAsk?: boolean;
+  allowCancelledWorkerResume?: boolean;
   onUserInputAppended?: () => void;
 }) {
   try {
     const currentWorker = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
-    if (isWorkerCancelled(currentWorker)) {
+    if (isWorkerCancelled(currentWorker) && !allowCancelledWorkerResume) {
       onUserInputAppended?.();
       return;
     }
@@ -1097,6 +1099,7 @@ async function sendConversationMessageUnlocked({
 
   if (isDirectRunMode(run.mode)) {
     notifyEventStreamSubscribers();
+    const allowCancelledWorkerResume = isWorkerCancelled(worker);
 
     if (busyAction === "steer") {
       try {
@@ -1109,6 +1112,7 @@ async function sendConversationMessageUnlocked({
           attachments: normalizedAttachments,
           // Already appended above.
           appendUserInputBeforeAsk: false,
+          allowCancelledWorkerResume,
         }));
       } catch (error) {
         if (isAgentBusyError(error)) {
@@ -1147,6 +1151,7 @@ async function sendConversationMessageUnlocked({
       attachments: normalizedAttachments,
       // Already appended above.
       appendUserInputBeforeAsk: false,
+      allowCancelledWorkerResume,
     })));
     turn.catch((error) => {
       if (isAgentBusyError(error)) {

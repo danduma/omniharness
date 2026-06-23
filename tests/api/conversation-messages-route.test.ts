@@ -1488,6 +1488,114 @@ describe("POST /api/conversations/[id]/messages", () => {
     }));
   });
 
+  it("resumes a stopped direct worker when the user sends a follow-up", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-stopped-follow-up.md",
+      status: "cancelled",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "cancelled",
+      preferredWorkerType: "claude",
+      preferredWorkerModel: "claude-sonnet-4",
+      preferredWorkerEffort: "high",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "cancelled",
+      cwd: "/workspace/app",
+      bridgeSessionId: "saved-session",
+      bridgeSessionMode: "full-access",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockAskAgent
+      .mockRejectedValueOnce(new Error(`Ask failed: Agent not found: ${workerId}`))
+      .mockResolvedValueOnce({
+        response: "Continuing after the explicit stop.",
+        state: "idle",
+      });
+    mockSpawnAgent.mockResolvedValueOnce({
+      name: workerId,
+      type: "claude",
+      cwd: "/workspace/app",
+      state: "idle",
+      sessionId: "resumed-session",
+      sessionMode: "full-access",
+      outputEntries: [],
+      currentText: "",
+      lastText: "Continuing after stop.",
+    });
+
+    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "continue" }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+
+    await waitFor(
+      () => Promise.resolve(mockSpawnAgent.mock.calls),
+      (calls) => calls.some((call) => call[0]?.name === workerId),
+    );
+
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      name: workerId,
+      type: "claude",
+      cwd: "/workspace/app",
+      mode: "full-access",
+      model: "claude-sonnet-4",
+      effort: "high",
+      resumeSessionId: "saved-session",
+    }));
+    await waitFor(
+      () => Promise.resolve(mockAskAgent.mock.calls),
+      (calls) => calls.length >= 2,
+    );
+    expect(mockAskAgent).toHaveBeenNthCalledWith(1, workerId, "continue");
+    expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, "continue");
+
+    await waitFor(
+      async () => db.select().from(runs).where(eq(runs.id, runId)).get(),
+      (record) => record?.status === "done",
+    );
+    const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
+    const resumeEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+
+    expect(updatedWorker?.status).toBe("idle");
+    expect(updatedWorker?.bridgeSessionId).toBe("resumed-session");
+    expect(storedMessages.map((message) => message.content)).toEqual(["continue"]);
+    expect(resumeEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "worker.reattached",
+      runId,
+      workerId,
+    }));
+  });
+
   it("creates a fresh direct worker when an empty saved Gemini session cannot be loaded", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
