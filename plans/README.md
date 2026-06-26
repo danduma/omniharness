@@ -13,18 +13,58 @@ into plans yet — see "Findings deferred" below for why and what they'd need.
 
 | Plan | Title                                              | Priority | Effort | Depends on | Status |
 |------|----------------------------------------------------|----------|--------|------------|--------|
-| 001  | Add `typecheck` script + CI (typecheck & lint gate)| P1       | S      | —          | TODO   |
-| 002  | Resolve `pnpm audit` advisories (next/fast-uri/vitest) | P1   | S      | —          | TODO   |
-| 003  | Remove dead duplicate xterm dependencies           | P2       | S      | —          | TODO   |
+| 004  | Fix committed typecheck error (home-utils test)    | P1       | S      | —          | TODO   |
+| 001  | Add `typecheck` script + CI (typecheck & lint gate)| P1       | S      | 004        | BLOCKED — typecheck baseline is RED until 004 lands |
+| 002  | Resolve `pnpm audit` advisories (next/fast-uri/vitest) | P1   | S      | —          | DONE (executed + reviewed 2026-06-23) |
+| 003  | Remove dead duplicate xterm dependencies           | P2       | S      | —          | DONE (executed + reviewed 2026-06-23) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
 
+## Execution log (2026-06-23 — `execute all`)
+
+Three executors ran in isolated worktrees; the advisor reviewed each diff.
+
+- **002 — APPROVED → DONE.** Worktree branch `worktree-agent-a14acf9e24069f9d0`,
+  commit `170417d`. Diff is dep-files-only (scope clean): `next`/`eslint-config-next`
+  → `^15.5.18` (resolved `15.5.19`), `vitest` → `^3.2.6` (`3.2.6`), `fast-uri`
+  override `^3.1.2` (`3.1.2`). Advisor re-ran `pnpm audit` in the worktree: no
+  `next`/`fast-uri`/`vitest` advisories remain. `pnpm build` exited 0; `pnpm lint`
+  exited 0. The one `tsc` failure is the pre-existing, unrelated error addressed
+  by plan 004 (confirmed pre-existing independently). **Not yet merged — merging
+  is the user's call.**
+- **003 — APPROVED → DONE.** Worktree branch `worktree-agent-afff8c31933dce4c2`,
+  commit `17bce28`. Diff removes only the two dead deps from `package.json` +
+  lockfile (scope clean). Advisor confirmed in the worktree: legacy
+  `xterm`/`xterm-addon-fit` absent from manifest and lockfile, scoped `@xterm/*`
+  retained, zero importers, `pnpm build` exited 0. Same pre-existing `tsc` caveat.
+  **Not yet merged.**
+- **001 — BLOCKED.** The executor correctly hit a STOP condition: `pnpm typecheck`
+  is not green at `9e732d4`. The advisor's original "green baseline" claim was a
+  false-green from the stale `tsconfig.tsbuildinfo` incremental cache; a fresh
+  `tsc --noEmit --incremental false` confirms one real error in
+  `tests/app/home-utils.test.ts:440`. Plan 001 was revised to depend on the new
+  plan 004, which fixes that error.
+
 ## Dependency notes
 
-- All three plans are independent and can be executed in any order. Recommended
-  order is by leverage: 001 first (it gives 002 and 003 an automatic
-  typecheck/lint gate in CI), then 002 (security), then 003 (cleanup).
-- 001 and 002 both add value to each other but neither blocks the other.
+- **004 → 001**: the typecheck CI gate (001) cannot go green until the committed
+  type error is fixed (004). Land 004 first.
+- 002 and 003 are independent of everything and are already DONE in worktrees
+  (pending the user's merge). They both touch `package.json` + `pnpm-lock.yaml`,
+  so merging them will require resolving a trivial lockfile/manifest overlap —
+  merge one, reinstall, then merge the other (or re-run their `pnpm install`).
+- After 004 + 001 land, CI will typecheck + lint every change; 002 and 003 would
+  then be verified by that gate automatically.
+
+## Baseline correction (important)
+
+The repo does **not** typecheck clean at `9e732d4`: `tsc --noEmit` reports one
+error in `tests/app/home-utils.test.ts:440` (`runMode` is not a valid option of
+`buildConversationTimelineItems`, which takes `isPlanningRun`). It reached
+`master` because `vitest run` type-strips tests and never typechecks them — the
+exact gap plan 001 closes. Always verify typecheck with
+`pnpm exec tsc --noEmit --incremental false`; the `.gitignore`d
+`tsconfig.tsbuildinfo` cache can otherwise report a false green.
 
 ## Findings deferred (audited, not yet planned)
 

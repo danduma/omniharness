@@ -16,9 +16,12 @@
 - **Priority**: P1
 - **Effort**: S
 - **Risk**: LOW
-- **Depends on**: none
+- **Depends on**: plans/004-fix-committed-typecheck-error.md (MUST be DONE first — see below)
 - **Category**: dx
 - **Planned at**: commit `9e732d4`, 2026-06-23
+- **Revised**: 2026-06-23 after an execution attempt revealed the typecheck
+  baseline is RED at `9e732d4` (one pre-existing error). Added the dependency on
+  plan 004 and corrected the "Current state" section.
 
 ## Why this matters
 
@@ -30,8 +33,14 @@ never touches the TypeScript app. There is also no `typecheck` npm script, so
 "does this compile?" is an undiscoverable `pnpm exec tsc --noEmit` invocation.
 Adding a `typecheck` script plus a CI workflow that runs typecheck and lint on
 every push and PR gives every future change a deterministic, green-or-red gate.
-Both gates are confirmed green at the planned-at commit, so this establishes a
-baseline rather than chasing existing failures.
+
+**Baseline reality (corrected after an execution attempt):** `pnpm lint` is
+green at `9e732d4`, but `tsc --noEmit` is NOT — there is one pre-existing type
+error in `tests/app/home-utils.test.ts:440` that `vitest run` cannot catch
+(it type-strips tests). **Plan 004 fixes that error and MUST land before this
+plan**, or the new typecheck gate goes red on its first run. This very gap is the
+argument for the gate: a test-only type error reached `master` precisely because
+nothing typechecks in CI today.
 
 ## Current state
 
@@ -59,8 +68,12 @@ baseline rather than chasing existing failures.
     "measure:dev": "node ./scripts/measure-local-dev.mjs"
   },
   ```
-- `tsconfig.json` already sets `"noEmit": true`, so `tsc` is type-only. Running
-  `pnpm exec tsc --noEmit` at the planned-at commit exits 0.
+- `tsconfig.json` already sets `"noEmit": true`, so `tsc` is type-only. At the
+  planned-at commit, `pnpm exec tsc --noEmit --incremental false` exits **2**
+  (one error in `tests/app/home-utils.test.ts:440`). Plan 004 resolves it; this
+  plan assumes 004 is DONE. Note: a `.gitignore`d `tsconfig.tsbuildinfo` cache
+  can make a stale incremental run falsely report 0 — always verify with
+  `--incremental false`.
 - `pnpm lint` runs `eslint` (flat config in `eslint.config.mjs`, extends
   `next/core-web-vitals` + `next/typescript`). It exits 0 at the planned-at commit.
 - Toolchain facts the CI must match:
@@ -223,9 +236,10 @@ Machine-checkable. ALL must hold:
 Stop and report back (do not improvise) if:
 
 - `pnpm typecheck` or `pnpm lint` does NOT exit 0 at the current commit. This
-  plan assumes a green baseline; if it is red, the gate cannot be added without
-  first fixing pre-existing errors, which is out of scope — report the failing
-  output instead.
+  plan assumes plan 004 has already made typecheck green; if `tsc` is still red,
+  STOP — do not fix source/test errors here (that is plan 004's job). Verify the
+  typecheck with `pnpm exec tsc --noEmit --incremental false` (the incremental
+  cache can mask test-file errors). Report the failing output.
 - `.nvmrc` does not exist at the repo root (the workflow references it).
 - The `"scripts"` block in `package.json` no longer matches the "Current state"
   excerpt closely enough to place the `typecheck` entry unambiguously.
