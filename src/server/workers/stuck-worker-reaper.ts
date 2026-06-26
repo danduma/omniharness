@@ -99,11 +99,14 @@ async function persistRedeliveredTurnResult(args: {
   await updateDirectRunStatusFromWorkerOutput({
     runId: args.worker.runId,
     workerId: args.worker.id,
+    workerStatus: snapshot?.state ?? "idle",
     responseText: args.responseText,
     renderedOutput: snapshot?.renderedOutput,
     currentText: snapshot?.currentText,
     lastText: snapshot?.lastText,
     outputEntries: snapshot?.outputEntries,
+    pendingPermissions: snapshot?.pendingPermissions,
+    pendingElicitations: snapshot?.pendingElicitations,
   });
 }
 

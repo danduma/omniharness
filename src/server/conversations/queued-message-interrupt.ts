@@ -29,6 +29,7 @@ import {
   runWorkerTurn,
   trackConversationBackgroundTask,
 } from "./worker-turn-gate";
+import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
@@ -395,7 +396,10 @@ async function deliverInterruptedQueuedMessage(args: {
         return;
       }
 
-      const response = await askAgent(worker.id, workerContent);
+      const workerPrompt = run.mode === "direct" || run.mode === "commit"
+        ? buildDirectWorkerPrompt(workerContent)
+        : workerContent;
+      const response = await askAgent(worker.id, workerPrompt);
       const finishedAt = new Date();
 
       // Before any terminal persistence, confirm a newer interrupt has not

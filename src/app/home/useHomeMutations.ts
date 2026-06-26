@@ -870,7 +870,7 @@ export function useHomeMutations({
           preferredWorkerType: selectedWorkerType,
           preferredWorkerModel: isAutoWorkerSelection ? null : resolvedSelectedModel,
           preferredWorkerEffort: selectedEffort.toLowerCase(),
-          allowedWorkerTypes: activeAllowedWorkerTypes,
+          allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedWorkerType],
         }),
       }, {
         source: "Conversations",

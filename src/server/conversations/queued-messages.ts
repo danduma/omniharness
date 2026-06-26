@@ -19,6 +19,7 @@ import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { runWorkerTurn } from "./worker-turn-gate";
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
 import { persistRunFailure } from "@/server/runs/failures";
+import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
 import {
   serializeQueuedConversationMessage,
   type BusyMessageAction,
@@ -30,7 +31,8 @@ type QueuedConversationMessageRecord = typeof queuedConversationMessages.$inferS
 export type WorkerAskResponse = Awaited<ReturnType<typeof askAgent>>;
 type WorkerSnapshot = Awaited<ReturnType<typeof getAgent>>;
 export type WorkerResponseRun = Pick<typeof runs.$inferSelect, "id" | "mode">;
-type ElicitationSchema = NonNullable<WorkerSnapshot["pendingElicitations"]>[number]["requestedSchema"];
+type PendingElicitation = NonNullable<WorkerSnapshot["pendingElicitations"]>[number];
+type ElicitationSchema = PendingElicitation["requestedSchema"];
 type ElicitationContent = Record<string, string | number | boolean | string[]>;
 
 export class EmptyQueuedWorkerOutputError extends Error {
@@ -46,6 +48,12 @@ export class EmptyQueuedWorkerOutputError extends Error {
     super(`Agent stopped without producing output. ${suffix}`);
     this.name = "EmptyQueuedWorkerOutputError";
   }
+}
+
+function workerPromptForRun(run: WorkerResponseRun, content: string) {
+  return run.mode === "direct" || run.mode === "commit"
+    ? buildDirectWorkerPrompt(content)
+    : content;
 }
 
 const lastQueuedMessageCreatedAtByRun = new Map<string, number>();
@@ -194,6 +202,75 @@ function formatWorkerLabel(worker: typeof workers.$inferSelect) {
   return match ? `worker ${match[1]}` : "the active worker";
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function asRequestedSchema(value: unknown): ElicitationSchema | null {
+  const schema = asRecord(value);
+  if (!schema) {
+    return null;
+  }
+  const properties = asRecord(schema.properties) ?? {};
+  const required = Array.isArray(schema.required)
+    ? schema.required.filter((item): item is string => typeof item === "string")
+    : undefined;
+  const type = asString(schema.type);
+  return {
+    properties,
+    ...(type ? { type } : {}),
+    ...(required ? { required } : {}),
+  };
+}
+
+function isOpenElicitationEntry(entry: NonNullable<WorkerSnapshot["outputEntries"]>[number]) {
+  if (entry.type !== "elicitation") {
+    return false;
+  }
+  const status = (entry.status ?? "pending").trim().toLowerCase();
+  return !["answered", "approved", "cancelled", "canceled", "completed", "declined", "denied", "failed", "rejected", "skipped"].includes(status);
+}
+
+function pendingElicitationFromEntry(entry: NonNullable<WorkerSnapshot["outputEntries"]>[number]): PendingElicitation | null {
+  if (!isOpenElicitationEntry(entry)) {
+    return null;
+  }
+  const raw = asRecord(entry.raw);
+  const requestId = raw?.requestId;
+  if (!raw || typeof requestId !== "number" || !Number.isFinite(requestId)) {
+    return null;
+  }
+  return {
+    requestId,
+    requestedAt: entry.timestamp,
+    sessionId: asString(raw.sessionId),
+    toolCallId: asString(raw.toolCallId ?? entry.toolCallId),
+    message: asString(raw.message),
+    requestedSchema: asRequestedSchema(raw.requestedSchema),
+  };
+}
+
+function selectPendingWorkerElicitation(snapshot: WorkerSnapshot | null): PendingElicitation | null {
+  const pending = snapshot?.pendingElicitations?.[0] ?? null;
+  if (pending) {
+    return pending;
+  }
+  const entries = snapshot?.outputEntries ?? [];
+  for (const entry of entries) {
+    const elicitation = pendingElicitationFromEntry(entry);
+    if (elicitation) {
+      return elicitation;
+    }
+  }
+  return null;
+}
+
 function elicitationAnswerContent(text: string, requestedSchema: ElicitationSchema | null | undefined): ElicitationContent {
   const properties = requestedSchema?.properties ?? {};
   const propertyNames = Object.keys(properties);
@@ -216,7 +293,7 @@ async function answerPendingWorkerElicitation(args: {
   content: string;
   deliveredAt: Date;
 }) {
-  const elicitation = args.snapshot?.pendingElicitations?.[0] ?? null;
+  const elicitation = selectPendingWorkerElicitation(args.snapshot);
   if (!elicitation) {
     return false;
   }
@@ -285,11 +362,14 @@ export async function persistDeliveredWorkerResponse({
     await updateDirectRunStatusFromWorkerOutput({
       runId: run.id,
       workerId,
+      workerStatus: snapshot?.state ?? response.state,
       responseText: response.response,
       renderedOutput: snapshot?.renderedOutput,
       currentText: snapshot?.currentText,
       lastText: snapshot?.lastText,
       outputEntries: snapshot?.outputEntries,
+      pendingPermissions: snapshot?.pendingPermissions,
+      pendingElicitations: snapshot?.pendingElicitations,
     });
   }
 }
@@ -482,7 +562,7 @@ async function deliverQueuedWorkerSteering(args: {
       return;
     }
 
-    const response = await askAgent(args.worker.id, args.content);
+    const response = await askAgent(args.worker.id, workerPromptForRun(args.run, args.content));
     await persistDeliveredWorkerResponse({
       run: args.run,
       workerId: args.worker.id,
@@ -1044,7 +1124,7 @@ export async function drainQueuedWorkerMessages({
           return;
         }
 
-        const response = await askAgent(workerId, workerContent);
+        const response = await askAgent(workerId, workerPromptForRun(run, workerContent));
         await persistDeliveredWorkerResponse({
           run,
           workerId,

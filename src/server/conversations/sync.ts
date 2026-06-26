@@ -59,11 +59,18 @@ function isInputEntry(entry: NonNullable<AgentRecord["outputEntries"]>[number]) 
 }
 
 function isOpenWorkEntry(entry: NonNullable<AgentRecord["outputEntries"]>[number]) {
-  if (entry.type !== "tool_call" && entry.type !== "tool_call_update" && entry.type !== "permission") {
+  if (entry.type !== "tool_call" && entry.type !== "tool_call_update" && entry.type !== "permission" && entry.type !== "elicitation") {
     return false;
   }
 
   return !isCompletedEntryStatus(entry.status);
+}
+
+function hasPendingElicitationSignal(snapshot: ReturnType<typeof normalizeAgentRecord> | null) {
+  return Boolean(
+    (snapshot?.pendingElicitations?.length ?? 0) > 0
+    || snapshot?.outputEntries?.some((entry) => entry.type === "elicitation" && !isCompletedEntryStatus(entry.status)),
+  );
 }
 
 function directLiveAgentHasCompletedTurn(agent: ReturnType<typeof normalizeAgentRecord>) {
@@ -77,6 +84,10 @@ function directLiveAgentHasCompletedTurn(agent: ReturnType<typeof normalizeAgent
   }
 
   if ((agent.pendingPermissions?.length ?? 0) > 0) {
+    return false;
+  }
+
+  if ((agent.pendingElicitations?.length ?? 0) > 0) {
     return false;
   }
 
@@ -126,7 +137,7 @@ function resolveSyncedRunState(run: typeof runs.$inferSelect, agent: ReturnType<
     return "failed";
   }
 
-  if (isDirectRunMode(run.mode) && resolveDirectRunStatusFromWorkerOutput(agent) === "awaiting_user") {
+  if (isDirectRunMode(run.mode) && resolveDirectRunStatusFromWorkerOutput({ ...agent, workerStatus: agent.state }) === "awaiting_user") {
     return "awaiting_user";
   }
 
@@ -155,7 +166,7 @@ async function resolvePersistedRunState(run: typeof runs.$inferSelect, worker: t
     return "failed";
   }
 
-  if (isDirectRunMode(run.mode) && resolveDirectRunStatusFromWorkerOutput(worker) === "awaiting_user") {
+  if (isDirectRunMode(run.mode) && resolveDirectRunStatusFromWorkerOutput({ ...worker, workerStatus: worker.status }) === "awaiting_user") {
     return "awaiting_user";
   }
 
@@ -271,7 +282,8 @@ async function drainQueuedWorkerMessagesWithObservation(args: {
     return 0;
   }
 
-  const hasPendingElicitation = (args.snapshot?.pendingElicitations?.length ?? 0) > 0;
+  const snapshot = args.snapshot ?? null;
+  const hasPendingElicitation = hasPendingElicitationSignal(snapshot);
   const drainable = hasPendingElicitation || isWorkerQueueDrainableStatus(args.workerStatus);
   await recordQueueDrainDecision({
     ...args,
@@ -290,7 +302,7 @@ async function drainQueuedWorkerMessagesWithObservation(args: {
   const deliveredCount = await drainQueuedWorkerMessages({
     runId: args.runId,
     workerId: args.workerId,
-    snapshot: args.snapshot,
+    snapshot,
   });
   emitNamedEvent({
     kind: "queue.drain_finished",
@@ -425,9 +437,15 @@ export function syncConversationSessionsFromBridge(): Promise<void> {
   return bridgeSyncInFlight;
 }
 
-export async function syncConversationSessions(rawAgents: unknown[], options: { selectedRunId?: string | null } = {}) {
+type SyncConversationSessionsOptions = {
+  selectedRunId?: string | null;
+  refreshPlanningArtifacts?: boolean;
+};
+
+export async function syncConversationSessions(rawAgents: unknown[], options: SyncConversationSessionsOptions = {}) {
   const agents = rawAgents.map((agent) => normalizeAgentRecord(agent));
   const selectedRunId = options.selectedRunId?.trim() || null;
+  const refreshPlanningArtifacts = options.refreshPlanningArtifacts !== false;
   const allRuns = selectedRunId
     ? await db.select().from(runs).where(eq(runs.id, selectedRunId))
     : await db.select().from(runs);
@@ -596,14 +614,16 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
     }
 
     if (run.mode === "planning") {
-      const result = await refreshPlanningArtifactsForRun({
-        run,
-        worker,
-        snapshot: agent,
-        status: nextRunState === "running" ? "working" : undefined,
-      });
-      if (staleBusyFailure && result.status !== "failed") {
-        await clearMatchingRunFailureMessage(run);
+      if (refreshPlanningArtifacts) {
+        const result = await refreshPlanningArtifactsForRun({
+          run,
+          worker,
+          snapshot: agent,
+          status: nextRunState === "running" ? "working" : undefined,
+        });
+        if (staleBusyFailure && result.status !== "failed") {
+          await clearMatchingRunFailureMessage(run);
+        }
       }
       await drainQueuedWorkerMessagesWithObservation({
         runId: run.id,
@@ -618,10 +638,13 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       await updateDirectRunStatusFromWorkerOutput({
         runId: run.id,
         workerId: worker.id,
+        workerStatus: nextWorkerStatus,
         renderedOutput: agent.renderedOutput,
         currentText: agent.currentText,
         lastText: agent.lastText,
         outputEntries: agent.outputEntries,
+        pendingPermissions: agent.pendingPermissions,
+        pendingElicitations: agent.pendingElicitations,
       });
     } else {
       await db.update(runs).set({
@@ -682,11 +705,13 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
 
     const nextRunState = await resolvePersistedRunState(run, worker);
     if (run.mode === "planning") {
-      await refreshPlanningArtifactsForRun({
-        run,
-        worker,
-        status: nextRunState === "running" ? "working" : undefined,
-      });
+      if (refreshPlanningArtifacts) {
+        await refreshPlanningArtifactsForRun({
+          run,
+          worker,
+          status: nextRunState === "running" ? "working" : undefined,
+        });
+      }
       continue;
     }
 
@@ -704,6 +729,7 @@ export async function syncConversationSessions(rawAgents: unknown[], options: { 
       await updateDirectRunStatusFromWorkerOutput({
         runId: run.id,
         workerId: worker.id,
+        workerStatus: worker.status,
         outputLog: worker.outputLog,
         currentText: worker.currentText,
         lastText: worker.lastText,

@@ -9,9 +9,12 @@ import { runMilestoneAutoCommit } from "@/server/git/run-auto-commit";
 type OutputEntryLike = {
   type?: string | null;
   text?: string | null;
+  status?: string | null;
+  raw?: unknown;
 };
 
 type WorkerOutputSource = {
+  workerStatus?: string | null;
   responseText?: string | null;
   renderedOutput?: string | null;
   currentText?: string | null;
@@ -19,24 +22,14 @@ type WorkerOutputSource = {
   outputLog?: string | null;
   outputEntries?: readonly OutputEntryLike[] | null;
   outputEntriesJson?: string | null;
+  pendingPermissions?: readonly unknown[] | null;
+  pendingElicitations?: readonly unknown[] | null;
 };
 
-const USER_INPUT_REQUEST_PATTERNS = [
-  /\bwhich\s+(?:approach|option|path|one|choice|of these)\b.{0,120}\b(?:do you want|would you like|should i|should we)\b/i,
-  /\b(?:what|how)\b.{0,120}\b(?:do you want|would you like)\b/i,
-  /\bshould\s+(?:i|we)\b/i,
-  /\bdo you want me to\b/i,
-  /\bwould you like me to\b/i,
-  /\bplease\s+(?:confirm|choose|pick|select|tell me|let me know)\b/i,
-  /\b(?:choose|pick|select)\s+(?:an?\s+)?(?:option|approach|path|choice)\b/i,
-  /\blet me know\s+(?:which|whether|how|what|if)\b/i,
-  /\bneed\s+(?:your|a)\s+(?:confirmation|decision|approval|input|direction)\b/i,
-  /\bwaiting for\s+(?:your|user)\s+(?:confirmation|decision|approval|input|direction)\b/i,
-  /\bbefore\s+(?:i|we)\s+(?:proceed|continue|do that|make|merge|delete|change|apply|commit|stash)\b/i,
-];
+const ACTIVE_DIRECT_WORKER_STATUSES = new Set(["starting", "working", "stuck", "recovering"]);
 
-function normalizeOutputText(text: string) {
-  return text.replace(/\s+/g, " ").trim();
+function normalizeWorkerStatus(value: string | null | undefined) {
+  return value?.trim().toLowerCase().split(":")[0]?.trim() ?? "";
 }
 
 function parseOutputEntriesJson(value: string | null | undefined): OutputEntryLike[] {
@@ -69,26 +62,65 @@ function firstNonEmptyText(values: ReadonlyArray<string | null | undefined>) {
   return values.find((value) => typeof value === "string" && value.trim().length > 0) ?? "";
 }
 
-export function directWorkerOutputRequestsUserInput(source: WorkerOutputSource) {
-  const text = normalizeOutputText(firstNonEmptyText([
-    source.responseText,
-    source.currentText,
-    source.lastText,
-    latestVisibleEntryText(source.outputEntries),
-    latestVisibleEntryText(parseOutputEntriesJson(source.outputEntriesJson)),
-    source.renderedOutput,
-    source.outputLog,
-  ]));
-
-  if (!text) {
+function isOpenHumanInputEntry(entry: OutputEntryLike) {
+  if (entry.type !== "permission" && entry.type !== "elicitation") {
     return false;
   }
+  const status = (entry.status ?? "pending").trim().toLowerCase();
+  return !["answered", "approved", "cancelled", "canceled", "completed", "declined", "denied", "failed", "rejected", "skipped"].includes(status);
+}
 
-  return USER_INPUT_REQUEST_PATTERNS.some((pattern) => pattern.test(text));
+function entryRequestId(entry: OutputEntryLike) {
+  const raw = entry.raw;
+  if (typeof raw !== "object" || raw === null) {
+    return null;
+  }
+  const requestId = (raw as { requestId?: unknown }).requestId;
+  return typeof requestId === "number" && Number.isFinite(requestId) ? requestId : null;
+}
+
+function entriesHaveOpenHumanInput(entries: readonly OutputEntryLike[]) {
+  const pendingByRequestId = new Map<string, boolean>();
+
+  for (const entry of entries) {
+    if (entry.type !== "permission" && entry.type !== "elicitation") {
+      continue;
+    }
+
+    const open = isOpenHumanInputEntry(entry);
+    const requestId = entryRequestId(entry);
+    if (requestId === null) {
+      if (open) {
+        return true;
+      }
+      continue;
+    }
+
+    pendingByRequestId.set(`${entry.type}:${requestId}`, open);
+  }
+
+  return [...pendingByRequestId.values()].some(Boolean);
+}
+
+export function directWorkerOutputHasPendingHumanInput(source: WorkerOutputSource) {
+  return (
+    (source.pendingPermissions?.length ?? 0) > 0
+    || (source.pendingElicitations?.length ?? 0) > 0
+    || entriesHaveOpenHumanInput(source.outputEntries ?? [])
+    || entriesHaveOpenHumanInput(parseOutputEntriesJson(source.outputEntriesJson))
+  );
 }
 
 export function resolveDirectRunStatusFromWorkerOutput(source: WorkerOutputSource) {
-  return directWorkerOutputRequestsUserInput(source) ? "awaiting_user" : "done";
+  if (directWorkerOutputHasPendingHumanInput(source)) {
+    return "awaiting_user";
+  }
+
+  if (ACTIVE_DIRECT_WORKER_STATUSES.has(normalizeWorkerStatus(source.workerStatus))) {
+    return "running";
+  }
+
+  return "done";
 }
 
 export async function updateDirectRunStatusFromWorkerOutput(args: WorkerOutputSource & {
@@ -146,7 +178,7 @@ export async function updateDirectRunAwaitingUserInputIfRequested(args: WorkerOu
   runId: string;
   workerId?: string | null;
 }) {
-  if (!directWorkerOutputRequestsUserInput(args)) {
+  if (!directWorkerOutputHasPendingHumanInput(args)) {
     return false;
   }
 

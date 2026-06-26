@@ -6,6 +6,7 @@ import { Terminal, TerminalTextSizeControl, type AgentTerminalPayload, type Term
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useWorkerStream } from "@/app/home/WorkerEntriesManager";
+import { derivePendingElicitationsFromWorkerEntries } from "@/app/home/worker-elicitations";
 import { workerCardManager } from "@/components/component-state-managers";
 import { sideWindowManager } from "@/app/home/SideWindowManager";
 import type { AgentOutputEntry } from "@/lib/agent-output";
@@ -517,6 +518,7 @@ function elicitationFields(elicitation: PendingElicitationRecord) {
     return [{
       name: "response",
       label: t("worker.elicitation.responseLabel"),
+      description: null,
       options: [] as Array<{ value: string; label: string }>,
       required: true,
     }];
@@ -529,6 +531,9 @@ function elicitationFields(elicitation: PendingElicitationRecord) {
       label: typeof property.title === "string" && property.title.trim()
         ? property.title
         : schemaFieldLabel(name, index),
+      description: typeof property.description === "string" && property.description.trim()
+        ? property.description
+        : null,
       options: fieldOptions(property),
       required: required.has(name),
     };
@@ -613,7 +618,10 @@ function ElicitationWarning({
               const value = elicitationDraftsByKey[draftKey] ?? "";
               return (
                 <label key={field.name} className="block space-y-1.5 text-[11px]">
-                  <span className="font-medium text-foreground dark:text-zinc-100">{field.label}</span>
+                  <span className="block font-medium text-foreground dark:text-zinc-100">{field.label}</span>
+                  {field.description ? (
+                    <span className="block text-[10.5px] leading-4 text-muted-foreground dark:text-zinc-500">{field.description}</span>
+                  ) : null}
                   {field.options.length > 0 ? (
                     <select
                       className="h-8 w-full rounded-md border border-border bg-background px-2 text-[11px] text-foreground outline-none focus:border-primary"
@@ -708,6 +716,20 @@ export function WorkerCard({
       ? unifiedTerminalEntries.filter(isWorkerCardBridgeEntry)
       : agent.outputEntries
   ), [agent.outputEntries, unifiedTerminalEntries]);
+  const streamPendingElicitations = useMemo(
+    () => derivePendingElicitationsFromWorkerEntries(unifiedTerminalEntries ?? []),
+    [unifiedTerminalEntries],
+  );
+  const effectivePendingElicitations = useMemo(() => {
+    if (streamPendingElicitations.length === 0) {
+      return pendingElicitations;
+    }
+    const liveRequestIds = new Set(pendingElicitations.map((elicitation) => elicitation.requestId));
+    return [
+      ...pendingElicitations,
+      ...streamPendingElicitations.filter((elicitation) => !liveRequestIds.has(elicitation.requestId)),
+    ];
+  }, [pendingElicitations, streamPendingElicitations]);
   const terminalProcesses = useMemo(() => deriveVisibleWorkerTerminalProcesses(processEntries, agent.state), [agent.state, processEntries]);
   const hasActiveTerminalProcesses = terminalProcesses.some((process) => process.active);
   const showHeaderStopWorker = showStopWorker && !hasActiveTerminalProcesses;
@@ -807,10 +829,10 @@ export function WorkerCard({
   );
   const actionControls = (
     <div className="flex shrink-0 items-center gap-1.5">
-      {pendingElicitations.length > 0 ? (
+      {effectivePendingElicitations.length > 0 ? (
         <ElicitationWarning
           workerId={workerId}
-          pendingElicitations={pendingElicitations}
+          pendingElicitations={effectivePendingElicitations}
           onRespondElicitation={onRespondElicitation}
         />
       ) : null}
