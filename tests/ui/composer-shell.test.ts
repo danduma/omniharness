@@ -160,6 +160,23 @@ test("composer draft state is isolated from the root home app subscription", () 
   expect(pageSource).toContain('type HomeAppState = Omit<HomeUiState, "command" | "commandCursor" | "mentionIndex" | "attachments">;');
 });
 
+test("selecting a session preserves its restored composer draft", () => {
+  const actionsSource = fs.readFileSync(
+    path.resolve(process.cwd(), "src/app/home/useConversationActions.ts"),
+    "utf8"
+  );
+  const start = actionsSource.indexOf("const handleSelectRun = (runId: string) => {");
+  const end = actionsSource.indexOf("  };", start);
+  const block = actionsSource.slice(start, end);
+
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(block).toContain("setSelectedRunId(runId);");
+  expect(block).toContain("setDraftProjectPath(null);");
+  expect(block).not.toContain("setCommand(");
+  expect(block).not.toContain("setCommandCursor(");
+  expect(block).not.toContain("clearAttachments(");
+});
+
 test("composer submit button sends text, stops live conversations, and disables when idle empty", () => {
   expect(pageSource).toContain("const isSupervisorRunning = Boolean(");
   expect(pageSource).toContain('selectedRunMode === "implementation"');

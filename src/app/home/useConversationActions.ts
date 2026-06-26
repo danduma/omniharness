@@ -168,9 +168,6 @@ export function useConversationActions({
   const handleSelectRun = (runId: string) => {
     setSelectedRunId(runId);
     setDraftProjectPath(null);
-    setCommand("");
-    setCommandCursor(0);
-    clearAttachments();
     setMobileNavOpen(false);
   };
 
