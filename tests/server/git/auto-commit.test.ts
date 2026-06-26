@@ -1,5 +1,5 @@
 import { execFileSync } from "child_process";
-import { mkdtempSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { describe, expect, it } from "vitest";
@@ -52,6 +52,35 @@ describe("autoCommitMilestone", () => {
     expect(result.commitSha).toMatch(/^[0-9a-f]{7,40}$/);
     expect(result.pushStatus).toBe("not_requested");
     expect(git(repo, ["log", "-1", "--pretty=%s"])).toBe("OmniHarness: test milestone");
+    expect(git(repo, ["status", "--porcelain"])).toBe("");
+  }, GIT_AUTO_COMMIT_TEST_TIMEOUT_MS);
+
+  it("stages modified tracked files without dropping the first path character", () => {
+    const repo = createRepo("modified-tracked-path");
+    const trackedPath = path.join(repo, "src", "app", "(public)", "(marketing)", "page.tsx");
+    mkdirSync(path.dirname(trackedPath), { recursive: true });
+    writeFileSync(trackedPath, "export default function Page() { return null; }\n");
+    git(repo, ["add", "src/app/(public)/(marketing)/page.tsx"]);
+    git(repo, ["commit", "-m", "add marketing page"]);
+    const baseline = captureGitBaseline(repo);
+    writeFileSync(trackedPath, "export default function Page() { return 'done'; }\n");
+
+    const result = autoCommitMilestone({
+      cwd: repo,
+      baseline,
+      autoCommitMilestones: true,
+      pushOnCommit: false,
+      subject: "OmniHarness: test milestone",
+      body: "run id: test-run",
+    });
+
+    expect(result.status).toBe("created");
+    if (result.status !== "created") {
+      throw new Error(`Expected created result, got ${result.status}: ${JSON.stringify(result)}`);
+    }
+    expect(git(repo, ["show", "--name-only", "--pretty=format:", "HEAD"]).split("\n").filter(Boolean)).toEqual([
+      "src/app/(public)/(marketing)/page.tsx",
+    ]);
     expect(git(repo, ["status", "--porcelain"])).toBe("");
   }, GIT_AUTO_COMMIT_TEST_TIMEOUT_MS);
 

@@ -42,7 +42,7 @@ type GitCommandResult = {
   status: number | null;
 };
 
-function runGit(cwd: string, args: string[]): GitCommandResult {
+function runGit(cwd: string, args: string[], options: { trimStdout?: boolean } = {}): GitCommandResult {
   const result = spawnSync("git", args, {
     cwd,
     encoding: "utf8",
@@ -50,7 +50,11 @@ function runGit(cwd: string, args: string[]): GitCommandResult {
     maxBuffer: 1024 * 1024,
   });
 
-  const stdout = typeof result.stdout === "string" ? result.stdout.trim() : "";
+  const stdout = typeof result.stdout === "string"
+    ? options.trimStdout === false
+      ? result.stdout.replace(/\r?\n$/, "")
+      : result.stdout.trim()
+    : "";
   const stderr = typeof result.stderr === "string" ? result.stderr.trim() : "";
 
   return {
@@ -79,7 +83,7 @@ export function captureGitBaseline(cwd: string): GitBaseline {
   }
 
   const head = runGit(repoRoot.stdout, ["rev-parse", "HEAD"]);
-  const status = runGit(repoRoot.stdout, ["status", "--porcelain"]);
+  const status = runGit(repoRoot.stdout, ["status", "--porcelain"], { trimStdout: false });
 
   return {
     status: "ok",
@@ -167,7 +171,7 @@ export function autoCommitMilestone({
     return { status: "skipped", reason: "not_git", details: current.reason };
   }
 
-  const status = runGit(current.repoRoot, ["status", "--porcelain"]);
+  const status = runGit(current.repoRoot, ["status", "--porcelain"], { trimStdout: false });
   if (!status.ok) {
     return { status: "failed", reason: "status_failed", stderr: formatGitFailure("status --porcelain", status) };
   }
