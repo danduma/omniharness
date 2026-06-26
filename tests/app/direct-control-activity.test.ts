@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  countOpenHumanInputEntries,
+  hasPendingHumanInputSignal,
   isMutationPendingForSelectedRun,
   resolveDirectControlPendingAssistantStatus,
   resolvePendingConversationWorkerId,
@@ -45,6 +47,40 @@ describe("shouldShowDirectControlPendingAssistant", () => {
       hasAgentCurrentText: true,
       hasPendingHumanInput: true,
     })).toBe(null);
+  });
+
+  it("does show Working after the pending input row is answered for the same request", () => {
+    const outputEntries = [
+      {
+        id: "elicitation-pending",
+        type: "elicitation" as const,
+        text: "Question for user: Please answer the following questions.",
+        status: "pending",
+        timestamp: "2026-06-25T21:11:51.267Z",
+        raw: { requestId: 2 },
+      },
+      {
+        id: "elicitation-answered",
+        type: "elicitation" as const,
+        text: "Question answered for request 2",
+        status: "answered",
+        timestamp: "2026-06-25T21:14:37.797Z",
+        raw: { requestId: 2 },
+      },
+    ];
+
+    expect(countOpenHumanInputEntries(outputEntries)).toBe(0);
+    expect(hasPendingHumanInputSignal({ outputEntries })).toBe(false);
+    expect(resolveDirectControlPendingAssistantStatus({
+      isDirectConversation: true,
+      pendingConversationWorkerId: null,
+      busyConversationWorkerId: "run-1-worker-1",
+      selectedRunStatus: "running",
+      workerStatuses: ["working"],
+      agentStates: ["working"],
+      hasAgentCurrentText: true,
+      hasPendingHumanInput: hasPendingHumanInputSignal({ outputEntries }),
+    })).toBe("working");
   });
 
   it("labels pending direct-send handoff as connecting before the worker starts", () => {

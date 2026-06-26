@@ -3,6 +3,18 @@ import { isTerminalRunStatus } from "@/lib/run-status";
 import type { AgentOutputEntry } from "@/lib/agent-output";
 
 const DIRECT_WORKING_STATUSES = new Set(["starting", "working", "stuck", "recovering"]);
+const TERMINAL_HUMAN_INPUT_STATUSES = new Set([
+  "answered",
+  "approved",
+  "cancelled",
+  "canceled",
+  "completed",
+  "declined",
+  "denied",
+  "failed",
+  "rejected",
+  "skipped",
+]);
 
 export type DirectControlPendingAssistantStatus = "connecting" | "thinking" | "working";
 
@@ -15,7 +27,48 @@ function isOpenInputEntry(entry: AgentOutputEntry) {
     return false;
   }
   const status = (entry.status ?? "pending").trim().toLowerCase();
-  return !["answered", "approved", "cancelled", "canceled", "completed", "declined", "denied", "failed", "rejected"].includes(status);
+  return !TERMINAL_HUMAN_INPUT_STATUSES.has(status);
+}
+
+function entryRequestKey(entry: AgentOutputEntry) {
+  const raw = entry.raw;
+  if (typeof raw !== "object" || raw === null) {
+    return null;
+  }
+  const requestId = (raw as { requestId?: unknown }).requestId;
+  return typeof requestId === "number" && Number.isFinite(requestId)
+    ? `${entry.type}:${requestId}`
+    : null;
+}
+
+export function countOpenHumanInputEntries(
+  entries: readonly AgentOutputEntry[] | null | undefined,
+  inputType?: "permission" | "elicitation",
+) {
+  const openByRequestKey = new Map<string, boolean>();
+  let unkeyedOpenCount = 0;
+
+  for (const entry of entries ?? []) {
+    if (entry.type !== "permission" && entry.type !== "elicitation") {
+      continue;
+    }
+    if (inputType && entry.type !== inputType) {
+      continue;
+    }
+
+    const open = isOpenInputEntry(entry);
+    const requestKey = entryRequestKey(entry);
+    if (!requestKey) {
+      if (open) {
+        unkeyedOpenCount += 1;
+      }
+      continue;
+    }
+
+    openByRequestKey.set(requestKey, open);
+  }
+
+  return unkeyedOpenCount + [...openByRequestKey.values()].filter(Boolean).length;
 }
 
 export function hasPendingHumanInputSignal(agent: {
@@ -26,7 +79,7 @@ export function hasPendingHumanInputSignal(agent: {
   return (
     (agent.pendingPermissions?.length ?? 0) > 0
     || (agent.pendingElicitations?.length ?? 0) > 0
-    || (agent.outputEntries?.some(isOpenInputEntry) ?? false)
+    || countOpenHumanInputEntries(agent.outputEntries) > 0
   );
 }
 

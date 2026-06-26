@@ -39,11 +39,16 @@ import { pendingOrphanWorktreeError } from "@/server/git/orphan-recovery";
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
 import { isResourceAdmissionError } from "@/server/agent-runtime/resource-admission";
 import { globalClaudeConfigDir } from "@/server/external-sessions/discovery";
+import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
 
 
 function buildInitialWorkerPrompt(mode: ConversationMode, command: string, projectRoot: string) {
   if (mode === "planning") {
     return `${buildPlannerSystemPrompt(projectRoot)}\n\nUser request:\n${command}`;
+  }
+
+  if (mode === "direct" || mode === "commit") {
+    return buildDirectWorkerPrompt(command);
   }
 
   return command;
@@ -392,11 +397,14 @@ async function runInitialWorkerTurn(args: {
       await updateDirectRunStatusFromWorkerOutput({
         runId: args.runId,
         workerId: args.workerId,
+        workerStatus: snapshot?.state ?? response.state,
         responseText: response.response,
         renderedOutput: snapshot?.renderedOutput,
         currentText: snapshot?.currentText,
         lastText: snapshot?.lastText,
         outputEntries: snapshot?.outputEntries,
+        pendingPermissions: snapshot?.pendingPermissions,
+        pendingElicitations: snapshot?.pendingElicitations,
       });
     }
 

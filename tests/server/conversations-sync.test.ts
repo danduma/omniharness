@@ -200,6 +200,69 @@ describe("syncConversationSessions", () => {
     expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 
+  it("can sync a selected planning worker without refreshing planning artifact fields", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const old = new Date(0);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/plan.md",
+      status: "running",
+      createdAt: old,
+      updatedAt: old,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "planning",
+      status: "working",
+      title: "Planning snapshot",
+      createdAt: old,
+      updatedAt: old,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      workerNumber: 1,
+      createdAt: old,
+      updatedAt: old,
+    });
+
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "codex",
+        cwd: process.cwd(),
+        state: "working",
+        lastText: "Still planning.",
+        currentText: "Still planning.",
+        renderedOutput: "Still planning.",
+        outputEntries: [{ type: "message", text: "Still planning." }],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    ], { selectedRunId: runId, refreshPlanningArtifacts: false });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+
+    expect(run?.status).toBe("working");
+    expect(run?.updatedAt?.getTime()).toBe(old.getTime());
+    expect(run?.specPath).toBeNull();
+    expect(run?.artifactPlanPath).toBeNull();
+    expect(run?.plannerArtifactsJson).toBeNull();
+    expect(worker?.currentText).toBe("Still planning.");
+  });
+
   it("recovers the latest non-cancelled direct worker instead of completing from an older cancelled worker", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -296,7 +359,7 @@ describe("syncConversationSessions", () => {
     }));
   });
 
-  it("keeps an idle direct worker question in awaiting_user instead of completing the run", async () => {
+  it("does not infer awaiting_user from idle direct worker prose", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = `${runId}-worker-1`;
@@ -342,7 +405,7 @@ describe("syncConversationSessions", () => {
 
     const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
 
-    expect(run?.status).toBe("awaiting_user");
+    expect(run?.status).toBe("done");
     expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 
@@ -599,7 +662,7 @@ describe("syncConversationSessions", () => {
 
     expect(worker?.status).toBe("idle");
     expect(run?.status).toBe("done");
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "continue");
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("User message:\ncontinue"));
     expect(queued?.status).toBe("delivered");
     const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
     expect(events).toEqual(expect.arrayContaining([
@@ -770,6 +833,200 @@ describe("syncConversationSessions", () => {
     expect(queued?.status).toBe("delivered");
     expect(run?.status).toBe("running");
     expect(worker?.status).toBe("working");
+  });
+
+  it("drains an awaiting direct worker when the list snapshot only has an open elicitation entry", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+    const question = "The worker is waiting for a direct answer, but the list snapshot is stale.";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-stale-elicitation-drain.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "awaiting_user",
+      title: "Direct stale elicitation drain",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: question,
+      lastText: question,
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(queuedConversationMessages).values({
+      id: "queued-stale-answer",
+      runId,
+      targetWorkerId: workerId,
+      action: "steer",
+      status: "pending",
+      content: "answer the pending direct question",
+      attachmentsJson: "[]",
+      createdAt: new Date(now.getTime() + 3),
+      updatedAt: new Date(now.getTime() + 3),
+    });
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "claude",
+        cwd: process.cwd(),
+        state: "working",
+        sessionId: "elicitation-session",
+        sessionMode: "full-access",
+        currentText: question,
+        lastText: question,
+        renderedOutput: question,
+        outputEntries: [
+          {
+            id: "elicitation-stale",
+            type: "elicitation",
+            text: `Question for user: ${question}`,
+            status: "pending",
+            timestamp: new Date(now.getTime() + 1).toISOString(),
+            raw: {
+              requestId: 4,
+              sessionId: "elicitation-session",
+              toolCallId: "ask-tool",
+              message: question,
+              requestedSchema: {
+                type: "object",
+                properties: {
+                  customAnswer: { type: "string", title: "Other" },
+                },
+              },
+            },
+          },
+        ],
+        pendingElicitations: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    ], { selectedRunId: runId });
+
+    const queued = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, "queued-stale-answer")).get();
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+
+    expect(mockGetAgent).not.toHaveBeenCalled();
+    expect(mockAskAgent).not.toHaveBeenCalled();
+    expect(mockRespondElicitation).toHaveBeenCalledWith(workerId, {
+      action: "accept",
+      content: { customAnswer: "answer the pending direct question" },
+    });
+    expect(queued?.status).toBe("delivered");
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "queue_drain_decision",
+        detailsPreview: expect.stringContaining("\"reason\":\"pending_elicitation\""),
+      }),
+    ]));
+  });
+
+  it("keeps a direct run running after an elicitation is answered while the worker continues", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-answered-elicitation.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Direct answered elicitation",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "claude",
+        cwd: process.cwd(),
+        state: "working",
+        sessionId: "elicitation-session",
+        sessionMode: "full-access",
+        currentText: "Let me read the actual renderer + style files I'll edit.",
+        lastText: "Let me read the actual renderer + style files I'll edit.",
+        renderedOutput: "Let me read the actual renderer + style files I'll edit.",
+        outputEntries: [
+          {
+            id: "elicitation-pending",
+            type: "elicitation",
+            text: "Question for user: Please answer the following questions. (3 fields)",
+            status: "pending",
+            timestamp: new Date(now.getTime() + 1).toISOString(),
+            raw: { requestId: 2 },
+          },
+          {
+            id: "elicitation-answered",
+            type: "elicitation",
+            text: "Question answered for request 2",
+            status: "answered",
+            timestamp: new Date(now.getTime() + 2).toISOString(),
+            raw: { requestId: 2, action: "accept" },
+          },
+          {
+            id: "read-file",
+            type: "tool_call",
+            text: "Read File",
+            toolCallId: "toolu_read",
+            toolKind: "read",
+            status: "pending",
+            timestamp: new Date(now.getTime() + 3).toISOString(),
+          },
+        ],
+        pendingElicitations: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    ], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+
+    expect(run?.status).toBe("running");
+    expect(worker?.status).toBe("working");
+    expect(mockAskAgent).not.toHaveBeenCalled();
+    expect(mockRespondElicitation).not.toHaveBeenCalled();
   });
 
   it("keeps a direct run running when the live worker only has a partial streaming message", async () => {
@@ -1094,6 +1351,63 @@ describe("syncConversationSessions", () => {
 
     expect(run?.status).toBe("done");
     expect(getEventStreamNotificationVersion()).toBeGreaterThan(notificationVersionBefore);
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it("completes a commit run when final text contains an optional follow-up", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+    const finalText = [
+      "Done. The modified files are grouped into three logical commits and pushed to `origin/master`.",
+      "",
+      "Two files were deliberately left uncommitted because they are artifacts.",
+      "Let me know if you actually want either committed or added to `.gitignore`.",
+    ].join("\n");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/commit.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "commit",
+      status: "running",
+      title: "Commit and push",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "idle",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: JSON.stringify([
+        { type: "message", text: finalText },
+      ]),
+      currentText: "",
+      lastText: finalText,
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await syncConversationSessions([], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const awaitingEvents = await db.select()
+      .from(executionEvents)
+      .where(eq(executionEvents.runId, runId));
+
+    expect(run?.status).toBe("done");
+    expect(awaitingEvents.some((event) => event.eventType === "direct_worker_awaiting_user")).toBe(false);
     expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 

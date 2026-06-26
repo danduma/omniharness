@@ -372,6 +372,60 @@ describe("useConversationExecutionStatus", () => {
     });
   });
 
+  it("shows working after a stream elicitation has a later answered row", () => {
+    const { liveExecutionStatus } = useConversationExecutionStatus({
+      selectedRun: buildRun({ status: "running" }),
+      latestExecutionEvent: null,
+      erroredAgent: null,
+      pendingPermissionAgent: null,
+      pendingElicitationAgent: null,
+      hasStuckWorker: false,
+      latestStuckEvent: null,
+      showRecoverableRunningState: false,
+      latestWaitEvent: null,
+      latestPromptDeferredEvent: null,
+      completionEvent: null,
+      queuedMessageCount: 0,
+      activeConversationAgents: [{
+        name: "run-1-worker-1",
+        type: "claude",
+        state: "working",
+        currentText: "Let me read the actual renderer + style files I'll edit.",
+        outputEntries: [
+          {
+            id: "elicitation-pending",
+            type: "elicitation",
+            text: "Question for user: Please answer the following questions.",
+            status: "pending",
+            timestamp: "2026-06-25T21:11:51.267Z",
+            raw: { requestId: 2 },
+          },
+          {
+            id: "elicitation-answered",
+            type: "elicitation",
+            text: "Question answered for request 2",
+            status: "answered",
+            timestamp: "2026-06-25T21:14:37.797Z",
+            raw: { requestId: 2 },
+          },
+        ],
+      }],
+      liveThoughts: [{
+        agentName: "run-1-worker-1",
+        text: "Let me read the actual renderer + style files I'll edit.",
+        snippet: "Let me read the actual renderer + style files I'll edit.",
+        isLive: true,
+      }],
+      awaitingUserQuestionMessage: null,
+      isSelectedConversationLoaded: true,
+    });
+
+    expect(liveExecutionStatus).toMatchObject({
+      label: "Working",
+      tone: "active",
+    });
+  });
+
   it("shows a loading state when the selected conversation snapshot has not arrived", () => {
     const { liveExecutionStatus } = useConversationExecutionStatus({
       selectedRun: buildRun({ status: "running" }),

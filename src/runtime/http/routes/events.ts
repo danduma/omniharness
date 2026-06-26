@@ -644,6 +644,7 @@ async function buildRuntimeEnrichedEventPayload(options: EventPayloadOptions = {
       const { syncConversationSessions } = await import("@/server/conversations/sync");
       await syncConversationSessions(rawAgents, {
         selectedRunId: options.selectedRunId,
+        refreshPlanningArtifacts: false,
       });
       probe?.mark("bridge.sync");
       // Second reconciliation pass — this one knows what's actually in

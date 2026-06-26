@@ -685,11 +685,14 @@ async function resumeDirectRunFromSavedSession(
   await updateDirectRunStatusFromWorkerOutput({
     runId: run.id,
     workerId: worker.id,
+    workerStatus: snapshot?.state ?? response.state,
     responseText: response.response,
     renderedOutput: snapshot?.renderedOutput,
     currentText: snapshot?.currentText,
     lastText: snapshot?.lastText,
     outputEntries: snapshot?.outputEntries,
+    pendingPermissions: snapshot?.pendingPermissions,
+    pendingElicitations: snapshot?.pendingElicitations,
   });
   await resolveOpenRecoveryIncidentsForRun(run.id, worker.id, `Recovered ${worker.id}.`);
 

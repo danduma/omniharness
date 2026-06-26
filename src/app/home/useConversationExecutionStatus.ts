@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { t } from "@/lib/i18n";
 import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, RunRecord } from "./types";
 import { getRunDurationLabel, parseExecutionEventDetails, summarizeExecutionEvent } from "./utils";
+import { countOpenHumanInputEntries } from "./direct-control-activity";
 
 interface UseConversationExecutionStatusProps {
   selectedRun: RunRecord | null;
@@ -23,12 +24,7 @@ interface UseConversationExecutionStatusProps {
 }
 
 function pendingPermissionEntryCount(agent: AgentSnapshot | null | undefined) {
-  return agent?.outputEntries?.filter((entry) => (
-    entry.type === "permission"
-    && !["approved", "cancelled", "canceled", "completed", "denied", "failed", "rejected"].includes(
-      (entry.status ?? "pending").trim().toLowerCase(),
-    )
-  )).length ?? 0;
+  return countOpenHumanInputEntries(agent?.outputEntries, "permission");
 }
 
 function pendingPermissionCount(agent: AgentSnapshot | null | undefined) {
@@ -37,12 +33,7 @@ function pendingPermissionCount(agent: AgentSnapshot | null | undefined) {
 }
 
 function pendingElicitationEntryCount(agent: AgentSnapshot | null | undefined) {
-  return agent?.outputEntries?.filter((entry) => (
-    entry.type === "elicitation"
-    && !["answered", "cancelled", "canceled", "completed", "declined", "failed", "rejected"].includes(
-      (entry.status ?? "pending").trim().toLowerCase(),
-    )
-  )).length ?? 0;
+  return countOpenHumanInputEntries(agent?.outputEntries, "elicitation");
 }
 
 function pendingElicitationCount(agent: AgentSnapshot | null | undefined) {

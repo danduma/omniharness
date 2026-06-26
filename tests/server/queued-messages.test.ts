@@ -310,7 +310,7 @@ describe("queued conversation messages", () => {
     const drained = await drainQueuedWorkerMessages({ runId, workerId });
 
     expect(drained).toBe(1);
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "Queued worker note");
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("User message:\nQueued worker note"));
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
     // Worker response now lives in the unified worker stream.
     expect(storedMessages.map((message) => message.role)).toEqual(["user"]);

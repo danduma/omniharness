@@ -30,6 +30,7 @@ import { emitNamedEvent } from "@/server/events/named-events";
 import { cancelSupervisorWake } from "@/server/supervisor/wake";
 import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
 import { stopRunObserver } from "@/server/supervisor/observer";
+import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
@@ -453,8 +454,9 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
 }
 
 async function askDirectWorkerWithResume(run: RunRecord, worker: WorkerRecord, content: string) {
+  const workerPrompt = isDirectRunMode(run.mode) ? buildDirectWorkerPrompt(content) : content;
   try {
-    return await askAgent(worker.id, content);
+    return await askAgent(worker.id, workerPrompt);
   } catch (error) {
     if (!isAgentNotFoundError(error)) {
       throw error;
@@ -493,10 +495,10 @@ async function askDirectWorkerWithResume(run: RunRecord, worker: WorkerRecord, c
       ? await buildTranscriptReplayPrompt({
         runId: run.id,
         workerId: worker.id,
-        nextUserPrompt: content,
+        nextUserPrompt: workerPrompt,
       })
       : null;
-    return askAgent(worker.id, replayPrompt ?? content);
+    return askAgent(worker.id, replayPrompt ?? workerPrompt);
   }
 }
 
@@ -614,11 +616,14 @@ async function continueWorkerConversation({
       await updateDirectRunStatusFromWorkerOutput({
         runId: run.id,
         workerId: worker.id,
+        workerStatus: snapshot?.state ?? response.state,
         responseText: response.response,
         renderedOutput: snapshot?.renderedOutput,
         currentText: snapshot?.currentText,
         lastText: snapshot?.lastText,
         outputEntries: snapshot?.outputEntries,
+        pendingPermissions: snapshot?.pendingPermissions,
+        pendingElicitations: snapshot?.pendingElicitations,
       });
     }
 
@@ -668,27 +673,6 @@ type SendConversationMessageArgs = {
   allowedWorkerTypes?: string[] | string | null;
 };
 
-function parseAllowedWorkerTypeInput(value: string[] | string | null | undefined) {
-  const rawValues = Array.isArray(value)
-    ? value
-    : typeof value === "string"
-      ? (() => {
-        try {
-          const parsed = JSON.parse(value) as unknown;
-          return Array.isArray(parsed) ? parsed : value.split(",");
-        } catch {
-          return value.split(",");
-        }
-      })()
-      : [];
-
-  const normalized = rawValues
-    .filter((entry): entry is string => typeof entry === "string")
-    .map((entry) => normalizeWorkerType(entry))
-    .filter((entry): entry is SupportedWorkerType => SUPPORTED_WORKER_TYPES.includes(entry as SupportedWorkerType));
-  return Array.from(new Set(normalized));
-}
-
 function parseExplicitWorkerType(value: string | null | undefined) {
   if (!value?.trim()) {
     return null;
@@ -722,10 +706,7 @@ async function applyWorkerPreferenceForMessage(args: {
     return args.run;
   }
 
-  const allowedFromPayload = parseAllowedWorkerTypeInput(args.allowedWorkerTypes);
-  const nextAllowedWorkerTypes = allowedFromPayload.length > 0
-    ? Array.from(new Set([...allowedFromPayload, nextWorkerType]))
-    : [...SUPPORTED_WORKER_TYPES];
+  const nextAllowedWorkerTypes = [nextWorkerType];
   const nextPreferredWorkerModel = explicitWorkerType
     ? args.preferredWorkerModel?.trim() || null
     : null;

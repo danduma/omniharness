@@ -878,7 +878,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       preferredWorkerType: "gemini",
       preferredWorkerModel: "gemini-3.5-flash",
       preferredWorkerEffort: "high",
-      allowedWorkerTypes: JSON.stringify(["codex", "claude", "gemini", "opencode"]),
+      allowedWorkerTypes: JSON.stringify(["gemini"]),
     });
     expect(selectionEvent.some((event) => event.eventType === "worker_selection_changed")).toBe(true);
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
@@ -927,7 +927,7 @@ describe("POST /api/conversations/[id]/messages", () => {
     const selectionEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
     expect(updatedRun?.preferredWorkerType).toBe("gemini");
     expect(updatedRun?.preferredWorkerModel).toBeNull();
-    expect(JSON.parse(updatedRun?.allowedWorkerTypes ?? "[]")).toEqual(["codex", "claude", "gemini", "opencode"]);
+    expect(JSON.parse(updatedRun?.allowedWorkerTypes ?? "[]")).toEqual(["gemini"]);
     expect(selectionEvent.some((event) => (
       event.eventType === "worker_selection_changed"
       && JSON.parse(event.details ?? "{}").source === "message_text"
@@ -1146,6 +1146,14 @@ describe("POST /api/conversations/[id]/messages", () => {
       type: "user_input",
       text: content,
     });
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      workerId,
+      expect.stringContaining("Do not implement, edit files, run mutating commands, or otherwise change the workspace unless the user's latest message explicitly asks you to implement, edit, modify, fix, create, delete, run, apply, or change something."),
+    );
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      workerId,
+      expect.stringContaining(`User message:\n${content}`),
+    );
   });
 
   it("marks a direct fire-and-forget follow-up done when the worker finishes normally", async () => {

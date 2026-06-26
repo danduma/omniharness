@@ -220,10 +220,13 @@ async function resumeSavedWorkerSession(args: {
   }
   const nextRunStatus = args.run.mode === "direct" || args.run.mode === "commit"
     ? resolveDirectRunStatusFromWorkerOutput({
+      workerStatus: resumed.state,
       renderedOutput: resumed.renderedOutput,
       currentText: resumed.currentText,
       lastText: resumed.lastText,
       outputEntries: resumed.outputEntries,
+      pendingPermissions: resumed.pendingPermissions,
+      pendingElicitations: resumed.pendingElicitations,
     })
     : "running";
 

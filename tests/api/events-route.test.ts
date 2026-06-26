@@ -2088,7 +2088,7 @@ describe("GET /api/events", () => {
     expect(persistedMessages.filter((message) => message.kind === "error")).toHaveLength(0);
   });
 
-  it("recovers a planning conversation when an old busy failure is followed by a ready handoff", async () => {
+  it("does not refresh planning artifacts while streaming a ready planning handoff", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = randomUUID();
@@ -2184,17 +2184,19 @@ summary: Plan is ready.
     type WorkerSnap = { id: string; status: string };
     const runsList = payload.runs as RunSnap[];
     const workersList = payload.workers as WorkerSnap[];
-    expect(runsList.find((r) => r.id === runId)?.status).toBe("ready");
+    expect(runsList.find((r) => r.id === runId)?.status).toBe("failed");
     expect(workersList.find((w) => w.id === workerId)?.status).toBe("idle");
 
     const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
-    expect(persistedRun?.status).toBe("ready");
-    expect(persistedRun?.lastError).toBeNull();
-    expect(persistedRun?.failedAt).toBeNull();
-    expect(persistedRun?.artifactPlanPath).toBe(planPath);
-    expect(persistedRun?.specPath).toBe(specPath);
-    expect(persistedMessages.filter((message) => message.kind === "error")).toHaveLength(0);
+    expect(persistedRun?.status).toBe("failed");
+    expect(persistedRun?.lastError).toBe(`Ask failed: Agent is busy: ${workerId}`);
+    expect(persistedRun?.failedAt).not.toBeNull();
+    expect(persistedRun?.artifactPlanPath).toBeNull();
+    expect(persistedRun?.specPath).toBeNull();
+    expect(persistedWorker?.status).toBe("idle");
+    expect(persistedMessages.filter((message) => message.kind === "error")).toHaveLength(1);
   });
 
   it("recovers an implementation conversation when an old transient supervisor failure is followed by a clean live worker", async () => {

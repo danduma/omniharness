@@ -1343,6 +1343,60 @@ describe("POST /api/conversations", () => {
     );
   });
 
+  it("hardens consultative direct prompts without changing the normal worker permission mode", async () => {
+    const command = "How would you tweak the landing page? Don't do anything, just suggest.";
+    mockSpawnAgent.mockResolvedValueOnce({
+      name: "worker-consult",
+      type: "claude",
+      state: "idle",
+      cwd: "/workspace/app",
+      sessionId: "session-consult",
+      sessionMode: "full-access",
+      lastText: "",
+      currentText: "",
+      stderrBuffer: [],
+      stopReason: null,
+    });
+    await db.insert(settings).values({
+      key: "WORKER_YOLO_MODE",
+      value: "true",
+      updatedAt: new Date(),
+    });
+
+    const request = new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command,
+        projectPath: "/workspace/app",
+        preferredWorkerType: "claude",
+      }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+
+    const createdWorker = await waitFor(
+      () => db.select().from(workers).where(eq(workers.runId, payload.runId)).get(),
+      (worker) => worker?.bridgeSessionMode === "full-access",
+    );
+
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      name: createdWorker?.id,
+      type: "claude",
+      mode: "full-access",
+    }));
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      createdWorker?.id,
+      expect.stringContaining("Do not implement, edit files, run mutating commands, or otherwise change the workspace unless the user's latest message explicitly asks you to implement, edit, modify, fix, create, delete, run, apply, or change something."),
+    );
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      createdWorker?.id,
+      expect.stringContaining(`User message:\n${command}`),
+    );
+  });
+
   it("does not mark a new direct conversation failed when the first worker turn is already busy", async () => {
     mockAskAgent.mockRejectedValueOnce(new Error("Ask failed: Agent is busy: direct-worker"));
 
