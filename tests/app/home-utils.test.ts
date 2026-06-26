@@ -437,7 +437,7 @@ describe("home utils", () => {
           createdAt: "2026-04-27T00:00:10.000Z",
         }),
       ],
-      runMode: "planning",
+      isPlanningRun: true,
     });
 
     expect(timeline.map((item) => item.type === "message" ? item.message.content : item.text)).toEqual([
