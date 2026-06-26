@@ -60,4 +60,17 @@ describe("HomeUiStateManager", () => {
     expect(manager.getSnapshot().commandCursor).toBe(5);
     expect(notifications).toBe(1);
   });
+
+  it("restores saved composer drafts when switching between selected runs", () => {
+    const manager = new HomeUiStateManager();
+
+    manager.selectRun("run-a");
+    manager.setComposerDraft({ command: "draft for A", commandCursor: 11 });
+    manager.selectRun("run-b");
+    manager.setComposerDraft({ command: "draft for B", commandCursor: 7 });
+    manager.selectRun("run-a");
+
+    expect(manager.getSnapshot().command).toBe("draft for A");
+    expect(manager.getSnapshot().commandCursor).toBe(11);
+  });
 });
