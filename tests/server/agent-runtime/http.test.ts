@@ -107,6 +107,7 @@ process.stdin.on('data', (chunk) => {
           CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR || null,
           CODEX_SQLITE_HOME: process.env.CODEX_SQLITE_HOME || null,
           GEMINI_CLI_HOME: process.env.GEMINI_CLI_HOME || null,
+          GEMINI_CLI_TRUST_WORKSPACE: process.env.GEMINI_CLI_TRUST_WORKSPACE || null,
           GEMINI_FORCE_FILE_STORAGE: process.env.GEMINI_FORCE_FILE_STORAGE || null,
           OPENCODE_CONFIG_DIR: process.env.OPENCODE_CONFIG_DIR || null,
           XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || null,
@@ -2013,6 +2014,7 @@ process.stdout.write(JSON.stringify({
     const initialize = events.find((event) => event.method === "initialize");
     expect(initialize.argv).toEqual(["--experimental-acp", "--model", "gemini-3.5-flash"]);
     expect(initialize.selectedCliStorageEnv.GEMINI_CLI_HOME).toBe(join(projectDir, ".omniharness", "cli-home", "gemini"));
+    expect(initialize.selectedCliStorageEnv.GEMINI_CLI_TRUST_WORKSPACE).toBe("true");
 
     await fetch(`${baseUrl}/agents/gemini-worker`, { method: "DELETE" });
   }, 15_000);

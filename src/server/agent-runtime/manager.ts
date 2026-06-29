@@ -240,9 +240,14 @@ function applyClaudeKeychainOAuthToken(env: EnvLike) {
 function applyProjectScopedCliStorage(type: string, cwd: string, env: EnvLike, options: { bridgeCredentials?: boolean } = {}) {
   const cliHome = join(cwd, ".omniharness", "cli-home");
   let shouldBridgeCredentials = false;
-  if (type === "gemini" && !env.GEMINI_CLI_HOME?.trim()) {
-    env.GEMINI_CLI_HOME = join(cliHome, "gemini");
-    shouldBridgeCredentials = true;
+  if (type === "gemini") {
+    if (!env.GEMINI_CLI_HOME?.trim()) {
+      env.GEMINI_CLI_HOME = join(cliHome, "gemini");
+      shouldBridgeCredentials = true;
+    }
+    // Trust workspace folder to bypass interactive trust dialog and avoid:
+    // "Cannot enable privileged approval modes in an untrusted folder"
+    env.GEMINI_CLI_TRUST_WORKSPACE = "true";
   }
   if (type === "codex") {
     const codexHome = join(cliHome, "codex", "home");
