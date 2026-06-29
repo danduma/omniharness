@@ -84,6 +84,7 @@ export type HomeUiState = {
   hasReceivedInitialEventStreamPayload: boolean;
   selectedConversationMode: ConversationModeOption;
   selectedCliAgent: ComposerWorkerOption;
+  selectedWorkerAccountId: string;
   selectedModel: string;
   selectedEffort: string;
   hydratedRunSelectionId: string | null;
@@ -140,6 +141,7 @@ const initialHomeUiState: HomeUiState = {
   hasReceivedInitialEventStreamPayload: false,
   selectedConversationMode: "direct",
   selectedCliAgent: "auto",
+  selectedWorkerAccountId: "auto",
   selectedModel: "gpt-5.4",
   selectedEffort: "High",
   hydratedRunSelectionId: null,
@@ -404,6 +406,7 @@ export const homeUiSetters = {
   setHasReceivedInitialEventStreamPayload: homeUiStateManager.createSetter("hasReceivedInitialEventStreamPayload"),
   setSelectedConversationMode: homeUiStateManager.createSetter("selectedConversationMode"),
   setSelectedCliAgent: homeUiStateManager.createSetter("selectedCliAgent"),
+  setSelectedWorkerAccountId: homeUiStateManager.createSetter("selectedWorkerAccountId"),
   setSelectedModel: homeUiStateManager.createSetter("selectedModel"),
   setSelectedEffort: homeUiStateManager.createSetter("selectedEffort"),
   setHydratedRunSelectionId: homeUiStateManager.createSetter("hydratedRunSelectionId"),

@@ -43,7 +43,10 @@ function createRun(overrides: Partial<RunRecord> = {}): RunRecord {
   };
 }
 
-function useRenderViewModel(state: EventStreamState) {
+function useRenderViewModel(
+  state: EventStreamState,
+  workerCatalogData: Parameters<typeof useHomeViewModel>[0]["workerCatalogData"] = undefined,
+) {
   return useHomeViewModel({
     state,
     selectedRunId: "run-1",
@@ -54,7 +57,7 @@ function useRenderViewModel(state: EventStreamState) {
     draftProjectPath: null,
     searchQuery: "",
     apiKeys: {},
-    workerCatalogData: undefined,
+    workerCatalogData,
   });
 }
 
@@ -135,6 +138,57 @@ describe("useHomeViewModel", () => {
     expect(viewModel.hasActiveWorker).toBe(false);
     expect(viewModel.isConversationStoppable).toBe(false);
     expect(viewModel.isConversationThinking).toBe(false);
+  });
+
+  it("does not label permanent worker auth failures as reconnecting", () => {
+    const state = createState({
+      runs: [createRun({
+        mode: "implementation",
+        status: "failed",
+        failedAt: "2026-06-29T13:08:41.000Z",
+        lastError: 'Spawn failed: failed to start gemini agent via gemini: {"code":-32000,"message":"Gemini API key is missing or not configured."}',
+        preferredWorkerType: "gemini",
+      })],
+      plans: [{ id: "plan-1", path: "/workspace/project" }],
+      messages: [{
+        id: "message-1",
+        runId: "run-1",
+        role: "user",
+        kind: "checkpoint",
+        content: "Do the thing",
+        createdAt: "2026-05-13T00:00:00.000Z",
+      }],
+    });
+    const workerCatalogData: Parameters<typeof useHomeViewModel>[0]["workerCatalogData"] = {
+      workers: [{
+        type: "gemini",
+        label: "Gemini",
+        availability: {
+          status: "ok",
+          message: "Gemini login state was detected.",
+          setupCommand: "gemini",
+        },
+        installation: {
+          command: "gemini",
+          path: "/usr/local/bin/gemini",
+          dir: "/usr/local/bin",
+        },
+        authentication: {
+          status: "authenticated",
+          method: "session_file",
+          message: "Gemini login state was detected.",
+          setupCommand: "gemini",
+        },
+      }],
+      workerModels: {},
+    };
+    const viewModel = useRenderViewModel(state, workerCatalogData);
+
+    expect(viewModel.conversationFailure).toMatchObject({
+      tone: "error",
+      action: "Run failed",
+      message: 'Spawn failed: failed to start gemini agent via gemini: {"code":-32000,"message":"Gemini API key is missing or not configured."}',
+    });
   });
 
   it("does not show stale stuck-worker recovery once the supervisor is awaiting input", () => {

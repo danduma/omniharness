@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { useEffect, useMemo } from "react";
+import { memo, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ConversationComposer } from "@/components/home/ConversationComposer";
 import { requestJson } from "@/lib/app-errors";
@@ -52,6 +52,9 @@ export interface ComposerContainerProps {
   selectedCliAgent: ComposerWorkerOption;
   setSelectedCliAgent: (value: ComposerWorkerOption) => void;
   composerWorkerOptions: Array<{ value: ComposerWorkerOption; label: string }>;
+  selectedWorkerAccountId: string;
+  setSelectedWorkerAccountId: (value: string) => void;
+  composerAccountOptions: Array<{ value: string; label: string }>;
   selectedModel: string;
   setSelectedModel: (value: string) => void;
   activeWorkerModelOptions: WorkerModelOption[];
@@ -75,7 +78,7 @@ export interface ComposerContainerProps {
 }
 
 // Isolates high-churn draft subscriptions so keystrokes don't re-render HomeApp
-export function ComposerContainer({
+function ComposerContainerInner({
   className,
   commandInputRef,
   selectedRunId,
@@ -91,6 +94,9 @@ export function ComposerContainer({
   selectedCliAgent,
   setSelectedCliAgent,
   composerWorkerOptions,
+  selectedWorkerAccountId,
+  setSelectedWorkerAccountId,
+  composerAccountOptions,
   selectedModel,
   setSelectedModel,
   activeWorkerModelOptions,
@@ -217,6 +223,9 @@ export function ComposerContainer({
       selectedCliAgent={selectedCliAgent}
       setSelectedCliAgent={setSelectedCliAgent}
       composerWorkerOptions={composerWorkerOptions}
+      selectedWorkerAccountId={selectedWorkerAccountId}
+      setSelectedWorkerAccountId={setSelectedWorkerAccountId}
+      composerAccountOptions={composerAccountOptions}
       selectedModel={selectedModel}
       setSelectedModel={setSelectedModel}
       activeWorkerModelOptions={activeWorkerModelOptions}
@@ -242,3 +251,6 @@ export function ComposerContainer({
     />
   );
 }
+
+export const ComposerContainer = memo(ComposerContainerInner);
+ComposerContainer.displayName = "ComposerContainer";

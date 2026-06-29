@@ -1,5 +1,5 @@
 import Image from "next/image";
-import { useRef } from "react";
+import { memo, useRef } from "react";
 import type React from "react";
 import { ArrowUp, FileText, LoaderCircle, Plus, SlidersHorizontal, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,9 @@ interface ConversationComposerProps {
   selectedCliAgent: ComposerWorkerOption;
   setSelectedCliAgent: (value: ComposerWorkerOption) => void;
   composerWorkerOptions: Array<{ value: ComposerWorkerOption; label: string }>;
+  selectedWorkerAccountId: string;
+  setSelectedWorkerAccountId: (value: string) => void;
+  composerAccountOptions: Array<{ value: string; label: string }>;
   selectedModel: string;
   setSelectedModel: (value: string) => void;
   activeWorkerModelOptions: WorkerModelOption[];
@@ -79,7 +82,7 @@ class ComposerUiManager extends StateManager<{ mobileSettingsOpen: boolean }> {
 
 const composerUiManager = new ComposerUiManager();
 
-export function ConversationComposer({
+function ConversationComposerInner({
   className,
   command,
   setCommandCursor,
@@ -107,6 +110,9 @@ export function ConversationComposer({
   selectedCliAgent,
   setSelectedCliAgent,
   composerWorkerOptions,
+  selectedWorkerAccountId,
+  setSelectedWorkerAccountId,
+  composerAccountOptions,
   selectedModel,
   setSelectedModel,
   activeWorkerModelOptions,
@@ -151,8 +157,10 @@ export function ConversationComposer({
   const selectedHarnessLabel = shouldLockDirectWorker
     ? lockedDirectWorkerLabel
     : composerWorkerOptions.find((option) => option.value === selectedCliAgent)?.label ?? selectedCliAgent;
+  const selectedAccountLabel = composerAccountOptions.find((option) => option.value === selectedWorkerAccountId)?.label
+    ?? t("conversation.composer.account.auto");
   const selectedModelLabel = activeWorkerModelOptions.find((option) => option.value === selectedModel)?.label ?? selectedModel;
-  const mobileSettingsSummary = `${selectedHarnessLabel} · ${selectedModelLabel}`;
+  const mobileSettingsSummary = `${selectedHarnessLabel} · ${selectedAccountLabel} · ${selectedModelLabel}`;
   const composerPlaceholder = selectedRunId
     ? selectedConversationMode === "planning"
       ? t("conversation.composer.placeholder.planning")
@@ -244,15 +252,15 @@ export function ConversationComposer({
             </div>
           </div>
         )}
-      <div
-        className={cn(
-          "rounded-[1.5rem] px-4 pb-0 pt-3 transition-all sm:px-5 sm:pb-0 sm:pt-4",
-          themeMode === "night"
-            ? "border border-transparent bg-muted/80 shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] focus-within:bg-muted/90 dark:bg-[#2f2f2f] dark:focus-within:bg-[#343434]"
-            : "rounded-[2rem] border border-[#dededd] bg-[#fdfdfc] shadow-none focus-within:border-[#d2d2d0] focus-within:bg-[#fdfdfc] dark:border-transparent dark:bg-[#2f2f2f] dark:shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] dark:focus-within:bg-[#343434] sm:rounded-[2.35rem]",
-        )}
-      >
-        <textarea
+        <div
+          className={cn(
+            "rounded-[1.5rem] px-4 pb-0 pt-3 transition-all sm:px-5 sm:pb-0 sm:pt-4",
+            themeMode === "night"
+              ? "border border-transparent bg-muted/80 shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] focus-within:bg-muted/90 dark:bg-[#2f2f2f] dark:focus-within:bg-[#343434]"
+              : "rounded-[2rem] border border-[#dededd] bg-[#fdfdfc] shadow-none focus-within:border-[#d2d2d0] focus-within:bg-[#fdfdfc] dark:border-transparent dark:bg-[#2f2f2f] dark:shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] dark:focus-within:bg-[#343434] sm:rounded-[2.35rem]",
+          )}
+        >
+          <textarea
           data-composer-input="true"
           ref={commandInputRef}
           value={command}
@@ -486,6 +494,16 @@ export function ConversationComposer({
               />
             )}
 
+            {composerAccountOptions.length > 1 ? (
+              <ComposerSelect
+                ariaLabel={t("conversation.composer.account.ariaLabel")}
+                value={selectedWorkerAccountId}
+                options={composerAccountOptions}
+                onChange={setSelectedWorkerAccountId}
+                themeMode={themeMode}
+              />
+            ) : null}
+
             <>
               <ComposerModelPicker
               value={selectedModel}
@@ -521,6 +539,10 @@ export function ConversationComposer({
             <SlidersHorizontal className="h-[18px] w-[18px]" />
             <span className="min-w-0 truncate">
               {selectedHarnessLabel}
+            </span>
+            <span className="shrink-0 text-muted-foreground/55" aria-hidden="true">·</span>
+            <span className="min-w-0 truncate">
+              {selectedAccountLabel}
             </span>
             <span className="shrink-0 text-muted-foreground/55" aria-hidden="true">·</span>
             <span className="min-w-0 truncate">
@@ -573,7 +595,7 @@ export function ConversationComposer({
             )}
           </Button>
         </div>
-      </div>
+        </div>
       </div>
     </form>
 
@@ -601,6 +623,18 @@ export function ConversationComposer({
                 />
               </div>
             )}
+            {composerAccountOptions.length > 1 ? (
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">{t("conversation.composer.settings.account")}</span>
+                <ComposerSelect
+                  ariaLabel={t("conversation.composer.account.ariaLabel")}
+                  value={selectedWorkerAccountId}
+                  options={composerAccountOptions}
+                  onChange={setSelectedWorkerAccountId}
+                  themeMode={themeMode}
+                />
+              </div>
+            ) : null}
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">{t("conversation.composer.settings.model")}</span>
               <ComposerModelPicker
@@ -623,6 +657,9 @@ export function ConversationComposer({
           </div>
         </SheetContent>
       </Sheet>
-  </div>
+    </div>
   );
 }
+
+export const ConversationComposer = memo(ConversationComposerInner);
+ConversationComposer.displayName = "ConversationComposer";

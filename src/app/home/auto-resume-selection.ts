@@ -44,6 +44,10 @@ export function cancelInactiveAutoResumeTimers<TEntry extends { timerId: ReturnT
   return cancelled;
 }
 
+export function isPermanentAutoResumeFailure(failureKey: string | null | undefined) {
+  return /\b(?:api key|authentication required|auth(?:entication)? failed|billing required|api billing|cap_exceeded|insufficient quota|resource exhausted)\b/i.test(failureKey ?? "");
+}
+
 export function shouldFireAutoResumeTimer<TEntry extends {
   failureKey: string;
   targetMessageId: string;
@@ -68,6 +72,7 @@ export function shouldFireAutoResumeTimer<TEntry extends {
     && args.isAutoResumableConversation
     && args.selectedRunStatus === "failed"
     && args.failedWorkerAvailabilityStatus === "ok"
+    && !isPermanentAutoResumeFailure(args.failureKey)
     && !args.hasWorkerFailureDetail
     && !args.recoverRunIsPending;
 }

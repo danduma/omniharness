@@ -21,6 +21,10 @@ import type { AgentSnapshot, ClarificationRecord, ComposerMode, ComposerWorkerOp
 import type { WorkerCatalogResponse } from "./types";
 import { sessionStateManager } from "./SessionStateManager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import { isPermanentAutoResumeFailure } from "./auto-resume-selection";
+
+const EMPTY_RUNS: RunRecord[] = [];
+const EMPTY_PLANS: PlanRecord[] = [];
 
 export interface UseHomeViewModelParams {
   state: EventStreamState;
@@ -49,8 +53,8 @@ export function useHomeViewModel({
   workerCatalogData,
   readMarkers = {},
 }: UseHomeViewModelParams) {
-  const runs = (state.runs || []) as RunRecord[];
-  const plans = (state.plans || []) as PlanRecord[];
+  const runs = (state.runs as RunRecord[] | undefined) ?? EMPTY_RUNS;
+  const plans = (state.plans as PlanRecord[] | undefined) ?? EMPTY_PLANS;
 
   const explicitProjects = useMemo(() => parseProjectList(apiKeys.PROJECTS), [apiKeys.PROJECTS]);
 
@@ -74,6 +78,7 @@ export function useHomeViewModel({
   const activeComposerMode: ComposerMode = selectedRun
     ? isPlanningConversation ? "planning" : isDirectConversation ? "direct" : "implementation"
     : selectedConversationMode;
+  const hasSelectedRun = Boolean(selectedRun);
 
   const catalogWorkers = useMemo(
     () => workerCatalogData?.workers ?? [],
@@ -98,7 +103,7 @@ export function useHomeViewModel({
   );
 
   const activeAllowedWorkerTypes = useMemo(() => {
-    const configured = selectedRun && selectedRunMode !== "implementation"
+    const configured = hasSelectedRun && selectedRunMode !== "implementation"
       ? selectedRunAllowedWorkerTypes
       : configuredAllowedWorkerTypes;
     if (availableWorkerTypes.length === 0) {
@@ -108,7 +113,7 @@ export function useHomeViewModel({
     const availableSet = new Set(availableWorkerTypes);
     const filtered = configured.filter((type) => availableSet.has(type));
     return filtered.length > 0 ? filtered : [...availableWorkerTypes];
-  }, [availableWorkerTypes, configuredAllowedWorkerTypes, selectedRun, selectedRunAllowedWorkerTypes, selectedRunMode]);
+  }, [availableWorkerTypes, configuredAllowedWorkerTypes, hasSelectedRun, selectedRunAllowedWorkerTypes, selectedRunMode]);
 
   const autoSelectedWorkerType = useMemo(() => {
     return activeAllowedWorkerTypes[0] ?? null;
@@ -151,22 +156,25 @@ export function useHomeViewModel({
     }));
   }, [catalogWorkers]);
 
-  const groupedProjects = buildConversationGroups({
+  const groupedProjects = useMemo(() => buildConversationGroups({
     explicitProjects,
     plans,
     runs,
-  });
+  }), [explicitProjects, plans, runs]);
 
-  const filteredProjects = groupedProjects.map((group) => {
-    if (!searchQuery) return group;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const groupRuns = (group.runs as any[]).filter((run: { path: string; title: string }) =>
-      run.path.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      run.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      group.name.toLowerCase().includes(searchQuery.toLowerCase()),
-    );
-    return { ...group, runs: groupRuns };
-  }).filter((group) => group.runs.length > 0 || group.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const filteredProjects = useMemo(() => {
+    if (!searchQuery) return groupedProjects;
+    const normalizedSearchQuery = searchQuery.toLowerCase();
+    return groupedProjects.map((group) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const groupRuns = (group.runs as any[]).filter((run: { path: string; title: string }) =>
+        run.path.toLowerCase().includes(normalizedSearchQuery) ||
+        run.title.toLowerCase().includes(normalizedSearchQuery) ||
+        group.name.toLowerCase().includes(normalizedSearchQuery),
+      );
+      return { ...group, runs: groupRuns };
+    }).filter((group) => group.runs.length > 0 || group.name.toLowerCase().includes(normalizedSearchQuery));
+  }, [groupedProjects, searchQuery]);
 
   const activeProjects = useMemo(() => {
     const activeFilterNowMs = Date.now();
@@ -183,7 +191,6 @@ export function useHomeViewModel({
       selectedRunId,
     });
     return filterActiveConversationGroups(unsearched, searchQuery);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupedProjects, state.messages, state.workers, state.agents, state.queuedMessages, readMarkers, searchQuery, selectedRunId]);
 
   const selectedRunMessages = useMemo(
@@ -371,11 +378,13 @@ export function useHomeViewModel({
       return null;
     }
 
-    // Only show "Reconnecting" when an auto-resume will actually run. HomeApp
-    // only auto-resumes direct/implementation runs; planning runs surface the
-    // real error and rely on the user to act.
+    // Only show "Reconnecting" when an auto-resume will actually run.
+    // Planning runs surface the real error and rely on the user to act.
     const autoResumes = selectedRun.mode === "direct" || selectedRun.mode === "commit" || selectedRun.mode === "implementation";
-    const staleFailure = autoResumes && failedWorkerAvailability?.availability.status === "ok";
+    const failureKey = `${selectedRun.failedAt ?? ""}:${selectedRun.lastError ?? ""}`;
+    const staleFailure = autoResumes
+      && !isPermanentAutoResumeFailure(failureKey)
+      && failedWorkerAvailability?.availability.status === "ok";
     const workerLabel = failedWorkerAvailability?.label;
     const workerStatus = failedWorkerAvailability?.availability.message;
 

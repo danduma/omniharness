@@ -345,7 +345,7 @@ export type EventStreamState = {
   plans: PlanRecord[];
   runs: RunRecord[];
   sessions?: SessionRecord[];
-  accounts: unknown[];
+  accounts: AccountRecord[];
   agents: AgentSnapshot[];
   workers: ConversationWorkerRecord[];
   planItems: PlanItemRecord[];
@@ -383,6 +383,24 @@ export type EventStreamState = {
   };
   workerEntrySeqs?: Record<string, number>;
   workerEntries?: Record<string, WorkerEntry[]>;
+};
+
+export type AccountRecord = {
+  id: string;
+  cliType: string | null;
+  provider: string;
+  type: string;
+  label: string | null;
+  authMode: string;
+  enabled: boolean;
+  priority: number;
+  capacity: number | null;
+  resetSchedule: string | null;
+  status: string | null;
+  statusCheckedAt: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string | null;
 };
 export type SettingsTab = "general" | "models" | "credentials" | "agents" | "runtime" | "memory";
 
