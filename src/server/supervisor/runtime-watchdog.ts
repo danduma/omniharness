@@ -16,11 +16,13 @@ let startupPromise: Promise<void> | null = null;
 let watchdogInterval: ReturnType<typeof setInterval> | null = null;
 
 function isRecoverableFailedImplementationRun(run: typeof runs.$inferSelect) {
+  const lastError = run.lastError?.trim() ?? "";
   return run.mode === "implementation"
     && run.phase !== "planning"
     && run.status === "failed"
-    && Boolean(run.lastError?.trim())
-    && isTransientSupervisorError(new Error(run.lastError ?? ""));
+    && Boolean(lastError)
+    && isTransientSupervisorError(new Error(lastError))
+    && !/\b(?:api key|authentication required|auth(?:entication)? failed|billing required|api billing|cap_exceeded|insufficient quota|resource exhausted)\b/i.test(lastError);
 }
 
 async function clearMatchingRunFailureMessage(run: typeof runs.$inferSelect) {

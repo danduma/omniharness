@@ -51,7 +51,10 @@ export function computeEnvFingerprint(env: NodeJS.ProcessEnv): string {
       k.startsWith("GOOGLE_") ||
       k.startsWith("OPENAI_") ||
       k.startsWith("ANTHROPIC_") ||
+      k.startsWith("CLAUDE_") ||
+      k.startsWith("CODEX_") ||
       k.startsWith("OPENCODE_") ||
+      k.startsWith("XDG_") ||
       k.includes("API_KEY") ||
       k === "PATH" ||
       k === "HOME"

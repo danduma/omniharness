@@ -39,17 +39,37 @@ function isInfraFailure(reason: string | undefined) {
   }
   const normalized = reason.toLowerCase();
   return [
-    "quota",
-    "rate limit",
-    "rate-limit",
-    "credit",
-    "econn",
-    "etimedout",
-    "network",
-    "bridge",
-    "spawn",
-    "agent not found",
-  ].some((pattern) => normalized.includes(pattern));
+    /\bquota\b/,
+    /\bbilling\b/,
+    /\brate limit\b/,
+    /\brate-limit\b/,
+    /\bcredit\b/,
+    /\beconn/,
+    /\betimedout\b/,
+    /\bnetwork\b/,
+    /\bbridge\b/,
+    /\bspawn\b/,
+    /\bagent not found\b/,
+    /\bapi key\b.*\b(?:missing|not configured|required|unset|absent)\b/,
+    /\b(?:missing|not configured|required|unset|absent)\b.{0,80}\bapi key\b/,
+    /\b(?:credential|credentials|oauth|token)\b.{0,80}\b(?:missing|not configured|required|unavailable|invalid)\b/,
+    /\bnot authenticated\b/,
+    /\bnot logged in\b/,
+    /\blogin required\b/,
+    /\bsign-?in required\b/,
+    /\bunauthorized\b/,
+  ].some((pattern) => pattern.test(normalized));
+}
+
+function normalizeConsolidationMemoryPath(requestedPath: string) {
+  let normalized = requestedPath.replace(/\\/g, "/").replace(/^\.\//, "");
+  for (const prefix of [".omniharness/memory/", "omniharness/memory/"]) {
+    if (normalized.startsWith(prefix)) {
+      normalized = normalized.slice(prefix.length);
+      break;
+    }
+  }
+  return normalized;
 }
 
 async function gatherSignals(runId: string, sinceTimestamp: Date) {
@@ -189,7 +209,8 @@ function parseConsolidationPlan(raw: string): ConsolidationOperation[] {
     if (op !== "append" && op !== "write" && op !== "noop") {
       continue;
     }
-    const pathValue = typeof candidate.path === "string" ? candidate.path.trim() : "";
+    const rawPathValue = typeof candidate.path === "string" ? candidate.path.trim() : "";
+    const pathValue = normalizeConsolidationMemoryPath(rawPathValue);
     const content = typeof candidate.content === "string" ? candidate.content : "";
     const reason = typeof candidate.reason === "string" ? candidate.reason : "";
     if (!pathValue || !reason) {

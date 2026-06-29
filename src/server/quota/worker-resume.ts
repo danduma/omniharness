@@ -141,6 +141,7 @@ export async function resumeQuotaExhaustedWorkers(args: {
           name: worker.id,
           ...(workerMode ? { mode: workerMode } : {}),
           env: envParams,
+          ...(args.run.preferredWorkerAccountId ? { accountId: args.run.preferredWorkerAccountId } : {}),
           ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
           ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
           resumeSessionId: sessionId,

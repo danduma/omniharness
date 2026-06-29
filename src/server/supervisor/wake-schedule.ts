@@ -1,5 +1,6 @@
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/server/db";
+import { withSqliteBusyRetry } from "@/server/db/retry";
 import { runs, supervisorScheduledWakes } from "@/server/db/schema";
 import { isTerminalRunStatus } from "@/server/runs/status";
 
@@ -80,7 +81,7 @@ export async function scheduleDurableSupervisorWakeAt(args: DurableSupervisorWak
     )
   `;
 
-  await db.insert(supervisorScheduledWakes)
+  await withSqliteBusyRetry(() => db.insert(supervisorScheduledWakes)
     .values(record)
     .onConflictDoUpdate({
       target: supervisorScheduledWakes.runId,
@@ -93,7 +94,7 @@ export async function scheduleDurableSupervisorWakeAt(args: DurableSupervisorWak
         updatedAt: sql`excluded.updated_at`,
       },
       ...(args.force ? {} : { setWhere: nonForcedReplacement }),
-    });
+    }));
 
   const scheduled = await db
     .select()
@@ -111,21 +112,21 @@ export async function scheduleDurableSupervisorWakeAt(args: DurableSupervisorWak
 
 export async function cancelDurableSupervisorWake(runId: string, reason?: string) {
   clearDurableTimer(runId);
-  await db.delete(supervisorScheduledWakes).where(
+  await withSqliteBusyRetry(() => db.delete(supervisorScheduledWakes).where(
     reason
       ? and(eq(supervisorScheduledWakes.runId, runId), eq(supervisorScheduledWakes.reason, reason))
       : eq(supervisorScheduledWakes.runId, runId),
-  );
+  ));
 }
 
 export async function claimDueDurableSupervisorWake(runId: string, nowMs = Date.now()) {
-  const claimed = await db
+  const claimed = await withSqliteBusyRetry(() => db
     .delete(supervisorScheduledWakes)
     .where(and(
       eq(supervisorScheduledWakes.runId, runId),
       lte(supervisorScheduledWakes.wakeAt, new Date(nowMs)),
     ))
-    .returning();
+    .returning());
 
   if (!claimed[0]) {
     return null;

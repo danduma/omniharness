@@ -10,6 +10,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/server/db";
+import { withSqliteBusyRetry } from "@/server/db/retry";
 import { artifactStreams, runs } from "@/server/db/schema";
 import {
   ARTIFACT_STREAM_OWNER_NONE,
@@ -161,7 +162,7 @@ export async function commitArtifactAppend(args: {
     return;
   }
   const now = new Date();
-  await db
+  await withSqliteBusyRetry(() => db
     .update(artifactStreams)
     .set({
       latestSeq: args.seq,
@@ -174,7 +175,7 @@ export async function commitArtifactAppend(args: {
         eq(artifactStreams.kind, args.streamId.kind),
         eq(artifactStreams.ownerId, normalizeArtifactOwnerId(args.streamId.ownerId)),
       ),
-    );
+    ));
   latestSeqByStreamRow.set(cacheKey, args.seq);
 }
 

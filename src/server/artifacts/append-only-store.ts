@@ -169,7 +169,7 @@ function fileLockDelay(attempt: number) {
 
 function isRecoverableLockRaceError(error: unknown) {
   const code = (error as NodeJS.ErrnoException).code;
-  return code === "ENOENT" || code === "ENOTDIR";
+  return code === "ENOENT" || code === "ENOTDIR" || code === "EINVAL";
 }
 
 async function isFileLockStale(lockPath: string) {

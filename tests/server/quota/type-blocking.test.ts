@@ -2,11 +2,13 @@ import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/server/db";
 import {
+  accounts,
   executionEvents,
   plans,
   recoveryIncidents,
   runs,
   supervisorScheduledWakes,
+  workerCredentialAllocations,
   workers,
 } from "@/server/db/schema";
 import { isWorkerTypeQuotaBlocked, quotaBlockedTypes } from "@/server/quota/type-blocking";
@@ -74,12 +76,48 @@ async function insertIncident(runId: string, workerId: string, status: string, r
   return id;
 }
 
+async function insertAccount(type: string) {
+  const id = `account-${randomUUID()}`;
+  await db.insert(accounts).values({
+    id,
+    cliType: type,
+    provider: type === "claude" ? "anthropic" : "openai",
+    type: "subscription",
+    label: id,
+    authMode: "local_session",
+    authRef: "local-default",
+    enabled: true,
+    priority: 0,
+    status: "healthy",
+    createdAt: now,
+    updatedAt: now,
+  });
+  return id;
+}
+
+async function insertAllocation(runId: string, workerId: string, workerType: string, accountId: string) {
+  await db.insert(workerCredentialAllocations).values({
+    id: randomUUID(),
+    runId,
+    workerId,
+    workerType,
+    accountId,
+    strategy: "manual",
+    selectionReason: "test",
+    explicit: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
 describe("isWorkerTypeQuotaBlocked", () => {
   beforeEach(async () => {
     await db.delete(supervisorScheduledWakes);
     await db.delete(executionEvents);
     await db.delete(recoveryIncidents);
+    await db.delete(workerCredentialAllocations);
     await db.delete(workers);
+    await db.delete(accounts);
     await db.delete(runs);
     await db.delete(plans);
   });
@@ -114,6 +152,31 @@ describe("isWorkerTypeQuotaBlocked", () => {
   it("returns false for a type that has no workers at all", async () => {
     expect(await isWorkerTypeQuotaBlocked("gemini", { now })).toBe(false);
   });
+
+  it("does not block a worker type while another account for that type is usable", async () => {
+    const runId = await insertRun();
+    const exhaustedAccountId = await insertAccount("codex");
+    await insertAccount("codex");
+    const workerId = await insertWorker(runId, "codex", "cred-exhausted");
+    await insertAllocation(runId, workerId, "codex", exhaustedAccountId);
+    await insertIncident(runId, workerId, "open", new Date(now.getTime() + 60_000));
+
+    expect(await isWorkerTypeQuotaBlocked("codex", { now })).toBe(false);
+  });
+
+  it("blocks a worker type when every usable account for that type is blocked", async () => {
+    const runId = await insertRun();
+    const firstAccountId = await insertAccount("codex");
+    const secondAccountId = await insertAccount("codex");
+    const firstWorkerId = await insertWorker(runId, "codex", "cred-exhausted");
+    const secondWorkerId = await insertWorker(runId, "codex", "cred-exhausted");
+    await insertAllocation(runId, firstWorkerId, "codex", firstAccountId);
+    await insertAllocation(runId, secondWorkerId, "codex", secondAccountId);
+    await insertIncident(runId, firstWorkerId, "open", new Date(now.getTime() + 60_000));
+    await insertIncident(runId, secondWorkerId, "open", new Date(now.getTime() + 60_000));
+
+    expect(await isWorkerTypeQuotaBlocked("codex", { now })).toBe(true);
+  });
 });
 
 describe("quotaBlockedTypes", () => {
@@ -121,7 +184,9 @@ describe("quotaBlockedTypes", () => {
     await db.delete(supervisorScheduledWakes);
     await db.delete(executionEvents);
     await db.delete(recoveryIncidents);
+    await db.delete(workerCredentialAllocations);
     await db.delete(workers);
+    await db.delete(accounts);
     await db.delete(runs);
     await db.delete(plans);
   });

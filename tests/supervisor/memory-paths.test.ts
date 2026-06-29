@@ -50,4 +50,10 @@ describe("resolveMemoryPath", () => {
     const resolved = resolveMemoryPath(projectPath, "subdir/note.md");
     expect(resolved.absolutePath).toBe(path.join(getMemoryRoot(projectPath), "subdir/note.md"));
   });
+
+  it("strips a legacy nested memory root prefix", () => {
+    const resolved = resolveMemoryPath(projectPath, ".omniharness/memory/overview.md");
+    expect(resolved.absolutePath).toBe(path.join(getMemoryRoot(projectPath), "overview.md"));
+    expect(resolved.relativePath).toBe("overview.md");
+  });
 });

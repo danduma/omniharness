@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
@@ -51,6 +51,21 @@ describe("supervisor wake lease", () => {
       kind: "supervisor.wake_lease_released",
       runId: "run-lease-events",
     });
+  });
+
+  it("retries a transient database lock while releasing a lease", async () => {
+    const { acquireSupervisorWakeLease, releaseSupervisorWakeLease } = await import("@/server/supervisor/lease");
+
+    const leaseId = await acquireSupervisorWakeLease("run-release-retry", 1_000);
+    const deleteSpy = vi.spyOn(db, "delete").mockImplementationOnce((() => {
+      throw new Error("SQLITE_BUSY: database is locked");
+    }) as typeof db.delete);
+
+    await releaseSupervisorWakeLease("run-release-retry", leaseId!);
+
+    await expect(acquireSupervisorWakeLease("run-release-retry", 1_001)).resolves.toEqual(expect.any(String));
+    expect(deleteSpy).toHaveBeenCalledTimes(2);
+    deleteSpy.mockRestore();
   });
 
   it("emits whether an expired or malformed lease was replaced", async () => {

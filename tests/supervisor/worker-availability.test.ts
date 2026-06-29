@@ -4,7 +4,8 @@ const { mockExecFileSync } = vi.hoisted(() => ({
   mockExecFileSync: vi.fn(),
 }));
 
-vi.mock("child_process", () => ({
+vi.mock("child_process", async (importOriginal) => ({
+  ...await importOriginal<typeof import("child_process")>(),
   execFileSync: mockExecFileSync,
 }));
 
@@ -119,6 +120,40 @@ describe("selectSpawnableWorkerType", () => {
       requestedType: "claude",
       fallbackReason: null,
     });
+  });
+
+  it("uses the live process executable path when runtime settings env omits PATH entries", async () => {
+    const previousNvmBin = process.env.NVM_BIN;
+    process.env.NVM_BIN = "/Users/tester/.nvm/versions/node/v22.22.3/bin";
+    mockExecFileSync.mockImplementation((command: string, args: string[], options: { env?: Record<string, string> } = {}) => {
+      if (
+        command === "which"
+        && args[0] === "claude-agent-acp"
+        && options.env?.PATH?.includes("/Users/tester/.nvm/versions/node/v22.22.3/bin")
+      ) {
+        return Buffer.from("/Users/tester/.nvm/versions/node/v22.22.3/bin/claude-agent-acp\n");
+      }
+      throw new Error("not found");
+    });
+
+    try {
+      const { selectSpawnableWorkerType } = await import("@/server/supervisor/worker-availability");
+
+      expect(selectSpawnableWorkerType("claude", {
+        HOME: "/Users/tester",
+        PATH: "/usr/bin:/bin",
+      }, ["claude"])).toEqual({
+        type: "claude",
+        requestedType: "claude",
+        fallbackReason: null,
+      });
+    } finally {
+      if (previousNvmBin === undefined) {
+        delete process.env.NVM_BIN;
+      } else {
+        process.env.NVM_BIN = previousNvmBin;
+      }
+    }
   });
 
   it("checks Claude auth using the managed runtime PATH", async () => {
@@ -381,6 +416,19 @@ describe("selectSpawnableWorkerType", () => {
       env: {},
       homeDir: "/Users/tester",
       fileExists: (filePath) => filePath === "/Users/tester/.gemini/oauth_creds.json",
+    })).toMatchObject({
+      status: "authenticated",
+      method: "session_file",
+    });
+  });
+
+  it("detects gemini login from current Gemini credentials storage", async () => {
+    const { getWorkerAuthenticationInfo } = await import("@/server/supervisor/worker-availability");
+
+    expect(getWorkerAuthenticationInfo("gemini", {
+      env: {},
+      homeDir: "/Users/tester",
+      fileExists: (filePath) => filePath === "/Users/tester/.gemini/gemini-credentials.json",
     })).toMatchObject({
       status: "authenticated",
       method: "session_file",

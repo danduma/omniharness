@@ -1,6 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
-import { workers, recoveryIncidents } from "@/server/db/schema";
+import { accounts, workers, recoveryIncidents, workerCredentialAllocations } from "@/server/db/schema";
 import { markRecoveryIncidentResolved } from "@/server/runs/recovery-incidents";
 import {
   SUPPORTED_WORKER_TYPES,
@@ -36,6 +36,40 @@ function readResumeAt(details: Record<string, unknown>): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function readAccountId(details: Record<string, unknown>): string | null {
+  return typeof details.accountId === "string" && details.accountId.trim()
+    ? details.accountId.trim()
+    : null;
+}
+
+async function usableAccountIdsForType(type: SupportedWorkerType): Promise<Set<string>> {
+  const rows = await db.select().from(accounts).where(eq(accounts.cliType, type));
+  return new Set(rows
+    .filter((account) => {
+      if (!account.enabled) return false;
+      const status = account.status?.trim().toLowerCase();
+      return status !== "quota_exhausted" && status !== "login_required" && status !== "disabled";
+    })
+    .map((account) => account.id));
+}
+
+async function allocatedAccountIdForWorker(workerId: string): Promise<string | null> {
+  const allocation = await db.select()
+    .from(workerCredentialAllocations)
+    .where(eq(workerCredentialAllocations.workerId, workerId))
+    .get();
+  return allocation?.accountId ?? null;
+}
+
+function shouldBlockTypeForAccounts(usableAccountIds: Set<string>, blockedAccountIds: Set<string>, legacyBlocked: boolean) {
+  if (usableAccountIds.size === 0) return legacyBlocked;
+  if (blockedAccountIds.size === 0) return false;
+  for (const accountId of usableAccountIds) {
+    if (!blockedAccountIds.has(accountId)) return false;
+  }
+  return true;
+}
+
 function newestRecoveryIncident(incidents: RecoveryIncidentRecord[]) {
   return [...incidents].sort((a, b) => {
     const updatedDelta = b.updatedAt.getTime() - a.updatedAt.getTime();
@@ -64,6 +98,9 @@ export async function isWorkerTypeQuotaBlocked(
   options: { now?: Date } = {},
 ): Promise<boolean> {
   const now = options.now ?? new Date();
+  const usableAccountIds = await usableAccountIdsForType(type);
+  const blockedAccountIds = new Set<string>();
+  let legacyBlocked = false;
 
   const exhaustedWorkers = await db.select()
     .from(workers)
@@ -81,21 +118,29 @@ export async function isWorkerTypeQuotaBlocked(
         inArray(recoveryIncidents.workerId, workerIds),
       ));
 
-    const anyStillActive = exhaustedWorkers.some((worker) => {
+    for (const worker of exhaustedWorkers) {
       const incidentForWorker = newestRecoveryIncident(
         recentIncidents.filter((incident) => incident.workerId === worker.id),
       );
-      if (!incidentForWorker) return true;
+      if (!incidentForWorker) {
+        legacyBlocked = true;
+        const accountId = await allocatedAccountIdForWorker(worker.id);
+        if (accountId) blockedAccountIds.add(accountId);
+        continue;
+      }
       const details = parseDetails(incidentForWorker.details);
       const resumeAt = readResumeAt(details);
-      return !isResumeAtPast(resumeAt, now);
-    });
-
-    if (anyStillActive) return true;
+      if (!isResumeAtPast(resumeAt, now)) {
+        legacyBlocked = true;
+        const accountId = readAccountId(details) ?? await allocatedAccountIdForWorker(worker.id);
+        if (accountId) blockedAccountIds.add(accountId);
+      }
+    }
   }
 
   const quotaIncidents = await db.select({
     incident: recoveryIncidents,
+    worker: workers,
   })
     .from(recoveryIncidents)
     .innerJoin(workers, eq(recoveryIncidents.workerId, workers.id))
@@ -109,11 +154,13 @@ export async function isWorkerTypeQuotaBlocked(
     const details = parseDetails(row.incident.details);
     const resumeAt = readResumeAt(details);
     if (!isResumeAtPast(resumeAt, now)) {
-      return true;
+      legacyBlocked = true;
+      const accountId = readAccountId(details) ?? await allocatedAccountIdForWorker(row.worker.id);
+      if (accountId) blockedAccountIds.add(accountId);
     }
   }
 
-  return false;
+  return shouldBlockTypeForAccounts(usableAccountIds, blockedAccountIds, legacyBlocked);
 }
 
 /**
@@ -155,6 +202,36 @@ export async function quotaBlockedTypes(
           inArray(recoveryIncidents.workerId, credWorkerIds),
         ))
     : [];
+  const accountAwareCandidates = new Map<SupportedWorkerType, {
+    usableAccountIds: Set<string>;
+    blockedAccountIds: Set<string>;
+    reason: string;
+    resumeAt: Date | null;
+  }>();
+
+  async function addBlockedCandidate(workerType: SupportedWorkerType, accountId: string | null, candidate: QuotaBlockReason) {
+    const usableAccountIds = await usableAccountIdsForType(workerType);
+    if (usableAccountIds.size === 0) {
+      const existing = result.get(workerType);
+      if (!existing || (candidate.resumeAt && (!existing.resumeAt || candidate.resumeAt < existing.resumeAt))) {
+        result.set(workerType, candidate);
+      }
+      return;
+    }
+
+    const current = accountAwareCandidates.get(workerType) ?? {
+      usableAccountIds,
+      blockedAccountIds: new Set<string>(),
+      reason: candidate.reason,
+      resumeAt: candidate.resumeAt,
+    };
+    if (accountId) current.blockedAccountIds.add(accountId);
+    if (candidate.resumeAt && (!current.resumeAt || candidate.resumeAt < current.resumeAt)) {
+      current.resumeAt = candidate.resumeAt;
+      current.reason = candidate.reason;
+    }
+    accountAwareCandidates.set(workerType, current);
+  }
 
   for (const worker of credExhaustedRows) {
     const incidentForWorker = newestRecoveryIncident(
@@ -165,15 +242,12 @@ export async function quotaBlockedTypes(
     if (isResumeAtPast(resumeAt, now)) {
       continue;
     }
+    const accountId = readAccountId(details) ?? await allocatedAccountIdForWorker(worker.id);
     const workerType = worker.type as SupportedWorkerType;
-    const existing = result.get(workerType);
-    const candidate: QuotaBlockReason = {
+    await addBlockedCandidate(workerType, accountId, {
       reason: "cred-exhausted",
       resumeAt,
-    };
-    if (!existing || (resumeAt && (!existing.resumeAt || resumeAt < existing.resumeAt))) {
-      result.set(workerType, candidate);
-    }
+    });
   }
 
   const incidentRows = await db.select({
@@ -192,12 +266,19 @@ export async function quotaBlockedTypes(
     const details = parseDetails(row.incident.details);
     const resumeAt = readResumeAt(details);
     if (isResumeAtPast(resumeAt, now)) continue;
+    const accountId = readAccountId(details) ?? await allocatedAccountIdForWorker(row.worker.id);
     const workerType = row.worker.type as SupportedWorkerType;
-    const existing = result.get(workerType);
-    if (!existing || (resumeAt && (!existing.resumeAt || resumeAt < existing.resumeAt))) {
+    await addBlockedCandidate(workerType, accountId, {
+      reason: "active quota incident",
+      resumeAt,
+    });
+  }
+
+  for (const [workerType, candidate] of accountAwareCandidates) {
+    if (shouldBlockTypeForAccounts(candidate.usableAccountIds, candidate.blockedAccountIds, true)) {
       result.set(workerType, {
-        reason: "active quota incident",
-        resumeAt,
+        reason: candidate.reason,
+        resumeAt: candidate.resumeAt,
       });
     }
   }

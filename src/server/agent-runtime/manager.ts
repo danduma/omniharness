@@ -9,7 +9,6 @@ import { Readable, Writable } from "stream";
 import * as acp from "@agentclientprotocol/sdk";
 import { sanitizeAcpStream } from "./acp-stream-sanitizer";
 import { applyCodexBridgeEnv, buildCodexConfigArgs, shouldSetRequestedMode } from "./codex";
-import { applyCredentialProfileEnv, resolveCredentialProfile } from "./external-credentials";
 import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
 import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, withCodexStandardTooling, withManagedPath } from "./tool-env";
 import {
@@ -34,6 +33,10 @@ import type {
   StartAgentInput,
 } from "./types";
 import { RuntimeHttpError } from "./types";
+import {
+  applyAccountCredentialEnv,
+  resolveAccountCredentials,
+} from "@/server/accounts/account-resolver";
 import {
   computeEnvFingerprint,
   computeWorkerPoolKey,
@@ -132,12 +135,21 @@ function bridgeProjectScopedCliCredentials(type: string, env: EnvLike) {
     const globalHome = join(userHomeFromEnv(env), ".gemini");
     const scopedConfigDir = join(scopedHome, ".gemini");
     for (const fileName of [
+      "gemini-credentials.json",
       "google_accounts.json",
       "google_account_id",
+      "oauth_creds.json",
       "mcp-oauth-tokens-v2.json",
       "settings.json",
     ]) {
       bridgeCredentialFileIfMissing(join(globalHome, fileName), join(scopedConfigDir, fileName));
+    }
+    if (
+      !env.GEMINI_API_KEY?.trim()
+      && !env.GEMINI_FORCE_FILE_STORAGE?.trim()
+      && existsSync(join(globalHome, "gemini-credentials.json"))
+    ) {
+      env.GEMINI_FORCE_FILE_STORAGE = "true";
     }
     return;
   }
@@ -156,6 +168,31 @@ function bridgeProjectScopedCliCredentials(type: string, env: EnvLike) {
     if (!scopedConfigDir) return;
     const globalHome = join(userHomeFromEnv(env), ".claude");
     bridgeDirectoryIfMissing(join(globalHome, "skills"), join(scopedConfigDir, "skills"));
+    return;
+  }
+
+  if (type === "opencode") {
+    const homeDir = userHomeFromEnv(env);
+    const scopedConfigDir = env.OPENCODE_CONFIG_DIR?.trim();
+    const scopedDataHome = env.XDG_DATA_HOME?.trim();
+    const scopedStateHome = env.XDG_STATE_HOME?.trim();
+    const scopedCacheHome = env.XDG_CACHE_HOME?.trim();
+
+    if (scopedConfigDir) {
+      bridgeDirectoryIfMissing(join(homeDir, ".config", "opencode"), scopedConfigDir);
+      mkdirSync(scopedConfigDir, { recursive: true });
+    }
+    if (scopedDataHome) {
+      const scopedDataDir = join(scopedDataHome, "opencode");
+      mkdirSync(scopedDataDir, { recursive: true });
+      bridgeCredentialFileIfMissing(join(homeDir, ".local", "share", "opencode", "auth.json"), join(scopedDataDir, "auth.json"));
+    }
+    if (scopedStateHome) {
+      mkdirSync(join(scopedStateHome, "opencode"), { recursive: true });
+    }
+    if (scopedCacheHome) {
+      mkdirSync(join(scopedCacheHome, "opencode"), { recursive: true });
+    }
   }
 }
 
@@ -200,7 +237,7 @@ function applyClaudeKeychainOAuthToken(env: EnvLike) {
   }
 }
 
-function applyProjectScopedCliStorage(type: string, cwd: string, env: EnvLike) {
+function applyProjectScopedCliStorage(type: string, cwd: string, env: EnvLike, options: { bridgeCredentials?: boolean } = {}) {
   const cliHome = join(cwd, ".omniharness", "cli-home");
   let shouldBridgeCredentials = false;
   if (type === "gemini" && !env.GEMINI_CLI_HOME?.trim()) {
@@ -223,20 +260,28 @@ function applyProjectScopedCliStorage(type: string, cwd: string, env: EnvLike) {
   }
   if (type === "opencode") {
     const opencodeHome = join(cliHome, "opencode");
+    let opencodeUsesScopedStorage = false;
     if (!env.OPENCODE_CONFIG_DIR?.trim()) {
       env.OPENCODE_CONFIG_DIR = join(opencodeHome, "config");
+      opencodeUsesScopedStorage = true;
     }
     if (!env.XDG_DATA_HOME?.trim()) {
       env.XDG_DATA_HOME = join(opencodeHome, "data");
+      opencodeUsesScopedStorage = true;
     }
     if (!env.XDG_STATE_HOME?.trim()) {
       env.XDG_STATE_HOME = join(opencodeHome, "state");
+      opencodeUsesScopedStorage = true;
     }
     if (!env.XDG_CACHE_HOME?.trim()) {
       env.XDG_CACHE_HOME = join(opencodeHome, "cache");
+      opencodeUsesScopedStorage = true;
+    }
+    if (opencodeUsesScopedStorage) {
+      shouldBridgeCredentials = true;
     }
   }
-  if (shouldBridgeCredentials) {
+  if (shouldBridgeCredentials && options.bridgeCredentials !== false) {
     bridgeProjectScopedCliCredentials(type, env);
   }
 }
@@ -1430,21 +1475,27 @@ export class AgentRuntimeManager {
       ...(configuredAgent?.env || {}),
       ...(input.env || {}),
     }, cwd);
-    applyProjectScopedCliStorage(type, cwd, finalEnv);
-    const credentialProfile = await resolveCredentialProfile({
-      type,
+    const accountCredentials = await resolveAccountCredentials({
+      workerType: type,
       cwd,
       env: finalEnv,
-      requestedProfile: input.credentialProfile,
-      configuredProfile: configuredAgent?.credentialProfile,
+      accountId: input.accountId,
+      requestedCredentialProfile: input.credentialProfile,
+      configuredCredentialProfile: configuredAgent?.credentialProfile,
     });
-    applyCredentialProfileEnv(finalEnv, credentialProfile);
+    if (accountCredentials.account?.authMode === "isolated_cli_home") {
+      Object.assign(finalEnv, accountCredentials.env);
+    }
+    applyProjectScopedCliStorage(type, cwd, finalEnv, {
+      bridgeCredentials: accountCredentials.allowGlobalCredentialBridge,
+    });
+    applyAccountCredentialEnv(finalEnv, accountCredentials);
 
     if (type === "codex") {
       Object.assign(finalEnv, withCodexStandardTooling(finalEnv));
       Object.assign(finalEnv, applyCodexBridgeEnv(finalEnv, null));
     }
-    if (type === "claude") {
+    if (type === "claude" && accountCredentials.allowGlobalCredentialBridge) {
       applyClaudeKeychainOAuthToken(finalEnv);
     }
 
@@ -1597,7 +1648,7 @@ export class AgentRuntimeManager {
       effectiveModel: requestedModel,
       requestedEffort,
       effectiveEffort: null,
-      credentialProfile: credentialProfile.status,
+      credentialProfile: accountCredentials.credentialProfile.status,
       sessionMode: requestedMode || null,
       contextUsage: null,
       lastText: "",
@@ -1869,6 +1920,8 @@ export class AgentRuntimeManager {
     model?: string | null;
     mode?: string | null;
     env?: Record<string, string>;
+    accountId?: string | null;
+    credentialProfile?: string | null;
     mcpServers?: acp.McpServer[];
   }): Promise<{ ok: true; key: string; size: number; warmed: boolean }> {
     this.applyRuntimeSettings(input.env ?? {}, { emit: false });
@@ -1888,21 +1941,27 @@ export class AgentRuntimeManager {
       ...(configuredAgent?.env || {}),
       ...(input.env || {}),
     }, cwd);
-    applyProjectScopedCliStorage(type, cwd, finalEnv);
-    const credentialProfile = await resolveCredentialProfile({
-      type,
+    const accountCredentials = await resolveAccountCredentials({
+      workerType: type,
       cwd,
       env: finalEnv,
-      requestedProfile: undefined,
-      configuredProfile: configuredAgent?.credentialProfile,
+      accountId: input.accountId,
+      requestedCredentialProfile: input.credentialProfile,
+      configuredCredentialProfile: configuredAgent?.credentialProfile,
     });
-    applyCredentialProfileEnv(finalEnv, credentialProfile);
+    if (accountCredentials.account?.authMode === "isolated_cli_home") {
+      Object.assign(finalEnv, accountCredentials.env);
+    }
+    applyProjectScopedCliStorage(type, cwd, finalEnv, {
+      bridgeCredentials: accountCredentials.allowGlobalCredentialBridge,
+    });
+    applyAccountCredentialEnv(finalEnv, accountCredentials);
 
     if (type === "codex") {
       Object.assign(finalEnv, withCodexStandardTooling(finalEnv));
       Object.assign(finalEnv, applyCodexBridgeEnv(finalEnv, null));
     }
-    if (type === "claude") {
+    if (type === "claude" && accountCredentials.allowGlobalCredentialBridge) {
       applyClaudeKeychainOAuthToken(finalEnv);
     }
 

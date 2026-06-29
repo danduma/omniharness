@@ -99,6 +99,8 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
           model?: string | null;
           mode?: string | null;
           env?: Record<string, string>;
+          accountId?: string | null;
+          credentialProfile?: string | null;
           mcpServers?: unknown;
         }>(req);
         if (typeof body.type !== "string" || body.type.trim().length === 0) {
@@ -116,6 +118,8 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
           model: body.model ?? null,
           mode: body.mode ?? null,
           env: body.env,
+          accountId: body.accountId ?? null,
+          credentialProfile: body.credentialProfile ?? null,
           mcpServers,
         }));
         return;

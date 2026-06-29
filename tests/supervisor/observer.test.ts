@@ -262,6 +262,98 @@ describe("deriveWorkerEvents", () => {
     expect(events.some((event) => event.type === "worker_stuck")).toBe(false);
   });
 
+  it("does not mark a plain idle worker stuck after prolonged silence", () => {
+    const { events } = deriveWorkerEvents({
+      workerId: "worker-1",
+      snapshot: {
+        state: "idle",
+        currentText: "",
+        lastText: "",
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+      previous: {
+        fingerprint: JSON.stringify({
+          state: "idle",
+          currentText: "",
+          lastText: "",
+          pendingPermissions: [],
+          stopReason: null,
+          stderrTail: [],
+        }),
+        lastChangedAt: 0,
+        lastMeaningfulActivityAt: 0,
+        progressSignature: JSON.stringify({
+          state: "idle",
+          currentText: "",
+          lastText: "",
+          pendingPermissions: [],
+          stopReason: null,
+        }),
+        idleNotified: true,
+        stuckNotified: false,
+      },
+      now: 5 * 60_000,
+    });
+
+    expect(events.some((event) => event.type === "worker_stuck")).toBe(false);
+  });
+
+  it("does not age a final-looking working snapshot into stuck after completion fallback", () => {
+    const finalText = [
+      "Implemented the recovery fix and verified the focused tests.",
+      "",
+      "Verification:",
+      "- Account resolution now supports hydrated API key settings.",
+      "- Automatic allocation skips unusable API-key rows.",
+      "- Manual recovery bypasses the saved permanent failure guard.",
+      "- The Gemini credential bridge resumes the existing CLI session.",
+      "- The supervisor rejected stale auth-missing worker failures.",
+      "- The UI no longer reports reconnecting for unretryable saved failures.",
+      "- The recovered run has an active worker session with no last error.",
+      "- Focused tests cover the resolver, allocator, route, UI, and supervisor paths.",
+      "- The persisted worker state should remain idle after this final-looking turn.",
+    ].join("\n");
+
+    const { events } = deriveWorkerEvents({
+      workerId: "worker-1",
+      snapshot: {
+        state: "working",
+        currentText: finalText,
+        lastText: finalText,
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+      previous: {
+        fingerprint: JSON.stringify({
+          state: "working",
+          currentText: finalText,
+          lastText: finalText,
+          pendingPermissions: [],
+          stopReason: null,
+          stderrTail: [],
+        }),
+        lastChangedAt: 0,
+        lastMeaningfulActivityAt: 0,
+        progressSignature: JSON.stringify({
+          state: "working",
+          currentText: finalText,
+          lastText: finalText,
+          pendingPermissions: [],
+          stopReason: null,
+        }),
+        idleNotified: false,
+        stuckNotified: false,
+        completionHintNotified: true,
+      },
+      now: 5 * 60_000,
+    });
+
+    expect(events.some((event) => event.type === "worker_stuck")).toBe(false);
+  });
+
   it("wakes the supervisor immediately when ACP reports a worker turn is complete", () => {
     const { nextState, events } = deriveWorkerEvents({
       workerId: "worker-1",
@@ -1322,6 +1414,7 @@ describe("deriveWorkerEvents", () => {
     const runId = randomUUID();
     const workerId = randomUUID();
     const wakeSupervisor = vi.fn();
+    const nowSpy = vi.spyOn(Date, "now");
     const finalText = [
       "Implemented the planning review agents feature and verified the critical path.",
       "",
@@ -1374,13 +1467,21 @@ describe("deriveWorkerEvents", () => {
       stopReason: null,
     });
 
-    await pollRunWorkers(runId, wakeSupervisor);
+    try {
+      nowSpy.mockReturnValue(0);
+      await pollRunWorkers(runId, wakeSupervisor);
+      nowSpy.mockReturnValue(5 * 60_000);
+      await pollRunWorkers(runId, wakeSupervisor);
+    } finally {
+      nowSpy.mockRestore();
+    }
 
     const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
 
     expect(persistedWorker?.status).toBe("idle");
     expect(workerEvents.some((event) => event.eventType === "worker_turn_completed")).toBe(true);
+    expect(workerEvents.some((event) => event.eventType === "worker_stuck")).toBe(false);
     expect(wakeSupervisor).toHaveBeenCalledWith(runId, 0);
   });
 
@@ -1439,6 +1540,93 @@ describe("deriveWorkerEvents", () => {
     expect(persistedWorker?.status).toBe("stuck");
     expect(workerEvents.some((event) => event.eventType === "worker_stuck")).toBe(true);
     expect(wakeSupervisor).toHaveBeenCalledWith(runId, 0);
+  });
+
+  it("keeps a worker stuck until it makes new meaningful progress", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "gemini",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    mockGetAgent
+      .mockResolvedValueOnce({
+        state: "working",
+        currentText: "same output",
+        lastText: "same output",
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      })
+      .mockResolvedValueOnce({
+        state: "working",
+        currentText: "same output",
+        lastText: "same output",
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      })
+      .mockResolvedValueOnce({
+        state: "working",
+        currentText: "same output",
+        lastText: "same output",
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      })
+      .mockResolvedValueOnce({
+        state: "working",
+        currentText: "new output",
+        lastText: "new output",
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      });
+
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(5 * 60_000)
+      .mockReturnValueOnce(5 * 60_000 + 5_000)
+      .mockReturnValueOnce(5 * 60_000 + 10_000);
+
+    await pollRunWorkers(runId, wakeSupervisor);
+    await pollRunWorkers(runId, wakeSupervisor);
+    let persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(persistedWorker?.status).toBe("stuck");
+
+    await pollRunWorkers(runId, wakeSupervisor);
+    persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(persistedWorker?.status).toBe("stuck");
+
+    await pollRunWorkers(runId, wakeSupervisor);
+    persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(persistedWorker?.status).toBe("working");
   });
 
   it("does not mark an idle completed turn stuck when the bridge snapshot omits text already persisted for the worker", async () => {
@@ -2231,7 +2419,77 @@ describe("deriveWorkerEvents", () => {
     expect(vi.mocked(mockSpawnAgent)).not.toHaveBeenCalled();
   });
 
-  it("marks a worker cancelled when its saved bridge session is gone instead of failing the run", async () => {
+  it("starts a fresh runtime worker when its saved bridge session is rejected", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const wakeSupervisor = vi.fn();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      bridgeSessionId: "session-gone",
+      bridgeSessionMode: "full-access",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    mockGetAgent.mockRejectedValue(new Error("Get agent failed: 404 not_found"));
+    vi.mocked(mockSpawnAgent)
+      .mockRejectedValueOnce(new Error("Spawn agent failed: invalid session identifier"))
+      .mockResolvedValueOnce({
+        name: workerId,
+        type: "codex",
+        state: "working",
+        cwd: process.cwd(),
+        sessionId: "fresh-session",
+        sessionMode: "full-access",
+        currentText: "",
+        lastText: "",
+        pendingPermissions: [],
+        stderrBuffer: [],
+        stopReason: null,
+      });
+
+    await pollRunWorkers(runId, wakeSupervisor);
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+
+    expect(persistedRun?.status).toBe("running");
+    expect(persistedRun?.lastError).toBeNull();
+    expect(persistedWorker?.status).toBe("working");
+    expect(persistedWorker?.bridgeSessionId).toBe("fresh-session");
+    expect(workerEvents.some((event) => event.eventType === "worker_session_missing")).toBe(true);
+    expect(workerEvents.some((event) => event.eventType === "worker_session_recreated")).toBe(true);
+    expect(workerEvents.some((event) => event.eventType === "worker_resume_failed")).toBe(false);
+    expect(vi.mocked(mockSpawnAgent).mock.calls[0]?.[0]).toMatchObject({ resumeSessionId: "session-gone" });
+    expect(vi.mocked(mockSpawnAgent).mock.calls[1]?.[0]).not.toHaveProperty("resumeSessionId");
+    expect(wakeSupervisor).toHaveBeenCalledWith(runId, 0);
+  });
+
+  it("marks a worker cancelled when both saved-session resume and fresh spawn fail", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = randomUUID();
