@@ -6,6 +6,7 @@ import { accounts, creditEvents } from '../db/schema';
 import { randomUUID } from 'crypto';
 import { eq } from 'drizzle-orm';
 import { normalizeQuotaResumeAt, parseQuotaResetText } from '@/server/quota/reset-parser';
+import { runAccountInventoryMigration } from '@/server/accounts/migration';
 
 export interface AccountConfig {
   id: string;
@@ -31,21 +32,7 @@ export class CreditManager {
   }
 
   async syncAccounts() {
-    const configAccounts = this.loadConfig();
-    for (const acc of configAccounts) {
-      const existing = await db.select().from(accounts).where(eq(accounts.id, acc.id)).get();
-      if (!existing) {
-        await db.insert(accounts).values({
-          id: acc.id,
-          provider: acc.provider,
-          type: acc.type,
-          authRef: acc.auth_ref,
-          capacity: acc.capacity,
-          resetSchedule: acc.reset_schedule,
-          createdAt: new Date(),
-        });
-      }
-    }
+    await runAccountInventoryMigration({ configPath: this.configPath });
   }
 
   async recordEvent(accountId: string, workerId: string, eventType: string, details?: string) {
