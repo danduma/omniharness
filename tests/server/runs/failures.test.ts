@@ -113,6 +113,26 @@ describe("persistRunFailure", () => {
     expect(persistedMessages[0]?.content).toBe("Run failed: codex ACP adapter is not installed");
   });
 
+  it("does not append duplicate run_failed events when the same failure is persisted twice", async () => {
+    const { runId } = await seedRunningRun();
+
+    await persistRunFailure(runId, new Error("provider billing cap exceeded"), {
+      surface: { code: "supervisor.gave_up" },
+    });
+    await persistRunFailure(runId, new Error("provider billing cap exceeded"), {
+      surface: { code: "supervisor.gave_up" },
+    });
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+
+    expect(persistedRun?.lastError).toBe("provider billing cap exceeded");
+    expect(persistedMessages).toHaveLength(1);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.eventType).toBe("run_failed");
+  });
+
   it("records a durable run_failed execution event for persisted failures", async () => {
     const { runId } = await seedRunningRun();
     await db.insert(workers).values({

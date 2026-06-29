@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/server/db";
+import { withSqliteBusyRetry } from "@/server/db/retry";
 import { messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { listAgents, normalizeAgentRecord, type AgentRecord } from "@/server/bridge-client";
@@ -355,11 +356,11 @@ async function clearStaleDirectCurrentText(run: typeof runs.$inferSelect, worker
     return false;
   }
 
-  await db.update(workers).set({
+  await withSqliteBusyRetry(() => db.update(workers).set({
     currentText: "",
     lastText: worker.lastText || worker.currentText,
     updatedAt: new Date(),
-  }).where(eq(workers.id, worker.id));
+  }).where(eq(workers.id, worker.id)));
   notifyEventStreamSubscribers();
   return true;
 }
@@ -442,7 +443,20 @@ type SyncConversationSessionsOptions = {
   refreshPlanningArtifacts?: boolean;
 };
 
+let liveSyncQueue: Promise<void> = Promise.resolve();
+
+export function __resetSyncConversationSessionsQueueForTests() {
+  liveSyncQueue = Promise.resolve();
+}
+
 export async function syncConversationSessions(rawAgents: unknown[], options: SyncConversationSessionsOptions = {}) {
+  const runSync = () => syncConversationSessionsUnlocked(rawAgents, options);
+  const nextSync = liveSyncQueue.then(runSync, runSync);
+  liveSyncQueue = nextSync.catch(() => undefined);
+  return nextSync;
+}
+
+async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: SyncConversationSessionsOptions = {}) {
   const agents = rawAgents.map((agent) => normalizeAgentRecord(agent));
   const selectedRunId = options.selectedRunId?.trim() || null;
   const refreshPlanningArtifacts = options.refreshPlanningArtifacts !== false;
@@ -479,7 +493,7 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
         }
 
         await writeWorkerOutputEntries(run.id, implementationWorker.id, implementationAgent.outputEntries);
-        await db.update(workers).set({
+        await withSqliteBusyRetry(() => db.update(workers).set({
           status: implementationAgent.state,
           cwd: implementationAgent.cwd || implementationWorker.cwd,
           currentText: implementationAgent.currentText,
@@ -487,18 +501,18 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
           bridgeSessionId: implementationAgent.sessionId ?? implementationWorker.bridgeSessionId,
           bridgeSessionMode: implementationAgent.sessionMode ?? implementationWorker.bridgeSessionMode,
           updatedAt: new Date(),
-        }).where(eq(workers.id, implementationWorker.id));
+        }).where(eq(workers.id, implementationWorker.id)));
         syncedActiveLiveWorker = true;
       }
 
       if (syncedActiveLiveWorker) {
         if (run.status !== "running" || run.failedAt || run.lastError) {
-          await db.update(runs).set({
+          await withSqliteBusyRetry(() => db.update(runs).set({
             status: "running",
             failedAt: null,
             lastError: null,
             updatedAt: new Date(),
-          }).where(eq(runs.id, run.id));
+          }).where(eq(runs.id, run.id)));
           await clearMatchingRunFailureMessage(run);
           startSupervisorRun(run.id);
         }
@@ -517,12 +531,12 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
         if (staleImplementationConnectionFailure) {
           const resumableWorker = implementationWorkers.find((worker) => worker.bridgeSessionId?.trim());
           if (resumableWorker) {
-            await db.update(runs).set({
+            await withSqliteBusyRetry(() => db.update(runs).set({
               status: "running",
               failedAt: null,
               lastError: null,
               updatedAt: new Date(),
-            }).where(eq(runs.id, run.id));
+            }).where(eq(runs.id, run.id)));
             await clearMatchingRunFailureMessage(run);
             startSupervisorRun(run.id);
           }
@@ -531,19 +545,19 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
       }
 
       await writeWorkerOutputEntries(run.id, implementationWorker.id, implementationAgent.outputEntries);
-      await db.update(workers).set({
+      await withSqliteBusyRetry(() => db.update(workers).set({
         status: implementationAgent.state,
         cwd: implementationAgent.cwd || implementationWorker.cwd,
         currentText: implementationAgent.currentText,
         lastText: implementationAgent.lastText,
         updatedAt: new Date(),
-      }).where(eq(workers.id, implementationWorker.id));
-      await db.update(runs).set({
+      }).where(eq(workers.id, implementationWorker.id)));
+      await withSqliteBusyRetry(() => db.update(runs).set({
         status: "running",
         failedAt: null,
         lastError: null,
         updatedAt: new Date(),
-      }).where(eq(runs.id, run.id));
+      }).where(eq(runs.id, run.id)));
       await clearMatchingRunFailureMessage(run);
       startSupervisorRun(run.id);
       continue;
@@ -578,14 +592,14 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
       && worker.status.trim().toLowerCase().split(":")[0]?.trim() === "idle"
       && isIdleLiveAgentWithoutOutput(agent)
     ) {
-      await db.update(workers).set({
+      await withSqliteBusyRetry(() => db.update(workers).set({
         status: "error",
         cwd: agent.cwd || worker.cwd,
         currentText: agent.currentText,
         lastText: agent.lastText,
         outputLog: EMPTY_IDLE_WORKER_OUTPUT_DIAGNOSTIC,
         updatedAt: new Date(),
-      }).where(eq(workers.id, worker.id));
+      }).where(eq(workers.id, worker.id)));
       await persistRunFailure(run.id, new Error(EMPTY_IDLE_WORKER_OUTPUT_DIAGNOSTIC), {
         surface: { code: "worker.idle.empty_output", workerId: worker.id },
       });
@@ -596,13 +610,13 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
     const nextRunState = resolveSyncedRunState(run, agent);
     const quiescedDirectWorker = isDirectRunMode(run.mode) && directLiveAgentHasCompletedTurn(agent);
     const nextWorkerStatus = quiescedDirectWorker ? "idle" : agent.state;
-    await db.update(workers).set({
+    await withSqliteBusyRetry(() => db.update(workers).set({
       status: nextWorkerStatus,
       cwd: agent.cwd || worker.cwd,
       currentText: quiescedDirectWorker ? "" : agent.currentText,
       lastText: agent.lastText,
       updatedAt: new Date(),
-    }).where(eq(workers.id, worker.id));
+    }).where(eq(workers.id, worker.id)));
     if (worker.status !== nextWorkerStatus) {
       emitNamedEvent({
         kind: "worker.status",
@@ -647,12 +661,12 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
         pendingElicitations: agent.pendingElicitations,
       });
     } else {
-      await db.update(runs).set({
+      await withSqliteBusyRetry(() => db.update(runs).set({
         status: nextRunState,
         lastError: nextRunState === "failed" ? agent.lastError || run.lastError : null,
         failedAt: nextRunState === "failed" ? run.failedAt : null,
         updatedAt: new Date(),
-      }).where(eq(runs.id, run.id));
+      }).where(eq(runs.id, run.id)));
     }
     if (staleBusyFailure && nextRunState !== "failed") {
       await clearMatchingRunFailureMessage(run);
@@ -692,11 +706,11 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
     }
 
     if (await isEmptyIdlePersistedWorker(worker)) {
-      await db.update(workers).set({
+      await withSqliteBusyRetry(() => db.update(workers).set({
         status: "error",
         outputLog: MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC,
         updatedAt: new Date(),
-      }).where(eq(workers.id, worker.id));
+      }).where(eq(workers.id, worker.id)));
       await persistRunFailure(run.id, new Error(MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC), {
         surface: { code: "worker.idle.missing_output", workerId: worker.id },
       });
@@ -742,10 +756,10 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
         source: "persisted_direct_completion",
       });
     } else {
-      await db.update(runs).set({
+      await withSqliteBusyRetry(() => db.update(runs).set({
         status: nextRunState,
         updatedAt: new Date(),
-      }).where(eq(runs.id, run.id));
+      }).where(eq(runs.id, run.id)));
     }
   }
 }

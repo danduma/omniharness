@@ -513,6 +513,8 @@ export async function prewarmWorker(params: {
   model?: string | null;
   mode?: string | null;
   env?: Record<string, string>;
+  accountId?: string | null;
+  credentialProfile?: string | null;
   mcpServers?: BridgeMcpServer[];
 }) {
   return requestBridge<PrewarmWorkerResult>(
@@ -534,6 +536,7 @@ export async function spawnAgent(params: {
   mode?: string;
   env?: Record<string, string>;
   credentialProfile?: string;
+  accountId?: string;
   model?: string;
   effort?: string;
   skillRoots?: string[];

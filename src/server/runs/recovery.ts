@@ -42,6 +42,7 @@ import { createBranchWorktree } from "@/server/git/workspaces";
 import { pendingOrphanWorktreeError } from "@/server/git/orphan-recovery";
 import { markRecoveryIncidentResolved } from "@/server/runs/recovery-incidents";
 import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
+import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
 
 export type RecoveryAction = "retry" | "edit" | "fork";
 
@@ -223,6 +224,14 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string, 
     updatedAt: now,
   });
   emitNamedEvent({ kind: "worker.spawned", runId: run.id, workerId, workerType });
+  const accountAllocation = await allocateWorkerAccount({
+    workerType,
+    runId: run.id,
+    workerId,
+    explicitAccountId: run.preferredWorkerAccountId ?? null,
+    strategy: run.preferredWorkerAccountId ? "manual" : "priority",
+  });
+  const workerAccountId = accountAllocation.account?.id ?? null;
 
   let spawned = false;
   try {
@@ -232,6 +241,7 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string, 
       name: workerId,
       ...(workerMode ? { mode: workerMode } : {}),
       env: envParams,
+      ...(workerAccountId ? { accountId: workerAccountId } : {}),
       model: run.preferredWorkerModel?.trim() || undefined,
       effort: run.preferredWorkerEffort?.trim().toLowerCase() || undefined,
     });
@@ -462,6 +472,7 @@ async function resumeDirectRunFromSavedSession(
       name: worker.id,
       ...(workerMode ? { mode: workerMode } : {}),
       env: envParams,
+      ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
       ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
       ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
       resumeSessionId: sessionId,
@@ -496,6 +507,7 @@ async function resumeDirectRunFromSavedSession(
         name: worker.id,
         ...(workerMode ? { mode: workerMode } : {}),
         env: envParams,
+        ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
         ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
         ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
       });
@@ -531,6 +543,7 @@ async function resumeDirectRunFromSavedSession(
             name: worker.id,
             ...(workerMode ? { mode: workerMode } : {}),
             env: envParams,
+            ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
             ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
             ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
             resumeSessionId: sessionId,
@@ -578,6 +591,7 @@ async function resumeDirectRunFromSavedSession(
           name: worker.id,
           ...(workerMode ? { mode: workerMode } : {}),
           env: envParams,
+          ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
           ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
           ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
         });
@@ -677,15 +691,16 @@ async function resumeDirectRunFromSavedSession(
   });
 
   const completedAt = new Date();
+  const finalWorkerStatus = response.state || snapshot?.state;
   await db.update(workers).set({
-    status: snapshot?.state ?? response.state,
+    status: finalWorkerStatus,
     updatedAt: completedAt,
   }).where(eq(workers.id, worker.id));
   // Worker response now lives in the unified worker stream.
   await updateDirectRunStatusFromWorkerOutput({
     runId: run.id,
     workerId: worker.id,
-    workerStatus: snapshot?.state ?? response.state,
+    workerStatus: finalWorkerStatus,
     responseText: response.response,
     renderedOutput: snapshot?.renderedOutput,
     currentText: snapshot?.currentText,

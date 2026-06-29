@@ -67,6 +67,7 @@ export const handleConversationMessagesRequest: OmniHttpHandler = async (request
     const preferredWorkerType = typeof body?.preferredWorkerType === "string" ? body.preferredWorkerType : null;
     const preferredWorkerModel = typeof body?.preferredWorkerModel === "string" ? body.preferredWorkerModel : null;
     const preferredWorkerEffort = typeof body?.preferredWorkerEffort === "string" ? body.preferredWorkerEffort : null;
+    const preferredWorkerAccountId = typeof body?.preferredWorkerAccountId === "string" ? body.preferredWorkerAccountId : null;
     const allowedWorkerTypes = Array.isArray(body?.allowedWorkerTypes) || typeof body?.allowedWorkerTypes === "string"
       ? body.allowedWorkerTypes
       : null;
@@ -98,6 +99,7 @@ export const handleConversationMessagesRequest: OmniHttpHandler = async (request
         preferredWorkerType,
         preferredWorkerModel,
         preferredWorkerEffort,
+        preferredWorkerAccountId,
         allowedWorkerTypes,
       });
       probe.mark("sendConversationMessage");

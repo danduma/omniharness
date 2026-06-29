@@ -6,7 +6,7 @@ import os from "os";
 import path from "path";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { clarifications, conversationReadMarkers, creditEvents, executionEvents, messages, planItems, planningReviewFindings, planningReviewRounds, planningReviewRuns, plans, processSessions, queuedConversationMessages, recoveryIncidents, runs, supervisorInterventions, supervisorScheduledWakes, workerAssignments, workerCounters, workers } from "@/server/db/schema";
+import { accounts, clarifications, conversationReadMarkers, creditEvents, executionEvents, messages, planItems, planningReviewFindings, planningReviewRounds, planningReviewRuns, plans, processSessions, queuedConversationMessages, recoveryIncidents, runs, supervisorInterventions, supervisorScheduledWakes, workerAssignments, workerCounters, workers } from "@/server/db/schema";
 import { buildAgentOutputActivity } from "@/lib/agent-output";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { __resetNamedEventsForTests } from "@/server/events/named-events";
@@ -144,6 +144,35 @@ describe("GET /api/events", () => {
     await db.delete(runs);
     await db.delete(planItems);
     await db.delete(plans);
+    await db.delete(accounts);
+  });
+
+  it("redacts account credential references from persisted snapshots", async () => {
+    await db.insert(accounts).values({
+      id: "snapshot-account",
+      provider: "openai",
+      type: "api",
+      authRef: "secret-snapshot-ref",
+      capacity: 100,
+      resetSchedule: "daily",
+      createdAt: new Date("2026-06-29T10:00:00.000Z"),
+    });
+
+    const response = await GET(new NextRequest("http://localhost/api/events?snapshot=1&persisted=1"));
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.accounts).toEqual([expect.objectContaining({
+      id: "snapshot-account",
+      provider: "openai",
+      type: "api",
+      capacity: 100,
+      resetSchedule: "daily",
+      createdAt: expect.any(String),
+    })]);
+    expect(JSON.stringify(payload.accounts)).not.toContain("secret-snapshot-ref");
+    expect(payload.accounts[0]).not.toHaveProperty("authRef");
+    expect(payload.accounts[0]).not.toHaveProperty("auth_ref");
   });
 
   it("does not hydrate an archived run as a selected visible conversation", async () => {

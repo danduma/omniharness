@@ -35,6 +35,9 @@ export async function persistRunFailure(
 
   const previousStatus = normalizeRunStatus(currentRun.status);
   const isFirstTransitionToFailed = previousStatus !== "failed";
+  if (!isFirstTransitionToFailed && currentRun.lastError === errorMessage) {
+    return;
+  }
 
   await db.update(runs).set({
     status: "failed",

@@ -28,6 +28,7 @@ import { buildAwaitingUserQuestionInvariantErrors } from "@/server/events/lifecy
 import { serializeSessionRecord } from "@/server/session-providers/session-records";
 import { reconcileOrphanedProcessSessions } from "@/server/session-providers/process-store";
 import { reconcilePersistedReloadZombies } from "@/server/runs/persisted-zombie-reconciler";
+import { toAccountDto } from "@/server/accounts/dto";
 
 const EXECUTION_EVENT_LIMIT = 100;
 const SUPERVISOR_INTERVENTION_LIMIT = 50;
@@ -340,7 +341,7 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
     plans: allPlans,
     runs: allRuns.map(serializeRunRecord),
     sessions,
-    accounts: allAccounts,
+    accounts: allAccounts.map(toAccountDto),
     agents: [],
     workers: allWorkers.map(compactWorkerRecord),
     planItems: allPlanItems,

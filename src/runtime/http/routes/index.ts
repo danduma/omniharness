@@ -5,7 +5,7 @@ import { handleAuthLogoutRequest } from "./auth-logout";
 import { handleAuthPairRequest } from "./auth-pair";
 import { handleAuthPairRedeemRequest } from "./auth-pair-redeem";
 import { handleSettingsRequest } from "./settings";
-import { handleAccountsRequest } from "./accounts";
+import { handleAccountDetailRequest, handleAccountStatusRequest, handleAccountsRequest } from "./accounts";
 import { handleAgentsRequest } from "./agents";
 import { handleAgentsCatalogRequest } from "./agents-catalog";
 import { handleAgentDetailRequest, handleAgentElicitationRequest, handleAgentPermissionRequest } from "./agent-detail";
@@ -58,6 +58,9 @@ export function createOmniRuntimeHttpRegistry() {
     .route("GET", "/api/settings", handleSettingsRequest)
     .route("POST", "/api/settings", handleSettingsRequest)
     .route("GET", "/api/accounts", handleAccountsRequest)
+    .route("POST", "/api/accounts", handleAccountsRequest)
+    .route("PATCH", "/api/accounts/:id", handleAccountDetailRequest)
+    .route("POST", "/api/accounts/:id/status", handleAccountStatusRequest)
     .route("GET", "/api/agents", handleAgentsRequest)
     .route("GET", "/api/agents/:name", handleAgentDetailRequest)
     .route("POST", "/api/agents/:name/elicitation", handleAgentElicitationRequest)
@@ -110,7 +113,7 @@ export { handleAuthLogoutRequest } from "./auth-logout";
 export { handleAuthPairRequest } from "./auth-pair";
 export { handleAuthPairRedeemRequest } from "./auth-pair-redeem";
 export { handleSettingsRequest } from "./settings";
-export { handleAccountsRequest } from "./accounts";
+export { handleAccountDetailRequest, handleAccountStatusRequest, handleAccountsRequest } from "./accounts";
 export { handleAgentsRequest } from "./agents";
 export { handleAgentsCatalogRequest } from "./agents-catalog";
 export { handleAgentDetailRequest, handleAgentElicitationRequest, handleAgentPermissionRequest } from "./agent-detail";

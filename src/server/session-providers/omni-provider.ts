@@ -25,6 +25,7 @@ export const omniSessionProvider: SessionProvider = {
       preferredWorkerType: input.preferredWorkerType,
       preferredWorkerModel: input.preferredWorkerModel,
       preferredWorkerEffort: input.preferredWorkerEffort,
+      preferredWorkerAccountId: input.preferredWorkerAccountId,
       allowedWorkerTypes: input.allowedWorkerTypes,
       requestedRunId: input.requestedRunId,
       attachments: input.attachments,

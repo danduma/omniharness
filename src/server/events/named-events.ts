@@ -39,6 +39,12 @@ export type SurfacedErrorCode =
   | "runtime.resource_pressure"
   | "runtime.settings_apply_failed"
   | "runtime.start_failed"
+  | "account.invalid_explicit"
+  | "account.login_required"
+  | "account.quota_switch_failed"
+  | "account.resolution_failed"
+  | "account.secret_decryption_failed"
+  | "account.migration_failed"
   | "session.provider.unknown"
   | "session.action.unsupported"
   | "queue.interrupt.refused"
@@ -205,7 +211,7 @@ export type SupervisorEvent =
       runId: string;
       reason: "missing" | "malformed" | "not_owner";
     }
-  | { kind: "supervisor.wake_lease_recovered"; runId: string; reason: "orphaned_completion" }
+  | { kind: "supervisor.wake_lease_recovered"; runId: string; reason: "orphaned_completion" | "orphaned_pre_worker" }
   | {
       kind: "supervisor.wake_skipped";
       runId: string;
@@ -232,6 +238,35 @@ export type RecoveryEvent =
   | { kind: "recovery.attempt"; runId: string; incidentId: string; attempt: number }
   | { kind: "recovery.gave_up"; runId: string; incidentId: string; attempts: number }
   | { kind: "recovery.resolved"; runId: string; incidentId: string };
+
+export type AccountEvent =
+  | { kind: "account.detected"; accountId: string; workerType: string; provider: string; authMode: string }
+  | { kind: "account.created"; accountId: string; workerType: string | null; provider: string; authMode: string }
+  | { kind: "account.updated"; accountId: string; workerType: string | null; changedKeys: string[] }
+  | { kind: "account.status_checked"; accountId: string; workerType: string | null; status: string | null }
+  | {
+      kind: "account.credential_selected";
+      accountId: string;
+      runId?: string;
+      workerId?: string;
+      workerType: string;
+      strategy: string;
+      explicit: boolean;
+      reason: string;
+    }
+  | { kind: "account.quota_exhausted"; accountId: string; runId?: string; workerId?: string; workerType: string; reason: string }
+  | {
+      kind: "account.switch_decision";
+      runId?: string;
+      workerId?: string;
+      workerType: string;
+      fromAccountId?: string;
+      toAccountId?: string;
+      strategy: string;
+      reason: string;
+    }
+  | { kind: "account.usage_recorded"; accountId: string; runId: string; workerId?: string; workerType: string; inputTokens: number; outputTokens: number; costUsd: number }
+  | { kind: "account.login_required"; accountId: string; workerType: string; reason: string };
 
 export type ConversationEvent =
   | { kind: "conversation.awaiting_user"; runId: string; workerId?: string; reason: "worker_requested_input" }
@@ -396,6 +431,7 @@ export type NamedEvent =
   | SupervisorEvent
   | PlanEvent
   | RecoveryEvent
+  | AccountEvent
   | ConversationEvent
   | SessionEvent
   | ErrorSurfacedEvent

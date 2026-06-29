@@ -40,6 +40,7 @@ import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
 import { isResourceAdmissionError } from "@/server/agent-runtime/resource-admission";
 import { globalClaudeConfigDir } from "@/server/external-sessions/discovery";
 import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
+import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
 
 
 function buildInitialWorkerPrompt(mode: ConversationMode, command: string, projectRoot: string) {
@@ -446,6 +447,7 @@ async function startDirectWorkerConversation(args: {
   mode?: string;
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
+  preferredWorkerAccountId?: string | null;
   command: string;
   externalClaudeSessionId?: string | null;
 }) {
@@ -461,6 +463,7 @@ async function startDirectWorkerConversation(args: {
       name: args.workerId,
       ...(args.mode ? { mode: args.mode } : {}),
       env: externalEnv,
+      ...(args.preferredWorkerAccountId ? { accountId: args.preferredWorkerAccountId } : {}),
       model: args.preferredWorkerModel?.trim() || undefined,
       effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
       ...(args.externalClaudeSessionId ? { resumeSessionId: args.externalClaudeSessionId } : {}),
@@ -533,6 +536,7 @@ export async function createConversation(args: {
   preferredWorkerType?: string | null;
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
+  preferredWorkerAccountId?: string | null;
   allowedWorkerTypes?: string[] | string | null;
   requestedRunId?: string | null;
   attachments?: ChatAttachment[];
@@ -615,6 +619,7 @@ export async function createConversation(args: {
       preferredWorkerType,
       preferredWorkerModel: args.preferredWorkerModel?.trim() || null,
       preferredWorkerEffort: args.preferredWorkerEffort?.trim().toLowerCase() || null,
+      preferredWorkerAccountId: args.preferredWorkerAccountId?.trim() || null,
       allowedWorkerTypes: JSON.stringify(allowedWorkerTypes),
       autoCommitMilestones: commitWorkflowSettings.autoCommitMilestones,
       pushOnCommit: commitWorkflowSettings.pushOnCommit,
@@ -687,6 +692,16 @@ export async function createConversation(args: {
         createdAt: new Date(),
         updatedAt: new Date(),
       });
+      const { env: allocationEnvParams } = await readRuntimeEnvFromSettings();
+      const accountAllocation = await allocateWorkerAccount({
+        workerType,
+        runId,
+        workerId,
+        explicitAccountId: args.preferredWorkerAccountId?.trim() || null,
+        strategy: args.preferredWorkerAccountId?.trim() ? "manual" : "priority",
+        env: allocationEnvParams,
+      });
+      const workerAccountId = accountAllocation.account?.id ?? null;
       if (!args.externalClaudeSessionId || command) {
         await appendUserInputOnDelivery({
           id: initialMessageId,
@@ -723,6 +738,7 @@ export async function createConversation(args: {
           mode: workerMode,
           preferredWorkerModel: args.preferredWorkerModel,
           preferredWorkerEffort: args.preferredWorkerEffort,
+          preferredWorkerAccountId: workerAccountId,
           command: workerPrompt,
           externalClaudeSessionId: args.externalClaudeSessionId,
         });
@@ -745,6 +761,7 @@ export async function createConversation(args: {
               name: workerId,
               ...(workerMode ? { mode: workerMode } : {}),
               env: envParams,
+              ...(workerAccountId ? { accountId: workerAccountId } : {}),
               model: args.preferredWorkerModel?.trim() || undefined,
               effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
             });

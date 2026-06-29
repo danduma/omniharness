@@ -186,6 +186,7 @@ async function resumeSavedWorkerSession(args: {
       name: args.worker.id,
       ...(workerMode ? { mode: workerMode } : {}),
       env: envParams,
+      ...(args.run.preferredWorkerAccountId ? { accountId: args.run.preferredWorkerAccountId } : {}),
       ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
       ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
       resumeSessionId: sessionId,
@@ -213,6 +214,7 @@ async function resumeSavedWorkerSession(args: {
       name: args.worker.id,
       ...(workerMode ? { mode: workerMode } : {}),
       env: envParams,
+      ...(args.run.preferredWorkerAccountId ? { accountId: args.run.preferredWorkerAccountId } : {}),
       ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
       ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
     }) as AgentRecord;

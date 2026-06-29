@@ -22,6 +22,7 @@ import { handleAgentsRequest } from "@/runtime/http/routes/agents";
 import { handleLlmModelsRequest } from "@/runtime/http/routes/llm-models";
 import { handleCodexAuthStatusRequest } from "@/runtime/http/routes/codex-auth-status";
 import { createOmniRuntimeHttpRegistry } from "@/runtime/http/routes";
+import { __clearEventPayloadCachesForTests } from "@/runtime/http/routes/events";
 
 const { mockReadCodexCredentialsSync } = vi.hoisted(() => ({
   mockReadCodexCredentialsSync: vi.fn(),
@@ -55,6 +56,7 @@ describe("portable runtime HTTP routes", () => {
     await db.delete(accounts);
     await db.delete(plans);
     await db.delete(settings);
+    __clearEventPayloadCachesForTests();
     resetLoginRateLimitsForTests();
   });
 
@@ -454,6 +456,44 @@ describe("portable runtime HTTP routes", () => {
       messages: [],
       runs: [],
     }));
+  });
+
+  it("redacts account credential references from portable event snapshots", async () => {
+    const session = await createAuthSession({
+      label: "Portable events account redaction",
+      userAgent: "Vitest",
+      authMethod: "password_login",
+    });
+    await db.insert(accounts).values({
+      id: "portable-snapshot-account",
+      provider: "anthropic",
+      type: "api",
+      authRef: "secret-portable-ref",
+      capacity: 50,
+      resetSchedule: "weekly",
+      createdAt: new Date("2026-06-29T10:00:00.000Z"),
+    });
+
+    const registry = createOmniRuntimeHttpRegistry();
+    const response = await registry.handle(new Request("http://localhost/api/events?snapshot=1&persisted=1", {
+      headers: {
+        cookie: `omni_session=${session.tokenValue}`,
+      },
+    }), { surface: "test" });
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.accounts).toEqual([expect.objectContaining({
+      id: "portable-snapshot-account",
+      provider: "anthropic",
+      type: "api",
+      capacity: 50,
+      resetSchedule: "weekly",
+      createdAt: expect.any(String),
+    })]);
+    expect(JSON.stringify(payload.accounts)).not.toContain("secret-portable-ref");
+    expect(payload.accounts[0]).not.toHaveProperty("authRef");
+    expect(payload.accounts[0]).not.toHaveProperty("auth_ref");
   });
 
   it("mounts dynamic planning routes in the shared runtime route registry", async () => {

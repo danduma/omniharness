@@ -939,6 +939,109 @@ describe("syncConversationSessions", () => {
     ]));
   });
 
+  it("does not append a queued answer when a stale elicitation snapshot is already answered", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+    const question = "The worker already accepted this direct answer.";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-stale-elicitation-no-duplicate.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "awaiting_user",
+      title: "Direct stale elicitation no duplicate",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: question,
+      lastText: question,
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(queuedConversationMessages).values({
+      id: "queued-already-answered",
+      runId,
+      targetWorkerId: workerId,
+      action: "steer",
+      status: "pending",
+      content: "answer the pending direct question",
+      attachmentsJson: "[]",
+      createdAt: new Date(now.getTime() + 3),
+      updatedAt: new Date(now.getTime() + 3),
+    });
+    mockRespondElicitation.mockRejectedValueOnce(new Error("Respond elicitation failed: no_pending_elicitations"));
+
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "claude",
+        cwd: process.cwd(),
+        state: "working",
+        sessionId: "elicitation-session",
+        sessionMode: "full-access",
+        currentText: question,
+        lastText: question,
+        renderedOutput: question,
+        outputEntries: [
+          {
+            id: "stale-elicitation-entry",
+            type: "elicitation",
+            text: `Question for user: ${question}`,
+            status: "pending",
+            timestamp: new Date(now.getTime() + 1).toISOString(),
+            raw: {
+              requestId: 4,
+              sessionId: "elicitation-session",
+              toolCallId: "ask-tool",
+              message: question,
+              requestedSchema: {
+                type: "object",
+                properties: {
+                  customAnswer: { type: "string", title: "Other" },
+                },
+              },
+            },
+          },
+        ],
+        pendingElicitations: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    ], { selectedRunId: runId });
+
+    const queued = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, "queued-already-answered")).get();
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    const entries = await readWorkerOutputEntries(runId, workerId);
+
+    expect(mockAskAgent).not.toHaveBeenCalled();
+    expect(mockRespondElicitation).toHaveBeenCalledWith(workerId, {
+      action: "accept",
+      content: { customAnswer: "answer the pending direct question" },
+    });
+    expect(queued?.status).toBe("failed");
+    expect(queued?.lastError).toContain("no_pending_elicitations");
+    expect(storedMessages).toHaveLength(0);
+    expect(entries.filter((entry) => entry.type === "user_input")).toHaveLength(0);
+  });
+
   it("keeps a direct run running after an elicitation is answered while the worker continues", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
