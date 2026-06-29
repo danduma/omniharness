@@ -212,7 +212,8 @@ test("direct control user messages expose retry, edit, and fork recovery control
   expect(pageSource).toContain("const canRecoverUserMessage = isDirectConversation || isImplementationConversation;");
   expect(pageSource).toContain("getUserMessageActions={getUserMessageActions}");
   expect(pageSource).toContain("actions={userMessageActions}");
-  expect(pageSource).toContain('body: JSON.stringify({ action, targetMessageId, content, gitWorkspaceLaunch })');
+  expect(pageSource).toContain('body: JSON.stringify({ action, targetMessageId, content, gitWorkspaceLaunch, manualRecovery })');
+  expect(pageSource).toContain('manualRecovery: true');
 });
 
 test("implementation failures expose retry without direct-control edit and fork actions", () => {

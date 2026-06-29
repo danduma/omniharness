@@ -1,8 +1,10 @@
-import { ArrowDown, ArrowUp, RefreshCw } from "lucide-react";
+import { useState } from "react";
+import { ArrowDown, ArrowUp, Plus, Power, RefreshCw } from "lucide-react";
 import { WORKER_OPTIONS } from "@/app/home/constants";
-import type { WorkerAvailability, WorkerModelCatalog, WorkerType } from "@/app/home/types";
+import type { AccountRecord, WorkerAvailability, WorkerModelCatalog, WorkerType } from "@/app/home/types";
 import { buildInlineError, parseBooleanSetting, parseWorkerType, parseWorkerTypes } from "@/app/home/utils";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
+import { requestJson } from "@/lib/app-errors";
 import { cn } from "@/lib/utils";
 import { ErrorNotice } from "@/components/home/ErrorNotice";
 import { Button } from "@/components/ui/button";
@@ -15,6 +17,9 @@ interface AgentsSettingsPanelProps {
   settings: Record<string, string>;
   setSetting: (key: string, value: string) => void;
   settingsWorkers: WorkerAvailability[];
+  accounts: AccountRecord[];
+  onAccountsChanged: (accounts: AccountRecord[]) => void;
+  onRefreshAccounts: () => Promise<void>;
   workerModels?: Partial<WorkerModelCatalog>;
   workerModelsRefreshing?: boolean;
   workerCatalogQuery: {
@@ -31,6 +36,9 @@ export function AgentsSettingsPanel({
   settings,
   setSetting,
   settingsWorkers,
+  accounts,
+  onAccountsChanged,
+  onRefreshAccounts,
   workerModels,
   workerModelsRefreshing = false,
   workerCatalogQuery,
@@ -38,6 +46,8 @@ export function AgentsSettingsPanel({
   workerCatalogRefreshing,
 }: AgentsSettingsPanelProps) {
   useI18nSnapshot();
+  const [accountActionError, setAccountActionError] = useState<unknown>(null);
+  const [pendingAccountAction, setPendingAccountAction] = useState<string | null>(null);
   const configuredAllowedWorkerTypes = parseWorkerTypes(settings.WORKER_ALLOWED_TYPES);
   const configuredAllowedWorkerSet = new Set(configuredAllowedWorkerTypes);
   const availableWorkerTypes = new Set(
@@ -57,6 +67,12 @@ export function AgentsSettingsPanel({
     ...configuredAllowedWorkerTypes.flatMap((type) => settingsWorkers.find((worker) => worker.type === type) ?? []),
     ...settingsWorkers.filter((worker) => !configuredAllowedWorkerSet.has(worker.type)),
   ];
+  const accountsByWorkerType = new Map<string, AccountRecord[]>();
+  for (const account of accounts) {
+    const key = account.cliType || "";
+    if (!key) continue;
+    accountsByWorkerType.set(key, [...(accountsByWorkerType.get(key) ?? []), account]);
+  }
 
   const persistAllowedWorkerOrder = (nextAllowed: WorkerType[]) => {
     setSetting("WORKER_ALLOWED_TYPES", JSON.stringify(nextAllowed));
@@ -98,6 +114,70 @@ export function AgentsSettingsPanel({
       ...configuredAllowedWorkerTypes.filter((type) => type !== parsedWorkerType),
     ]);
   };
+
+  const workerProvider = (workerType: WorkerType) => {
+    if (workerType === "claude") return "anthropic";
+    if (workerType === "gemini") return "google";
+    if (workerType === "opencode") return "opencode";
+    return "openai";
+  };
+
+  const runAccountAction = async (actionKey: string, action: () => Promise<void>) => {
+    setAccountActionError(null);
+    setPendingAccountAction(actionKey);
+    try {
+      await action();
+      await onRefreshAccounts();
+    } catch (error) {
+      setAccountActionError(error);
+    } finally {
+      setPendingAccountAction(null);
+    }
+  };
+
+  const createLocalAccount = (worker: WorkerAvailability) => runAccountAction(`create:${worker.type}`, async () => {
+    const nextAccount = await requestJson<AccountRecord>("/api/accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: `local-session-${worker.type}`,
+        cliType: worker.type,
+        provider: workerProvider(worker.type),
+        type: "external",
+        label: t("settings.agents.localAccountLabel", { worker: worker.label }),
+        authMode: "local_session",
+        authRef: `local:${worker.type}`,
+      }),
+    }, {
+      source: t("settings.agents.accountActionErrorSource"),
+      action: t("settings.agents.createAccountAction"),
+    });
+    onAccountsChanged([...accounts.filter((account) => account.id !== nextAccount.id), nextAccount]);
+  });
+
+  const setAccountEnabled = (account: AccountRecord, enabled: boolean) => runAccountAction(`enabled:${account.id}`, async () => {
+    const nextAccount = await requestJson<AccountRecord>(`/api/accounts/${encodeURIComponent(account.id)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    }, {
+      source: t("settings.agents.accountActionErrorSource"),
+      action: t("settings.agents.updateAccountAction"),
+    });
+    onAccountsChanged(accounts.map((item) => (item.id === nextAccount.id ? nextAccount : item)));
+  });
+
+  const refreshAccountStatus = (account: AccountRecord) => runAccountAction(`status:${account.id}`, async () => {
+    const nextAccount = await requestJson<AccountRecord>(`/api/accounts/${encodeURIComponent(account.id)}/status`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: account.status ?? "unknown" }),
+    }, {
+      source: t("settings.agents.accountActionErrorSource"),
+      action: t("settings.agents.refreshAccountStatusAction"),
+    });
+    onAccountsChanged(accounts.map((item) => (item.id === nextAccount.id ? nextAccount : item)));
+  });
 
   const formatTokenCount = (value: number | null | undefined) => (
     typeof value === "number" && Number.isFinite(value) ? new Intl.NumberFormat().format(value) : null
@@ -192,7 +272,9 @@ export function AgentsSettingsPanel({
           const priorityIndex = displayedAllowedWorkerTypes.indexOf(worker.type);
           const canMoveUp = isChecked && priorityIndex > 0;
           const canMoveDown = isChecked && priorityIndex >= 0 && priorityIndex < displayedAllowedWorkerTypes.length - 1;
-          const modelOptions = workerModels?.[worker.type] ?? [];
+                  const modelOptions = workerModels?.[worker.type] ?? [];
+                  const workerAccounts = accountsByWorkerType.get(worker.type) ?? [];
+          const hasLocalAccount = workerAccounts.some((account) => account.authMode === "local_session");
           const availabilityMessage = isAvailable ? null : getWorkerAvailabilityMessage(worker);
           const availabilityTone =
             worker.availability.status === "ok"
@@ -243,6 +325,60 @@ export function AgentsSettingsPanel({
                     <dd className="min-w-0 truncate" title={worker.tokenQuota?.source}>
                       {formatTokenQuota(worker)}
                     </dd>
+                    <dt className="whitespace-nowrap font-medium text-foreground/70">{t("settings.agents.accounts")}</dt>
+                    <dd className="min-w-0">
+                      <div className="space-y-1">
+                        {workerAccounts.length > 0 ? (
+                          <div className="flex max-h-28 flex-wrap gap-1 overflow-y-auto pr-1">
+                            {workerAccounts.map((account) => (
+                              <span
+                              key={account.id}
+                                className={cn(
+                                  "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px]",
+                                  account.enabled
+                                    ? "bg-muted text-foreground/80"
+                                    : "bg-muted/50 text-muted-foreground line-through",
+                                )}
+                              >
+                                <span>{account.label || `${account.provider} ${account.type}`}</span>
+                                <button
+                                  type="button"
+                                  className="rounded-sm p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
+                                  aria-label={t("settings.agents.refreshAccountStatus", { account: account.label || account.id })}
+                                  disabled={pendingAccountAction !== null}
+                                  onClick={() => refreshAccountStatus(account)}
+                                >
+                                  <RefreshCw className={cn("h-3 w-3", pendingAccountAction === `status:${account.id}` && "animate-spin")} aria-hidden="true" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded-sm p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
+                                  aria-label={account.enabled
+                                    ? t("settings.agents.disableAccount", { account: account.label || account.id })
+                                    : t("settings.agents.enableAccount", { account: account.label || account.id })}
+                                  disabled={pendingAccountAction !== null}
+                                  onClick={() => setAccountEnabled(account, !account.enabled)}
+                                >
+                                  <Power className="h-3 w-3" aria-hidden="true" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span>{t("settings.agents.accountsNone")}</span>
+                        )}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={hasLocalAccount || pendingAccountAction !== null}
+                          onClick={() => createLocalAccount(worker)}
+                        >
+                          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                          {t("settings.agents.addLocalAccount")}
+                        </Button>
+                      </div>
+                    </dd>
                     <dt className="whitespace-nowrap font-medium text-foreground/70">{t("settings.tabs.models")}</dt>
                     <dd className="min-w-0">
                       {modelOptions.length > 0 ? (
@@ -286,6 +422,15 @@ export function AgentsSettingsPanel({
           );
         })}
       </div>
+
+      {accountActionError ? (
+        <ErrorNotice
+          error={buildInlineError(accountActionError, {
+            source: t("settings.agents.accountActionErrorSource"),
+            action: t("settings.agents.updateAccountAction"),
+          })}
+        />
+      ) : null}
 
       {workerCatalogQuery.isError ? (
         <ErrorNotice

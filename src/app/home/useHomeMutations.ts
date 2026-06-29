@@ -333,6 +333,7 @@ export interface UseHomeMutationsParams {
   setState: React.Dispatch<React.SetStateAction<EventStreamState>>;
   selectedRunId: string | null;
   selectedCliAgent: ComposerWorkerOption;
+  selectedWorkerAccountId: string;
   selectedConversationMode: ConversationModeOption;
   selectedModel: string;
   selectedEffort: string;
@@ -352,6 +353,7 @@ export function useHomeMutations({
   setState,
   selectedRunId,
   selectedCliAgent,
+  selectedWorkerAccountId,
   selectedConversationMode,
   selectedModel,
   selectedEffort,
@@ -383,6 +385,7 @@ export function useHomeMutations({
     setMobileNavOpen,
     clearAttachments,
   } = homeUiSetters;
+  const preferredWorkerAccountId = selectedWorkerAccountId === "auto" ? null : selectedWorkerAccountId;
 
   const loginMutation = useMutation({
     mutationFn: async (password: string) => requestJson<{ ok: true }>("/api/auth/login", {
@@ -669,16 +672,17 @@ export function useHomeMutations({
   });
 
   const recoverRun = useMutation({
-    mutationFn: async ({ runId, action, targetMessageId, content, gitWorkspaceLaunch }: {
+    mutationFn: async ({ runId, action, targetMessageId, content, gitWorkspaceLaunch, manualRecovery }: {
       runId: string;
       action: "retry" | "edit" | "fork";
       targetMessageId: string;
       content?: string;
       gitWorkspaceLaunch?: GitWorkspaceLaunchRequest;
+      manualRecovery?: boolean;
     }) => requestJson<{ runId?: string }>(`/api/runs/${runId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, targetMessageId, content, gitWorkspaceLaunch }),
+      body: JSON.stringify({ action, targetMessageId, content, gitWorkspaceLaunch, manualRecovery }),
     }, {
       source: "Runs",
       action: "Recover conversation",
@@ -745,6 +749,7 @@ export function useHomeMutations({
           preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
           preferredWorkerModel: resolvedSelectedModel,
           preferredWorkerEffort: selectedEffort.toLowerCase(),
+          preferredWorkerAccountId,
           allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent],
           attachments: uploadedAttachments,
         }),
@@ -870,6 +875,7 @@ export function useHomeMutations({
           preferredWorkerType: selectedWorkerType,
           preferredWorkerModel: isAutoWorkerSelection ? null : resolvedSelectedModel,
           preferredWorkerEffort: selectedEffort.toLowerCase(),
+          preferredWorkerAccountId,
           allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedWorkerType],
         }),
       }, {
@@ -882,7 +888,11 @@ export function useHomeMutations({
         pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
       }
       if (data.queuedMessage) {
-        busyMessageQueueManager.upsertQueuedMessage(data.queuedMessage);
+        if (variables.busyAction === "steer" && data.message) {
+          busyMessageQueueManager.hideQueuedMessage(data.queuedMessage.id);
+        } else {
+          busyMessageQueueManager.upsertQueuedMessage(data.queuedMessage);
+        }
       }
       setState((current) => appendSentConversationMessageSnapshot(current, data.message));
       const snapshot = homeUiStateManager.getSnapshot();
@@ -954,6 +964,7 @@ export function useHomeMutations({
           preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
           preferredWorkerModel: resolvedSelectedModel,
           preferredWorkerEffort: selectedEffort.toLowerCase(),
+          preferredWorkerAccountId,
           allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent],
         }),
       }, {

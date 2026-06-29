@@ -16,6 +16,24 @@ function buildQueuedMessage(overrides: Partial<QueuedConversationMessageRecord>)
 }
 
 describe("BusyMessageQueueManager", () => {
+  it("does not notify subscribers when the server queue snapshot is unchanged", () => {
+    const manager = new BusyMessageQueueManager();
+    const queuedMessage = buildQueuedMessage({ id: "queued-stable", runId: "run-a" });
+    let notificationCount = 0;
+    manager.subscribe(() => {
+      notificationCount += 1;
+    });
+
+    manager.setQueuedMessages([], true);
+    expect(notificationCount).toBe(0);
+
+    manager.setQueuedMessages([queuedMessage], true);
+    expect(notificationCount).toBe(1);
+
+    manager.setQueuedMessages([queuedMessage], true);
+    expect(notificationCount).toBe(1);
+  });
+
   it("returns queued messages only for the selected run", () => {
     const manager = new BusyMessageQueueManager();
     manager.setQueuedMessages([

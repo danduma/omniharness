@@ -155,9 +155,16 @@ test("composer controls stay on one mobile row while keeping readable label widt
 test("composer draft state is isolated from the root home app subscription", () => {
   expect(pageSource).toContain("selectHomeAppState, shallowEqualRecord");
   expect(pageSource).toContain("selectComposerDraftState");
-  expect(pageSource).toContain("function ComposerContainer");
+  expect(pageSource).toContain("function ComposerContainerInner");
+  expect(pageSource).toContain("export const ComposerContainer = memo(ComposerContainerInner)");
+  expect(pageSource).toContain("function ConversationComposerInner");
+  expect(pageSource).toContain("export const ConversationComposer = memo(ConversationComposerInner)");
   expect(pageSource).toContain("const { command, commandCursor, mentionIndex, attachments } = useManagerSelector(");
   expect(pageSource).toContain('type HomeAppState = Omit<HomeUiState, "command" | "commandCursor" | "mentionIndex" | "attachments">;');
+  expect(pageSource).toContain("const handleComposerInterruptQueuedMessage = useCallback(");
+  expect(pageSource).toContain("const handleComposerCancelQueuedMessage = useCallback(");
+  expect(pageSource).toContain("const handleComposerSendConversationMessage = useCallback(");
+  expect(pageSource).toContain("const handleComposerRunCommand = useCallback(");
 });
 
 test("selecting a session preserves its restored composer draft", () => {
@@ -199,10 +206,10 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain("disabled={isSubmitButtonDisabled}");
   expect(pageSource).toContain("aria-label={sendButtonAriaLabel}");
   expect(pageSource).toContain('composerBehavior.submitAction === "stop"');
-  expect(pageSource).toContain("stopSupervisor.mutate({ runId: selectedRunId })");
-  expect(pageSource).toContain("stopWorker.mutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId })");
+  expect(pageSource).toContain("stopSupervisorMutate({ runId: selectedRunId })");
+  expect(pageSource).toContain("stopWorkerMutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId })");
   expect(pageSource).toContain("if (selectedRunId) {");
-  expect(pageSource).toContain("sendConversationMessage.mutate({ runId: selectedRunId, content, attachments, busyAction })");
+  expect(pageSource).toContain("sendConversationMessageMutate({ runId: selectedRunId, content, attachments, busyAction })");
   expect(pageSource).toContain("resolveBusyMessageActionForSubmitAction(composerBehavior.submitAction");
   expect(pageSource).toContain("composerBehavior.allowAlternateBusyAction && useAlternateBusyAction");
   expect(pageSource).toContain("shouldUseAlternateComposerSubmitKeyDown({");
@@ -224,7 +231,7 @@ test("queued message drawer force-send arrow interrupts the active turn", () => 
   const cancelIndex = drawerSource.indexOf('queued.message.cancelAria');
 
   expect(pageSource).toContain("onInterruptQueuedMessage");
-  expect(pageSource).toContain("interruptQueuedMessage.mutate({ runId: selectedRunId, messageId })");
+  expect(pageSource).toContain("interruptQueuedMessageMutate({ runId: selectedRunId, messageId })");
   expect(drawerSource).toContain("onInterruptSendNow: (messageId: string) => void;");
   expect(drawerSource).toContain("onClick={() => onInterruptSendNow(message.id)}");
   expect(drawerSource).toContain('<ArrowUp className="h-[17px] w-[17px]" />');

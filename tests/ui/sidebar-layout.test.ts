@@ -886,3 +886,13 @@ test("empty state centers the composer with the welcome stack instead of docking
   expect(pageSource).not.toContain("Welcome to OmniHarness");
   expect(pageSource).not.toContain("{getConversationModeCopy(selectedConversationMode).description}");
 });
+
+test("live event updates reuse sidebar project derivations while typing stays responsive", () => {
+  expect(pageSource).toContain("const groupedProjects = useMemo(() => buildConversationGroups({");
+  expect(pageSource).toContain("}), [explicitProjects, plans, runs]);");
+  expect(pageSource).toContain("const filteredProjects = useMemo(() => {");
+  expect(pageSource).toContain("const normalizedSearchQuery = searchQuery.toLowerCase();");
+  expect(pageSource).toContain("}, [groupedProjects, searchQuery]);");
+  expect(pageSource).toContain("buildActiveConversationGroups({");
+  expect(pageSource).toContain("}, [groupedProjects, state.messages, state.workers, state.agents, state.queuedMessages, readMarkers, searchQuery, selectedRunId]);");
+});

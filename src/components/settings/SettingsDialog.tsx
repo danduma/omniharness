@@ -7,7 +7,7 @@ import { requestBugDropOpen } from "@/components/BugDropBootstrap";
 import type { SettingsDraftState } from "@/app/home/SettingsDraftManager";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { appErrorKey } from "@/lib/app-errors";
-import type { LlmProfileTab, SettingsResponse, SettingsTab, WorkerAvailability, WorkerCatalogResponse } from "@/app/home/types";
+import type { AccountRecord, LlmProfileTab, SettingsResponse, SettingsTab, WorkerAvailability, WorkerCatalogResponse } from "@/app/home/types";
 import { cn } from "@/lib/utils";
 import { ErrorNotice } from "@/components/home/ErrorNotice";
 import { buildInlineError } from "@/app/home/utils";
@@ -42,6 +42,9 @@ interface SettingsDialogProps {
   discardSettingsDraft: () => void;
   secretStates?: Record<string, { configured: boolean; updatedAt: string; preview?: string }>;
   settingsWorkers: WorkerAvailability[];
+  accounts: AccountRecord[];
+  onAccountsChanged: (accounts: AccountRecord[]) => void;
+  onRefreshAccounts: () => Promise<void>;
   workerCatalogQuery: {
     isError: boolean;
     isFetching?: boolean;
@@ -72,6 +75,9 @@ export function SettingsDialog({
   discardSettingsDraft,
   secretStates,
   settingsWorkers,
+  accounts,
+  onAccountsChanged,
+  onRefreshAccounts,
   workerCatalogQuery,
   onRefreshWorkerCatalog,
   workerCatalogRefreshing,
@@ -156,6 +162,9 @@ export function SettingsDialog({
                 settings={settingsDraft.draft}
                 setSetting={setSetting}
                 settingsWorkers={settingsWorkers}
+                accounts={accounts}
+                onAccountsChanged={onAccountsChanged}
+                onRefreshAccounts={onRefreshAccounts}
                 workerModels={workerCatalogQuery.data?.workerModels}
                 workerModelsRefreshing={workerCatalogQuery.data?.workerModelsRefreshing}
                 workerCatalogQuery={workerCatalogQuery}

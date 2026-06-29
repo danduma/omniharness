@@ -15,14 +15,15 @@ import { WORKER_OPTIONS } from "./constants";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
 import { conversationNotificationManager } from "./ConversationNotificationManager";
 import { sideWindowManager } from "./SideWindowManager";
-import { parseBusyMessageAction } from "./busy-message-behavior";
+import { parseBusyMessageAction, type BusyMessageAction } from "./busy-message-behavior";
+import type { PendingChatAttachment } from "@/lib/chat-attachments";
 import {
   hasPendingHumanInputSignal,
   isMutationPendingForSelectedRun,
   resolveDirectControlPendingAssistantStatus,
   resolvePendingConversationWorkerId,
 } from "./direct-control-activity";
-import { cancelInactiveAutoResumeTimers, shouldFireAutoResumeTimer } from "./auto-resume-selection";
+import { cancelInactiveAutoResumeTimers, isPermanentAutoResumeFailure, shouldFireAutoResumeTimer } from "./auto-resume-selection";
 import { EventStreamStateManager } from "./EventStreamStateManager";
 import {
   homeUiSetters,
@@ -67,6 +68,8 @@ import { sessionStateManager } from "./SessionStateManager";
 import { t } from "@/lib/i18n";
 import { StateManager } from "@/lib/state-manager";
 import { workersSidebarManager } from "@/components/component-state-managers";
+import { requestJson } from "@/lib/app-errors";
+import type { AccountRecord } from "./types";
 
 const FolderPickerDialog = dynamic(
   () => import("@/components/FolderPickerDialog").then((m) => m.FolderPickerDialog),
@@ -98,6 +101,7 @@ const InteractiveTerminal = dynamic(
 );
 
 const ONBOARDING_SEEN_STORAGE_KEY = "omni.onboarding.seen";
+const EMPTY_PROJECT_FILES: string[] = [];
 let appliedHomeBootstrapId: string | null = null;
 
 class AutoResumeExhaustionManager extends StateManager<Set<string>> {
@@ -236,6 +240,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     hasReceivedInitialEventStreamPayload,
     selectedConversationMode,
     selectedCliAgent,
+    selectedWorkerAccountId,
     selectedModel,
     selectedEffort,
     hydratedRunSelectionId,
@@ -282,6 +287,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     setHasReceivedInitialEventStreamPayload,
     setSelectedConversationMode,
     setSelectedCliAgent,
+    setSelectedWorkerAccountId,
     setSelectedModel,
     setSelectedEffort,
     setHydratedRunSelectionId,
@@ -460,6 +466,14 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     initialQueries: bootstrap?.initialQueries,
   });
 
+  const refreshAccounts = useCallback(async () => {
+    const nextAccounts = await requestJson<AccountRecord[]>("/api/accounts", undefined, {
+      source: "Accounts",
+      action: "Load accounts",
+    });
+    stateManager.update((current) => ({ ...current, accounts: nextAccounts }));
+  }, [stateManager]);
+
   // View model
   const vm = useHomeViewModel({
     state,
@@ -539,6 +553,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   const stableActiveProjects = useFrozenRecentOrder(
     activeProjects as SidebarGroup[],
     conversationSidebarTab === "recent",
+    filteredProjects as SidebarGroup[],
   );
 
   // A conversation created optimistically in this session is fully known to
@@ -597,6 +612,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     setState,
     selectedRunId,
     selectedCliAgent,
+    selectedWorkerAccountId,
     selectedConversationMode,
     selectedModel,
     selectedEffort,
@@ -760,6 +776,24 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     setSelectedModel(activeWorkerModelOptions[0].value);
   }, [activeWorkerModelOptions, vm.activeWorkerModelType, selectedModel, setSelectedModel]);
 
+  const effectiveComposerWorkerType = selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent;
+  const composerAccountOptions = useMemo(() => {
+    const options = [{ value: "auto", label: t("conversation.composer.account.auto") }];
+    if (!effectiveComposerWorkerType) return options;
+    for (const account of state.accounts ?? []) {
+      if (!account.enabled) continue;
+      if (account.cliType && account.cliType !== effectiveComposerWorkerType) continue;
+      options.push({
+        value: account.id,
+        label: account.label || `${account.provider} ${account.type}`,
+      });
+    }
+    return options;
+  }, [effectiveComposerWorkerType, state.accounts]);
+  const effectiveSelectedWorkerAccountId = composerAccountOptions.some((option) => option.value === selectedWorkerAccountId)
+    ? selectedWorkerAccountId
+    : "auto";
+
   // Pre-warm the worker the user is about to use. Overlapping ACP startup
   // (~3–30 s depending on CLI) with composer typing keeps "press Send → first
   // token" close to model latency instead of model + worker boot. Bridge dedups
@@ -773,7 +807,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     if (!currentProjectScope) return;
     if (!effectivePrewarmType) return;
     const modelKey = selectedModel ?? "";
-    const slot = `${currentProjectScope}::${effectivePrewarmType}::${modelKey}`;
+    const slot = `${currentProjectScope}::${effectivePrewarmType}::${modelKey}::${effectiveSelectedWorkerAccountId}`;
     if (prewarmedWorkerSlotsRef.current.has(slot)) return;
     prewarmedWorkerSlotsRef.current.add(slot);
     void fetch("/api/agents/prewarm-worker", {
@@ -783,12 +817,13 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
         type: effectivePrewarmType,
         cwd: currentProjectScope,
         model: selectedModel ?? null,
+        accountId: effectiveSelectedWorkerAccountId === "auto" ? null : effectiveSelectedWorkerAccountId,
       }),
       credentials: "same-origin",
     }).catch(() => {
       prewarmedWorkerSlotsRef.current.delete(slot);
     });
-  }, [appUnlocked, currentProjectScope, effectivePrewarmType, selectedModel]);
+  }, [appUnlocked, currentProjectScope, effectivePrewarmType, effectiveSelectedWorkerAccountId, selectedModel]);
 
   // Keep non-worker conversations from leaving the workspace side window open.
   useEffect(() => {
@@ -864,6 +899,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
       || (!isImplementationConversation && !isDirectConversation)
       || selectedRun.status !== "failed"
       || failedWorkerAvailability?.availability.status !== "ok"
+      || isPermanentAutoResumeFailure(selectedAutoResumeFailureKey)
       || workerFailureDetail || !latestUserCheckpoint || isRecoverRunPendingForSelectedRun
     ) return;
 
@@ -1068,18 +1104,65 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   const pairDeviceAvailabilityError = !authEnabled
     ? "Phone pairing requires OmniHarness auth. Set OMNIHARNESS_AUTH_PASSWORD or OMNIHARNESS_AUTH_PASSWORD_HASH and restart, then open Connect Phone again."
     : authConfigurationError;
+  const stopSupervisorMutate = stopSupervisor.mutate;
+  const stopWorkerMutate = stopWorker.mutate;
+  const interruptQueuedMessageMutate = interruptQueuedMessage.mutate;
+  const cancelQueuedMessageMutate = cancelQueuedMessage.mutate;
+  const sendConversationMessageMutate = sendConversationMessage.mutate;
+  const runCommandMutate = runCommand.mutate;
 
-  const handleStopConversation = () => {
+  const handleStopConversation = useCallback(() => {
     if (!selectedRunId || isStopConversationPending) return;
-    if (isSupervisorRunning) { stopSupervisor.mutate({ runId: selectedRunId }); return; }
-    if (stoppableConversationWorkerId) stopWorker.mutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId });
-  };
+    if (isSupervisorRunning) { stopSupervisorMutate({ runId: selectedRunId }); return; }
+    if (stoppableConversationWorkerId) stopWorkerMutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId });
+  }, [
+    isStopConversationPending,
+    isSupervisorRunning,
+    selectedRunId,
+    stopSupervisorMutate,
+    stopWorkerMutate,
+    stoppableConversationWorkerId,
+  ]);
+
+  const handleComposerEditQueuedMessage = useCallback((message: { id: string; runId: string; content: string }) => {
+    const nextCommand = message.content;
+    homeUiSetters.setCommand(nextCommand);
+    homeUiSetters.setCommandCursor(nextCommand.length);
+    homeUiSetters.clearAttachments();
+    cancelQueuedMessageMutate({ runId: message.runId, messageId: message.id });
+    requestAnimationFrame(() => {
+      commandInputRef.current?.focus();
+      commandInputRef.current?.setSelectionRange(nextCommand.length, nextCommand.length);
+    });
+  }, [cancelQueuedMessageMutate]);
+
+  const handleComposerInterruptQueuedMessage = useCallback((messageId: string) => {
+    if (selectedRunId) interruptQueuedMessageMutate({ runId: selectedRunId, messageId });
+  }, [interruptQueuedMessageMutate, selectedRunId]);
+
+  const handleComposerCancelQueuedMessage = useCallback((messageId: string) => {
+    if (selectedRunId) cancelQueuedMessageMutate({ runId: selectedRunId, messageId });
+  }, [cancelQueuedMessageMutate, selectedRunId]);
+
+  const handleComposerInterruptConversation = useCallback((draft: { content: string; attachments: PendingChatAttachment[] } | null) => {
+    if (selectedRunId) interruptQueuedMessageMutate({ runId: selectedRunId, draft: draft ?? undefined });
+  }, [interruptQueuedMessageMutate, selectedRunId]);
+
+  const handleComposerSendConversationMessage = useCallback((content: string, attachments: PendingChatAttachment[], busyAction?: BusyMessageAction) => {
+    if (selectedRunId) sendConversationMessageMutate({ runId: selectedRunId, content, attachments, busyAction });
+  }, [selectedRunId, sendConversationMessageMutate]);
+
+  const handleComposerRunCommand = useCallback((content: string, attachments: PendingChatAttachment[]) => {
+    runCommandMutate({ content, attachments, projectPath: currentProjectScope, requestedRunId: createClientRunId() });
+  }, [currentProjectScope, runCommandMutate]);
+
+  const composerProjectFiles = projectFilesQuery.data?.files ?? EMPTY_PROJECT_FILES;
 
   const handleReload = useCallback(() => {
     try {
       window.localStorage.removeItem("omni-event-stream-snapshot-cache:v1");
       window.localStorage.removeItem("omni-worker-entries-cache:v1");
-    } catch (e) {
+    } catch {
       // ignore
     }
     window.location.reload();
@@ -1093,7 +1176,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
       selectedConversationMode={activeComposerMode}
       setSelectedConversationMode={setSelectedConversationMode}
       currentProjectScope={currentProjectScope}
-      projectFiles={projectFilesQuery.data?.files ?? []}
+      projectFiles={composerProjectFiles}
       projectFilesIsFetched={projectFilesQuery.isFetched}
       onOpenProjectFile={actions.handleOpenProjectFile}
       themeMode={themeMode}
@@ -1102,6 +1185,9 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
       selectedCliAgent={selectedCliAgent}
       setSelectedCliAgent={setSelectedCliAgent}
       composerWorkerOptions={composerWorkerOptions}
+      selectedWorkerAccountId={effectiveSelectedWorkerAccountId}
+      setSelectedWorkerAccountId={setSelectedWorkerAccountId}
+      composerAccountOptions={composerAccountOptions}
       selectedModel={selectedModel}
       setSelectedModel={setSelectedModel}
       activeWorkerModelOptions={activeWorkerModelOptions}
@@ -1115,20 +1201,12 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
       queuedMessages={selectedQueuedMessages}
       cancellingQueuedMessageIds={busyMessageQueueState.cancellingMessageIds}
       interruptingQueuedMessageIds={busyMessageQueueState.interruptingMessageIds}
-      onEditQueuedMessage={actions.handleEditQueuedMessage}
-      onInterruptQueuedMessage={(messageId) => {
-        if (selectedRunId) interruptQueuedMessage.mutate({ runId: selectedRunId, messageId });
-      }}
-      onCancelQueuedMessage={(messageId) => {
-        if (selectedRunId) cancelQueuedMessage.mutate({ runId: selectedRunId, messageId });
-      }}
-      onInterruptConversation={(draft) => {
-        if (selectedRunId) interruptQueuedMessage.mutate({ runId: selectedRunId, draft: draft ?? undefined });
-      }}
-      onSendConversationMessage={(content, attachments, busyAction) => {
-        if (selectedRunId) sendConversationMessage.mutate({ runId: selectedRunId, content, attachments, busyAction });
-      }}
-      onRunCommand={(content, attachments) => runCommand.mutate({ content, attachments, projectPath: currentProjectScope, requestedRunId: createClientRunId() })}
+      onEditQueuedMessage={handleComposerEditQueuedMessage}
+      onInterruptQueuedMessage={handleComposerInterruptQueuedMessage}
+      onCancelQueuedMessage={handleComposerCancelQueuedMessage}
+      onInterruptConversation={handleComposerInterruptConversation}
+      onSendConversationMessage={handleComposerSendConversationMessage}
+      onRunCommand={handleComposerRunCommand}
       onStopConversation={handleStopConversation}
     />
   );
@@ -1448,6 +1526,9 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
         discardSettingsDraft={() => settingsDraftManager.discardDraft()}
         secretStates={settingsQuery.data?.secrets}
         settingsWorkers={settingsWorkers}
+        accounts={state.accounts}
+        onAccountsChanged={(nextAccounts) => stateManager.update((current) => ({ ...current, accounts: nextAccounts }))}
+        onRefreshAccounts={refreshAccounts}
         workerCatalogQuery={workerCatalogQuery}
         onRefreshWorkerCatalog={() => refreshWorkerCatalog.mutate()}
         workerCatalogRefreshing={refreshWorkerCatalog.isPending || workerCatalogQuery.isFetching}

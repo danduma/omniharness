@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   cancelInactiveAutoResumeTimers,
+  isPermanentAutoResumeFailure,
   shouldFireAutoResumeTimer,
   shouldSelectRecoveredRunAfterSuccess,
 } from "@/app/home/auto-resume-selection";
@@ -132,6 +133,32 @@ describe("auto-resume selection guards", () => {
         activeRunId: "failed-run",
         isAutoResumableConversation: true,
         selectedRunStatus: "running",
+        failedWorkerAvailabilityStatus: "ok",
+        hasWorkerFailureDetail: false,
+        recoverRunIsPending: false,
+      })).toBe(false);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
+  it("does not auto-resume permanent account and billing failures", () => {
+    const timer = setTimeout(() => undefined, 10_000);
+    const failureKey = ":The run cannot continue due to an API billing error (402 Runner billing required: cap_exceeded). Please check your billing status and try again.";
+    const entries = new Map([
+      ["failed-run", { failureKey, targetMessageId: "message-a", timerId: timer }],
+    ]);
+
+    try {
+      expect(isPermanentAutoResumeFailure(failureKey)).toBe(true);
+      expect(shouldFireAutoResumeTimer({
+        entries,
+        runId: "failed-run",
+        failureKey,
+        targetMessageId: "message-a",
+        activeRunId: "failed-run",
+        isAutoResumableConversation: true,
+        selectedRunStatus: "failed",
         failedWorkerAvailabilityStatus: "ok",
         hasWorkerFailureDetail: false,
         recoverRunIsPending: false,

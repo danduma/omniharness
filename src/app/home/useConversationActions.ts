@@ -239,7 +239,7 @@ export function useConversationActions({
 
   const handleRetryMessage = (messageId: string) => {
     if (!selectedRunId) return;
-    mutations.recoverRun.mutate({ runId: selectedRunId, action: "retry", targetMessageId: messageId });
+    mutations.recoverRun.mutate({ runId: selectedRunId, action: "retry", targetMessageId: messageId, manualRecovery: true });
   };
 
   const handleResumeRunRecovery = () => {

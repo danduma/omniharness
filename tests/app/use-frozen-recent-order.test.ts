@@ -19,9 +19,10 @@ vi.mock("react", () => ({
 const useRenderFrozenRecentOrder = (
   groups: SidebarGroup[],
   active: boolean,
+  allGroups: SidebarGroup[] = groups,
 ): SidebarGroup[] => {
   refIndex = 0;
-  return useFrozenRecentOrder(groups, active);
+  return useFrozenRecentOrder(groups, active, allGroups);
 };
 
 function group(path: string, runIds: string[], statusById: Record<string, string> = {}): SidebarGroup {
@@ -77,5 +78,22 @@ describe("useFrozenRecentOrder", () => {
 
     expect(updated.map((project) => project.path)).toEqual(["/project/a"]);
     expect(updated[0].runs.map((run) => run.id)).toEqual(["old-unread"]);
+  });
+
+  it("refreshes snapshotted run status from the full live project list after a run leaves Recent", () => {
+    useRenderFrozenRecentOrder(
+      [group("/project/a", ["finished"], { finished: "running" })],
+      true,
+      [group("/project/a", ["finished"], { finished: "running" })],
+    );
+
+    const updated = useRenderFrozenRecentOrder(
+      [],
+      true,
+      [group("/project/a", ["finished"], { finished: "done" })],
+    );
+
+    expect(updated[0].runs.map((run) => run.id)).toEqual(["finished"]);
+    expect(updated[0].runs[0].status).toBe("done");
   });
 });

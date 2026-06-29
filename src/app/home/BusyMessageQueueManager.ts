@@ -45,6 +45,67 @@ function isStaleServerAbsentActiveMessage(
   return absentUpdatedAt !== undefined && timestampMs(message.updatedAt) <= absentUpdatedAt;
 }
 
+function attachmentsEqual(
+  left: QueuedConversationMessageRecord["attachments"],
+  right: QueuedConversationMessageRecord["attachments"],
+) {
+  const leftAttachments = left ?? [];
+  const rightAttachments = right ?? [];
+  if (leftAttachments.length !== rightAttachments.length) {
+    return false;
+  }
+  return leftAttachments.every((attachment, index) => JSON.stringify(attachment) === JSON.stringify(rightAttachments[index]));
+}
+
+function queuedMessageRecordsEqual(left: QueuedConversationMessageRecord, right: QueuedConversationMessageRecord) {
+  return left.id === right.id
+    && left.runId === right.runId
+    && left.targetWorkerId === right.targetWorkerId
+    && left.action === right.action
+    && left.content === right.content
+    && left.status === right.status
+    && left.lastError === right.lastError
+    && left.createdAt === right.createdAt
+    && left.updatedAt === right.updatedAt
+    && left.deliveredAt === right.deliveredAt
+    && attachmentsEqual(left.attachments, right.attachments);
+}
+
+function queuedMessageArraysEqual(left: QueuedConversationMessageRecord[], right: QueuedConversationMessageRecord[]) {
+  return left.length === right.length
+    && left.every((message, index) => queuedMessageRecordsEqual(message, right[index]!));
+}
+
+function setsEqual<T>(left: Set<T>, right: Set<T>) {
+  if (left === right) {
+    return true;
+  }
+  if (left.size !== right.size) {
+    return false;
+  }
+  for (const value of left) {
+    if (!right.has(value)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function mapsEqual<TKey, TValue>(left: Map<TKey, TValue>, right: Map<TKey, TValue>) {
+  if (left === right) {
+    return true;
+  }
+  if (left.size !== right.size) {
+    return false;
+  }
+  for (const [key, value] of left) {
+    if (!Object.is(right.get(key), value)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState> {
   constructor() {
     super(initialBusyMessageQueueState);
@@ -89,11 +150,22 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
       for (const message of incomingMessages) {
         serverAbsentMessageUpdatedAtById.delete(message.id);
       }
+      const queuedMessages = incomingMessages.filter((message) => !current.locallyHiddenMessageIds.has(message.id));
+      const cancellingMessageIds = clearSettled(current.cancellingMessageIds);
+      const interruptingMessageIds = clearSettled(current.interruptingMessageIds);
+      if (
+        queuedMessageArraysEqual(current.queuedMessages, queuedMessages)
+        && setsEqual(current.cancellingMessageIds, cancellingMessageIds)
+        && setsEqual(current.interruptingMessageIds, interruptingMessageIds)
+        && mapsEqual(current.serverAbsentMessageUpdatedAtById, serverAbsentMessageUpdatedAtById)
+      ) {
+        return current;
+      }
       return {
         ...current,
-        queuedMessages: incomingMessages.filter((message) => !current.locallyHiddenMessageIds.has(message.id)),
-        cancellingMessageIds: clearSettled(current.cancellingMessageIds),
-        interruptingMessageIds: clearSettled(current.interruptingMessageIds),
+        queuedMessages,
+        cancellingMessageIds,
+        interruptingMessageIds,
         serverAbsentMessageUpdatedAtById,
       };
     }, notify);
