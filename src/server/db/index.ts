@@ -4,7 +4,7 @@ import * as schema from './schema';
 import { getAppDataPath } from '@/server/app-root';
 
 const dbPath = getAppDataPath('sqlite.db');
-const DB_SCHEMA_VERSION = 3;
+const DB_SCHEMA_VERSION = 4;
 type DbClient = ReturnType<typeof createClient>;
 
 async function tableColumns(client: DbClient, table: string): Promise<Set<string>> {
@@ -41,10 +41,11 @@ CREATE TABLE IF NOT EXISTS runs (
   phase text,
   project_path text,
   title text,
-  preferred_worker_type text,
-  preferred_worker_model text,
-  preferred_worker_effort text,
-  allowed_worker_types text,
+	  preferred_worker_type text,
+	  preferred_worker_model text,
+	  preferred_worker_effort text,
+	  preferred_worker_account_id text,
+	  allowed_worker_types text,
   spec_path text,
   artifact_plan_path text,
   planner_artifacts_json text,
@@ -192,12 +193,82 @@ CREATE TABLE IF NOT EXISTS supervisor_scheduled_wakes (
 
 CREATE TABLE IF NOT EXISTS accounts (
   id text PRIMARY KEY NOT NULL,
+  cli_type text,
   provider text NOT NULL,
   type text NOT NULL,
+  label text,
+  auth_mode text NOT NULL DEFAULT 'legacy_ref',
   auth_ref text NOT NULL,
+  enabled integer NOT NULL DEFAULT 1,
+  priority integer NOT NULL DEFAULT 0,
   capacity integer,
   reset_schedule text,
-  created_at integer NOT NULL
+  status text,
+  status_checked_at integer,
+  metadata_json text,
+  created_at integer NOT NULL,
+  updated_at integer
+);
+
+CREATE TABLE IF NOT EXISTS account_secrets (
+  id text PRIMARY KEY NOT NULL,
+  account_id text NOT NULL,
+  secret_kind text NOT NULL,
+  secret_ref text,
+  encrypted_value text NOT NULL,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE IF NOT EXISTS worker_credential_allocations (
+  id text PRIMARY KEY NOT NULL,
+  run_id text NOT NULL,
+  worker_id text NOT NULL,
+  worker_type text NOT NULL,
+  account_id text NOT NULL,
+  strategy text NOT NULL,
+  selection_reason text,
+  explicit integer NOT NULL DEFAULT 0,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action,
+  FOREIGN KEY (worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE no action,
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE IF NOT EXISTS worker_token_usage (
+  id text PRIMARY KEY NOT NULL,
+  run_id text NOT NULL,
+  worker_id text,
+  worker_type text NOT NULL,
+  account_id text NOT NULL,
+  model text,
+  input_tokens integer NOT NULL DEFAULT 0,
+  output_tokens integer NOT NULL DEFAULT 0,
+  cache_read_tokens integer NOT NULL DEFAULT 0,
+  cache_write_tokens integer NOT NULL DEFAULT 0,
+  cost_usd real NOT NULL DEFAULT 0,
+  occurred_at integer NOT NULL,
+  created_at integer NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action,
+  FOREIGN KEY (worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE no action,
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE IF NOT EXISTS account_usage_snapshots (
+  id text PRIMARY KEY NOT NULL,
+  account_id text NOT NULL,
+  worker_type text NOT NULL,
+  window_key text NOT NULL,
+  used_tokens integer NOT NULL DEFAULT 0,
+  remaining_tokens integer,
+  cost_usd real NOT NULL DEFAULT 0,
+  reset_at integer,
+  source text NOT NULL,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON UPDATE no action ON DELETE no action
 );
 
 CREATE TABLE IF NOT EXISTS credit_events (
@@ -445,6 +516,10 @@ if (!runColumnNames.has("preferred_worker_effort")) {
   await client.execute("ALTER TABLE runs ADD COLUMN preferred_worker_effort text;");
 }
 
+if (!runColumnNames.has("preferred_worker_account_id")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN preferred_worker_account_id text;");
+}
+
 if (!runColumnNames.has("allowed_worker_types")) {
   await client.execute("ALTER TABLE runs ADD COLUMN allowed_worker_types text;");
 }
@@ -636,6 +711,44 @@ if (!messageColumnNames.has("attachments_json")) {
   await client.execute("ALTER TABLE messages ADD COLUMN attachments_json text;");
 }
 
+const accountColumnNames = await tableColumns(client, "accounts");
+
+if (!accountColumnNames.has("cli_type")) {
+  await client.execute("ALTER TABLE accounts ADD COLUMN cli_type text;");
+}
+
+if (!accountColumnNames.has("label")) {
+  await client.execute("ALTER TABLE accounts ADD COLUMN label text;");
+}
+
+if (!accountColumnNames.has("auth_mode")) {
+  await client.execute("ALTER TABLE accounts ADD COLUMN auth_mode text NOT NULL DEFAULT 'legacy_ref';");
+}
+
+if (!accountColumnNames.has("enabled")) {
+  await client.execute("ALTER TABLE accounts ADD COLUMN enabled integer NOT NULL DEFAULT 1;");
+}
+
+if (!accountColumnNames.has("priority")) {
+  await client.execute("ALTER TABLE accounts ADD COLUMN priority integer NOT NULL DEFAULT 0;");
+}
+
+if (!accountColumnNames.has("status")) {
+  await client.execute("ALTER TABLE accounts ADD COLUMN status text;");
+}
+
+if (!accountColumnNames.has("status_checked_at")) {
+  await client.execute("ALTER TABLE accounts ADD COLUMN status_checked_at integer;");
+}
+
+if (!accountColumnNames.has("metadata_json")) {
+  await client.execute("ALTER TABLE accounts ADD COLUMN metadata_json text;");
+}
+
+if (!accountColumnNames.has("updated_at")) {
+  await client.execute("ALTER TABLE accounts ADD COLUMN updated_at integer;");
+}
+
 // ── v1 → v2: append-only artifact storage ──────────────────────────
 // Add the new metadata columns on each domain table that gains an
 // artifact stream. ALTER ADD COLUMN is safe with default NULL.
@@ -709,6 +822,14 @@ CREATE INDEX IF NOT EXISTS queued_conversation_messages_pending_run_created_id_d
 CREATE INDEX IF NOT EXISTS recovery_incidents_run_status_updated_idx ON recovery_incidents(run_id, status, updated_at);
 CREATE INDEX IF NOT EXISTS recovery_incidents_run_updated_id_desc_idx ON recovery_incidents(run_id, updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS supervisor_scheduled_wakes_wake_at_idx ON supervisor_scheduled_wakes(wake_at);
+CREATE INDEX IF NOT EXISTS accounts_cli_type_enabled_priority_idx ON accounts(cli_type, enabled, priority);
+CREATE INDEX IF NOT EXISTS account_secrets_account_idx ON account_secrets(account_id);
+CREATE INDEX IF NOT EXISTS worker_credential_allocations_worker_idx ON worker_credential_allocations(worker_id);
+CREATE INDEX IF NOT EXISTS worker_credential_allocations_run_idx ON worker_credential_allocations(run_id);
+CREATE INDEX IF NOT EXISTS worker_credential_allocations_account_idx ON worker_credential_allocations(account_id);
+CREATE INDEX IF NOT EXISTS worker_token_usage_account_occurred_idx ON worker_token_usage(account_id, occurred_at);
+CREATE INDEX IF NOT EXISTS worker_token_usage_worker_idx ON worker_token_usage(worker_id);
+CREATE INDEX IF NOT EXISTS account_usage_snapshots_account_window_idx ON account_usage_snapshots(account_id, window_key);
 CREATE INDEX IF NOT EXISTS runs_created_idx ON runs(created_at);
 CREATE INDEX IF NOT EXISTS runs_archived_created_id_desc_idx ON runs(archived_at, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS plans_created_idx ON plans(created_at);

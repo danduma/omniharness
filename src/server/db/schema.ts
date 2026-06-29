@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
 
 export const plans = sqliteTable('plans', {
   id: text('id').primaryKey(),
@@ -22,6 +22,7 @@ export const runs = sqliteTable('runs', {
   preferredWorkerType: text('preferred_worker_type'),
   preferredWorkerModel: text('preferred_worker_model'),
   preferredWorkerEffort: text('preferred_worker_effort'),
+  preferredWorkerAccountId: text('preferred_worker_account_id'),
   allowedWorkerTypes: text('allowed_worker_types'),
   specPath: text('spec_path'),
   artifactPlanPath: text('artifact_plan_path'),
@@ -159,12 +160,74 @@ export const supervisorScheduledWakes = sqliteTable('supervisor_scheduled_wakes'
 
 export const accounts = sqliteTable('accounts', {
   id: text('id').primaryKey(),
+  cliType: text('cli_type'),
   provider: text('provider').notNull(),
   type: text('type').notNull(), // 'subscription' | 'api'
+  label: text('label'),
+  authMode: text('auth_mode').notNull().default('legacy_ref'),
   authRef: text('auth_ref').notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  priority: integer('priority').notNull().default(0),
   capacity: integer('capacity'),
   resetSchedule: text('reset_schedule'),
+  status: text('status'),
+  statusCheckedAt: integer('status_checked_at', { mode: 'timestamp' }),
+  metadataJson: text('metadata_json'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }),
+});
+
+export const accountSecrets = sqliteTable('account_secrets', {
+  id: text('id').primaryKey(),
+  accountId: text('account_id').references(() => accounts.id).notNull(),
+  secretKind: text('secret_kind').notNull(),
+  secretRef: text('secret_ref'),
+  encryptedValue: text('encrypted_value').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const workerCredentialAllocations = sqliteTable('worker_credential_allocations', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').references(() => runs.id).notNull(),
+  workerId: text('worker_id').references(() => workers.id).notNull(),
+  workerType: text('worker_type').notNull(),
+  accountId: text('account_id').references(() => accounts.id).notNull(),
+  strategy: text('strategy').notNull(),
+  selectionReason: text('selection_reason'),
+  explicit: integer('explicit', { mode: 'boolean' }).notNull().default(false),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const workerTokenUsage = sqliteTable('worker_token_usage', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').references(() => runs.id).notNull(),
+  workerId: text('worker_id').references(() => workers.id),
+  workerType: text('worker_type').notNull(),
+  accountId: text('account_id').references(() => accounts.id).notNull(),
+  model: text('model'),
+  inputTokens: integer('input_tokens').notNull().default(0),
+  outputTokens: integer('output_tokens').notNull().default(0),
+  cacheReadTokens: integer('cache_read_tokens').notNull().default(0),
+  cacheWriteTokens: integer('cache_write_tokens').notNull().default(0),
+  costUsd: real('cost_usd').notNull().default(0),
+  occurredAt: integer('occurred_at', { mode: 'timestamp' }).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const accountUsageSnapshots = sqliteTable('account_usage_snapshots', {
+  id: text('id').primaryKey(),
+  accountId: text('account_id').references(() => accounts.id).notNull(),
+  workerType: text('worker_type').notNull(),
+  windowKey: text('window_key').notNull(),
+  usedTokens: integer('used_tokens').notNull().default(0),
+  remainingTokens: integer('remaining_tokens'),
+  costUsd: real('cost_usd').notNull().default(0),
+  resetAt: integer('reset_at', { mode: 'timestamp' }),
+  source: text('source').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });
 
 export const creditEvents = sqliteTable('credit_events', {
