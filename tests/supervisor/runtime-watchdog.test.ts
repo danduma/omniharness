@@ -187,4 +187,38 @@ describe("supervisor runtime watchdog", () => {
     expect(persistedRun?.lastError).toBe("API key not valid");
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
   });
+
+  it("leaves Claude billing cap failures stopped", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+    const lastError = "The run cannot continue due to an API billing error (402 Runner billing required: cap_exceeded). Please check your billing status and try again.";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/billing-cap.md",
+      status: "failed",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "failed",
+      lastError,
+      failedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const { syncRunningSupervision } = await import("@/server/supervisor/runtime-watchdog");
+    await syncRunningSupervision();
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+
+    expect(persistedRun?.status).toBe("failed");
+    expect(persistedRun?.lastError).toBe(lastError);
+    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+  });
 });

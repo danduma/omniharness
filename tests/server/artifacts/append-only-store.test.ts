@@ -110,7 +110,7 @@ describe("appendArtifactLine", () => {
     await expect(stat(location.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("retries when an artifact lock is reclaimed before owner metadata is written", async () => {
+  it("retries when artifact owner metadata hits a transient invalid lock path", async () => {
     const location = makeLocation();
     let failedOwnerWrite = false;
     const originalWriteFile = fsPromises.writeFile.bind(fsPromises);
@@ -118,8 +118,8 @@ describe("appendArtifactLine", () => {
       const target = String(args[0]);
       if (!failedOwnerWrite && target === path.join(location.lockPath, "owner.json")) {
         failedOwnerWrite = true;
-        throw Object.assign(new Error(`ENOENT: no such file or directory, open '${target}'`), {
-          code: "ENOENT",
+        throw Object.assign(new Error(`EINVAL: invalid argument, open '${target}'`), {
+          code: "EINVAL",
           path: target,
         });
       }

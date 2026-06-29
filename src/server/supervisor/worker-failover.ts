@@ -26,6 +26,7 @@ import {
   type SupportedWorkerType,
 } from "@/server/supervisor/worker-types";
 import { runs } from "@/server/db/schema";
+import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
 
 export type FailoverEnv = Record<string, string | undefined>;
 
@@ -319,6 +320,7 @@ export async function attemptWorkerFailover(
   let currentType: SupportedWorkerType = replacementType;
   let lastError: unknown = null;
   const blockedNow = new Set<SupportedWorkerType>([args.outgoingWorkerType]);
+  const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
   while (attempts < maxAttempts) {
     attempts += 1;
     const newWorkerId = await reserveReplacementWorkerRow({
@@ -329,11 +331,21 @@ export async function attemptWorkerFailover(
       initialPrompt: seed,
     });
     try {
+      const accountAllocation = await allocateWorkerAccount({
+        workerType: currentType,
+        runId: args.runId,
+        workerId: newWorkerId,
+        explicitAccountId: run?.preferredWorkerAccountId ?? null,
+        strategy: run?.preferredWorkerAccountId ? "manual" : "priority",
+        env: compactEnv(args.env),
+      });
+      const workerAccountId = accountAllocation.account?.id ?? null;
       const spawned = await bridge.spawnAgent({
         type: currentType,
         cwd: args.cwd,
         name: newWorkerId,
         env: compactEnv(args.env),
+        ...(workerAccountId ? { accountId: workerAccountId } : {}),
       });
       await db.update(workers).set({
         bridgeSessionId: spawned.sessionId ?? null,

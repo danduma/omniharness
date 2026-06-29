@@ -50,7 +50,15 @@ const RETRYABLE_MESSAGE_PATTERNS = [
   /\bnetwork\b/i,
   /\bsocket hang up\b/i,
   /\bother side closed\b/i,
+];
+const PERMANENT_MESSAGE_PATTERNS = [
   /\bworker binary is not installed\b/i,
+  /\bAPI key not valid\b/i,
+  /\bauthentication required\b/i,
+  /\bbilling required\b/i,
+  /\bcap_exceeded\b/i,
+  /\binsufficient quota\b/i,
+  /\bresource exhausted\b/i,
 ];
 
 export interface RetrySupervisorRequestOptions {
@@ -148,6 +156,13 @@ export function isTransientSupervisorError(error: unknown) {
   const explicitOverride = chain.find((entry) => typeof entry.retryable === "boolean");
   if (explicitOverride && typeof explicitOverride.retryable === "boolean") {
     return explicitOverride.retryable;
+  }
+
+  if (chain.some((entry) => {
+    const message = typeof entry.message === "string" ? entry.message : "";
+    return PERMANENT_MESSAGE_PATTERNS.some((pattern) => pattern.test(message));
+  })) {
+    return false;
   }
 
   return chain.some((entry) => {

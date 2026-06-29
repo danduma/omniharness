@@ -66,17 +66,24 @@ function claudeKeychainCredentialsExist(env: EnvLike) {
 type WorkerDetectionOptions = {
   env?: EnvLike;
   commandResolver?: WorkerCommandResolver;
+  cwd?: string;
+  loginShellPathMode?: "blocking" | "cached";
 };
 
-function resolveCommandPath(command: string, env: EnvLike = process.env, commandResolver?: WorkerCommandResolver) {
-  if (commandResolver) {
-    return commandResolver(command, env);
+function resolveCommandPath(command: string, options: WorkerDetectionOptions = {}) {
+  const lookupEnv = withManagedPath(
+    { ...process.env, ...(options.env ?? {}) },
+    options.cwd,
+    { loginShellPathMode: options.loginShellPathMode ?? "cached" },
+  );
+  if (options.commandResolver) {
+    return options.commandResolver(command, lookupEnv);
   }
 
   try {
     return String(execFileSync("which", [command], {
       encoding: "utf8",
-      env: withManagedPath(env, undefined, { loginShellPathMode: "cached" }) as NodeJS.ProcessEnv,
+      env: lookupEnv as NodeJS.ProcessEnv,
       timeout: 1_500,
       maxBuffer: 64 * 1024,
     })).trim() || null;
@@ -85,8 +92,8 @@ function resolveCommandPath(command: string, env: EnvLike = process.env, command
   }
 }
 
-function workerBinaryAvailable(type: SupportedWorkerType, env: EnvLike = process.env, commandResolver?: WorkerCommandResolver) {
-  return resolveCommandPath(WORKER_BINARY_COMMANDS[type], env, commandResolver) !== null;
+function workerBinaryAvailable(type: SupportedWorkerType, options: WorkerDetectionOptions = {}) {
+  return resolveCommandPath(WORKER_BINARY_COMMANDS[type], options) !== null;
 }
 
 function workerHasApiKey(type: SupportedWorkerType) {
@@ -424,6 +431,7 @@ export function getWorkerAuthenticationInfo(type: string, options: WorkerAuthent
     }
 
     if (anyFileExists([
+      join(homeDir, ".gemini", "gemini-credentials.json"),
       join(homeDir, ".gemini", "oauth_creds.json"),
       join(homeDir, ".gemini", "google_account_id"),
       join(homeDir, ".gemini", "google_accounts.json"),
@@ -499,7 +507,7 @@ export function isSpawnableWorkerType(type: string, options: SpawnabilityOptions
   const supportedType = normalized as SupportedWorkerType;
   const env = options.env ?? process.env;
 
-  if (!workerBinaryAvailable(supportedType, env, options.commandResolver)) {
+  if (!workerBinaryAvailable(supportedType, { ...options, env })) {
     const reason =
       supportedType === "codex"
         ? "codex ACP adapter is not installed."
@@ -539,7 +547,7 @@ export function getWorkerInstallationInfo(type: string, options: WorkerDetection
     ? normalized as SupportedWorkerType
     : null;
   const command = supportedType ? WORKER_BINARY_COMMANDS[supportedType] : normalized;
-  const path = resolveCommandPath(command, options.env ?? process.env, options.commandResolver);
+  const path = resolveCommandPath(command, options);
 
   return {
     command,
@@ -552,7 +560,7 @@ export function selectSpawnableWorkerType(
   requestedType: string,
   env: EnvLike,
   allowedTypes: SupportedWorkerType[] = [...SUPPORTED_WORKER_TYPES],
-  options: { quotaBlocked?: ReadonlySet<SupportedWorkerType> } = {},
+  options: Omit<WorkerDetectionOptions, "env"> & { quotaBlocked?: ReadonlySet<SupportedWorkerType> } = {},
 ) {
   const normalizedRequestedType = normalizeWorkerType(requestedType);
   const normalizedAllowedTypes = Array.from(new Set(
@@ -565,7 +573,7 @@ export function selectSpawnableWorkerType(
     if (!firstAllowed) {
       throw new Error("No allowed worker types are configured for this run.");
     }
-    const availability = isSpawnableWorkerType(firstAllowed, { env, quotaBlocked });
+    const availability = isSpawnableWorkerType(firstAllowed, { ...options, env, quotaBlocked });
     if (availability.ok) {
       return {
         type: availability.type,
@@ -575,7 +583,7 @@ export function selectSpawnableWorkerType(
     }
   }
 
-  const requested = isSpawnableWorkerType(normalizedRequestedType, { env, quotaBlocked });
+  const requested = isSpawnableWorkerType(normalizedRequestedType, { ...options, env, quotaBlocked });
   if (requested.ok && normalizedAllowedTypes.includes(requested.type)) {
     return {
       type: requested.type,
@@ -588,7 +596,7 @@ export function selectSpawnableWorkerType(
     if (candidate === normalizedRequestedType || !normalizedAllowedTypes.includes(candidate)) {
       continue;
     }
-    const availability = isSpawnableWorkerType(candidate, { env, quotaBlocked });
+    const availability = isSpawnableWorkerType(candidate, { ...options, env, quotaBlocked });
     if (availability.ok) {
       return {
         type: availability.type,

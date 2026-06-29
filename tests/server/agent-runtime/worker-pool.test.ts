@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
 import { describe, expect, it, vi } from "vitest";
-import { WorkerPool, type WorkerPoolMember } from "@/server/agent-runtime/worker-pool";
+import { computeEnvFingerprint, WorkerPool, type WorkerPoolMember } from "@/server/agent-runtime/worker-pool";
 
 type FakeChild = EventEmitter & {
   pid: number;
@@ -47,6 +47,41 @@ function makeMember(key: string, opts: { warmedAt?: number; child?: FakeChild } 
     warmedAt: opts.warmedAt ?? Date.now(),
   };
 }
+
+describe("computeEnvFingerprint", () => {
+  it("separates prewarmed workers by account-specific CLI homes", () => {
+    const baseEnv: NodeJS.ProcessEnv = {
+      NODE_ENV: "test",
+      PATH: "/usr/bin",
+      HOME: "/Users/tester",
+      CODEX_HOME: "/Users/tester/.omniharness/accounts/codex/work",
+      CODEX_SQLITE_HOME: "/Users/tester/.omniharness/accounts/codex/work-sqlite",
+      CLAUDE_CONFIG_DIR: "/Users/tester/.omniharness/accounts/claude/work",
+      GEMINI_CLI_HOME: "/Users/tester/.omniharness/accounts/gemini/work",
+      OPENCODE_CONFIG_DIR: "/Users/tester/.omniharness/accounts/opencode/work/config",
+      XDG_DATA_HOME: "/Users/tester/.omniharness/accounts/opencode/work/data",
+      XDG_STATE_HOME: "/Users/tester/.omniharness/accounts/opencode/work/state",
+      XDG_CACHE_HOME: "/Users/tester/.omniharness/accounts/opencode/work/cache",
+    };
+
+    expect(computeEnvFingerprint(baseEnv)).not.toBe(computeEnvFingerprint({
+      ...baseEnv,
+      CODEX_HOME: "/Users/tester/.omniharness/accounts/codex/personal",
+    }));
+    expect(computeEnvFingerprint(baseEnv)).not.toBe(computeEnvFingerprint({
+      ...baseEnv,
+      CLAUDE_CONFIG_DIR: "/Users/tester/.omniharness/accounts/claude/personal",
+    }));
+    expect(computeEnvFingerprint(baseEnv)).not.toBe(computeEnvFingerprint({
+      ...baseEnv,
+      GEMINI_CLI_HOME: "/Users/tester/.omniharness/accounts/gemini/personal",
+    }));
+    expect(computeEnvFingerprint(baseEnv)).not.toBe(computeEnvFingerprint({
+      ...baseEnv,
+      XDG_DATA_HOME: "/Users/tester/.omniharness/accounts/opencode/personal/data",
+    }));
+  });
+});
 
 describe("WorkerPool atomic warm reservation", () => {
   it("tryBeginWarm returns true once per slot and false thereafter under maxPerKey=1", () => {

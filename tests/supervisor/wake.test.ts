@@ -230,6 +230,22 @@ describe("executeSupervisorWake", () => {
     expect(mockSupervisorRun).not.toHaveBeenCalled();
   });
 
+  it("does not let a stale past volatile deadline suppress an immediate wake", async () => {
+    vi.useFakeTimers();
+    const runId = randomUUID();
+
+    vi.setSystemTime(0);
+    scheduleSupervisorWake(runId, 1_000);
+    vi.setSystemTime(2_000);
+    scheduleSupervisorWake(runId, 0);
+
+    const events = getNamedEventsSince(0, { runId }).events.map((entry) => entry.event);
+    expect(events).toContainEqual({ kind: "supervisor.wake_scheduled", runId, delayMs: 1_000, source: "lease_retry" });
+    expect(events).toContainEqual({ kind: "supervisor.wake_scheduled", runId, delayMs: 0, source: "volatile" });
+
+    cancelSupervisorWake(runId);
+  });
+
   it("persists wait wakeups so supervisor heartbeats survive reloads", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -471,6 +487,304 @@ describe("executeSupervisorWake", () => {
       runId,
       reason: "orphaned_completion",
     });
+
+    cancelSupervisorWake(runId);
+  });
+
+  it("breaks an orphaned lease when a recreated idle worker needs supervisor continuation", async () => {
+    vi.useFakeTimers();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const beforeRecreate = new Date(Date.now() - 10_000);
+    const afterRecreate = new Date(Date.now() - 5_000);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: beforeRecreate,
+      updatedAt: beforeRecreate,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      createdAt: beforeRecreate,
+      updatedAt: beforeRecreate,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "gemini",
+      status: "idle",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: beforeRecreate,
+      updatedAt: afterRecreate,
+      bridgeSessionId: "new-session",
+    });
+    await db.insert(executionEvents).values([
+      {
+        id: randomUUID(),
+        runId,
+        eventType: "supervisor_turn_ended",
+        details: JSON.stringify({ summary: "Worker is actively working.", nextCheckSeconds: 5 }),
+        createdAt: beforeRecreate,
+      },
+      {
+        id: randomUUID(),
+        runId,
+        workerId,
+        eventType: "worker_session_recreated",
+        details: JSON.stringify({
+          summary: "Started a fresh runtime worker after its saved session was rejected.",
+          rejectedSessionId: "old-session",
+          newSessionId: "new-session",
+        }),
+        createdAt: afterRecreate,
+      },
+      {
+        id: randomUUID(),
+        runId,
+        workerId,
+        eventType: "worker_idle",
+        details: JSON.stringify({ summary: "Worker has been idle for 30 seconds." }),
+        createdAt: new Date(afterRecreate.getTime() + 1_000),
+      },
+    ]);
+    await db.insert(settings).values({
+      key: `SUPERVISOR_WAKE_LEASE:${runId}`,
+      value: JSON.stringify({ leaseId: randomUUID(), expiresAt: Date.now() + 900_000 }),
+      updatedAt: beforeRecreate,
+    });
+
+    mockSupervisorRun.mockResolvedValue({ state: "completed" });
+
+    await executeSupervisorWake(runId);
+    expect(mockSupervisorRun).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockSupervisorRun).toHaveBeenCalledTimes(1);
+    const recoveryEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(recoveryEvents.some((event) => event.eventType === "supervisor_wake_lease_recovered")).toBe(true);
+    const namedEvents = getNamedEventsSince(0, { runId }).events.map((entry) => entry.event);
+    expect(namedEvents).toContainEqual({
+      kind: "supervisor.wake_lease_recovered",
+      runId,
+      reason: "orphaned_worker_session_recreated",
+    });
+
+    cancelSupervisorWake(runId);
+  });
+
+  it("breaks an orphaned pre-worker lease after clarification was answered", async () => {
+    vi.useFakeTimers();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const stale = new Date(Date.now() - 120_000);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: stale,
+      updatedAt: stale,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      createdAt: stale,
+      updatedAt: stale,
+    });
+    await db.insert(clarifications).values({
+      id: randomUUID(),
+      runId,
+      question: "Proceed?",
+      answer: "Yes",
+      status: "answered",
+      createdAt: stale,
+      updatedAt: stale,
+    });
+    await db.insert(executionEvents).values({
+      id: randomUUID(),
+      runId,
+      eventType: "clarification_resolved",
+      details: JSON.stringify({ remainingPending: 0 }),
+      createdAt: stale,
+    });
+    await db.insert(settings).values({
+      key: `SUPERVISOR_WAKE_LEASE:${runId}`,
+      value: JSON.stringify({ leaseId: randomUUID(), expiresAt: Date.now() + 900_000 }),
+      updatedAt: stale,
+    });
+
+    mockSupervisorRun.mockResolvedValue({ state: "completed" });
+
+    await executeSupervisorWake(runId);
+    expect(mockSupervisorRun).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockSupervisorRun).toHaveBeenCalledTimes(1);
+    const recoveryEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(recoveryEvents.some((event) => event.eventType === "supervisor_wake_lease_recovered")).toBe(true);
+    const namedEvents = getNamedEventsSince(0, { runId }).events.map((entry) => entry.event);
+    expect(namedEvents).toContainEqual({
+      kind: "supervisor.wake_lease_recovered",
+      runId,
+      reason: "orphaned_pre_worker",
+    });
+
+    cancelSupervisorWake(runId);
+  });
+
+  it("breaks an orphaned pre-worker lease after an earlier lease recovery still attached no worker", async () => {
+    vi.useFakeTimers();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const stale = new Date(Date.now() - 120_000);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: stale,
+      updatedAt: stale,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      createdAt: stale,
+      updatedAt: stale,
+    });
+    await db.insert(executionEvents).values({
+      id: randomUUID(),
+      runId,
+      eventType: "supervisor_wake_lease_recovered",
+      details: JSON.stringify({ reason: "orphaned_pre_worker" }),
+      createdAt: stale,
+    });
+    await db.insert(settings).values({
+      key: `SUPERVISOR_WAKE_LEASE:${runId}`,
+      value: JSON.stringify({ leaseId: randomUUID(), expiresAt: Date.now() + 900_000 }),
+      updatedAt: stale,
+    });
+
+    mockSupervisorRun.mockResolvedValue({ state: "completed" });
+
+    await executeSupervisorWake(runId);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockSupervisorRun).toHaveBeenCalledTimes(1);
+    const namedEvents = getNamedEventsSince(0, { runId }).events.map((entry) => entry.event);
+    expect(namedEvents).toContainEqual({
+      kind: "supervisor.wake_lease_recovered",
+      runId,
+      reason: "orphaned_pre_worker",
+    });
+
+    cancelSupervisorWake(runId);
+  });
+
+  it("does not break a recent pre-worker lease after a transient supervisor retry", async () => {
+    vi.useFakeTimers();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const recent = new Date(Date.now() - 70_000);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: recent,
+      updatedAt: recent,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      createdAt: recent,
+      updatedAt: recent,
+    });
+    await db.insert(executionEvents).values({
+      id: randomUUID(),
+      runId,
+      eventType: "supervisor_wake_retry_scheduled",
+      details: JSON.stringify({ summary: "Supervisor wake hit a transient error; retrying shortly." }),
+      createdAt: recent,
+    });
+    await db.insert(settings).values({
+      key: `SUPERVISOR_WAKE_LEASE:${runId}`,
+      value: JSON.stringify({ leaseId: randomUUID(), expiresAt: Date.now() + 900_000 }),
+      updatedAt: recent,
+    });
+
+    mockSupervisorRun.mockResolvedValue({ state: "completed" });
+
+    await executeSupervisorWake(runId);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(mockSupervisorRun).not.toHaveBeenCalled();
+    expect(events.some((event) => event.eventType === "supervisor_wake_lease_recovered")).toBe(false);
+
+    cancelSupervisorWake(runId);
+  });
+
+  it("re-applies a pre-worker run_failed event when a stale supervisor turn resurrected the run", async () => {
+    vi.useFakeTimers();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const stale = new Date(Date.now() - 120_000);
+    const error = 'No spawnable worker is available. Requested "claude" failed because claude worker binary is not installed.';
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: stale,
+      updatedAt: stale,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "running",
+      createdAt: stale,
+      updatedAt: stale,
+    });
+    await db.insert(executionEvents).values({
+      id: randomUUID(),
+      runId,
+      eventType: "run_failed",
+      details: JSON.stringify({ summary: error, error }),
+      createdAt: stale,
+    });
+    await db.insert(settings).values({
+      key: `SUPERVISOR_WAKE_LEASE:${runId}`,
+      value: JSON.stringify({ leaseId: randomUUID(), expiresAt: Date.now() + 900_000 }),
+      updatedAt: stale,
+    });
+
+    mockSupervisorRun.mockResolvedValue({ state: "completed" });
+
+    await executeSupervisorWake(runId);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const lease = await db.select().from(settings).where(eq(settings.key, `SUPERVISOR_WAKE_LEASE:${runId}`)).get();
+    expect(mockSupervisorRun).not.toHaveBeenCalled();
+    expect(run?.status).toBe("failed");
+    expect(run?.lastError).toContain("claude worker binary is not installed");
+    expect(lease).toBeUndefined();
 
     cancelSupervisorWake(runId);
   });

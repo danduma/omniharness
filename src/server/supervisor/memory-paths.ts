@@ -24,6 +24,20 @@ function isPathInside(childPath: string, parentPath: string) {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+export function normalizeMemoryRelativePath(requestedPath: string) {
+  let normalizedRel = path.normalize(requestedPath);
+  while (true) {
+    const parts = normalizedRel.split(path.sep);
+    if (parts[0] !== ".omniharness" || parts[1] !== MEMORY_DIRNAME) {
+      return normalizedRel;
+    }
+    normalizedRel = parts.slice(2).join(path.sep);
+    if (!normalizedRel) {
+      return ".";
+    }
+  }
+}
+
 export function resolveMemoryPath(projectPath: string | null | undefined, requestedPath: string): {
   absolutePath: string;
   relativePath: string;
@@ -45,7 +59,7 @@ export function resolveMemoryPath(projectPath: string | null | undefined, reques
     throw new SupervisorProtocolError("Memory path must be relative to the memory root.");
   }
 
-  const normalizedRel = path.normalize(requestedPath);
+  const normalizedRel = normalizeMemoryRelativePath(requestedPath);
   if (normalizedRel === "." || normalizedRel === "..") {
     throw new SupervisorProtocolError("Memory path must point to a file inside the memory root.");
   }

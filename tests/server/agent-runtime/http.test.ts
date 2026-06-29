@@ -107,6 +107,7 @@ process.stdin.on('data', (chunk) => {
           CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR || null,
           CODEX_SQLITE_HOME: process.env.CODEX_SQLITE_HOME || null,
           GEMINI_CLI_HOME: process.env.GEMINI_CLI_HOME || null,
+          GEMINI_FORCE_FILE_STORAGE: process.env.GEMINI_FORCE_FILE_STORAGE || null,
           OPENCODE_CONFIG_DIR: process.env.OPENCODE_CONFIG_DIR || null,
           XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || null,
           XDG_DATA_HOME: process.env.XDG_DATA_HOME || null,
@@ -2022,6 +2023,7 @@ process.stdout.write(JSON.stringify({
     const fakeHome = createTempDir("omni-runtime-gemini-credentials-home-");
     const globalGeminiHome = join(fakeHome, ".gemini");
     mkdirSync(globalGeminiHome, { recursive: true });
+    writeFileSync(join(globalGeminiHome, "gemini-credentials.json"), "{\"access_token\":\"global-token\"}\n");
     writeFileSync(join(globalGeminiHome, "google_accounts.json"), "{\"accounts\":[\"global-account\"]}\n");
     writeFileSync(join(globalGeminiHome, "google_account_id"), "global-account\n");
     writeFileSync(join(globalGeminiHome, "settings.json"), "{\"theme\":\"dark\"}\n");
@@ -2052,9 +2054,13 @@ process.stdout.write(JSON.stringify({
 
     expect(spawnResponse.status).toBe(201);
     const scopedGeminiConfigDir = join(projectDir, ".omniharness", "cli-home", "gemini", ".gemini");
+    expect(readFileSync(join(scopedGeminiConfigDir, "gemini-credentials.json"), "utf8")).toContain("global-token");
     expect(readFileSync(join(scopedGeminiConfigDir, "google_accounts.json"), "utf8")).toContain("global-account");
     expect(readFileSync(join(scopedGeminiConfigDir, "google_account_id"), "utf8")).toContain("global-account");
     expect(existsSync(join(scopedGeminiConfigDir, "settings.json"))).toBe(true);
+    const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
+    const initialize = events.find((event) => event.method === "initialize");
+    expect(initialize.selectedCliStorageEnv.GEMINI_FORCE_FILE_STORAGE).toBe("true");
 
     await fetch(`${baseUrl}/agents/gemini-credential-worker`, { method: "DELETE" });
   }, 15_000);
@@ -2116,6 +2122,51 @@ process.stdout.write(JSON.stringify({
     }
 
     await fetch(`${baseUrl}/agents/${name}`, { method: "DELETE" });
+  }, 15_000);
+
+  it("bridges OpenCode auth into project-scoped CLI storage", async () => {
+    const projectDir = createTempDir("omni-runtime-opencode-credentials-project-");
+    const binDir = createTempDir("omni-runtime-opencode-credentials-bin-");
+    const fakeHome = createTempDir("omni-runtime-opencode-credentials-home-");
+    const globalOpencodeDataDir = join(fakeHome, ".local", "share", "opencode");
+    const globalOpencodeConfigDir = join(fakeHome, ".config", "opencode");
+    mkdirSync(globalOpencodeDataDir, { recursive: true });
+    mkdirSync(globalOpencodeConfigDir, { recursive: true });
+    writeFileSync(join(globalOpencodeDataDir, "auth.json"), "{\"google\":{\"key\":\"global-token\"}}\n");
+    writeFileSync(join(globalOpencodeConfigDir, "opencode.jsonc"), "{ \"$schema\": \"https://opencode.ai/config.json\" }\n");
+    const requestLog = join(projectDir, "requests.jsonl");
+    createExecutable(binDir, "opencode", fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        HOME: fakeHome,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        OMNIHARNESS_RESOURCE_GUARD: "0",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "opencode",
+        cwd: projectDir,
+        name: "opencode-credential-worker",
+        env: { FAKE_ACP_REQUEST_LOG: requestLog },
+      }),
+    });
+
+    expect(spawnResponse.status).toBe(201);
+    const scopedOpencodeHome = join(projectDir, ".omniharness", "cli-home", "opencode");
+    expect(readFileSync(join(scopedOpencodeHome, "data", "opencode", "auth.json"), "utf8")).toContain("global-token");
+    expect(readFileSync(join(scopedOpencodeHome, "config", "opencode.jsonc"), "utf8")).toContain("opencode.ai");
+    expect(existsSync(join(scopedOpencodeHome, "state", "opencode"))).toBe(true);
+    expect(existsSync(join(scopedOpencodeHome, "cache", "opencode"))).toBe(true);
+
+    await fetch(`${baseUrl}/agents/opencode-credential-worker`, { method: "DELETE" });
   }, 15_000);
 
   it("treats duplicate saved-session resume requests as idempotent", async () => {

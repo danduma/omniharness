@@ -3,7 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/server/db";
 import { clarifications, conversationReadMarkers, creditEvents, executionEvents, messages, planItems, planningReviewFindings, planningReviewRounds, planningReviewRuns, plans, processSessions, queuedConversationMessages, recoveryIncidents, runs, settings, supervisorInterventions, supervisorScheduledWakes, workerAssignments, workerCounters, workers } from "@/server/db/schema";
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
@@ -19,6 +19,7 @@ const {
   mockBuildSupervisorTurnContext,
   mockParseSupervisorToolCall,
   mockSelectSpawnableWorkerType,
+  mockGetWorkerAuthenticationInfo,
   mockNotifyEventStreamSubscribers,
   mockAgentConfigs,
   mockGetSupervisorModelConfig,
@@ -34,6 +35,7 @@ const {
   mockBuildSupervisorTurnContext: vi.fn(),
   mockParseSupervisorToolCall: vi.fn(),
   mockSelectSpawnableWorkerType: vi.fn(),
+  mockGetWorkerAuthenticationInfo: vi.fn(),
   mockNotifyEventStreamSubscribers: vi.fn(),
   mockAgentConfigs: [] as unknown[],
   mockGetSupervisorModelConfig: vi.fn((_env?: unknown, sourcePreference?: "primary" | "fallback") => ({
@@ -100,6 +102,7 @@ vi.mock("@/server/supervisor/protocol", async () => {
 
 vi.mock("@/server/supervisor/worker-availability", () => ({
   selectSpawnableWorkerType: mockSelectSpawnableWorkerType,
+  getWorkerAuthenticationInfo: mockGetWorkerAuthenticationInfo,
 }));
 
 vi.mock("@/server/events/live-updates", () => ({
@@ -114,6 +117,11 @@ function deferred<T>() {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+async function readBusyTimeout() {
+  const rows = await db.all(sql`PRAGMA busy_timeout`);
+  return Number((rows[0] as { timeout?: unknown } | undefined)?.timeout ?? 0);
 }
 
 describe("Supervisor worker spawn flow", () => {
@@ -174,6 +182,12 @@ describe("Supervisor worker spawn flow", () => {
       type: "opencode",
       requestedType: "opencode",
       fallbackReason: null,
+    });
+    mockGetWorkerAuthenticationInfo.mockReturnValue({
+      status: "authenticated",
+      method: "session_file",
+      message: "Worker login state was detected.",
+      setupCommand: null,
     });
     mockAskAgent.mockResolvedValue({ response: "ok", state: "working" });
     mockGetAgent.mockResolvedValue(null);
@@ -256,7 +270,9 @@ describe("Supervisor worker spawn flow", () => {
 
     const { Supervisor } = await import("@/server/supervisor");
 
+    await expect(readBusyTimeout()).resolves.toBe(15000);
     await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "paused" });
+    await expect(readBusyTimeout()).resolves.toBe(15000);
 
     expect(mockSpawnAgent).not.toHaveBeenCalled();
     expect(mockAskAgent).not.toHaveBeenCalled();
@@ -2728,6 +2744,107 @@ describe("Supervisor worker spawn flow", () => {
 
     const completionEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
     expect(completionEvent?.eventType).toBe("run_completed");
+  });
+
+  it("rejects stale binary-missing failures when the worker is currently spawnable", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      projectPath: "/tmp/project",
+      preferredWorkerType: "claude",
+      allowedWorkerTypes: JSON.stringify(["claude"]),
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-fail",
+      name: "mark_failed",
+      args: {
+        reason: "The 'claude' worker binary is not installed, and it is the only allowed worker type for this run.",
+      },
+    });
+    mockSelectSpawnableWorkerType.mockReturnValue({
+      type: "claude",
+      requestedType: "claude",
+      fallbackReason: null,
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 1_000 });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(run?.status).toBe("running");
+    expect(run?.lastError).toBeNull();
+    expect(events.map((event) => event.eventType)).toEqual(["supervisor_turn_stopped"]);
+    expect(events[0]?.details).toContain("Rejected stale supervisor failure");
+  });
+
+  it("rejects stale auth-missing failures when the worker is currently authenticated", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/test-plan.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      projectPath: "/tmp/project",
+      preferredWorkerType: "gemini",
+      allowedWorkerTypes: JSON.stringify(["gemini"]),
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    mockParseSupervisorToolCall.mockReturnValue({
+      id: "tool-fail",
+      name: "mark_failed",
+      args: {
+        reason: 'Spawn failed: failed to start gemini agent via gemini: {"code":-32000,"message":"Gemini API key is missing or not configured."}',
+      },
+    });
+    mockSelectSpawnableWorkerType.mockReturnValue({
+      type: "gemini",
+      requestedType: "gemini",
+      fallbackReason: null,
+    });
+    mockGetWorkerAuthenticationInfo.mockReturnValue({
+      status: "authenticated",
+      method: "session_file",
+      message: "Gemini login state was detected.",
+      setupCommand: "gemini",
+    });
+
+    const { Supervisor } = await import("@/server/supervisor");
+
+    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 1_000 });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(run?.status).toBe("running");
+    expect(run?.lastError).toBeNull();
+    expect(events.map((event) => event.eventType)).toEqual(["supervisor_turn_stopped"]);
+    expect(events[0]?.details).toContain("mark_failed:worker_auth_missing");
+    expect(events[0]?.details).toContain("Gemini login state was detected.");
   });
 
   it("records worker cancellation without deleting the worker before writing events", async () => {

@@ -95,7 +95,7 @@ describe("appendWorkerEntry", () => {
     }
   });
 
-  it("retries when a lock is reclaimed before owner metadata is written", async () => {
+  it("retries when owner metadata hits a transient invalid lock path", async () => {
     const runId = uniqueId("run");
     const workerId = uniqueId("worker");
     try {
@@ -106,8 +106,8 @@ describe("appendWorkerEntry", () => {
         const target = String(args[0]);
         if (!failedOwnerWrite && target === `${filePath}.lock/owner.json`) {
           failedOwnerWrite = true;
-          const error = Object.assign(new Error(`ENOENT: no such file or directory, open '${target}'`), {
-            code: "ENOENT",
+          const error = Object.assign(new Error(`EINVAL: invalid argument, open '${target}'`), {
+            code: "EINVAL",
             path: target,
           });
           throw error;

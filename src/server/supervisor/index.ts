@@ -3,7 +3,7 @@ import { spawnSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { Agent } from "@mastra/core/agent";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, notInArray } from "drizzle-orm";
 import * as bridge from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { clarifications, executionEvents, messages as dbMessages, runs, settings, supervisorInterventions, workers } from "@/server/db/schema";
@@ -19,7 +19,7 @@ import { parseSupervisorToolCallFromMastra, SupervisorProtocolError } from "@/se
 import { retrySupervisorRequest } from "@/server/supervisor/retry";
 import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
 import { handleSupervisorQuotaExhaustion, handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
-import { selectSpawnableWorkerType } from "@/server/supervisor/worker-availability";
+import { getWorkerAuthenticationInfo, selectSpawnableWorkerType } from "@/server/supervisor/worker-availability";
 import { attemptWorkerFailover, loadPendingFailoverContext } from "@/server/supervisor/worker-failover";
 import { parseAllowedWorkerTypes, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
 import { persistRunFailure } from "@/server/runs/failures";
@@ -41,6 +41,7 @@ import { notifyRunLifecycleEventBestEffort } from "@/server/notifications/trigge
 import { isProjectMemoryEnabled } from "@/server/projects/config";
 import { appendMemory, listMemory, readMemory, writeMemory } from "@/server/supervisor/memory-tools";
 import { consolidateProjectMemory } from "@/server/supervisor/memory-consolidation";
+import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
 
 export interface SupervisorOptions {
   runId: string;
@@ -219,17 +220,44 @@ function formatSupervisorError(error: unknown) {
 function isInfraFailureReason(reason: string) {
   const normalized = reason.toLowerCase();
   return [
-    "quota",
-    "rate limit",
-    "rate-limit",
-    "credit",
-    "econn",
-    "etimedout",
-    "network",
-    "bridge",
-    "spawn",
-    "agent not found",
-  ].some((pattern) => normalized.includes(pattern));
+    /\bquota\b/,
+    /\bbilling\b/,
+    /\brate limit\b/,
+    /\brate-limit\b/,
+    /\bcredit\b/,
+    /\beconn/,
+    /\betimedout\b/,
+    /\bnetwork\b/,
+    /\bbridge\b/,
+    /\bspawn\b/,
+    /\bagent not found\b/,
+    /\bapi key\b.*\b(?:missing|not configured|required|unset|absent)\b/,
+    /\b(?:missing|not configured|required|unset|absent)\b.{0,80}\bapi key\b/,
+    /\b(?:credential|credentials|oauth|token)\b.{0,80}\b(?:missing|not configured|required|unavailable|invalid)\b/,
+    /\bnot authenticated\b/,
+    /\bnot logged in\b/,
+    /\blogin required\b/,
+    /\bsign-?in required\b/,
+    /\bunauthorized\b/,
+  ].some((pattern) => pattern.test(normalized));
+}
+
+function isWorkerBinaryMissingReason(reason: string) {
+  return /\bworker binary is not installed\b/i.test(reason);
+}
+
+function isWorkerAuthenticationMissingReason(reason: string) {
+  const normalized = reason.toLowerCase();
+  return [
+    /\bapi key\b.*\b(?:missing|not configured|required|unset|absent)\b/,
+    /\b(?:missing|not configured|required|unset|absent)\b.{0,80}\bapi key\b/,
+    /\b(?:credential|credentials|oauth|token)\b.{0,80}\b(?:missing|not configured|required|unavailable|invalid)\b/,
+    /\bnot authenticated\b/,
+    /\bnot logged in\b/,
+    /\blogin required\b/,
+    /\bsign-?in required\b/,
+    /\bunauthorized\b/,
+  ].some((pattern) => pattern.test(normalized));
 }
 
 function truncate(text: string, maxLength: number) {
@@ -351,8 +379,10 @@ async function persistAwaitingUserQuestion(args: {
   eventDetails: Record<string, unknown>;
 }) {
   const now = new Date();
-  await db.transaction(async (tx) => {
-    await tx.insert(clarifications).values({
+  // Keep this as a libsql batch rather than an interactive transaction:
+  // interactive transactions orphan the PRAGMA-configured connection.
+  await db.batch([
+    db.insert(clarifications).values({
       id: randomUUID(),
       runId: args.runId,
       question: args.question,
@@ -360,8 +390,8 @@ async function persistAwaitingUserQuestion(args: {
       status: "pending",
       createdAt: now,
       updatedAt: now,
-    });
-    await tx.insert(dbMessages).values({
+    }),
+    db.insert(dbMessages).values({
       id: randomUUID(),
       runId: args.runId,
       role: "supervisor",
@@ -369,13 +399,13 @@ async function persistAwaitingUserQuestion(args: {
       content: args.question,
       workerId: null,
       createdAt: now,
-    });
-    await tx.update(runs).set({ status: "awaiting_user", updatedAt: now }).where(eq(runs.id, args.runId));
+    }),
+    db.update(runs).set({ status: "awaiting_user", updatedAt: now }).where(eq(runs.id, args.runId)),
     // Legacy-format insert: this runs inside a SQLite transaction so we
     // can't safely interleave the artifact-stream append. Readers
     // tolerate `artifact_seq IS NULL` by falling back to the legacy
     // `details` column (see execution-event-store.ts).
-    await tx.insert(executionEvents).values({
+    db.insert(executionEvents).values({
       id: randomUUID(),
       runId: args.runId,
       workerId: null,
@@ -383,8 +413,8 @@ async function persistAwaitingUserQuestion(args: {
       eventType: args.eventType,
       details: JSON.stringify(args.eventDetails),
       createdAt: now,
-    });
-  });
+    }),
+  ]);
   await notifyRunLifecycleEventBestEffort({
     runId: args.runId,
     eventType: args.eventType,
@@ -869,6 +899,7 @@ async function resumeWorkerFromSavedSessionForSupervisor(runId: string, workerId
     name: worker.id,
     ...(mode ? { mode } : {}),
     env: envParams,
+    ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
     ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
     ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
   };
@@ -1097,7 +1128,11 @@ export class Supervisor {
       failedAt: null,
       lastError: null,
       updatedAt: new Date(),
-    }).where(eq(runs.id, this.runId));
+    }).where(and(
+      eq(runs.id, this.runId),
+      eq(runs.mode, "implementation"),
+      notInArray(runs.status, ["awaiting_user", "done", "failed", "cancelled", "canceled", "promoting", "promoted"]),
+    ));
 
     // Observer-driven failover: if an incident is flagged
     // failover_pending we owe a failover attempt before doing anything
@@ -1231,8 +1266,11 @@ export class Supervisor {
           const requestedType = asString(action.args.type, "type");
           const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
           const allowedWorkerTypes = parseAllowedWorkerTypes(run?.allowedWorkerTypes);
-          const workerType = selectSpawnableWorkerType(requestedType, envParams, allowedWorkerTypes);
           const cwd = resolveSupervisorWorkerCwd(asString(action.args.cwd, "cwd"), run?.projectPath);
+          const workerType = selectSpawnableWorkerType(requestedType, envParams, allowedWorkerTypes, {
+            cwd,
+            loginShellPathMode: "blocking",
+          });
           const title = asString(action.args.title, "title");
           const prompt = asString(action.args.prompt, "prompt");
           const mode = resolveWorkerSpawnMode(action.args.mode, yoloModeEnabled);
@@ -1291,6 +1329,15 @@ export class Supervisor {
           });
           const preferredModel = run?.preferredWorkerModel ?? null;
           const preferredEffort = run?.preferredWorkerEffort ?? null;
+          const accountAllocation = await allocateWorkerAccount({
+            workerType: workerType.type,
+            runId: this.runId,
+            workerId,
+            explicitAccountId: run?.preferredWorkerAccountId ?? null,
+            strategy: run?.preferredWorkerAccountId ? "manual" : "priority",
+            env: envParams,
+          });
+          const workerAccountId = accountAllocation.account?.id ?? null;
 
           let spawnedWorker: bridge.AgentRecord;
           try {
@@ -1300,6 +1347,7 @@ export class Supervisor {
               name: workerId,
               ...(mode ? { mode } : {}),
               env: envParams,
+              ...(workerAccountId ? { accountId: workerAccountId } : {}),
               ...(preferredModel ? { model: preferredModel } : {}),
               ...(preferredEffort ? { effort: preferredEffort } : {}),
               ...(skillRoots?.length ? { skillRoots } : {}),
@@ -1955,6 +2003,38 @@ export class Supervisor {
 
         case "mark_failed": {
           const reason = asString(action.args.reason, "reason");
+          const staleBinaryMissingReason = isWorkerBinaryMissingReason(reason);
+          const staleAuthMissingReason = isWorkerAuthenticationMissingReason(reason);
+          if (staleBinaryMissingReason || staleAuthMissingReason) {
+            const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+            const allowedWorkerTypes = parseAllowedWorkerTypes(run?.allowedWorkerTypes);
+            const requestedType = run?.preferredWorkerType ?? allowedWorkerTypes[0] ?? "codex";
+            try {
+              selectSpawnableWorkerType(requestedType, envParams, allowedWorkerTypes, {
+                cwd: run?.projectPath ?? undefined,
+                loginShellPathMode: "blocking",
+              });
+              const authInfo = staleAuthMissingReason
+                ? getWorkerAuthenticationInfo(requestedType, { env: envParams })
+                : null;
+              if (authInfo?.status === "not_authenticated") {
+                throw new Error(authInfo.message);
+              }
+              await insertExecutionEvent(this.runId, "supervisor_turn_stopped", {
+                summary: staleAuthMissingReason
+                  ? "Rejected stale supervisor failure because the requested worker is currently authenticated."
+                  : "Rejected stale supervisor failure because the requested worker binary is currently spawnable.",
+                actionName: action.name,
+                evidenceKey: staleAuthMissingReason ? "mark_failed:worker_auth_missing" : "mark_failed:worker_binary_missing",
+                rejectedReason: reason,
+                requestedType,
+                authentication: authInfo,
+              });
+              return { state: "wait", delayMs: 1_000 };
+            } catch {
+              // The worker is still genuinely unavailable; proceed with the failure.
+            }
+          }
           await cancelRunWorkers(this.runId);
           const failHalt = await this.haltResultIfRunCannotContinue();
           if (failHalt) {
@@ -1975,7 +2055,6 @@ export class Supervisor {
               });
             }
           }
-          await insertExecutionEvent(this.runId, "run_failed", { reason });
           await persistRunFailure(this.runId, reason, {
             surface: { code: "supervisor.gave_up" },
           });

@@ -50,6 +50,23 @@ describe("isTransientSupervisorError", () => {
 
   it("does not retry clear configuration errors", () => {
     expect(isTransientSupervisorError(new Error("API key not valid"))).toBe(false);
+    expect(isTransientSupervisorError(new Error(
+      'No spawnable worker is available. Requested "claude" failed because claude worker binary is not installed. Checked allowed workers: claude.',
+    ))).toBe(false);
+  });
+
+  it("does not retry permanent provider account failures hidden behind bridge wrappers", () => {
+    const billingError = Object.assign(
+      new Error("Internal error: API Error: 402 Runner billing required: cap_exceeded"),
+      { status: 500 },
+    );
+    const quotaError = Object.assign(
+      new Error("Model request failed: resource exhausted due to insufficient quota"),
+      { status: 500 },
+    );
+
+    expect(isTransientSupervisorError(billingError)).toBe(false);
+    expect(isTransientSupervisorError(quotaError)).toBe(false);
   });
 
   it("honors an explicit retryable override on wrapped errors", () => {

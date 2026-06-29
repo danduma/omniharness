@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
+import { withSqliteBusyRetry } from "@/server/db/retry";
 import { emitNamedEvent } from "@/server/events/named-events";
 
 const LEASE_TTL_MS = 15 * 60_000;
@@ -44,7 +45,7 @@ export async function acquireSupervisorWakeLease(runId: string, now = Date.now()
 
   if (!existing) {
     try {
-      await db.insert(settings).values({ key, value, updatedAt: new Date(now) });
+      await withSqliteBusyRetry(() => db.insert(settings).values({ key, value, updatedAt: new Date(now) }));
       emitNamedEvent({ kind: "supervisor.wake_lease_acquired", runId, source: "insert" });
       return lease.leaseId;
     } catch {
@@ -54,9 +55,9 @@ export async function acquireSupervisorWakeLease(runId: string, now = Date.now()
   }
 
   const replaceSource = existingLease ? "replace_expired" : "replace_malformed";
-  await db.update(settings)
+  await withSqliteBusyRetry(() => db.update(settings)
     .set({ value, updatedAt: new Date(now) })
-    .where(and(eq(settings.key, key), eq(settings.value, existing.value)));
+    .where(and(eq(settings.key, key), eq(settings.value, existing.value))));
 
   const claimed = await db.select().from(settings).where(eq(settings.key, key)).get();
   if (claimed?.value === value) {
@@ -86,10 +87,10 @@ export async function releaseSupervisorWakeLease(runId: string, leaseId: string)
     return;
   }
 
-  await db.delete(settings).where(and(eq(settings.key, key), eq(settings.value, existing.value)));
+  await withSqliteBusyRetry(() => db.delete(settings).where(and(eq(settings.key, key), eq(settings.value, existing.value))));
   emitNamedEvent({ kind: "supervisor.wake_lease_released", runId });
 }
 
 export async function clearSupervisorWakeLease(runId: string) {
-  await db.delete(settings).where(eq(settings.key, leaseKey(runId)));
+  await withSqliteBusyRetry(() => db.delete(settings).where(eq(settings.key, leaseKey(runId))));
 }

@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { SupervisorProtocolError } from "@/server/supervisor/protocol";
-import { ensureMemoryRoot, getMemoryRoot, resolveMemoryPath } from "@/server/supervisor/memory-paths";
+import { ensureMemoryRoot, getMemoryRoot, normalizeMemoryRelativePath, resolveMemoryPath } from "@/server/supervisor/memory-paths";
 
 export const MEMORY_READ_LIMIT = 60_000;
 export const MEMORY_WRITE_LIMIT = 60_000;
@@ -49,11 +49,15 @@ function listMemoryFilesRecursive(root: string, currentDir: string, results: Mem
     }
     const stat = fs.statSync(absolutePath);
     results.push({
-      path: path.relative(root, absolutePath),
+      path: normalizeMemoryRelativePath(path.relative(root, absolutePath)),
       size: stat.size,
       updatedAt: stat.mtime.toISOString(),
     });
   }
+}
+
+function legacyNestedMemoryPath(root: string, relativePath: string) {
+  return path.join(root, ".omniharness", "memory", relativePath);
 }
 
 export function listMemory(projectPath: string | null | undefined): MemoryFileEntry[] {
@@ -66,29 +70,39 @@ export function listMemory(projectPath: string | null | undefined): MemoryFileEn
   }
   const results: MemoryFileEntry[] = [];
   listMemoryFilesRecursive(root, root, results);
-  results.sort((a, b) => a.path.localeCompare(b.path));
-  return results;
+  const deduped = new Map<string, MemoryFileEntry>();
+  for (const entry of results) {
+    const existing = deduped.get(entry.path);
+    if (!existing || entry.updatedAt > existing.updatedAt) {
+      deduped.set(entry.path, entry);
+    }
+  }
+  return [...deduped.values()].sort((a, b) => a.path.localeCompare(b.path));
 }
 
 export function readMemory(projectPath: string | null | undefined, requestedPath: string, options?: {
   maxBytes?: number;
 }): MemoryReadResult {
   const { absolutePath, relativePath } = resolveMemoryPath(projectPath ?? null, requestedPath);
-  if (!fs.existsSync(absolutePath)) {
+  const root = getMemoryRoot(projectPath!);
+  const readPath = fs.existsSync(absolutePath)
+    ? absolutePath
+    : legacyNestedMemoryPath(root, relativePath);
+  if (!fs.existsSync(readPath)) {
     throw new SupervisorProtocolError(`Memory file "${requestedPath}" does not exist.`);
   }
 
-  const stat = fs.statSync(absolutePath);
+  const stat = fs.statSync(readPath);
   if (!stat.isFile()) {
     throw new SupervisorProtocolError(`Memory path "${requestedPath}" is not a regular file.`);
   }
 
   const maxBytes = options?.maxBytes ?? MEMORY_READ_LIMIT;
-  const raw = fs.readFileSync(absolutePath, "utf8");
+  const raw = fs.readFileSync(readPath, "utf8");
   const truncated = raw.length > maxBytes;
   return {
     path: relativePath,
-    absolutePath,
+    absolutePath: readPath,
     content: truncated ? raw.slice(0, maxBytes) : raw,
     truncated,
     size: stat.size,

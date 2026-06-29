@@ -39,6 +39,7 @@ const WORKER_TURN_COMPLETION_RELATED_EVENT_TYPES = [
   WORKER_TURN_COMPLETED_EVENT_TYPE,
   ...WORKER_TURN_COMPLETION_RESET_EVENT_TYPES,
 ];
+const STUCK_ELIGIBLE_WORKER_STATUSES = new Set(["starting", "working"]);
 
 interface WorkerBridgeSnapshot {
   state: string;
@@ -348,16 +349,30 @@ function withPersistedCompletedTurnText(
   };
 }
 
-function resolvePersistedWorkerStatus(snapshot: WorkerBridgeSnapshot, events: DerivedWorkerEvent[]) {
+function resolvePersistedWorkerStatus(
+  snapshot: WorkerBridgeSnapshot,
+  events: DerivedWorkerEvent[],
+  previousStatus: string | null | undefined,
+) {
   if (events.some((event) => event.type === "worker_stuck")) {
     return "stuck";
   }
 
   if (
     hasCompletedIdleTurn(snapshot)
+    || hasLongCompletionHint(snapshot)
     || events.some((event) => event.type === WORKER_TURN_COMPLETED_EVENT_TYPE)
   ) {
     return "idle";
+  }
+
+  const madeMeaningfulProgress = events.some((event) => event.updatesActivity);
+  if (
+    normalizeWorkerStatus(previousStatus) === "stuck"
+    && !madeMeaningfulProgress
+    && STUCK_ELIGIBLE_WORKER_STATUSES.has(normalizeWorkerStatus(snapshot.state))
+  ) {
+    return "stuck";
   }
 
   return snapshot.state;
@@ -636,7 +651,9 @@ export function deriveWorkerEvents(args: {
   if (
     !stuckNotified
     && silenceMs >= STUCK_THRESHOLD_MS
+    && STUCK_ELIGIBLE_WORKER_STATUSES.has(currentStatus)
     && !hasCompletedIdleTurn(args.snapshot)
+    && !longCompletionText
     && !hasActiveTerminalProcess(args.snapshot)
   ) {
     events.push({
@@ -809,39 +826,69 @@ async function reviveWorkerFromSavedSession(args: {
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
   const { env: envParams } = await readRuntimeEnvFromSettings();
+  const spawnParams = {
+    type: args.worker.type,
+    cwd: args.worker.cwd,
+    name: args.worker.id,
+    ...(workerMode ? { mode: workerMode } : {}),
+    env: envParams,
+    ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
+    ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
+  };
 
   let resumedWorker: bridge.AgentRecord;
+  let recreatedFromMissingSession = false;
+  let missingSessionReason: unknown = null;
   try {
     resumedWorker = await bridge.spawnAgent({
-      type: args.worker.type,
-      cwd: args.worker.cwd,
-      name: args.worker.id,
-      ...(workerMode ? { mode: workerMode } : {}),
-      env: envParams,
-      ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
-      ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
+      ...spawnParams,
       resumeSessionId: sessionId,
     });
   } catch (error) {
-    if (!isAgentAlreadyExistsError(error, args.worker.id)) {
+    if (isAgentAlreadyExistsError(error, args.worker.id)) {
+      resumedWorker = await bridge.getAgent(args.worker.id, { retryIndefinitely: false });
+    } else if (isMissingAgentError(error)) {
+      missingSessionReason = error;
+      await db.update(workers).set({
+        status: "starting",
+        bridgeSessionId: null,
+        bridgeSessionMode: null,
+        updatedAt: new Date(args.now),
+      }).where(eq(workers.id, args.worker.id));
+      resumedWorker = await bridge.spawnAgent(spawnParams);
+      recreatedFromMissingSession = true;
+    } else {
       throw error;
     }
-    resumedWorker = await bridge.getAgent(args.worker.id, { retryIndefinitely: false });
   }
 
-  await insertExecutionEvent(args.run.id, args.worker.id, "worker_session_resumed", {
-    summary: `Resumed ${args.worker.id} from saved session`,
-    sessionId,
-  });
+  if (recreatedFromMissingSession) {
+    await insertExecutionEvent(args.run.id, args.worker.id, "worker_session_missing", {
+      summary: `Saved bridge session for ${args.worker.id} is no longer available`,
+      reason: formatErrorMessage(missingSessionReason),
+      sessionId,
+    });
+    await insertExecutionEvent(args.run.id, args.worker.id, "worker_session_recreated", {
+      summary: `Started a fresh runtime worker for ${args.worker.id} after its saved session was rejected.`,
+      rejectedSessionId: sessionId,
+      newSessionId: resumedWorker.sessionId ?? null,
+      reason: "observer_missing_agent",
+    });
+  } else {
+    await insertExecutionEvent(args.run.id, args.worker.id, "worker_session_resumed", {
+      summary: `Resumed ${args.worker.id} from saved session`,
+      sessionId,
+    });
+  }
 
   await db.update(workers).set({
     status: resumedWorker.state,
-    bridgeSessionId: resumedWorker.sessionId ?? sessionId,
+    bridgeSessionId: resumedWorker.sessionId ?? (recreatedFromMissingSession ? null : sessionId),
     bridgeSessionMode: resumedWorker.sessionMode ?? sessionMode ?? null,
     updatedAt: new Date(args.now),
   }).where(eq(workers.id, args.worker.id));
   emitNamedEvent({
-    kind: "worker.reattached",
+    kind: recreatedFromMissingSession ? "worker.recreated" : "worker.reattached",
     runId: args.run.id,
     workerId: args.worker.id,
   });
@@ -1178,7 +1225,7 @@ export async function pollRunWorkers(
         : events;
 
       const activityEvent = filteredEvents.find((event) => event.updatesActivity);
-      const nextStatus = resolvePersistedWorkerStatus(snapshot, filteredEvents);
+      const nextStatus = resolvePersistedWorkerStatus(snapshot, filteredEvents, worker.status);
       const prevStatus = worker.status;
       // Gate the UPDATE on the previous status so only one racing observer
       // can claim a given transition. The losers see 0 rows returned and

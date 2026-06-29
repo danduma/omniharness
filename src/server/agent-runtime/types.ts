@@ -140,6 +140,7 @@ export type StartAgentInput = {
   args?: string[];
   env?: Record<string, string>;
   credentialProfile?: string;
+  accountId?: string;
   mode?: string;
   model?: string;
   effort?: string;

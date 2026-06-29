@@ -39,12 +39,30 @@ describe("memory-tools", () => {
     expect(listed).toEqual(["alpha.md", "zeta.md"]);
   });
 
+  it("lists legacy nested memory files by canonical path", () => {
+    const legacyDir = path.join(getMemoryRoot(projectPath), ".omniharness", "memory");
+    fs.mkdirSync(legacyDir, { recursive: true });
+    fs.writeFileSync(path.join(legacyDir, "overview.md"), "# Overview", "utf8");
+
+    const listed = listMemory(projectPath).map((entry) => entry.path);
+    expect(listed).toEqual(["overview.md"]);
+  });
+
   it("reads back what was written and reports byte sizes", () => {
     writeMemory(projectPath, "decisions.md", "Decision: use SQLite");
     const read = readMemory(projectPath, "decisions.md");
     expect(read.content).toBe("Decision: use SQLite");
     expect(read.truncated).toBe(false);
     expect(read.size).toBeGreaterThan(0);
+  });
+
+  it("reads legacy nested memory files through canonical paths", () => {
+    const legacyDir = path.join(getMemoryRoot(projectPath), ".omniharness", "memory");
+    fs.mkdirSync(legacyDir, { recursive: true });
+    fs.writeFileSync(path.join(legacyDir, "overview.md"), "# Legacy overview", "utf8");
+
+    expect(readMemory(projectPath, "overview.md").content).toBe("# Legacy overview");
+    expect(readMemory(projectPath, ".omniharness/memory/overview.md").path).toBe("overview.md");
   });
 
   it("truncates oversized reads at the budget", () => {

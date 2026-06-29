@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { runs, workers } from "@/server/db/schema";
+import { runs, workerCredentialAllocations, workers } from "@/server/db/schema";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { openRecoveryIncident, markRecoveryIncidentNeedsUser } from "@/server/runs/recovery-incidents";
 import { getRecoveryPolicy } from "@/server/runs/recovery-policy";
@@ -46,6 +46,7 @@ function quotaIncidentDetails(args: {
   scheduledWakeAt?: Date | null;
   sourceType: "supervisor" | "worker";
   failoverPending?: boolean;
+  accountId?: string | null;
 }) {
   const details: Record<string, unknown> = {
     recoveryState: args.resumeAt ? "quota_waiting" : "needs_recovery",
@@ -58,6 +59,7 @@ function quotaIncidentDetails(args: {
     quotaResetConfidence: args.quota.confidence,
     retryAfterMs: args.quota.retryAfterMs,
     provider: args.quota.provider ?? null,
+    accountId: args.accountId ?? null,
     rawText: truncate(args.quota.rawText),
   };
   if (args.failoverPending) {
@@ -103,12 +105,17 @@ export async function recordWorkerQuotaBlock(args: {
     provider: args.provider,
   });
   const { resumeAt } = await computeResumeAt(quota, now);
+  const allocation = await db.select()
+    .from(workerCredentialAllocations)
+    .where(eq(workerCredentialAllocations.workerId, args.workerId))
+    .get();
   const details = quotaIncidentDetails({
     quota,
     resetAt: quota.resetAt,
     resumeAt,
     sourceType: "worker",
     failoverPending: args.failoverPending ?? false,
+    accountId: allocation?.accountId ?? null,
   });
 
   await db.update(workers).set({
