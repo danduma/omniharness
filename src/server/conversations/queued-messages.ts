@@ -495,9 +495,9 @@ async function deliverQueuedWorkerSteering(args: {
   content: string;
   userText: string;
   attachments: ChatAttachment[];
+  onUserInputAppended?: () => void;
 }) {
   await runWorkerTurn(args.worker.id, async () => {
-    let userInputAppended = false;
     const appendQueuedUserInput = async (deliveredAt: Date) => {
       await appendUserInputOnDelivery({
         id: args.userMessageId ?? args.messageId,
@@ -512,16 +512,8 @@ async function deliverQueuedWorkerSteering(args: {
           sizeBytes: attachment.size,
         })),
       });
-      userInputAppended = true;
+      args.onUserInputAppended?.();
     };
-
-    if (await queuedMessageStatus(args.messageId) !== "delivering") {
-      notifyEventStreamSubscribers();
-      return;
-    }
-
-    await appendQueuedUserInput(new Date());
-    notifyEventStreamSubscribers();
 
     if (await queuedMessageStatus(args.messageId) !== "delivering") {
       notifyEventStreamSubscribers();
@@ -534,11 +526,6 @@ async function deliverQueuedWorkerSteering(args: {
       notifyEventStreamSubscribers();
       return;
     }
-    if (!userInputAppended) {
-      // Kept as a defensive fallback for future call paths that might
-      // choose not to pre-anchor the prompt before bridge output streams.
-      await appendQueuedUserInput(deliveredAt);
-    }
     if (await answerPendingWorkerElicitation({
       run: args.run,
       worker: args.worker,
@@ -546,6 +533,7 @@ async function deliverQueuedWorkerSteering(args: {
       content: args.userText,
       deliveredAt,
     })) {
+      await appendQueuedUserInput(deliveredAt);
       await db.update(queuedConversationMessages).set({
         status: "delivered",
         lastError: null,
@@ -558,6 +546,14 @@ async function deliverQueuedWorkerSteering(args: {
         action: "steer",
         delivery: "elicitation",
       }, args.worker.id);
+      notifyEventStreamSubscribers();
+      return;
+    }
+
+    await appendQueuedUserInput(deliveredAt);
+    notifyEventStreamSubscribers();
+
+    if (await queuedMessageStatus(args.messageId) !== "delivering") {
       notifyEventStreamSubscribers();
       return;
     }
@@ -596,8 +592,14 @@ async function continueQueuedWorkerSteering(args: {
   userText: string;
   attachments: ChatAttachment[];
 }) {
+  let userInputAppended = false;
   try {
-    await deliverQueuedWorkerSteering(args);
+    await deliverQueuedWorkerSteering({
+      ...args,
+      onUserInputAppended: () => {
+        userInputAppended = true;
+      },
+    });
     return;
   } catch (error) {
     if (isAgentNotFoundError(error)) {
@@ -611,6 +613,9 @@ async function continueQueuedWorkerSteering(args: {
           await deliverQueuedWorkerSteering({
             ...args,
             worker: fallbackWorker,
+            onUserInputAppended: () => {
+              userInputAppended = true;
+            },
           });
           return;
         } catch (fallbackError) {
@@ -641,7 +646,7 @@ async function continueQueuedWorkerSteering(args: {
         });
       }
     }
-    if (isAgentBusyError(error) && args.userMessageId) {
+    if (args.userMessageId && (isAgentBusyError(error) || !userInputAppended)) {
       await db.delete(messages).where(eq(messages.id, args.userMessageId));
     }
     await insertQueueExecutionEvent(args.run.id, isAgentBusyError(error) ? "queued_message_deferred" : "queued_message_failed", {
@@ -1089,20 +1094,6 @@ export async function drainQueuedWorkerMessages({
         }).where(eq(workers.id, workerId));
         const snapshotBeforeAsk = snapshot ?? await Promise.resolve(getAgent(workerId)).catch(() => null);
         const deliveredAt = new Date();
-        await appendUserInputOnDelivery({
-          id: userMessage.id,
-          runId,
-          workerId,
-          text: record.content,
-          deliveredAt,
-          attachments: normalizedAttachments.map((attachment) => ({
-            id: attachment.id,
-            filename: attachment.name,
-            mimeType: attachment.mimeType,
-            sizeBytes: attachment.size,
-          })),
-        });
-        await db.insert(messages).values(userMessage);
         if (await answerPendingWorkerElicitation({
           run,
           worker,
@@ -1110,6 +1101,20 @@ export async function drainQueuedWorkerMessages({
           content: record.content,
           deliveredAt,
         })) {
+          await appendUserInputOnDelivery({
+            id: userMessage.id,
+            runId,
+            workerId,
+            text: record.content,
+            deliveredAt,
+            attachments: normalizedAttachments.map((attachment) => ({
+              id: attachment.id,
+              filename: attachment.name,
+              mimeType: attachment.mimeType,
+              sizeBytes: attachment.size,
+            })),
+          });
+          await db.insert(messages).values(userMessage);
           await db.update(queuedConversationMessages).set({
             status: "delivered",
             lastError: null,
@@ -1124,6 +1129,20 @@ export async function drainQueuedWorkerMessages({
           return;
         }
 
+        await appendUserInputOnDelivery({
+          id: userMessage.id,
+          runId,
+          workerId,
+          text: record.content,
+          deliveredAt,
+          attachments: normalizedAttachments.map((attachment) => ({
+            id: attachment.id,
+            filename: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.size,
+          })),
+        });
+        await db.insert(messages).values(userMessage);
         const response = await askAgent(workerId, workerPromptForRun(run, workerContent));
         await persistDeliveredWorkerResponse({
           run,

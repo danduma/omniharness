@@ -1029,6 +1029,17 @@ describe("POST /api/conversations/[id]/messages", () => {
       createdAt: now,
       updatedAt: now,
     });
+    await db.insert(queuedConversationMessages).values({
+      id: "queued-duplicate-answer",
+      runId,
+      targetWorkerId: workerId,
+      action: "steer",
+      status: "pending",
+      content: "just group files and commit them",
+      attachmentsJson: "[]",
+      createdAt: new Date(now.getTime() - 1_000),
+      updatedAt: new Date(now.getTime() - 1_000),
+    });
     mockGetAgent.mockResolvedValueOnce({
       name: workerId,
       type: "claude",
@@ -1083,9 +1094,87 @@ describe("POST /api/conversations/[id]/messages", () => {
     const queued = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId));
     const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
-    expect(queued).toHaveLength(0);
+    expect(queued).toHaveLength(1);
+    expect(queued[0]).toMatchObject({
+      id: "queued-duplicate-answer",
+      status: "cancelled",
+      lastError: "Answered directly before queued delivery.",
+    });
     expect(updatedRun?.status).toBe("running");
     expect(updatedWorker?.status).toBe("working");
+  });
+
+  it("force-delivers a busy direct steer instead of leaving it queued", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-force-steer.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "Still working.",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const response = await POST(new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        content: "Stop doing that and check the repo segment.",
+        busyAction: "steer",
+      }),
+    }), { params: Promise.resolve({ id: runId }) });
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.message).toMatchObject({
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "Stop doing that and check the repo segment.",
+    });
+    expect(mockCancelAgentTurn).toHaveBeenCalledWith(workerId);
+
+    await waitForConversationBackgroundTasksForTests();
+
+    const queued = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId));
+    const activeQueued = queued.filter((row) => row.status === "pending" || row.status === "delivering");
+    const entries = await readWorkerOutputEntries(runId, workerId);
+    expect(activeQueued).toHaveLength(0);
+    expect(queued).toHaveLength(1);
+    expect(queued[0]).toMatchObject({
+      status: "delivered",
+      content: "Stop doing that and check the repo segment.",
+    });
+    expect(entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: payload.message.id,
+        type: "user_input",
+        text: "Stop doing that and check the repo segment.",
+      }),
+    ]));
   });
 
   it("shows a direct fire-and-forget follow-up in the worker stream before the bridge turn finishes", async () => {

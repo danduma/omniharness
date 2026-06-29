@@ -38,6 +38,8 @@ export const handlePrewarmWorkerRequest: OmniHttpHandler = async (request) => {
       cwd,
       model: typeof body.model === "string" ? body.model : null,
       mode: typeof body.mode === "string" ? body.mode : null,
+      accountId: typeof body.accountId === "string" ? body.accountId : null,
+      credentialProfile: typeof body.credentialProfile === "string" ? body.credentialProfile : null,
       env: envParams,
     });
     return Response.json(result);

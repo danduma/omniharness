@@ -170,6 +170,7 @@ export const handleConversationsRequest: OmniHttpHandler = async (request) => {
         : typeof body?.preferredWorkerType === "string" ? body.preferredWorkerType : null,
       preferredWorkerModel: typeof body?.preferredWorkerModel === "string" ? body.preferredWorkerModel : null,
       preferredWorkerEffort: typeof body?.preferredWorkerEffort === "string" ? body.preferredWorkerEffort : null,
+      preferredWorkerAccountId: typeof body?.preferredWorkerAccountId === "string" ? body.preferredWorkerAccountId : null,
       allowedWorkerTypes: Array.isArray(body?.allowedWorkerTypes) || typeof body?.allowedWorkerTypes === "string"
         ? body.allowedWorkerTypes
         : null,

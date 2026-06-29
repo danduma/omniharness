@@ -24,6 +24,7 @@ import { buildAwaitingUserQuestionInvariantErrors } from "@/server/events/lifecy
 import { serializeSessionRecord } from "@/server/session-providers/session-records";
 import { reconcileOrphanedProcessSessions } from "@/server/session-providers/process-store";
 import { reconcilePersistedReloadZombies } from "@/server/runs/persisted-zombie-reconciler";
+import { toAccountDto } from "@/server/accounts/dto";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { startSlowProbe } from "@/server/slow-probe";
 import { toNextRequest } from "./next-request";
@@ -479,7 +480,7 @@ function buildEventPayload(
     plans: records.allPlans,
     runs: records.allRuns,
     sessions,
-    accounts: records.allAccounts,
+    accounts: records.allAccounts.map(toAccountDto),
     agents: agentsData.map(compactAgentSnapshot),
     workers: records.allWorkers.map(compactWorkerRecord),
     planItems: records.allPlanItems,

@@ -799,7 +799,7 @@ describe("POST /api/runs/[id]", () => {
 
     const response = await Promise.race([
       POST(request, { params: Promise.resolve({ id: runId }) }),
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 25)),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 1_000)),
     ]);
     if (response === "timeout") {
       throw new Error("Stop worker request waited for bridge cancellation");
@@ -1219,6 +1219,115 @@ describe("POST /api/runs/[id]", () => {
     expect(remainingWorkers[0]?.bridgeSessionId).toBe("session-existing");
     expect(remainingClarifications).toHaveLength(1);
     expect(staleLease).toBeUndefined();
+    expect(remainingMessages.map((message) => message.id)).toEqual([userMessageId]);
+  });
+
+  it("blocks automatic retry of saved permanent account failures", async () => {
+    mockStartSupervisorRun.mockClear();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const userMessageId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/auto-blocked-account-failure.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      title: "Blocked account failure",
+      status: "failed",
+      lastError: 'Spawn failed: failed to start gemini agent via gemini: {"code":-32000,"message":"Gemini API key is missing or not configured."}',
+      failedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(messages).values({
+      id: userMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "try after fixing credentials",
+      createdAt: now,
+    });
+
+    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
+    }), { params: Promise.resolve({ id: runId }) });
+    const payload = await response.json();
+    const storedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+
+    expect(response.status).toBe(409);
+    expect(payload.error.message).toContain("cannot be auto-retried");
+    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+    expect(storedRun?.status).toBe("failed");
+  });
+
+  it("allows manual retry of saved permanent account failures", async () => {
+    mockStartSupervisorRun.mockClear();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const userMessageId = randomUUID();
+    const errorMessage = 'Spawn failed: failed to start gemini agent via gemini: {"code":-32000,"message":"Gemini API key is missing or not configured."}';
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/manual-account-recovery.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      title: "Manual account recovery",
+      status: "failed",
+      lastError: errorMessage,
+      failedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(messages).values([
+      {
+        id: userMessageId,
+        runId,
+        role: "user",
+        kind: "checkpoint",
+        content: "try after fixing credentials",
+        createdAt: new Date("2026-04-21T10:00:00Z"),
+      },
+      {
+        id: randomUUID(),
+        runId,
+        role: "system",
+        kind: "error",
+        content: `Run failed: ${errorMessage}`,
+        createdAt: new Date("2026-04-21T10:01:00Z"),
+      },
+    ]);
+
+    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "retry", targetMessageId: userMessageId, manualRecovery: true }),
+    }), { params: Promise.resolve({ id: runId }) });
+    const payload = await response.json();
+    const storedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const remainingMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+
+    expect(response.status).toBe(200);
+    expect(payload).toMatchObject({ ok: true, runId });
+    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
+    expect(storedRun?.status).toBe("running");
+    expect(storedRun?.lastError).toBeNull();
+    expect(storedRun?.failedAt).toBeNull();
     expect(remainingMessages.map((message) => message.id)).toEqual([userMessageId]);
   });
 

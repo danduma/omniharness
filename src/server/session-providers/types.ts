@@ -60,6 +60,7 @@ export type CreateSessionInput = {
   preferredWorkerType?: string | null;
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
+  preferredWorkerAccountId?: string | null;
   allowedWorkerTypes?: string[] | string | null;
   requestedRunId?: string | null;
   attachments?: ChatAttachment[];

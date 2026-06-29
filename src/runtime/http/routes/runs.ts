@@ -79,6 +79,10 @@ function isSupervisorStopAlreadySettled(status: string | null | undefined) {
   return normalizeWorkerStatus(status) !== "running";
 }
 
+function isPermanentAccountFailure(message: string | null | undefined) {
+  return /\b(?:api key|authentication required|auth(?:entication)? failed|billing required|api billing|cap_exceeded|insufficient quota|resource exhausted)\b/i.test(message ?? "");
+}
+
 function actionLabelForPostAction(action: unknown) {
   switch (action) {
     case "stop_supervisor":
@@ -645,6 +649,7 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
 
     const targetMessageId = String(body?.targetMessageId ?? "");
     const content = typeof body?.content === "string" ? body.content : undefined;
+    const manualRecovery = body?.manualRecovery === true;
 
     if (action !== "retry" && action !== "edit" && action !== "fork") {
       return errorResponse("Unsupported recovery action", {
@@ -657,6 +662,14 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
     if (!targetMessageId) {
       return errorResponse("targetMessageId is required", {
         status: 400,
+        source: "Runs",
+        action: "Recover conversation",
+      });
+    }
+
+    if (action === "retry" && !manualRecovery && actionRun.status === "failed" && isPermanentAccountFailure(actionRun.lastError)) {
+      return errorResponse("This run cannot be auto-retried while the saved failure is an account, billing, or quota error.", {
+        status: 409,
         source: "Runs",
         action: "Recover conversation",
       });

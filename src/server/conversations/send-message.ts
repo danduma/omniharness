@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { and, asc, eq } from "drizzle-orm";
 import { askAgent, cancelAgent, getAgent, respondElicitation, spawnAgent } from "@/server/bridge-client";
 import { db } from "@/server/db";
-import { clarifications, messages, runs, workers } from "@/server/db/schema";
+import { clarifications, messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { answerClarification } from "@/server/clarifications/store";
 import { resumeRunAfterClarification } from "@/server/clarifications/loop";
@@ -17,10 +17,11 @@ import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
-import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
+import { appendAttachmentContext, normalizeChatAttachments, parseChatAttachmentsJson, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import { getAppDataPath } from "@/server/app-root";
 import { normalizeWorkerType, SUPPORTED_WORKER_TYPES, type SupportedWorkerType } from "@/server/supervisor/worker-types";
 import { createQueuedConversationMessage, type BusyMessageAction } from "./queued-messages";
+import { interruptWithDraftMessage } from "./queued-message-interrupt";
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import { runConversationMutation, runWorkerTurn, trackConversationBackgroundTask } from "./worker-turn-gate";
@@ -201,6 +202,46 @@ async function answerDirectWorkerElicitation(args: {
   return userMessage;
 }
 
+async function retireMatchingQueuedDirectAnswers(args: {
+  runId: string;
+  workerId: string;
+  content: string;
+  attachmentsJson: string | null;
+  answeredAt: Date;
+}) {
+  const expectedAttachmentsJson = serializeChatAttachments(parseChatAttachmentsJson(args.attachmentsJson));
+  const queuedRows = await db
+    .select()
+    .from(queuedConversationMessages)
+    .where(eq(queuedConversationMessages.runId, args.runId));
+  const matchingRows = queuedRows.filter((row) => (
+    (row.status === "pending" || row.status === "delivering")
+    && (row.targetWorkerId === args.workerId || row.targetWorkerId === null)
+    && row.content === args.content
+    && serializeChatAttachments(parseChatAttachmentsJson(row.attachmentsJson)) === expectedAttachmentsJson
+  ));
+
+  for (const row of matchingRows) {
+    await db.update(queuedConversationMessages).set({
+      status: "cancelled",
+      lastError: "Answered directly before queued delivery.",
+      updatedAt: args.answeredAt,
+    }).where(eq(queuedConversationMessages.id, row.id));
+    await recordExecutionEvent({
+      runId: args.runId,
+      workerId: row.targetWorkerId ?? args.workerId,
+      planItemId: null,
+      eventType: "queued_message_cancelled",
+      details: {
+        summary: "Cancelled queued duplicate after the answer was delivered directly.",
+        queuedMessageId: row.id,
+        reason: "direct_answer_delivered",
+      },
+      createdAt: args.answeredAt,
+    });
+  }
+}
+
 /**
  * Reconcile the DB user-message list against the worker output stream.
  *
@@ -292,6 +333,7 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
     name: worker.id,
     ...(workerMode ? { mode: workerMode } : {}),
     env: envParams,
+    ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
     ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
     ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
   };
@@ -670,6 +712,7 @@ type SendConversationMessageArgs = {
   preferredWorkerType?: string | null;
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
+  preferredWorkerAccountId?: string | null;
   allowedWorkerTypes?: string[] | string | null;
 };
 
@@ -697,6 +740,7 @@ async function applyWorkerPreferenceForMessage(args: {
   preferredWorkerType?: string | null;
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
+  preferredWorkerAccountId?: string | null;
   allowedWorkerTypes?: string[] | string | null;
 }) {
   const explicitWorkerType = parseExplicitWorkerType(args.preferredWorkerType);
@@ -711,12 +755,14 @@ async function applyWorkerPreferenceForMessage(args: {
     ? args.preferredWorkerModel?.trim() || null
     : null;
   const nextPreferredWorkerEffort = args.preferredWorkerEffort?.trim() || args.run.preferredWorkerEffort || null;
+  const nextPreferredWorkerAccountId = args.preferredWorkerAccountId?.trim() || null;
   const now = new Date();
 
   await db.update(runs).set({
     preferredWorkerType: nextWorkerType,
     preferredWorkerModel: nextPreferredWorkerModel,
     preferredWorkerEffort: nextPreferredWorkerEffort,
+    preferredWorkerAccountId: nextPreferredWorkerAccountId,
     allowedWorkerTypes: JSON.stringify(nextAllowedWorkerTypes),
     updatedAt: now,
   }).where(eq(runs.id, args.run.id));
@@ -730,6 +776,7 @@ async function applyWorkerPreferenceForMessage(args: {
       preferredWorkerType: nextWorkerType,
       preferredWorkerModel: nextPreferredWorkerModel,
       preferredWorkerEffort: nextPreferredWorkerEffort,
+      preferredWorkerAccountId: nextPreferredWorkerAccountId,
       allowedWorkerTypes: nextAllowedWorkerTypes,
       source: explicitWorkerType ? "composer_selection" : "message_text",
     },
@@ -741,6 +788,7 @@ async function applyWorkerPreferenceForMessage(args: {
     preferredWorkerType: nextWorkerType,
     preferredWorkerModel: nextPreferredWorkerModel,
     preferredWorkerEffort: nextPreferredWorkerEffort,
+    preferredWorkerAccountId: nextPreferredWorkerAccountId,
     allowedWorkerTypes: JSON.stringify(nextAllowedWorkerTypes),
     updatedAt: now,
   };
@@ -892,6 +940,7 @@ async function sendConversationMessageUnlocked({
   preferredWorkerType = null,
   preferredWorkerModel = null,
   preferredWorkerEffort = null,
+  preferredWorkerAccountId = null,
   allowedWorkerTypes = null,
 }: SendConversationMessageArgs) {
   const trimmedContent = content.trim();
@@ -918,6 +967,7 @@ async function sendConversationMessageUnlocked({
     preferredWorkerType,
     preferredWorkerModel,
     preferredWorkerEffort,
+    preferredWorkerAccountId,
     allowedWorkerTypes,
   });
 
@@ -926,6 +976,20 @@ async function sendConversationMessageUnlocked({
   }
 
   if (isSupervisedRun(run) && (busyAction === "queue" || busyAction === "steer")) {
+    if (busyAction === "steer") {
+      const worker = await selectConversationWorker(runId);
+      if (!worker) {
+        throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
+      }
+      return interruptWithDraftMessage({
+        runId,
+        content: trimmedContent,
+        attachments: normalizedAttachments,
+        targetWorkerId: worker.id,
+        source: "api",
+      });
+    }
+
     const queuedMessage = await createQueuedConversationMessage({
       runId,
       action: "steer",
@@ -1018,6 +1082,14 @@ async function sendConversationMessageUnlocked({
       attachmentsJson,
     });
     if (elicitationAnswer) {
+      await retireMatchingQueuedDirectAnswers({
+        runId,
+        workerId: worker.id,
+        content: trimmedContent,
+        attachmentsJson,
+        answeredAt: elicitationAnswer.createdAt,
+      });
+      notifyEventStreamSubscribers();
       return {
         ok: true,
         message: serializeMessageRecord({ ...elicitationAnswer, attachmentsJson }),
@@ -1026,14 +1098,13 @@ async function sendConversationMessageUnlocked({
   }
 
   if (busyAction === "steer" && ["starting", "working", "stuck"].includes(worker.status.trim().toLowerCase().split(":")[0] ?? "")) {
-    const queuedMessage = await createQueuedConversationMessage({
+    return interruptWithDraftMessage({
       runId,
-      targetWorkerId: worker.id,
-      action: "steer",
       content: trimmedContent,
       attachments: normalizedAttachments,
+      targetWorkerId: worker.id,
+      source: "api",
     });
-    return { ok: true, queuedMessage };
   }
 
   const userMessageCreatedAt = new Date();
