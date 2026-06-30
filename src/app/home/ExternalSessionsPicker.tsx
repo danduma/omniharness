@@ -27,6 +27,8 @@ interface ExternalSession {
 
 interface ExternalSessionsResponse {
   sessions: ExternalSession[];
+  claude?: ExternalSession[];
+  gemini?: ExternalSession[];
 }
 
 interface ExternalSessionsPickerProps {
@@ -56,8 +58,8 @@ function shortProjectPath(full: string): string {
 
 export function ExternalSessionsPicker({ open, onClose, onResumed }: ExternalSessionsPickerProps) {
   useI18nSnapshot();
-  const manager = useMemo(() => new StateManager({ resumingId: null as string | null, query: "" }), []);
-  const { resumingId, query } = useManagerSnapshot(manager);
+  const manager = useMemo(() => new StateManager({ resumingId: null as string | null, query: "", activeTab: "claude" as "claude" | "gemini" }), []);
+  const { resumingId, query, activeTab } = useManagerSnapshot(manager);
 
   const { data, isLoading, isError, refetch } = useQuery<ExternalSessionsResponse>({
     queryKey: ["external-sessions"],
@@ -78,6 +80,7 @@ export function ExternalSessionsPicker({ open, onClose, onResumed }: ExternalSes
           externalClaudeSessionId: session.sessionId,
           projectPath: session.projectPath,
           command: "",
+          preferredWorkerType: activeTab,
         }),
       }, {
         source: t("externalSessions.errorSource"),
@@ -97,7 +100,13 @@ export function ExternalSessionsPicker({ open, onClose, onResumed }: ExternalSes
     resumeMutation.mutate(session);
   }
 
-  const allSessions = data?.sessions ?? [];
+  const allSessions = useMemo(() => {
+    if (activeTab === "gemini") {
+      return data?.gemini ?? [];
+    }
+    return data?.claude ?? data?.sessions ?? [];
+  }, [data, activeTab]);
+
   const sessions = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return allSessions;
@@ -118,6 +127,36 @@ export function ExternalSessionsPicker({ open, onClose, onResumed }: ExternalSes
             {t("externalSessions.title")}
           </DialogTitle>
         </DialogHeader>
+
+        {/* Tabs Bar */}
+        <div className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-1 self-start">
+          <button
+            type="button"
+            className={cn(
+              "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+              activeTab === "claude"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            aria-pressed={activeTab === "claude"}
+            onClick={() => manager.setKey("activeTab", "claude")}
+          >
+            {t("externalSessions.provider.claudeCode")}
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+              activeTab === "gemini"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            aria-pressed={activeTab === "gemini"}
+            onClick={() => manager.setKey("activeTab", "gemini")}
+          >
+            {t("externalSessions.provider.gemini")}
+          </button>
+        </div>
 
         <div className="relative">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -143,7 +182,9 @@ export function ExternalSessionsPicker({ open, onClose, onResumed }: ExternalSes
           {isEmpty && (
             <div className="py-10 text-center text-sm text-muted-foreground">
               {t("externalSessions.empty", { path: "" })}{" "}
-              <code className="rounded bg-muted px-1 py-0.5 text-xs">~/.claude/projects/</code>
+              <code className="rounded bg-muted px-1 py-0.5 text-xs">
+                {activeTab === "gemini" ? "~/.gemini/tmp/ or .omniharness/" : "~/.claude/projects/"}
+              </code>
             </div>
           )}
           {!isLoading && !isError && !isEmpty && sessions.length === 0 && (
@@ -153,7 +194,9 @@ export function ExternalSessionsPicker({ open, onClose, onResumed }: ExternalSes
             <div className="space-y-px pr-1">
               <div className="mb-2 flex items-center gap-1.5 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 <SquareTerminal className="h-3.5 w-3.5" />
-                {t("externalSessions.provider.claudeCode")}
+                {activeTab === "gemini"
+                  ? t("externalSessions.provider.gemini")
+                  : t("externalSessions.provider.claudeCode")}
               </div>
               {sessions.map((session) => {
                 const isResuming = resumingId === session.sessionId;

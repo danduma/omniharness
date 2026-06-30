@@ -908,6 +908,57 @@ describe("POST /api/conversations", () => {
     expect(storedMessages).toHaveLength(0);
   });
 
+  it("resumes an external Gemini session as a direct Gemini worker when the picker specifies preferredWorkerType as gemini", async () => {
+    const externalGeminiSessionId = "abcdef12-1234-4234-9234-123456789abc";
+    mockSpawnAgent.mockResolvedValueOnce({
+      name: "worker-1",
+      type: "gemini",
+      state: "idle",
+      cwd: "/workspace/app",
+      sessionId: "resumed-external-gemini-session",
+      sessionMode: "full-access",
+      lastText: "",
+      currentText: "",
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        externalClaudeSessionId: externalGeminiSessionId,
+        projectPath: "/workspace/app",
+        command: "",
+        preferredWorkerType: "gemini",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+
+    expect(payload.run.mode).toBe("direct");
+    expect(mockEnsureSupervisorRuntimeStarted).not.toHaveBeenCalled();
+    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+    await waitFor(() => mockSpawnAgent.mock.calls.length, (count) => count > 0);
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      type: "gemini",
+      cwd: "/workspace/app",
+      resumeSessionId: externalGeminiSessionId,
+    }));
+    expect(mockAskAgent).not.toHaveBeenCalled();
+
+    const createdWorker = await waitFor(
+      () => db.select().from(workers).where(eq(workers.runId, payload.runId)).get(),
+      (worker) => worker?.status === "awaiting_user",
+    );
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
+    expect(createdWorker).toEqual(expect.objectContaining({
+      type: "gemini",
+      bridgeSessionId: "resumed-external-gemini-session",
+    }));
+    expect(storedMessages).toHaveLength(0);
+  });
+
   it("queues title generation for direct Claude conversations", async () => {
     const command = [
       "session ef25debddace keeps showing a spinner even tho it finishd",

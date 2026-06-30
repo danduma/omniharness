@@ -13,6 +13,7 @@
   "externalSessions.empty": "{path}에서 외부 CLI 세션을 찾을 수 없습니다",
   "externalSessions.noFilterResults": "필터와 일치하는 세션이 없습니다.",
   "externalSessions.provider.claudeCode": "Claude Code",
+  "externalSessions.provider.gemini": "Gemini",
   "externalSessions.untitled": "(제목 없는 세션)",
   "externalSessions.resuming": "재개 중...",
   "externalSessions.errorSource": "외부 세션",

@@ -38,7 +38,9 @@ import { setProjectGitWorkspaceDefaultTarget } from "@/server/projects/config";
 import { pendingOrphanWorktreeError } from "@/server/git/orphan-recovery";
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
 import { isResourceAdmissionError } from "@/server/agent-runtime/resource-admission";
-import { globalClaudeConfigDir } from "@/server/external-sessions/discovery";
+import { globalClaudeConfigDir, isGlobalGeminiSession } from "@/server/external-sessions/discovery";
+import { homedir } from "os";
+import { join } from "path";
 import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
 import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
 
@@ -454,9 +456,19 @@ async function startDirectWorkerConversation(args: {
   let agent: AgentRecord;
   try {
     const { env: envParams } = await readRuntimeEnvFromSettings();
-    const externalEnv = args.externalClaudeSessionId
-      ? { ...envParams, CLAUDE_CONFIG_DIR: globalClaudeConfigDir() }
-      : envParams;
+    let externalEnv = envParams;
+    if (args.externalClaudeSessionId) {
+      if (args.workerType === "claude") {
+        externalEnv = { ...envParams, CLAUDE_CONFIG_DIR: globalClaudeConfigDir() };
+      } else if (args.workerType === "gemini") {
+        const isGlobal = await isGlobalGeminiSession(args.externalClaudeSessionId);
+        if (isGlobal) {
+          externalEnv = { ...envParams, GEMINI_CLI_HOME: homedir() };
+        } else {
+          externalEnv = { ...envParams, GEMINI_CLI_HOME: join(args.cwd, ".omniharness", "cli-home", "gemini") };
+        }
+      }
+    }
     agent = await spawnAgent({
       type: args.workerType,
       cwd: args.cwd,
@@ -569,10 +581,10 @@ export async function createConversation(args: {
     const workerPrompt = appendAttachmentContext(command, attachments, {
       resolvePath: (storagePath) => getAppDataPath(storagePath),
     });
-    const preferredWorkerType = isExternalClaudeResume
-      ? "claude"
-      : args.preferredWorkerType?.trim()
-        ? normalizeWorkerType(args.preferredWorkerType)
+    const preferredWorkerType = args.preferredWorkerType?.trim()
+      ? normalizeWorkerType(args.preferredWorkerType)
+      : isExternalClaudeResume
+        ? "claude"
         : null;
     const defaultTitle = getDefaultConversationTitle(mode, command);
     const generateTitle = shouldGenerateConversationTitle(mode, command);

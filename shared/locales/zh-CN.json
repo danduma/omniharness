@@ -13,6 +13,7 @@
   "externalSessions.empty": "在 {path} 中未找到外部 CLI 会话",
   "externalSessions.noFilterResults": "没有会话匹配你的筛选。",
   "externalSessions.provider.claudeCode": "Claude Code",
+  "externalSessions.provider.gemini": "Gemini",
   "externalSessions.untitled": "（未命名会话）",
   "externalSessions.resuming": "正在恢复...",
   "externalSessions.errorSource": "外部会话",

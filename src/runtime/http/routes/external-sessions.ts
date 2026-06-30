@@ -1,6 +1,6 @@
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
-import { discoverExternalClaudeSessions } from "@/server/external-sessions/discovery";
+import { discoverExternalClaudeSessions, discoverExternalGeminiSessions } from "@/server/external-sessions/discovery";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { toNextRequest } from "./next-request";
 
@@ -21,10 +21,21 @@ export const handleExternalSessionsRequest: OmniHttpHandler = async (request) =>
       return auth.response;
     }
 
-    const sessions = await discoverExternalClaudeSessions();
+    const [claudeSessions, geminiSessions] = await Promise.all([
+      discoverExternalClaudeSessions(),
+      discoverExternalGeminiSessions(),
+    ]);
 
     return Response.json({
-      sessions: sessions.map((s) => ({
+      sessions: claudeSessions.map((s) => ({
+        ...s,
+        lastModified: s.lastModified.toISOString(),
+      })),
+      claude: claudeSessions.map((s) => ({
+        ...s,
+        lastModified: s.lastModified.toISOString(),
+      })),
+      gemini: geminiSessions.map((s) => ({
         ...s,
         lastModified: s.lastModified.toISOString(),
       })),
