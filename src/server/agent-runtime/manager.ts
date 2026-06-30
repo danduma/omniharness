@@ -9,7 +9,7 @@ import { Readable, Writable } from "stream";
 import * as acp from "@agentclientprotocol/sdk";
 import { sanitizeAcpStream } from "./acp-stream-sanitizer";
 import { applyCodexBridgeEnv, buildCodexConfigArgs, shouldSetRequestedMode } from "./codex";
-import { buildGeminiArgs, isFullAccessAgentMode } from "./gemini";
+import { buildGeminiArgs, isFullAccessAgentMode, resolveFullGeminiUuid } from "./gemini";
 import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
 import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, withCodexStandardTooling, withManagedPath } from "./tool-env";
 import {
@@ -1431,11 +1431,16 @@ export class AgentRuntimeManager {
     }
 
     const cwd = input.cwd || process.cwd();
+    let resumeSessionId = input.resumeSessionId?.trim() || null;
+    if (type === "gemini" && resumeSessionId) {
+      resumeSessionId = await resolveFullGeminiUuid(resumeSessionId, cwd);
+    }
+
     const existing = this.agents.get(name);
     if (existing) {
       if (
-        input.resumeSessionId
-        && existing.sessionId === input.resumeSessionId
+        resumeSessionId
+        && existing.sessionId === resumeSessionId
         && existing.type === type
         && existing.cwd === cwd
       ) {
@@ -1446,7 +1451,6 @@ export class AgentRuntimeManager {
 
     const requestedModel = input.model?.trim() || null;
     const requestedEffort = input.effort?.trim().toLowerCase() || null;
-    const resumeSessionId = input.resumeSessionId?.trim() || null;
     const configuredAgent = this.options.config?.agents?.[type];
     const baseEnv = this.getRuntimeEnv();
     const skillRoots = [
