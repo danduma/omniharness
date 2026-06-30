@@ -134,4 +134,24 @@ describe("MarkdownContent - Table rendering", () => {
     expect(pNodes.length).toBe(2);
     expect(tableNodes.length).toBe(1);
   });
+
+  it("renders the exact table from session 00d43e0c7102 correctly", () => {
+    const content = [
+      "| Power Tier | Recommended Tool | Core Benefit | Complexity to Implement |",
+      "| :--- | :--- | :--- | :--- |",
+      "| **Tier 1 (Surgical Edits)** | `replace_in_file`, `write_file` | Bypasses worker spawning overhead for simple bug fixes/linters. | **Low** (Simple file read/write APIs). |",
+      "| **Tier 2 (Direct Tests)** | `run_verification_command` | Speeds up validation; allows supervisor to verify code directly. | **Medium** (Process spawning and output capture). |",
+      "| **Tier 3 (Hybrid Autonomy)**| Refined prompt/failover system | Integrates both modes natively, maximizing efficiency. | **Medium** (Prompt engineering and loop design). |",
+    ].join("\n");
+
+    const tree = MarkdownContent({ content });
+    const tableNodes = findReactNodes(tree, (n) => n.type === "table");
+    expect(tableNodes.length).toBe(1);
+
+    const thNodes = findReactNodes(tree, (n) => n.type === "th");
+    expect(thNodes.length).toBe(4);
+
+    const trNodes = findReactNodes(tree, (n) => n.type === "tr");
+    expect(trNodes.length).toBe(4); // 1 header row + 3 body rows
+  });
 });
