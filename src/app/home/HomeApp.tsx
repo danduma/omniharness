@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
 import { X } from "lucide-react";
 import { BootShell } from "@/components/BootShell";
@@ -194,7 +194,6 @@ function applyHomeBootstrap(bootstrap: HomeBootstrapPayload | null | undefined, 
 
 export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null }) {
   applyHomeBootstrap(bootstrap, false);
-  const [showExternalSessionsPicker, setShowExternalSessionsPicker] = useState(false);
   const initialEventState = bootstrap?.initialEventState ?? INITIAL_EVENT_STREAM_STATE;
   const initialRoute = typeof window === "undefined"
     ? bootstrap?.route
@@ -251,6 +250,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     runtimeErrors,
     settingsDiagnostics,
     conversationSidebarTab,
+    showExternalSessionsPicker,
   } = useManagerSelector(homeUiStateManager, selectHomeAppState, shallowEqualRecord);
 
   const {
@@ -258,6 +258,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     setShowSettings,
     setShowOnboarding,
     setShowPairDeviceDialog,
+    setShowExternalSessionsPicker,
     setActiveSettingsTab,
     setActiveLlmProfileTab,
     setApiKeys,
@@ -1328,8 +1329,8 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           setMobileWorkersOpen={setMobileWorkersOpen}
           mobileTerminalOpen={mobileTerminalOpen}
           setMobileTerminalOpen={setMobileTerminalOpen}
-          selectedRunWorkers={selectedRunWorkersForDisplay}
-          conversationAgents={conversationAgents}
+          selectedRunWorkers={vm.sideWindowWorkers}
+          conversationAgents={vm.sideWindowAgents}
           supervisorInterventions={selectedRunSupervisorInterventions}
           onCommitNow={() => actions.handleManualCommitChat("commit")}
           onCommitAndPushNow={() => actions.handleManualCommitChat("commit-push")}
@@ -1480,8 +1481,8 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           <div className={`flex h-full min-w-0 flex-1 pl-2 transition-transform duration-150 ease-out motion-reduce:transition-none ${rightSidebarOpen ? "translate-x-0" : "translate-x-3"}`}>
             <SideWindow
               projectRoot={currentProjectScope}
-              workers={selectedRunId ? selectedRunWorkersForDisplay : []}
-              agents={selectedRunId ? conversationAgents : []}
+              workers={selectedRunId ? vm.sideWindowWorkers : []}
+              agents={selectedRunId ? vm.sideWindowAgents : []}
               supervisorInterventions={selectedRunId ? selectedRunSupervisorInterventions : []}
               preferredModel={selectedRun?.preferredWorkerModel ?? null}
               preferredEffort={selectedRun?.preferredWorkerEffort ?? null}

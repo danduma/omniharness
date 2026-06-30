@@ -74,6 +74,21 @@ describe("shouldShowDirectWorkerStreamInitialLoading", () => {
     });
   });
 
+  it("does not block terminal direct runs on worker stream catch-up", () => {
+    expect(deriveConversationLoadState({
+      snapshotLoaded: true,
+      unifiedWorkerStreamEnabled: true,
+      primaryConversationWorkerId: "worker-1",
+      streamState: buildState({ status: "loading", latestContiguousSeq: 0, latestKnownSeq: 3 }),
+      selectedRunIsTerminal: true,
+    })).toMatchObject({
+      workerStreamRequired: false,
+      workerStreamLoaded: true,
+      fullyLoaded: true,
+      loadingReason: null,
+    });
+  });
+
   it("defines worker stream caught-up as loaded through the known cursor", () => {
     expect(isWorkerStreamCaughtUp(buildState({
       status: "loaded",
@@ -207,6 +222,15 @@ describe("shouldShowDirectWorkerStreamInitialLoading", () => {
       activeRefreshIntervalMs: 2_000,
       validationIntervalMs: 5_000,
       showDirectControlWorkingIndicator: false,
+    })).toBeNull();
+
+    expect(resolveDirectWorkerStreamRefreshInterval({
+      unifiedWorkerStreamEnabled: true,
+      primaryConversationWorkerId: "worker-1",
+      activeRefreshIntervalMs: 2_000,
+      validationIntervalMs: 5_000,
+      showDirectControlWorkingIndicator: false,
+      selectedRunIsTerminal: true,
     })).toBeNull();
   });
 });

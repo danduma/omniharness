@@ -48,6 +48,7 @@ export type HomeUiState = {
   showSettings: boolean;
   showOnboarding: boolean;
   showPairDeviceDialog: boolean;
+  showExternalSessionsPicker: boolean;
   activeSettingsTab: SettingsTab;
   activeLlmProfileTab: LlmProfileTab;
   apiKeys: Record<string, string>;
@@ -105,6 +106,7 @@ const initialHomeUiState: HomeUiState = {
   showSettings: false,
   showOnboarding: false,
   showPairDeviceDialog: false,
+  showExternalSessionsPicker: false,
   activeSettingsTab: "general",
   activeLlmProfileTab: "supervisor",
   apiKeys: { ...DEFAULT_SERVER_SETTINGS },
@@ -366,6 +368,7 @@ export const homeUiSetters = {
   setShowSettings: homeUiStateManager.createSetter("showSettings"),
   setShowOnboarding: homeUiStateManager.createSetter("showOnboarding"),
   setShowPairDeviceDialog: homeUiStateManager.createSetter("showPairDeviceDialog"),
+  setShowExternalSessionsPicker: homeUiStateManager.createSetter("showExternalSessionsPicker"),
   setActiveSettingsTab: homeUiStateManager.createSetter("activeSettingsTab"),
   setActiveLlmProfileTab: homeUiStateManager.createSetter("activeLlmProfileTab"),
   setApiKeys: homeUiStateManager.createSetter("apiKeys"),

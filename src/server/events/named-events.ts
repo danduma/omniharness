@@ -211,7 +211,7 @@ export type SupervisorEvent =
       runId: string;
       reason: "missing" | "malformed" | "not_owner";
     }
-  | { kind: "supervisor.wake_lease_recovered"; runId: string; reason: "orphaned_completion" | "orphaned_pre_worker" }
+  | { kind: "supervisor.wake_lease_recovered"; runId: string; reason: "orphaned_completion" | "orphaned_pre_worker" | "orphaned_worker_session_recreated" }
   | {
       kind: "supervisor.wake_skipped";
       runId: string;

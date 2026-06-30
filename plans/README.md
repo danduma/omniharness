@@ -13,8 +13,8 @@ into plans yet — see "Findings deferred" below for why and what they'd need.
 
 | Plan | Title                                              | Priority | Effort | Depends on | Status |
 |------|----------------------------------------------------|----------|--------|------------|--------|
-| 004  | Fix committed typecheck error (home-utils test)    | P1       | S      | —          | TODO   |
-| 001  | Add `typecheck` script + CI (typecheck & lint gate)| P1       | S      | 004        | BLOCKED — typecheck baseline is RED until 004 lands |
+| 004  | Fix committed typecheck error (home-utils test)    | P1       | S      | —          | DONE   |
+| 001  | Add `typecheck` script + CI (typecheck & lint gate)| P1       | S      | 004        | DONE   |
 | 002  | Resolve `pnpm audit` advisories (next/fast-uri/vitest) | P1   | S      | —          | DONE (executed + reviewed 2026-06-23) |
 | 003  | Remove dead duplicate xterm dependencies           | P2       | S      | —          | DONE (executed + reviewed 2026-06-23) |
 

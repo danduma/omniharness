@@ -142,7 +142,7 @@ test("composer controls stay on one mobile row while keeping readable label widt
   expect(pageSource).toContain('"ml-auto flex h-8 min-w-0 max-w-[min(13rem,48vw)] shrink items-center gap-1.5 rounded-full px-2 text-xs font-medium sm:hidden"');
   expect(pageSource).toContain("const selectedHarnessLabel = shouldLockDirectWorker");
   expect(pageSource).toContain("const selectedModelLabel = activeWorkerModelOptions.find");
-  expect(pageSource).toContain("const mobileSettingsSummary = `${selectedHarnessLabel} · ${selectedModelLabel}`;");
+  expect(pageSource).toContain("const mobileSettingsSummary = `${selectedHarnessLabel} · ${selectedAccountLabel} · ${selectedModelLabel}`;");
   expect(pageSource).toContain("title={mobileSettingsSummary}");
   expect(pageSource).toContain("{selectedHarnessLabel}");
   expect(pageSource).toContain("{selectedModelLabel}");

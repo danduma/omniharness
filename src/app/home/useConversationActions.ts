@@ -23,7 +23,7 @@ type MutationsRef = {
   deleteRun: { mutate: (vars: { runId: string }) => void };
   archiveRun: { mutate: (vars: { runId: string }) => void };
   recoverRun: {
-    mutate: (vars: { runId: string; action: "retry" | "edit" | "fork"; targetMessageId: string; content?: string; gitWorkspaceLaunch?: GitWorkspaceLaunchRequest }, opts?: { onError?: (err: unknown) => void }) => void;
+    mutate: (vars: { runId: string; action: "retry" | "edit" | "fork"; targetMessageId: string; content?: string; gitWorkspaceLaunch?: GitWorkspaceLaunchRequest; manualRecovery?: boolean }, opts?: { onError?: (err: unknown) => void }) => void;
     isPending: boolean;
   };
   resumeRunRecovery: { mutate: (vars: { runId: string }) => void };

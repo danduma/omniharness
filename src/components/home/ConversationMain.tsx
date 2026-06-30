@@ -777,6 +777,7 @@ export function ConversationMain({
   useI18nSnapshot();
   const { hasOutputBelow } = useManagerSnapshot(conversationMainManager);
   const { handledMessageIds: handledPreflightConfirmationMessageIds } = useManagerSnapshot(preflightConfirmationActionsManager);
+  const selectedRunIsTerminal = isTerminalRunStatus(selectedRun?.status);
   // Subscribe to the unified worker conversation stream for the
   // direct-control worker. When the flag is enabled this drives the
   // Terminal directly; otherwise the legacy `agent` + `userMessages`
@@ -792,6 +793,7 @@ export function ConversationMain({
         activeRefreshIntervalMs: DIRECT_WORKER_STREAM_REFRESH_INTERVAL_MS,
         validationIntervalMs: DIRECT_WORKER_STREAM_VALIDATION_INTERVAL_MS,
         showDirectControlWorkingIndicator,
+        selectedRunIsTerminal,
       }),
     },
   );
@@ -812,6 +814,7 @@ export function ConversationMain({
         activeRefreshIntervalMs: DIRECT_WORKER_STREAM_REFRESH_INTERVAL_MS,
         validationIntervalMs: DIRECT_WORKER_STREAM_VALIDATION_INTERVAL_MS,
         showDirectControlWorkingIndicator,
+        selectedRunIsTerminal,
       }),
     },
   );
@@ -825,6 +828,7 @@ export function ConversationMain({
     unifiedWorkerStreamEnabled,
     primaryConversationWorkerId,
     streamState: directWorkerStream.state,
+    selectedRunIsTerminal,
   });
   const isDirectWorkerStreamLoading = shouldShowDirectConversationLoading(directConversationLoadState)
     || Boolean(
