@@ -9,6 +9,7 @@ import { Readable, Writable } from "stream";
 import * as acp from "@agentclientprotocol/sdk";
 import { sanitizeAcpStream } from "./acp-stream-sanitizer";
 import { applyCodexBridgeEnv, buildCodexConfigArgs, shouldSetRequestedMode } from "./codex";
+import { buildGeminiArgs, isFullAccessAgentMode } from "./gemini";
 import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
 import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, withCodexStandardTooling, withManagedPath } from "./tool-env";
 import {
@@ -82,10 +83,10 @@ type EndpointCheckResult = {
 
 const endpointCheckCache = new Map<string, { result: EndpointCheckResult | null; refreshing: boolean }>();
 
-function defaultCommandFor(type: string, model: string | null): { command: string; args: string[] } | null {
+function defaultCommandFor(type: string, model: string | null, mode?: string | null): { command: string; args: string[] } | null {
   switch (type) {
     case "gemini":
-      return { command: "gemini", args: ["--experimental-acp", ...(model ? ["--model", model] : [])] };
+      return { command: "gemini", args: buildGeminiArgs({ model, mode }) };
     case "claude":
       return { command: "claude-agent-acp", args: [] };
     case "codex":
@@ -836,7 +837,7 @@ class RuntimeClient implements acp.Client {
     // Mode switches (e.g. exiting plan mode via "Ready to code?") change how the
     // agent operates and are always the user's call — never auto-approve them, even
     // in full-access/YOLO mode where every other permission is bypassed.
-    if (isFullAccessPermissionMode(record.sessionMode) && !isModeSwitchPermission(params)) {
+    if (isFullAccessAgentMode(record.sessionMode) && !isModeSwitchPermission(params)) {
       const optionId = findAutoApprovePermissionOptionId(params);
       appendPermissionOutcomeEntry(record, requestId, params, "approve", optionId);
       record.updatedAt = nowIso();
@@ -1030,10 +1031,6 @@ function buildPermissionRequestText(params: acp.RequestPermissionRequest) {
   return target
     ? `Permission requested for ${target}${optionsText}`
     : `Permission requested${optionsText}`;
-}
-
-function isFullAccessPermissionMode(mode: string | null) {
-  return mode === "full-access" || mode === "danger-full-access";
 }
 
 // A `switch_mode` permission asks to change the agent's operating mode (the
@@ -1556,7 +1553,7 @@ export class AgentRuntimeManager {
         : useClaudeDefault
           ? [{ command: "claude-agent-acp", args: [] as string[] }]
           : useGeminiDefault
-            ? [{ command: "gemini", args: ["--experimental-acp", ...(requestedModel ? ["--model", requestedModel] : [])] as string[] }]
+            ? [{ command: "gemini", args: buildGeminiArgs({ model: requestedModel, mode: requestedMode }) }]
             : [{ command: defaultCommand, args: defaultArgsList }])
         .filter((candidate) => commandExists(candidate.command, finalEnv));
 
@@ -1875,7 +1872,7 @@ export class AgentRuntimeManager {
     // promise no one will resolve, and the UI keeps showing the permission
     // warning even though the mode now grants everything automatically. Drain
     // them with the same auto-approve decision a live request would have gotten.
-    const autoApprovedPending = isFullAccessPermissionMode(mode)
+    const autoApprovedPending = isFullAccessAgentMode(mode)
       ? this.autoApproveAllPendingPermissions(record)
       : 0;
     return { ok: true, name: record.name, mode, autoApprovedPending };
@@ -1981,7 +1978,7 @@ export class AgentRuntimeManager {
       envFingerprint: computeEnvFingerprint(finalEnv as NodeJS.ProcessEnv),
     });
 
-    const candidate = defaultCommandFor(type, requestedModel);
+    const candidate = defaultCommandFor(type, requestedModel, requestedMode);
     if (!candidate) {
       throw new RuntimeHttpError(400, `Worker type "${type}" has no default ACP command; cannot prewarm`);
     }
