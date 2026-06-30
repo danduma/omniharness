@@ -129,7 +129,8 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(workersSidebarSource).toContain("buildWorkerTerminalUserMessages");
   expect(workerCardSource).toContain("<Terminal");
   expect(workerCardSource).toContain('import { useWorkerStream } from "@/app/home/WorkerEntriesManager";');
-  expect(workerCardSource).toContain("const workerStream = useWorkerStream(workerId);");
+  expect(workerCardSource).toContain("const open = isFocused || (openByWorkerId[workerId] ?? defaultOpen);");
+  expect(workerCardSource).toContain("const workerStream = useWorkerStream(open ? workerId : null);");
   expect(workerCardSource).toContain("const unifiedTerminalEntries = useMemo");
   expect(workerCardSource).toContain("const processEntries = useMemo");
   expect(workerCardSource).toContain("entries={unifiedTerminalEntries}");
@@ -181,8 +182,8 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('const CloseButtonIcon = closeButtonVariant === "back" ? ArrowLeft : PanelRightClose;');
   expect(pageSource).toContain('<PanelRightClose');
   expect(pageSource).toContain('<SideWindow');
-  expect(pageSource).toContain('workers={selectedRunId ? selectedRunWorkersForDisplay : []}');
-  expect(pageSource).toContain('agents={selectedRunId ? conversationAgents : []}');
+  expect(pageSource).toContain('workers={selectedRunId ? vm.sideWindowWorkers : []}');
+  expect(pageSource).toContain('agents={selectedRunId ? vm.sideWindowAgents : []}');
   expect(pageSource).toContain('workersSidebarManager');
   expect(pageSource).toContain('activeTab: "active"');
   expect(pageSource).toContain('t("workers.sidebar.activeTab", { count: workerGroups.active.length })');

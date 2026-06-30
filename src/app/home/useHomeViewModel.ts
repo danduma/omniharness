@@ -276,6 +276,37 @@ export function useHomeViewModel({
       : buildWorkerLists(selectedRunWorkersForDisplay),
     [selectedRunIsTerminal, selectedRunNeedsRecovery, selectedRunWorkersForDisplay],
   );
+  const sideWindowTerminalStatus = selectedRun && (selectedRunIsTerminal || selectedRunNeedsRecovery)
+    ? normalizeRunStatus(selectedRun.status)
+    : null;
+  const sideWindowWorkers = useMemo(
+    () => sideWindowTerminalStatus
+      ? selectedRunWorkersForDisplay.map((worker) => (
+        isWorkerActiveStatus(worker.status)
+          ? { ...worker, status: sideWindowTerminalStatus }
+          : worker
+      ))
+      : selectedRunWorkersForDisplay,
+    [selectedRunWorkersForDisplay, sideWindowTerminalStatus],
+  );
+  const sideWindowAgents = useMemo(
+    () => sideWindowTerminalStatus
+      ? conversationAgents.map((agent) => {
+        if (!isWorkerActiveStatus(agent.state) && !agent.currentText?.trim()) {
+          return agent;
+        }
+
+        const currentText = agent.currentText?.trim() ?? "";
+        return {
+          ...agent,
+          state: sideWindowTerminalStatus,
+          currentText: "",
+          lastText: agent.lastText?.trim() || currentText || agent.lastText,
+        };
+      })
+      : conversationAgents,
+    [conversationAgents, sideWindowTerminalStatus],
+  );
 
   const activeConversationWorkerIds = useMemo(
     () => new Set(conversationWorkerGroups.active.map((worker) => worker.id)),
@@ -595,6 +626,8 @@ export function useHomeViewModel({
     selectedRunWorkers,
     conversationAgents,
     selectedRunWorkersForDisplay,
+    sideWindowWorkers,
+    sideWindowAgents,
     primaryConversationAgent,
     conversationWorkerGroups,
     activeConversationWorkerIds,

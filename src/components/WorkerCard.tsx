@@ -701,8 +701,8 @@ export function WorkerCard({
 }: WorkerCardProps) {
   useI18nSnapshot();
   const { openByWorkerId } = useManagerSnapshot(workerCardManager);
-  const workerStream = useWorkerStream(workerId);
   const open = isFocused || (openByWorkerId[workerId] ?? defaultOpen);
+  const workerStream = useWorkerStream(open ? workerId : null);
   const promptPreviewText = promptPreview?.trim() ?? "";
   const stateLabel = formatWorkerStateLabel(agent.state);
   const showPromptPreview = promptPreviewText.length > 0;
