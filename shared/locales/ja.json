@@ -13,6 +13,7 @@
   "externalSessions.empty": "{path} に外部CLIセッションはありません",
   "externalSessions.noFilterResults": "フィルターに一致するセッションはありません。",
   "externalSessions.provider.claudeCode": "Claude Code",
+  "externalSessions.provider.gemini": "Gemini",
   "externalSessions.untitled": "(無題のセッション)",
   "externalSessions.resuming": "再開中...",
   "externalSessions.errorSource": "外部セッション",

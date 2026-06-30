@@ -13,6 +13,7 @@
   "externalSessions.empty": "Nenhuma sessão CLI externa encontrada em {path}",
   "externalSessions.noFilterResults": "Nenhuma sessão corresponde ao filtro.",
   "externalSessions.provider.claudeCode": "Claude Code",
+  "externalSessions.provider.gemini": "Gemini",
   "externalSessions.untitled": "(sessão sem título)",
   "externalSessions.resuming": "Retomando...",
   "externalSessions.errorSource": "Sessões externas",

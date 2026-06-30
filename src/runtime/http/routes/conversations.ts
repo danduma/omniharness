@@ -17,7 +17,7 @@ function readExternalClaudeSessionId(value: unknown): string | null {
     return null;
   }
   const id = String(value).trim();
-  if (UUID_RE.test(id)) {
+  if (UUID_RE.test(id) || /^[a-zA-Z0-9_-]+$/.test(id)) {
     return id;
   }
   throw Object.assign(new Error("Invalid external session id."), { status: 400 });
@@ -165,9 +165,9 @@ export const handleConversationsRequest: OmniHttpHandler = async (request) => {
       projectPath: typeof body?.projectPath === "string" ? body.projectPath : null,
       gitWorkspaceTarget: readGitWorkspaceTarget(body?.gitWorkspaceTarget),
       gitWorkspaceLaunch: readGitWorkspaceLaunch(body?.gitWorkspaceLaunch),
-      preferredWorkerType: externalClaudeSessionId
-        ? "claude"
-        : typeof body?.preferredWorkerType === "string" ? body.preferredWorkerType : null,
+      preferredWorkerType: typeof body?.preferredWorkerType === "string" && body.preferredWorkerType
+        ? body.preferredWorkerType
+        : externalClaudeSessionId ? "claude" : null,
       preferredWorkerModel: typeof body?.preferredWorkerModel === "string" ? body.preferredWorkerModel : null,
       preferredWorkerEffort: typeof body?.preferredWorkerEffort === "string" ? body.preferredWorkerEffort : null,
       preferredWorkerAccountId: typeof body?.preferredWorkerAccountId === "string" ? body.preferredWorkerAccountId : null,

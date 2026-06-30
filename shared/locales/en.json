@@ -13,6 +13,7 @@
   "externalSessions.empty": "No external CLI sessions found in {path}",
   "externalSessions.noFilterResults": "No sessions match your filter.",
   "externalSessions.provider.claudeCode": "Claude Code",
+  "externalSessions.provider.gemini": "Gemini",
   "externalSessions.untitled": "(untitled session)",
   "externalSessions.resuming": "Resuming...",
   "externalSessions.errorSource": "External sessions",
