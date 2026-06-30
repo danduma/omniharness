@@ -5,6 +5,7 @@ import { join } from "path";
 import { createServer, type Server } from "http";
 import { dirname } from "path";
 import { createAgentRuntimeServer } from "@/server/agent-runtime/http";
+import { getAppDataPath } from "@/server/app-root";
 
 const tempDirs: string[] = [];
 const servers: Server[] = [];
@@ -125,6 +126,10 @@ process.stdin.on('data', (chunk) => {
         skillEntries: fs.existsSync(skillsDir) ? fs.readdirSync(skillsDir).sort() : [],
       });
       write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-1' } });
+    }
+    if (message.method === 'session/set_mode') {
+      append({ method: message.method, params: message.params });
+      write({ jsonrpc: '2.0', id: message.id, result: {} });
     }
     if (message.method === 'session/resume') {
       append({ method: message.method, params: message.params });
@@ -2012,11 +2017,64 @@ process.stdout.write(JSON.stringify({
     expect(spawnResponse.status).toBe(201);
     const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
     const initialize = events.find((event) => event.method === "initialize");
-    expect(initialize.argv).toEqual(["--experimental-acp", "--model", "gemini-3.5-flash"]);
+    expect(initialize.argv).toEqual([
+      "--experimental-acp",
+      "--model",
+      "gemini-3.5-flash",
+      "--include-directories",
+      getAppDataPath("attachments"),
+    ]);
     expect(initialize.selectedCliStorageEnv.GEMINI_CLI_HOME).toBe(join(projectDir, ".omniharness", "cli-home", "gemini"));
     expect(initialize.selectedCliStorageEnv.GEMINI_CLI_TRUST_WORKSPACE).toBe("true");
 
     await fetch(`${baseUrl}/agents/gemini-worker`, { method: "DELETE" });
+  }, 15_000);
+
+  it("launches default Gemini full-access workers with Gemini YOLO approval mode", async () => {
+    const projectDir = createTempDir("omni-runtime-gemini-yolo-project-");
+    const binDir = createTempDir("omni-runtime-gemini-yolo-bin-");
+    const requestLog = join(projectDir, "requests.jsonl");
+    writeFileSync(join(projectDir, "SKILL.md"), "---\nname: test-skill\n---\n");
+    createExecutable(binDir, "gemini", fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        OMNIHARNESS_RESOURCE_GUARD: "0",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "gemini",
+        cwd: projectDir,
+        name: "gemini-yolo-worker",
+        model: "gemini-3.5-flash",
+        mode: "full-access",
+        skillRoots: [projectDir],
+        env: { FAKE_ACP_REQUEST_LOG: requestLog },
+      }),
+    });
+
+    expect(spawnResponse.status).toBe(201);
+    const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
+    const initialize = events.find((event) => event.method === "initialize");
+    expect(initialize.argv).toEqual([
+      "--experimental-acp",
+      "--approval-mode",
+      "yolo",
+      "--model",
+      "gemini-3.5-flash",
+      "--include-directories",
+      getAppDataPath("attachments"),
+    ]);
+
+    await fetch(`${baseUrl}/agents/gemini-yolo-worker`, { method: "DELETE" });
   }, 15_000);
 
   it("bridges Gemini credentials into project-scoped CLI storage", async () => {
