@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useMemo } from "react";
+import { StateManager } from "@/lib/state-manager";
+import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { ArrowDown, ArrowUp, Plus, Power, RefreshCw } from "lucide-react";
 import { WORKER_OPTIONS } from "@/app/home/constants";
 import type { AccountRecord, WorkerAvailability, WorkerModelCatalog, WorkerType } from "@/app/home/types";
@@ -46,8 +48,8 @@ export function AgentsSettingsPanel({
   workerCatalogRefreshing,
 }: AgentsSettingsPanelProps) {
   useI18nSnapshot();
-  const [accountActionError, setAccountActionError] = useState<unknown>(null);
-  const [pendingAccountAction, setPendingAccountAction] = useState<string | null>(null);
+  const manager = useMemo(() => new StateManager({ accountActionError: null as unknown, pendingAccountAction: null as string | null }), []);
+  const { accountActionError, pendingAccountAction } = useManagerSnapshot(manager);
   const configuredAllowedWorkerTypes = parseWorkerTypes(settings.WORKER_ALLOWED_TYPES);
   const configuredAllowedWorkerSet = new Set(configuredAllowedWorkerTypes);
   const availableWorkerTypes = new Set(
@@ -123,15 +125,15 @@ export function AgentsSettingsPanel({
   };
 
   const runAccountAction = async (actionKey: string, action: () => Promise<void>) => {
-    setAccountActionError(null);
-    setPendingAccountAction(actionKey);
+    manager.setKey("accountActionError", null);
+    manager.setKey("pendingAccountAction", actionKey);
     try {
       await action();
       await onRefreshAccounts();
     } catch (error) {
-      setAccountActionError(error);
+      manager.setKey("accountActionError", error);
     } finally {
-      setPendingAccountAction(null);
+      manager.setKey("pendingAccountAction", null);
     }
   };
 

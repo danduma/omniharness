@@ -1,7 +1,9 @@
 "use client";
 
 import type React from "react";
-import { useState, useMemo } from "react";
+import { useMemo } from "react";
+import { StateManager } from "@/lib/state-manager";
+import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { FolderOpen, Search, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -54,8 +56,8 @@ function shortProjectPath(full: string): string {
 
 export function ExternalSessionsPicker({ open, onClose, onResumed }: ExternalSessionsPickerProps) {
   useI18nSnapshot();
-  const [resumingId, setResumingId] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  const manager = useMemo(() => new StateManager({ resumingId: null as string | null, query: "" }), []);
+  const { resumingId, query } = useManagerSnapshot(manager);
 
   const { data, isLoading, isError, refetch } = useQuery<ExternalSessionsResponse>({
     queryKey: ["external-sessions"],
@@ -82,16 +84,16 @@ export function ExternalSessionsPicker({ open, onClose, onResumed }: ExternalSes
         action: t("externalSessions.resumeAction"),
       }),
     onSuccess: (result) => {
-      setResumingId(null);
+      manager.setKey("resumingId", null);
       if (result.runId) onResumed(result.runId);
       onClose();
     },
-    onError: () => setResumingId(null),
+    onError: () => manager.setKey("resumingId", null),
   });
 
   function handleResume(session: ExternalSession) {
     if (resumingId) return;
-    setResumingId(session.sessionId);
+    manager.setKey("resumingId", session.sessionId);
     resumeMutation.mutate(session);
   }
 
@@ -108,7 +110,7 @@ export function ExternalSessionsPicker({ open, onClose, onResumed }: ExternalSes
   const isEmpty = !isLoading && !isError && allSessions.length === 0;
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) { setQuery(""); onClose(); } }}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) { manager.setKey("query", ""); onClose(); } }}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -122,7 +124,7 @@ export function ExternalSessionsPicker({ open, onClose, onResumed }: ExternalSes
           <Input
             placeholder={t("externalSessions.filterPlaceholder")}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => manager.setKey("query", e.target.value)}
             className="pl-8"
             autoFocus
           />

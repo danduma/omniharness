@@ -22,10 +22,12 @@ export function deriveConversationLoadState(args: {
   unifiedWorkerStreamEnabled: boolean;
   primaryConversationWorkerId: string | null | undefined;
   streamState: WorkerStreamState;
+  selectedRunIsTerminal?: boolean;
 }): ConversationLoadState {
   const workerStreamRequired = Boolean(
     args.unifiedWorkerStreamEnabled
       && args.primaryConversationWorkerId
+      && !args.selectedRunIsTerminal
   );
   const workerStreamLoaded = !workerStreamRequired || isWorkerStreamCaughtUp(args.streamState);
   const fullyLoaded = args.snapshotLoaded && workerStreamLoaded;
@@ -84,8 +86,9 @@ export function resolveDirectWorkerStreamRefreshInterval(args: {
   activeRefreshIntervalMs: number;
   validationIntervalMs: number;
   showDirectControlWorkingIndicator: boolean;
+  selectedRunIsTerminal?: boolean;
 }) {
-  if (!args.unifiedWorkerStreamEnabled || !args.primaryConversationWorkerId) {
+  if (!args.unifiedWorkerStreamEnabled || !args.primaryConversationWorkerId || args.selectedRunIsTerminal) {
     return null;
   }
 
