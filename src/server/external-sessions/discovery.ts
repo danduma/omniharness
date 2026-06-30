@@ -390,7 +390,12 @@ export async function discoverExternalGeminiSessions(): Promise<ExternalGeminiSe
             }
 
             const parsed = parseGeminiLines([...headLines, ...tailLines]);
-            const sessionId = parsed.sessionId || basename(filePath, ".jsonl").replace(/^session-[^r]*-/, "");
+            let sessionId = parsed.sessionId;
+            if (!sessionId) {
+              const base = basename(filePath, ".jsonl");
+              const suffixMatch = base.match(/[-_]?([0-9a-f]{8})$/i);
+              sessionId = suffixMatch ? suffixMatch[1] : base;
+            }
 
             const projectNameLower = dirName.trim().toLowerCase();
             let projectPath = projectsMap[projectNameLower];

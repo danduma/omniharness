@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { AgentRuntimeManager } from "@/server/agent-runtime/manager";
-import { buildGeminiArgs } from "@/server/agent-runtime/gemini";
+import { buildGeminiArgs, resolveFullGeminiUuid } from "@/server/agent-runtime/gemini";
 import { getAppDataPath } from "@/server/app-root";
 import { __resetNamedEventsForTests } from "@/server/events/named-events";
 
@@ -122,4 +122,52 @@ describe("Gemini runtime args", () => {
       manager.shutdownPools();
     }
   }, 15_000);
+
+  describe("resolveFullGeminiUuid", () => {
+    it("returns 36-char UUIDs immediately", async () => {
+      const fullUuid = "dc3ca096-12af-4e06-b136-063676e362ac";
+      expect(await resolveFullGeminiUuid(fullUuid)).toBe(fullUuid);
+    });
+
+    it("pads short IDs with zeros if session file is not found", async () => {
+      expect(await resolveFullGeminiUuid("1aba5d6a")).toBe("1aba5d6a-0000-0000-0000-000000000000");
+    });
+
+    it("resolves short ID to full UUID if session file is found in project path", async () => {
+      const projectDir = createTempDir("omni-resolve-project-");
+      const chatsDir = join(projectDir, ".omniharness/cli-home/gemini/.gemini/tmp/some-project/chats");
+      
+      const fs = require("fs");
+      fs.mkdirSync(chatsDir, { recursive: true });
+      
+      const sessionFileContent = JSON.stringify({
+        sessionId: "1aba5d6a-def8-4e87-ab58-699f3aa83822",
+        kind: "main",
+      }) + "\n";
+      
+      fs.writeFileSync(join(chatsDir, "session-2026-06-30T14-50-1aba5d6a.jsonl"), sessionFileContent);
+      
+      const resolved = await resolveFullGeminiUuid("1aba5d6a", projectDir);
+      expect(resolved).toBe("1aba5d6a-def8-4e87-ab58-699f3aa83822");
+    });
+
+    it("normalizes and resolves complex suffixes ending in short ID", async () => {
+      const projectDir = createTempDir("omni-resolve-project-");
+      const chatsDir = join(projectDir, ".omniharness/cli-home/gemini/.gemini/tmp/some-project/chats");
+      
+      const fs = require("fs");
+      fs.mkdirSync(chatsDir, { recursive: true });
+      
+      const sessionFileContent = JSON.stringify({
+        sessionId: "98765432-abcd-ef01-2345-6789abcdef01",
+        kind: "main",
+      }) + "\n";
+      
+      fs.writeFileSync(join(chatsDir, "session-2026-06-30T14-50-98765432.jsonl"), sessionFileContent);
+      
+      // Test suffix extract and resolve
+      const resolved = await resolveFullGeminiUuid("omniharness-98765432", projectDir);
+      expect(resolved).toBe("98765432-abcd-ef01-2345-6789abcdef01");
+    });
+  });
 });

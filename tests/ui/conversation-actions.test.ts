@@ -315,6 +315,16 @@ test("direct conversations keep the terminal mounted during worker stream refres
   expect(conversationMainSource).toContain("isLoading={isHydratingConversations || isDirectWorkerStreamLoading}");
 });
 
+test("direct conversations gate legacy user fallback on authoritative stream load", () => {
+  const conversationMainSource = readSource("src/components/home/ConversationMain.tsx");
+
+  expect(conversationMainSource).toContain("const allowDirectUserMessageFallback = Boolean(");
+  expect(conversationMainSource).toContain("directWorkerStream.isLoaded");
+  expect(conversationMainSource).toContain("conversationTranscript.isLoaded");
+  expect(conversationMainSource).toContain("allowUserMessageFallback={allowDirectUserMessageFallback}");
+  expect(conversationMainSource).not.toContain("\n                allowUserMessageFallback\n");
+});
+
 test("attachment image previews use a global full-screen dialog", () => {
   const homeSource = readSource("src/app/home/HomeApp.tsx");
   const dialogSource = readSource("src/components/AttachmentImagePreviewDialog.tsx");

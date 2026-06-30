@@ -88,7 +88,7 @@ export function resolveDirectWorkerStreamRefreshInterval(args: {
   showDirectControlWorkingIndicator: boolean;
   selectedRunIsTerminal?: boolean;
 }) {
-  if (!args.unifiedWorkerStreamEnabled || !args.primaryConversationWorkerId || args.selectedRunIsTerminal) {
+  if (!args.unifiedWorkerStreamEnabled || !args.primaryConversationWorkerId) {
     return null;
   }
 

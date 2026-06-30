@@ -823,6 +823,11 @@ export function ConversationMain({
     directWorkerEntries: directWorkerStream.entries,
   });
   const isUsingConversationTranscriptEntries = conversationTranscript.entries.length > 0;
+  const allowDirectUserMessageFallback = Boolean(
+    !unifiedWorkerStreamEnabled
+      || directWorkerStream.isLoaded
+      || conversationTranscript.isLoaded,
+  );
   const directConversationLoadState = deriveConversationLoadState({
     snapshotLoaded: isSelectedConversationPreviewAvailable,
     unifiedWorkerStreamEnabled,
@@ -994,7 +999,7 @@ export function ConversationMain({
                     ? conversationEntries
                     : undefined
                 }
-                allowUserMessageFallback
+                allowUserMessageFallback={allowDirectUserMessageFallback}
                 getUserMessageActions={getUserMessageActions}
                 editingUserMessageId={editingMessageId}
                 editingUserMessageValue={editingMessageValue}

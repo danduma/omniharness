@@ -231,6 +231,6 @@ describe("shouldShowDirectWorkerStreamInitialLoading", () => {
       validationIntervalMs: 5_000,
       showDirectControlWorkingIndicator: false,
       selectedRunIsTerminal: true,
-    })).toBeNull();
+    })).toBe(5_000);
   });
 });
