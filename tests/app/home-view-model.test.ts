@@ -106,6 +106,39 @@ describe("useHomeViewModel", () => {
     expect(viewModel.isConversationThinking).toBe(false);
   });
 
+  it("quiesces completed commit workers before handing them to the side window", () => {
+    const viewModel = useRenderViewModel(createState({
+      runs: [createRun({ mode: "commit", status: "done", title: "Commit" })],
+      plans: [{ id: "plan-1", path: "/workspace/project" }],
+      messages: [{
+        id: "message-1",
+        runId: "run-1",
+        role: "user",
+        kind: "checkpoint",
+        content: "Commit the changes",
+        createdAt: "2026-05-13T00:00:00.000Z",
+      }],
+      workers: [{
+        id: "run-1-worker-1",
+        runId: "run-1",
+        type: "gemini",
+        status: "idle",
+        createdAt: "2026-05-13T00:00:00.000Z",
+        updatedAt: "2026-05-13T00:01:00.000Z",
+      }],
+      agents: [{
+        name: "run-1-worker-1",
+        type: "gemini",
+        state: "idle",
+        currentText: "",
+        lastText: "Committed and pushed changes.",
+      }],
+    }));
+
+    expect(viewModel.sideWindowWorkers.map((worker) => worker.status)).toEqual(["done"]);
+    expect(viewModel.sideWindowAgents.map((agent) => agent.state)).toEqual(["done"]);
+  });
+
   it("does not show a manual-recovery run as thinking because of a stale recovering worker", () => {
     const viewModel = useRenderViewModel(createState({
       runs: [createRun({
@@ -165,8 +198,10 @@ describe("useHomeViewModel", () => {
         label: "Gemini",
         availability: {
           status: "ok",
+          binary: true,
+          apiKey: null,
+          endpoint: null,
           message: "Gemini login state was detected.",
-          setupCommand: "gemini",
         },
         installation: {
           command: "gemini",
