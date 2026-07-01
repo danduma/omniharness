@@ -2118,6 +2118,8 @@ process.stdout.write(JSON.stringify({
     expect(readFileSync(join(scopedGeminiConfigDir, "google_accounts.json"), "utf8")).toContain("global-account");
     expect(readFileSync(join(scopedGeminiConfigDir, "google_account_id"), "utf8")).toContain("global-account");
     expect(existsSync(join(scopedGeminiConfigDir, "settings.json"))).toBe(true);
+    expect(readFileSync(join(projectDir, ".omniharness", "cli-home", "gemini", "settings.json"), "utf8")).toContain('"autoConfigureMemory": false');
+    expect(readFileSync(join(scopedGeminiConfigDir, "settings.json"), "utf8")).toContain('"autoConfigureMemory": false');
     const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
     const initialize = events.find((event) => event.method === "initialize");
     expect(initialize.selectedCliStorageEnv.GEMINI_FORCE_FILE_STORAGE).toBe("true");
@@ -2227,6 +2229,50 @@ process.stdout.write(JSON.stringify({
     expect(existsSync(join(scopedOpencodeHome, "cache", "opencode"))).toBe(true);
 
     await fetch(`${baseUrl}/agents/opencode-credential-worker`, { method: "DELETE" });
+  }, 15_000);
+
+  it("starts OpenCode ACP workers without forwarding a model flag", async () => {
+    const projectDir = createTempDir("omni-runtime-opencode-model-project-");
+    const binDir = createTempDir("omni-runtime-opencode-model-bin-");
+    const fakeHome = createTempDir("omni-runtime-opencode-model-home-");
+    const globalOpencodeDataDir = join(fakeHome, ".local", "share", "opencode");
+    const globalOpencodeConfigDir = join(fakeHome, ".config", "opencode");
+    mkdirSync(globalOpencodeDataDir, { recursive: true });
+    mkdirSync(globalOpencodeConfigDir, { recursive: true });
+    writeFileSync(join(globalOpencodeDataDir, "auth.json"), "{\"google\":{\"key\":\"global-token\"}}\n");
+    writeFileSync(join(globalOpencodeConfigDir, "opencode.jsonc"), "{ \"$schema\": \"https://opencode.ai/config.json\" }\n");
+    const requestLog = join(projectDir, "requests.jsonl");
+    createExecutable(binDir, "opencode", fakeAcpAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        HOME: fakeHome,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        OMNIHARNESS_RESOURCE_GUARD: "0",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "opencode",
+        cwd: projectDir,
+        name: "opencode-model-worker",
+        model: "google/gemini-3.5-flash",
+        env: { FAKE_ACP_REQUEST_LOG: requestLog },
+      }),
+    });
+
+    expect(spawnResponse.status).toBe(201);
+    const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
+    const initialize = events.find((event) => event.method === "initialize");
+    expect(initialize.argv).toEqual(["acp"]);
+
+    await fetch(`${baseUrl}/agents/opencode-model-worker`, { method: "DELETE" });
   }, 15_000);
 
   it("treats duplicate saved-session resume requests as idempotent", async () => {
