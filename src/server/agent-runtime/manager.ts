@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "child_process";
-import { constants, accessSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, statSync, symlinkSync } from "fs";
+import { constants, accessSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "fs";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { request as httpRequest } from "http";
 import { request as httpsRequest } from "https";
@@ -92,7 +92,7 @@ function defaultCommandFor(type: string, model: string | null, mode?: string | n
     case "codex":
       return { command: "codex-acp", args: [] };
     case "opencode":
-      return { command: "opencode", args: ["acp", ...(model ? ["--model", model] : [])] };
+      return { command: "opencode", args: ["acp"] };
     default:
       return null;
   }
@@ -129,6 +129,51 @@ function bridgeDirectoryIfMissing(source: string, target: string) {
   }
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function mergeJsonOverlay(base: unknown, overlay: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = isPlainObject(base) ? { ...base } : {};
+  for (const [key, overlayValue] of Object.entries(overlay)) {
+    const baseValue = result[key];
+    if (isPlainObject(baseValue) && isPlainObject(overlayValue)) {
+      result[key] = mergeJsonOverlay(baseValue, overlayValue);
+    } else {
+      result[key] = overlayValue;
+    }
+  }
+  return result;
+}
+
+function writeGeminiMemorySafetySettings(scopedHome: string) {
+  const settingsPatch = {
+    advanced: {
+      autoConfigureMemory: false,
+    },
+    experimental: {
+      autoMemory: false,
+    },
+  };
+
+  // Gemini's early bootstrap path and its normal settings loader do not read
+  // the same user-settings location when GEMINI_CLI_HOME is set, so we write
+  // the override to both the home root and the nested .gemini settings file.
+  for (const filePath of [
+    join(scopedHome, "settings.json"),
+    join(scopedHome, ".gemini", "settings.json"),
+  ]) {
+    let current: unknown = {};
+    try {
+      current = JSON.parse(readFileSync(filePath, "utf8"));
+    } catch {
+      current = {};
+    }
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, `${JSON.stringify(mergeJsonOverlay(current, settingsPatch), null, 2)}\n`);
+  }
+}
+
 function bridgeProjectScopedCliCredentials(type: string, env: EnvLike) {
   if (type === "gemini") {
     const scopedHome = env.GEMINI_CLI_HOME?.trim();
@@ -152,6 +197,7 @@ function bridgeProjectScopedCliCredentials(type: string, env: EnvLike) {
     ) {
       env.GEMINI_FORCE_FILE_STORAGE = "true";
     }
+    writeGeminiMemorySafetySettings(scopedHome);
     return;
   }
 
@@ -1465,9 +1511,6 @@ export class AgentRuntimeManager {
     let defaultArgs: string[] = [];
     if (type === "opencode") {
       defaultArgs = ["acp"];
-      if (requestedModel) {
-        defaultArgs.push("--model", requestedModel);
-      }
     } else if (type === "codex") {
       defaultArgs = buildCodexConfigArgs({
         model: requestedModel,
@@ -1500,6 +1543,9 @@ export class AgentRuntimeManager {
     if (type === "codex") {
       Object.assign(finalEnv, withCodexStandardTooling(finalEnv));
       Object.assign(finalEnv, applyCodexBridgeEnv(finalEnv, null));
+    }
+    if (type === "opencode") {
+      Object.assign(finalEnv, withCodexStandardTooling(finalEnv));
     }
     if (type === "claude" && accountCredentials.allowGlobalCredentialBridge) {
       applyClaudeKeychainOAuthToken(finalEnv);
@@ -1741,7 +1787,7 @@ export class AgentRuntimeManager {
     return true;
   }
 
-  async askAgent(name: string, prompt: string, onChunk?: (chunk: string) => void): Promise<AskResult> {
+  async askAgent(name: string, prompt: string, imageAttachments?: Array<{ path: string; mimeType: string }>, onChunk?: (chunk: string) => void): Promise<AskResult> {
     const record = this.agents.get(name);
     if (!record) {
       throw new RuntimeHttpError(404, `Agent not found: ${name}`);
@@ -1759,9 +1805,27 @@ export class AgentRuntimeManager {
     const unsubscribe = onChunk ? this.subscribeChunks(name, onChunk) : null;
 
     try {
+      const contentBlocks: Array<acp.ContentBlock> = [{ type: "text", text: prompt }];
+      if (imageAttachments?.length) {
+        for (const img of imageAttachments) {
+          try {
+            const buffer = await readFile(img.path);
+            const data = buffer.toString("base64");
+            contentBlocks.push({
+              type: "image",
+              data,
+              mimeType: img.mimeType || "image/png",
+            });
+          } catch {
+            // If an image file can't be read, skip it rather than failing the
+            // entire prompt. The text annotation in the prompt still tells the
+            // agent the file existed at the time of upload.
+          }
+        }
+      }
       const promptParams = {
         sessionId: record.sessionId,
-        prompt: [{ type: "text", text: prompt }],
+        prompt: contentBlocks,
       } as Parameters<acp.ClientSideConnection["prompt"]>[0];
       const response = await retrySupervisorRequest(
         () => this.runAgentRequest(record, () => record.connection.prompt(promptParams)),
@@ -1966,6 +2030,9 @@ export class AgentRuntimeManager {
     if (type === "codex") {
       Object.assign(finalEnv, withCodexStandardTooling(finalEnv));
       Object.assign(finalEnv, applyCodexBridgeEnv(finalEnv, null));
+    }
+    if (type === "opencode") {
+      Object.assign(finalEnv, withCodexStandardTooling(finalEnv));
     }
     if (type === "claude" && accountCredentials.allowGlobalCredentialBridge) {
       applyClaudeKeychainOAuthToken(finalEnv);

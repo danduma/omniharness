@@ -148,6 +148,7 @@ export class LiveEventConnectionManager {
   private reconnectingAfterResync = false;
   private lastSnapshotPollAt = 0;
   private lastEventId: string | null;
+  private connectionGeneration = 0;
 
   constructor(options: LiveEventConnectionManagerOptions) {
     this.selectedRunId = options.selectedRunId;
@@ -215,6 +216,7 @@ export class LiveEventConnectionManager {
 
   stop() {
     this.active = false;
+    this.connectionGeneration++;
     this.stopFallbackPolling();
     this.stopSnapshotValidation();
     this.eventSource?.close();
@@ -362,6 +364,7 @@ export class LiveEventConnectionManager {
   }
 
   private async runSnapshotPoll(): Promise<boolean> {
+    const gen = this.connectionGeneration;
     try {
       const result = await this.requestSnapshot(
         buildPersistedSnapshotUrl(this.selectedRunId, this.getSnapshotChecksum?.()),
@@ -371,7 +374,7 @@ export class LiveEventConnectionManager {
           action: "Load live state snapshot",
         },
       );
-      if (!this.active) {
+      if (!this.active || gen !== this.connectionGeneration) {
         return false;
       }
       this.setLastEventId(result.lastEventId);

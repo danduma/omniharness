@@ -279,7 +279,7 @@ export class EventStreamStateManager {
 
     this.state = {
       ...mergeScopedCachedState(this.state, cached),
-      snapshotSource: "cache",
+      snapshotSource: this.state.snapshotSource === "server" ? "server" : "cache",
     };
     for (const listener of this.listeners) {
       listener(this.state);

@@ -218,9 +218,15 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
           writeJson(res, 400, { error: "prompt is required" });
           return;
         }
+        const imageAttachments = Array.isArray(body.imageAttachments)
+          ? body.imageAttachments.filter(
+              (a: unknown): a is { path: string; mimeType: string } =>
+                typeof a === "object" && a !== null && typeof (a as Record<string, unknown>).path === "string" && typeof (a as Record<string, unknown>).mimeType === "string",
+            )
+          : undefined;
         const stream = requestUrl(req).searchParams.get("stream") === "true";
         if (!stream) {
-          writeJson(res, 200, await manager.askAgent(parts[1], body.prompt));
+          writeJson(res, 200, await manager.askAgent(parts[1], body.prompt, imageAttachments));
           return;
         }
 
@@ -238,7 +244,7 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
         progressTimer.unref?.();
 
         try {
-          const result = await manager.askAgent(parts[1], body.prompt, (chunk) => {
+          const result = await manager.askAgent(parts[1], body.prompt, imageAttachments, (chunk) => {
             writeSse(res, "chunk", { chunk });
           });
           writeSse(res, "done", result);
