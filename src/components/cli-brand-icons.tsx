@@ -58,7 +58,7 @@ function OpenCodeGlyph({ className }: { className?: string }) {
         aria-hidden="true"
         fill
         sizes="14px"
-        className="object-contain"
+        className="object-cover"
       />
     </span>
   );
