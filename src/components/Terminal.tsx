@@ -2033,7 +2033,9 @@ export function Terminal({
         if (typeof entry.seq !== "number") {
           continue;
         }
-        seqByActivityId.set(entry.id, entry.seq);
+        if (!seqByActivityId.has(entry.id)) {
+          seqByActivityId.set(entry.id, entry.seq);
+        }
         if (entry.toolCallId) {
           const previousSeq = seqByActivityId.get(entry.toolCallId) ?? entry.seq;
           seqByActivityId.set(entry.toolCallId, Math.min(previousSeq, entry.seq));
