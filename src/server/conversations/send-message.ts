@@ -495,10 +495,12 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
   return { ...resumedWorker, transcriptReplayRequired };
 }
 
-async function askDirectWorkerWithResume(run: RunRecord, worker: WorkerRecord, content: string) {
+async function askDirectWorkerWithResume(run: RunRecord, worker: WorkerRecord, content: string, imageAttachments?: Array<{ path: string; mimeType: string }>) {
   const workerPrompt = isDirectRunMode(run.mode) ? buildDirectWorkerPrompt(content) : content;
   try {
-    return await askAgent(worker.id, workerPrompt);
+    return await (imageAttachments?.length
+      ? askAgent(worker.id, workerPrompt, imageAttachments)
+      : askAgent(worker.id, workerPrompt));
   } catch (error) {
     if (!isAgentNotFoundError(error)) {
       throw error;
@@ -540,8 +542,19 @@ async function askDirectWorkerWithResume(run: RunRecord, worker: WorkerRecord, c
         nextUserPrompt: workerPrompt,
       })
       : null;
-    return askAgent(worker.id, replayPrompt ?? workerPrompt);
+    return imageAttachments?.length
+      ? askAgent(worker.id, replayPrompt ?? workerPrompt, imageAttachments)
+      : askAgent(worker.id, replayPrompt ?? workerPrompt);
   }
+}
+
+function resolveImageAttachmentPaths(attachments: ChatAttachment[]): Array<{ path: string; mimeType: string }> {
+  return attachments
+    .filter((a) => a.kind === "image" && a.storagePath)
+    .map((a) => ({
+      path: getAppDataPath(a.storagePath!),
+      mimeType: a.mimeType || "image/png",
+    }));
 }
 
 async function continueWorkerConversation({
@@ -602,7 +615,8 @@ async function continueWorkerConversation({
       notifyEventStreamSubscribers();
     }
 
-    const response = await askDirectWorkerWithResume(run, worker, content);
+    const imageAttachments = resolveImageAttachmentPaths(attachments);
+    const response = await askDirectWorkerWithResume(run, worker, content, imageAttachments);
     if (!userInputAppended) {
       // Append user_input on delivery — `askDirectWorkerWithResume` has
       // resolved successfully, so the prompt definitely reached the

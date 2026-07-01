@@ -561,14 +561,18 @@ export async function spawnAgent(params: {
   );
 }
 
-export async function askAgent(name: string, prompt: string) {
+export async function askAgent(name: string, prompt: string, imageAttachments?: Array<{ path: string; mimeType: string }>) {
   try {
     return await retrySupervisorRequest(async () => {
       const path = `/agents/${name}/ask?stream=true`;
+      const body: Record<string, unknown> = { prompt };
+      if (imageAttachments?.length) {
+        body.imageAttachments = imageAttachments;
+      }
       const res = await fetch(`${BRIDGE_URL}${path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         let detail = `${res.status} ${res.statusText}`;

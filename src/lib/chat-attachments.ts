@@ -161,5 +161,12 @@ export function appendAttachmentContext(
     return trimmedContent;
   }
 
-  return trimmedContent ? `${trimmedContent}\n\n${context}` : context;
+  const hasImages = normalizeChatAttachments(attachments).some((a) => a.kind === "image" && a.storagePath);
+  const toolHint = hasImages
+    ? "\n\nTo view attached images, use the `view_image` tool with the file path shown above."
+    : "";
+
+  const fullContext = context + toolHint;
+
+  return trimmedContent ? `${trimmedContent}\n\n${fullContext}` : fullContext;
 }
