@@ -117,6 +117,17 @@ uses `OMNIHARNESS_AUTH_PASSWORD_HASH` or `OMNIHARNESS_AUTH_PASSWORD` when either
 is configured, then falls back to `OMNIHARNESS_REMOTE_RESTART_PASSWORD`, then to
 the generated token file.
 
+To keep the restart controller alive across reboots even when macOS does not
+auto-login, install the boot-time daemon:
+
+```bash
+./scripts/install-restarter.sh
+```
+
+It installs as a `LaunchDaemon` by default. If you explicitly want the older
+login-session `LaunchAgent` behavior, set
+`OMNIHARNESS_RESTART_LAUNCHD_SCOPE=user` before running the installer.
+
 The script API creates `.omniharness/remote-restart-token` on first run and
 accepts bearer auth:
 
