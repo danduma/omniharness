@@ -479,3 +479,40 @@ test("unified stream resolves message-fragment-run seqs and falls back to timest
 
   expect(text.indexOf("Fragment one")).toBeLessThan(text.indexOf("Steer action"));
 });
+
+test("unified stream orders revised message by its first seen seq number so it does not shift positions", () => {
+  Object.assign(globalThis, { React });
+
+  const entries: WorkerEntry[] = [
+    {
+      id: "assistant-msg",
+      seq: 1,
+      type: "message",
+      text: "Assistant response",
+      timestamp: "2026-07-01T18:45:00.000Z",
+    },
+    {
+      id: "user-msg",
+      seq: 2,
+      type: "user_input",
+      text: "User option",
+      timestamp: "2026-07-01T18:46:00.000Z",
+    },
+    {
+      id: "assistant-msg",
+      seq: 3,
+      type: "message",
+      text: "Assistant response (revised)",
+      timestamp: "2026-07-01T18:47:00.000Z",
+    },
+  ];
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries,
+    showTextSizeControl: false,
+  }));
+  const text = html.replace(/<[^>]+>/g, "");
+
+  // Assistant response should remain at the top (its first seen seq 1 is before user msg seq 2)
+  expect(text.indexOf("Assistant response")).toBeLessThan(text.indexOf("User option"));
+});
