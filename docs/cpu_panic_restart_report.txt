@@ -1,0 +1,108 @@
+panic(cpu 0 caller 0xfffffe005477cf2c): watchdog timeout: no checkins from watchdogd in 93 seconds (152666 total checkins since monitoring last enabled)
+Debugger message: panic
+Memory ID: 0xff
+OS release type: User
+OS version: 25E253
+Kernel version: Darwin Kernel Version 25.4.0: Thu Mar 19 19:31:09 PDT 2026; root:xnu-12377.101.15~1/RELEASE_ARM64_T8132
+Fileset Kernelcache UUID: B9EC710BD7B63FF888D02F8250BCDF23
+Kernel UUID: EA09004D-E9D5-3037-9E8C-CA9642794D9B
+Boot session UUID: 58AA0377-FE56-44E5-9FA2-B7FDE4871A7E
+iBoot version: mBoot-18000.101.7
+iBoot Stage 2 version: mBoot-18000.101.7
+secure boot?: YES
+roots installed: 0
+Paniclog version: 15
+Debug Header address: 0xfffffe0032d59000
+Debug Header entry count: 3
+TXM load address: 0xfffffe0042cb4000
+TXM UUID: 67D71E4E-0D5D-3D18-BBAE-538038B6ABFA
+Debug Header kernelcache load address: 0xfffffe0052cb4000
+Debug Header kernelcache UUID: B9EC710B-D7B6-3FF8-88D0-2F8250BCDF23
+SPTM load address: 0xfffffe0032cb4000
+SPTM UUID: D270423F-3F6B-3502-8865-C0DC91571C0B
+KernelCache slide: 0x000000004bcb0000
+KernelCache base:  0xfffffe0052cb4000
+Kernel slide:      0x000000004bcb8000
+Kernel text base:  0xfffffe0052cbc000
+Kernel text exec slide: 0x00000000503d4000
+Kernel text exec base:  0xfffffe00573d8000
+mach_absolute_time: 0x215473bb1958
+Epoch Time:        sec       usec
+  Boot    : 0x6a2d80ef 0x0007b9fd
+  Sleep   : 0x00000000 0x00000000
+  Wake    : 0x00000000 0x00000000
+  Calendar: 0x6a44cd8e 0x0006c66f
+
+Zone info:
+  Zone map: 0xfffffe1006000000 - 0xfffffe3606000000
+  . VM    : 0xfffffe1006000000 - 0xfffffe15d2000000
+  . RO    : 0xfffffe15d2000000 - 0xfffffe186c000000
+  . GEN0  : 0xfffffe186c000000 - 0xfffffe1e38000000
+  . GEN1  : 0xfffffe1e38000000 - 0xfffffe2404000000
+  . GEN2  : 0xfffffe2404000000 - 0xfffffe29d0000000
+  . GEN3  : 0xfffffe29d0000000 - 0xfffffe2f9c000000
+  . DATA  : 0xfffffe2f9c000000 - 0xfffffe3606000000
+  Metadata: 0xfffffe7304010000 - 0xfffffe730d810000
+  Bitmaps : 0xfffffe730d810000 - 0xfffffe73105fc000
+  Extra   : 0 - 0
+
+CORE 0 [EACC0] recently retired instr at 0x0000000000000000
+CORE 1 [EACC0] recently retired instr at 0x0000000000000000
+CORE 2 [EACC0] recently retired instr at 0x0000000000000000
+CORE 3 [EACC0] recently retired instr at 0x0000000000000000
+CORE 4 [EACC0] recently retired instr at 0x0000000000000000
+CORE 5 [EACC0] recently retired instr at 0x0000000000000000
+CORE 6 [PACC1] recently retired instr at 0x0000000000000000
+CORE 7 [PACC1] recently retired instr at 0x0000000000000000
+CORE 8 [PACC1] recently retired instr at 0x0000000000000000
+CORE 9 [PACC1] recently retired instr at 0x0000000000000000
+TPIDRx_ELy = {1: 0xfffffe28cff58d30  0: 0x0001000000000000  0ro: 0x0000000000000000 }
+CORE 0 is the one that panicked. Check the full backtrace for details.
+CORE 1: PC=0xfffffe005752ebf8, LR=0xfffffe005752ee94, FP=0xfffffecffa1e7f20
+CORE 2: PC=0xfffffe00575ae910, LR=0xfffffe00575ae90c, FP=0xfffffecff9887e40
+CORE 3: PC=0xfffffe00575ae910, LR=0xfffffe00575ae90c, FP=0xfffffecffaab7e40
+CORE 4: PC=0xfffffe00575ae910, LR=0xfffffe00575ae90c, FP=0xfffffecff7757e40
+CORE 5: PC=0xfffffe00575ae910, LR=0xfffffe00575ae90c, FP=0xfffffecfefc17e40
+CORE 6: PC=0xfffffe005746c740, LR=0xfffffe005746c740, FP=0xfffffecffa597ee0
+CORE 7: PC=0xfffffe005746c740, LR=0xfffffe005746c740, FP=0xfffffecffb1c7ee0
+CORE 8: PC=0xfffffe005746c740, LR=0xfffffe005746c740, FP=0xfffffecff6fa7ee0
+CORE 9: PC=0xfffffe005746c740, LR=0xfffffe005746c740, FP=0xfffffecffae97ee0
+Compressor Info: 61% of compressed pages limit (OK) and 100% of segments limit (BAD) with 44 swapfiles and OK swap space
+Total cpu_usage: 81261365
+Thread task pri cpu_usage
+0xfffffe28cff58d30 kernel_task 91 3624773
+0xfffffe28cfcd4d30 kernel_task 91 3634903
+0xfffffe28cfd45e20 kernel_task 0 1147460
+0xfffffe28cfd480f8 kernel_task 0 3585046
+0xfffffe28cfd4a2d8 kernel_task 0 3639497
+
+Panicked task 0xfffffe1d37f955e0: 0 pages, 610 threads: pid 0: kernel_task
+Panicked thread: 0xfffffe28cff58d30, backtrace: 0xfffffe4886007760, tid: 1960
+		  lr: 0xfffffe005742dda0  fp: 0xfffffe4886007800
+		  lr: 0xfffffe00575aab4c  fp: 0xfffffe4886007870
+		  lr: 0xfffffe00575a8ae0  fp: 0xfffffe4886007930
+		  lr: 0xfffffe00573dde2c  fp: 0xfffffe4886007940
+		  lr: 0xfffffe005742e0b0  fp: 0xfffffe4886007e60
+		  lr: 0xfffffe0057d1d3e8  fp: 0xfffffe4886007e80
+		  lr: 0xfffffe005477cf2c  fp: 0xfffffe4886007ed0
+		  lr: 0xfffffe005477bcd0  fp: 0xfffffe4886007f10
+		  lr: 0xfffffe0054778a64  fp: 0xfffffe4886007f30
+		  lr: 0xfffffe005523d2a4  fp: 0xfffffe4886007fc0
+		  lr: 0xfffffe00575ac2fc  fp: 0xfffffe4886007fe0
+		  lr: 0xfffffe00573dded0  fp: 0xfffffe4886007ff0
+		  lr: 0xfffffe005752ee94  fp: 0xfffffecff8fd7e50
+		  lr: 0xfffffe005752ee94  fp: 0xfffffecff8fd7f20
+		  lr: 0xfffffe00573de8ac  fp: 0x0000000000000000
+      Kernel Extensions in backtrace:
+         com.apple.driver.AppleInterruptControllerV3(1.0d1)[17E37838-AA51-37A2-B605-871825C22626]@0xfffffe005523a2f0->0xfffffe005523e763
+            dependency: com.apple.driver.AppleARMPlatform(1.0.2)[5DA29013-052B-37DE-83A7-BE38F6B2243F]@0xfffffe0054723e20->0xfffffe00547771e3
+         com.apple.driver.AppleARMWatchdogTimer(1.0)[BDBB2E95-0C68-3FC0-9B7F-0DB0514437BC]@0xfffffe00547771f0->0xfffffe005477cfe3
+            dependency: com.apple.driver.AppleARMPlatform(1.0.2)[5DA29013-052B-37DE-83A7-BE38F6B2243F]@0xfffffe0054723e20->0xfffffe00547771e3
+
+
+last started kext at 4132941342204: com.apple.iokit.SCSITaskUserClient	545.100.10 (addr 0xfffffe0053735d90, size 2206)
+loaded kexts: (skipped, see boot kernelcache)
+
+
+
+** Stackshot Succeeded ** Bytes Traced 912292 (Uncompressed 2300896) **
