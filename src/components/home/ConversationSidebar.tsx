@@ -342,7 +342,7 @@ function ConversationProjectGroupList({
                               aria-label={t("conversation.sidebar.conversationVisual", { kind: visualConfig.label })}
                             >
                               {visualKind === "direct" ? (
-                                <CliBrandIcon workerType={run.preferredWorkerType ?? null} className="h-3.5 w-3.5" />
+                                <CliBrandIcon workerType={run.preferredWorkerType ?? null} className={run.preferredWorkerType === "opencode" ? "h-3 w-3" : "h-3.5 w-3.5"} />
                               ) : (
                                 <ConversationIcon className="h-3.5 w-3.5" aria-hidden="true" />
                               )}
