@@ -1,0 +1,2028 @@
+diff --git a/src/app/home/useConversationActions.ts b/src/app/home/useConversationActions.ts
+index ea04329..7540dc0 100644
+--- a/src/app/home/useConversationActions.ts
++++ b/src/app/home/useConversationActions.ts
+@@ -239,7 +239,7 @@ export function useConversationActions({
+ 
+   const handleRetryMessage = (messageId: string) => {
+     if (!selectedRunId) return;
+-    mutations.recoverRun.mutate({ runId: selectedRunId, action: "retry", targetMessageId: messageId });
++    mutations.recoverRun.mutate({ runId: selectedRunId, action: "retry", targetMessageId: messageId, manualRecovery: true });
+   };
+ 
+   const handleResumeRunRecovery = () => {
+diff --git a/src/app/home/useHomeMutations.ts b/src/app/home/useHomeMutations.ts
+index bb57f27..019b331 100644
+--- a/src/app/home/useHomeMutations.ts
++++ b/src/app/home/useHomeMutations.ts
+@@ -333,6 +333,7 @@ export interface UseHomeMutationsParams {
+   setState: React.Dispatch<React.SetStateAction<EventStreamState>>;
+   selectedRunId: string | null;
+   selectedCliAgent: ComposerWorkerOption;
++  selectedWorkerAccountId: string;
+   selectedConversationMode: ConversationModeOption;
+   selectedModel: string;
+   selectedEffort: string;
+@@ -352,6 +353,7 @@ export function useHomeMutations({
+   setState,
+   selectedRunId,
+   selectedCliAgent,
++  selectedWorkerAccountId,
+   selectedConversationMode,
+   selectedModel,
+   selectedEffort,
+@@ -383,6 +385,7 @@ export function useHomeMutations({
+     setMobileNavOpen,
+     clearAttachments,
+   } = homeUiSetters;
++  const preferredWorkerAccountId = selectedWorkerAccountId === "auto" ? null : selectedWorkerAccountId;
+ 
+   const loginMutation = useMutation({
+     mutationFn: async (password: string) => requestJson<{ ok: true }>("/api/auth/login", {
+@@ -669,16 +672,17 @@ export function useHomeMutations({
+   });
+ 
+   const recoverRun = useMutation({
+-    mutationFn: async ({ runId, action, targetMessageId, content, gitWorkspaceLaunch }: {
++    mutationFn: async ({ runId, action, targetMessageId, content, gitWorkspaceLaunch, manualRecovery }: {
+       runId: string;
+       action: "retry" | "edit" | "fork";
+       targetMessageId: string;
+       content?: string;
+       gitWorkspaceLaunch?: GitWorkspaceLaunchRequest;
++      manualRecovery?: boolean;
+     }) => requestJson<{ runId?: string }>(`/api/runs/${runId}`, {
+       method: "POST",
+       headers: { "Content-Type": "application/json" },
+-      body: JSON.stringify({ action, targetMessageId, content, gitWorkspaceLaunch }),
++      body: JSON.stringify({ action, targetMessageId, content, gitWorkspaceLaunch, manualRecovery }),
+     }, {
+       source: "Runs",
+       action: "Recover conversation",
+@@ -745,6 +749,7 @@ export function useHomeMutations({
+           preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
+           preferredWorkerModel: resolvedSelectedModel,
+           preferredWorkerEffort: selectedEffort.toLowerCase(),
++          preferredWorkerAccountId,
+           allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent],
+           attachments: uploadedAttachments,
+         }),
+@@ -870,6 +875,7 @@ export function useHomeMutations({
+           preferredWorkerType: selectedWorkerType,
+           preferredWorkerModel: isAutoWorkerSelection ? null : resolvedSelectedModel,
+           preferredWorkerEffort: selectedEffort.toLowerCase(),
++          preferredWorkerAccountId,
+           allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedWorkerType],
+         }),
+       }, {
+@@ -882,7 +888,11 @@ export function useHomeMutations({
+         pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
+       }
+       if (data.queuedMessage) {
+-        busyMessageQueueManager.upsertQueuedMessage(data.queuedMessage);
++        if (variables.busyAction === "steer" && data.message) {
++          busyMessageQueueManager.hideQueuedMessage(data.queuedMessage.id);
++        } else {
++          busyMessageQueueManager.upsertQueuedMessage(data.queuedMessage);
++        }
+       }
+       setState((current) => appendSentConversationMessageSnapshot(current, data.message));
+       const snapshot = homeUiStateManager.getSnapshot();
+@@ -954,6 +964,7 @@ export function useHomeMutations({
+           preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
+           preferredWorkerModel: resolvedSelectedModel,
+           preferredWorkerEffort: selectedEffort.toLowerCase(),
++          preferredWorkerAccountId,
+           allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent],
+         }),
+       }, {
+diff --git a/src/app/home/useHomeViewModel.ts b/src/app/home/useHomeViewModel.ts
+index 6c79f2a..912cb56 100644
+--- a/src/app/home/useHomeViewModel.ts
++++ b/src/app/home/useHomeViewModel.ts
+@@ -21,6 +21,10 @@ import type { AgentSnapshot, ClarificationRecord, ComposerMode, ComposerWorkerOp
+ import type { WorkerCatalogResponse } from "./types";
+ import { sessionStateManager } from "./SessionStateManager";
+ import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
++import { isPermanentAutoResumeFailure } from "./auto-resume-selection";
++
++const EMPTY_RUNS: RunRecord[] = [];
++const EMPTY_PLANS: PlanRecord[] = [];
+ 
+ export interface UseHomeViewModelParams {
+   state: EventStreamState;
+@@ -49,8 +53,8 @@ export function useHomeViewModel({
+   workerCatalogData,
+   readMarkers = {},
+ }: UseHomeViewModelParams) {
+-  const runs = (state.runs || []) as RunRecord[];
+-  const plans = (state.plans || []) as PlanRecord[];
++  const runs = (state.runs as RunRecord[] | undefined) ?? EMPTY_RUNS;
++  const plans = (state.plans as PlanRecord[] | undefined) ?? EMPTY_PLANS;
+ 
+   const explicitProjects = useMemo(() => parseProjectList(apiKeys.PROJECTS), [apiKeys.PROJECTS]);
+ 
+@@ -74,6 +78,7 @@ export function useHomeViewModel({
+   const activeComposerMode: ComposerMode = selectedRun
+     ? isPlanningConversation ? "planning" : isDirectConversation ? "direct" : "implementation"
+     : selectedConversationMode;
++  const hasSelectedRun = Boolean(selectedRun);
+ 
+   const catalogWorkers = useMemo(
+     () => workerCatalogData?.workers ?? [],
+@@ -98,7 +103,7 @@ export function useHomeViewModel({
+   );
+ 
+   const activeAllowedWorkerTypes = useMemo(() => {
+-    const configured = selectedRun && selectedRunMode !== "implementation"
++    const configured = hasSelectedRun && selectedRunMode !== "implementation"
+       ? selectedRunAllowedWorkerTypes
+       : configuredAllowedWorkerTypes;
+     if (availableWorkerTypes.length === 0) {
+@@ -108,7 +113,7 @@ export function useHomeViewModel({
+     const availableSet = new Set(availableWorkerTypes);
+     const filtered = configured.filter((type) => availableSet.has(type));
+     return filtered.length > 0 ? filtered : [...availableWorkerTypes];
+-  }, [availableWorkerTypes, configuredAllowedWorkerTypes, selectedRun, selectedRunAllowedWorkerTypes, selectedRunMode]);
++  }, [availableWorkerTypes, configuredAllowedWorkerTypes, hasSelectedRun, selectedRunAllowedWorkerTypes, selectedRunMode]);
+ 
+   const autoSelectedWorkerType = useMemo(() => {
+     return activeAllowedWorkerTypes[0] ?? null;
+@@ -151,22 +156,25 @@ export function useHomeViewModel({
+     }));
+   }, [catalogWorkers]);
+ 
+-  const groupedProjects = buildConversationGroups({
++  const groupedProjects = useMemo(() => buildConversationGroups({
+     explicitProjects,
+     plans,
+     runs,
+-  });
+-
+-  const filteredProjects = groupedProjects.map((group) => {
+-    if (!searchQuery) return group;
+-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+-    const groupRuns = (group.runs as any[]).filter((run: { path: string; title: string }) =>
+-      run.path.toLowerCase().includes(searchQuery.toLowerCase()) ||
+-      run.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+-      group.name.toLowerCase().includes(searchQuery.toLowerCase()),
+-    );
+-    return { ...group, runs: groupRuns };
+-  }).filter((group) => group.runs.length > 0 || group.name.toLowerCase().includes(searchQuery.toLowerCase()));
++  }), [explicitProjects, plans, runs]);
++
++  const filteredProjects = useMemo(() => {
++    if (!searchQuery) return groupedProjects;
++    const normalizedSearchQuery = searchQuery.toLowerCase();
++    return groupedProjects.map((group) => {
++      // eslint-disable-next-line @typescript-eslint/no-explicit-any
++      const groupRuns = (group.runs as any[]).filter((run: { path: string; title: string }) =>
++        run.path.toLowerCase().includes(normalizedSearchQuery) ||
++        run.title.toLowerCase().includes(normalizedSearchQuery) ||
++        group.name.toLowerCase().includes(normalizedSearchQuery),
++      );
++      return { ...group, runs: groupRuns };
++    }).filter((group) => group.runs.length > 0 || group.name.toLowerCase().includes(normalizedSearchQuery));
++  }, [groupedProjects, searchQuery]);
+ 
+   const activeProjects = useMemo(() => {
+     const activeFilterNowMs = Date.now();
+@@ -183,7 +191,6 @@ export function useHomeViewModel({
+       selectedRunId,
+     });
+     return filterActiveConversationGroups(unsearched, searchQuery);
+-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [groupedProjects, state.messages, state.workers, state.agents, state.queuedMessages, readMarkers, searchQuery, selectedRunId]);
+ 
+   const selectedRunMessages = useMemo(
+@@ -371,11 +378,13 @@ export function useHomeViewModel({
+       return null;
+     }
+ 
+-    // Only show "Reconnecting" when an auto-resume will actually run. HomeApp
+-    // only auto-resumes direct/implementation runs; planning runs surface the
+-    // real error and rely on the user to act.
++    // Only show "Reconnecting" when an auto-resume will actually run.
++    // Planning runs surface the real error and rely on the user to act.
+     const autoResumes = selectedRun.mode === "direct" || selectedRun.mode === "commit" || selectedRun.mode === "implementation";
+-    const staleFailure = autoResumes && failedWorkerAvailability?.availability.status === "ok";
++    const failureKey = `${selectedRun.failedAt ?? ""}:${selectedRun.lastError ?? ""}`;
++    const staleFailure = autoResumes
++      && !isPermanentAutoResumeFailure(failureKey)
++      && failedWorkerAvailability?.availability.status === "ok";
+     const workerLabel = failedWorkerAvailability?.label;
+     const workerStatus = failedWorkerAvailability?.availability.message;
+ 
+diff --git a/src/runtime/http/routes/runs.ts b/src/runtime/http/routes/runs.ts
+index 934aec0..e7c1498 100644
+--- a/src/runtime/http/routes/runs.ts
++++ b/src/runtime/http/routes/runs.ts
+@@ -79,6 +79,10 @@ function isSupervisorStopAlreadySettled(status: string | null | undefined) {
+   return normalizeWorkerStatus(status) !== "running";
+ }
+ 
++function isPermanentAccountFailure(message: string | null | undefined) {
++  return /\b(?:api key|authentication required|auth(?:entication)? failed|billing required|api billing|cap_exceeded|insufficient quota|resource exhausted)\b/i.test(message ?? "");
++}
++
+ function actionLabelForPostAction(action: unknown) {
+   switch (action) {
+     case "stop_supervisor":
+@@ -645,6 +649,7 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
+ 
+     const targetMessageId = String(body?.targetMessageId ?? "");
+     const content = typeof body?.content === "string" ? body.content : undefined;
++    const manualRecovery = body?.manualRecovery === true;
+ 
+     if (action !== "retry" && action !== "edit" && action !== "fork") {
+       return errorResponse("Unsupported recovery action", {
+@@ -662,6 +667,14 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
+       });
+     }
+ 
++    if (action === "retry" && !manualRecovery && actionRun.status === "failed" && isPermanentAccountFailure(actionRun.lastError)) {
++      return errorResponse("This run cannot be auto-retried while the saved failure is an account, billing, or quota error.", {
++        status: 409,
++        source: "Runs",
++        action: "Recover conversation",
++      });
++    }
++
+     const result = await recoverRun({
+       runId,
+       action,
+diff --git a/src/server/agent-runtime/manager.ts b/src/server/agent-runtime/manager.ts
+index d46d6dd..810a43d 100644
+--- a/src/server/agent-runtime/manager.ts
++++ b/src/server/agent-runtime/manager.ts
+@@ -9,7 +9,6 @@ import { Readable, Writable } from "stream";
+ import * as acp from "@agentclientprotocol/sdk";
+ import { sanitizeAcpStream } from "./acp-stream-sanitizer";
+ import { applyCodexBridgeEnv, buildCodexConfigArgs, shouldSetRequestedMode } from "./codex";
+-import { applyCredentialProfileEnv, resolveCredentialProfile } from "./external-credentials";
+ import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
+ import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, withCodexStandardTooling, withManagedPath } from "./tool-env";
+ import {
+@@ -34,6 +33,10 @@ import type {
+   StartAgentInput,
+ } from "./types";
+ import { RuntimeHttpError } from "./types";
++import {
++  applyAccountCredentialEnv,
++  resolveAccountCredentials,
++} from "@/server/accounts/account-resolver";
+ import {
+   computeEnvFingerprint,
+   computeWorkerPoolKey,
+@@ -132,13 +135,22 @@ function bridgeProjectScopedCliCredentials(type: string, env: EnvLike) {
+     const globalHome = join(userHomeFromEnv(env), ".gemini");
+     const scopedConfigDir = join(scopedHome, ".gemini");
+     for (const fileName of [
++      "gemini-credentials.json",
+       "google_accounts.json",
+       "google_account_id",
++      "oauth_creds.json",
+       "mcp-oauth-tokens-v2.json",
+       "settings.json",
+     ]) {
+       bridgeCredentialFileIfMissing(join(globalHome, fileName), join(scopedConfigDir, fileName));
+     }
++    if (
++      !env.GEMINI_API_KEY?.trim()
++      && !env.GEMINI_FORCE_FILE_STORAGE?.trim()
++      && existsSync(join(globalHome, "gemini-credentials.json"))
++    ) {
++      env.GEMINI_FORCE_FILE_STORAGE = "true";
++    }
+     return;
+   }
+ 
+@@ -156,6 +168,31 @@ function bridgeProjectScopedCliCredentials(type: string, env: EnvLike) {
+     if (!scopedConfigDir) return;
+     const globalHome = join(userHomeFromEnv(env), ".claude");
+     bridgeDirectoryIfMissing(join(globalHome, "skills"), join(scopedConfigDir, "skills"));
++    return;
++  }
++
++  if (type === "opencode") {
++    const homeDir = userHomeFromEnv(env);
++    const scopedConfigDir = env.OPENCODE_CONFIG_DIR?.trim();
++    const scopedDataHome = env.XDG_DATA_HOME?.trim();
++    const scopedStateHome = env.XDG_STATE_HOME?.trim();
++    const scopedCacheHome = env.XDG_CACHE_HOME?.trim();
++
++    if (scopedConfigDir) {
++      bridgeDirectoryIfMissing(join(homeDir, ".config", "opencode"), scopedConfigDir);
++      mkdirSync(scopedConfigDir, { recursive: true });
++    }
++    if (scopedDataHome) {
++      const scopedDataDir = join(scopedDataHome, "opencode");
++      mkdirSync(scopedDataDir, { recursive: true });
++      bridgeCredentialFileIfMissing(join(homeDir, ".local", "share", "opencode", "auth.json"), join(scopedDataDir, "auth.json"));
++    }
++    if (scopedStateHome) {
++      mkdirSync(join(scopedStateHome, "opencode"), { recursive: true });
++    }
++    if (scopedCacheHome) {
++      mkdirSync(join(scopedCacheHome, "opencode"), { recursive: true });
++    }
+   }
+ }
+ 
+@@ -200,7 +237,7 @@ function applyClaudeKeychainOAuthToken(env: EnvLike) {
+   }
+ }
+ 
+-function applyProjectScopedCliStorage(type: string, cwd: string, env: EnvLike) {
++function applyProjectScopedCliStorage(type: string, cwd: string, env: EnvLike, options: { bridgeCredentials?: boolean } = {}) {
+   const cliHome = join(cwd, ".omniharness", "cli-home");
+   let shouldBridgeCredentials = false;
+   if (type === "gemini" && !env.GEMINI_CLI_HOME?.trim()) {
+@@ -223,20 +260,28 @@ function applyProjectScopedCliStorage(type: string, cwd: string, env: EnvLike) {
+   }
+   if (type === "opencode") {
+     const opencodeHome = join(cliHome, "opencode");
++    let opencodeUsesScopedStorage = false;
+     if (!env.OPENCODE_CONFIG_DIR?.trim()) {
+       env.OPENCODE_CONFIG_DIR = join(opencodeHome, "config");
++      opencodeUsesScopedStorage = true;
+     }
+     if (!env.XDG_DATA_HOME?.trim()) {
+       env.XDG_DATA_HOME = join(opencodeHome, "data");
++      opencodeUsesScopedStorage = true;
+     }
+     if (!env.XDG_STATE_HOME?.trim()) {
+       env.XDG_STATE_HOME = join(opencodeHome, "state");
++      opencodeUsesScopedStorage = true;
+     }
+     if (!env.XDG_CACHE_HOME?.trim()) {
+       env.XDG_CACHE_HOME = join(opencodeHome, "cache");
++      opencodeUsesScopedStorage = true;
++    }
++    if (opencodeUsesScopedStorage) {
++      shouldBridgeCredentials = true;
+     }
+   }
+-  if (shouldBridgeCredentials) {
++  if (shouldBridgeCredentials && options.bridgeCredentials !== false) {
+     bridgeProjectScopedCliCredentials(type, env);
+   }
+ }
+@@ -1430,21 +1475,27 @@ export class AgentRuntimeManager {
+       ...(configuredAgent?.env || {}),
+       ...(input.env || {}),
+     }, cwd);
+-    applyProjectScopedCliStorage(type, cwd, finalEnv);
+-    const credentialProfile = await resolveCredentialProfile({
+-      type,
++    const accountCredentials = await resolveAccountCredentials({
++      workerType: type,
+       cwd,
+       env: finalEnv,
+-      requestedProfile: input.credentialProfile,
+-      configuredProfile: configuredAgent?.credentialProfile,
++      accountId: input.accountId,
++      requestedCredentialProfile: input.credentialProfile,
++      configuredCredentialProfile: configuredAgent?.credentialProfile,
+     });
+-    applyCredentialProfileEnv(finalEnv, credentialProfile);
++    if (accountCredentials.account?.authMode === "isolated_cli_home") {
++      Object.assign(finalEnv, accountCredentials.env);
++    }
++    applyProjectScopedCliStorage(type, cwd, finalEnv, {
++      bridgeCredentials: accountCredentials.allowGlobalCredentialBridge,
++    });
++    applyAccountCredentialEnv(finalEnv, accountCredentials);
+ 
+     if (type === "codex") {
+       Object.assign(finalEnv, withCodexStandardTooling(finalEnv));
+       Object.assign(finalEnv, applyCodexBridgeEnv(finalEnv, null));
+     }
+-    if (type === "claude") {
++    if (type === "claude" && accountCredentials.allowGlobalCredentialBridge) {
+       applyClaudeKeychainOAuthToken(finalEnv);
+     }
+ 
+@@ -1597,7 +1648,7 @@ export class AgentRuntimeManager {
+       effectiveModel: requestedModel,
+       requestedEffort,
+       effectiveEffort: null,
+-      credentialProfile: credentialProfile.status,
++      credentialProfile: accountCredentials.credentialProfile.status,
+       sessionMode: requestedMode || null,
+       contextUsage: null,
+       lastText: "",
+@@ -1869,6 +1920,8 @@ export class AgentRuntimeManager {
+     model?: string | null;
+     mode?: string | null;
+     env?: Record<string, string>;
++    accountId?: string | null;
++    credentialProfile?: string | null;
+     mcpServers?: acp.McpServer[];
+   }): Promise<{ ok: true; key: string; size: number; warmed: boolean }> {
+     this.applyRuntimeSettings(input.env ?? {}, { emit: false });
+@@ -1888,21 +1941,27 @@ export class AgentRuntimeManager {
+       ...(configuredAgent?.env || {}),
+       ...(input.env || {}),
+     }, cwd);
+-    applyProjectScopedCliStorage(type, cwd, finalEnv);
+-    const credentialProfile = await resolveCredentialProfile({
+-      type,
++    const accountCredentials = await resolveAccountCredentials({
++      workerType: type,
+       cwd,
+       env: finalEnv,
+-      requestedProfile: undefined,
+-      configuredProfile: configuredAgent?.credentialProfile,
++      accountId: input.accountId,
++      requestedCredentialProfile: input.credentialProfile,
++      configuredCredentialProfile: configuredAgent?.credentialProfile,
++    });
++    if (accountCredentials.account?.authMode === "isolated_cli_home") {
++      Object.assign(finalEnv, accountCredentials.env);
++    }
++    applyProjectScopedCliStorage(type, cwd, finalEnv, {
++      bridgeCredentials: accountCredentials.allowGlobalCredentialBridge,
+     });
+-    applyCredentialProfileEnv(finalEnv, credentialProfile);
++    applyAccountCredentialEnv(finalEnv, accountCredentials);
+ 
+     if (type === "codex") {
+       Object.assign(finalEnv, withCodexStandardTooling(finalEnv));
+       Object.assign(finalEnv, applyCodexBridgeEnv(finalEnv, null));
+     }
+-    if (type === "claude") {
++    if (type === "claude" && accountCredentials.allowGlobalCredentialBridge) {
+       applyClaudeKeychainOAuthToken(finalEnv);
+     }
+ 
+diff --git a/src/server/conversations/create.ts b/src/server/conversations/create.ts
+index bcd9f4e..6367997 100644
+--- a/src/server/conversations/create.ts
++++ b/src/server/conversations/create.ts
+@@ -40,6 +40,7 @@ import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
+ import { isResourceAdmissionError } from "@/server/agent-runtime/resource-admission";
+ import { globalClaudeConfigDir } from "@/server/external-sessions/discovery";
+ import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
++import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
+ 
+ 
+ function buildInitialWorkerPrompt(mode: ConversationMode, command: string, projectRoot: string) {
+@@ -446,6 +447,7 @@ async function startDirectWorkerConversation(args: {
+   mode?: string;
+   preferredWorkerModel?: string | null;
+   preferredWorkerEffort?: string | null;
++  preferredWorkerAccountId?: string | null;
+   command: string;
+   externalClaudeSessionId?: string | null;
+ }) {
+@@ -461,6 +463,7 @@ async function startDirectWorkerConversation(args: {
+       name: args.workerId,
+       ...(args.mode ? { mode: args.mode } : {}),
+       env: externalEnv,
++      ...(args.preferredWorkerAccountId ? { accountId: args.preferredWorkerAccountId } : {}),
+       model: args.preferredWorkerModel?.trim() || undefined,
+       effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
+       ...(args.externalClaudeSessionId ? { resumeSessionId: args.externalClaudeSessionId } : {}),
+@@ -533,6 +536,7 @@ export async function createConversation(args: {
+   preferredWorkerType?: string | null;
+   preferredWorkerModel?: string | null;
+   preferredWorkerEffort?: string | null;
++  preferredWorkerAccountId?: string | null;
+   allowedWorkerTypes?: string[] | string | null;
+   requestedRunId?: string | null;
+   attachments?: ChatAttachment[];
+@@ -615,6 +619,7 @@ export async function createConversation(args: {
+       preferredWorkerType,
+       preferredWorkerModel: args.preferredWorkerModel?.trim() || null,
+       preferredWorkerEffort: args.preferredWorkerEffort?.trim().toLowerCase() || null,
++      preferredWorkerAccountId: args.preferredWorkerAccountId?.trim() || null,
+       allowedWorkerTypes: JSON.stringify(allowedWorkerTypes),
+       autoCommitMilestones: commitWorkflowSettings.autoCommitMilestones,
+       pushOnCommit: commitWorkflowSettings.pushOnCommit,
+@@ -687,6 +692,16 @@ export async function createConversation(args: {
+         createdAt: new Date(),
+         updatedAt: new Date(),
+       });
++      const { env: allocationEnvParams } = await readRuntimeEnvFromSettings();
++      const accountAllocation = await allocateWorkerAccount({
++        workerType,
++        runId,
++        workerId,
++        explicitAccountId: args.preferredWorkerAccountId?.trim() || null,
++        strategy: args.preferredWorkerAccountId?.trim() ? "manual" : "priority",
++        env: allocationEnvParams,
++      });
++      const workerAccountId = accountAllocation.account?.id ?? null;
+       if (!args.externalClaudeSessionId || command) {
+         await appendUserInputOnDelivery({
+           id: initialMessageId,
+@@ -723,6 +738,7 @@ export async function createConversation(args: {
+           mode: workerMode,
+           preferredWorkerModel: args.preferredWorkerModel,
+           preferredWorkerEffort: args.preferredWorkerEffort,
++          preferredWorkerAccountId: workerAccountId,
+           command: workerPrompt,
+           externalClaudeSessionId: args.externalClaudeSessionId,
+         });
+@@ -745,6 +761,7 @@ export async function createConversation(args: {
+               name: workerId,
+               ...(workerMode ? { mode: workerMode } : {}),
+               env: envParams,
++              ...(workerAccountId ? { accountId: workerAccountId } : {}),
+               model: args.preferredWorkerModel?.trim() || undefined,
+               effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
+             });
+diff --git a/src/server/runs/recovery.ts b/src/server/runs/recovery.ts
+index 0a43abc..d915039 100644
+--- a/src/server/runs/recovery.ts
++++ b/src/server/runs/recovery.ts
+@@ -42,6 +42,7 @@ import { createBranchWorktree } from "@/server/git/workspaces";
+ import { pendingOrphanWorktreeError } from "@/server/git/orphan-recovery";
+ import { markRecoveryIncidentResolved } from "@/server/runs/recovery-incidents";
+ import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
++import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
+ 
+ export type RecoveryAction = "retry" | "edit" | "fork";
+ 
+@@ -223,6 +224,14 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string,
+     updatedAt: now,
+   });
+   emitNamedEvent({ kind: "worker.spawned", runId: run.id, workerId, workerType });
++  const accountAllocation = await allocateWorkerAccount({
++    workerType,
++    runId: run.id,
++    workerId,
++    explicitAccountId: run.preferredWorkerAccountId ?? null,
++    strategy: run.preferredWorkerAccountId ? "manual" : "priority",
++  });
++  const workerAccountId = accountAllocation.account?.id ?? null;
+ 
+   let spawned = false;
+   try {
+@@ -232,6 +241,7 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string,
+       name: workerId,
+       ...(workerMode ? { mode: workerMode } : {}),
+       env: envParams,
++      ...(workerAccountId ? { accountId: workerAccountId } : {}),
+       model: run.preferredWorkerModel?.trim() || undefined,
+       effort: run.preferredWorkerEffort?.trim().toLowerCase() || undefined,
+     });
+@@ -462,6 +472,7 @@ async function resumeDirectRunFromSavedSession(
+       name: worker.id,
+       ...(workerMode ? { mode: workerMode } : {}),
+       env: envParams,
++      ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
+       ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+       ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+       resumeSessionId: sessionId,
+@@ -496,6 +507,7 @@ async function resumeDirectRunFromSavedSession(
+         name: worker.id,
+         ...(workerMode ? { mode: workerMode } : {}),
+         env: envParams,
++        ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
+         ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+         ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+       });
+@@ -531,6 +543,7 @@ async function resumeDirectRunFromSavedSession(
+             name: worker.id,
+             ...(workerMode ? { mode: workerMode } : {}),
+             env: envParams,
++            ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
+             ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+             ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+             resumeSessionId: sessionId,
+@@ -578,6 +591,7 @@ async function resumeDirectRunFromSavedSession(
+           name: worker.id,
+           ...(workerMode ? { mode: workerMode } : {}),
+           env: envParams,
++          ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
+           ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+           ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+         });
+@@ -677,15 +691,16 @@ async function resumeDirectRunFromSavedSession(
+   });
+ 
+   const completedAt = new Date();
++  const finalWorkerStatus = response.state || snapshot?.state;
+   await db.update(workers).set({
+-    status: snapshot?.state ?? response.state,
++    status: finalWorkerStatus,
+     updatedAt: completedAt,
+   }).where(eq(workers.id, worker.id));
+   // Worker response now lives in the unified worker stream.
+   await updateDirectRunStatusFromWorkerOutput({
+     runId: run.id,
+     workerId: worker.id,
+-    workerStatus: snapshot?.state ?? response.state,
++    workerStatus: finalWorkerStatus,
+     responseText: response.response,
+     renderedOutput: snapshot?.renderedOutput,
+     currentText: snapshot?.currentText,
+diff --git a/src/server/supervisor/index.ts b/src/server/supervisor/index.ts
+index 6b21271..ab02ac8 100644
+--- a/src/server/supervisor/index.ts
++++ b/src/server/supervisor/index.ts
+@@ -3,7 +3,7 @@ import { spawnSync } from "child_process";
+ import fs from "fs";
+ import path from "path";
+ import { Agent } from "@mastra/core/agent";
+-import { desc, eq } from "drizzle-orm";
++import { and, desc, eq, notInArray } from "drizzle-orm";
+ import * as bridge from "@/server/bridge-client";
+ import { db } from "@/server/db";
+ import { clarifications, executionEvents, messages as dbMessages, runs, settings, supervisorInterventions, workers } from "@/server/db/schema";
+@@ -19,7 +19,7 @@ import { parseSupervisorToolCallFromMastra, SupervisorProtocolError } from "@/se
+ import { retrySupervisorRequest } from "@/server/supervisor/retry";
+ import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
+ import { handleSupervisorQuotaExhaustion, handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
+-import { selectSpawnableWorkerType } from "@/server/supervisor/worker-availability";
++import { getWorkerAuthenticationInfo, selectSpawnableWorkerType } from "@/server/supervisor/worker-availability";
+ import { attemptWorkerFailover, loadPendingFailoverContext } from "@/server/supervisor/worker-failover";
+ import { parseAllowedWorkerTypes, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
+ import { persistRunFailure } from "@/server/runs/failures";
+@@ -41,6 +41,7 @@ import { notifyRunLifecycleEventBestEffort } from "@/server/notifications/trigge
+ import { isProjectMemoryEnabled } from "@/server/projects/config";
+ import { appendMemory, listMemory, readMemory, writeMemory } from "@/server/supervisor/memory-tools";
+ import { consolidateProjectMemory } from "@/server/supervisor/memory-consolidation";
++import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
+ 
+ export interface SupervisorOptions {
+   runId: string;
+@@ -219,17 +220,44 @@ function formatSupervisorError(error: unknown) {
+ function isInfraFailureReason(reason: string) {
+   const normalized = reason.toLowerCase();
+   return [
+-    "quota",
+-    "rate limit",
+-    "rate-limit",
+-    "credit",
+-    "econn",
+-    "etimedout",
+-    "network",
+-    "bridge",
+-    "spawn",
+-    "agent not found",
+-  ].some((pattern) => normalized.includes(pattern));
++    /\bquota\b/,
++    /\bbilling\b/,
++    /\brate limit\b/,
++    /\brate-limit\b/,
++    /\bcredit\b/,
++    /\beconn/,
++    /\betimedout\b/,
++    /\bnetwork\b/,
++    /\bbridge\b/,
++    /\bspawn\b/,
++    /\bagent not found\b/,
++    /\bapi key\b.*\b(?:missing|not configured|required|unset|absent)\b/,
++    /\b(?:missing|not configured|required|unset|absent)\b.{0,80}\bapi key\b/,
++    /\b(?:credential|credentials|oauth|token)\b.{0,80}\b(?:missing|not configured|required|unavailable|invalid)\b/,
++    /\bnot authenticated\b/,
++    /\bnot logged in\b/,
++    /\blogin required\b/,
++    /\bsign-?in required\b/,
++    /\bunauthorized\b/,
++  ].some((pattern) => pattern.test(normalized));
++}
++
++function isWorkerBinaryMissingReason(reason: string) {
++  return /\bworker binary is not installed\b/i.test(reason);
++}
++
++function isWorkerAuthenticationMissingReason(reason: string) {
++  const normalized = reason.toLowerCase();
++  return [
++    /\bapi key\b.*\b(?:missing|not configured|required|unset|absent)\b/,
++    /\b(?:missing|not configured|required|unset|absent)\b.{0,80}\bapi key\b/,
++    /\b(?:credential|credentials|oauth|token)\b.{0,80}\b(?:missing|not configured|required|unavailable|invalid)\b/,
++    /\bnot authenticated\b/,
++    /\bnot logged in\b/,
++    /\blogin required\b/,
++    /\bsign-?in required\b/,
++    /\bunauthorized\b/,
++  ].some((pattern) => pattern.test(normalized));
+ }
+ 
+ function truncate(text: string, maxLength: number) {
+@@ -351,8 +379,10 @@ async function persistAwaitingUserQuestion(args: {
+   eventDetails: Record<string, unknown>;
+ }) {
+   const now = new Date();
+-  await db.transaction(async (tx) => {
+-    await tx.insert(clarifications).values({
++  // Keep this as a libsql batch rather than an interactive transaction:
++  // interactive transactions orphan the PRAGMA-configured connection.
++  await db.batch([
++    db.insert(clarifications).values({
+       id: randomUUID(),
+       runId: args.runId,
+       question: args.question,
+@@ -360,8 +390,8 @@ async function persistAwaitingUserQuestion(args: {
+       status: "pending",
+       createdAt: now,
+       updatedAt: now,
+-    });
+-    await tx.insert(dbMessages).values({
++    }),
++    db.insert(dbMessages).values({
+       id: randomUUID(),
+       runId: args.runId,
+       role: "supervisor",
+@@ -369,13 +399,13 @@ async function persistAwaitingUserQuestion(args: {
+       content: args.question,
+       workerId: null,
+       createdAt: now,
+-    });
+-    await tx.update(runs).set({ status: "awaiting_user", updatedAt: now }).where(eq(runs.id, args.runId));
++    }),
++    db.update(runs).set({ status: "awaiting_user", updatedAt: now }).where(eq(runs.id, args.runId)),
+     // Legacy-format insert: this runs inside a SQLite transaction so we
+     // can't safely interleave the artifact-stream append. Readers
+     // tolerate `artifact_seq IS NULL` by falling back to the legacy
+     // `details` column (see execution-event-store.ts).
+-    await tx.insert(executionEvents).values({
++    db.insert(executionEvents).values({
+       id: randomUUID(),
+       runId: args.runId,
+       workerId: null,
+@@ -383,8 +413,8 @@ async function persistAwaitingUserQuestion(args: {
+       eventType: args.eventType,
+       details: JSON.stringify(args.eventDetails),
+       createdAt: now,
+-    });
+-  });
++    }),
++  ]);
+   await notifyRunLifecycleEventBestEffort({
+     runId: args.runId,
+     eventType: args.eventType,
+@@ -869,6 +899,7 @@ async function resumeWorkerFromSavedSessionForSupervisor(runId: string, workerId
+     name: worker.id,
+     ...(mode ? { mode } : {}),
+     env: envParams,
++    ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
+     ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+     ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+   };
+@@ -1097,7 +1128,11 @@ export class Supervisor {
+       failedAt: null,
+       lastError: null,
+       updatedAt: new Date(),
+-    }).where(eq(runs.id, this.runId));
++    }).where(and(
++      eq(runs.id, this.runId),
++      eq(runs.mode, "implementation"),
++      notInArray(runs.status, ["awaiting_user", "done", "failed", "cancelled", "canceled", "promoting", "promoted"]),
++    ));
+ 
+     // Observer-driven failover: if an incident is flagged
+     // failover_pending we owe a failover attempt before doing anything
+@@ -1231,8 +1266,11 @@ export class Supervisor {
+           const requestedType = asString(action.args.type, "type");
+           const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+           const allowedWorkerTypes = parseAllowedWorkerTypes(run?.allowedWorkerTypes);
+-          const workerType = selectSpawnableWorkerType(requestedType, envParams, allowedWorkerTypes);
+           const cwd = resolveSupervisorWorkerCwd(asString(action.args.cwd, "cwd"), run?.projectPath);
++          const workerType = selectSpawnableWorkerType(requestedType, envParams, allowedWorkerTypes, {
++            cwd,
++            loginShellPathMode: "blocking",
++          });
+           const title = asString(action.args.title, "title");
+           const prompt = asString(action.args.prompt, "prompt");
+           const mode = resolveWorkerSpawnMode(action.args.mode, yoloModeEnabled);
+@@ -1291,6 +1329,15 @@ export class Supervisor {
+           });
+           const preferredModel = run?.preferredWorkerModel ?? null;
+           const preferredEffort = run?.preferredWorkerEffort ?? null;
++          const accountAllocation = await allocateWorkerAccount({
++            workerType: workerType.type,
++            runId: this.runId,
++            workerId,
++            explicitAccountId: run?.preferredWorkerAccountId ?? null,
++            strategy: run?.preferredWorkerAccountId ? "manual" : "priority",
++            env: envParams,
++          });
++          const workerAccountId = accountAllocation.account?.id ?? null;
+ 
+           let spawnedWorker: bridge.AgentRecord;
+           try {
+@@ -1300,6 +1347,7 @@ export class Supervisor {
+               name: workerId,
+               ...(mode ? { mode } : {}),
+               env: envParams,
++              ...(workerAccountId ? { accountId: workerAccountId } : {}),
+               ...(preferredModel ? { model: preferredModel } : {}),
+               ...(preferredEffort ? { effort: preferredEffort } : {}),
+               ...(skillRoots?.length ? { skillRoots } : {}),
+@@ -1955,6 +2003,38 @@ export class Supervisor {
+ 
+         case "mark_failed": {
+           const reason = asString(action.args.reason, "reason");
++          const staleBinaryMissingReason = isWorkerBinaryMissingReason(reason);
++          const staleAuthMissingReason = isWorkerAuthenticationMissingReason(reason);
++          if (staleBinaryMissingReason || staleAuthMissingReason) {
++            const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
++            const allowedWorkerTypes = parseAllowedWorkerTypes(run?.allowedWorkerTypes);
++            const requestedType = run?.preferredWorkerType ?? allowedWorkerTypes[0] ?? "codex";
++            try {
++              selectSpawnableWorkerType(requestedType, envParams, allowedWorkerTypes, {
++                cwd: run?.projectPath ?? undefined,
++                loginShellPathMode: "blocking",
++              });
++              const authInfo = staleAuthMissingReason
++                ? getWorkerAuthenticationInfo(requestedType, { env: envParams })
++                : null;
++              if (authInfo?.status === "not_authenticated") {
++                throw new Error(authInfo.message);
++              }
++              await insertExecutionEvent(this.runId, "supervisor_turn_stopped", {
++                summary: staleAuthMissingReason
++                  ? "Rejected stale supervisor failure because the requested worker is currently authenticated."
++                  : "Rejected stale supervisor failure because the requested worker binary is currently spawnable.",
++                actionName: action.name,
++                evidenceKey: staleAuthMissingReason ? "mark_failed:worker_auth_missing" : "mark_failed:worker_binary_missing",
++                rejectedReason: reason,
++                requestedType,
++                authentication: authInfo,
++              });
++              return { state: "wait", delayMs: 1_000 };
++            } catch {
++              // The worker is still genuinely unavailable; proceed with the failure.
++            }
++          }
+           await cancelRunWorkers(this.runId);
+           const failHalt = await this.haltResultIfRunCannotContinue();
+           if (failHalt) {
+@@ -1975,7 +2055,6 @@ export class Supervisor {
+               });
+             }
+           }
+-          await insertExecutionEvent(this.runId, "run_failed", { reason });
+           await persistRunFailure(this.runId, reason, {
+             surface: { code: "supervisor.gave_up" },
+           });
+diff --git a/src/server/supervisor/memory-consolidation.ts b/src/server/supervisor/memory-consolidation.ts
+index 7a36e67..d9539b3 100644
+--- a/src/server/supervisor/memory-consolidation.ts
++++ b/src/server/supervisor/memory-consolidation.ts
+@@ -39,17 +39,37 @@ function isInfraFailure(reason: string | undefined) {
+   }
+   const normalized = reason.toLowerCase();
+   return [
+-    "quota",
+-    "rate limit",
+-    "rate-limit",
+-    "credit",
+-    "econn",
+-    "etimedout",
+-    "network",
+-    "bridge",
+-    "spawn",
+-    "agent not found",
+-  ].some((pattern) => normalized.includes(pattern));
++    /\bquota\b/,
++    /\bbilling\b/,
++    /\brate limit\b/,
++    /\brate-limit\b/,
++    /\bcredit\b/,
++    /\beconn/,
++    /\betimedout\b/,
++    /\bnetwork\b/,
++    /\bbridge\b/,
++    /\bspawn\b/,
++    /\bagent not found\b/,
++    /\bapi key\b.*\b(?:missing|not configured|required|unset|absent)\b/,
++    /\b(?:missing|not configured|required|unset|absent)\b.{0,80}\bapi key\b/,
++    /\b(?:credential|credentials|oauth|token)\b.{0,80}\b(?:missing|not configured|required|unavailable|invalid)\b/,
++    /\bnot authenticated\b/,
++    /\bnot logged in\b/,
++    /\blogin required\b/,
++    /\bsign-?in required\b/,
++    /\bunauthorized\b/,
++  ].some((pattern) => pattern.test(normalized));
++}
++
++function normalizeConsolidationMemoryPath(requestedPath: string) {
++  let normalized = requestedPath.replace(/\\/g, "/").replace(/^\.\//, "");
++  for (const prefix of [".omniharness/memory/", "omniharness/memory/"]) {
++    if (normalized.startsWith(prefix)) {
++      normalized = normalized.slice(prefix.length);
++      break;
++    }
++  }
++  return normalized;
+ }
+ 
+ async function gatherSignals(runId: string, sinceTimestamp: Date) {
+@@ -189,7 +209,8 @@ function parseConsolidationPlan(raw: string): ConsolidationOperation[] {
+     if (op !== "append" && op !== "write" && op !== "noop") {
+       continue;
+     }
+-    const pathValue = typeof candidate.path === "string" ? candidate.path.trim() : "";
++    const rawPathValue = typeof candidate.path === "string" ? candidate.path.trim() : "";
++    const pathValue = normalizeConsolidationMemoryPath(rawPathValue);
+     const content = typeof candidate.content === "string" ? candidate.content : "";
+     const reason = typeof candidate.reason === "string" ? candidate.reason : "";
+     if (!pathValue || !reason) {
+diff --git a/src/server/supervisor/memory-paths.ts b/src/server/supervisor/memory-paths.ts
+index bdb93a3..df2f776 100644
+--- a/src/server/supervisor/memory-paths.ts
++++ b/src/server/supervisor/memory-paths.ts
+@@ -24,6 +24,20 @@ function isPathInside(childPath: string, parentPath: string) {
+   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+ }
+ 
++export function normalizeMemoryRelativePath(requestedPath: string) {
++  let normalizedRel = path.normalize(requestedPath);
++  while (true) {
++    const parts = normalizedRel.split(path.sep);
++    if (parts[0] !== ".omniharness" || parts[1] !== MEMORY_DIRNAME) {
++      return normalizedRel;
++    }
++    normalizedRel = parts.slice(2).join(path.sep);
++    if (!normalizedRel) {
++      return ".";
++    }
++  }
++}
++
+ export function resolveMemoryPath(projectPath: string | null | undefined, requestedPath: string): {
+   absolutePath: string;
+   relativePath: string;
+@@ -45,7 +59,7 @@ export function resolveMemoryPath(projectPath: string | null | undefined, reques
+     throw new SupervisorProtocolError("Memory path must be relative to the memory root.");
+   }
+ 
+-  const normalizedRel = path.normalize(requestedPath);
++  const normalizedRel = normalizeMemoryRelativePath(requestedPath);
+   if (normalizedRel === "." || normalizedRel === "..") {
+     throw new SupervisorProtocolError("Memory path must point to a file inside the memory root.");
+   }
+diff --git a/src/server/supervisor/memory-tools.ts b/src/server/supervisor/memory-tools.ts
+index 4100653..efba131 100644
+--- a/src/server/supervisor/memory-tools.ts
++++ b/src/server/supervisor/memory-tools.ts
+@@ -1,7 +1,7 @@
+ import fs from "fs";
+ import path from "path";
+ import { SupervisorProtocolError } from "@/server/supervisor/protocol";
+-import { ensureMemoryRoot, getMemoryRoot, resolveMemoryPath } from "@/server/supervisor/memory-paths";
++import { ensureMemoryRoot, getMemoryRoot, normalizeMemoryRelativePath, resolveMemoryPath } from "@/server/supervisor/memory-paths";
+ 
+ export const MEMORY_READ_LIMIT = 60_000;
+ export const MEMORY_WRITE_LIMIT = 60_000;
+@@ -49,13 +49,17 @@ function listMemoryFilesRecursive(root: string, currentDir: string, results: Mem
+     }
+     const stat = fs.statSync(absolutePath);
+     results.push({
+-      path: path.relative(root, absolutePath),
++      path: normalizeMemoryRelativePath(path.relative(root, absolutePath)),
+       size: stat.size,
+       updatedAt: stat.mtime.toISOString(),
+     });
+   }
+ }
+ 
++function legacyNestedMemoryPath(root: string, relativePath: string) {
++  return path.join(root, ".omniharness", "memory", relativePath);
++}
++
+ export function listMemory(projectPath: string | null | undefined): MemoryFileEntry[] {
+   if (!projectPath) {
+     return [];
+@@ -66,29 +70,39 @@ export function listMemory(projectPath: string | null | undefined): MemoryFileEn
+   }
+   const results: MemoryFileEntry[] = [];
+   listMemoryFilesRecursive(root, root, results);
+-  results.sort((a, b) => a.path.localeCompare(b.path));
+-  return results;
++  const deduped = new Map<string, MemoryFileEntry>();
++  for (const entry of results) {
++    const existing = deduped.get(entry.path);
++    if (!existing || entry.updatedAt > existing.updatedAt) {
++      deduped.set(entry.path, entry);
++    }
++  }
++  return [...deduped.values()].sort((a, b) => a.path.localeCompare(b.path));
+ }
+ 
+ export function readMemory(projectPath: string | null | undefined, requestedPath: string, options?: {
+   maxBytes?: number;
+ }): MemoryReadResult {
+   const { absolutePath, relativePath } = resolveMemoryPath(projectPath ?? null, requestedPath);
+-  if (!fs.existsSync(absolutePath)) {
++  const root = getMemoryRoot(projectPath!);
++  const readPath = fs.existsSync(absolutePath)
++    ? absolutePath
++    : legacyNestedMemoryPath(root, relativePath);
++  if (!fs.existsSync(readPath)) {
+     throw new SupervisorProtocolError(`Memory file "${requestedPath}" does not exist.`);
+   }
+ 
+-  const stat = fs.statSync(absolutePath);
++  const stat = fs.statSync(readPath);
+   if (!stat.isFile()) {
+     throw new SupervisorProtocolError(`Memory path "${requestedPath}" is not a regular file.`);
+   }
+ 
+   const maxBytes = options?.maxBytes ?? MEMORY_READ_LIMIT;
+-  const raw = fs.readFileSync(absolutePath, "utf8");
++  const raw = fs.readFileSync(readPath, "utf8");
+   const truncated = raw.length > maxBytes;
+   return {
+     path: relativePath,
+-    absolutePath,
++    absolutePath: readPath,
+     content: truncated ? raw.slice(0, maxBytes) : raw,
+     truncated,
+     size: stat.size,
+diff --git a/src/server/supervisor/observer.ts b/src/server/supervisor/observer.ts
+index 9f95370..c385a3a 100644
+--- a/src/server/supervisor/observer.ts
++++ b/src/server/supervisor/observer.ts
+@@ -39,6 +39,7 @@ const WORKER_TURN_COMPLETION_RELATED_EVENT_TYPES = [
+   WORKER_TURN_COMPLETED_EVENT_TYPE,
+   ...WORKER_TURN_COMPLETION_RESET_EVENT_TYPES,
+ ];
++const STUCK_ELIGIBLE_WORKER_STATUSES = new Set(["starting", "working"]);
+ 
+ interface WorkerBridgeSnapshot {
+   state: string;
+@@ -355,6 +356,7 @@ function resolvePersistedWorkerStatus(snapshot: WorkerBridgeSnapshot, events: De
+ 
+   if (
+     hasCompletedIdleTurn(snapshot)
++    || hasLongCompletionHint(snapshot)
+     || events.some((event) => event.type === WORKER_TURN_COMPLETED_EVENT_TYPE)
+   ) {
+     return "idle";
+@@ -636,7 +638,9 @@ export function deriveWorkerEvents(args: {
+   if (
+     !stuckNotified
+     && silenceMs >= STUCK_THRESHOLD_MS
++    && STUCK_ELIGIBLE_WORKER_STATUSES.has(currentStatus)
+     && !hasCompletedIdleTurn(args.snapshot)
++    && !longCompletionText
+     && !hasActiveTerminalProcess(args.snapshot)
+   ) {
+     events.push({
+diff --git a/src/server/supervisor/worker-availability.ts b/src/server/supervisor/worker-availability.ts
+index 4fa4b3e..ce3c2f6 100644
+--- a/src/server/supervisor/worker-availability.ts
++++ b/src/server/supervisor/worker-availability.ts
+@@ -66,17 +66,24 @@ function claudeKeychainCredentialsExist(env: EnvLike) {
+ type WorkerDetectionOptions = {
+   env?: EnvLike;
+   commandResolver?: WorkerCommandResolver;
++  cwd?: string;
++  loginShellPathMode?: "blocking" | "cached";
+ };
+ 
+-function resolveCommandPath(command: string, env: EnvLike = process.env, commandResolver?: WorkerCommandResolver) {
+-  if (commandResolver) {
+-    return commandResolver(command, env);
++function resolveCommandPath(command: string, options: WorkerDetectionOptions = {}) {
++  const lookupEnv = withManagedPath(
++    { ...process.env, ...(options.env ?? {}) },
++    options.cwd,
++    { loginShellPathMode: options.loginShellPathMode ?? "cached" },
++  );
++  if (options.commandResolver) {
++    return options.commandResolver(command, lookupEnv);
+   }
+ 
+   try {
+     return String(execFileSync("which", [command], {
+       encoding: "utf8",
+-      env: withManagedPath(env, undefined, { loginShellPathMode: "cached" }) as NodeJS.ProcessEnv,
++      env: lookupEnv as NodeJS.ProcessEnv,
+       timeout: 1_500,
+       maxBuffer: 64 * 1024,
+     })).trim() || null;
+@@ -85,8 +92,8 @@ function resolveCommandPath(command: string, env: EnvLike = process.env, command
+   }
+ }
+ 
+-function workerBinaryAvailable(type: SupportedWorkerType, env: EnvLike = process.env, commandResolver?: WorkerCommandResolver) {
+-  return resolveCommandPath(WORKER_BINARY_COMMANDS[type], env, commandResolver) !== null;
++function workerBinaryAvailable(type: SupportedWorkerType, options: WorkerDetectionOptions = {}) {
++  return resolveCommandPath(WORKER_BINARY_COMMANDS[type], options) !== null;
+ }
+ 
+ function workerHasApiKey(type: SupportedWorkerType) {
+@@ -424,6 +431,7 @@ export function getWorkerAuthenticationInfo(type: string, options: WorkerAuthent
+     }
+ 
+     if (anyFileExists([
++      join(homeDir, ".gemini", "gemini-credentials.json"),
+       join(homeDir, ".gemini", "oauth_creds.json"),
+       join(homeDir, ".gemini", "google_account_id"),
+       join(homeDir, ".gemini", "google_accounts.json"),
+@@ -499,7 +507,7 @@ export function isSpawnableWorkerType(type: string, options: SpawnabilityOptions
+   const supportedType = normalized as SupportedWorkerType;
+   const env = options.env ?? process.env;
+ 
+-  if (!workerBinaryAvailable(supportedType, env, options.commandResolver)) {
++  if (!workerBinaryAvailable(supportedType, { ...options, env })) {
+     const reason =
+       supportedType === "codex"
+         ? "codex ACP adapter is not installed."
+@@ -539,7 +547,7 @@ export function getWorkerInstallationInfo(type: string, options: WorkerDetection
+     ? normalized as SupportedWorkerType
+     : null;
+   const command = supportedType ? WORKER_BINARY_COMMANDS[supportedType] : normalized;
+-  const path = resolveCommandPath(command, options.env ?? process.env, options.commandResolver);
++  const path = resolveCommandPath(command, options);
+ 
+   return {
+     command,
+@@ -552,7 +560,7 @@ export function selectSpawnableWorkerType(
+   requestedType: string,
+   env: EnvLike,
+   allowedTypes: SupportedWorkerType[] = [...SUPPORTED_WORKER_TYPES],
+-  options: { quotaBlocked?: ReadonlySet<SupportedWorkerType> } = {},
++  options: Omit<WorkerDetectionOptions, "env"> & { quotaBlocked?: ReadonlySet<SupportedWorkerType> } = {},
+ ) {
+   const normalizedRequestedType = normalizeWorkerType(requestedType);
+   const normalizedAllowedTypes = Array.from(new Set(
+@@ -565,7 +573,7 @@ export function selectSpawnableWorkerType(
+     if (!firstAllowed) {
+       throw new Error("No allowed worker types are configured for this run.");
+     }
+-    const availability = isSpawnableWorkerType(firstAllowed, { env, quotaBlocked });
++    const availability = isSpawnableWorkerType(firstAllowed, { ...options, env, quotaBlocked });
+     if (availability.ok) {
+       return {
+         type: availability.type,
+@@ -575,7 +583,7 @@ export function selectSpawnableWorkerType(
+     }
+   }
+ 
+-  const requested = isSpawnableWorkerType(normalizedRequestedType, { env, quotaBlocked });
++  const requested = isSpawnableWorkerType(normalizedRequestedType, { ...options, env, quotaBlocked });
+   if (requested.ok && normalizedAllowedTypes.includes(requested.type)) {
+     return {
+       type: requested.type,
+@@ -588,7 +596,7 @@ export function selectSpawnableWorkerType(
+     if (candidate === normalizedRequestedType || !normalizedAllowedTypes.includes(candidate)) {
+       continue;
+     }
+-    const availability = isSpawnableWorkerType(candidate, { env, quotaBlocked });
++    const availability = isSpawnableWorkerType(candidate, { ...options, env, quotaBlocked });
+     if (availability.ok) {
+       return {
+         type: availability.type,
+diff --git a/src/server/supervisor/worker-completion.ts b/src/server/supervisor/worker-completion.ts
+index 3043a9a..f09d52f 100644
+--- a/src/server/supervisor/worker-completion.ts
++++ b/src/server/supervisor/worker-completion.ts
+@@ -1,4 +1,10 @@
+ const WORKER_COMPLETION_TEXT_WAKE_THRESHOLD_CHARS = 600;
++const COMPLETION_CUE_PATTERNS = [
++  /\b(done|complete[sd]?|implemented|fixed|verified|passed|updated|added|removed|changed|delivered)\b/i,
++  /\bverification\s*:/i,
++  /\bsummary\s*:/i,
++  /\btests?\s+(passed|pass|verified|succeeded)\b/i,
++];
+ 
+ export function normalizeWorkerStatus(status: string | null | undefined) {
+   return (status ?? "").trim().toLowerCase().split(":")[0]?.trim() ?? "";
+@@ -6,7 +12,8 @@ export function normalizeWorkerStatus(status: string | null | undefined) {
+ 
+ export function isLongWorkerCompletionText(text: string | null | undefined) {
+   const normalized = (text ?? "").replace(/\s+/g, " ").trim();
+-  return normalized.length >= WORKER_COMPLETION_TEXT_WAKE_THRESHOLD_CHARS;
++  return normalized.length >= WORKER_COMPLETION_TEXT_WAKE_THRESHOLD_CHARS
++    && COMPLETION_CUE_PATTERNS.some((pattern) => pattern.test(normalized));
+ }
+ 
+ export function workerTurnRecheckDelayMs(args: {
+diff --git a/src/server/supervisor/worker-failover.ts b/src/server/supervisor/worker-failover.ts
+index 3e7ee60..8392462 100644
+--- a/src/server/supervisor/worker-failover.ts
++++ b/src/server/supervisor/worker-failover.ts
+@@ -26,6 +26,7 @@ import {
+   type SupportedWorkerType,
+ } from "@/server/supervisor/worker-types";
+ import { runs } from "@/server/db/schema";
++import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
+ 
+ export type FailoverEnv = Record<string, string | undefined>;
+ 
+@@ -319,6 +320,7 @@ export async function attemptWorkerFailover(
+   let currentType: SupportedWorkerType = replacementType;
+   let lastError: unknown = null;
+   const blockedNow = new Set<SupportedWorkerType>([args.outgoingWorkerType]);
++  const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
+   while (attempts < maxAttempts) {
+     attempts += 1;
+     const newWorkerId = await reserveReplacementWorkerRow({
+@@ -329,11 +331,21 @@ export async function attemptWorkerFailover(
+       initialPrompt: seed,
+     });
+     try {
++      const accountAllocation = await allocateWorkerAccount({
++        workerType: currentType,
++        runId: args.runId,
++        workerId: newWorkerId,
++        explicitAccountId: run?.preferredWorkerAccountId ?? null,
++        strategy: run?.preferredWorkerAccountId ? "manual" : "priority",
++        env: compactEnv(args.env),
++      });
++      const workerAccountId = accountAllocation.account?.id ?? null;
+       const spawned = await bridge.spawnAgent({
+         type: currentType,
+         cwd: args.cwd,
+         name: newWorkerId,
+         env: compactEnv(args.env),
++        ...(workerAccountId ? { accountId: workerAccountId } : {}),
+       });
+       await db.update(workers).set({
+         bridgeSessionId: spawned.sessionId ?? null,
+diff --git a/tests/api/run-route.test.ts b/tests/api/run-route.test.ts
+index 0a75706..a58448f 100644
+--- a/tests/api/run-route.test.ts
++++ b/tests/api/run-route.test.ts
+@@ -1222,6 +1222,115 @@ describe("POST /api/runs/[id]", () => {
+     expect(remainingMessages.map((message) => message.id)).toEqual([userMessageId]);
+   });
+ 
++  it("blocks automatic retry of saved permanent account failures", async () => {
++    mockStartSupervisorRun.mockClear();
++    const planId = randomUUID();
++    const runId = randomUUID();
++    const userMessageId = randomUUID();
++    const now = new Date();
++
++    await db.insert(plans).values({
++      id: planId,
++      path: "vibes/ad-hoc/auto-blocked-account-failure.md",
++      status: "running",
++      createdAt: now,
++      updatedAt: now,
++    });
++    await db.insert(runs).values({
++      id: runId,
++      planId,
++      mode: "implementation",
++      title: "Blocked account failure",
++      status: "failed",
++      lastError: 'Spawn failed: failed to start gemini agent via gemini: {"code":-32000,"message":"Gemini API key is missing or not configured."}',
++      failedAt: now,
++      createdAt: now,
++      updatedAt: now,
++    });
++    await db.insert(messages).values({
++      id: userMessageId,
++      runId,
++      role: "user",
++      kind: "checkpoint",
++      content: "try after fixing credentials",
++      createdAt: now,
++    });
++
++    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
++      method: "POST",
++      body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
++    }), { params: Promise.resolve({ id: runId }) });
++    const payload = await response.json();
++    const storedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
++
++    expect(response.status).toBe(409);
++    expect(payload.error.message).toContain("cannot be auto-retried");
++    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
++    expect(storedRun?.status).toBe("failed");
++  });
++
++  it("allows manual retry of saved permanent account failures", async () => {
++    mockStartSupervisorRun.mockClear();
++    const planId = randomUUID();
++    const runId = randomUUID();
++    const userMessageId = randomUUID();
++    const errorMessage = 'Spawn failed: failed to start gemini agent via gemini: {"code":-32000,"message":"Gemini API key is missing or not configured."}';
++    const now = new Date();
++
++    await db.insert(plans).values({
++      id: planId,
++      path: "vibes/ad-hoc/manual-account-recovery.md",
++      status: "running",
++      createdAt: now,
++      updatedAt: now,
++    });
++    await db.insert(runs).values({
++      id: runId,
++      planId,
++      mode: "implementation",
++      title: "Manual account recovery",
++      status: "failed",
++      lastError: errorMessage,
++      failedAt: now,
++      createdAt: now,
++      updatedAt: now,
++    });
++    await db.insert(messages).values([
++      {
++        id: userMessageId,
++        runId,
++        role: "user",
++        kind: "checkpoint",
++        content: "try after fixing credentials",
++        createdAt: new Date("2026-04-21T10:00:00Z"),
++      },
++      {
++        id: randomUUID(),
++        runId,
++        role: "system",
++        kind: "error",
++        content: `Run failed: ${errorMessage}`,
++        createdAt: new Date("2026-04-21T10:01:00Z"),
++      },
++    ]);
++
++    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
++      method: "POST",
++      body: JSON.stringify({ action: "retry", targetMessageId: userMessageId, manualRecovery: true }),
++    }), { params: Promise.resolve({ id: runId }) });
++    const payload = await response.json();
++    const storedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
++    const remainingMessages = await db.select().from(messages).where(eq(messages.runId, runId));
++
++    expect(response.status).toBe(200);
++    expect(payload).toMatchObject({ ok: true, runId });
++    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
++    expect(storedRun?.status).toBe("running");
++    expect(storedRun?.lastError).toBeNull();
++    expect(storedRun?.failedAt).toBeNull();
++    expect(remainingMessages.map((message) => message.id)).toEqual([userMessageId]);
++  });
++
+   it("repairs direct retry session metadata from the worker stream", async () => {
+     __resetNamedEventsForTests();
+     mockAskAgent.mockClear();
+diff --git a/tests/app/auto-resume-selection.test.ts b/tests/app/auto-resume-selection.test.ts
+index 9818c83..434328a 100644
+--- a/tests/app/auto-resume-selection.test.ts
++++ b/tests/app/auto-resume-selection.test.ts
+@@ -1,6 +1,7 @@
+ import { describe, expect, it, vi } from "vitest";
+ import {
+   cancelInactiveAutoResumeTimers,
++  isPermanentAutoResumeFailure,
+   shouldFireAutoResumeTimer,
+   shouldSelectRecoveredRunAfterSuccess,
+ } from "@/app/home/auto-resume-selection";
+@@ -140,4 +141,30 @@ describe("auto-resume selection guards", () => {
+       clearTimeout(timer);
+     }
+   });
++
++  it("does not auto-resume permanent account and billing failures", () => {
++    const timer = setTimeout(() => undefined, 10_000);
++    const failureKey = ":The run cannot continue due to an API billing error (402 Runner billing required: cap_exceeded). Please check your billing status and try again.";
++    const entries = new Map([
++      ["failed-run", { failureKey, targetMessageId: "message-a", timerId: timer }],
++    ]);
++
++    try {
++      expect(isPermanentAutoResumeFailure(failureKey)).toBe(true);
++      expect(shouldFireAutoResumeTimer({
++        entries,
++        runId: "failed-run",
++        failureKey,
++        targetMessageId: "message-a",
++        activeRunId: "failed-run",
++        isAutoResumableConversation: true,
++        selectedRunStatus: "failed",
++        failedWorkerAvailabilityStatus: "ok",
++        hasWorkerFailureDetail: false,
++        recoverRunIsPending: false,
++      })).toBe(false);
++    } finally {
++      clearTimeout(timer);
++    }
++  });
+ });
+diff --git a/tests/app/home-view-model.test.ts b/tests/app/home-view-model.test.ts
+index d735607..ed86d72 100644
+--- a/tests/app/home-view-model.test.ts
++++ b/tests/app/home-view-model.test.ts
+@@ -43,7 +43,10 @@ function createRun(overrides: Partial<RunRecord> = {}): RunRecord {
+   };
+ }
+ 
+-function useRenderViewModel(state: EventStreamState) {
++function useRenderViewModel(
++  state: EventStreamState,
++  workerCatalogData: Parameters<typeof useHomeViewModel>[0]["workerCatalogData"] = undefined,
++) {
+   return useHomeViewModel({
+     state,
+     selectedRunId: "run-1",
+@@ -54,7 +57,7 @@ function useRenderViewModel(state: EventStreamState) {
+     draftProjectPath: null,
+     searchQuery: "",
+     apiKeys: {},
+-    workerCatalogData: undefined,
++    workerCatalogData,
+   });
+ }
+ 
+@@ -137,6 +140,57 @@ describe("useHomeViewModel", () => {
+     expect(viewModel.isConversationThinking).toBe(false);
+   });
+ 
++  it("does not label permanent worker auth failures as reconnecting", () => {
++    const state = createState({
++      runs: [createRun({
++        mode: "implementation",
++        status: "failed",
++        failedAt: "2026-06-29T13:08:41.000Z",
++        lastError: 'Spawn failed: failed to start gemini agent via gemini: {"code":-32000,"message":"Gemini API key is missing or not configured."}',
++        preferredWorkerType: "gemini",
++      })],
++      plans: [{ id: "plan-1", path: "/workspace/project" }],
++      messages: [{
++        id: "message-1",
++        runId: "run-1",
++        role: "user",
++        kind: "checkpoint",
++        content: "Do the thing",
++        createdAt: "2026-05-13T00:00:00.000Z",
++      }],
++    });
++    const workerCatalogData: Parameters<typeof useHomeViewModel>[0]["workerCatalogData"] = {
++      workers: [{
++        type: "gemini",
++        label: "Gemini",
++        availability: {
++          status: "ok",
++          message: "Gemini login state was detected.",
++          setupCommand: "gemini",
++        },
++        installation: {
++          command: "gemini",
++          path: "/usr/local/bin/gemini",
++          dir: "/usr/local/bin",
++        },
++        authentication: {
++          status: "authenticated",
++          method: "session_file",
++          message: "Gemini login state was detected.",
++          setupCommand: "gemini",
++        },
++      }],
++      workerModels: {},
++    };
++    const viewModel = useRenderViewModel(state, workerCatalogData);
++
++    expect(viewModel.conversationFailure).toMatchObject({
++      tone: "error",
++      action: "Run failed",
++      message: 'Spawn failed: failed to start gemini agent via gemini: {"code":-32000,"message":"Gemini API key is missing or not configured."}',
++    });
++  });
++
+   it("does not show stale stuck-worker recovery once the supervisor is awaiting input", () => {
+     const viewModel = useRenderViewModel(createState({
+       runs: [createRun({
+diff --git a/tests/server/agent-runtime/http.test.ts b/tests/server/agent-runtime/http.test.ts
+index 6274e1c..7cb4016 100644
+--- a/tests/server/agent-runtime/http.test.ts
++++ b/tests/server/agent-runtime/http.test.ts
+@@ -107,6 +107,7 @@ process.stdin.on('data', (chunk) => {
+           CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR || null,
+           CODEX_SQLITE_HOME: process.env.CODEX_SQLITE_HOME || null,
+           GEMINI_CLI_HOME: process.env.GEMINI_CLI_HOME || null,
++          GEMINI_FORCE_FILE_STORAGE: process.env.GEMINI_FORCE_FILE_STORAGE || null,
+           OPENCODE_CONFIG_DIR: process.env.OPENCODE_CONFIG_DIR || null,
+           XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || null,
+           XDG_DATA_HOME: process.env.XDG_DATA_HOME || null,
+@@ -2022,6 +2023,7 @@ process.stdout.write(JSON.stringify({
+     const fakeHome = createTempDir("omni-runtime-gemini-credentials-home-");
+     const globalGeminiHome = join(fakeHome, ".gemini");
+     mkdirSync(globalGeminiHome, { recursive: true });
++    writeFileSync(join(globalGeminiHome, "gemini-credentials.json"), "{\"access_token\":\"global-token\"}\n");
+     writeFileSync(join(globalGeminiHome, "google_accounts.json"), "{\"accounts\":[\"global-account\"]}\n");
+     writeFileSync(join(globalGeminiHome, "google_account_id"), "global-account\n");
+     writeFileSync(join(globalGeminiHome, "settings.json"), "{\"theme\":\"dark\"}\n");
+@@ -2052,9 +2054,13 @@ process.stdout.write(JSON.stringify({
+ 
+     expect(spawnResponse.status).toBe(201);
+     const scopedGeminiConfigDir = join(projectDir, ".omniharness", "cli-home", "gemini", ".gemini");
++    expect(readFileSync(join(scopedGeminiConfigDir, "gemini-credentials.json"), "utf8")).toContain("global-token");
+     expect(readFileSync(join(scopedGeminiConfigDir, "google_accounts.json"), "utf8")).toContain("global-account");
+     expect(readFileSync(join(scopedGeminiConfigDir, "google_account_id"), "utf8")).toContain("global-account");
+     expect(existsSync(join(scopedGeminiConfigDir, "settings.json"))).toBe(true);
++    const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
++    const initialize = events.find((event) => event.method === "initialize");
++    expect(initialize.selectedCliStorageEnv.GEMINI_FORCE_FILE_STORAGE).toBe("true");
+ 
+     await fetch(`${baseUrl}/agents/gemini-credential-worker`, { method: "DELETE" });
+   }, 15_000);
+@@ -2118,6 +2124,51 @@ process.stdout.write(JSON.stringify({
+     await fetch(`${baseUrl}/agents/${name}`, { method: "DELETE" });
+   }, 15_000);
+ 
++  it("bridges OpenCode auth into project-scoped CLI storage", async () => {
++    const projectDir = createTempDir("omni-runtime-opencode-credentials-project-");
++    const binDir = createTempDir("omni-runtime-opencode-credentials-bin-");
++    const fakeHome = createTempDir("omni-runtime-opencode-credentials-home-");
++    const globalOpencodeDataDir = join(fakeHome, ".local", "share", "opencode");
++    const globalOpencodeConfigDir = join(fakeHome, ".config", "opencode");
++    mkdirSync(globalOpencodeDataDir, { recursive: true });
++    mkdirSync(globalOpencodeConfigDir, { recursive: true });
++    writeFileSync(join(globalOpencodeDataDir, "auth.json"), "{\"google\":{\"key\":\"global-token\"}}\n");
++    writeFileSync(join(globalOpencodeConfigDir, "opencode.jsonc"), "{ \"$schema\": \"https://opencode.ai/config.json\" }\n");
++    const requestLog = join(projectDir, "requests.jsonl");
++    createExecutable(binDir, "opencode", fakeAcpAgentScript);
++    const server = createAgentRuntimeServer({
++      env: {
++        ...process.env,
++        HOME: fakeHome,
++        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
++        OMNIHARNESS_RESOURCE_GUARD: "0",
++        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
++      },
++    });
++    const port = await listen(server);
++    const baseUrl = `http://127.0.0.1:${port}`;
++
++    const spawnResponse = await fetch(`${baseUrl}/agents`, {
++      method: "POST",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify({
++        type: "opencode",
++        cwd: projectDir,
++        name: "opencode-credential-worker",
++        env: { FAKE_ACP_REQUEST_LOG: requestLog },
++      }),
++    });
++
++    expect(spawnResponse.status).toBe(201);
++    const scopedOpencodeHome = join(projectDir, ".omniharness", "cli-home", "opencode");
++    expect(readFileSync(join(scopedOpencodeHome, "data", "opencode", "auth.json"), "utf8")).toContain("global-token");
++    expect(readFileSync(join(scopedOpencodeHome, "config", "opencode.jsonc"), "utf8")).toContain("opencode.ai");
++    expect(existsSync(join(scopedOpencodeHome, "state", "opencode"))).toBe(true);
++    expect(existsSync(join(scopedOpencodeHome, "cache", "opencode"))).toBe(true);
++
++    await fetch(`${baseUrl}/agents/opencode-credential-worker`, { method: "DELETE" });
++  }, 15_000);
++
+   it("treats duplicate saved-session resume requests as idempotent", async () => {
+     const projectDir = createTempDir("omni-runtime-resume-project-");
+     const binDir = createTempDir("omni-runtime-resume-bin-");
+diff --git a/tests/supervisor/index.test.ts b/tests/supervisor/index.test.ts
+index f24f6b8..8dbe6ae 100644
+--- a/tests/supervisor/index.test.ts
++++ b/tests/supervisor/index.test.ts
+@@ -3,7 +3,7 @@ import fs from "fs";
+ import os from "os";
+ import path from "path";
+ import { beforeEach, describe, expect, it, vi } from "vitest";
+-import { eq } from "drizzle-orm";
++import { eq, sql } from "drizzle-orm";
+ import { db } from "@/server/db";
+ import { clarifications, conversationReadMarkers, creditEvents, executionEvents, messages, planItems, planningReviewFindings, planningReviewRounds, planningReviewRuns, plans, processSessions, queuedConversationMessages, recoveryIncidents, runs, settings, supervisorInterventions, supervisorScheduledWakes, workerAssignments, workerCounters, workers } from "@/server/db/schema";
+ import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
+@@ -19,6 +19,7 @@ const {
+   mockBuildSupervisorTurnContext,
+   mockParseSupervisorToolCall,
+   mockSelectSpawnableWorkerType,
++  mockGetWorkerAuthenticationInfo,
+   mockNotifyEventStreamSubscribers,
+   mockAgentConfigs,
+   mockGetSupervisorModelConfig,
+@@ -34,6 +35,7 @@ const {
+   mockBuildSupervisorTurnContext: vi.fn(),
+   mockParseSupervisorToolCall: vi.fn(),
+   mockSelectSpawnableWorkerType: vi.fn(),
++  mockGetWorkerAuthenticationInfo: vi.fn(),
+   mockNotifyEventStreamSubscribers: vi.fn(),
+   mockAgentConfigs: [] as unknown[],
+   mockGetSupervisorModelConfig: vi.fn((_env?: unknown, sourcePreference?: "primary" | "fallback") => ({
+@@ -100,6 +102,7 @@ vi.mock("@/server/supervisor/protocol", async () => {
+ 
+ vi.mock("@/server/supervisor/worker-availability", () => ({
+   selectSpawnableWorkerType: mockSelectSpawnableWorkerType,
++  getWorkerAuthenticationInfo: mockGetWorkerAuthenticationInfo,
+ }));
+ 
+ vi.mock("@/server/events/live-updates", () => ({
+@@ -116,6 +119,11 @@ function deferred<T>() {
+   return { promise, resolve, reject };
+ }
+ 
++async function readBusyTimeout() {
++  const rows = await db.all(sql`PRAGMA busy_timeout`);
++  return Number((rows[0] as { timeout?: unknown } | undefined)?.timeout ?? 0);
++}
++
+ describe("Supervisor worker spawn flow", () => {
+   beforeEach(async () => {
+     vi.clearAllMocks();
+@@ -175,6 +183,12 @@ describe("Supervisor worker spawn flow", () => {
+       requestedType: "opencode",
+       fallbackReason: null,
+     });
++    mockGetWorkerAuthenticationInfo.mockReturnValue({
++      status: "authenticated",
++      method: "session_file",
++      message: "Worker login state was detected.",
++      setupCommand: null,
++    });
+     mockAskAgent.mockResolvedValue({ response: "ok", state: "working" });
+     mockGetAgent.mockResolvedValue(null);
+     vi.spyOn(Date, "now").mockReturnValue(123456);
+@@ -256,7 +270,9 @@ describe("Supervisor worker spawn flow", () => {
+ 
+     const { Supervisor } = await import("@/server/supervisor");
+ 
++    await expect(readBusyTimeout()).resolves.toBe(15000);
+     await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "paused" });
++    await expect(readBusyTimeout()).resolves.toBe(15000);
+ 
+     expect(mockSpawnAgent).not.toHaveBeenCalled();
+     expect(mockAskAgent).not.toHaveBeenCalled();
+@@ -2730,6 +2746,107 @@ describe("Supervisor worker spawn flow", () => {
+     expect(completionEvent?.eventType).toBe("run_completed");
+   });
+ 
++  it("rejects stale binary-missing failures when the worker is currently spawnable", async () => {
++    const planId = randomUUID();
++    const runId = randomUUID();
++    const now = new Date();
++
++    await db.insert(plans).values({
++      id: planId,
++      path: "vibes/ad-hoc/test-plan.md",
++      status: "running",
++      createdAt: now,
++      updatedAt: now,
++    });
++    await db.insert(runs).values({
++      id: runId,
++      planId,
++      projectPath: "/tmp/project",
++      preferredWorkerType: "claude",
++      allowedWorkerTypes: JSON.stringify(["claude"]),
++      status: "running",
++      createdAt: now,
++      updatedAt: now,
++    });
++    mockParseSupervisorToolCall.mockReturnValue({
++      id: "tool-fail",
++      name: "mark_failed",
++      args: {
++        reason: "The 'claude' worker binary is not installed, and it is the only allowed worker type for this run.",
++      },
++    });
++    mockSelectSpawnableWorkerType.mockReturnValue({
++      type: "claude",
++      requestedType: "claude",
++      fallbackReason: null,
++    });
++
++    const { Supervisor } = await import("@/server/supervisor");
++
++    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 1_000 });
++
++    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
++    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
++    expect(run?.status).toBe("running");
++    expect(run?.lastError).toBeNull();
++    expect(events.map((event) => event.eventType)).toEqual(["supervisor_turn_stopped"]);
++    expect(events[0]?.details).toContain("Rejected stale supervisor failure");
++  });
++
++  it("rejects stale auth-missing failures when the worker is currently authenticated", async () => {
++    const planId = randomUUID();
++    const runId = randomUUID();
++    const now = new Date();
++
++    await db.insert(plans).values({
++      id: planId,
++      path: "vibes/ad-hoc/test-plan.md",
++      status: "running",
++      createdAt: now,
++      updatedAt: now,
++    });
++    await db.insert(runs).values({
++      id: runId,
++      planId,
++      projectPath: "/tmp/project",
++      preferredWorkerType: "gemini",
++      allowedWorkerTypes: JSON.stringify(["gemini"]),
++      status: "running",
++      createdAt: now,
++      updatedAt: now,
++    });
++    mockParseSupervisorToolCall.mockReturnValue({
++      id: "tool-fail",
++      name: "mark_failed",
++      args: {
++        reason: 'Spawn failed: failed to start gemini agent via gemini: {"code":-32000,"message":"Gemini API key is missing or not configured."}',
++      },
++    });
++    mockSelectSpawnableWorkerType.mockReturnValue({
++      type: "gemini",
++      requestedType: "gemini",
++      fallbackReason: null,
++    });
++    mockGetWorkerAuthenticationInfo.mockReturnValue({
++      status: "authenticated",
++      method: "session_file",
++      message: "Gemini login state was detected.",
++      setupCommand: "gemini",
++    });
++
++    const { Supervisor } = await import("@/server/supervisor");
++
++    await expect(new Supervisor({ runId }).run()).resolves.toEqual({ state: "wait", delayMs: 1_000 });
++
++    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
++    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
++    expect(run?.status).toBe("running");
++    expect(run?.lastError).toBeNull();
++    expect(events.map((event) => event.eventType)).toEqual(["supervisor_turn_stopped"]);
++    expect(events[0]?.details).toContain("mark_failed:worker_auth_missing");
++    expect(events[0]?.details).toContain("Gemini login state was detected.");
++  });
++
+   it("records worker cancellation without deleting the worker before writing events", async () => {
+     const planId = randomUUID();
+     const runId = randomUUID();
+diff --git a/tests/supervisor/memory-paths.test.ts b/tests/supervisor/memory-paths.test.ts
+index d7c02c6..4476626 100644
+--- a/tests/supervisor/memory-paths.test.ts
++++ b/tests/supervisor/memory-paths.test.ts
+@@ -50,4 +50,10 @@ describe("resolveMemoryPath", () => {
+     const resolved = resolveMemoryPath(projectPath, "subdir/note.md");
+     expect(resolved.absolutePath).toBe(path.join(getMemoryRoot(projectPath), "subdir/note.md"));
+   });
++
++  it("strips a legacy nested memory root prefix", () => {
++    const resolved = resolveMemoryPath(projectPath, ".omniharness/memory/overview.md");
++    expect(resolved.absolutePath).toBe(path.join(getMemoryRoot(projectPath), "overview.md"));
++    expect(resolved.relativePath).toBe("overview.md");
++  });
+ });
+diff --git a/tests/supervisor/memory-tools.test.ts b/tests/supervisor/memory-tools.test.ts
+index bfc2ca4..c538a72 100644
+--- a/tests/supervisor/memory-tools.test.ts
++++ b/tests/supervisor/memory-tools.test.ts
+@@ -39,6 +39,15 @@ describe("memory-tools", () => {
+     expect(listed).toEqual(["alpha.md", "zeta.md"]);
+   });
+ 
++  it("lists legacy nested memory files by canonical path", () => {
++    const legacyDir = path.join(getMemoryRoot(projectPath), ".omniharness", "memory");
++    fs.mkdirSync(legacyDir, { recursive: true });
++    fs.writeFileSync(path.join(legacyDir, "overview.md"), "# Overview", "utf8");
++
++    const listed = listMemory(projectPath).map((entry) => entry.path);
++    expect(listed).toEqual(["overview.md"]);
++  });
++
+   it("reads back what was written and reports byte sizes", () => {
+     writeMemory(projectPath, "decisions.md", "Decision: use SQLite");
+     const read = readMemory(projectPath, "decisions.md");
+@@ -47,6 +56,15 @@ describe("memory-tools", () => {
+     expect(read.size).toBeGreaterThan(0);
+   });
+ 
++  it("reads legacy nested memory files through canonical paths", () => {
++    const legacyDir = path.join(getMemoryRoot(projectPath), ".omniharness", "memory");
++    fs.mkdirSync(legacyDir, { recursive: true });
++    fs.writeFileSync(path.join(legacyDir, "overview.md"), "# Legacy overview", "utf8");
++
++    expect(readMemory(projectPath, "overview.md").content).toBe("# Legacy overview");
++    expect(readMemory(projectPath, ".omniharness/memory/overview.md").path).toBe("overview.md");
++  });
++
+   it("truncates oversized reads at the budget", () => {
+     const big = "x".repeat(5_000);
+     writeMemory(projectPath, "overview.md", big);
+diff --git a/tests/supervisor/observer.test.ts b/tests/supervisor/observer.test.ts
+index 22d1d89..d336451 100644
+--- a/tests/supervisor/observer.test.ts
++++ b/tests/supervisor/observer.test.ts
+@@ -262,6 +262,98 @@ describe("deriveWorkerEvents", () => {
+     expect(events.some((event) => event.type === "worker_stuck")).toBe(false);
+   });
+ 
++  it("does not mark a plain idle worker stuck after prolonged silence", () => {
++    const { events } = deriveWorkerEvents({
++      workerId: "worker-1",
++      snapshot: {
++        state: "idle",
++        currentText: "",
++        lastText: "",
++        pendingPermissions: [],
++        stderrBuffer: [],
++        stopReason: null,
++      },
++      previous: {
++        fingerprint: JSON.stringify({
++          state: "idle",
++          currentText: "",
++          lastText: "",
++          pendingPermissions: [],
++          stopReason: null,
++          stderrTail: [],
++        }),
++        lastChangedAt: 0,
++        lastMeaningfulActivityAt: 0,
++        progressSignature: JSON.stringify({
++          state: "idle",
++          currentText: "",
++          lastText: "",
++          pendingPermissions: [],
++          stopReason: null,
++        }),
++        idleNotified: true,
++        stuckNotified: false,
++      },
++      now: 5 * 60_000,
++    });
++
++    expect(events.some((event) => event.type === "worker_stuck")).toBe(false);
++  });
++
++  it("does not age a final-looking working snapshot into stuck after completion fallback", () => {
++    const finalText = [
++      "Implemented the recovery fix and verified the focused tests.",
++      "",
++      "Verification:",
++      "- Account resolution now supports hydrated API key settings.",
++      "- Automatic allocation skips unusable API-key rows.",
++      "- Manual recovery bypasses the saved permanent failure guard.",
++      "- The Gemini credential bridge resumes the existing CLI session.",
++      "- The supervisor rejected stale auth-missing worker failures.",
++      "- The UI no longer reports reconnecting for unretryable saved failures.",
++      "- The recovered run has an active worker session with no last error.",
++      "- Focused tests cover the resolver, allocator, route, UI, and supervisor paths.",
++      "- The persisted worker state should remain idle after this final-looking turn.",
++    ].join("\n");
++
++    const { events } = deriveWorkerEvents({
++      workerId: "worker-1",
++      snapshot: {
++        state: "working",
++        currentText: finalText,
++        lastText: finalText,
++        pendingPermissions: [],
++        stderrBuffer: [],
++        stopReason: null,
++      },
++      previous: {
++        fingerprint: JSON.stringify({
++          state: "working",
++          currentText: finalText,
++          lastText: finalText,
++          pendingPermissions: [],
++          stopReason: null,
++          stderrTail: [],
++        }),
++        lastChangedAt: 0,
++        lastMeaningfulActivityAt: 0,
++        progressSignature: JSON.stringify({
++          state: "working",
++          currentText: finalText,
++          lastText: finalText,
++          pendingPermissions: [],
++          stopReason: null,
++        }),
++        idleNotified: false,
++        stuckNotified: false,
++        completionHintNotified: true,
++      },
++      now: 5 * 60_000,
++    });
++
++    expect(events.some((event) => event.type === "worker_stuck")).toBe(false);
++  });
++
+   it("wakes the supervisor immediately when ACP reports a worker turn is complete", () => {
+     const { nextState, events } = deriveWorkerEvents({
+       workerId: "worker-1",
+@@ -1322,6 +1414,7 @@ describe("deriveWorkerEvents", () => {
+     const runId = randomUUID();
+     const workerId = randomUUID();
+     const wakeSupervisor = vi.fn();
++    const nowSpy = vi.spyOn(Date, "now");
+     const finalText = [
+       "Implemented the planning review agents feature and verified the critical path.",
+       "",
+@@ -1374,13 +1467,21 @@ describe("deriveWorkerEvents", () => {
+       stopReason: null,
+     });
+ 
+-    await pollRunWorkers(runId, wakeSupervisor);
++    try {
++      nowSpy.mockReturnValue(0);
++      await pollRunWorkers(runId, wakeSupervisor);
++      nowSpy.mockReturnValue(5 * 60_000);
++      await pollRunWorkers(runId, wakeSupervisor);
++    } finally {
++      nowSpy.mockRestore();
++    }
+ 
+     const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+     const workerEvents = await db.select().from(executionEvents).where(eq(executionEvents.workerId, workerId));
+ 
+     expect(persistedWorker?.status).toBe("idle");
+     expect(workerEvents.some((event) => event.eventType === "worker_turn_completed")).toBe(true);
++    expect(workerEvents.some((event) => event.eventType === "worker_stuck")).toBe(false);
+     expect(wakeSupervisor).toHaveBeenCalledWith(runId, 0);
+   });
+ 
+diff --git a/tests/supervisor/worker-availability.test.ts b/tests/supervisor/worker-availability.test.ts
+index 0beba51..7beacd0 100644
+--- a/tests/supervisor/worker-availability.test.ts
++++ b/tests/supervisor/worker-availability.test.ts
+@@ -4,7 +4,8 @@ const { mockExecFileSync } = vi.hoisted(() => ({
+   mockExecFileSync: vi.fn(),
+ }));
+ 
+-vi.mock("child_process", () => ({
++vi.mock("child_process", async (importOriginal) => ({
++  ...await importOriginal<typeof import("child_process")>(),
+   execFileSync: mockExecFileSync,
+ }));
+ 
+@@ -121,6 +122,40 @@ describe("selectSpawnableWorkerType", () => {
+     });
+   });
+ 
++  it("uses the live process executable path when runtime settings env omits PATH entries", async () => {
++    const previousNvmBin = process.env.NVM_BIN;
++    process.env.NVM_BIN = "/Users/tester/.nvm/versions/node/v22.22.3/bin";
++    mockExecFileSync.mockImplementation((command: string, args: string[], options: { env?: Record<string, string> } = {}) => {
++      if (
++        command === "which"
++        && args[0] === "claude-agent-acp"
++        && options.env?.PATH?.includes("/Users/tester/.nvm/versions/node/v22.22.3/bin")
++      ) {
++        return Buffer.from("/Users/tester/.nvm/versions/node/v22.22.3/bin/claude-agent-acp\n");
++      }
++      throw new Error("not found");
++    });
++
++    try {
++      const { selectSpawnableWorkerType } = await import("@/server/supervisor/worker-availability");
++
++      expect(selectSpawnableWorkerType("claude", {
++        HOME: "/Users/tester",
++        PATH: "/usr/bin:/bin",
++      }, ["claude"])).toEqual({
++        type: "claude",
++        requestedType: "claude",
++        fallbackReason: null,
++      });
++    } finally {
++      if (previousNvmBin === undefined) {
++        delete process.env.NVM_BIN;
++      } else {
++        process.env.NVM_BIN = previousNvmBin;
++      }
++    }
++  });
++
+   it("checks Claude auth using the managed runtime PATH", async () => {
+     mockExecFileSync.mockImplementation((command: string, args: string[], options: { env?: Record<string, string> } = {}) => {
+       if (command === "claude" && args[0] === "auth" && args[1] === "status" && options.env?.PATH?.includes("/Users/tester/.local/bin")) {
+@@ -387,6 +422,19 @@ describe("selectSpawnableWorkerType", () => {
+     });
+   });
+ 
++  it("detects gemini login from current Gemini credentials storage", async () => {
++    const { getWorkerAuthenticationInfo } = await import("@/server/supervisor/worker-availability");
++
++    expect(getWorkerAuthenticationInfo("gemini", {
++      env: {},
++      homeDir: "/Users/tester",
++      fileExists: (filePath) => filePath === "/Users/tester/.gemini/gemini-credentials.json",
++    })).toMatchObject({
++      status: "authenticated",
++      method: "session_file",
++    });
++  });
++
+   it("parses reported monthly token quota text when a CLI exposes it", async () => {
+     const { parseWorkerTokenQuotaOutput } = await import("@/server/supervisor/worker-availability");
+ 
+diff --git a/tests/ui/conversation-actions.test.ts b/tests/ui/conversation-actions.test.ts
+index ae1880d..72c43b6 100644
+--- a/tests/ui/conversation-actions.test.ts
++++ b/tests/ui/conversation-actions.test.ts
+@@ -212,7 +212,8 @@ test("direct control user messages expose retry, edit, and fork recovery control
+   expect(pageSource).toContain("const canRecoverUserMessage = isDirectConversation || isImplementationConversation;");
+   expect(pageSource).toContain("getUserMessageActions={getUserMessageActions}");
+   expect(pageSource).toContain("actions={userMessageActions}");
+-  expect(pageSource).toContain('body: JSON.stringify({ action, targetMessageId, content, gitWorkspaceLaunch })');
++  expect(pageSource).toContain('body: JSON.stringify({ action, targetMessageId, content, gitWorkspaceLaunch, manualRecovery })');
++  expect(pageSource).toContain('manualRecovery: true');
+ });
+ 
+ test("implementation failures expose retry without direct-control edit and fork actions", () => {

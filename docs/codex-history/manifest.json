@@ -1,0 +1,1531 @@
+{
+  "version": 1,
+  "projectRoot": "/Users/masterman/NLP/omniharness",
+  "generatedAt": "2026-07-22T14:45:32.837Z",
+  "conversations": [
+    {
+      "id": "019f5a1b-f57d-7a23-8bc4-b1dc53fc42db",
+      "title": "GPT5.6 in Claude Code",
+      "startedAt": "2026-07-13T06:13:29.656Z",
+      "updatedAt": "2026-07-21T14:33:16.519Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "724da0a18c42e00c4d841495a512d566a0a9aa04a2ac750c0497d005b368c513",
+      "parts": [
+        "conversations/2026/07/2026-07-13-gpt5.6-in-claude-code-019f5a1b-f57d-7a23-8bc4-b1dc53fc42db-part-001.md"
+      ],
+      "attachmentCount": 10,
+      "eventCount": 3755,
+      "malformedLines": 0,
+      "redactions": 116,
+      "warnings": []
+    },
+    {
+      "id": "019f5d91-a739-73e2-b111-6914fab5347e",
+      "title": "Fix account toggles and cleanup",
+      "startedAt": "2026-07-13T22:20:54.477Z",
+      "updatedAt": "2026-07-13T22:52:59.384Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "7d2680a0e304e11d63c18d9d9dbb4d4fc7bfa748bc4075a51b1368f1f01c05ab",
+      "parts": [
+        "conversations/2026/07/2026-07-13-fix-account-toggles-and-cleanup-019f5d91-a739-73e2-b111-6914fab5347e-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 453,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f5d9e-0ee4-77c3-ba44-0f7e00caed1c",
+      "title": "Codex conversation 019f5d9e",
+      "startedAt": "2026-07-13T22:34:27.470Z",
+      "updatedAt": "2026-07-13T22:52:33.683Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "55a37d32ed58f0579d4e2923f19235236ffc580cda94a033a455d66a27b97be8",
+      "parts": [
+        "conversations/2026/07/2026-07-13-codex-conversation-019f5d9e-019f5d9e-0ee4-77c3-ba44-0f7e00caed1c-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 156,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f5ce4-7e20-74a3-942f-1c8e01a0ee0d",
+      "title": "these on/off buttons next to accounts aren't doing anything…",
+      "startedAt": "2026-07-13T19:11:46.353Z",
+      "updatedAt": "2026-07-13T19:11:46.353Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "baca32c19a49c98ddee7046bf642d6091ff15899c227bb29a2e863e3485aae02",
+      "parts": [
+        "conversations/2026/07/2026-07-13-these-on-off-buttons-next-to-accounts-aren-t-doing-anything...-019f5ce4-7e20-74a3-942f-1c8e01a0ee0d-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 0,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f5cda-ee0c-7fb0-80d1-fd6a53067350",
+      "title": "we need an option to copy full path to a file in the file v…",
+      "startedAt": "2026-07-13T19:01:19.533Z",
+      "updatedAt": "2026-07-13T19:09:31.209Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "119fae4a5e4845cbb5eb5ab093bb45575e5c9c457a8358e4e87c5d08da6d5d73",
+      "parts": [
+        "conversations/2026/07/2026-07-13-we-need-an-option-to-copy-full-path-to-a-file-in-the-file-v...-019f5cda-ee0c-7fb0-80d1-fd6a53067350-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 109,
+      "malformedLines": 0,
+      "redactions": 3,
+      "warnings": []
+    },
+    {
+      "id": "019f5af5-fcc4-7761-bd4b-5d49bb6540a4",
+      "title": "Codex conversation 019f5af5",
+      "startedAt": "2026-07-13T10:11:38.344Z",
+      "updatedAt": "2026-07-13T10:42:09.905Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "9baa81f8d0e6a7c41e9a4b1196a0cc2d212904fe199113f72dcdf5b62741b21a",
+      "parts": [
+        "conversations/2026/07/2026-07-13-codex-conversation-019f5af5-019f5af5-fcc4-7761-bd4b-5d49bb6540a4-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 217,
+      "malformedLines": 0,
+      "redactions": 5,
+      "warnings": []
+    },
+    {
+      "id": "019f510a-6840-7f40-88d9-33d938ce93a7",
+      "title": "OH: implement new ACP commands for CC",
+      "startedAt": "2026-07-11T11:57:44.439Z",
+      "updatedAt": "2026-07-11T14:00:24.602Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "687dc3b28c493c57f8740d20c4f1be0ca316bbe0f762459fb342e81c8a63932d",
+      "parts": [
+        "conversations/2026/07/2026-07-11-oh-implement-new-acp-commands-for-cc-019f510a-6840-7f40-88d9-33d938ce93a7-part-001.md"
+      ],
+      "attachmentCount": 2,
+      "eventCount": 1157,
+      "malformedLines": 0,
+      "redactions": 4,
+      "warnings": [
+        "attachment_unavailable:1-photo-1.jpg:ENOENT"
+      ]
+    },
+    {
+      "id": "019f512e-b7d8-7a13-8c9f-9342fd88b932",
+      "title": "Codex conversation 019f512e",
+      "startedAt": "2026-07-11T12:37:24.087Z",
+      "updatedAt": "2026-07-11T12:41:55.323Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "b10281f63208e4550c877a7e47b731eda90cde6f213e9f81a1a16c34047a6485",
+      "parts": [
+        "conversations/2026/07/2026-07-11-codex-conversation-019f512e-019f512e-b7d8-7a13-8c9f-9342fd88b932-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 65,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f48c9-384c-7c70-8006-c418278639ff",
+      "title": "Fix stuck session state",
+      "startedAt": "2026-07-09T21:29:34.570Z",
+      "updatedAt": "2026-07-09T21:48:48.247Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "e27e514019e27fd34c6fd451379887e8eae6bad689673f2277672a287fd494e3",
+      "parts": [
+        "conversations/2026/07/2026-07-09-fix-stuck-session-state-019f48c9-384c-7c70-8006-c418278639ff-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 311,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f4683-670f-7b21-b15b-39fa2e22f4a8",
+      "title": "quota reset",
+      "startedAt": "2026-07-09T10:54:04.640Z",
+      "updatedAt": "2026-07-09T15:36:57.367Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "332b67a374a36856511ce9de6dae943c1769f307053e966a86070a54a561e2ba",
+      "parts": [
+        "conversations/2026/07/2026-07-09-quota-reset-019f4683-670f-7b21-b15b-39fa2e22f4a8-part-001.md"
+      ],
+      "attachmentCount": 3,
+      "eventCount": 772,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": [
+        "attachment_unavailable:1-photo-1.jpg:ENOENT",
+        "attachment_unavailable:1-photo-1.jpg:ENOENT",
+        "attachment_unavailable:1-photo-1.jpg:ENOENT"
+      ]
+    },
+    {
+      "id": "019f460c-3922-76d3-9e97-51ccf65c3def",
+      "title": "Codex conversation 019f460c",
+      "startedAt": "2026-07-09T08:43:54.072Z",
+      "updatedAt": "2026-07-09T10:57:32.589Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "67cdcef7bf70fbaf8e9086da64e127a01ea73dd63806a7f1dbc47ff2aad7e616",
+      "parts": [
+        "conversations/2026/07/2026-07-09-codex-conversation-019f460c-019f460c-3922-76d3-9e97-51ccf65c3def-part-001.md"
+      ],
+      "attachmentCount": 1,
+      "eventCount": 201,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": [
+        "attachment_unavailable:1-photo-1.jpg:ENOENT"
+      ]
+    },
+    {
+      "id": "019f4607-ce3d-7b40-ae0e-e033f58d9667",
+      "title": "Codex conversation 019f4607",
+      "startedAt": "2026-07-09T08:39:04.565Z",
+      "updatedAt": "2026-07-09T08:45:31.789Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "6ecccb48d3a3f7a0d6791e9d987b84d7de264737683c075643a70085a7537944",
+      "parts": [
+        "conversations/2026/07/2026-07-09-codex-conversation-019f4607-019f4607-ce3d-7b40-ae0e-e033f58d9667-part-001.md"
+      ],
+      "attachmentCount": 1,
+      "eventCount": 200,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": [
+        "attachment_unavailable:1-photo-1.jpg:ENOENT"
+      ]
+    },
+    {
+      "id": "019f45fd-3130-7430-8cd8-87c154b22801",
+      "title": "Codex conversation 019f45fd",
+      "startedAt": "2026-07-09T08:27:29.000Z",
+      "updatedAt": "2026-07-09T08:33:55.139Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "b4c4d029fea2cb92deb83b440ffa878c9fddffffd6db84228a5de369f289c1f2",
+      "parts": [
+        "conversations/2026/07/2026-07-09-codex-conversation-019f45fd-019f45fd-3130-7430-8cd8-87c154b22801-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 229,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f3e84-873e-78b0-b144-9e0f91cda31a",
+      "title": "Codex conversation 019f3e84",
+      "startedAt": "2026-07-07T21:38:20.665Z",
+      "updatedAt": "2026-07-07T22:20:08.194Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "5ff008d9069182f1e500c4cdbcd33f5c8bebcf926547ff6d37611d0bd95e05f1",
+      "parts": [
+        "conversations/2026/07/2026-07-07-codex-conversation-019f3e84-019f3e84-873e-78b0-b144-9e0f91cda31a-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 193,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f31b5-ca45-7f53-b8f4-cd31f6780a03",
+      "title": "Fix output omission",
+      "startedAt": "2026-07-05T09:57:05.247Z",
+      "updatedAt": "2026-07-05T15:24:28.478Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "1f30c90a2120916e4c7d5117e3a5cb3c34aef8dd5474966be9b0cf04818f9a3d",
+      "parts": [
+        "conversations/2026/07/2026-07-05-fix-output-omission-019f31b5-ca45-7f53-b8f4-cd31f6780a03-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 355,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
+    {
+      "id": "019f31ad-023f-7411-a3ec-d509de71a00d",
+      "title": "Verify direct control effort",
+      "startedAt": "2026-07-05T09:47:29.757Z",
+      "updatedAt": "2026-07-05T09:50:08.118Z",
+      "status": "interrupted",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "071be4841a445d5b7e3fab7959760feaaeb1a0131bd2828690cc1066efdfb4c1",
+      "parts": [
+        "conversations/2026/07/2026-07-05-verify-direct-control-effort-019f31ad-023f-7411-a3ec-d509de71a00d-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 82,
+      "malformedLines": 0,
+      "redactions": 2,
+      "warnings": []
+    },
+    {
+      "id": "019f2d4b-f68f-7a12-af08-ea106eeaf1fa",
+      "title": "Fix Claude Code auth errors",
+      "startedAt": "2026-07-04T13:23:00.915Z",
+      "updatedAt": "2026-07-05T05:59:25.506Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "70e46cfa384d701d501fe89dd8a7b2f5756858bf5ffdf3140126d368a728d98e",
+      "parts": [
+        "conversations/2026/07/2026-07-04-fix-claude-code-auth-errors-019f2d4b-f68f-7a12-af08-ea106eeaf1fa-part-001.md"
+      ],
+      "attachmentCount": 3,
+      "eventCount": 853,
+      "malformedLines": 0,
+      "redactions": 10,
+      "warnings": [
+        "attachment_unavailable:3fy9ervydvo8v8d95j1ctdydbcaaaaasuvork5cyii:ENAMETOOLONG",
+        "attachment_unavailable:xt6dvljlauxt-s1s42ppvlrp9w1tkwy59rv8dfozko4-2tpzipnc3nuy0o1q78hmc5kxzymntgaaaaas:ENAMETOOLONG",
+        "attachment_unavailable:1-photo-1.jpg:ENOENT"
+      ]
+    },
+    {
+      "id": "019f2144-122c-7cd3-9535-f375020f18bf",
+      "title": "Remove OmniHarness from commits",
+      "startedAt": "2026-07-02T05:18:57.098Z",
+      "updatedAt": "2026-07-02T05:20:40.262Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "f46f98d3a07caba2c8dbeb5efeb719c5d8fc8694874b7461c0ca1eb810a3120c",
+      "parts": [
+        "conversations/2026/07/2026-07-02-remove-omniharness-from-commits-019f2144-122c-7cd3-9535-f375020f18bf-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 78,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f1d16-920e-7a53-81f6-5bc49b6c3171",
+      "title": "Codex conversation 019f1d16",
+      "startedAt": "2026-07-01T09:50:46.324Z",
+      "updatedAt": "2026-07-01T16:02:00.943Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "3a76e98b2868ab8a327b4a87460ee1dc2f901e1a15a9f24a5a57f769a5a9a08d",
+      "parts": [
+        "conversations/2026/07/2026-07-01-codex-conversation-019f1d16-019f1d16-920e-7a53-81f6-5bc49b6c3171-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 300,
+      "malformedLines": 0,
+      "redactions": 10,
+      "warnings": []
+    },
+    {
+      "id": "019f1d5a-9581-7113-b0d8-7044316fa267",
+      "title": "Fix opencode spawn error",
+      "startedAt": "2026-07-01T11:05:03.649Z",
+      "updatedAt": "2026-07-01T11:22:45.526Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "d8fb7e3d8a5b1fe19d0d61df0fef848987da9ee276ff132d1b4a84b441fdc33a",
+      "parts": [
+        "conversations/2026/07/2026-07-01-fix-opencode-spawn-error-019f1d5a-9581-7113-b0d8-7044316fa267-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 240,
+      "malformedLines": 0,
+      "redactions": 2,
+      "warnings": []
+    },
+    {
+      "id": "019f1a37-0163-7833-a802-abb3f0d08345",
+      "title": "Remove .claude worktrees",
+      "startedAt": "2026-06-30T20:27:20.321Z",
+      "updatedAt": "2026-06-30T20:29:21.919Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "82c6763abdc2bd4bd6d959ca5a12c90010e5b7b944b366f59bdf90173947f052",
+      "parts": [
+        "conversations/2026/06/2026-06-30-remove-.claude-worktrees-019f1a37-0163-7833-a802-abb3f0d08345-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 43,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f1923-0b86-74a3-91d0-2cc735fc9a07",
+      "title": "Inspect session output loss",
+      "startedAt": "2026-06-30T15:25:54.985Z",
+      "updatedAt": "2026-06-30T19:48:33.266Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "ff3e93551c8ef0997955a64d240be008d340703068d69381a3191579b341f030",
+      "parts": [
+        "conversations/2026/06/2026-06-30-inspect-session-output-loss-019f1923-0b86-74a3-91d0-2cc735fc9a07-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 246,
+      "malformedLines": 0,
+      "redactions": 2,
+      "warnings": []
+    },
+    {
+      "id": "019f152e-285b-7cf1-af15-abebdecb36ba",
+      "title": "Fix finished session spinner",
+      "startedAt": "2026-06-29T20:59:34.401Z",
+      "updatedAt": "2026-06-30T13:09:03.921Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "e11f2577ba899d35ef6f8d4b91cc038629965fa6c231bcbbd4bc998f444840e9",
+      "parts": [
+        "conversations/2026/06/2026-06-29-fix-finished-session-spinner-019f152e-285b-7cf1-af15-abebdecb36ba-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 500,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f1876-6646-7880-8c63-7bbee9790217",
+      "title": "Fix agent tool denial",
+      "startedAt": "2026-06-30T12:17:20.479Z",
+      "updatedAt": "2026-06-30T12:28:14.374Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "4663b3286eb163f788fa48c8d7b7513f00b804eca77f96240680a5b8f576820c",
+      "parts": [
+        "conversations/2026/06/2026-06-30-fix-agent-tool-denial-019f1876-6646-7880-8c63-7bbee9790217-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 231,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
+    {
+      "id": "019f1531-8c86-7af0-9482-cc74fb65095f",
+      "title": "Codex conversation 019f1531",
+      "startedAt": "2026-06-29T21:03:16.651Z",
+      "updatedAt": "2026-06-29T21:09:08.342Z",
+      "status": "interrupted",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "abba6be5cfe79e38e224e735b0fa1145a512561baba673149050f2b46cc90b5b",
+      "parts": [
+        "conversations/2026/06/2026-06-29-codex-conversation-019f1531-019f1531-8c86-7af0-9482-cc74fb65095f-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 93,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f1380-22b8-76a1-8e79-11c2cf1a5f88",
+      "title": "Fix Gemini API key missing error",
+      "startedAt": "2026-06-29T13:09:52.470Z",
+      "updatedAt": "2026-06-29T20:45:15.413Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "2caa5ab22a1782aeea722afb6d356f3e156a31a56e76f221790ae44fb57ac564",
+      "parts": [
+        "conversations/2026/06/2026-06-29-fix-gemini-api-key-missing-error-019f1380-22b8-76a1-8e79-11c2cf1a5f88-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 1951,
+      "malformedLines": 0,
+      "redactions": 30,
+      "warnings": []
+    },
+    {
+      "id": "019f151c-1ee0-7a81-97cc-40318fe07ce7",
+      "title": "Codex conversation 019f151c",
+      "startedAt": "2026-06-29T20:39:52.317Z",
+      "updatedAt": "2026-06-29T20:41:20.224Z",
+      "status": "active",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "2dca53946c6d1fd63abf6dbf088f93415e67a241d396ab73c62123fbc6d3e7ca",
+      "parts": [
+        "conversations/2026/06/2026-06-29-codex-conversation-019f151c-019f151c-1ee0-7a81-97cc-40318fe07ce7-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 57,
+      "malformedLines": 0,
+      "redactions": 3,
+      "warnings": []
+    },
+    {
+      "id": "019f14e8-9a10-7500-bc37-b7b13f333d27",
+      "title": "Codex conversation 019f14e8",
+      "startedAt": "2026-06-29T19:43:35.987Z",
+      "updatedAt": "2026-06-29T19:44:30.513Z",
+      "status": "active",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "5ee725a0fc527f174733b05eaf35d086cb70a620dae154166ff2b89b7b60c46d",
+      "parts": [
+        "conversations/2026/06/2026-06-29-codex-conversation-019f14e8-019f14e8-9a10-7500-bc37-b7b13f333d27-part-001.md"
+      ],
+      "attachmentCount": 1,
+      "eventCount": 29,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f14da-b752-7442-838c-3354b0a6d8f8",
+      "title": "Codex conversation 019f14da",
+      "startedAt": "2026-06-29T19:28:25.973Z",
+      "updatedAt": "2026-06-29T19:30:54.186Z",
+      "status": "interrupted",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "733e21c8029b51b41ddd78834e2461f5e995dfd15c830a6f935a6723a01b556a",
+      "parts": [
+        "conversations/2026/06/2026-06-29-codex-conversation-019f14da-019f14da-b752-7442-838c-3354b0a6d8f8-part-001.md"
+      ],
+      "attachmentCount": 1,
+      "eventCount": 55,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
+    {
+      "id": "019f1304-7578-7ad2-a345-d54ef8890986",
+      "title": "Find multi-credential CLI plan",
+      "startedAt": "2026-06-29T10:54:47.195Z",
+      "updatedAt": "2026-06-29T14:16:58.602Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "15aa72bb38c24d709d26580740b7979dd210ca8bef74d591fdf151a177c131b2",
+      "parts": [
+        "conversations/2026/06/2026-06-29-find-multi-credential-cli-plan-019f1304-7578-7ad2-a345-d54ef8890986-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 1030,
+      "malformedLines": 0,
+      "redactions": 6,
+      "warnings": []
+    },
+    {
+      "id": "019f13bb-338c-7462-8261-f7506f74c935",
+      "title": "Codex conversation 019f13bb",
+      "startedAt": "2026-06-29T14:14:23.405Z",
+      "updatedAt": "2026-06-29T14:14:28.204Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "addee5e607168f716e93556271d645bdd00086f9e5898f2f139dc3430aaf034f",
+      "parts": [
+        "conversations/2026/06/2026-06-29-codex-conversation-019f13bb-019f13bb-338c-7462-8261-f7506f74c935-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 3,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f13ab-aa95-7132-8ee3-b19a2f71bf5c",
+      "title": "Codex conversation 019f13ab",
+      "startedAt": "2026-06-29T13:57:25.328Z",
+      "updatedAt": "2026-06-29T13:58:14.280Z",
+      "status": "active",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "6d95763896884681eadd7176550039db647bfed48dd0d0c2c90b4b2c5a22d59f",
+      "parts": [
+        "conversations/2026/06/2026-06-29-codex-conversation-019f13ab-019f13ab-aa95-7132-8ee3-b19a2f71bf5c-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 19,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f13a8-c67c-7411-a104-648d2800e798",
+      "title": "Codex conversation 019f13a8",
+      "startedAt": "2026-06-29T13:54:15.827Z",
+      "updatedAt": "2026-06-29T13:58:14.166Z",
+      "status": "interrupted",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "767e82dbd1850a55d272de48a8e9b2289360569038b430fb7a60f79285defe28",
+      "parts": [
+        "conversations/2026/06/2026-06-29-codex-conversation-019f13a8-019f13a8-c67c-7411-a104-648d2800e798-part-001.md"
+      ],
+      "attachmentCount": 1,
+      "eventCount": 89,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f13ab-a9a4-7380-89e4-4075a7486300",
+      "title": "Codex conversation 019f13ab",
+      "startedAt": "2026-06-29T13:57:25.060Z",
+      "updatedAt": "2026-06-29T13:57:28.928Z",
+      "status": "active",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "a779fd47e736a7e20471e2a7d87bd7865e8a70e812fb0a5a4a70742ba5c4748a",
+      "parts": [
+        "conversations/2026/06/2026-06-29-codex-conversation-019f13ab-019f13ab-a9a4-7380-89e4-4075a7486300-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 3,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f0fff-7685-7af2-a1a4-ef6a9b64cf3c",
+      "title": "Fix session recovery",
+      "startedAt": "2026-06-28T20:50:28.132Z",
+      "updatedAt": "2026-06-28T22:01:16.889Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "24c6c3ce6b84456e479a255e4c924f0ca9b2915a5490b9302ef4a83e0abbab8d",
+      "parts": [
+        "conversations/2026/06/2026-06-28-fix-session-recovery-019f0fff-7685-7af2-a1a4-ef6a9b64cf3c-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 1073,
+      "malformedLines": 0,
+      "redactions": 14,
+      "warnings": []
+    },
+    {
+      "id": "019f0ff7-7325-7f62-b5b8-b745c0306f0b",
+      "title": "Compare local i18n version",
+      "startedAt": "2026-06-28T20:41:42.994Z",
+      "updatedAt": "2026-06-28T20:46:47.405Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "2a64cdafcb16ef473ee7cf5ff369513e9ec19eb2f29a7506c25a79983d5a6089",
+      "parts": [
+        "conversations/2026/06/2026-06-28-compare-local-i18n-version-019f0ff7-7325-7f62-b5b8-b745c0306f0b-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 67,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f05aa-b96a-73b1-952d-6bace01598b5",
+      "title": "Find typing lag cause",
+      "startedAt": "2026-06-26T20:41:42.553Z",
+      "updatedAt": "2026-06-26T21:01:10.384Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "04a75b5726a10503d79189dcfe0819423a257a1adadfaff36194b1662cb32689",
+      "parts": [
+        "conversations/2026/06/2026-06-26-find-typing-lag-cause-019f05aa-b96a-73b1-952d-6bace01598b5-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 340,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019f05a9-9cb6-7da2-8f01-8e6335b480e4",
+      "title": "Fix queued message duplication",
+      "startedAt": "2026-06-26T20:40:29.659Z",
+      "updatedAt": "2026-06-26T20:51:22.727Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "e8b6310081e3e671aea5572eeab052f940d89603144bcaf6f22a9da72861dd02",
+      "parts": [
+        "conversations/2026/06/2026-06-26-fix-queued-message-duplication-019f05a9-9cb6-7da2-8f01-8e6335b480e4-part-001.md"
+      ],
+      "attachmentCount": 1,
+      "eventCount": 248,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": [
+        "attachment_unavailable:kzd3y3av8r8adt-u3gjhauaaaaabjru5erkjggg:ENAMETOOLONG"
+      ]
+    },
+    {
+      "id": "019efb62-fe95-7da1-93d6-4d4494095b22",
+      "title": "Fix stale session warning",
+      "startedAt": "2026-06-24T20:47:09.495Z",
+      "updatedAt": "2026-06-26T20:22:51.696Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "22a675d4a721e3212e7e55607be167f3a78c0615b0e910f9ed4cbae9fe4556ae",
+      "parts": [
+        "conversations/2026/06/2026-06-24-fix-stale-session-warning-019efb62-fe95-7da1-93d6-4d4494095b22-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 618,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
+    {
+      "id": "019f055f-31e7-7b52-af6b-24f8dcaac308",
+      "title": "Inspect session spawn failure",
+      "startedAt": "2026-06-26T19:19:12.646Z",
+      "updatedAt": "2026-06-26T19:43:17.753Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "c738baa73c37cd8a3155a176e2c39b2819dd2f65314fce7234fe6b675129b09f",
+      "parts": [
+        "conversations/2026/06/2026-06-26-inspect-session-spawn-failure-019f055f-31e7-7b52-af6b-24f8dcaac308-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 358,
+      "malformedLines": 0,
+      "redactions": 5,
+      "warnings": []
+    },
+    {
+      "id": "019f00a4-367c-7463-ba93-29d09a7563c1",
+      "title": "Codex conversation 019f00a4",
+      "startedAt": "2026-06-25T21:16:29.735Z",
+      "updatedAt": "2026-06-25T21:26:17.890Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "c22e179ad12897af319768dc94e5d70285ac61666e9cacd865384d23feea9bdd",
+      "parts": [
+        "conversations/2026/06/2026-06-25-codex-conversation-019f00a4-019f00a4-367c-7463-ba93-29d09a7563c1-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 276,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019efbbb-5960-72b0-924d-d57bb2e27e1d",
+      "title": "Fix unsaved session input",
+      "startedAt": "2026-06-24T22:23:39.915Z",
+      "updatedAt": "2026-06-24T22:28:44.525Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "62c4b728d341f38af2446f546a6214d3f5d62db9c8e7b2e335e0ebeefcc06cba",
+      "parts": [
+        "conversations/2026/06/2026-06-24-fix-unsaved-session-input-019efbbb-5960-72b0-924d-d57bb2e27e1d-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 123,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019efb78-b3e4-7a63-bbf6-f53d1a8142c4",
+      "title": "Fix waiting input state",
+      "startedAt": "2026-06-24T21:10:52.164Z",
+      "updatedAt": "2026-06-24T21:21:54.641Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "aa1edc8f6245870d18cc227f4627731f789c555849a422680c7c28026d56c363",
+      "parts": [
+        "conversations/2026/06/2026-06-24-fix-waiting-input-state-019efb78-b3e4-7a63-bbf6-f53d1a8142c4-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 264,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019efb71-2174-7f92-a6da-17a80986f422",
+      "title": "Prevent unwanted implementation",
+      "startedAt": "2026-06-24T21:02:35.922Z",
+      "updatedAt": "2026-06-24T21:17:26.034Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "ee9ab8cfbd1e49c4e84f28e94410a99c1dd372d7812841f3ce8ec0c9960e423b",
+      "parts": [
+        "conversations/2026/06/2026-06-24-prevent-unwanted-implementation-019efb71-2174-7f92-a6da-17a80986f422-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 311,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
+    {
+      "id": "019efb71-ff61-7c42-be1f-a29e31d37293",
+      "title": "Fix caption rendering slowdown",
+      "startedAt": "2026-06-24T21:03:32.728Z",
+      "updatedAt": "2026-06-24T21:04:43.898Z",
+      "status": "interrupted",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "482b4ddd366a19bf4b3728eb9f292eb0e947850ab128bcb568fa71c91afac526",
+      "parts": [
+        "conversations/2026/06/2026-06-24-fix-caption-rendering-slowdown-019efb71-ff61-7c42-be1f-a29e31d37293-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 43,
+      "malformedLines": 0,
+      "redactions": 2,
+      "warnings": []
+    },
+    {
+      "id": "019efb42-5215-7482-b889-7c68afd65f65",
+      "title": "Fix hidden ask path",
+      "startedAt": "2026-06-24T20:11:28.194Z",
+      "updatedAt": "2026-06-24T20:18:59.394Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "7182ecd08c52c4065316ebcd418ed509a56e4c999895762de11820be09a96443",
+      "parts": [
+        "conversations/2026/06/2026-06-24-fix-hidden-ask-path-019efb42-5215-7482-b889-7c68afd65f65-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 222,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019ef6c9-5d4f-78c0-876f-cd356989e2bb",
+      "title": "Investigate session block",
+      "startedAt": "2026-06-23T23:20:52.326Z",
+      "updatedAt": "2026-06-23T23:32:52.633Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "6a211c3a61472ce7fc406aa3cf807ee2e895a093aa25718c46cb097be08728b0",
+      "parts": [
+        "conversations/2026/06/2026-06-23-investigate-session-block-019ef6c9-5d4f-78c0-876f-cd356989e2bb-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 211,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019ef4a1-c3a7-70f1-8d7d-925ee8ff4326",
+      "title": "Fix resume session selection",
+      "startedAt": "2026-06-23T13:18:22.658Z",
+      "updatedAt": "2026-06-23T13:24:02.511Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "c8be9ef65ec8012431887d704755c5c67ff5eb559b17c806354d147af0e0dcf8",
+      "parts": [
+        "conversations/2026/06/2026-06-23-fix-resume-session-selection-019ef4a1-c3a7-70f1-8d7d-925ee8ff4326-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 166,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019ef49b-7a7a-7cd2-b3e9-f36fe695194c",
+      "title": "Fix continue not resuming session",
+      "startedAt": "2026-06-23T13:11:30.702Z",
+      "updatedAt": "2026-06-23T13:18:40.646Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "3a300ba5e61548e4b5303a601b156d4f0caab3615e1413ecbc52bef4b158eff1",
+      "parts": [
+        "conversations/2026/06/2026-06-23-fix-continue-not-resuming-session-019ef49b-7a7a-7cd2-b3e9-f36fe695194c-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 180,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019ef495-8e21-7f41-921b-3f2883ed6f38",
+      "title": "Fix /improve command",
+      "startedAt": "2026-06-23T13:05:02.521Z",
+      "updatedAt": "2026-06-23T13:13:04.195Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "851a1c46617bd743259c9c1509525d5d9cfca1139ba73d6585671305b9f60c25",
+      "parts": [
+        "conversations/2026/06/2026-06-23-fix-improve-command-019ef495-8e21-7f41-921b-3f2883ed6f38-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 128,
+      "malformedLines": 0,
+      "redactions": 3,
+      "warnings": []
+    },
+    {
+      "id": "019eead9-0603-7710-adc1-ab1cf3a67401",
+      "title": "Codex conversation 019eead9",
+      "startedAt": "2026-06-21T15:42:31.991Z",
+      "updatedAt": "2026-06-21T15:43:20.442Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "e4e520035ca5c0adc720efe47bd71f94dd2807819bdad183680c65608deca5f7",
+      "parts": [
+        "conversations/2026/06/2026-06-21-codex-conversation-019eead9-019eead9-0603-7710-adc1-ab1cf3a67401-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 22,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
+    {
+      "id": "019ee639-35a1-73f2-a5f5-7fd31f025257",
+      "title": "Codex conversation 019ee639",
+      "startedAt": "2026-06-20T18:09:29.573Z",
+      "updatedAt": "2026-06-21T13:18:32.354Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "694d5022d0bd7494b9194b54d36b16a6baf0e698fb0f350f1e3175ead92d5f50",
+      "parts": [
+        "conversations/2026/06/2026-06-20-codex-conversation-019ee639-019ee639-35a1-73f2-a5f5-7fd31f025257-part-001.md"
+      ],
+      "attachmentCount": 46,
+      "eventCount": 1006,
+      "malformedLines": 0,
+      "redactions": 49,
+      "warnings": []
+    },
+    {
+      "id": "019ee92d-8587-71f3-a259-2239de3af597",
+      "title": "Ignore .omniharness by default",
+      "startedAt": "2026-06-21T07:55:35.211Z",
+      "updatedAt": "2026-06-21T08:57:22.411Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "a245eccc9ed2b0bbd62ee944f4ac64f0930880011a388979ba35828d29144494",
+      "parts": [
+        "conversations/2026/06/2026-06-21-ignore-.omniharness-by-default-019ee92d-8587-71f3-a259-2239de3af597-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 307,
+      "malformedLines": 0,
+      "redactions": 5,
+      "warnings": []
+    },
+    {
+      "id": "019ee0cb-3155-7b13-a9aa-1325c54ce228",
+      "title": "Remove Runner leftovers",
+      "startedAt": "2026-06-19T16:51:13.408Z",
+      "updatedAt": "2026-06-19T16:56:48.155Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "4d0290f34628eb8ef2cfd4022dbb2ee880e3fae47fe38a9537d9ce8ff79a21e2",
+      "parts": [
+        "conversations/2026/06/2026-06-19-remove-runner-leftovers-019ee0cb-3155-7b13-a9aa-1325c54ce228-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 146,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019ed25f-7558-78e0-8c6c-88c0a8ba0731",
+      "title": "Fix queued messages after steer",
+      "startedAt": "2026-06-16T21:38:51.896Z",
+      "updatedAt": "2026-06-16T21:49:36.838Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "cfe38774df4f31bdae3b77aeb9c85f26e8b5109297a323d2c46c358bed8f1605",
+      "parts": [
+        "conversations/2026/06/2026-06-16-fix-queued-messages-after-steer-019ed25f-7558-78e0-8c6c-88c0a8ba0731-part-001.md"
+      ],
+      "attachmentCount": 2,
+      "eventCount": 213,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": [
+        "attachment_unavailable:l1zdt7yaxbqaaaabjru5erkjggg:ENAMETOOLONG"
+      ]
+    },
+    {
+      "id": "019ecc05-fe0c-7df1-a365-99eee1128ed0",
+      "title": "Locate automated answer source",
+      "startedAt": "2026-06-15T16:03:25.356Z",
+      "updatedAt": "2026-06-16T10:50:41.328Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "c3f782f2ae4c063980d1df93d20ac3757e8be220875ec1e4584bf0e066357681",
+      "parts": [
+        "conversations/2026/06/2026-06-15-locate-automated-answer-source-019ecc05-fe0c-7df1-a365-99eee1128ed0-part-001.md"
+      ],
+      "attachmentCount": 1,
+      "eventCount": 239,
+      "malformedLines": 0,
+      "redactions": 4,
+      "warnings": [
+        "attachment_unavailable:codex-clipboard-059ecab8-225a-4909-96cd-cf03a5b5c322.png:ENOENT"
+      ]
+    },
+    {
+      "id": "019ecb93-bf00-77d1-be64-cedc66cc0abb",
+      "title": "Fix CLI feedback prompt handling",
+      "startedAt": "2026-06-15T13:58:38.131Z",
+      "updatedAt": "2026-06-15T21:01:50.500Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "6a192e7b40c56b7b092dc96d458dfbe769140c8ca195b5cf17530b08acc723c9",
+      "parts": [
+        "conversations/2026/06/2026-06-15-fix-cli-feedback-prompt-handling-019ecb93-bf00-77d1-be64-cedc66cc0abb-part-001.md"
+      ],
+      "attachmentCount": 2,
+      "eventCount": 624,
+      "malformedLines": 0,
+      "redactions": 6,
+      "warnings": [
+        "attachment_unavailable:codex-clipboard-2646425c-455f-4139-8cd8-b62805e39883.png:ENOENT",
+        "attachment_unavailable:ossafg-urekaaaaasuvork5cyii:ENAMETOOLONG"
+      ]
+    },
+    {
+      "id": "019ecc11-a5c5-7262-985a-59d3082c63c4",
+      "title": "Add draggable project ordering",
+      "startedAt": "2026-06-15T16:16:09.208Z",
+      "updatedAt": "2026-06-15T19:52:45.325Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "0c500702c0d97c1651a2494949c45ed90967b39728fc808bc99954e7a95c275b",
+      "parts": [
+        "conversations/2026/06/2026-06-15-add-draggable-project-ordering-019ecc11-a5c5-7262-985a-59d3082c63c4-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 655,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019ecbd6-a803-7e80-a804-efa540c2b847",
+      "title": "Windows install",
+      "startedAt": "2026-06-15T15:11:43.133Z",
+      "updatedAt": "2026-06-15T16:44:33.080Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "79a5430cf3dd25a38a880130faf0cea1ece441d6983195c1a5d4b7b7cb221583",
+      "parts": [
+        "conversations/2026/06/2026-06-15-windows-install-019ecbd6-a803-7e80-a804-efa540c2b847-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 833,
+      "malformedLines": 0,
+      "redactions": 23,
+      "warnings": []
+    },
+    {
+      "id": "019ecbab-9681-78a0-b1cf-b8c6f05b15d1",
+      "title": "Codex conversation 019ecbab",
+      "startedAt": "2026-06-15T14:24:40.609Z",
+      "updatedAt": "2026-06-15T14:30:58.621Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "225b9ae21d55908836e1200f49d4f2d817719384d86ddead170ecc031a5aefdd",
+      "parts": [
+        "conversations/2026/06/2026-06-15-codex-conversation-019ecbab-019ecbab-9681-78a0-b1cf-b8c6f05b15d1-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 180,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019ecb8e-96b0-7f10-b9f1-e6df04da3437",
+      "title": "Align other sessions chevron",
+      "startedAt": "2026-06-15T13:53:00.118Z",
+      "updatedAt": "2026-06-15T14:01:09.241Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "0fdc1132a48d20d4c3dbac17830188a46ab7ea773adf5a2ddef232c5c6c38ce2",
+      "parts": [
+        "conversations/2026/06/2026-06-15-align-other-sessions-chevron-019ecb8e-96b0-7f10-b9f1-e6df04da3437-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 127,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019ecb8b-bdab-7312-bc8d-cc9d15180151",
+      "title": "Freeze recent tab list",
+      "startedAt": "2026-06-15T13:49:53.492Z",
+      "updatedAt": "2026-06-15T13:56:42.441Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "1d6afe27e1f7251348ac0f19bfaf994cb05dd42d958d8cd8336f9f15f9c951ee",
+      "parts": [
+        "conversations/2026/06/2026-06-15-freeze-recent-tab-list-019ecb8b-bdab-7312-bc8d-cc9d15180151-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 162,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019ecb81-2766-7c53-9d49-d0e27d37dd87",
+      "title": "Fix session loading and replay",
+      "startedAt": "2026-06-15T13:38:19.648Z",
+      "updatedAt": "2026-06-15T13:52:41.741Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "dfc99f5e24b40a0ddcb9184eb2db1c53859fa68bd664d3b98299b280a041a240",
+      "parts": [
+        "conversations/2026/06/2026-06-15-fix-session-loading-and-replay-019ecb81-2766-7c53-9d49-d0e27d37dd87-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 223,
+      "malformedLines": 0,
+      "redactions": 6,
+      "warnings": []
+    },
+    {
+      "id": "019ecb84-2c90-7c10-8c22-bf6021750dc3",
+      "title": "Add collapse all button",
+      "startedAt": "2026-06-15T13:41:37.592Z",
+      "updatedAt": "2026-06-15T13:50:56.381Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "7bfa14e1cfa6f70bec92a66beeaf0077cd09441db66d500905bb94a811091980",
+      "parts": [
+        "conversations/2026/06/2026-06-15-add-collapse-all-button-019ecb84-2c90-7c10-8c22-bf6021750dc3-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 225,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019ecb70-823b-79b0-9c18-7a5c0438c491",
+      "title": "Test baton command",
+      "startedAt": "2026-06-15T13:20:08.814Z",
+      "updatedAt": "2026-06-15T13:22:14.469Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "3dc28a3d4afcd1e472bbb6ede48efd4746e84d7f1132e0e5cecdee96021dce7b",
+      "parts": [
+        "conversations/2026/06/2026-06-15-test-baton-command-019ecb70-823b-79b0-9c18-7a5c0438c491-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 22,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019ec89d-32d8-7280-983e-4063f2bc282d",
+      "title": "Fix queued message list",
+      "startedAt": "2026-06-15T00:10:05.956Z",
+      "updatedAt": "2026-06-15T00:13:34.153Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "6ecc672e6c5c0f0048cea240fcf0b4d903cb3052580ed34d92582e0dad53f8ac",
+      "parts": [
+        "conversations/2026/06/2026-06-15-fix-queued-message-list-019ec89d-32d8-7280-983e-4063f2bc282d-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 93,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019ec74e-9493-7a21-9eb6-940005805579",
+      "title": "Codex conversation 019ec74e",
+      "startedAt": "2026-06-14T18:04:36.400Z",
+      "updatedAt": "2026-06-14T18:08:53.749Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "77d58966a65378084a3be1806738cdb63848ab718964859c4a0adcf0cc27a53a",
+      "parts": [
+        "conversations/2026/06/2026-06-14-codex-conversation-019ec74e-019ec74e-9493-7a21-9eb6-940005805579-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 116,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
+    {
+      "id": "019ec737-a9d1-79f0-bd91-5757fb88c60b",
+      "title": "Codex conversation 019ec737",
+      "startedAt": "2026-06-14T17:39:34.508Z",
+      "updatedAt": "2026-06-14T17:59:36.265Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "23b2606b5d7d60c9daa38685ad0b64f822ebd39588884204341520346309e88f",
+      "parts": [
+        "conversations/2026/06/2026-06-14-codex-conversation-019ec737-019ec737-a9d1-79f0-bd91-5757fb88c60b-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 451,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
+    {
+      "id": "019ec740-0740-7443-900f-6b3264bbae93",
+      "title": "Codex conversation 019ec740",
+      "startedAt": "2026-06-14T17:48:42.714Z",
+      "updatedAt": "2026-06-14T17:51:03.647Z",
+      "status": "interrupted",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "ffc324f928af7cda0e2680b849ada7632064cbf5d9f10b63aae947d0e81e6234",
+      "parts": [
+        "conversations/2026/06/2026-06-14-codex-conversation-019ec740-019ec740-0740-7443-900f-6b3264bbae93-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 98,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
+    {
+      "id": "019ec736-702e-7f83-a09a-7c254e1a1a17",
+      "title": "Codex conversation 019ec736",
+      "startedAt": "2026-06-14T17:38:14.229Z",
+      "updatedAt": "2026-06-14T17:45:34.545Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "3712fe26dc97a3e0642479abf58a70f541e76e0f10f7b6ca05e57dacc5348930",
+      "parts": [
+        "conversations/2026/06/2026-06-14-codex-conversation-019ec736-019ec736-702e-7f83-a09a-7c254e1a1a17-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 197,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
+    {
+      "id": "019ec6fb-7a2d-7100-9a72-f3cd19ec1851",
+      "title": "Codex conversation 019ec6fb",
+      "startedAt": "2026-06-14T16:33:50.152Z",
+      "updatedAt": "2026-06-14T16:47:20.290Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "d2a74cac0808f8b0165bccae03f20a07ba80e757b337c063ee27a0148feaa297",
+      "parts": [
+        "conversations/2026/06/2026-06-14-codex-conversation-019ec6fb-019ec6fb-7a2d-7100-9a72-f3cd19ec1851-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 240,
+      "malformedLines": 0,
+      "redactions": 3,
+      "warnings": []
+    },
+    {
+      "id": "019ec701-cd12-74e1-b1bc-5500e64d0904",
+      "title": "Codex conversation 019ec701",
+      "startedAt": "2026-06-14T16:40:44.581Z",
+      "updatedAt": "2026-06-14T16:45:46.809Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "f1a0dd8a2e6015ba938faa055284a67a724db2d0a0b4ed643a32f48cc8e83a66",
+      "parts": [
+        "conversations/2026/06/2026-06-14-codex-conversation-019ec701-019ec701-cd12-74e1-b1bc-5500e64d0904-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 134,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
+    {
+      "id": "019ec701-2a4a-7f62-8a48-2c961fec483c",
+      "title": "Codex conversation 019ec701",
+      "startedAt": "2026-06-14T16:40:02.915Z",
+      "updatedAt": "2026-06-14T16:42:04.452Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "747ca55d0d440eccec0a1b7f5380eb6c7978416318507a8048fe64dd41668faa",
+      "parts": [
+        "conversations/2026/06/2026-06-14-codex-conversation-019ec701-019ec701-2a4a-7f62-8a48-2c961fec483c-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 77,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019ec6c7-4c64-72d1-a22e-134185cd20de",
+      "title": "OH multi server single app",
+      "startedAt": "2026-06-14T15:36:50.565Z",
+      "updatedAt": "2026-06-14T16:08:04.819Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "18a4404ab26085e18026a9ccf19107251182d27ebd429ae13cbba233ed105583",
+      "parts": [
+        "conversations/2026/06/2026-06-14-oh-multi-server-single-app-019ec6c7-4c64-72d1-a22e-134185cd20de-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 344,
+      "malformedLines": 0,
+      "redactions": 3,
+      "warnings": []
+    },
+    {
+      "id": "019ec6da-25c9-75e3-8f1e-b3ae605fac71",
+      "title": "Codex conversation 019ec6da",
+      "startedAt": "2026-06-14T15:57:25.859Z",
+      "updatedAt": "2026-06-14T16:02:25.939Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "0d8b99046da657934a8d48bd06583d9d9de891b2446256193707e5a4d84b2393",
+      "parts": [
+        "conversations/2026/06/2026-06-14-codex-conversation-019ec6da-019ec6da-25c9-75e3-8f1e-b3ae605fac71-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 103,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019ec6ce-2a40-7bf2-b067-e9e5f0b4f340",
+      "title": "Codex conversation 019ec6ce",
+      "startedAt": "2026-06-14T15:44:20.571Z",
+      "updatedAt": "2026-06-14T15:55:37.405Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "060f5f1192158ff5742de1de2c49578c49c1be3212377fea6e68ccd063e81a9a",
+      "parts": [
+        "conversations/2026/06/2026-06-14-codex-conversation-019ec6ce-019ec6ce-2a40-7bf2-b067-e9e5f0b4f340-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 252,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019ec6cc-eac4-7643-b6c2-f1c7e8b21700",
+      "title": "Codex conversation 019ec6cc",
+      "startedAt": "2026-06-14T15:42:58.778Z",
+      "updatedAt": "2026-06-14T15:46:47.288Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "36b2b8a9b058122eaa4c26361744b704a0913b49ad454fdc78d86153f91bd1d3",
+      "parts": [
+        "conversations/2026/06/2026-06-14-codex-conversation-019ec6cc-019ec6cc-eac4-7643-b6c2-f1c7e8b21700-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 60,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "id": "019ec6b5-b66f-7a72-b890-d5e656359191",
+      "title": "Fix conversation auto-naming",
+      "startedAt": "2026-06-14T15:17:38.055Z",
+      "updatedAt": "2026-06-14T15:22:21.204Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "30510f60e1a5dbca4a63b554bca0b3a0caa34acd5a02b89098f3373568325b1b",
+      "parts": [
+        "conversations/2026/06/2026-06-14-fix-conversation-auto-naming-019ec6b5-b66f-7a72-b890-d5e656359191-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 160,
+      "malformedLines": 0,
+      "redactions": 2,
+      "warnings": []
+    },
+    {
+      "id": "019ec6b2-6b55-74b1-910b-be642c9996de",
+      "title": "Fix session opens at top",
+      "startedAt": "2026-06-14T15:14:02.236Z",
+      "updatedAt": "2026-06-14T15:20:04.477Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "12710faf570f4f9855165d817078bf0c99b6db7c801257288d67815c61ceccef",
+      "parts": [
+        "conversations/2026/06/2026-06-14-fix-session-opens-at-top-019ec6b2-6b55-74b1-910b-be642c9996de-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 158,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    }
+  ]
+}

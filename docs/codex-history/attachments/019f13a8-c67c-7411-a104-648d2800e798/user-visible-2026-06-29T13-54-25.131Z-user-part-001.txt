@@ -1,0 +1,3741 @@
+diff --git a/docs/superpowers/specs/2026-05-29-multi-account-cli-credentials.md b/docs/superpowers/specs/2026-05-29-multi-account-cli-credentials.md
+index 7256262..1eedc26 100644
+--- a/docs/superpowers/specs/2026-05-29-multi-account-cli-credentials.md
++++ b/docs/superpowers/specs/2026-05-29-multi-account-cli-credentials.md
+@@ -10,9 +10,23 @@ Support multiple authentication accounts per coding CLI, let users choose or aut
+ - Runtime startup already accepts one optional `credentialProfile` and resolves profile env through `src/server/agent-runtime/external-credentials.ts`.
+ - `src/server/agent-runtime/manager.ts` applies project-scoped CLI homes for Codex, Claude, Gemini, and OpenCode, but credential profile env is applied after project-scoped storage is chosen.
+ - `accounts` and `credit_events` tables exist, but they are a thin config-backed credit model and are not a complete credential/account source of truth.
++- `/api/accounts` now returns an explicit redacted DTO through `src/server/accounts/dto.ts`; event snapshots must use the same mapper and must never serialize raw account rows.
++- Execution events, supervisor interventions, planning review findings, and worker entries now use append-only artifact streams for larger payloads. New account/allocation ledgers should keep hot SQLite rows small and use artifact-backed payloads if details can grow.
++- Quota recovery is now a durable control-plane workflow built around `recovery_incidents`, `supervisor_scheduled_wakes`, and type-level quota blocking in `src/server/quota/type-blocking.ts`.
+ - Worker availability detects one installation/authentication/quota status per worker type, not per account.
+ - The quota tracking plan explicitly left multi-account as future work. This design makes account id part of quota and allocation from the start.
+ 
++## Readiness Update - 2026-06-29
++
++This design is still directionally correct, but implementation must account for code that landed after the original May 29 draft:
++
++- Snapshot account redaction is a hard boundary. Any route or SSE snapshot that carries accounts must return `AccountDto`, not database rows with `authRef`.
++- Account selection is a conversation/run preference, not only a visual composer detail. It must be carried through `POST /api/conversations`, `POST /api/conversations/:id/messages`, commit/direct conversation flows, and stored on `runs`.
++- Quota blocking must become account-aware. A quota incident for one Codex account must not block all Codex workers if another healthy Codex account exists.
++- Worker pool keys must include account-specific credential homes and credential env. Prewarmed workers must never be shared across accounts.
++- Runtime prewarm must use the same account resolution and env ordering as real spawn.
++- The legacy `config/accounts.yml`, `CreditManager`, and `CREDIT_STRATEGY=swap_account` surface is still present. Migrate it deliberately instead of assuming it is dead.
++
+ ## Product Shape
+ 
+ OmniHarness should treat each usable CLI identity as an account record:
+@@ -66,6 +80,10 @@ Add:
+ 
+ Keep `credit_events`, but use it as the durable account event ledger for allocation/switch/exhaustion/wait decisions, or rename only in a later migration if needed.
+ 
++Keep account-related SQLite rows queryable and small. If an allocation, usage, or account event needs a large JSON payload, follow the artifact-stream pattern used by `execution_events` and `supervisor_interventions`: store a preview/hash/seq in SQLite and put the body in append-only JSONL.
++
++DTO/API rule: database rows are private. All public account payloads, including `/api/accounts`, `/api/events?snapshot=1`, SSE update frames, and runtime-portable route responses, must pass through a whitelist DTO mapper.
++
+ ## Credential Execution
+ 
+ Introduce `src/server/accounts/account-resolver.ts`:
+@@ -84,6 +102,12 @@ Important runtime change:
+ 
+ This avoids the current single-login bias where project-scoped homes bridge the global Codex/Gemini credentials before account-specific env is known.
+ 
++Apply the same ordering in every runtime path, including real spawn and prewarm. `prewarmAgent` must not resolve a different env from `spawnAgent`.
++
++Account-aware pool keys must include at least: `CODEX_HOME`, `CODEX_SQLITE_HOME`, `CLAUDE_CONFIG_DIR`, `GEMINI_CLI_HOME`, `OPENCODE_CONFIG_DIR`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`, provider API/token env, `PATH`, and `HOME`.
++
++Claude-specific note: the current macOS keychain fallback injects the global Claude OAuth token when no explicit Claude credential env is set. Under account selection, that fallback must only run for `local_session` or a selected account that explicitly allows the global keychain. It must not override or leak into an isolated/account-specific Claude config.
++
+ ## Multiple Login Model
+ 
+ For CLIs that naturally use one global login, additional subscription accounts use isolated CLI homes under app data:
+@@ -122,6 +146,14 @@ The default migration should preserve current behavior as `priority`, with one d
+ 
+ Every worker spawn stores the selected account in `worker_credential_allocations`. Resume/recovery should reuse the same account unless the selected strategy explicitly allows a switch after quota exhaustion.
+ 
++Quota blocking changes:
++
++- replace type-only blocking (`codex` blocked) with account-aware blocking (`codex/account-a` blocked),
++- keep type-level fallback only when no account inventory exists yet,
++- persist the account id on quota incidents and allocation records,
++- make failover select another healthy account for the same worker type before falling back to another worker type when policy allows,
++- keep `wait_for_reset` tied to the originally allocated account.
++
+ ## Settings And UI
+ 
+ Agents settings remains the owner of worker ordering, but each worker row gains an account table:
+@@ -151,6 +183,17 @@ Composer run settings should gain an `Account` selector when a concrete worker t
+ 
+ Persist run-level choice with a new nullable `preferred_worker_account_id` column. The server treats the run value as an explicit allocation request.
+ 
++Wire the run account choice through all run/message entry points:
++
++- frontend `useHomeMutations` create, send, direct, and commit flows,
++- `src/runtime/http/routes/conversations.ts`,
++- `src/runtime/http/routes/conversation-messages.ts`,
++- `src/server/conversations/create.ts`,
++- `src/server/conversations/send-message.ts`,
++- CLI options and runner payloads if CLI-created runs should support account pinning.
++
++The server must validate that a requested account exists, is enabled, and matches the selected worker type. Invalid explicit accounts fail visibly with `error.surfaced`; automatic allocation may fall back according to policy.
++
+ All new frontend text must be added to every `shared/locales/*.json` file and rendered through `t()`.
+ 
+ ## Migration
+@@ -181,8 +224,15 @@ Add a startup migration from existing settings and rows:
+ 5. Existing worker settings:
+    - keep `WORKER_ALLOWED_TYPES`, `WORKER_DEFAULT_TYPE`, and `WORKER_YOLO_MODE`,
+    - migrate `CREDIT_STRATEGY` into a new per-CLI allocation policy setting or table-backed config,
++   - map legacy `swap_account` to `priority` or `quota_balanced` according to the existing behavior at migration time,
+    - keep `CREDIT_STRATEGY` as fallback compatibility until all readers move.
+ 
++6. Existing `config/accounts.yml` / `CreditManager`:
++   - import rows into the account inventory idempotently,
++   - treat `auth_ref` values as non-secret pointers unless they are known secret material,
++   - preserve the file as a fallback compatibility source until all tests and runtime readers use the new inventory,
++   - do not delete or rewrite the file during migration.
++
+ Migration must be idempotent and emit named events for migration failures or skipped invalid rows.
+ 
+ ## Observability
+@@ -203,6 +253,13 @@ Add `error.surfaced` codes for account resolver failures, missing login, invalid
+ 
+ The dev event log must be enough to answer: which account was chosen, why, what failed, and whether a switch/wait was deliberate.
+ 
++Snapshot and event invariants:
++
++- account payloads are always DTOs with no `authRef`, secret setting key, token, API key, or credential command output,
++- named events may include `accountId`, account label, mode, status, reason, and strategy, but never raw secret refs,
++- account allocation/switch/refusal decisions are named events, not inferred from snapshots,
++- user-visible allocation failures emit `error.surfaced` with stable account-specific codes.
++
+ ## State Invariants
+ 
+ - Server is authoritative for accounts, account status, allocation decisions, usage history, and run account choice.
+@@ -219,15 +276,18 @@ Add tests for:
+ 
+ - schema migration from old `accounts` rows,
+ - migration from old settings keys,
++- migration from `config/accounts.yml` and legacy `CREDIT_STRATEGY`,
+ - account resolver env ordering,
+ - account-specific CLI home selection,
+-- no secret leakage in `/api/accounts`, snapshots, SSE, logs, and errors,
++- no secret leakage in `/api/accounts`, `/api/events?snapshot=1`, SSE, logs, and errors,
+ - allocator strategies,
+ - explicit account unavailable failure,
+ - quota exhaustion switching from account A to B,
+ - wait-for-reset keeping the same account,
+ - worker resume reusing the recorded account,
+ - account-aware worker pool keys,
++- prewarm using the same account env as spawn,
++- account-aware quota blocking so one exhausted account does not block the whole worker type,
+ - UI rendering for account rows and composer account selection,
+ - i18n hardcoded copy coverage.
+ 
+diff --git a/shared/locales/de.json b/shared/locales/de.json
+index ec1209c..f539951 100644
+--- a/shared/locales/de.json
++++ b/shared/locales/de.json
+@@ -177,8 +177,11 @@
+   "conversation.mode.omni.description": "Nutze den Planungsmodus direkt in der ausgewählten CLI. Sobald der Plan fertig ist, übernimmt omni, bestätigt ihn gemäß deiner Absicht und lässt die Agenten ohne Unterbrechung weiterarbeiten, bis er vollständig implementiert ist.",
+   "conversation.composer.settings.title": "Settings",
+   "conversation.composer.settings.agent": "Agent",
++  "conversation.composer.settings.account": "Account",
+   "conversation.composer.settings.model": "Model",
+   "conversation.composer.settings.effort": "Effort",
++  "conversation.composer.account.auto": "Auto account",
++  "conversation.composer.account.ariaLabel": "Worker account",
+   "conversation.composer.sendButton.send": "Nachricht senden",
+   "conversation.composer.sendButton.stop": "Konversation stoppen",
+   "conversation.composer.sendButton.queue": "Nachricht einreihen",
+@@ -431,6 +434,8 @@
+   "settings.agents.moveWorkerUp": "Move {worker} up",
+   "settings.agents.moveWorkerDown": "Move {worker} down",
+   "settings.agents.monthlyTokens": "Monthly tokens",
++  "settings.agents.accounts": "Accounts",
++  "settings.agents.accountsNone": "No accounts configured",
+   "settings.agents.monthlyTokensRemaining": "{remaining} remaining",
+   "settings.agents.monthlyTokensRemainingOf": "{remaining} of {limit} remaining",
+   "settings.agents.monthlyTokensUsageOnly": "{used} used in 31 days; remaining not reported",
+diff --git a/shared/locales/en.json b/shared/locales/en.json
+index cc71644..7fe53ac 100644
+--- a/shared/locales/en.json
++++ b/shared/locales/en.json
+@@ -44,6 +44,8 @@
+   "settings.agents.moveWorkerUp": "Move {worker} up",
+   "settings.agents.moveWorkerDown": "Move {worker} down",
+   "settings.agents.monthlyTokens": "Monthly tokens",
++  "settings.agents.accounts": "Accounts",
++  "settings.agents.accountsNone": "No accounts configured",
+   "settings.agents.monthlyTokensRemaining": "{remaining} remaining",
+   "settings.agents.monthlyTokensRemainingOf": "{remaining} of {limit} remaining",
+   "settings.agents.monthlyTokensUsageOnly": "{used} used in 31 days; remaining not reported",
+@@ -207,8 +209,11 @@
+   "conversation.mode.omni.description": "Describe what you want and Omni plans it with you, then takes over — confirming the plan under your intent and keeping agents working non stop until it is fully implemented. Already have a plan or spec? Point Omni at it to go straight to implementation.",
+   "conversation.composer.settings.title": "Settings",
+   "conversation.composer.settings.agent": "Agent",
++  "conversation.composer.settings.account": "Account",
+   "conversation.composer.settings.model": "Model",
+   "conversation.composer.settings.effort": "Effort",
++  "conversation.composer.account.auto": "Auto account",
++  "conversation.composer.account.ariaLabel": "Worker account",
+   "conversation.composer.sendButton.send": "Send message",
+   "conversation.composer.sendButton.stop": "Stop conversation",
+   "conversation.composer.sendButton.queue": "Queue message",
+diff --git a/shared/locales/es.json b/shared/locales/es.json
+index faeb0e6..b194ef6 100644
+--- a/shared/locales/es.json
++++ b/shared/locales/es.json
+@@ -177,8 +177,11 @@
+   "conversation.mode.omni.description": "Usa el modo de planificación directamente en el CLI seleccionado. Cuando el plan esté listo, omni tomará el control, lo confirmará según tu intención y mantendrá a los agentes trabajando sin parar hasta implementarlo por completo.",
+   "conversation.composer.settings.title": "Settings",
+   "conversation.composer.settings.agent": "Agent",
++  "conversation.composer.settings.account": "Account",
+   "conversation.composer.settings.model": "Model",
+   "conversation.composer.settings.effort": "Effort",
++  "conversation.composer.account.auto": "Auto account",
++  "conversation.composer.account.ariaLabel": "Worker account",
+   "conversation.composer.sendButton.send": "Enviar mensaje",
+   "conversation.composer.sendButton.stop": "Detener conversación",
+   "conversation.composer.sendButton.queue": "Encolar mensaje",
+@@ -431,6 +434,8 @@
+   "settings.agents.moveWorkerUp": "Move {worker} up",
+   "settings.agents.moveWorkerDown": "Move {worker} down",
+   "settings.agents.monthlyTokens": "Monthly tokens",
++  "settings.agents.accounts": "Accounts",
++  "settings.agents.accountsNone": "No accounts configured",
+   "settings.agents.monthlyTokensRemaining": "{remaining} remaining",
+   "settings.agents.monthlyTokensRemainingOf": "{remaining} of {limit} remaining",
+   "settings.agents.monthlyTokensUsageOnly": "{used} used in 31 days; remaining not reported",
+diff --git a/shared/locales/fr.json b/shared/locales/fr.json
+index 8c42a19..99eb716 100644
+--- a/shared/locales/fr.json
++++ b/shared/locales/fr.json
+@@ -177,8 +177,11 @@
+   "conversation.mode.omni.description": "Utilisez le mode planification directement dans le CLI sélectionné. Une fois le plan terminé, omni prendra le relais, le confirmera selon votre intention et gardera les agents au travail sans interruption jusqu'à son implémentation complète.",
+   "conversation.composer.settings.title": "Settings",
+   "conversation.composer.settings.agent": "Agent",
++  "conversation.composer.settings.account": "Account",
+   "conversation.composer.settings.model": "Model",
+   "conversation.composer.settings.effort": "Effort",
++  "conversation.composer.account.auto": "Auto account",
++  "conversation.composer.account.ariaLabel": "Worker account",
+   "conversation.composer.sendButton.send": "Envoyer le message",
+   "conversation.composer.sendButton.stop": "Arrêter la conversation",
+   "conversation.composer.sendButton.queue": "Mettre le message en file",
+@@ -431,6 +434,8 @@
+   "settings.agents.moveWorkerUp": "Move {worker} up",
+   "settings.agents.moveWorkerDown": "Move {worker} down",
+   "settings.agents.monthlyTokens": "Monthly tokens",
++  "settings.agents.accounts": "Accounts",
++  "settings.agents.accountsNone": "No accounts configured",
+   "settings.agents.monthlyTokensRemaining": "{remaining} remaining",
+   "settings.agents.monthlyTokensRemainingOf": "{remaining} of {limit} remaining",
+   "settings.agents.monthlyTokensUsageOnly": "{used} used in 31 days; remaining not reported",
+diff --git a/shared/locales/it.json b/shared/locales/it.json
+index ba1ac56..ad366e4 100644
+--- a/shared/locales/it.json
++++ b/shared/locales/it.json
+@@ -177,8 +177,11 @@
+   "conversation.mode.omni.description": "Usa la modalità pianificazione direttamente nella CLI selezionata. Quando il piano è pronto, omni prenderà il controllo, lo confermerà secondo la tua intenzione e manterrà gli agenti al lavoro senza interruzioni fino alla completa implementazione.",
+   "conversation.composer.settings.title": "Settings",
+   "conversation.composer.settings.agent": "Agent",
++  "conversation.composer.settings.account": "Account",
+   "conversation.composer.settings.model": "Model",
+   "conversation.composer.settings.effort": "Effort",
++  "conversation.composer.account.auto": "Auto account",
++  "conversation.composer.account.ariaLabel": "Worker account",
+   "conversation.composer.sendButton.send": "Invia messaggio",
+   "conversation.composer.sendButton.stop": "Interrompi conversazione",
+   "conversation.composer.sendButton.queue": "Accoda messaggio",
+@@ -431,6 +434,8 @@
+   "settings.agents.moveWorkerUp": "Move {worker} up",
+   "settings.agents.moveWorkerDown": "Move {worker} down",
+   "settings.agents.monthlyTokens": "Monthly tokens",
++  "settings.agents.accounts": "Accounts",
++  "settings.agents.accountsNone": "No accounts configured",
+   "settings.agents.monthlyTokensRemaining": "{remaining} remaining",
+   "settings.agents.monthlyTokensRemainingOf": "{remaining} of {limit} remaining",
+   "settings.agents.monthlyTokensUsageOnly": "{used} used in 31 days; remaining not reported",
+diff --git a/shared/locales/ja.json b/shared/locales/ja.json
+index 5e74f7a..cc458f5 100644
+--- a/shared/locales/ja.json
++++ b/shared/locales/ja.json
+@@ -177,8 +177,11 @@
+   "conversation.mode.omni.description": "選択した CLI で計画モードを直接使います。計画が完了すると omni が引き継ぎ、あなたの意図に沿って確認し、完全に実装されるまでエージェントを継続的に動かします。",
+   "conversation.composer.settings.title": "Settings",
+   "conversation.composer.settings.agent": "Agent",
++  "conversation.composer.settings.account": "Account",
+   "conversation.composer.settings.model": "Model",
+   "conversation.composer.settings.effort": "Effort",
++  "conversation.composer.account.auto": "Auto account",
++  "conversation.composer.account.ariaLabel": "Worker account",
+   "conversation.composer.sendButton.send": "メッセージを送信",
+   "conversation.composer.sendButton.stop": "会話を停止",
+   "conversation.composer.sendButton.queue": "メッセージをキューに追加",
+@@ -431,6 +434,8 @@
+   "settings.agents.moveWorkerUp": "Move {worker} up",
+   "settings.agents.moveWorkerDown": "Move {worker} down",
+   "settings.agents.monthlyTokens": "Monthly tokens",
++  "settings.agents.accounts": "Accounts",
++  "settings.agents.accountsNone": "No accounts configured",
+   "settings.agents.monthlyTokensRemaining": "{remaining} remaining",
+   "settings.agents.monthlyTokensRemainingOf": "{remaining} of {limit} remaining",
+   "settings.agents.monthlyTokensUsageOnly": "{used} used in 31 days; remaining not reported",
+diff --git a/shared/locales/ko.json b/shared/locales/ko.json
+index 0a0497a..f2006cf 100644
+--- a/shared/locales/ko.json
++++ b/shared/locales/ko.json
+@@ -177,8 +177,11 @@
+   "conversation.mode.omni.description": "선택한 CLI에서 계획 모드를 직접 사용합니다. 계획이 완료되면 omni가 이어받아 의도에 맞게 확인하고, 완전히 구현될 때까지 에이전트가 계속 작업하게 합니다.",
+   "conversation.composer.settings.title": "Settings",
+   "conversation.composer.settings.agent": "Agent",
++  "conversation.composer.settings.account": "Account",
+   "conversation.composer.settings.model": "Model",
+   "conversation.composer.settings.effort": "Effort",
++  "conversation.composer.account.auto": "Auto account",
++  "conversation.composer.account.ariaLabel": "Worker account",
+   "conversation.composer.sendButton.send": "메시지 보내기",
+   "conversation.composer.sendButton.stop": "대화 중지",
+   "conversation.composer.sendButton.queue": "메시지 대기열에 추가",
+@@ -431,6 +434,8 @@
+   "settings.agents.moveWorkerUp": "Move {worker} up",
+   "settings.agents.moveWorkerDown": "Move {worker} down",
+   "settings.agents.monthlyTokens": "Monthly tokens",
++  "settings.agents.accounts": "Accounts",
++  "settings.agents.accountsNone": "No accounts configured",
+   "settings.agents.monthlyTokensRemaining": "{remaining} remaining",
+   "settings.agents.monthlyTokensRemainingOf": "{remaining} of {limit} remaining",
+   "settings.agents.monthlyTokensUsageOnly": "{used} used in 31 days; remaining not reported",
+diff --git a/shared/locales/pt.json b/shared/locales/pt.json
+index ffc75a0..cfff597 100644
+--- a/shared/locales/pt.json
++++ b/shared/locales/pt.json
+@@ -177,8 +177,11 @@
+   "conversation.mode.omni.description": "Use o modo de planejamento diretamente na CLI selecionada. Quando o plano estiver pronto, omni assumirá, confirmará conforme sua intenção e manterá os agentes trabalhando sem parar até que tudo esteja totalmente implementado.",
+   "conversation.composer.settings.title": "Settings",
+   "conversation.composer.settings.agent": "Agent",
++  "conversation.composer.settings.account": "Account",
+   "conversation.composer.settings.model": "Model",
+   "conversation.composer.settings.effort": "Effort",
++  "conversation.composer.account.auto": "Auto account",
++  "conversation.composer.account.ariaLabel": "Worker account",
+   "conversation.composer.sendButton.send": "Enviar mensagem",
+   "conversation.composer.sendButton.stop": "Parar conversa",
+   "conversation.composer.sendButton.queue": "Enfileirar mensagem",
+@@ -431,6 +434,8 @@
+   "settings.agents.moveWorkerUp": "Move {worker} up",
+   "settings.agents.moveWorkerDown": "Move {worker} down",
+   "settings.agents.monthlyTokens": "Monthly tokens",
++  "settings.agents.accounts": "Accounts",
++  "settings.agents.accountsNone": "No accounts configured",
+   "settings.agents.monthlyTokensRemaining": "{remaining} remaining",
+   "settings.agents.monthlyTokensRemainingOf": "{remaining} of {limit} remaining",
+   "settings.agents.monthlyTokensUsageOnly": "{used} used in 31 days; remaining not reported",
+diff --git a/shared/locales/zh-CN.json b/shared/locales/zh-CN.json
+index 013494d..7b9d4dc 100644
+--- a/shared/locales/zh-CN.json
++++ b/shared/locales/zh-CN.json
+@@ -177,8 +177,11 @@
+   "conversation.mode.omni.description": "直接在所选 CLI 中使用规划模式。计划完成后，omni 会接管，根据你的意图确认计划，并让代理持续工作，直到计划完全实现。",
+   "conversation.composer.settings.title": "Settings",
+   "conversation.composer.settings.agent": "Agent",
++  "conversation.composer.settings.account": "Account",
+   "conversation.composer.settings.model": "Model",
+   "conversation.composer.settings.effort": "Effort",
++  "conversation.composer.account.auto": "Auto account",
++  "conversation.composer.account.ariaLabel": "Worker account",
+   "conversation.composer.sendButton.send": "发送消息",
+   "conversation.composer.sendButton.stop": "停止对话",
+   "conversation.composer.sendButton.queue": "将消息排队",
+@@ -431,6 +434,8 @@
+   "settings.agents.moveWorkerUp": "Move {worker} up",
+   "settings.agents.moveWorkerDown": "Move {worker} down",
+   "settings.agents.monthlyTokens": "Monthly tokens",
++  "settings.agents.accounts": "Accounts",
++  "settings.agents.accountsNone": "No accounts configured",
+   "settings.agents.monthlyTokensRemaining": "{remaining} remaining",
+   "settings.agents.monthlyTokensRemainingOf": "{remaining} of {limit} remaining",
+   "settings.agents.monthlyTokensUsageOnly": "{used} used in 31 days; remaining not reported",
+diff --git a/src/app/home/BusyMessageQueueManager.ts b/src/app/home/BusyMessageQueueManager.ts
+index 7fcfd36..bdea7de 100644
+--- a/src/app/home/BusyMessageQueueManager.ts
++++ b/src/app/home/BusyMessageQueueManager.ts
+@@ -45,6 +45,67 @@ function isStaleServerAbsentActiveMessage(
+   return absentUpdatedAt !== undefined && timestampMs(message.updatedAt) <= absentUpdatedAt;
+ }
+ 
++function attachmentsEqual(
++  left: QueuedConversationMessageRecord["attachments"],
++  right: QueuedConversationMessageRecord["attachments"],
++) {
++  const leftAttachments = left ?? [];
++  const rightAttachments = right ?? [];
++  if (leftAttachments.length !== rightAttachments.length) {
++    return false;
++  }
++  return leftAttachments.every((attachment, index) => JSON.stringify(attachment) === JSON.stringify(rightAttachments[index]));
++}
++
++function queuedMessageRecordsEqual(left: QueuedConversationMessageRecord, right: QueuedConversationMessageRecord) {
++  return left.id === right.id
++    && left.runId === right.runId
++    && left.targetWorkerId === right.targetWorkerId
++    && left.action === right.action
++    && left.content === right.content
++    && left.status === right.status
++    && left.lastError === right.lastError
++    && left.createdAt === right.createdAt
++    && left.updatedAt === right.updatedAt
++    && left.deliveredAt === right.deliveredAt
++    && attachmentsEqual(left.attachments, right.attachments);
++}
++
++function queuedMessageArraysEqual(left: QueuedConversationMessageRecord[], right: QueuedConversationMessageRecord[]) {
++  return left.length === right.length
++    && left.every((message, index) => queuedMessageRecordsEqual(message, right[index]!));
++}
++
++function setsEqual<T>(left: Set<T>, right: Set<T>) {
++  if (left === right) {
++    return true;
++  }
++  if (left.size !== right.size) {
++    return false;
++  }
++  for (const value of left) {
++    if (!right.has(value)) {
++      return false;
++    }
++  }
++  return true;
++}
++
++function mapsEqual<TKey, TValue>(left: Map<TKey, TValue>, right: Map<TKey, TValue>) {
++  if (left === right) {
++    return true;
++  }
++  if (left.size !== right.size) {
++    return false;
++  }
++  for (const [key, value] of left) {
++    if (!Object.is(right.get(key), value)) {
++      return false;
++    }
++  }
++  return true;
++}
++
+ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState> {
+   constructor() {
+     super(initialBusyMessageQueueState);
+@@ -89,11 +150,22 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
+       for (const message of incomingMessages) {
+         serverAbsentMessageUpdatedAtById.delete(message.id);
+       }
++      const queuedMessages = incomingMessages.filter((message) => !current.locallyHiddenMessageIds.has(message.id));
++      const cancellingMessageIds = clearSettled(current.cancellingMessageIds);
++      const interruptingMessageIds = clearSettled(current.interruptingMessageIds);
++      if (
++        queuedMessageArraysEqual(current.queuedMessages, queuedMessages)
++        && setsEqual(current.cancellingMessageIds, cancellingMessageIds)
++        && setsEqual(current.interruptingMessageIds, interruptingMessageIds)
++        && mapsEqual(current.serverAbsentMessageUpdatedAtById, serverAbsentMessageUpdatedAtById)
++      ) {
++        return current;
++      }
+       return {
+         ...current,
+-        queuedMessages: incomingMessages.filter((message) => !current.locallyHiddenMessageIds.has(message.id)),
+-        cancellingMessageIds: clearSettled(current.cancellingMessageIds),
+-        interruptingMessageIds: clearSettled(current.interruptingMessageIds),
++        queuedMessages,
++        cancellingMessageIds,
++        interruptingMessageIds,
+         serverAbsentMessageUpdatedAtById,
+       };
+     }, notify);
+diff --git a/src/app/home/ComposerContainer.tsx b/src/app/home/ComposerContainer.tsx
+index 6d34958..a113abc 100644
+--- a/src/app/home/ComposerContainer.tsx
++++ b/src/app/home/ComposerContainer.tsx
+@@ -1,7 +1,7 @@
+ "use client";
+ 
+ import type React from "react";
+-import { useEffect, useMemo } from "react";
++import { memo, useEffect, useMemo } from "react";
+ import { useQuery } from "@tanstack/react-query";
+ import { ConversationComposer } from "@/components/home/ConversationComposer";
+ import { requestJson } from "@/lib/app-errors";
+@@ -52,6 +52,9 @@ export interface ComposerContainerProps {
+   selectedCliAgent: ComposerWorkerOption;
+   setSelectedCliAgent: (value: ComposerWorkerOption) => void;
+   composerWorkerOptions: Array<{ value: ComposerWorkerOption; label: string }>;
++  selectedWorkerAccountId: string;
++  setSelectedWorkerAccountId: (value: string) => void;
++  composerAccountOptions: Array<{ value: string; label: string }>;
+   selectedModel: string;
+   setSelectedModel: (value: string) => void;
+   activeWorkerModelOptions: WorkerModelOption[];
+@@ -75,7 +78,7 @@ export interface ComposerContainerProps {
+ }
+ 
+ // Isolates high-churn draft subscriptions so keystrokes don't re-render HomeApp
+-export function ComposerContainer({
++function ComposerContainerInner({
+   className,
+   commandInputRef,
+   selectedRunId,
+@@ -91,6 +94,9 @@ export function ComposerContainer({
+   selectedCliAgent,
+   setSelectedCliAgent,
+   composerWorkerOptions,
++  selectedWorkerAccountId,
++  setSelectedWorkerAccountId,
++  composerAccountOptions,
+   selectedModel,
+   setSelectedModel,
+   activeWorkerModelOptions,
+@@ -217,6 +223,9 @@ export function ComposerContainer({
+       selectedCliAgent={selectedCliAgent}
+       setSelectedCliAgent={setSelectedCliAgent}
+       composerWorkerOptions={composerWorkerOptions}
++      selectedWorkerAccountId={selectedWorkerAccountId}
++      setSelectedWorkerAccountId={setSelectedWorkerAccountId}
++      composerAccountOptions={composerAccountOptions}
+       selectedModel={selectedModel}
+       setSelectedModel={setSelectedModel}
+       activeWorkerModelOptions={activeWorkerModelOptions}
+@@ -242,3 +251,6 @@ export function ComposerContainer({
+     />
+   );
+ }
++
++export const ComposerContainer = memo(ComposerContainerInner);
++ComposerContainer.displayName = "ComposerContainer";
+diff --git a/src/app/home/HomeApp.tsx b/src/app/home/HomeApp.tsx
+index daedcc3..ccb94c7 100644
+--- a/src/app/home/HomeApp.tsx
++++ b/src/app/home/HomeApp.tsx
+@@ -15,14 +15,15 @@ import { WORKER_OPTIONS } from "./constants";
+ import { busyMessageQueueManager } from "./BusyMessageQueueManager";
+ import { conversationNotificationManager } from "./ConversationNotificationManager";
+ import { sideWindowManager } from "./SideWindowManager";
+-import { parseBusyMessageAction } from "./busy-message-behavior";
++import { parseBusyMessageAction, type BusyMessageAction } from "./busy-message-behavior";
++import type { PendingChatAttachment } from "@/lib/chat-attachments";
+ import {
+   hasPendingHumanInputSignal,
+   isMutationPendingForSelectedRun,
+   resolveDirectControlPendingAssistantStatus,
+   resolvePendingConversationWorkerId,
+ } from "./direct-control-activity";
+-import { cancelInactiveAutoResumeTimers, shouldFireAutoResumeTimer } from "./auto-resume-selection";
++import { cancelInactiveAutoResumeTimers, isPermanentAutoResumeFailure, shouldFireAutoResumeTimer } from "./auto-resume-selection";
+ import { EventStreamStateManager } from "./EventStreamStateManager";
+ import {
+   homeUiSetters,
+@@ -98,6 +99,7 @@ const InteractiveTerminal = dynamic(
+ );
+ 
+ const ONBOARDING_SEEN_STORAGE_KEY = "omni.onboarding.seen";
++const EMPTY_PROJECT_FILES: string[] = [];
+ let appliedHomeBootstrapId: string | null = null;
+ 
+ class AutoResumeExhaustionManager extends StateManager<Set<string>> {
+@@ -236,6 +238,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
+     hasReceivedInitialEventStreamPayload,
+     selectedConversationMode,
+     selectedCliAgent,
++    selectedWorkerAccountId,
+     selectedModel,
+     selectedEffort,
+     hydratedRunSelectionId,
+@@ -282,6 +285,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
+     setHasReceivedInitialEventStreamPayload,
+     setSelectedConversationMode,
+     setSelectedCliAgent,
++    setSelectedWorkerAccountId,
+     setSelectedModel,
+     setSelectedEffort,
+     setHydratedRunSelectionId,
+@@ -539,6 +543,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
+   const stableActiveProjects = useFrozenRecentOrder(
+     activeProjects as SidebarGroup[],
+     conversationSidebarTab === "recent",
++    filteredProjects as SidebarGroup[],
+   );
+ 
+   // A conversation created optimistically in this session is fully known to
+@@ -597,6 +602,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
+     setState,
+     selectedRunId,
+     selectedCliAgent,
++    selectedWorkerAccountId,
+     selectedConversationMode,
+     selectedModel,
+     selectedEffort,
+@@ -760,6 +766,24 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
+     setSelectedModel(activeWorkerModelOptions[0].value);
+   }, [activeWorkerModelOptions, vm.activeWorkerModelType, selectedModel, setSelectedModel]);
+ 
++  const effectiveComposerWorkerType = selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent;
++  const composerAccountOptions = useMemo(() => {
++    const options = [{ value: "auto", label: t("conversation.composer.account.auto") }];
++    if (!effectiveComposerWorkerType) return options;
++    for (const account of state.accounts ?? []) {
++      if (!account.enabled) continue;
++      if (account.cliType && account.cliType !== effectiveComposerWorkerType) continue;
++      options.push({
++        value: account.id,
++        label: account.label || `${account.provider} ${account.type}`,
++      });
++    }
++    return options;
++  }, [effectiveComposerWorkerType, state.accounts]);
++  const effectiveSelectedWorkerAccountId = composerAccountOptions.some((option) => option.value === selectedWorkerAccountId)
++    ? selectedWorkerAccountId
++    : "auto";
++
+   // Pre-warm the worker the user is about to use. Overlapping ACP startup
+   // (~3–30 s depending on CLI) with composer typing keeps "press Send → first
+   // token" close to model latency instead of model + worker boot. Bridge dedups
+@@ -773,7 +797,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
+     if (!currentProjectScope) return;
+     if (!effectivePrewarmType) return;
+     const modelKey = selectedModel ?? "";
+-    const slot = `${currentProjectScope}::${effectivePrewarmType}::${modelKey}`;
++    const slot = `${currentProjectScope}::${effectivePrewarmType}::${modelKey}::${effectiveSelectedWorkerAccountId}`;
+     if (prewarmedWorkerSlotsRef.current.has(slot)) return;
+     prewarmedWorkerSlotsRef.current.add(slot);
+     void fetch("/api/agents/prewarm-worker", {
+@@ -783,12 +807,13 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
+         type: effectivePrewarmType,
+         cwd: currentProjectScope,
+         model: selectedModel ?? null,
++        accountId: effectiveSelectedWorkerAccountId === "auto" ? null : effectiveSelectedWorkerAccountId,
+       }),
+       credentials: "same-origin",
+     }).catch(() => {
+       prewarmedWorkerSlotsRef.current.delete(slot);
+     });
+-  }, [appUnlocked, currentProjectScope, effectivePrewarmType, selectedModel]);
++  }, [appUnlocked, currentProjectScope, effectivePrewarmType, effectiveSelectedWorkerAccountId, selectedModel]);
+ 
+   // Keep non-worker conversations from leaving the workspace side window open.
+   useEffect(() => {
+@@ -864,6 +889,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
+       || (!isImplementationConversation && !isDirectConversation)
+       || selectedRun.status !== "failed"
+       || failedWorkerAvailability?.availability.status !== "ok"
++      || isPermanentAutoResumeFailure(selectedAutoResumeFailureKey)
+       || workerFailureDetail || !latestUserCheckpoint || isRecoverRunPendingForSelectedRun
+     ) return;
+ 
+@@ -1068,18 +1094,65 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
+   const pairDeviceAvailabilityError = !authEnabled
+     ? "Phone pairing requires OmniHarness auth. Set OMNIHARNESS_AUTH_PASSWORD or OMNIHARNESS_AUTH_PASSWORD_HASH and restart, then open Connect Phone again."
+     : authConfigurationError;
+-
+-  const handleStopConversation = () => {
++  const stopSupervisorMutate = stopSupervisor.mutate;
++  const stopWorkerMutate = stopWorker.mutate;
++  const interruptQueuedMessageMutate = interruptQueuedMessage.mutate;
++  const cancelQueuedMessageMutate = cancelQueuedMessage.mutate;
++  const sendConversationMessageMutate = sendConversationMessage.mutate;
++  const runCommandMutate = runCommand.mutate;
++
++  const handleStopConversation = useCallback(() => {
+     if (!selectedRunId || isStopConversationPending) return;
+-    if (isSupervisorRunning) { stopSupervisor.mutate({ runId: selectedRunId }); return; }
+-    if (stoppableConversationWorkerId) stopWorker.mutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId });
+-  };
++    if (isSupervisorRunning) { stopSupervisorMutate({ runId: selectedRunId }); return; }
++    if (stoppableConversationWorkerId) stopWorkerMutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId });
++  }, [
++    isStopConversationPending,
++    isSupervisorRunning,
++    selectedRunId,
++    stopSupervisorMutate,
++    stopWorkerMutate,
++    stoppableConversationWorkerId,
++  ]);
++
++  const handleComposerEditQueuedMessage = useCallback((message: { id: string; runId: string; content: string }) => {
++    const nextCommand = message.content;
++    homeUiSetters.setCommand(nextCommand);
++    homeUiSetters.setCommandCursor(nextCommand.length);
++    homeUiSetters.clearAttachments();
++    cancelQueuedMessageMutate({ runId: message.runId, messageId: message.id });
++    requestAnimationFrame(() => {
++      commandInputRef.current?.focus();
++      commandInputRef.current?.setSelectionRange(nextCommand.length, nextCommand.length);
++    });
++  }, [cancelQueuedMessageMutate]);
++
++  const handleComposerInterruptQueuedMessage = useCallback((messageId: string) => {
++    if (selectedRunId) interruptQueuedMessageMutate({ runId: selectedRunId, messageId });
++  }, [interruptQueuedMessageMutate, selectedRunId]);
++
++  const handleComposerCancelQueuedMessage = useCallback((messageId: string) => {
++    if (selectedRunId) cancelQueuedMessageMutate({ runId: selectedRunId, messageId });
++  }, [cancelQueuedMessageMutate, selectedRunId]);
++
++  const handleComposerInterruptConversation = useCallback((draft: { content: string; attachments: PendingChatAttachment[] } | null) => {
++    if (selectedRunId) interruptQueuedMessageMutate({ runId: selectedRunId, draft: draft ?? undefined });
++  }, [interruptQueuedMessageMutate, selectedRunId]);
++
++  const handleComposerSendConversationMessage = useCallback((content: string, attachments: PendingChatAttachment[], busyAction?: BusyMessageAction) => {
++    if (selectedRunId) sendConversationMessageMutate({ runId: selectedRunId, content, attachments, busyAction });
++  }, [selectedRunId, sendConversationMessageMutate]);
++
++  const handleComposerRunCommand = useCallback((content: string, attachments: PendingChatAttachment[]) => {
++    runCommandMutate({ content, attachments, projectPath: currentProjectScope, requestedRunId: createClientRunId() });
++  }, [currentProjectScope, runCommandMutate]);
++
++  const composerProjectFiles = projectFilesQuery.data?.files ?? EMPTY_PROJECT_FILES;
+ 
+   const handleReload = useCallback(() => {
+     try {
+       window.localStorage.removeItem("omni-event-stream-snapshot-cache:v1");
+       window.localStorage.removeItem("omni-worker-entries-cache:v1");
+-    } catch (e) {
++    } catch {
+       // ignore
+     }
+     window.location.reload();
+@@ -1093,7 +1166,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
+       selectedConversationMode={activeComposerMode}
+       setSelectedConversationMode={setSelectedConversationMode}
+       currentProjectScope={currentProjectScope}
+-      projectFiles={projectFilesQuery.data?.files ?? []}
++      projectFiles={composerProjectFiles}
+       projectFilesIsFetched={projectFilesQuery.isFetched}
+       onOpenProjectFile={actions.handleOpenProjectFile}
+       themeMode={themeMode}
+@@ -1102,6 +1175,9 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
+       selectedCliAgent={selectedCliAgent}
+       setSelectedCliAgent={setSelectedCliAgent}
+       composerWorkerOptions={composerWorkerOptions}
++      selectedWorkerAccountId={effectiveSelectedWorkerAccountId}
++      setSelectedWorkerAccountId={setSelectedWorkerAccountId}
++      composerAccountOptions={composerAccountOptions}
+       selectedModel={selectedModel}
+       setSelectedModel={setSelectedModel}
+       activeWorkerModelOptions={activeWorkerModelOptions}
+@@ -1115,20 +1191,12 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
+       queuedMessages={selectedQueuedMessages}
+       cancellingQueuedMessageIds={busyMessageQueueState.cancellingMessageIds}
+       interruptingQueuedMessageIds={busyMessageQueueState.interruptingMessageIds}
+-      onEditQueuedMessage={actions.handleEditQueuedMessage}
+-      onInterruptQueuedMessage={(messageId) => {
+-        if (selectedRunId) interruptQueuedMessage.mutate({ runId: selectedRunId, messageId });
+-      }}
+-      onCancelQueuedMessage={(messageId) => {
+-        if (selectedRunId) cancelQueuedMessage.mutate({ runId: selectedRunId, messageId });
+-      }}
+-      onInterruptConversation={(draft) => {
+-        if (selectedRunId) interruptQueuedMessage.mutate({ runId: selectedRunId, draft: draft ?? undefined });
+-      }}
+-      onSendConversationMessage={(content, attachments, busyAction) => {
+-        if (selectedRunId) sendConversationMessage.mutate({ runId: selectedRunId, content, attachments, busyAction });
+-      }}
+-      onRunCommand={(content, attachments) => runCommand.mutate({ content, attachments, projectPath: currentProjectScope, requestedRunId: createClientRunId() })}
++      onEditQueuedMessage={handleComposerEditQueuedMessage}
++      onInterruptQueuedMessage={handleComposerInterruptQueuedMessage}
++      onCancelQueuedMessage={handleComposerCancelQueuedMessage}
++      onInterruptConversation={handleComposerInterruptConversation}
++      onSendConversationMessage={handleComposerSendConversationMessage}
++      onRunCommand={handleComposerRunCommand}
+       onStopConversation={handleStopConversation}
+     />
+   );
+@@ -1448,6 +1516,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
+         discardSettingsDraft={() => settingsDraftManager.discardDraft()}
+         secretStates={settingsQuery.data?.secrets}
+         settingsWorkers={settingsWorkers}
++        accounts={state.accounts}
+         workerCatalogQuery={workerCatalogQuery}
+         onRefreshWorkerCatalog={() => refreshWorkerCatalog.mutate()}
+         workerCatalogRefreshing={refreshWorkerCatalog.isPending || workerCatalogQuery.isFetching}
+diff --git a/src/app/home/HomeUiStateManager.ts b/src/app/home/HomeUiStateManager.ts
+index 1a4a2a6..66d8eab 100644
+--- a/src/app/home/HomeUiStateManager.ts
++++ b/src/app/home/HomeUiStateManager.ts
+@@ -84,6 +84,7 @@ export type HomeUiState = {
+   hasReceivedInitialEventStreamPayload: boolean;
+   selectedConversationMode: ConversationModeOption;
+   selectedCliAgent: ComposerWorkerOption;
++  selectedWorkerAccountId: string;
+   selectedModel: string;
+   selectedEffort: string;
+   hydratedRunSelectionId: string | null;
+@@ -140,6 +141,7 @@ const initialHomeUiState: HomeUiState = {
+   hasReceivedInitialEventStreamPayload: false,
+   selectedConversationMode: "direct",
+   selectedCliAgent: "auto",
++  selectedWorkerAccountId: "auto",
+   selectedModel: "gpt-5.4",
+   selectedEffort: "High",
+   hydratedRunSelectionId: null,
+@@ -404,6 +406,7 @@ export const homeUiSetters = {
+   setHasReceivedInitialEventStreamPayload: homeUiStateManager.createSetter("hasReceivedInitialEventStreamPayload"),
+   setSelectedConversationMode: homeUiStateManager.createSetter("selectedConversationMode"),
+   setSelectedCliAgent: homeUiStateManager.createSetter("selectedCliAgent"),
++  setSelectedWorkerAccountId: homeUiStateManager.createSetter("selectedWorkerAccountId"),
+   setSelectedModel: homeUiStateManager.createSetter("selectedModel"),
+   setSelectedEffort: homeUiStateManager.createSetter("selectedEffort"),
+   setHydratedRunSelectionId: homeUiStateManager.createSetter("hydratedRunSelectionId"),
+diff --git a/src/app/home/auto-resume-selection.ts b/src/app/home/auto-resume-selection.ts
+index 2a5b53c..f7b9cb8 100644
+--- a/src/app/home/auto-resume-selection.ts
++++ b/src/app/home/auto-resume-selection.ts
+@@ -44,6 +44,10 @@ export function cancelInactiveAutoResumeTimers<TEntry extends { timerId: ReturnT
+   return cancelled;
+ }
+ 
++export function isPermanentAutoResumeFailure(failureKey: string | null | undefined) {
++  return /\b(?:api key|authentication required|auth(?:entication)? failed|billing required|api billing|cap_exceeded|insufficient quota|resource exhausted)\b/i.test(failureKey ?? "");
++}
++
+ export function shouldFireAutoResumeTimer<TEntry extends {
+   failureKey: string;
+   targetMessageId: string;
+@@ -68,6 +72,7 @@ export function shouldFireAutoResumeTimer<TEntry extends {
+     && args.isAutoResumableConversation
+     && args.selectedRunStatus === "failed"
+     && args.failedWorkerAvailabilityStatus === "ok"
++    && !isPermanentAutoResumeFailure(args.failureKey)
+     && !args.hasWorkerFailureDetail
+     && !args.recoverRunIsPending;
+ }
+diff --git a/src/app/home/types.ts b/src/app/home/types.ts
+index f9f76f2..cbdb9ec 100644
+--- a/src/app/home/types.ts
++++ b/src/app/home/types.ts
+@@ -345,7 +345,7 @@ export type EventStreamState = {
+   plans: PlanRecord[];
+   runs: RunRecord[];
+   sessions?: SessionRecord[];
+-  accounts: unknown[];
++  accounts: AccountRecord[];
+   agents: AgentSnapshot[];
+   workers: ConversationWorkerRecord[];
+   planItems: PlanItemRecord[];
+@@ -384,6 +384,24 @@ export type EventStreamState = {
+   workerEntrySeqs?: Record<string, number>;
+   workerEntries?: Record<string, WorkerEntry[]>;
+ };
++
++export type AccountRecord = {
++  id: string;
++  cliType: string | null;
++  provider: string;
++  type: string;
++  label: string | null;
++  authMode: string;
++  enabled: boolean;
++  priority: number;
++  capacity: number | null;
++  resetSchedule: string | null;
++  status: string | null;
++  statusCheckedAt: string | null;
++  metadata: Record<string, unknown> | null;
++  createdAt: string;
++  updatedAt: string | null;
++};
+ export type SettingsTab = "general" | "models" | "credentials" | "agents" | "runtime" | "memory";
+ 
+ export type ConversationSidebarTab = "projects" | "recent";
+diff --git a/src/app/home/useFrozenRecentOrder.ts b/src/app/home/useFrozenRecentOrder.ts
+index 074e243..253fda3 100644
+--- a/src/app/home/useFrozenRecentOrder.ts
++++ b/src/app/home/useFrozenRecentOrder.ts
+@@ -41,24 +41,27 @@ function captureOrder(groups: SidebarGroup[]): OrderSnapshot {
+   return { groupOrder, groupsByPath };
+ }
+ 
+-function applyOrder(groups: SidebarGroup[], snapshot: OrderSnapshot): SidebarGroup[] {
++function applyOrder(groups: SidebarGroup[], snapshot: OrderSnapshot, liveCatalogGroups: SidebarGroup[] = groups): SidebarGroup[] {
+   const liveGroupsByPath = new Map(groups.map((group) => [group.path, group]));
++  const liveCatalogGroupsByPath = new Map(liveCatalogGroups.map((group) => [group.path, group]));
+ 
+   return snapshot.groupOrder.flatMap((groupPath) => {
+     const snapshotted = snapshot.groupsByPath.get(groupPath);
+     if (!snapshotted) return [];
+ 
+     const liveGroup = liveGroupsByPath.get(groupPath);
++    const liveCatalogGroup = liveCatalogGroupsByPath.get(groupPath);
+     const liveRunsById = new Map((liveGroup?.runs ?? []).map((run) => [run.id, run]));
++    const liveCatalogRunsById = new Map((liveCatalogGroup?.runs ?? []).map((run) => [run.id, run]));
+     const runs = snapshotted.runOrder.flatMap((runId) => {
+-      const run = liveRunsById.get(runId) ?? snapshotted.runsById.get(runId);
++      const run = liveRunsById.get(runId) ?? liveCatalogRunsById.get(runId) ?? snapshotted.runsById.get(runId);
+       return run ? [run] : [];
+     });
+ 
+     if (runs.length === 0) return [];
+ 
+     return [{
+-      ...(liveGroup ?? snapshotted.group),
++      ...(liveGroup ?? liveCatalogGroup ?? snapshotted.group),
+       runs,
+     }];
+   });
+@@ -67,6 +70,7 @@ function applyOrder(groups: SidebarGroup[], snapshot: OrderSnapshot): SidebarGro
+ export function useFrozenRecentOrder(
+   activeProjects: SidebarGroup[],
+   isRecentTabActive: boolean,
++  liveCatalogProjects: SidebarGroup[] = activeProjects,
+ ): SidebarGroup[] {
+   const snapshotRef = useRef<OrderSnapshot | null>(null);
+   const wasActiveRef = useRef(false);
+@@ -82,8 +86,8 @@ export function useFrozenRecentOrder(
+     // Just (re)opened the tab — freeze the current latest-activity order.
+     snapshotRef.current = captureOrder(activeProjects);
+     wasActiveRef.current = true;
+-    return applyOrder(activeProjects, snapshotRef.current);
++    return applyOrder(activeProjects, snapshotRef.current, liveCatalogProjects);
+   }
+ 
+-  return applyOrder(activeProjects, snapshotRef.current);
++  return applyOrder(activeProjects, snapshotRef.current, liveCatalogProjects);
+ }
+diff --git a/src/app/home/useHomeMutations.ts b/src/app/home/useHomeMutations.ts
+index bb57f27..0658ac1 100644
+--- a/src/app/home/useHomeMutations.ts
++++ b/src/app/home/useHomeMutations.ts
+@@ -333,6 +333,7 @@ export interface UseHomeMutationsParams {
+   setState: React.Dispatch<React.SetStateAction<EventStreamState>>;
+   selectedRunId: string | null;
+   selectedCliAgent: ComposerWorkerOption;
++  selectedWorkerAccountId: string;
+   selectedConversationMode: ConversationModeOption;
+   selectedModel: string;
+   selectedEffort: string;
+@@ -352,6 +353,7 @@ export function useHomeMutations({
+   setState,
+   selectedRunId,
+   selectedCliAgent,
++  selectedWorkerAccountId,
+   selectedConversationMode,
+   selectedModel,
+   selectedEffort,
+@@ -383,6 +385,7 @@ export function useHomeMutations({
+     setMobileNavOpen,
+     clearAttachments,
+   } = homeUiSetters;
++  const preferredWorkerAccountId = selectedWorkerAccountId === "auto" ? null : selectedWorkerAccountId;
+ 
+   const loginMutation = useMutation({
+     mutationFn: async (password: string) => requestJson<{ ok: true }>("/api/auth/login", {
+@@ -745,6 +748,7 @@ export function useHomeMutations({
+           preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
+           preferredWorkerModel: resolvedSelectedModel,
+           preferredWorkerEffort: selectedEffort.toLowerCase(),
++          preferredWorkerAccountId,
+           allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent],
+           attachments: uploadedAttachments,
+         }),
+@@ -870,6 +874,7 @@ export function useHomeMutations({
+           preferredWorkerType: selectedWorkerType,
+           preferredWorkerModel: isAutoWorkerSelection ? null : resolvedSelectedModel,
+           preferredWorkerEffort: selectedEffort.toLowerCase(),
++          preferredWorkerAccountId,
+           allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedWorkerType],
+         }),
+       }, {
+@@ -882,7 +887,11 @@ export function useHomeMutations({
+         pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
+       }
+       if (data.queuedMessage) {
+-        busyMessageQueueManager.upsertQueuedMessage(data.queuedMessage);
++        if (variables.busyAction === "steer" && data.message) {
++          busyMessageQueueManager.hideQueuedMessage(data.queuedMessage.id);
++        } else {
++          busyMessageQueueManager.upsertQueuedMessage(data.queuedMessage);
++        }
+       }
+       setState((current) => appendSentConversationMessageSnapshot(current, data.message));
+       const snapshot = homeUiStateManager.getSnapshot();
+@@ -954,6 +963,7 @@ export function useHomeMutations({
+           preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
+           preferredWorkerModel: resolvedSelectedModel,
+           preferredWorkerEffort: selectedEffort.toLowerCase(),
++          preferredWorkerAccountId,
+           allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent],
+         }),
+       }, {
+diff --git a/src/app/home/useHomeViewModel.ts b/src/app/home/useHomeViewModel.ts
+index 6c79f2a..1eddc02 100644
+--- a/src/app/home/useHomeViewModel.ts
++++ b/src/app/home/useHomeViewModel.ts
+@@ -22,6 +22,9 @@ import type { WorkerCatalogResponse } from "./types";
+ import { sessionStateManager } from "./SessionStateManager";
+ import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+ 
++const EMPTY_RUNS: RunRecord[] = [];
++const EMPTY_PLANS: PlanRecord[] = [];
++
+ export interface UseHomeViewModelParams {
+   state: EventStreamState;
+   selectedRunId: string | null;
+@@ -49,8 +52,8 @@ export function useHomeViewModel({
+   workerCatalogData,
+   readMarkers = {},
+ }: UseHomeViewModelParams) {
+-  const runs = (state.runs || []) as RunRecord[];
+-  const plans = (state.plans || []) as PlanRecord[];
++  const runs = (state.runs as RunRecord[] | undefined) ?? EMPTY_RUNS;
++  const plans = (state.plans as PlanRecord[] | undefined) ?? EMPTY_PLANS;
+ 
+   const explicitProjects = useMemo(() => parseProjectList(apiKeys.PROJECTS), [apiKeys.PROJECTS]);
+ 
+@@ -74,6 +77,7 @@ export function useHomeViewModel({
+   const activeComposerMode: ComposerMode = selectedRun
+     ? isPlanningConversation ? "planning" : isDirectConversation ? "direct" : "implementation"
+     : selectedConversationMode;
++  const hasSelectedRun = Boolean(selectedRun);
+ 
+   const catalogWorkers = useMemo(
+     () => workerCatalogData?.workers ?? [],
+@@ -98,7 +102,7 @@ export function useHomeViewModel({
+   );
+ 
+   const activeAllowedWorkerTypes = useMemo(() => {
+-    const configured = selectedRun && selectedRunMode !== "implementation"
++    const configured = hasSelectedRun && selectedRunMode !== "implementation"
+       ? selectedRunAllowedWorkerTypes
+       : configuredAllowedWorkerTypes;
+     if (availableWorkerTypes.length === 0) {
+@@ -108,7 +112,7 @@ export function useHomeViewModel({
+     const availableSet = new Set(availableWorkerTypes);
+     const filtered = configured.filter((type) => availableSet.has(type));
+     return filtered.length > 0 ? filtered : [...availableWorkerTypes];
+-  }, [availableWorkerTypes, configuredAllowedWorkerTypes, selectedRun, selectedRunAllowedWorkerTypes, selectedRunMode]);
++  }, [availableWorkerTypes, configuredAllowedWorkerTypes, hasSelectedRun, selectedRunAllowedWorkerTypes, selectedRunMode]);
+ 
+   const autoSelectedWorkerType = useMemo(() => {
+     return activeAllowedWorkerTypes[0] ?? null;
+@@ -151,22 +155,25 @@ export function useHomeViewModel({
+     }));
+   }, [catalogWorkers]);
+ 
+-  const groupedProjects = buildConversationGroups({
++  const groupedProjects = useMemo(() => buildConversationGroups({
+     explicitProjects,
+     plans,
+     runs,
+-  });
+-
+-  const filteredProjects = groupedProjects.map((group) => {
+-    if (!searchQuery) return group;
+-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+-    const groupRuns = (group.runs as any[]).filter((run: { path: string; title: string }) =>
+-      run.path.toLowerCase().includes(searchQuery.toLowerCase()) ||
+-      run.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+-      group.name.toLowerCase().includes(searchQuery.toLowerCase()),
+-    );
+-    return { ...group, runs: groupRuns };
+-  }).filter((group) => group.runs.length > 0 || group.name.toLowerCase().includes(searchQuery.toLowerCase()));
++  }), [explicitProjects, plans, runs]);
++
++  const filteredProjects = useMemo(() => {
++    if (!searchQuery) return groupedProjects;
++    const normalizedSearchQuery = searchQuery.toLowerCase();
++    return groupedProjects.map((group) => {
++      // eslint-disable-next-line @typescript-eslint/no-explicit-any
++      const groupRuns = (group.runs as any[]).filter((run: { path: string; title: string }) =>
++        run.path.toLowerCase().includes(normalizedSearchQuery) ||
++        run.title.toLowerCase().includes(normalizedSearchQuery) ||
++        group.name.toLowerCase().includes(normalizedSearchQuery),
++      );
++      return { ...group, runs: groupRuns };
++    }).filter((group) => group.runs.length > 0 || group.name.toLowerCase().includes(normalizedSearchQuery));
++  }, [groupedProjects, searchQuery]);
+ 
+   const activeProjects = useMemo(() => {
+     const activeFilterNowMs = Date.now();
+@@ -183,7 +190,6 @@ export function useHomeViewModel({
+       selectedRunId,
+     });
+     return filterActiveConversationGroups(unsearched, searchQuery);
+-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [groupedProjects, state.messages, state.workers, state.agents, state.queuedMessages, readMarkers, searchQuery, selectedRunId]);
+ 
+   const selectedRunMessages = useMemo(
+diff --git a/src/components/home/ConversationComposer.tsx b/src/components/home/ConversationComposer.tsx
+index 42c5ef9..1feabbb 100644
+--- a/src/components/home/ConversationComposer.tsx
++++ b/src/components/home/ConversationComposer.tsx
+@@ -1,5 +1,5 @@
+ import Image from "next/image";
+-import { useRef } from "react";
++import { memo, useRef } from "react";
+ import type React from "react";
+ import { ArrowUp, FileText, LoaderCircle, Plus, SlidersHorizontal, Square, X } from "lucide-react";
+ import { Button } from "@/components/ui/button";
+@@ -48,6 +48,9 @@ interface ConversationComposerProps {
+   selectedCliAgent: ComposerWorkerOption;
+   setSelectedCliAgent: (value: ComposerWorkerOption) => void;
+   composerWorkerOptions: Array<{ value: ComposerWorkerOption; label: string }>;
++  selectedWorkerAccountId: string;
++  setSelectedWorkerAccountId: (value: string) => void;
++  composerAccountOptions: Array<{ value: string; label: string }>;
+   selectedModel: string;
+   setSelectedModel: (value: string) => void;
+   activeWorkerModelOptions: WorkerModelOption[];
+@@ -79,7 +82,7 @@ class ComposerUiManager extends StateManager<{ mobileSettingsOpen: boolean }> {
+ 
+ const composerUiManager = new ComposerUiManager();
+ 
+-export function ConversationComposer({
++function ConversationComposerInner({
+   className,
+   command,
+   setCommandCursor,
+@@ -107,6 +110,9 @@ export function ConversationComposer({
+   selectedCliAgent,
+   setSelectedCliAgent,
+   composerWorkerOptions,
++  selectedWorkerAccountId,
++  setSelectedWorkerAccountId,
++  composerAccountOptions,
+   selectedModel,
+   setSelectedModel,
+   activeWorkerModelOptions,
+@@ -151,8 +157,10 @@ export function ConversationComposer({
+   const selectedHarnessLabel = shouldLockDirectWorker
+     ? lockedDirectWorkerLabel
+     : composerWorkerOptions.find((option) => option.value === selectedCliAgent)?.label ?? selectedCliAgent;
++  const selectedAccountLabel = composerAccountOptions.find((option) => option.value === selectedWorkerAccountId)?.label
++    ?? t("conversation.composer.account.auto");
+   const selectedModelLabel = activeWorkerModelOptions.find((option) => option.value === selectedModel)?.label ?? selectedModel;
+-  const mobileSettingsSummary = `${selectedHarnessLabel} · ${selectedModelLabel}`;
++  const mobileSettingsSummary = `${selectedHarnessLabel} · ${selectedAccountLabel} · ${selectedModelLabel}`;
+   const composerPlaceholder = selectedRunId
+     ? selectedConversationMode === "planning"
+       ? t("conversation.composer.placeholder.planning")
+@@ -244,15 +252,15 @@ export function ConversationComposer({
+             </div>
+           </div>
+         )}
+-      <div
+-        className={cn(
+-          "rounded-[1.5rem] px-4 pb-0 pt-3 transition-all sm:px-5 sm:pb-0 sm:pt-4",
+-          themeMode === "night"
+-            ? "border border-transparent bg-muted/80 shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] focus-within:bg-muted/90 dark:bg-[#2f2f2f] dark:focus-within:bg-[#343434]"
+-            : "rounded-[2rem] border border-[#dededd] bg-[#fdfdfc] shadow-none focus-within:border-[#d2d2d0] focus-within:bg-[#fdfdfc] dark:border-transparent dark:bg-[#2f2f2f] dark:shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] dark:focus-within:bg-[#343434] sm:rounded-[2.35rem]",
+-        )}
+-      >
+-        <textarea
++        <div
++          className={cn(
++            "rounded-[1.5rem] px-4 pb-0 pt-3 transition-all sm:px-5 sm:pb-0 sm:pt-4",
++            themeMode === "night"
++              ? "border border-transparent bg-muted/80 shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] focus-within:bg-muted/90 dark:bg-[#2f2f2f] dark:focus-within:bg-[#343434]"
++              : "rounded-[2rem] border border-[#dededd] bg-[#fdfdfc] shadow-none focus-within:border-[#d2d2d0] focus-within:bg-[#fdfdfc] dark:border-transparent dark:bg-[#2f2f2f] dark:shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] dark:focus-within:bg-[#343434] sm:rounded-[2.35rem]",
++          )}
++        >
++          <textarea
+           data-composer-input="true"
+           ref={commandInputRef}
+           value={command}
+@@ -486,6 +494,16 @@ export function ConversationComposer({
+               />
+             )}
+ 
++            {composerAccountOptions.length > 1 ? (
++              <ComposerSelect
++                ariaLabel={t("conversation.composer.account.ariaLabel")}
++                value={selectedWorkerAccountId}
++                options={composerAccountOptions}
++                onChange={setSelectedWorkerAccountId}
++                themeMode={themeMode}
++              />
++            ) : null}
++
+             <>
+               <ComposerModelPicker
+               value={selectedModel}
+@@ -523,6 +541,10 @@ export function ConversationComposer({
+               {selectedHarnessLabel}
+             </span>
+             <span className="shrink-0 text-muted-foreground/55" aria-hidden="true">·</span>
++            <span className="min-w-0 truncate">
++              {selectedAccountLabel}
++            </span>
++            <span className="shrink-0 text-muted-foreground/55" aria-hidden="true">·</span>
+             <span className="min-w-0 truncate">
+               {selectedModelLabel}
+             </span>
+@@ -573,7 +595,7 @@ export function ConversationComposer({
+             )}
+           </Button>
+         </div>
+-      </div>
++        </div>
+       </div>
+     </form>
+ 
+@@ -601,6 +623,18 @@ export function ConversationComposer({
+                 />
+               </div>
+             )}
++            {composerAccountOptions.length > 1 ? (
++              <div className="flex items-center justify-between">
++                <span className="text-sm font-medium">{t("conversation.composer.settings.account")}</span>
++                <ComposerSelect
++                  ariaLabel={t("conversation.composer.account.ariaLabel")}
++                  value={selectedWorkerAccountId}
++                  options={composerAccountOptions}
++                  onChange={setSelectedWorkerAccountId}
++                  themeMode={themeMode}
++                />
++              </div>
++            ) : null}
+             <div className="flex items-center justify-between">
+               <span className="text-sm font-medium">{t("conversation.composer.settings.model")}</span>
+               <ComposerModelPicker
+@@ -623,6 +657,9 @@ export function ConversationComposer({
+           </div>
+         </SheetContent>
+       </Sheet>
+-  </div>
++    </div>
+   );
+ }
++
++export const ConversationComposer = memo(ConversationComposerInner);
++ConversationComposer.displayName = "ConversationComposer";
+diff --git a/src/components/settings/AgentsSettingsPanel.tsx b/src/components/settings/AgentsSettingsPanel.tsx
+index 0f680b1..7c09902 100644
+--- a/src/components/settings/AgentsSettingsPanel.tsx
++++ b/src/components/settings/AgentsSettingsPanel.tsx
+@@ -1,6 +1,6 @@
+ import { ArrowDown, ArrowUp, RefreshCw } from "lucide-react";
+ import { WORKER_OPTIONS } from "@/app/home/constants";
+-import type { WorkerAvailability, WorkerModelCatalog, WorkerType } from "@/app/home/types";
++import type { AccountRecord, WorkerAvailability, WorkerModelCatalog, WorkerType } from "@/app/home/types";
+ import { buildInlineError, parseBooleanSetting, parseWorkerType, parseWorkerTypes } from "@/app/home/utils";
+ import type { AppErrorDescriptor } from "@/lib/app-errors";
+ import { cn } from "@/lib/utils";
+@@ -15,6 +15,7 @@ interface AgentsSettingsPanelProps {
+   settings: Record<string, string>;
+   setSetting: (key: string, value: string) => void;
+   settingsWorkers: WorkerAvailability[];
++  accounts: AccountRecord[];
+   workerModels?: Partial<WorkerModelCatalog>;
+   workerModelsRefreshing?: boolean;
+   workerCatalogQuery: {
+@@ -31,6 +32,7 @@ export function AgentsSettingsPanel({
+   settings,
+   setSetting,
+   settingsWorkers,
++  accounts,
+   workerModels,
+   workerModelsRefreshing = false,
+   workerCatalogQuery,
+@@ -57,6 +59,12 @@ export function AgentsSettingsPanel({
+     ...configuredAllowedWorkerTypes.flatMap((type) => settingsWorkers.find((worker) => worker.type === type) ?? []),
+     ...settingsWorkers.filter((worker) => !configuredAllowedWorkerSet.has(worker.type)),
+   ];
++  const accountsByWorkerType = new Map<string, AccountRecord[]>();
++  for (const account of accounts) {
++    const key = account.cliType || "";
++    if (!key) continue;
++    accountsByWorkerType.set(key, [...(accountsByWorkerType.get(key) ?? []), account]);
++  }
+ 
+   const persistAllowedWorkerOrder = (nextAllowed: WorkerType[]) => {
+     setSetting("WORKER_ALLOWED_TYPES", JSON.stringify(nextAllowed));
+@@ -193,6 +201,7 @@ export function AgentsSettingsPanel({
+           const canMoveUp = isChecked && priorityIndex > 0;
+           const canMoveDown = isChecked && priorityIndex >= 0 && priorityIndex < displayedAllowedWorkerTypes.length - 1;
+           const modelOptions = workerModels?.[worker.type] ?? [];
++          const workerAccounts = accountsByWorkerType.get(worker.type) ?? [];
+           const availabilityMessage = isAvailable ? null : getWorkerAvailabilityMessage(worker);
+           const availabilityTone =
+             worker.availability.status === "ok"
+@@ -243,6 +252,29 @@ export function AgentsSettingsPanel({
+                     <dd className="min-w-0 truncate" title={worker.tokenQuota?.source}>
+                       {formatTokenQuota(worker)}
+                     </dd>
++                    <dt className="whitespace-nowrap font-medium text-foreground/70">{t("settings.agents.accounts")}</dt>
++                    <dd className="min-w-0">
++                      {workerAccounts.length > 0 ? (
++                        <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto pr-1">
++                          {workerAccounts.map((account) => (
++                            <span
++                              key={account.id}
++                              className={cn(
++                                "rounded-md px-1.5 py-0.5 text-[10px]",
++                                account.enabled
++                                  ? "bg-muted text-foreground/80"
++                                  : "bg-muted/50 text-muted-foreground line-through",
++                              )}
++                              title={account.status ?? undefined}
++                            >
++                              {account.label || `${account.provider} ${account.type}`}
++                            </span>
++                          ))}
++                        </div>
++                      ) : (
++                        <span>{t("settings.agents.accountsNone")}</span>
++                      )}
++                    </dd>
+                     <dt className="whitespace-nowrap font-medium text-foreground/70">{t("settings.tabs.models")}</dt>
+                     <dd className="min-w-0">
+                       {modelOptions.length > 0 ? (
+diff --git a/src/components/settings/SettingsDialog.tsx b/src/components/settings/SettingsDialog.tsx
+index cb68c0f..b8bf324 100644
+--- a/src/components/settings/SettingsDialog.tsx
++++ b/src/components/settings/SettingsDialog.tsx
+@@ -7,7 +7,7 @@ import { requestBugDropOpen } from "@/components/BugDropBootstrap";
+ import type { SettingsDraftState } from "@/app/home/SettingsDraftManager";
+ import type { AppErrorDescriptor } from "@/lib/app-errors";
+ import { appErrorKey } from "@/lib/app-errors";
+-import type { LlmProfileTab, SettingsResponse, SettingsTab, WorkerAvailability, WorkerCatalogResponse } from "@/app/home/types";
++import type { AccountRecord, LlmProfileTab, SettingsResponse, SettingsTab, WorkerAvailability, WorkerCatalogResponse } from "@/app/home/types";
+ import { cn } from "@/lib/utils";
+ import { ErrorNotice } from "@/components/home/ErrorNotice";
+ import { buildInlineError } from "@/app/home/utils";
+@@ -42,6 +42,7 @@ interface SettingsDialogProps {
+   discardSettingsDraft: () => void;
+   secretStates?: Record<string, { configured: boolean; updatedAt: string; preview?: string }>;
+   settingsWorkers: WorkerAvailability[];
++  accounts: AccountRecord[];
+   workerCatalogQuery: {
+     isError: boolean;
+     isFetching?: boolean;
+@@ -72,6 +73,7 @@ export function SettingsDialog({
+   discardSettingsDraft,
+   secretStates,
+   settingsWorkers,
++  accounts,
+   workerCatalogQuery,
+   onRefreshWorkerCatalog,
+   workerCatalogRefreshing,
+@@ -156,6 +158,7 @@ export function SettingsDialog({
+                 settings={settingsDraft.draft}
+                 setSetting={setSetting}
+                 settingsWorkers={settingsWorkers}
++                accounts={accounts}
+                 workerModels={workerCatalogQuery.data?.workerModels}
+                 workerModelsRefreshing={workerCatalogQuery.data?.workerModelsRefreshing}
+                 workerCatalogQuery={workerCatalogQuery}
+diff --git a/src/runtime/http/routes/conversation-messages.ts b/src/runtime/http/routes/conversation-messages.ts
+index 509d4de..9dbf9c3 100644
+--- a/src/runtime/http/routes/conversation-messages.ts
++++ b/src/runtime/http/routes/conversation-messages.ts
+@@ -67,6 +67,7 @@ export const handleConversationMessagesRequest: OmniHttpHandler = async (request
+     const preferredWorkerType = typeof body?.preferredWorkerType === "string" ? body.preferredWorkerType : null;
+     const preferredWorkerModel = typeof body?.preferredWorkerModel === "string" ? body.preferredWorkerModel : null;
+     const preferredWorkerEffort = typeof body?.preferredWorkerEffort === "string" ? body.preferredWorkerEffort : null;
++    const preferredWorkerAccountId = typeof body?.preferredWorkerAccountId === "string" ? body.preferredWorkerAccountId : null;
+     const allowedWorkerTypes = Array.isArray(body?.allowedWorkerTypes) || typeof body?.allowedWorkerTypes === "string"
+       ? body.allowedWorkerTypes
+       : null;
+@@ -98,6 +99,7 @@ export const handleConversationMessagesRequest: OmniHttpHandler = async (request
+         preferredWorkerType,
+         preferredWorkerModel,
+         preferredWorkerEffort,
++        preferredWorkerAccountId,
+         allowedWorkerTypes,
+       });
+       probe.mark("sendConversationMessage");
+diff --git a/src/runtime/http/routes/conversations.ts b/src/runtime/http/routes/conversations.ts
+index ac54faf..a2fdcba 100644
+--- a/src/runtime/http/routes/conversations.ts
++++ b/src/runtime/http/routes/conversations.ts
+@@ -170,6 +170,7 @@ export const handleConversationsRequest: OmniHttpHandler = async (request) => {
+         : typeof body?.preferredWorkerType === "string" ? body.preferredWorkerType : null,
+       preferredWorkerModel: typeof body?.preferredWorkerModel === "string" ? body.preferredWorkerModel : null,
+       preferredWorkerEffort: typeof body?.preferredWorkerEffort === "string" ? body.preferredWorkerEffort : null,
++      preferredWorkerAccountId: typeof body?.preferredWorkerAccountId === "string" ? body.preferredWorkerAccountId : null,
+       allowedWorkerTypes: Array.isArray(body?.allowedWorkerTypes) || typeof body?.allowedWorkerTypes === "string"
+         ? body.allowedWorkerTypes
+         : null,
+diff --git a/src/runtime/http/routes/events.ts b/src/runtime/http/routes/events.ts
+index 4bd2419..bde078f 100644
+--- a/src/runtime/http/routes/events.ts
++++ b/src/runtime/http/routes/events.ts
+@@ -24,6 +24,7 @@ import { buildAwaitingUserQuestionInvariantErrors } from "@/server/events/lifecy
+ import { serializeSessionRecord } from "@/server/session-providers/session-records";
+ import { reconcileOrphanedProcessSessions } from "@/server/session-providers/process-store";
+ import { reconcilePersistedReloadZombies } from "@/server/runs/persisted-zombie-reconciler";
++import { toAccountDto } from "@/server/accounts/dto";
+ import type { OmniHttpHandler } from "@/runtime/http/registry";
+ import { startSlowProbe } from "@/server/slow-probe";
+ import { toNextRequest } from "./next-request";
+@@ -479,7 +480,7 @@ function buildEventPayload(
+     plans: records.allPlans,
+     runs: records.allRuns,
+     sessions,
+-    accounts: records.allAccounts,
++    accounts: records.allAccounts.map(toAccountDto),
+     agents: agentsData.map(compactAgentSnapshot),
+     workers: records.allWorkers.map(compactWorkerRecord),
+     planItems: records.allPlanItems,
+diff --git a/src/runtime/http/routes/prewarm-worker.ts b/src/runtime/http/routes/prewarm-worker.ts
+index 78424cb..bea5da9 100644
+--- a/src/runtime/http/routes/prewarm-worker.ts
++++ b/src/runtime/http/routes/prewarm-worker.ts
+@@ -38,6 +38,8 @@ export const handlePrewarmWorkerRequest: OmniHttpHandler = async (request) => {
+       cwd,
+       model: typeof body.model === "string" ? body.model : null,
+       mode: typeof body.mode === "string" ? body.mode : null,
++      accountId: typeof body.accountId === "string" ? body.accountId : null,
++      credentialProfile: typeof body.credentialProfile === "string" ? body.credentialProfile : null,
+       env: envParams,
+     });
+     return Response.json(result);
+diff --git a/src/runtime/http/routes/runs.ts b/src/runtime/http/routes/runs.ts
+index 934aec0..2ef2f1c 100644
+--- a/src/runtime/http/routes/runs.ts
++++ b/src/runtime/http/routes/runs.ts
+@@ -79,6 +79,10 @@ function isSupervisorStopAlreadySettled(status: string | null | undefined) {
+   return normalizeWorkerStatus(status) !== "running";
+ }
+ 
++function isPermanentAccountFailure(message: string | null | undefined) {
++  return /\b(?:api key|authentication required|auth(?:entication)? failed|billing required|api billing|cap_exceeded|insufficient quota|resource exhausted)\b/i.test(message ?? "");
++}
++
+ function actionLabelForPostAction(action: unknown) {
+   switch (action) {
+     case "stop_supervisor":
+@@ -662,6 +666,14 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
+       });
+     }
+ 
++    if (action === "retry" && actionRun.status === "failed" && isPermanentAccountFailure(actionRun.lastError)) {
++      return errorResponse("This run cannot be auto-retried while the saved failure is an account, billing, or quota error.", {
++        status: 409,
++        source: "Runs",
++        action: "Recover conversation",
++      });
++    }
++
+     const result = await recoverRun({
+       runId,
+       action,
+diff --git a/src/server/accounts/dto.ts b/src/server/accounts/dto.ts
+index 637c8f1..b52855a 100644
+--- a/src/server/accounts/dto.ts
++++ b/src/server/accounts/dto.ts
+@@ -4,20 +4,49 @@ type AccountRow = typeof accounts.$inferSelect;
+ 
+ export type AccountDto = {
+   id: string;
++  cliType: string | null;
+   provider: string;
+   type: string;
++  label: string | null;
++  authMode: string;
++  enabled: boolean;
++  priority: number;
+   capacity: number | null;
+   resetSchedule: string | null;
++  status: string | null;
++  statusCheckedAt: string | null;
++  metadata: Record<string, unknown> | null;
+   createdAt: string;
++  updatedAt: string | null;
+ };
+ 
++function parseMetadata(metadataJson: string | null): Record<string, unknown> | null {
++  if (!metadataJson) return null;
++  try {
++    const value = JSON.parse(metadataJson) as unknown;
++    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
++    return value as Record<string, unknown>;
++  } catch {
++    return null;
++  }
++}
++
+ export function toAccountDto(account: AccountRow): AccountDto {
+   return {
+     id: account.id,
++    cliType: account.cliType ?? null,
+     provider: account.provider,
+     type: account.type,
++    label: account.label ?? null,
++    authMode: account.authMode,
++    enabled: account.enabled,
++    priority: account.priority,
+     capacity: account.capacity ?? null,
+     resetSchedule: account.resetSchedule ?? null,
++    status: account.status ?? null,
++    statusCheckedAt: account.statusCheckedAt?.toISOString() ?? null,
++    metadata: parseMetadata(account.metadataJson ?? null),
+     createdAt: account.createdAt.toISOString(),
++    updatedAt: account.updatedAt?.toISOString() ?? null,
+   };
+ }
+diff --git a/src/server/agent-runtime/http.ts b/src/server/agent-runtime/http.ts
+index 4685b1a..aab4762 100644
+--- a/src/server/agent-runtime/http.ts
++++ b/src/server/agent-runtime/http.ts
+@@ -99,6 +99,8 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
+           model?: string | null;
+           mode?: string | null;
+           env?: Record<string, string>;
++          accountId?: string | null;
++          credentialProfile?: string | null;
+           mcpServers?: unknown;
+         }>(req);
+         if (typeof body.type !== "string" || body.type.trim().length === 0) {
+@@ -116,6 +118,8 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
+           model: body.model ?? null,
+           mode: body.mode ?? null,
+           env: body.env,
++          accountId: body.accountId ?? null,
++          credentialProfile: body.credentialProfile ?? null,
+           mcpServers,
+         }));
+         return;
+diff --git a/src/server/agent-runtime/manager.ts b/src/server/agent-runtime/manager.ts
+index d46d6dd..59ea7da 100644
+--- a/src/server/agent-runtime/manager.ts
++++ b/src/server/agent-runtime/manager.ts
+@@ -9,7 +9,6 @@ import { Readable, Writable } from "stream";
+ import * as acp from "@agentclientprotocol/sdk";
+ import { sanitizeAcpStream } from "./acp-stream-sanitizer";
+ import { applyCodexBridgeEnv, buildCodexConfigArgs, shouldSetRequestedMode } from "./codex";
+-import { applyCredentialProfileEnv, resolveCredentialProfile } from "./external-credentials";
+ import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
+ import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, withCodexStandardTooling, withManagedPath } from "./tool-env";
+ import {
+@@ -34,6 +33,10 @@ import type {
+   StartAgentInput,
+ } from "./types";
+ import { RuntimeHttpError } from "./types";
++import {
++  applyAccountCredentialEnv,
++  resolveAccountCredentials,
++} from "@/server/accounts/account-resolver";
+ import {
+   computeEnvFingerprint,
+   computeWorkerPoolKey,
+@@ -132,8 +135,10 @@ function bridgeProjectScopedCliCredentials(type: string, env: EnvLike) {
+     const globalHome = join(userHomeFromEnv(env), ".gemini");
+     const scopedConfigDir = join(scopedHome, ".gemini");
+     for (const fileName of [
++      "gemini-credentials.json",
+       "google_accounts.json",
+       "google_account_id",
++      "oauth_creds.json",
+       "mcp-oauth-tokens-v2.json",
+       "settings.json",
+     ]) {
+@@ -156,6 +161,31 @@ function bridgeProjectScopedCliCredentials(type: string, env: EnvLike) {
+     if (!scopedConfigDir) return;
+     const globalHome = join(userHomeFromEnv(env), ".claude");
+     bridgeDirectoryIfMissing(join(globalHome, "skills"), join(scopedConfigDir, "skills"));
++    return;
++  }
++
++  if (type === "opencode") {
++    const homeDir = userHomeFromEnv(env);
++    const scopedConfigDir = env.OPENCODE_CONFIG_DIR?.trim();
++    const scopedDataHome = env.XDG_DATA_HOME?.trim();
++    const scopedStateHome = env.XDG_STATE_HOME?.trim();
++    const scopedCacheHome = env.XDG_CACHE_HOME?.trim();
++
++    if (scopedConfigDir) {
++      bridgeDirectoryIfMissing(join(homeDir, ".config", "opencode"), scopedConfigDir);
++      mkdirSync(scopedConfigDir, { recursive: true });
++    }
++    if (scopedDataHome) {
++      const scopedDataDir = join(scopedDataHome, "opencode");
++      mkdirSync(scopedDataDir, { recursive: true });
++      bridgeCredentialFileIfMissing(join(homeDir, ".local", "share", "opencode", "auth.json"), join(scopedDataDir, "auth.json"));
++    }
++    if (scopedStateHome) {
++      mkdirSync(join(scopedStateHome, "opencode"), { recursive: true });
++    }
++    if (scopedCacheHome) {
++      mkdirSync(join(scopedCacheHome, "opencode"), { recursive: true });
++    }
+   }
+ }
+ 
+@@ -200,7 +230,7 @@ function applyClaudeKeychainOAuthToken(env: EnvLike) {
+   }
+ }
+ 
+-function applyProjectScopedCliStorage(type: string, cwd: string, env: EnvLike) {
++function applyProjectScopedCliStorage(type: string, cwd: string, env: EnvLike, options: { bridgeCredentials?: boolean } = {}) {
+   const cliHome = join(cwd, ".omniharness", "cli-home");
+   let shouldBridgeCredentials = false;
+   if (type === "gemini" && !env.GEMINI_CLI_HOME?.trim()) {
+@@ -223,20 +253,28 @@ function applyProjectScopedCliStorage(type: string, cwd: string, env: EnvLike) {
+   }
+   if (type === "opencode") {
+     const opencodeHome = join(cliHome, "opencode");
++    let opencodeUsesScopedStorage = false;
+     if (!env.OPENCODE_CONFIG_DIR?.trim()) {
+       env.OPENCODE_CONFIG_DIR = join(opencodeHome, "config");
++      opencodeUsesScopedStorage = true;
+     }
+     if (!env.XDG_DATA_HOME?.trim()) {
+       env.XDG_DATA_HOME = join(opencodeHome, "data");
++      opencodeUsesScopedStorage = true;
+     }
+     if (!env.XDG_STATE_HOME?.trim()) {
+       env.XDG_STATE_HOME = join(opencodeHome, "state");
++      opencodeUsesScopedStorage = true;
+     }
+     if (!env.XDG_CACHE_HOME?.trim()) {
+       env.XDG_CACHE_HOME = join(opencodeHome, "cache");
++      opencodeUsesScopedStorage = true;
++    }
++    if (opencodeUsesScopedStorage) {
++      shouldBridgeCredentials = true;
+     }
+   }
+-  if (shouldBridgeCredentials) {
++  if (shouldBridgeCredentials && options.bridgeCredentials !== false) {
+     bridgeProjectScopedCliCredentials(type, env);
+   }
+ }
+@@ -1430,21 +1468,27 @@ export class AgentRuntimeManager {
+       ...(configuredAgent?.env || {}),
+       ...(input.env || {}),
+     }, cwd);
+-    applyProjectScopedCliStorage(type, cwd, finalEnv);
+-    const credentialProfile = await resolveCredentialProfile({
+-      type,
++    const accountCredentials = await resolveAccountCredentials({
++      workerType: type,
+       cwd,
+       env: finalEnv,
+-      requestedProfile: input.credentialProfile,
+-      configuredProfile: configuredAgent?.credentialProfile,
++      accountId: input.accountId,
++      requestedCredentialProfile: input.credentialProfile,
++      configuredCredentialProfile: configuredAgent?.credentialProfile,
+     });
+-    applyCredentialProfileEnv(finalEnv, credentialProfile);
++    if (accountCredentials.account?.authMode === "isolated_cli_home") {
++      Object.assign(finalEnv, accountCredentials.env);
++    }
++    applyProjectScopedCliStorage(type, cwd, finalEnv, {
++      bridgeCredentials: accountCredentials.allowGlobalCredentialBridge,
++    });
++    applyAccountCredentialEnv(finalEnv, accountCredentials);
+ 
+     if (type === "codex") {
+       Object.assign(finalEnv, withCodexStandardTooling(finalEnv));
+       Object.assign(finalEnv, applyCodexBridgeEnv(finalEnv, null));
+     }
+-    if (type === "claude") {
++    if (type === "claude" && accountCredentials.allowGlobalCredentialBridge) {
+       applyClaudeKeychainOAuthToken(finalEnv);
+     }
+ 
+@@ -1597,7 +1641,7 @@ export class AgentRuntimeManager {
+       effectiveModel: requestedModel,
+       requestedEffort,
+       effectiveEffort: null,
+-      credentialProfile: credentialProfile.status,
++      credentialProfile: accountCredentials.credentialProfile.status,
+       sessionMode: requestedMode || null,
+       contextUsage: null,
+       lastText: "",
+@@ -1869,6 +1913,8 @@ export class AgentRuntimeManager {
+     model?: string | null;
+     mode?: string | null;
+     env?: Record<string, string>;
++    accountId?: string | null;
++    credentialProfile?: string | null;
+     mcpServers?: acp.McpServer[];
+   }): Promise<{ ok: true; key: string; size: number; warmed: boolean }> {
+     this.applyRuntimeSettings(input.env ?? {}, { emit: false });
+@@ -1888,21 +1934,27 @@ export class AgentRuntimeManager {
+       ...(configuredAgent?.env || {}),
+       ...(input.env || {}),
+     }, cwd);
+-    applyProjectScopedCliStorage(type, cwd, finalEnv);
+-    const credentialProfile = await resolveCredentialProfile({
+-      type,
++    const accountCredentials = await resolveAccountCredentials({
++      workerType: type,
+       cwd,
+       env: finalEnv,
+-      requestedProfile: undefined,
+-      configuredProfile: configuredAgent?.credentialProfile,
++      accountId: input.accountId,
++      requestedCredentialProfile: input.credentialProfile,
++      configuredCredentialProfile: configuredAgent?.credentialProfile,
++    });
++    if (accountCredentials.account?.authMode === "isolated_cli_home") {
++      Object.assign(finalEnv, accountCredentials.env);
++    }
++    applyProjectScopedCliStorage(type, cwd, finalEnv, {
++      bridgeCredentials: accountCredentials.allowGlobalCredentialBridge,
+     });
+-    applyCredentialProfileEnv(finalEnv, credentialProfile);
++    applyAccountCredentialEnv(finalEnv, accountCredentials);
+ 
+     if (type === "codex") {
+       Object.assign(finalEnv, withCodexStandardTooling(finalEnv));
+       Object.assign(finalEnv, applyCodexBridgeEnv(finalEnv, null));
+     }
+-    if (type === "claude") {
++    if (type === "claude" && accountCredentials.allowGlobalCredentialBridge) {
+       applyClaudeKeychainOAuthToken(finalEnv);
+     }
+ 
+diff --git a/src/server/agent-runtime/types.ts b/src/server/agent-runtime/types.ts
+index d4444ab..4b8980a 100644
+--- a/src/server/agent-runtime/types.ts
++++ b/src/server/agent-runtime/types.ts
+@@ -140,6 +140,7 @@ export type StartAgentInput = {
+   args?: string[];
+   env?: Record<string, string>;
+   credentialProfile?: string;
++  accountId?: string;
+   mode?: string;
+   model?: string;
+   effort?: string;
+diff --git a/src/server/agent-runtime/worker-pool.ts b/src/server/agent-runtime/worker-pool.ts
+index caeb78a..1d06ddf 100644
+--- a/src/server/agent-runtime/worker-pool.ts
++++ b/src/server/agent-runtime/worker-pool.ts
+@@ -51,7 +51,10 @@ export function computeEnvFingerprint(env: NodeJS.ProcessEnv): string {
+       k.startsWith("GOOGLE_") ||
+       k.startsWith("OPENAI_") ||
+       k.startsWith("ANTHROPIC_") ||
++      k.startsWith("CLAUDE_") ||
++      k.startsWith("CODEX_") ||
+       k.startsWith("OPENCODE_") ||
++      k.startsWith("XDG_") ||
+       k.includes("API_KEY") ||
+       k === "PATH" ||
+       k === "HOME"
+diff --git a/src/server/bridge-client/index.ts b/src/server/bridge-client/index.ts
+index d326d8a..0bbf3d1 100644
+--- a/src/server/bridge-client/index.ts
++++ b/src/server/bridge-client/index.ts
+@@ -513,6 +513,8 @@ export async function prewarmWorker(params: {
+   model?: string | null;
+   mode?: string | null;
+   env?: Record<string, string>;
++  accountId?: string | null;
++  credentialProfile?: string | null;
+   mcpServers?: BridgeMcpServer[];
+ }) {
+   return requestBridge<PrewarmWorkerResult>(
+@@ -534,6 +536,7 @@ export async function spawnAgent(params: {
+   mode?: string;
+   env?: Record<string, string>;
+   credentialProfile?: string;
++  accountId?: string;
+   model?: string;
+   effort?: string;
+   skillRoots?: string[];
+diff --git a/src/server/conversations/create.ts b/src/server/conversations/create.ts
+index bcd9f4e..c054f79 100644
+--- a/src/server/conversations/create.ts
++++ b/src/server/conversations/create.ts
+@@ -40,6 +40,7 @@ import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
+ import { isResourceAdmissionError } from "@/server/agent-runtime/resource-admission";
+ import { globalClaudeConfigDir } from "@/server/external-sessions/discovery";
+ import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
++import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
+ 
+ 
+ function buildInitialWorkerPrompt(mode: ConversationMode, command: string, projectRoot: string) {
+@@ -446,6 +447,7 @@ async function startDirectWorkerConversation(args: {
+   mode?: string;
+   preferredWorkerModel?: string | null;
+   preferredWorkerEffort?: string | null;
++  preferredWorkerAccountId?: string | null;
+   command: string;
+   externalClaudeSessionId?: string | null;
+ }) {
+@@ -461,6 +463,7 @@ async function startDirectWorkerConversation(args: {
+       name: args.workerId,
+       ...(args.mode ? { mode: args.mode } : {}),
+       env: externalEnv,
++      ...(args.preferredWorkerAccountId ? { accountId: args.preferredWorkerAccountId } : {}),
+       model: args.preferredWorkerModel?.trim() || undefined,
+       effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
+       ...(args.externalClaudeSessionId ? { resumeSessionId: args.externalClaudeSessionId } : {}),
+@@ -533,6 +536,7 @@ export async function createConversation(args: {
+   preferredWorkerType?: string | null;
+   preferredWorkerModel?: string | null;
+   preferredWorkerEffort?: string | null;
++  preferredWorkerAccountId?: string | null;
+   allowedWorkerTypes?: string[] | string | null;
+   requestedRunId?: string | null;
+   attachments?: ChatAttachment[];
+@@ -615,6 +619,7 @@ export async function createConversation(args: {
+       preferredWorkerType,
+       preferredWorkerModel: args.preferredWorkerModel?.trim() || null,
+       preferredWorkerEffort: args.preferredWorkerEffort?.trim().toLowerCase() || null,
++      preferredWorkerAccountId: args.preferredWorkerAccountId?.trim() || null,
+       allowedWorkerTypes: JSON.stringify(allowedWorkerTypes),
+       autoCommitMilestones: commitWorkflowSettings.autoCommitMilestones,
+       pushOnCommit: commitWorkflowSettings.pushOnCommit,
+@@ -687,6 +692,14 @@ export async function createConversation(args: {
+         createdAt: new Date(),
+         updatedAt: new Date(),
+       });
++      const accountAllocation = await allocateWorkerAccount({
++        workerType,
++        runId,
++        workerId,
++        explicitAccountId: args.preferredWorkerAccountId?.trim() || null,
++        strategy: args.preferredWorkerAccountId?.trim() ? "manual" : "priority",
++      });
++      const workerAccountId = accountAllocation.account?.id ?? null;
+       if (!args.externalClaudeSessionId || command) {
+         await appendUserInputOnDelivery({
+           id: initialMessageId,
+@@ -723,6 +736,7 @@ export async function createConversation(args: {
+           mode: workerMode,
+           preferredWorkerModel: args.preferredWorkerModel,
+           preferredWorkerEffort: args.preferredWorkerEffort,
++          preferredWorkerAccountId: workerAccountId,
+           command: workerPrompt,
+           externalClaudeSessionId: args.externalClaudeSessionId,
+         });
+@@ -745,6 +759,7 @@ export async function createConversation(args: {
+               name: workerId,
+               ...(workerMode ? { mode: workerMode } : {}),
+               env: envParams,
++              ...(workerAccountId ? { accountId: workerAccountId } : {}),
+               model: args.preferredWorkerModel?.trim() || undefined,
+               effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
+             });
+diff --git a/src/server/conversations/queued-messages.ts b/src/server/conversations/queued-messages.ts
+index c4ea4f6..8bcc16b 100644
+--- a/src/server/conversations/queued-messages.ts
++++ b/src/server/conversations/queued-messages.ts
+@@ -495,9 +495,9 @@ async function deliverQueuedWorkerSteering(args: {
+   content: string;
+   userText: string;
+   attachments: ChatAttachment[];
++  onUserInputAppended?: () => void;
+ }) {
+   await runWorkerTurn(args.worker.id, async () => {
+-    let userInputAppended = false;
+     const appendQueuedUserInput = async (deliveredAt: Date) => {
+       await appendUserInputOnDelivery({
+         id: args.userMessageId ?? args.messageId,
+@@ -512,7 +512,7 @@ async function deliverQueuedWorkerSteering(args: {
+           sizeBytes: attachment.size,
+         })),
+       });
+-      userInputAppended = true;
++      args.onUserInputAppended?.();
+     };
+ 
+     if (await queuedMessageStatus(args.messageId) !== "delivering") {
+@@ -520,25 +520,12 @@ async function deliverQueuedWorkerSteering(args: {
+       return;
+     }
+ 
+-    await appendQueuedUserInput(new Date());
+-    notifyEventStreamSubscribers();
+-
+-    if (await queuedMessageStatus(args.messageId) !== "delivering") {
+-      notifyEventStreamSubscribers();
+-      return;
+-    }
+-
+     const snapshotBeforeAsk = await Promise.resolve(getAgent(args.worker.id)).catch(() => null);
+     const deliveredAt = new Date();
+     if (await queuedMessageStatus(args.messageId) !== "delivering") {
+       notifyEventStreamSubscribers();
+       return;
+     }
+-    if (!userInputAppended) {
+-      // Kept as a defensive fallback for future call paths that might
+-      // choose not to pre-anchor the prompt before bridge output streams.
+-      await appendQueuedUserInput(deliveredAt);
+-    }
+     if (await answerPendingWorkerElicitation({
+       run: args.run,
+       worker: args.worker,
+@@ -546,6 +533,7 @@ async function deliverQueuedWorkerSteering(args: {
+       content: args.userText,
+       deliveredAt,
+     })) {
++      await appendQueuedUserInput(deliveredAt);
+       await db.update(queuedConversationMessages).set({
+         status: "delivered",
+         lastError: null,
+@@ -562,6 +550,14 @@ async function deliverQueuedWorkerSteering(args: {
+       return;
+     }
+ 
++    await appendQueuedUserInput(deliveredAt);
++    notifyEventStreamSubscribers();
++
++    if (await queuedMessageStatus(args.messageId) !== "delivering") {
++      notifyEventStreamSubscribers();
++      return;
++    }
++
+     const response = await askAgent(args.worker.id, workerPromptForRun(args.run, args.content));
+     await persistDeliveredWorkerResponse({
+       run: args.run,
+@@ -596,8 +592,14 @@ async function continueQueuedWorkerSteering(args: {
+   userText: string;
+   attachments: ChatAttachment[];
+ }) {
++  let userInputAppended = false;
+   try {
+-    await deliverQueuedWorkerSteering(args);
++    await deliverQueuedWorkerSteering({
++      ...args,
++      onUserInputAppended: () => {
++        userInputAppended = true;
++      },
++    });
+     return;
+   } catch (error) {
+     if (isAgentNotFoundError(error)) {
+@@ -611,6 +613,9 @@ async function continueQueuedWorkerSteering(args: {
+           await deliverQueuedWorkerSteering({
+             ...args,
+             worker: fallbackWorker,
++            onUserInputAppended: () => {
++              userInputAppended = true;
++            },
+           });
+           return;
+         } catch (fallbackError) {
+@@ -641,7 +646,7 @@ async function continueQueuedWorkerSteering(args: {
+         });
+       }
+     }
+-    if (isAgentBusyError(error) && args.userMessageId) {
++    if (args.userMessageId && (isAgentBusyError(error) || !userInputAppended)) {
+       await db.delete(messages).where(eq(messages.id, args.userMessageId));
+     }
+     await insertQueueExecutionEvent(args.run.id, isAgentBusyError(error) ? "queued_message_deferred" : "queued_message_failed", {
+@@ -1089,20 +1094,6 @@ export async function drainQueuedWorkerMessages({
+         }).where(eq(workers.id, workerId));
+         const snapshotBeforeAsk = snapshot ?? await Promise.resolve(getAgent(workerId)).catch(() => null);
+         const deliveredAt = new Date();
+-        await appendUserInputOnDelivery({
+-          id: userMessage.id,
+-          runId,
+-          workerId,
+-          text: record.content,
+-          deliveredAt,
+-          attachments: normalizedAttachments.map((attachment) => ({
+-            id: attachment.id,
+-            filename: attachment.name,
+-            mimeType: attachment.mimeType,
+-            sizeBytes: attachment.size,
+-          })),
+-        });
+-        await db.insert(messages).values(userMessage);
+         if (await answerPendingWorkerElicitation({
+           run,
+           worker,
+@@ -1110,6 +1101,20 @@ export async function drainQueuedWorkerMessages({
+           content: record.content,
+           deliveredAt,
+         })) {
++          await appendUserInputOnDelivery({
++            id: userMessage.id,
++            runId,
++            workerId,
++            text: record.content,
++            deliveredAt,
++            attachments: normalizedAttachments.map((attachment) => ({
++              id: attachment.id,
++              filename: attachment.name,
++              mimeType: attachment.mimeType,
++              sizeBytes: attachment.size,
++            })),
++          });
++          await db.insert(messages).values(userMessage);
+           await db.update(queuedConversationMessages).set({
+             status: "delivered",
+             lastError: null,
+@@ -1124,6 +1129,20 @@ export async function drainQueuedWorkerMessages({
+           return;
+         }
+ 
++        await appendUserInputOnDelivery({
++          id: userMessage.id,
++          runId,
++          workerId,
++          text: record.content,
++          deliveredAt,
++          attachments: normalizedAttachments.map((attachment) => ({
++            id: attachment.id,
++            filename: attachment.name,
++            mimeType: attachment.mimeType,
++            sizeBytes: attachment.size,
++          })),
++        });
++        await db.insert(messages).values(userMessage);
+         const response = await askAgent(workerId, workerPromptForRun(run, workerContent));
+         await persistDeliveredWorkerResponse({
+           run,
+diff --git a/src/server/conversations/send-message.ts b/src/server/conversations/send-message.ts
+index 1269f30..ab93bf6 100644
+--- a/src/server/conversations/send-message.ts
++++ b/src/server/conversations/send-message.ts
+@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
+ import { and, asc, eq } from "drizzle-orm";
+ import { askAgent, cancelAgent, getAgent, respondElicitation, spawnAgent } from "@/server/bridge-client";
+ import { db } from "@/server/db";
+-import { clarifications, messages, runs, workers } from "@/server/db/schema";
++import { clarifications, messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
+ import { recordExecutionEvent } from "@/server/events/execution-event-store";
+ import { answerClarification } from "@/server/clarifications/store";
+ import { resumeRunAfterClarification } from "@/server/clarifications/loop";
+@@ -17,10 +17,11 @@ import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
+ import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
+ import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
+ import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
+-import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
++import { appendAttachmentContext, normalizeChatAttachments, parseChatAttachmentsJson, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
+ import { getAppDataPath } from "@/server/app-root";
+ import { normalizeWorkerType, SUPPORTED_WORKER_TYPES, type SupportedWorkerType } from "@/server/supervisor/worker-types";
+ import { createQueuedConversationMessage, type BusyMessageAction } from "./queued-messages";
++import { interruptWithDraftMessage } from "./queued-message-interrupt";
+ import { serializeMessageRecord } from "./message-records";
+ import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
+ import { runConversationMutation, runWorkerTurn, trackConversationBackgroundTask } from "./worker-turn-gate";
+@@ -201,6 +202,46 @@ async function answerDirectWorkerElicitation(args: {
+   return userMessage;
+ }
+ 
++async function retireMatchingQueuedDirectAnswers(args: {
++  runId: string;
++  workerId: string;
++  content: string;
++  attachmentsJson: string | null;
++  answeredAt: Date;
++}) {
++  const expectedAttachmentsJson = serializeChatAttachments(parseChatAttachmentsJson(args.attachmentsJson));
++  const queuedRows = await db
++    .select()
++    .from(queuedConversationMessages)
++    .where(eq(queuedConversationMessages.runId, args.runId));
++  const matchingRows = queuedRows.filter((row) => (
++    (row.status === "pending" || row.status === "delivering")
++    && (row.targetWorkerId === args.workerId || row.targetWorkerId === null)
++    && row.content === args.content
++    && serializeChatAttachments(parseChatAttachmentsJson(row.attachmentsJson)) === expectedAttachmentsJson
++  ));
++
++  for (const row of matchingRows) {
++    await db.update(queuedConversationMessages).set({
++      status: "cancelled",
++      lastError: "Answered directly before queued delivery.",
++      updatedAt: args.answeredAt,
++    }).where(eq(queuedConversationMessages.id, row.id));
++    await recordExecutionEvent({
++      runId: args.runId,
++      workerId: row.targetWorkerId ?? args.workerId,
++      planItemId: null,
++      eventType: "queued_message_cancelled",
++      details: {
++        summary: "Cancelled queued duplicate after the answer was delivered directly.",
++        queuedMessageId: row.id,
++        reason: "direct_answer_delivered",
++      },
++      createdAt: args.answeredAt,
++    });
++  }
++}
++
+ /**
+  * Reconcile the DB user-message list against the worker output stream.
+  *
+@@ -292,6 +333,7 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
+     name: worker.id,
+     ...(workerMode ? { mode: workerMode } : {}),
+     env: envParams,
++    ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
+     ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+     ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+   };
+@@ -670,6 +712,7 @@ type SendConversationMessageArgs = {
+   preferredWorkerType?: string | null;
+   preferredWorkerModel?: string | null;
+   preferredWorkerEffort?: string | null;
++  preferredWorkerAccountId?: string | null;
+   allowedWorkerTypes?: string[] | string | null;
+ };
+ 
+@@ -697,6 +740,7 @@ async function applyWorkerPreferenceForMessage(args: {
+   preferredWorkerType?: string | null;
+   preferredWorkerModel?: string | null;
+   preferredWorkerEffort?: string | null;
++  preferredWorkerAccountId?: string | null;
+   allowedWorkerTypes?: string[] | string | null;
+ }) {
+   const explicitWorkerType = parseExplicitWorkerType(args.preferredWorkerType);
+@@ -711,12 +755,14 @@ async function applyWorkerPreferenceForMessage(args: {
+     ? args.preferredWorkerModel?.trim() || null
+     : null;
+   const nextPreferredWorkerEffort = args.preferredWorkerEffort?.trim() || args.run.preferredWorkerEffort || null;
++  const nextPreferredWorkerAccountId = args.preferredWorkerAccountId?.trim() || null;
+   const now = new Date();
+ 
+   await db.update(runs).set({
+     preferredWorkerType: nextWorkerType,
+     preferredWorkerModel: nextPreferredWorkerModel,
+     preferredWorkerEffort: nextPreferredWorkerEffort,
++    preferredWorkerAccountId: nextPreferredWorkerAccountId,
+     allowedWorkerTypes: JSON.stringify(nextAllowedWorkerTypes),
+     updatedAt: now,
+   }).where(eq(runs.id, args.run.id));
+@@ -730,6 +776,7 @@ async function applyWorkerPreferenceForMessage(args: {
+       preferredWorkerType: nextWorkerType,
+       preferredWorkerModel: nextPreferredWorkerModel,
+       preferredWorkerEffort: nextPreferredWorkerEffort,
++      preferredWorkerAccountId: nextPreferredWorkerAccountId,
+       allowedWorkerTypes: nextAllowedWorkerTypes,
+       source: explicitWorkerType ? "composer_selection" : "message_text",
+     },
+@@ -741,6 +788,7 @@ async function applyWorkerPreferenceForMessage(args: {
+     preferredWorkerType: nextWorkerType,
+     preferredWorkerModel: nextPreferredWorkerModel,
+     preferredWorkerEffort: nextPreferredWorkerEffort,
++    preferredWorkerAccountId: nextPreferredWorkerAccountId,
+     allowedWorkerTypes: JSON.stringify(nextAllowedWorkerTypes),
+     updatedAt: now,
+   };
+@@ -892,6 +940,7 @@ async function sendConversationMessageUnlocked({
+   preferredWorkerType = null,
+   preferredWorkerModel = null,
+   preferredWorkerEffort = null,
++  preferredWorkerAccountId = null,
+   allowedWorkerTypes = null,
+ }: SendConversationMessageArgs) {
+   const trimmedContent = content.trim();
+@@ -918,6 +967,7 @@ async function sendConversationMessageUnlocked({
+     preferredWorkerType,
+     preferredWorkerModel,
+     preferredWorkerEffort,
++    preferredWorkerAccountId,
+     allowedWorkerTypes,
+   });
+ 
+@@ -926,6 +976,20 @@ async function sendConversationMessageUnlocked({
+   }
+ 
+   if (isSupervisedRun(run) && (busyAction === "queue" || busyAction === "steer")) {
++    if (busyAction === "steer") {
++      const worker = await selectConversationWorker(runId);
++      if (!worker) {
++        throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
++      }
++      return interruptWithDraftMessage({
++        runId,
++        content: trimmedContent,
++        attachments: normalizedAttachments,
++        targetWorkerId: worker.id,
++        source: "api",
++      });
++    }
++
+     const queuedMessage = await createQueuedConversationMessage({
+       runId,
+       action: "steer",
+@@ -1018,6 +1082,14 @@ async function sendConversationMessageUnlocked({
+       attachmentsJson,
+     });
+     if (elicitationAnswer) {
++      await retireMatchingQueuedDirectAnswers({
++        runId,
++        workerId: worker.id,
++        content: trimmedContent,
++        attachmentsJson,
++        answeredAt: elicitationAnswer.createdAt,
++      });
++      notifyEventStreamSubscribers();
+       return {
+         ok: true,
+         message: serializeMessageRecord({ ...elicitationAnswer, attachmentsJson }),
+@@ -1026,14 +1098,13 @@ async function sendConversationMessageUnlocked({
+   }
+ 
+   if (busyAction === "steer" && ["starting", "working", "stuck"].includes(worker.status.trim().toLowerCase().split(":")[0] ?? "")) {
+-    const queuedMessage = await createQueuedConversationMessage({
++    return interruptWithDraftMessage({
+       runId,
+-      targetWorkerId: worker.id,
+-      action: "steer",
+       content: trimmedContent,
+       attachments: normalizedAttachments,
++      targetWorkerId: worker.id,
++      source: "api",
+     });
+-    return { ok: true, queuedMessage };
+   }
+ 
+   const userMessageCreatedAt = new Date();
+diff --git a/src/server/conversations/sync.ts b/src/server/conversations/sync.ts
+index 72d1cc9..d67c054 100644
+--- a/src/server/conversations/sync.ts
++++ b/src/server/conversations/sync.ts
+@@ -1,5 +1,6 @@
+ import { and, eq } from "drizzle-orm";
+ import { db } from "@/server/db";
++import { withSqliteBusyRetry } from "@/server/db/retry";
+ import { messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
+ import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
+ import { listAgents, normalizeAgentRecord, type AgentRecord } from "@/server/bridge-client";
+@@ -355,11 +356,11 @@ async function clearStaleDirectCurrentText(run: typeof runs.$inferSelect, worker
+     return false;
+   }
+ 
+-  await db.update(workers).set({
++  await withSqliteBusyRetry(() => db.update(workers).set({
+     currentText: "",
+     lastText: worker.lastText || worker.currentText,
+     updatedAt: new Date(),
+-  }).where(eq(workers.id, worker.id));
++  }).where(eq(workers.id, worker.id)));
+   notifyEventStreamSubscribers();
+   return true;
+ }
+@@ -442,7 +443,20 @@ type SyncConversationSessionsOptions = {
+   refreshPlanningArtifacts?: boolean;
+ };
+ 
++let liveSyncQueue: Promise<void> = Promise.resolve();
++
++export function __resetSyncConversationSessionsQueueForTests() {
++  liveSyncQueue = Promise.resolve();
++}
++
+ export async function syncConversationSessions(rawAgents: unknown[], options: SyncConversationSessionsOptions = {}) {
++  const runSync = () => syncConversationSessionsUnlocked(rawAgents, options);
++  const nextSync = liveSyncQueue.then(runSync, runSync);
++  liveSyncQueue = nextSync.catch(() => undefined);
++  return nextSync;
++}
++
++async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: SyncConversationSessionsOptions = {}) {
+   const agents = rawAgents.map((agent) => normalizeAgentRecord(agent));
+   const selectedRunId = options.selectedRunId?.trim() || null;
+   const refreshPlanningArtifacts = options.refreshPlanningArtifacts !== false;
+@@ -479,7 +493,7 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
+         }
+ 
+         await writeWorkerOutputEntries(run.id, implementationWorker.id, implementationAgent.outputEntries);
+-        await db.update(workers).set({
++        await withSqliteBusyRetry(() => db.update(workers).set({
+           status: implementationAgent.state,
+           cwd: implementationAgent.cwd || implementationWorker.cwd,
+           currentText: implementationAgent.currentText,
+@@ -487,18 +501,18 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
+           bridgeSessionId: implementationAgent.sessionId ?? implementationWorker.bridgeSessionId,
+           bridgeSessionMode: implementationAgent.sessionMode ?? implementationWorker.bridgeSessionMode,
+           updatedAt: new Date(),
+-        }).where(eq(workers.id, implementationWorker.id));
++        }).where(eq(workers.id, implementationWorker.id)));
+         syncedActiveLiveWorker = true;
+       }
+ 
+       if (syncedActiveLiveWorker) {
+         if (run.status !== "running" || run.failedAt || run.lastError) {
+-          await db.update(runs).set({
++          await withSqliteBusyRetry(() => db.update(runs).set({
+             status: "running",
+             failedAt: null,
+             lastError: null,
+             updatedAt: new Date(),
+-          }).where(eq(runs.id, run.id));
++          }).where(eq(runs.id, run.id)));
+           await clearMatchingRunFailureMessage(run);
+           startSupervisorRun(run.id);
+         }
+@@ -517,12 +531,12 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
+         if (staleImplementationConnectionFailure) {
+           const resumableWorker = implementationWorkers.find((worker) => worker.bridgeSessionId?.trim());
+           if (resumableWorker) {
+-            await db.update(runs).set({
++            await withSqliteBusyRetry(() => db.update(runs).set({
+               status: "running",
+               failedAt: null,
+               lastError: null,
+               updatedAt: new Date(),
+-            }).where(eq(runs.id, run.id));
++            }).where(eq(runs.id, run.id)));
+             await clearMatchingRunFailureMessage(run);
+             startSupervisorRun(run.id);
+           }
+@@ -531,19 +545,19 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
+       }
+ 
+       await writeWorkerOutputEntries(run.id, implementationWorker.id, implementationAgent.outputEntries);
+-      await db.update(workers).set({
++      await withSqliteBusyRetry(() => db.update(workers).set({
+         status: implementationAgent.state,
+         cwd: implementationAgent.cwd || implementationWorker.cwd,
+         currentText: implementationAgent.currentText,
+         lastText: implementationAgent.lastText,
+         updatedAt: new Date(),
+-      }).where(eq(workers.id, implementationWorker.id));
+-      await db.update(runs).set({
++      }).where(eq(workers.id, implementationWorker.id)));
++      await withSqliteBusyRetry(() => db.update(runs).set({
+         status: "running",
+         failedAt: null,
+         lastError: null,
+         updatedAt: new Date(),
+-      }).where(eq(runs.id, run.id));
++      }).where(eq(runs.id, run.id)));
+       await clearMatchingRunFailureMessage(run);
+       startSupervisorRun(run.id);
+       continue;
+@@ -578,14 +592,14 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
+       && worker.status.trim().toLowerCase().split(":")[0]?.trim() === "idle"
+       && isIdleLiveAgentWithoutOutput(agent)
+     ) {
+-      await db.update(workers).set({
++      await withSqliteBusyRetry(() => db.update(workers).set({
+         status: "error",
+         cwd: agent.cwd || worker.cwd,
+         currentText: agent.currentText,
+         lastText: agent.lastText,
+         outputLog: EMPTY_IDLE_WORKER_OUTPUT_DIAGNOSTIC,
+         updatedAt: new Date(),
+-      }).where(eq(workers.id, worker.id));
++      }).where(eq(workers.id, worker.id)));
+       await persistRunFailure(run.id, new Error(EMPTY_IDLE_WORKER_OUTPUT_DIAGNOSTIC), {
+         surface: { code: "worker.idle.empty_output", workerId: worker.id },
+       });
+@@ -596,13 +610,13 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
+     const nextRunState = resolveSyncedRunState(run, agent);
+     const quiescedDirectWorker = isDirectRunMode(run.mode) && directLiveAgentHasCompletedTurn(agent);
+     const nextWorkerStatus = quiescedDirectWorker ? "idle" : agent.state;
+-    await db.update(workers).set({
++    await withSqliteBusyRetry(() => db.update(workers).set({
+       status: nextWorkerStatus,
+       cwd: agent.cwd || worker.cwd,
+       currentText: quiescedDirectWorker ? "" : agent.currentText,
+       lastText: agent.lastText,
+       updatedAt: new Date(),
+-    }).where(eq(workers.id, worker.id));
++    }).where(eq(workers.id, worker.id)));
+     if (worker.status !== nextWorkerStatus) {
+       emitNamedEvent({
+         kind: "worker.status",
+@@ -647,12 +661,12 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
+         pendingElicitations: agent.pendingElicitations,
+       });
+     } else {
+-      await db.update(runs).set({
++      await withSqliteBusyRetry(() => db.update(runs).set({
+         status: nextRunState,
+         lastError: nextRunState === "failed" ? agent.lastError || run.lastError : null,
+         failedAt: nextRunState === "failed" ? run.failedAt : null,
+         updatedAt: new Date(),
+-      }).where(eq(runs.id, run.id));
++      }).where(eq(runs.id, run.id)));
+     }
+     if (staleBusyFailure && nextRunState !== "failed") {
+       await clearMatchingRunFailureMessage(run);
+@@ -692,11 +706,11 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
+     }
+ 
+     if (await isEmptyIdlePersistedWorker(worker)) {
+-      await db.update(workers).set({
++      await withSqliteBusyRetry(() => db.update(workers).set({
+         status: "error",
+         outputLog: MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC,
+         updatedAt: new Date(),
+-      }).where(eq(workers.id, worker.id));
++      }).where(eq(workers.id, worker.id)));
+       await persistRunFailure(run.id, new Error(MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC), {
+         surface: { code: "worker.idle.missing_output", workerId: worker.id },
+       });
+@@ -742,10 +756,10 @@ export async function syncConversationSessions(rawAgents: unknown[], options: Sy
+         source: "persisted_direct_completion",
+       });
+     } else {
+-      await db.update(runs).set({
++      await withSqliteBusyRetry(() => db.update(runs).set({
+         status: nextRunState,
+         updatedAt: new Date(),
+-      }).where(eq(runs.id, run.id));
++      }).where(eq(runs.id, run.id)));
+     }
+   }
+ }
+diff --git a/src/server/db/index.ts b/src/server/db/index.ts
+index aff8fa6..b181c1c 100644
+--- a/src/server/db/index.ts
++++ b/src/server/db/index.ts
+@@ -4,7 +4,7 @@ import * as schema from './schema';
+ import { getAppDataPath } from '@/server/app-root';
+ 
+ const dbPath = getAppDataPath('sqlite.db');
+-const DB_SCHEMA_VERSION = 3;
++const DB_SCHEMA_VERSION = 4;
+ type DbClient = ReturnType<typeof createClient>;
+ 
+ async function tableColumns(client: DbClient, table: string): Promise<Set<string>> {
+@@ -41,10 +41,11 @@ CREATE TABLE IF NOT EXISTS runs (
+   phase text,
+   project_path text,
+   title text,
+-  preferred_worker_type text,
+-  preferred_worker_model text,
+-  preferred_worker_effort text,
+-  allowed_worker_types text,
++	  preferred_worker_type text,
++	  preferred_worker_model text,
++	  preferred_worker_effort text,
++	  preferred_worker_account_id text,
++	  allowed_worker_types text,
+   spec_path text,
+   artifact_plan_path text,
+   planner_artifacts_json text,
+@@ -192,12 +193,82 @@ CREATE TABLE IF NOT EXISTS supervisor_scheduled_wakes (
+ 
+ CREATE TABLE IF NOT EXISTS accounts (
+   id text PRIMARY KEY NOT NULL,
++  cli_type text,
+   provider text NOT NULL,
+   type text NOT NULL,
++  label text,
++  auth_mode text NOT NULL DEFAULT 'legacy_ref',
+   auth_ref text NOT NULL,
++  enabled integer NOT NULL DEFAULT 1,
++  priority integer NOT NULL DEFAULT 0,
+   capacity integer,
+   reset_schedule text,
+-  created_at integer NOT NULL
++  status text,
++  status_checked_at integer,
++  metadata_json text,
++  created_at integer NOT NULL,
++  updated_at integer
++);
++
++CREATE TABLE IF NOT EXISTS account_secrets (
++  id text PRIMARY KEY NOT NULL,
++  account_id text NOT NULL,
++  secret_kind text NOT NULL,
++  secret_ref text,
++  encrypted_value text NOT NULL,
++  created_at integer NOT NULL,
++  updated_at integer NOT NULL,
++  FOREIGN KEY (account_id) REFERENCES accounts(id) ON UPDATE no action ON DELETE no action
++);
++
++CREATE TABLE IF NOT EXISTS worker_credential_allocations (
++  id text PRIMARY KEY NOT NULL,
++  run_id text NOT NULL,
++  worker_id text NOT NULL,
++  worker_type text NOT NULL,
++  account_id text NOT NULL,
++  strategy text NOT NULL,
++  selection_reason text,
++  explicit integer NOT NULL DEFAULT 0,
++  created_at integer NOT NULL,
++  updated_at integer NOT NULL,
++  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action,
++  FOREIGN KEY (worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE no action,
++  FOREIGN KEY (account_id) REFERENCES accounts(id) ON UPDATE no action ON DELETE no action
++);
++
++CREATE TABLE IF NOT EXISTS worker_token_usage (
++  id text PRIMARY KEY NOT NULL,
++  run_id text NOT NULL,
++  worker_id text,
++  worker_type text NOT NULL,
++  account_id text NOT NULL,
++  model text,
++  input_tokens integer NOT NULL DEFAULT 0,
++  output_tokens integer NOT NULL DEFAULT 0,
++  cache_read_tokens integer NOT NULL DEFAULT 0,
++  cache_write_tokens integer NOT NULL DEFAULT 0,
++  cost_usd real NOT NULL DEFAULT 0,
++  occurred_at integer NOT NULL,
++  created_at integer NOT NULL,
++  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action,
++  FOREIGN KEY (worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE no action,
++  FOREIGN KEY (account_id) REFERENCES accounts(id) ON UPDATE no action ON DELETE no action
++);
++
++CREATE TABLE IF NOT EXISTS account_usage_snapshots (
++  id text PRIMARY KEY NOT NULL,
++  account_id text NOT NULL,
++  worker_type text NOT NULL,
++  window_key text NOT NULL,
++  used_tokens integer NOT NULL DEFAULT 0,
++  remaining_tokens integer,
++  cost_usd real NOT NULL DEFAULT 0,
++  reset_at integer,
++  source text NOT NULL,
++  created_at integer NOT NULL,
++  updated_at integer NOT NULL,
++  FOREIGN KEY (account_id) REFERENCES accounts(id) ON UPDATE no action ON DELETE no action
+ );
+ 
+ CREATE TABLE IF NOT EXISTS credit_events (
+@@ -445,6 +516,10 @@ if (!runColumnNames.has("preferred_worker_effort")) {
+   await client.execute("ALTER TABLE runs ADD COLUMN preferred_worker_effort text;");
+ }
+ 
++if (!runColumnNames.has("preferred_worker_account_id")) {
++  await client.execute("ALTER TABLE runs ADD COLUMN preferred_worker_account_id text;");
++}
++
+ if (!runColumnNames.has("allowed_worker_types")) {
+   await client.execute("ALTER TABLE runs ADD COLUMN allowed_worker_types text;");
+ }
+@@ -636,6 +711,44 @@ if (!messageColumnNames.has("attachments_json")) {
+   await client.execute("ALTER TABLE messages ADD COLUMN attachments_json text;");
+ }
+ 
++const accountColumnNames = await tableColumns(client, "accounts");
++
++if (!accountColumnNames.has("cli_type")) {
++  await client.execute("ALTER TABLE accounts ADD COLUMN cli_type text;");
++}
++
++if (!accountColumnNames.has("label")) {
++  await client.execute("ALTER TABLE accounts ADD COLUMN label text;");
++}
++
++if (!accountColumnNames.has("auth_mode")) {
++  await client.execute("ALTER TABLE accounts ADD COLUMN auth_mode text NOT NULL DEFAULT 'legacy_ref';");
++}
++
++if (!accountColumnNames.has("enabled")) {
++  await client.execute("ALTER TABLE accounts ADD COLUMN enabled integer NOT NULL DEFAULT 1;");
++}
++
++if (!accountColumnNames.has("priority")) {
++  await client.execute("ALTER TABLE accounts ADD COLUMN priority integer NOT NULL DEFAULT 0;");
++}
++
++if (!accountColumnNames.has("status")) {
++  await client.execute("ALTER TABLE accounts ADD COLUMN status text;");
++}
++
++if (!accountColumnNames.has("status_checked_at")) {
++  await client.execute("ALTER TABLE accounts ADD COLUMN status_checked_at integer;");
++}
++
++if (!accountColumnNames.has("metadata_json")) {
++  await client.execute("ALTER TABLE accounts ADD COLUMN metadata_json text;");
++}
++
++if (!accountColumnNames.has("updated_at")) {
++  await client.execute("ALTER TABLE accounts ADD COLUMN updated_at integer;");
++}
++
+ // ── v1 → v2: append-only artifact storage ──────────────────────────
+ // Add the new metadata columns on each domain table that gains an
+ // artifact stream. ALTER ADD COLUMN is safe with default NULL.
+@@ -709,6 +822,14 @@ CREATE INDEX IF NOT EXISTS queued_conversation_messages_pending_run_created_id_d
+ CREATE INDEX IF NOT EXISTS recovery_incidents_run_status_updated_idx ON recovery_incidents(run_id, status, updated_at);
+ CREATE INDEX IF NOT EXISTS recovery_incidents_run_updated_id_desc_idx ON recovery_incidents(run_id, updated_at DESC, id DESC);
+ CREATE INDEX IF NOT EXISTS supervisor_scheduled_wakes_wake_at_idx ON supervisor_scheduled_wakes(wake_at);
++CREATE INDEX IF NOT EXISTS accounts_cli_type_enabled_priority_idx ON accounts(cli_type, enabled, priority);
++CREATE INDEX IF NOT EXISTS account_secrets_account_idx ON account_secrets(account_id);
++CREATE INDEX IF NOT EXISTS worker_credential_allocations_worker_idx ON worker_credential_allocations(worker_id);
++CREATE INDEX IF NOT EXISTS worker_credential_allocations_run_idx ON worker_credential_allocations(run_id);
++CREATE INDEX IF NOT EXISTS worker_credential_allocations_account_idx ON worker_credential_allocations(account_id);
++CREATE INDEX IF NOT EXISTS worker_token_usage_account_occurred_idx ON worker_token_usage(account_id, occurred_at);
++CREATE INDEX IF NOT EXISTS worker_token_usage_worker_idx ON worker_token_usage(worker_id);
++CREATE INDEX IF NOT EXISTS account_usage_snapshots_account_window_idx ON account_usage_snapshots(account_id, window_key);
+ CREATE INDEX IF NOT EXISTS runs_created_idx ON runs(created_at);
+ CREATE INDEX IF NOT EXISTS runs_archived_created_id_desc_idx ON runs(archived_at, created_at DESC, id DESC);
+ CREATE INDEX IF NOT EXISTS plans_created_idx ON plans(created_at);
+diff --git a/src/server/db/schema.ts b/src/server/db/schema.ts
+index f00b023..d5f954c 100644
+--- a/src/server/db/schema.ts
++++ b/src/server/db/schema.ts
+@@ -1,4 +1,4 @@
+-import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
++import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
+ 
+ export const plans = sqliteTable('plans', {
+   id: text('id').primaryKey(),
+@@ -22,6 +22,7 @@ export const runs = sqliteTable('runs', {
+   preferredWorkerType: text('preferred_worker_type'),
+   preferredWorkerModel: text('preferred_worker_model'),
+   preferredWorkerEffort: text('preferred_worker_effort'),
++  preferredWorkerAccountId: text('preferred_worker_account_id'),
+   allowedWorkerTypes: text('allowed_worker_types'),
+   specPath: text('spec_path'),
+   artifactPlanPath: text('artifact_plan_path'),
+@@ -159,12 +160,74 @@ export const supervisorScheduledWakes = sqliteTable('supervisor_scheduled_wakes'
+ 
+ export const accounts = sqliteTable('accounts', {
+   id: text('id').primaryKey(),
++  cliType: text('cli_type'),
+   provider: text('provider').notNull(),
+   type: text('type').notNull(), // 'subscription' | 'api'
++  label: text('label'),
++  authMode: text('auth_mode').notNull().default('legacy_ref'),
+   authRef: text('auth_ref').notNull(),
++  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
++  priority: integer('priority').notNull().default(0),
+   capacity: integer('capacity'),
+   resetSchedule: text('reset_schedule'),
++  status: text('status'),
++  statusCheckedAt: integer('status_checked_at', { mode: 'timestamp' }),
++  metadataJson: text('metadata_json'),
++  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
++  updatedAt: integer('updated_at', { mode: 'timestamp' }),
++});
++
++export const accountSecrets = sqliteTable('account_secrets', {
++  id: text('id').primaryKey(),
++  accountId: text('account_id').references(() => accounts.id).notNull(),
++  secretKind: text('secret_kind').notNull(),
++  secretRef: text('secret_ref'),
++  encryptedValue: text('encrypted_value').notNull(),
++  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
++  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
++});
++
++export const workerCredentialAllocations = sqliteTable('worker_credential_allocations', {
++  id: text('id').primaryKey(),
++  runId: text('run_id').references(() => runs.id).notNull(),
++  workerId: text('worker_id').references(() => workers.id).notNull(),
++  workerType: text('worker_type').notNull(),
++  accountId: text('account_id').references(() => accounts.id).notNull(),
++  strategy: text('strategy').notNull(),
++  selectionReason: text('selection_reason'),
++  explicit: integer('explicit', { mode: 'boolean' }).notNull().default(false),
+   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
++  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
++});
++
++export const workerTokenUsage = sqliteTable('worker_token_usage', {
++  id: text('id').primaryKey(),
++  runId: text('run_id').references(() => runs.id).notNull(),
++  workerId: text('worker_id').references(() => workers.id),
++  workerType: text('worker_type').notNull(),
++  accountId: text('account_id').references(() => accounts.id).notNull(),
++  model: text('model'),
++  inputTokens: integer('input_tokens').notNull().default(0),
++  outputTokens: integer('output_tokens').notNull().default(0),
++  cacheReadTokens: integer('cache_read_tokens').notNull().default(0),
++  cacheWriteTokens: integer('cache_write_tokens').notNull().default(0),
++  costUsd: real('cost_usd').notNull().default(0),
++  occurredAt: integer('occurred_at', { mode: 'timestamp' }).notNull(),
++  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
++});
++
++export const accountUsageSnapshots = sqliteTable('account_usage_snapshots', {
++  id: text('id').primaryKey(),
++  accountId: text('account_id').references(() => accounts.id).notNull(),
++  workerType: text('worker_type').notNull(),
++  windowKey: text('window_key').notNull(),
++  usedTokens: integer('used_tokens').notNull().default(0),
++  remainingTokens: integer('remaining_tokens'),
++  costUsd: real('cost_usd').notNull().default(0),
++  resetAt: integer('reset_at', { mode: 'timestamp' }),
++  source: text('source').notNull(),
++  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
++  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+ });
+ 
+ export const creditEvents = sqliteTable('credit_events', {
+diff --git a/src/server/quota/recovery.ts b/src/server/quota/recovery.ts
+index b36a2b0..dc2e55a 100644
+--- a/src/server/quota/recovery.ts
++++ b/src/server/quota/recovery.ts
+@@ -1,6 +1,6 @@
+ import { eq } from "drizzle-orm";
+ import { db } from "@/server/db";
+-import { runs, workers } from "@/server/db/schema";
++import { runs, workerCredentialAllocations, workers } from "@/server/db/schema";
+ import { recordExecutionEvent } from "@/server/events/execution-event-store";
+ import { openRecoveryIncident, markRecoveryIncidentNeedsUser } from "@/server/runs/recovery-incidents";
+ import { getRecoveryPolicy } from "@/server/runs/recovery-policy";
+@@ -46,6 +46,7 @@ function quotaIncidentDetails(args: {
+   scheduledWakeAt?: Date | null;
+   sourceType: "supervisor" | "worker";
+   failoverPending?: boolean;
++  accountId?: string | null;
+ }) {
+   const details: Record<string, unknown> = {
+     recoveryState: args.resumeAt ? "quota_waiting" : "needs_recovery",
+@@ -58,6 +59,7 @@ function quotaIncidentDetails(args: {
+     quotaResetConfidence: args.quota.confidence,
+     retryAfterMs: args.quota.retryAfterMs,
+     provider: args.quota.provider ?? null,
++    accountId: args.accountId ?? null,
+     rawText: truncate(args.quota.rawText),
+   };
+   if (args.failoverPending) {
+@@ -103,12 +105,17 @@ export async function recordWorkerQuotaBlock(args: {
+     provider: args.provider,
+   });
+   const { resumeAt } = await computeResumeAt(quota, now);
++  const allocation = await db.select()
++    .from(workerCredentialAllocations)
++    .where(eq(workerCredentialAllocations.workerId, args.workerId))
++    .get();
+   const details = quotaIncidentDetails({
+     quota,
+     resetAt: quota.resetAt,
+     resumeAt,
+     sourceType: "worker",
+     failoverPending: args.failoverPending ?? false,
++    accountId: allocation?.accountId ?? null,
+   });
+ 
+   await db.update(workers).set({
+diff --git a/src/server/quota/type-blocking.ts b/src/server/quota/type-blocking.ts
+index 83cafb5..1fa87b7 100644
+--- a/src/server/quota/type-blocking.ts
++++ b/src/server/quota/type-blocking.ts
+@@ -1,6 +1,6 @@
+ import { and, eq, inArray } from "drizzle-orm";
+ import { db } from "@/server/db";
+-import { workers, recoveryIncidents } from "@/server/db/schema";
++import { accounts, workers, recoveryIncidents, workerCredentialAllocations } from "@/server/db/schema";
+ import { markRecoveryIncidentResolved } from "@/server/runs/recovery-incidents";
+ import {
+   SUPPORTED_WORKER_TYPES,
+@@ -36,6 +36,40 @@ function readResumeAt(details: Record<string, unknown>): Date | null {
+   return Number.isNaN(parsed.getTime()) ? null : parsed;
+ }
+ 
++function readAccountId(details: Record<string, unknown>): string | null {
++  return typeof details.accountId === "string" && details.accountId.trim()
++    ? details.accountId.trim()
++    : null;
++}
++
++async function usableAccountIdsForType(type: SupportedWorkerType): Promise<Set<string>> {
++  const rows = await db.select().from(accounts).where(eq(accounts.cliType, type));
++  return new Set(rows
++    .filter((account) => {
++      if (!account.enabled) return false;
++      const status = account.status?.trim().toLowerCase();
++      return status !== "quota_exhausted" && status !== "login_required" && status !== "disabled";
++    })
++    .map((account) => account.id));
++}
++
++async function allocatedAccountIdForWorker(workerId: string): Promise<string | null> {
++  const allocation = await db.select()
++    .from(workerCredentialAllocations)
++    .where(eq(workerCredentialAllocations.workerId, workerId))
++    .get();
++  return allocation?.accountId ?? null;
++}
++
++function shouldBlockTypeForAccounts(usableAccountIds: Set<string>, blockedAccountIds: Set<string>, legacyBlocked: boolean) {
++  if (usableAccountIds.size === 0) return legacyBlocked;
++  if (blockedAccountIds.size === 0) return false;
++  for (const accountId of usableAccountIds) {
++    if (!blockedAccountIds.has(accountId)) return false;
++  }
++  return true;
++}
++
+ function newestRecoveryIncident(incidents: RecoveryIncidentRecord[]) {
+   return [...incidents].sort((a, b) => {
+     const updatedDelta = b.updatedAt.getTime() - a.updatedAt.getTime();
+@@ -64,6 +98,9 @@ export async function isWorkerTypeQuotaBlocked(
+   options: { now?: Date } = {},
+ ): Promise<boolean> {
+   const now = options.now ?? new Date();
++  const usableAccountIds = await usableAccountIdsForType(type);
++  const blockedAccountIds = new Set<string>();
++  let legacyBlocked = false;
+ 
+   const exhaustedWorkers = await db.select()
+     .from(workers)
+@@ -81,21 +118,29 @@ export async function isWorkerTypeQuotaBlocked(
+         inArray(recoveryIncidents.workerId, workerIds),
+       ));
+ 
+-    const anyStillActive = exhaustedWorkers.some((worker) => {
++    for (const worker of exhaustedWorkers) {
+       const incidentForWorker = newestRecoveryIncident(
+         recentIncidents.filter((incident) => incident.workerId === worker.id),
+       );
+-      if (!incidentForWorker) return true;
++      if (!incidentForWorker) {
++        legacyBlocked = true;
++        const accountId = await allocatedAccountIdForWorker(worker.id);
++        if (accountId) blockedAccountIds.add(accountId);
++        continue;
++      }
+       const details = parseDetails(incidentForWorker.details);
+       const resumeAt = readResumeAt(details);
+-      return !isResumeAtPast(resumeAt, now);
+-    });
+-
+-    if (anyStillActive) return true;
++      if (!isResumeAtPast(resumeAt, now)) {
++        legacyBlocked = true;
++        const accountId = readAccountId(details) ?? await allocatedAccountIdForWorker(worker.id);
++        if (accountId) blockedAccountIds.add(accountId);
++      }
++    }
+   }
+ 
+   const quotaIncidents = await db.select({
+     incident: recoveryIncidents,
++    worker: workers,
+   })
+     .from(recoveryIncidents)
+     .innerJoin(workers, eq(recoveryIncidents.workerId, workers.id))
+@@ -109,11 +154,13 @@ export async function isWorkerTypeQuotaBlocked(
+     const details = parseDetails(row.incident.details);
+     const resumeAt = readResumeAt(details);
+     if (!isResumeAtPast(resumeAt, now)) {
+-      return true;
++      legacyBlocked = true;
++      const accountId = readAccountId(details) ?? await allocatedAccountIdForWorker(row.worker.id);
++      if (accountId) blockedAccountIds.add(accountId);
+     }
+   }
+ 
+-  return false;
++  return shouldBlockTypeForAccounts(usableAccountIds, blockedAccountIds, legacyBlocked);
+ }
+ 
+ /**
+@@ -155,6 +202,36 @@ export async function quotaBlockedTypes(
+           inArray(recoveryIncidents.workerId, credWorkerIds),
+         ))
+     : [];
++  const accountAwareCandidates = new Map<SupportedWorkerType, {
++    usableAccountIds: Set<string>;
++    blockedAccountIds: Set<string>;
++    reason: string;
++    resumeAt: Date | null;
++  }>();
++
++  async function addBlockedCandidate(workerType: SupportedWorkerType, accountId: string | null, candidate: QuotaBlockReason) {
++    const usableAccountIds = await usableAccountIdsForType(workerType);
++    if (usableAccountIds.size === 0) {
++      const existing = result.get(workerType);
++      if (!existing || (candidate.resumeAt && (!existing.resumeAt || candidate.resumeAt < existing.resumeAt))) {
++        result.set(workerType, candidate);
++      }
++      return;
++    }
++
++    const current = accountAwareCandidates.get(workerType) ?? {
++      usableAccountIds,
++      blockedAccountIds: new Set<string>(),
++      reason: candidate.reason,
++      resumeAt: candidate.resumeAt,
++    };
++    if (accountId) current.blockedAccountIds.add(accountId);
++    if (candidate.resumeAt && (!current.resumeAt || candidate.resumeAt < current.resumeAt)) {
++      current.resumeAt = candidate.resumeAt;
++      current.reason = candidate.reason;
++    }
++    accountAwareCandidates.set(workerType, current);
++  }
+ 
+   for (const worker of credExhaustedRows) {
+     const incidentForWorker = newestRecoveryIncident(
+@@ -165,15 +242,12 @@ export async function quotaBlockedTypes(
+     if (isResumeAtPast(resumeAt, now)) {
+       continue;
+     }
++    const accountId = readAccountId(details) ?? await allocatedAccountIdForWorker(worker.id);
+     const workerType = worker.type as SupportedWorkerType;
+-    const existing = result.get(workerType);
+-    const candidate: QuotaBlockReason = {
++    await addBlockedCandidate(workerType, accountId, {
+       reason: "cred-exhausted",
+       resumeAt,
+-    };
+-    if (!existing || (resumeAt && (!existing.resumeAt || resumeAt < existing.resumeAt))) {
+-      result.set(workerType, candidate);
+-    }
++    });
+   }
+ 
+   const incidentRows = await db.select({
+@@ -192,12 +266,19 @@ export async function quotaBlockedTypes(
+     const details = parseDetails(row.incident.details);
+     const resumeAt = readResumeAt(details);
+     if (isResumeAtPast(resumeAt, now)) continue;
++    const accountId = readAccountId(details) ?? await allocatedAccountIdForWorker(row.worker.id);
+     const workerType = row.worker.type as SupportedWorkerType;
+-    const existing = result.get(workerType);
+-    if (!existing || (resumeAt && (!existing.resumeAt || resumeAt < existing.resumeAt))) {
++    await addBlockedCandidate(workerType, accountId, {
++      reason: "active quota incident",
++      resumeAt,
++    });
++  }
++
++  for (const [workerType, candidate] of accountAwareCandidates) {
++    if (shouldBlockTypeForAccounts(candidate.usableAccountIds, candidate.blockedAccountIds, true)) {
+       result.set(workerType, {
+-        reason: "active quota incident",
+-        resumeAt,
++        reason: candidate.reason,
++        resumeAt: candidate.resumeAt,
+       });
+     }
+   }
+diff --git a/src/server/quota/worker-resume.ts b/src/server/quota/worker-resume.ts
+index 9dc25f1..084cc5a 100644
+--- a/src/server/quota/worker-resume.ts
++++ b/src/server/quota/worker-resume.ts
+@@ -141,6 +141,7 @@ export async function resumeQuotaExhaustedWorkers(args: {
+           name: worker.id,
+           ...(workerMode ? { mode: workerMode } : {}),
+           env: envParams,
++          ...(args.run.preferredWorkerAccountId ? { accountId: args.run.preferredWorkerAccountId } : {}),
+           ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
+           ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
+           resumeSessionId: sessionId,
+diff --git a/src/server/runs/failures.ts b/src/server/runs/failures.ts
+index 4e7683d..f0f1772 100644
+--- a/src/server/runs/failures.ts
++++ b/src/server/runs/failures.ts
+@@ -35,6 +35,9 @@ export async function persistRunFailure(
+ 
+   const previousStatus = normalizeRunStatus(currentRun.status);
+   const isFirstTransitionToFailed = previousStatus !== "failed";
++  if (!isFirstTransitionToFailed && currentRun.lastError === errorMessage) {
++    return;
++  }
+ 
+   await db.update(runs).set({
+     status: "failed",
+diff --git a/src/server/runs/recovery-reconciler.ts b/src/server/runs/recovery-reconciler.ts
+index 0f9683a..f8c8e34 100644
+--- a/src/server/runs/recovery-reconciler.ts
++++ b/src/server/runs/recovery-reconciler.ts
+@@ -186,6 +186,7 @@ async function resumeSavedWorkerSession(args: {
+       name: args.worker.id,
+       ...(workerMode ? { mode: workerMode } : {}),
+       env: envParams,
++      ...(args.run.preferredWorkerAccountId ? { accountId: args.run.preferredWorkerAccountId } : {}),
+       ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
+       ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
+       resumeSessionId: sessionId,
+@@ -213,6 +214,7 @@ async function resumeSavedWorkerSession(args: {
+       name: args.worker.id,
+       ...(workerMode ? { mode: workerMode } : {}),
+       env: envParams,
++      ...(args.run.preferredWorkerAccountId ? { accountId: args.run.preferredWorkerAccountId } : {}),
+       ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
+       ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
+     }) as AgentRecord;
+diff --git a/src/server/runs/recovery.ts b/src/server/runs/recovery.ts
+index 0a43abc..b53c277 100644
+--- a/src/server/runs/recovery.ts
++++ b/src/server/runs/recovery.ts
+@@ -42,6 +42,7 @@ import { createBranchWorktree } from "@/server/git/workspaces";
+ import { pendingOrphanWorktreeError } from "@/server/git/orphan-recovery";
+ import { markRecoveryIncidentResolved } from "@/server/runs/recovery-incidents";
+ import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
++import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
+ 
+ export type RecoveryAction = "retry" | "edit" | "fork";
+ 
+@@ -223,6 +224,14 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string,
+     updatedAt: now,
+   });
+   emitNamedEvent({ kind: "worker.spawned", runId: run.id, workerId, workerType });
++  const accountAllocation = await allocateWorkerAccount({
++    workerType,
++    runId: run.id,
++    workerId,
++    explicitAccountId: run.preferredWorkerAccountId ?? null,
++    strategy: run.preferredWorkerAccountId ? "manual" : "priority",
++  });
++  const workerAccountId = accountAllocation.account?.id ?? null;
+ 
+   let spawned = false;
+   try {
+@@ -232,6 +241,7 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string,
+       name: workerId,
+       ...(workerMode ? { mode: workerMode } : {}),
+       env: envParams,
++      ...(workerAccountId ? { accountId: workerAccountId } : {}),
+       model: run.preferredWorkerModel?.trim() || undefined,
+       effort: run.preferredWorkerEffort?.trim().toLowerCase() || undefined,
+     });
+@@ -462,6 +472,7 @@ async function resumeDirectRunFromSavedSession(
+       name: worker.id,
+       ...(workerMode ? { mode: workerMode } : {}),
+       env: envParams,
++      ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
+       ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+       ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+       resumeSessionId: sessionId,
+@@ -496,6 +507,7 @@ async function resumeDirectRunFromSavedSession(
+         name: worker.id,
+         ...(workerMode ? { mode: workerMode } : {}),
+         env: envParams,
++        ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
+         ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+         ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+       });
+@@ -531,6 +543,7 @@ async function resumeDirectRunFromSavedSession(
+             name: worker.id,
+             ...(workerMode ? { mode: workerMode } : {}),
+             env: envParams,
++            ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
+             ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+             ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+             resumeSessionId: sessionId,
+@@ -578,6 +591,7 @@ async function resumeDirectRunFromSavedSession(
+           name: worker.id,
+           ...(workerMode ? { mode: workerMode } : {}),
+           env: envParams,
++          ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
+           ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+           ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+         });
+diff --git a/src/server/supervisor/index.ts b/src/server/supervisor/index.ts
+index 6b21271..f1ec3c3 100644
+--- a/src/server/supervisor/index.ts
++++ b/src/server/supervisor/index.ts
+@@ -3,7 +3,7 @@ import { spawnSync } from "child_process";
+ import fs from "fs";
+ import path from "path";
+ import { Agent } from "@mastra/core/agent";
+-import { desc, eq } from "drizzle-orm";
++import { and, desc, eq, notInArray } from "drizzle-orm";
+ import * as bridge from "@/server/bridge-client";
+ import { db } from "@/server/db";
+ import { clarifications, executionEvents, messages as dbMessages, runs, settings, supervisorInterventions, workers } from "@/server/db/schema";
+@@ -41,6 +41,7 @@ import { notifyRunLifecycleEventBestEffort } from "@/server/notifications/trigge
+ import { isProjectMemoryEnabled } from "@/server/projects/config";
+ import { appendMemory, listMemory, readMemory, writeMemory } from "@/server/supervisor/memory-tools";
+ import { consolidateProjectMemory } from "@/server/supervisor/memory-consolidation";
++import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
+ 
+ export interface SupervisorOptions {
+   runId: string;
+@@ -232,6 +233,10 @@ function isInfraFailureReason(reason: string) {
+   ].some((pattern) => normalized.includes(pattern));
+ }
+ 
++function isWorkerBinaryMissingReason(reason: string) {
++  return /\bworker binary is not installed\b/i.test(reason);
++}
++
+ function truncate(text: string, maxLength: number) {
+   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+ }
+@@ -351,8 +356,10 @@ async function persistAwaitingUserQuestion(args: {
+   eventDetails: Record<string, unknown>;
+ }) {
+   const now = new Date();
+-  await db.transaction(async (tx) => {
+-    await tx.insert(clarifications).values({
++  // Keep this as a libsql batch rather than an interactive transaction:
++  // interactive transactions orphan the PRAGMA-configured connection.
++  await db.batch([
++    db.insert(clarifications).values({
+       id: randomUUID(),
+       runId: args.runId,
+       question: args.question,
+@@ -360,8 +367,8 @@ async function persistAwaitingUserQuestion(args: {
+       status: "pending",
+       createdAt: now,
+       updatedAt: now,
+-    });
+-    await tx.insert(dbMessages).values({
++    }),
++    db.insert(dbMessages).values({
+       id: randomUUID(),
+       runId: args.runId,
+       role: "supervisor",
+@@ -369,13 +376,13 @@ async function persistAwaitingUserQuestion(args: {
+       content: args.question,
+       workerId: null,
+       createdAt: now,
+-    });
+-    await tx.update(runs).set({ status: "awaiting_user", updatedAt: now }).where(eq(runs.id, args.runId));
++    }),
++    db.update(runs).set({ status: "awaiting_user", updatedAt: now }).where(eq(runs.id, args.runId)),
+     // Legacy-format insert: this runs inside a SQLite transaction so we
+     // can't safely interleave the artifact-stream append. Readers
+     // tolerate `artifact_seq IS NULL` by falling back to the legacy
+     // `details` column (see execution-event-store.ts).
+-    await tx.insert(executionEvents).values({
++    db.insert(executionEvents).values({
+       id: randomUUID(),
+       runId: args.runId,
+       workerId: null,
+@@ -383,8 +390,8 @@ async function persistAwaitingUserQuestion(args: {
+       eventType: args.eventType,
+       details: JSON.stringify(args.eventDetails),
+       createdAt: now,
+-    });
+-  });
++    }),
++  ]);
+   await notifyRunLifecycleEventBestEffort({
+     runId: args.runId,
+     eventType: args.eventType,
+@@ -869,6 +876,7 @@ async function resumeWorkerFromSavedSessionForSupervisor(runId: string, workerId
+     name: worker.id,
+     ...(mode ? { mode } : {}),
+     env: envParams,
++    ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
+     ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
+     ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+   };
+@@ -1097,7 +1105,11 @@ export class Supervisor {
+       failedAt: null,
+       lastError: null,
+       updatedAt: new Date(),
+-    }).where(eq(runs.id, this.runId));
++    }).where(and(
++      eq(runs.id, this.runId),
++      eq(runs.mode, "implementation"),
++      notInArray(runs.status, ["awaiting_user", "done", "failed", "cancelled", "canceled", "promoting", "promoted"]),
++    ));
+ 
+     // Observer-driven failover: if an incident is flagged
+     // failover_pending we owe a failover attempt before doing anything
+@@ -1231,8 +1243,11 @@ export class Supervisor {
+           const requestedType = asString(action.args.type, "type");
+           const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
+           const allowedWorkerTypes = parseAllowedWorkerTypes(run?.allowedWorkerTypes);
+-          const workerType = selectSpawnableWorkerType(requestedType, envParams, allowedWorkerTypes);
+           const cwd = resolveSupervisorWorkerCwd(asString(action.args.cwd, "cwd"), run?.projectPath);
++          const workerType = selectSpawnableWorkerType(requestedType, envParams, allowedWorkerTypes, {
++            cwd,
++            loginShellPathMode: "blocking",
++          });
+           const title = asString(action.args.title, "title");
+           const prompt = asString(action.args.prompt, "prompt");
+           const mode = resolveWorkerSpawnMode(action.args.mode, yoloModeEnabled);
+@@ -1291,6 +1306,14 @@ export class Supervisor {
+           });
+           const preferredModel = run?.preferredWorkerModel ?? null;
+           const preferredEffort = run?.preferredWorkerEffort ?? null;
++          const accountAllocation = await allocateWorkerAccount({
++            workerType: workerType.type,
++            runId: this.runId,
++            workerId,
++            explicitAccountId: run?.preferredWorkerAccountId ?? null,
++            strategy: run?.preferredWorkerAccountId ? "manual" : "priority",
++          });
++          const workerAccountId = accountAllocation.account?.id ?? null;
+ 
+           let spawnedWorker: bridge.AgentRecord;
+           try {
+@@ -1300,6 +1323,7 @@ export class Supervisor {
+               name: workerId,
+               ...(mode ? { mode } : {}),
+               env: envParams,
++              ...(workerAccountId ? { accountId: workerAccountId } : {}),
+               ...(preferredModel ? { model: preferredModel } : {}),
+               ...(preferredEffort ? { effort: preferredEffort } : {}),
+               ...(skillRoots?.length ? { skillRoots } : {}),
+@@ -1955,6 +1979,27 @@ export class Supervisor {
+ 
+         case "mark_failed": {
+           const reason = asString(action.args.reason, "reason");
++          if (isWorkerBinaryMissingReason(reason)) {
++            const run = await db.select().from(runs).where(eq(runs.id, this.runId)).get();
++            const allowedWorkerTypes = parseAllowedWorkerTypes(run?.allowedWorkerTypes);
++            const requestedType = run?.preferredWorkerType ?? allowedWorkerTypes[0] ?? "codex";
++            try {
++              selectSpawnableWorkerType(requestedType, envParams, allowedWorkerTypes, {
++                cwd: run?.projectPath ?? undefined,
++                loginShellPathMode: "blocking",
++              });
++              await insertExecutionEvent(this.runId, "supervisor_turn_stopped", {
++                summary: "Rejected stale supervisor failure because the requested worker binary is currently spawnable.",
++                actionName: action.name,
++                evidenceKey: "mark_failed:worker_binary_missing",
++                rejectedReason: reason,
++                requestedType,
++              });
++              return { state: "wait", delayMs: 1_000 };
++            } catch {
++              // The binary is still genuinely unavailable; proceed with the failure.
++            }
++          }
+           await cancelRunWorkers(this.runId);
+           const failHalt = await this.haltResultIfRunCannotContinue();
+           if (failHalt) {
+@@ -1975,7 +2020,6 @@ export class Supervisor {
+               });
+             }
+           }
+-          await insertExecutionEvent(this.runId, "run_failed", { reason });
+           await persistRunFailure(this.runId, reason, {
+             surface: { code: "supervisor.gave_up" },
+           });
+diff --git a/src/server/supervisor/lease.ts b/src/server/supervisor/lease.ts
+index 714145b..3f2227f 100644
+--- a/src/server/supervisor/lease.ts
++++ b/src/server/supervisor/lease.ts
+@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
+ import { and, eq } from "drizzle-orm";
+ import { db } from "@/server/db";
+ import { settings } from "@/server/db/schema";
++import { withSqliteBusyRetry } from "@/server/db/retry";
+ import { emitNamedEvent } from "@/server/events/named-events";
+ 
+ const LEASE_TTL_MS = 15 * 60_000;
+@@ -44,7 +45,7 @@ export async function acquireSupervisorWakeLease(runId: string, now = Date.now()
+ 
+   if (!existing) {
+     try {
+-      await db.insert(settings).values({ key, value, updatedAt: new Date(now) });
++      await withSqliteBusyRetry(() => db.insert(settings).values({ key, value, updatedAt: new Date(now) }));
+       emitNamedEvent({ kind: "supervisor.wake_lease_acquired", runId, source: "insert" });
+       return lease.leaseId;
+     } catch {
+@@ -54,9 +55,9 @@ export async function acquireSupervisorWakeLease(runId: string, now = Date.now()
+   }
+ 
+   const replaceSource = existingLease ? "replace_expired" : "replace_malformed";
+-  await db.update(settings)
++  await withSqliteBusyRetry(() => db.update(settings)
+     .set({ value, updatedAt: new Date(now) })
+-    .where(and(eq(settings.key, key), eq(settings.value, existing.value)));
++    .where(and(eq(settings.key, key), eq(settings.value, existing.value))));
+ 
+   const claimed = await db.select().from(settings).where(eq(settings.key, key)).get();
+   if (claimed?.value === value) {
+@@ -86,10 +87,10 @@ export async function releaseSupervisorWakeLease(runId: string, leaseId: string)
+     return;
+   }
+ 
+-  await db.delete(settings).where(and(eq(settings.key, key), eq(settings.value, existing.value)));
++  await withSqliteBusyRetry(() => db.delete(settings).where(and(eq(settings.key, key), eq(settings.value, existing.value))));
+   emitNamedEvent({ kind: "supervisor.wake_lease_released", runId });
+ }
+ 
+ export async function clearSupervisorWakeLease(runId: string) {
+-  await db.delete(settings).where(eq(settings.key, leaseKey(runId)));
++  await withSqliteBusyRetry(() => db.delete(settings).where(eq(settings.key, leaseKey(runId))));
+ }
+diff --git a/src/server/supervisor/retry.ts b/src/server/supervisor/retry.ts
+index e63021b..799d581 100644
+--- a/src/server/supervisor/retry.ts
++++ b/src/server/supervisor/retry.ts
+@@ -50,7 +50,15 @@ const RETRYABLE_MESSAGE_PATTERNS = [
+   /\bnetwork\b/i,
+   /\bsocket hang up\b/i,
+   /\bother side closed\b/i,
++];
++const PERMANENT_MESSAGE_PATTERNS = [
+   /\bworker binary is not installed\b/i,
++  /\bAPI key not valid\b/i,
++  /\bauthentication required\b/i,
++  /\bbilling required\b/i,
++  /\bcap_exceeded\b/i,
++  /\binsufficient quota\b/i,
++  /\bresource exhausted\b/i,
+ ];
+ 
+ export interface RetrySupervisorRequestOptions {
+@@ -150,6 +158,13 @@ export function isTransientSupervisorError(error: unknown) {
+     return explicitOverride.retryable;
+   }
+ 
++  if (chain.some((entry) => {
++    const message = typeof entry.message === "string" ? entry.message : "";
++    return PERMANENT_MESSAGE_PATTERNS.some((pattern) => pattern.test(message));
++  })) {
++    return false;
++  }
++
+   return chain.some((entry) => {
+     const message = typeof entry.message === "string" ? entry.message : "";
+     const code = typeof entry.code === "string" ? entry.code.toUpperCase() : "";
+diff --git a/src/server/supervisor/runtime-watchdog.ts b/src/server/supervisor/runtime-watchdog.ts
+index dbc735d..10aa3cd 100644
+--- a/src/server/supervisor/runtime-watchdog.ts
++++ b/src/server/supervisor/runtime-watchdog.ts
+@@ -16,11 +16,13 @@ let startupPromise: Promise<void> | null = null;
+ let watchdogInterval: ReturnType<typeof setInterval> | null = null;
+ 
+ function isRecoverableFailedImplementationRun(run: typeof runs.$inferSelect) {
++  const lastError = run.lastError?.trim() ?? "";
+   return run.mode === "implementation"
+     && run.phase !== "planning"
+     && run.status === "failed"
+-    && Boolean(run.lastError?.trim())
+-    && isTransientSupervisorError(new Error(run.lastError ?? ""));
++    && Boolean(lastError)
++    && isTransientSupervisorError(new Error(lastError))
++    && !/\b(?:api key|authentication required|auth(?:entication)? failed|billing required|api billing|cap_exceeded|insufficient quota|resource exhausted)\b/i.test(lastError);
+ }
+ 
+ async function clearMatchingRunFailureMessage(run: typeof runs.$inferSelect) {
+diff --git a/src/server/supervisor/wake-schedule.ts b/src/server/supervisor/wake-schedule.ts
+index 1afc68a..7504b2e 100644
+--- a/src/server/supervisor/wake-schedule.ts
++++ b/src/server/supervisor/wake-schedule.ts
+@@ -1,5 +1,6 @@
+ import { and, eq, inArray, lte, sql } from "drizzle-orm";
+ import { db } from "@/server/db";
++import { withSqliteBusyRetry } from "@/server/db/retry";
+ import { runs, supervisorScheduledWakes } from "@/server/db/schema";
+ import { isTerminalRunStatus } from "@/server/runs/status";
+ 
+@@ -80,7 +81,7 @@ export async function scheduleDurableSupervisorWakeAt(args: DurableSupervisorWak
+     )
+   `;
+ 
+-  await db.insert(supervisorScheduledWakes)
++  await withSqliteBusyRetry(() => db.insert(supervisorScheduledWakes)
+     .values(record)
+     .onConflictDoUpdate({
+       target: supervisorScheduledWakes.runId,
+@@ -93,7 +94,7 @@ export async function scheduleDurableSupervisorWakeAt(args: DurableSupervisorWak
+         updatedAt: sql`excluded.updated_at`,
+       },
+       ...(args.force ? {} : { setWhere: nonForcedReplacement }),
+-    });
++    }));
+ 
+   const scheduled = await db
+     .select()
+@@ -111,21 +112,21 @@ export async function scheduleDurableSupervisorWakeAt(args: DurableSupervisorWak
+ 
+ export async function cancelDurableSupervisorWake(runId: string, reason?: string) {
+   clearDurableTimer(runId);
+-  await db.delete(supervisorScheduledWakes).where(
++  await withSqliteBusyRetry(() => db.delete(supervisorScheduledWakes).where(
+     reason
+       ? and(eq(supervisorScheduledWakes.runId, runId), eq(supervisorScheduledWakes.reason, reason))
+       : eq(supervisorScheduledWakes.runId, runId),
+-  );
++  ));
+ }
+ 
+ export async function claimDueDurableSupervisorWake(runId: string, nowMs = Date.now()) {
+-  const claimed = await db
++  const claimed = await withSqliteBusyRetry(() => db
+     .delete(supervisorScheduledWakes)
+     .where(and(
+       eq(supervisorScheduledWakes.runId, runId),
+       lte(supervisorScheduledWakes.wakeAt, new Date(nowMs)),
+     ))
+-    .returning();
++    .returning());
+ 
+   if (!claimed[0]) {
+     return null;
+diff --git a/src/server/supervisor/wake.ts b/src/server/supervisor/wake.ts
+index e71f5f8..61c0003 100644
+--- a/src/server/supervisor/wake.ts
++++ b/src/server/supervisor/wake.ts
+@@ -1,7 +1,7 @@
+ import { recordExecutionEvent } from "@/server/events/execution-event-store";
+-import { desc, eq, inArray } from "drizzle-orm";
++import { and, desc, eq, inArray } from "drizzle-orm";
+ import { db } from "@/server/db";
+-import { executionEvents, runs, workers } from "@/server/db/schema";
++import { clarifications, executionEvents, runs, workers } from "@/server/db/schema";
+ import { persistRunFailure } from "@/server/runs/failures";
+ import { emitNamedEvent } from "@/server/events/named-events";
+ import { isActiveImplementationRun, isRunnableImplementationRun } from "@/server/runs/status";
+@@ -23,8 +23,19 @@ const wakeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+ const wakeDeadlines = new Map<string, number>();
+ const inFlight = new Set<string>();
+ const LEASE_BLOCKED_RETRY_MS = 1_000;
++const TRANSIENT_SUPERVISOR_RETRY_MS = 5_000;
++const PRE_WORKER_LEASE_ORPHAN_GRACE_MS = 90_000;
+ const COMPLETION_EVENT_TYPES = new Set(["worker_turn_completed"]);
+ const COMPLETION_RESET_EVENT_TYPES = new Set(["worker_prompted", "worker_spawned", "worker_session_resumed", "worker_session_recreated"]);
++const PRE_WORKER_RECOVERY_EVENT_TYPES = new Set([
++  "clarification_resolved",
++  "supervisor_model_request_started",
++  "supervisor_wake_retry_scheduled",
++  "supervisor_wake_lease_recovered",
++  "supervisor_turn_step_limit_reached",
++  "supervisor_turn_stopped",
++  "worker_selection_changed",
++]);
+ const ACTIVE_WORKER_STATUS_PATTERN = /\b(working|stuck|starting|pending|busy|running)\b/i;
+ 
+ function scheduleDurableWakeBackup(runId: string, nextDeadline: number, delayMs: number) {
+@@ -98,6 +109,81 @@ async function recoverCompletionBlockedByOrphanedLease(runId: string) {
+   return true;
+ }
+ 
++async function recoverPreWorkerBlockedByOrphanedLease(runId: string) {
++  const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
++  if (!run || run.mode !== "implementation" || run.status !== "running") {
++    return false;
++  }
++
++  const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
++  if (runWorkers.length > 0) {
++    return false;
++  }
++
++  const pendingClarification = await db.select().from(clarifications).where(and(
++    eq(clarifications.runId, runId),
++    eq(clarifications.status, "pending"),
++  )).limit(1).get();
++  if (pendingClarification) {
++    return false;
++  }
++
++  const latestEvent = await db.select().from(executionEvents)
++    .where(eq(executionEvents.runId, runId))
++    .orderBy(desc(executionEvents.createdAt), desc(executionEvents.id))
++    .limit(1)
++    .get();
++  if (!latestEvent || !PRE_WORKER_RECOVERY_EVENT_TYPES.has(latestEvent.eventType)) {
++    if (latestEvent?.eventType === "run_failed") {
++      let error = "Supervisor wake failed before the first worker was attached.";
++      try {
++        const details = JSON.parse(latestEvent.details || "{}") as { error?: unknown; summary?: unknown };
++        const parsed = typeof details.error === "string"
++          ? details.error
++          : typeof details.summary === "string"
++            ? details.summary
++            : "";
++        if (parsed) {
++          error = parsed;
++        }
++      } catch {
++        // Keep the generic failure text when legacy event details are malformed.
++      }
++      await clearSupervisorWakeLease(runId);
++      await persistRunFailure(runId, new Error(error), {
++        surface: { code: "supervisor.wake.failed" },
++      });
++      emitNamedEvent({
++        kind: "supervisor.wake_lease_recovered",
++        runId,
++        reason: "orphaned_pre_worker",
++      });
++      return true;
++    }
++    return false;
++  }
++  if (Date.now() - latestEvent.createdAt.getTime() < PRE_WORKER_LEASE_ORPHAN_GRACE_MS) {
++    return false;
++  }
++
++  await clearSupervisorWakeLease(runId);
++  emitNamedEvent({
++    kind: "supervisor.wake_lease_recovered",
++    runId,
++    reason: "orphaned_pre_worker",
++  });
++  await recordExecutionEvent({
++    runId,
++    eventType: "supervisor_wake_lease_recovered",
++    details: {
++      summary: "Cleared an orphaned supervisor wake lease before the first worker was attached.",
++      latestEventType: latestEvent.eventType,
++      latestEventId: latestEvent.id,
++    },
++  });
++  return true;
++}
++
+ export async function executeSupervisorWake(runId: string) {
+   clearWake(runId);
+   if (inFlight.has(runId)) {
+@@ -107,7 +193,10 @@ export async function executeSupervisorWake(runId: string) {
+ 
+   const leaseId = await acquireSupervisorWakeLease(runId);
+   if (!leaseId) {
+-    if (await recoverCompletionBlockedByOrphanedLease(runId)) {
++    if (
++      await recoverCompletionBlockedByOrphanedLease(runId)
++      || await recoverPreWorkerBlockedByOrphanedLease(runId)
++    ) {
+       scheduleSupervisorWake(runId, 0);
+       return;
+     }
+@@ -195,7 +284,16 @@ export async function executeSupervisorWake(runId: string) {
+     }
+   } catch (error) {
+     if (isTransientSupervisorError(error)) {
+-      scheduleSupervisorWake(runId, 5_000);
++      await recordExecutionEvent({
++        runId,
++        eventType: "supervisor_wake_retry_scheduled",
++        details: {
++          summary: "Supervisor wake hit a transient error; retrying shortly.",
++          delayMs: TRANSIENT_SUPERVISOR_RETRY_MS,
++          error: error instanceof Error ? error.message : String(error),
++        },
++      });
++      scheduleSupervisorWake(runId, TRANSIENT_SUPERVISOR_RETRY_MS);
+       return;
+     }
+     stopRunObserver(runId);
+diff --git a/src/server/supervisor/worker-availability.ts b/src/server/supervisor/worker-availability.ts
+index 4fa4b3e..ce3c2f6 100644
+--- a/src/server/supervisor/worker-availability.ts
++++ b/src/server/supervisor/worker-availability.ts
+@@ -66,17 +66,24 @@ function claudeKeychainCredentialsExist(env: EnvLike) {
+ type WorkerDetectionOptions = {
+   env?: EnvLike;
+   commandResolver?: WorkerCommandResolver;
++  cwd?: string;
++  loginShellPathMode?: "blocking" | "cached";
+ };
+ 
+-function resolveCommandPath(command: string, env: EnvLike = process.env, commandResolver?: WorkerCommandResolver) {
+-  if (commandResolver) {
+-    return commandResolver(command, env);
++function resolveCommandPath(command: string, options: WorkerDetectionOptions = {}) {
++  const lookupEnv = withManagedPath(
++    { ...process.env, ...(options.env ?? {}) },
++    options.cwd,
++    { loginShellPathMode: options.loginShellPathMode ?? "cached" },
++  );
++  if (options.commandResolver) {
++    return options.commandResolver(command, lookupEnv);
+   }
+ 
+   try {
+     return String(execFileSync("which", [command], {
+       encoding: "utf8",
+-      env: withManagedPath(env, undefined, { loginShellPathMode: "cached" }) as NodeJS.ProcessEnv,
++      env: lookupEnv as NodeJS.ProcessEnv,
+       timeout: 1_500,
+       maxBuffer: 64 * 1024,
+     })).trim() || null;
+@@ -85,8 +92,8 @@ function resolveCommandPath(command: string, env: EnvLike = process.env, command
+   }
+ }
+ 
+-function workerBinaryAvailable(type: SupportedWorkerType, env: EnvLike = process.env, commandResolver?: WorkerCommandResolver) {
+-  return resolveCommandPath(WORKER_BINARY_COMMANDS[type], env, commandResolver) !== null;
++function workerBinaryAvailable(type: SupportedWorkerType, options: WorkerDetectionOptions = {}) {
++  return resolveCommandPath(WORKER_BINARY_COMMANDS[type], options) !== null;
+ }
+ 
+ function workerHasApiKey(type: SupportedWorkerType) {
+@@ -424,6 +431,7 @@ export function getWorkerAuthenticationInfo(type: string, options: WorkerAuthent
+     }
+ 
+     if (anyFileExists([
++      join(homeDir, ".gemini", "gemini-credentials.json"),
+       join(homeDir, ".gemini", "oauth_creds.json"),
+       join(homeDir, ".gemini", "google_account_id"),
+       join(homeDir, ".gemini", "google_accounts.json"),
+@@ -499,7 +507,7 @@ export function isSpawnableWorkerType(type: string, options: SpawnabilityOptions
+   const supportedType = normalized as SupportedWorkerType;
+   const env = options.env ?? process.env;
+ 
+-  if (!workerBinaryAvailable(supportedType, env, options.commandResolver)) {
++  if (!workerBinaryAvailable(supportedType, { ...options, env })) {
+     const reason =
+       supportedType === "codex"
+         ? "codex ACP adapter is not installed."
+@@ -539,7 +547,7 @@ export function getWorkerInstallationInfo(type: string, options: WorkerDetection
+     ? normalized as SupportedWorkerType
+     : null;
+   const command = supportedType ? WORKER_BINARY_COMMANDS[supportedType] : normalized;
+-  const path = resolveCommandPath(command, options.env ?? process.env, options.commandResolver);
++  const path = resolveCommandPath(command, options);
+ 
+   return {
+     command,
+@@ -552,7 +560,7 @@ export function selectSpawnableWorkerType(
+   requestedType: string,
+   env: EnvLike,
+   allowedTypes: SupportedWorkerType[] = [...SUPPORTED_WORKER_TYPES],
+-  options: { quotaBlocked?: ReadonlySet<SupportedWorkerType> } = {},
++  options: Omit<WorkerDetectionOptions, "env"> & { quotaBlocked?: ReadonlySet<SupportedWorkerType> } = {},
+ ) {
+   const normalizedRequestedType = normalizeWorkerType(requestedType);
+   const normalizedAllowedTypes = Array.from(new Set(
+@@ -565,7 +573,7 @@ export function selectSpawnableWorkerType(
+     if (!firstAllowed) {
+       throw new Error("No allowed worker types are configured for this run.");
+     }
+-    const availability = isSpawnableWorkerType(firstAllowed, { env, quotaBlocked });
++    const availability = isSpawnableWorkerType(firstAllowed, { ...options, env, quotaBlocked });
+     if (availability.ok) {
+       return {
+         type: availability.type,
+@@ -575,7 +583,7 @@ export function selectSpawnableWorkerType(
+     }
+   }
+ 
+-  const requested = isSpawnableWorkerType(normalizedRequestedType, { env, quotaBlocked });
++  const requested = isSpawnableWorkerType(normalizedRequestedType, { ...options, env, quotaBlocked });
+   if (requested.ok && normalizedAllowedTypes.includes(requested.type)) {
+     return {
+       type: requested.type,
+@@ -588,7 +596,7 @@ export function selectSpawnableWorkerType(
+     if (candidate === normalizedRequestedType || !normalizedAllowedTypes.includes(candidate)) {
+       continue;
+     }
+-    const availability = isSpawnableWorkerType(candidate, { env, quotaBlocked });
++    const availability = isSpawnableWorkerType(candidate, { ...options, env, quotaBlocked });
+     if (availability.ok) {
+       return {
+         type: availability.type,
+diff --git a/src/server/supervisor/worker-failover.ts b/src/server/supervisor/worker-failover.ts
+index 3e7ee60..abe78c2 100644
+--- a/src/server/supervisor/worker-failover.ts
++++ b/src/server/supervisor/worker-failover.ts
+@@ -26,6 +26,7 @@ import {
+   type SupportedWorkerType,
+ } from "@/server/supervisor/worker-types";
+ import { runs } from "@/server/db/schema";
++import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
+ 
+ export type FailoverEnv = Record<string, string | undefined>;
+ 
+@@ -319,6 +320,7 @@ export async function attemptWorkerFailover(
+   let currentType: SupportedWorkerType = replacementType;
+   let lastError: unknown = null;
+   const blockedNow = new Set<SupportedWorkerType>([args.outgoingWorkerType]);
++  const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
+   while (attempts < maxAttempts) {
+     attempts += 1;
+     const newWorkerId = await reserveReplacementWorkerRow({
+@@ -329,11 +331,20 @@ export async function attemptWorkerFailover(
+       initialPrompt: seed,
+     });
+     try {
++      const accountAllocation = await allocateWorkerAccount({
++        workerType: currentType,
++        runId: args.runId,
++        workerId: newWorkerId,
++        explicitAccountId: run?.preferredWorkerAccountId ?? null,
++        strategy: run?.preferredWorkerAccountId ? "manual" : "priority",
++      });
++      const workerAccountId = accountAllocation.account?.id ?? null;
+       const spawned = await bridge.spawnAgent({
+         type: currentType,
+         cwd: args.cwd,
+         name: newWorkerId,
+         env: compactEnv(args.env),
++        ...(workerAccountId ? { accountId: workerAccountId } : {}),
+       });
+       await db.update(workers).set({
+         bridgeSessionId: spawned.sessionId ?? null,
+diff --git a/tests/server/quota/type-blocking.test.ts b/tests/server/quota/type-blocking.test.ts
+index 962d784..f43b610 100644
+--- a/tests/server/quota/type-blocking.test.ts
++++ b/tests/server/quota/type-blocking.test.ts
+@@ -2,11 +2,13 @@ import { randomUUID } from "crypto";
+ import { beforeEach, describe, expect, it } from "vitest";
+ import { db } from "@/server/db";
+ import {
++  accounts,
+   executionEvents,
+   plans,
+   recoveryIncidents,
+   runs,
+   supervisorScheduledWakes,
++  workerCredentialAllocations,
+   workers,
+ } from "@/server/db/schema";
+ import { isWorkerTypeQuotaBlocked, quotaBlockedTypes } from "@/server/quota/type-blocking";
+@@ -74,12 +76,48 @@ async function insertIncident(runId: string, workerId: string, status: string, r
+   return id;
+ }
+ 
++async function insertAccount(type: string) {
++  const id = `account-${randomUUID()}`;
++  await db.insert(accounts).values({
++    id,
++    cliType: type,
++    provider: type === "claude" ? "anthropic" : "openai",
++    type: "subscription",
++    label: id,
++    authMode: "local_session",
++    authRef: "local-default",
++    enabled: true,
++    priority: 0,
++    status: "healthy",
++    createdAt: now,
++    updatedAt: now,
++  });
++  return id;
++}
++
++async function insertAllocation(runId: string, workerId: string, workerType: string, accountId: string) {
++  await db.insert(workerCredentialAllocations).values({
++    id: randomUUID(),
++    runId,
++    workerId,
++    workerType,
++    accountId,
++    strategy: "manual",
++    selectionReason: "test",
++    explicit: true,
++    createdAt: now,
++    updatedAt: now,
++  });
++}
++
+ describe("isWorkerTypeQuotaBlocked", () => {
+   beforeEach(async () => {
+     await db.delete(supervisorScheduledWakes);
+     await db.delete(executionEvents);
+     await db.delete(recoveryIncidents);
++    await db.delete(workerCredentialAllocations);
+     await db.delete(workers);
++    await db.delete(accounts);
+     await db.delete(runs);
+     await db.delete(plans);
+   });
+@@ -114,6 +152,31 @@ describe("isWorkerTypeQuotaBlocked", () => {
+   it("returns false for a type that has no workers at all", async () => {
+     expect(await isWorkerTypeQuotaBlocked("gemini", { now })).toBe(false);
+   });
++
++  it("does not block a worker type while another account for that type is usable", async () => {
++    const runId = await insertRun();
++    const exhaustedAccountId = await insertAccount("codex");
++    await insertAccount("codex");
++    const workerId = await insertWorker(runId, "codex", "cred-exhausted");
++    await insertAllocation(runId, workerId, "codex", exhaustedAccountId);
++    await insertIncident(runId, workerId, "open", new Date(now.getTime() + 60_000));
++
++    expect(await isWorkerTypeQuotaBlocked("codex", { now })).toBe(false);
++  });
++
++  it("blocks a worker type when every usable account for that type is blocked", async () => {
++    const runId = await insertRun();
++    const firstAccountId = await insertAccount("codex");
++    const secondAccountId = await insertAccount("codex");
++    const firstWorkerId = await insertWorker(runId, "codex", "cred-exhausted");
++    const secondWorkerId = await insertWorker(runId, "codex", "cred-exhausted");
++    await insertAllocation(runId, firstWorkerId, "codex", firstAccountId);
++    await insertAllocation(runId, secondWorkerId, "codex", secondAccountId);
++    await insertIncident(runId, firstWorkerId, "open", new Date(now.getTime() + 60_000));
++    await insertIncident(runId, secondWorkerId, "open", new Date(now.getTime() + 60_000));
++
++    expect(await isWorkerTypeQuotaBlocked("codex", { now })).toBe(true);
++  });
+ });
+ 
+ describe("quotaBlockedTypes", () => {
+@@ -121,7 +184,9 @@ describe("quotaBlockedTypes", () => {
+     await db.delete(supervisorScheduledWakes);
+     await db.delete(executionEvents);
+     await db.delete(recoveryIncidents);
++    await db.delete(workerCredentialAllocations);
+     await db.delete(workers);
++    await db.delete(accounts);
+     await db.delete(runs);
+     await db.delete(plans);
+   });

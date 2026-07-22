@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex conversation archive</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --background: #f4f1ea;
+      --panel: #fffdf8;
+      --panel-strong: #ffffff;
+      --text: #24231f;
+      --muted: #706d64;
+      --line: #d8d2c5;
+      --accent: #315f57;
+      --accent-soft: #dcebe6;
+      --user: #e9eef8;
+      --final: #e6f2e8;
+      --tool: #f4ead8;
+      --danger: #a33b31;
+      --shadow: 0 18px 50px rgba(49, 43, 32, 0.09);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --background: #171816;
+        --panel: #20221f;
+        --panel-strong: #272a26;
+        --text: #ecebe4;
+        --muted: #aaa99f;
+        --line: #3b3e39;
+        --accent: #91cabe;
+        --accent-soft: #243e38;
+        --user: #242f42;
+        --final: #233a29;
+        --tool: #3a3020;
+        --danger: #ff9a8f;
+        --shadow: 0 18px 50px rgba(0, 0, 0, 0.3);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--background); color: var(--text); font: 15px/1.55 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    a { color: var(--accent); }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    code { font-size: 0.92em; }
+    pre { overflow: auto; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--background) 72%, black 3%); white-space: pre-wrap; word-break: break-word; }
+
+    .shell { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); min-height: 100vh; }
+    .sidebar { position: sticky; top: 0; height: 100vh; overflow: hidden; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--panel); }
+    .sidebar-header { padding: 22px 20px 16px; border-bottom: 1px solid var(--line); }
+    .eyebrow { margin: 0 0 4px; color: var(--accent); font-size: 12px; font-weight: 750; letter-spacing: 0.1em; text-transform: uppercase; }
+    h1 { margin: 0; font: 700 clamp(22px, 3vw, 34px)/1.15 ui-serif, Georgia, serif; }
+    .archive-meta { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+    .filters { display: grid; gap: 9px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+    .search-row { display: flex; gap: 7px; }
+    input, select { min-width: 0; width: 100%; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-strong); color: var(--text); padding: 9px 10px; }
+    .search-button { border: 0; border-radius: 9px; background: var(--accent); color: var(--background); padding: 9px 13px; font-weight: 700; }
+    .filter-row { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    #search-progress { min-height: 18px; color: var(--muted); font-size: 12px; }
+    .conversation-list { overflow: auto; padding: 9px; }
+    .conversation-button { width: 100%; margin: 0 0 6px; padding: 12px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--text); text-align: left; }
+    .conversation-button:hover, .conversation-button[aria-current="true"] { border-color: var(--line); background: var(--accent-soft); }
+    .conversation-title { display: block; font-weight: 700; }
+    .conversation-subtitle { display: flex; justify-content: space-between; gap: 10px; margin-top: 5px; color: var(--muted); font-size: 12px; }
+
+    main { min-width: 0; padding: 32px clamp(18px, 5vw, 72px) 80px; }
+    .content { max-width: 980px; margin: 0 auto; }
+    .empty { padding: 48px; border: 1px dashed var(--line); border-radius: 16px; color: var(--muted); text-align: center; background: var(--panel); }
+    .error { border-color: color-mix(in srgb, var(--danger) 50%, var(--line)); color: var(--danger); }
+    .conversation-header { margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+    .conversation-header h1 { margin-bottom: 10px; }
+    .metadata { display: flex; flex-wrap: wrap; gap: 7px 16px; color: var(--muted); font-size: 13px; }
+    .event { margin: 0 0 14px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); box-shadow: var(--shadow); overflow: hidden; }
+    .event.user { background: var(--user); }
+    .event.final { background: var(--final); }
+    .event summary { padding: 13px 16px; font-weight: 750; cursor: pointer; user-select: none; }
+    .event summary:hover { background: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
+    .event-body { padding: 4px 18px 18px; }
+    article.event { padding: 17px 18px; }
+    .event-heading { display: flex; justify-content: space-between; gap: 16px; margin: 0 0 10px; font-weight: 800; }
+    .event-time { color: var(--muted); font-size: 12px; font-weight: 500; }
+    .tool-call, .tool-result, .subagent, .state { background: var(--tool); }
+    .lazy-output { margin-top: 10px; }
+    .source-link { display: inline-block; margin-top: 10px; font-size: 13px; }
+    .status { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 8px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 700; }
+
+    @media (max-width: 760px) {
+      .shell { display: block; }
+      .sidebar { position: relative; height: auto; max-height: 52vh; border-right: 0; border-bottom: 1px solid var(--line); }
+      .conversation-list { max-height: 27vh; }
+      main { padding-top: 22px; }
+      .empty { padding: 28px 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <header class="sidebar-header">
+        <p class="eyebrow">Local record</p>
+        <h1>Codex archive</h1>
+        <p class="archive-meta" id="archive-meta">Loading manifest…</p>
+      </header>
+      <form class="filters" id="search-form">
+        <div class="search-row">
+          <input id="search" type="search" placeholder="Search every transcript" aria-label="Search conversations">
+          <button class="search-button" type="submit">Search</button>
+        </div>
+        <div class="filter-row">
+          <select id="status-filter" aria-label="Filter by status">
+            <option value="">All statuses</option>
+            <option value="complete">Complete</option>
+            <option value="active">Active</option>
+            <option value="interrupted">Interrupted</option>
+            <option value="unknown">Unknown</option>
+          </select>
+          <input id="month-filter" type="month" aria-label="Filter by month">
+        </div>
+        <div id="search-progress" aria-live="polite"></div>
+      </form>
+      <nav class="conversation-list" id="conversation-list" aria-label="Archived conversations"></nav>
+    </aside>
+    <main>
+      <div class="content" id="content">
+        <div class="empty">Choose a conversation from the archive.</div>
+      </div>
+    </main>
+  </div>
+  <details hidden><summary>Collapsed archive section</summary></details>
+  <script>
+    "use strict";
+
+    const state = { manifest: null, visible: [], selectedId: null, searchRun: 0 };
+    const listElement = document.getElementById("conversation-list");
+    const contentElement = document.getElementById("content");
+    const progressElement = document.getElementById("search-progress");
+    const searchInput = document.getElementById("search");
+    const statusInput = document.getElementById("status-filter");
+    const monthInput = document.getElementById("month-filter");
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[character]);
+    }
+
+    function safeRelativeHref(value) {
+      const href = String(value).trim();
+      if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//")) return "#";
+      return escapeHtml(href);
+    }
+
+    function renderInline(value) {
+      let output = escapeHtml(value);
+      output = output.replace(/`([^`]+)`/g, "<code>$1</code>");
+      output = output.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, href) => {
+        const safeHref = safeRelativeHref(href);
+        const lazy = /attachments\//.test(href) && /\.txt(?:$|[?#])/.test(href) ? " data-lazy-output" : "";
+        return `<a href="${safeHref}"${lazy}>${label}</a>`;
+      });
+      output = output.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      output = output.replace(/(^|\s)\*([^*]+)\*/g, "$1<em>$2</em>");
+      return output;
+    }
+
+    function renderSafeMarkdown(markdown) {
+      const lines = String(markdown).replace(/\r\n?/g, "\n").split("\n");
+      const output = [];
+      let paragraph = [];
+      let list = [];
+      let code = [];
+      let fence = null;
+
+      const flushParagraph = () => {
+        if (paragraph.length) output.push(`<p>${renderInline(paragraph.join("\n")).replace(/\n/g, "<br>")}</p>`);
+        paragraph = [];
+      };
+      const flushList = () => {
+        if (list.length) output.push(`<ul>${list.map(item => `<li>${renderInline(item)}</li>`).join("")}</ul>`);
+        list = [];
+      };
+
+      for (const line of lines) {
+        const fenceMatch = line.match(/^(`{3,})(.*)$/);
+        if (fence) {
+          if (line.startsWith(fence)) {
+            output.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
+            code = [];
+            fence = null;
+          } else code.push(line);
+          continue;
+        }
+        if (fenceMatch) {
+          flushParagraph(); flushList();
+          fence = fenceMatch[1];
+          continue;
+        }
+        if (!line.trim()) {
+          flushParagraph(); flushList();
+          continue;
+        }
+        const listMatch = line.match(/^\s*[-*]\s+(.+)$/);
+        if (listMatch) {
+          flushParagraph();
+          list.push(listMatch[1]);
+          continue;
+        }
+        const quoteMatch = line.match(/^>\s?(.*)$/);
+        if (quoteMatch) {
+          flushParagraph(); flushList();
+          output.push(`<blockquote>${renderInline(quoteMatch[1])}</blockquote>`);
+          continue;
+        }
+        paragraph.push(line);
+      }
+      if (fence) output.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
+      flushParagraph(); flushList();
+      return output.join("\n");
+    }
+
+    function formatDate(value) {
+      const date = new Date(value);
+      return Number.isNaN(date.valueOf()) ? value || "Unknown date" : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
+    }
+
+    function filtersMatch(conversation) {
+      const status = statusInput.value;
+      const month = monthInput.value;
+      return (!status || conversation.status === status) && (!month || String(conversation.startedAt).startsWith(month));
+    }
+
+    function renderList(conversations) {
+      state.visible = conversations;
+      if (!conversations.length) {
+        listElement.innerHTML = '<div class="empty">No conversations match.</div>';
+        return;
+      }
+      listElement.innerHTML = conversations.map(conversation => `
+        <button class="conversation-button" data-id="${escapeHtml(conversation.id)}" aria-current="${conversation.id === state.selectedId}">
+          <span class="conversation-title">${escapeHtml(conversation.title)}</span>
+          <span class="conversation-subtitle"><span>${escapeHtml(formatDate(conversation.updatedAt))}</span><span>${escapeHtml(conversation.status)}</span></span>
+        </button>`).join("");
+    }
+
+    async function fetchConversationText(conversation) {
+      const parts = [];
+      for (const path of conversation.parts) {
+        const response = await fetch(path);
+        if (!response.ok) throw new Error(`Could not load ${path} (${response.status})`);
+        parts.push(await response.text());
+      }
+      return parts.join("\n\n");
+    }
+
+    function parseEvents(markdown) {
+      const events = [];
+      const pattern = /<!-- codex-event:(.*?) -->([\s\S]*?)<!-- \/codex-event -->/g;
+      for (const match of markdown.matchAll(pattern)) {
+        let metadata = { kind: "progress", timestamp: "", phase: null };
+        try { metadata = JSON.parse(match[1]); } catch { /* render as a normal collapsed event */ }
+        const block = match[2].trim();
+        const lines = block.split("\n");
+        const heading = (lines.shift() || "## Archive event").replace(/^##\s*/, "").replace(/\s+·\s+.*$/, "");
+        events.push({ metadata, heading, body: lines.join("\n").trim() });
+      }
+      return events;
+    }
+
+    function renderEvent(event) {
+      const kind = event.metadata.kind || "progress";
+      const time = event.metadata.timestamp ? formatDate(event.metadata.timestamp) : "";
+      const heading = escapeHtml(event.heading);
+      const body = renderSafeMarkdown(event.body);
+      if (kind === "user" || kind === "final") {
+        return `<article class="event ${escapeHtml(kind)}"><div class="event-heading"><span>${heading}</span><span class="event-time">${escapeHtml(time)}</span></div><div>${body}</div></article>`;
+      }
+      return `<details class="event ${escapeHtml(kind)}"><summary>${heading}<span class="event-time">${escapeHtml(time)}</span></summary><div class="event-body">${body}</div></details>`;
+    }
+
+    async function selectConversation(id) {
+      const conversation = state.manifest.conversations.find(item => item.id === id);
+      if (!conversation) return;
+      state.selectedId = id;
+      renderList(state.visible);
+      contentElement.innerHTML = '<div class="empty">Loading conversation…</div>';
+      try {
+        const markdown = await fetchConversationText(conversation);
+        const events = parseEvents(markdown);
+        contentElement.innerHTML = `
+          <header class="conversation-header">
+            <p class="eyebrow">${escapeHtml(conversation.id)}</p>
+            <h1>${escapeHtml(conversation.title)}</h1>
+            <div class="metadata">
+              <span class="status">${escapeHtml(conversation.status)}</span>
+              <span>${escapeHtml(formatDate(conversation.startedAt))}</span>
+              <span>${escapeHtml(conversation.workingDirectory || "")}</span>
+              <span>${conversation.eventCount || events.length} recorded events</span>
+            </div>
+            <a class="source-link" href="${safeRelativeHref(conversation.parts[0])}">Open source Markdown</a>
+          </header>
+          ${events.length ? events.map(renderEvent).join("") : '<div class="empty">This transcript has no readable events.</div>'}`;
+      } catch (error) {
+        contentElement.innerHTML = `<div class="empty error"><strong>Conversation could not be loaded.</strong><br>${escapeHtml(error.message || String(error))}</div>`;
+      }
+    }
+
+    async function searchEveryTranscript(query) {
+      const run = ++state.searchRun;
+      const candidates = state.manifest.conversations.filter(filtersMatch);
+      if (!query) {
+        progressElement.textContent = `${candidates.length} conversations`;
+        renderList(candidates);
+        return;
+      }
+      const normalized = query.toLocaleLowerCase();
+      const matches = [];
+      for (let index = 0; index < candidates.length; index += 1) {
+        if (run !== state.searchRun) return;
+        const conversation = candidates[index];
+        progressElement.textContent = `Searching ${index + 1} of ${candidates.length}…`;
+        if (conversation.title.toLocaleLowerCase().includes(normalized)) {
+          matches.push(conversation);
+          continue;
+        }
+        try {
+          const text = await fetchConversationText(conversation);
+          if (text.toLocaleLowerCase().includes(normalized)) matches.push(conversation);
+        } catch { /* missing transcripts remain visible through direct navigation, but do not match */ }
+      }
+      if (run !== state.searchRun) return;
+      progressElement.textContent = `${matches.length} matches in ${candidates.length} conversations`;
+      renderList(matches);
+    }
+
+    document.getElementById("search-form").addEventListener("submit", event => {
+      event.preventDefault();
+      searchEveryTranscript(searchInput.value.trim());
+    });
+    statusInput.addEventListener("change", () => searchEveryTranscript(searchInput.value.trim()));
+    monthInput.addEventListener("change", () => searchEveryTranscript(searchInput.value.trim()));
+    listElement.addEventListener("click", event => {
+      const button = event.target.closest("[data-id]");
+      if (button) selectConversation(button.dataset.id);
+    });
+    contentElement.addEventListener("click", async event => {
+      const link = event.target.closest("a[data-lazy-output]");
+      if (!link) return;
+      event.preventDefault();
+      if (link.dataset.loaded === "true") return;
+      link.dataset.loaded = "true";
+      const holder = document.createElement("pre");
+      holder.className = "lazy-output";
+      holder.textContent = "Loading stored output…";
+      link.insertAdjacentElement("afterend", holder);
+      try {
+        const response = await fetch(link.getAttribute("href"));
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        holder.textContent = await response.text();
+      } catch (error) {
+        holder.textContent = `Stored output could not be loaded: ${error.message || error}`;
+        holder.classList.add("error");
+      }
+    });
+
+    async function start() {
+      try {
+        const response = await fetch("manifest.json");
+        if (!response.ok) throw new Error(`Manifest request failed (${response.status})`);
+        state.manifest = await response.json();
+        const conversations = Array.isArray(state.manifest.conversations) ? state.manifest.conversations : [];
+        state.manifest.conversations = conversations;
+        document.getElementById("archive-meta").textContent = `${conversations.length} conversations · ${state.manifest.projectRoot || "repository"}`;
+        progressElement.textContent = `${conversations.length} conversations`;
+        renderList(conversations.filter(filtersMatch));
+      } catch (error) {
+        document.getElementById("archive-meta").textContent = "Archive unavailable";
+        contentElement.innerHTML = `<div class="empty error"><strong>The archive manifest could not be loaded.</strong><br>Run this folder’s serve.sh script, then reload.<br>${escapeHtml(error.message || String(error))}</div>`;
+      }
+    }
+
+    start();
+  </script>
+</body>
+</html>
+
