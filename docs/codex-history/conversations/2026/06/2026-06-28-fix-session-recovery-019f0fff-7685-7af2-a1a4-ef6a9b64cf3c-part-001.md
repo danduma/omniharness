@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019f0fff-7685-7af2-a1a4-ef6a9b64cf3c"
 title: "Fix session recovery"
 started_at: "2026-06-28T20:50:28.132Z"

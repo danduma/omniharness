@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019ec6b5-b66f-7a72-b890-d5e656359191"
 title: "Fix conversation auto-naming"
 started_at: "2026-06-14T15:17:38.055Z"

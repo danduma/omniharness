@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019ecb8b-bdab-7312-bc8d-cc9d15180151"
 title: "Freeze recent tab list"
 started_at: "2026-06-15T13:49:53.492Z"

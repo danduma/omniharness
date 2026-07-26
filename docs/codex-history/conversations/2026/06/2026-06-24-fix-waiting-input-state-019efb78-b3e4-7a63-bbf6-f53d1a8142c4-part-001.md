@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019efb78-b3e4-7a63-bbf6-f53d1a8142c4"
 title: "Fix waiting input state"
 started_at: "2026-06-24T21:10:52.164Z"

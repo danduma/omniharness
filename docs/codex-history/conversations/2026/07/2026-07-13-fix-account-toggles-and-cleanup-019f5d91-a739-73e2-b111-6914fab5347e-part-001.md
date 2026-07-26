@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019f5d91-a739-73e2-b111-6914fab5347e"
 title: "Fix account toggles and cleanup"
 started_at: "2026-07-13T22:20:54.477Z"

@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019ecb8e-96b0-7f10-b9f1-e6df04da3437"
 title: "Align other sessions chevron"
 started_at: "2026-06-15T13:53:00.118Z"

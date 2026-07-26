@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019f31ad-023f-7411-a3ec-d509de71a00d"
 title: "Verify direct control effort"
 started_at: "2026-07-05T09:47:29.757Z"

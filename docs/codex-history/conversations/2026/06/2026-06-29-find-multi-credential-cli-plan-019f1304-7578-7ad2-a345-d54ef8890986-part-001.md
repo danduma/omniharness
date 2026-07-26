@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019f1304-7578-7ad2-a345-d54ef8890986"
 title: "Find multi-credential CLI plan"
 started_at: "2026-06-29T10:54:47.195Z"

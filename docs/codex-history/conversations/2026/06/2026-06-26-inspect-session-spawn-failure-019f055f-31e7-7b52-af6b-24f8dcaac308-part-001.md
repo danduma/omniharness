@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019f055f-31e7-7b52-af6b-24f8dcaac308"
 title: "Inspect session spawn failure"
 started_at: "2026-06-26T19:19:12.646Z"

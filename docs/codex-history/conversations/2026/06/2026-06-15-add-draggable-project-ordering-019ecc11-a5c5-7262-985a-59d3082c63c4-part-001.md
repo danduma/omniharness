@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019ecc11-a5c5-7262-985a-59d3082c63c4"
 title: "Add draggable project ordering"
 started_at: "2026-06-15T16:16:09.208Z"

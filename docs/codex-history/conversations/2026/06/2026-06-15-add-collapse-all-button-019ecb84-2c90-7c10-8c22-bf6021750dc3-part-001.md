@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019ecb84-2c90-7c10-8c22-bf6021750dc3"
 title: "Add collapse all button"
 started_at: "2026-06-15T13:41:37.592Z"

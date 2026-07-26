@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019f1923-0b86-74a3-91d0-2cc735fc9a07"
 title: "Inspect session output loss"
 started_at: "2026-06-30T15:25:54.985Z"

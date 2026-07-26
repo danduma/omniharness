@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019f5ce4-7e20-74a3-942f-1c8e01a0ee0d"
 title: "these on/off buttons next to accounts aren't doing anything…"
 started_at: "2026-07-13T19:11:46.353Z"

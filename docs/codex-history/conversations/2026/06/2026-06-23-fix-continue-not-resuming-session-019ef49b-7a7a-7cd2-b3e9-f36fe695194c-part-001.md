@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019ef49b-7a7a-7cd2-b3e9-f36fe695194c"
 title: "Fix continue not resuming session"
 started_at: "2026-06-23T13:11:30.702Z"

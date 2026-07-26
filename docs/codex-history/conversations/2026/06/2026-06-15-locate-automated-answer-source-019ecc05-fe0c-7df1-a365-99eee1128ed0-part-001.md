@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019ecc05-fe0c-7df1-a365-99eee1128ed0"
 title: "Locate automated answer source"
 started_at: "2026-06-15T16:03:25.356Z"

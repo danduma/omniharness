@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019ef4a1-c3a7-70f1-8d7d-925ee8ff4326"
 title: "Fix resume session selection"
 started_at: "2026-06-23T13:18:22.658Z"

@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019efb71-ff61-7c42-be1f-a29e31d37293"
 title: "Fix caption rendering slowdown"
 started_at: "2026-06-24T21:03:32.728Z"

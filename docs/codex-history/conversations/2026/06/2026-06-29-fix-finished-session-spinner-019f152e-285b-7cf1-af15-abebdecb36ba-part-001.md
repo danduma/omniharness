@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019f152e-285b-7cf1-af15-abebdecb36ba"
 title: "Fix finished session spinner"
 started_at: "2026-06-29T20:59:34.401Z"

@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019f5cda-ee0c-7fb0-80d1-fd6a53067350"
 title: "we need an option to copy full path to a file in the file v…"
 started_at: "2026-07-13T19:01:19.533Z"

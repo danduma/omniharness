@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019ecb81-2766-7c53-9d49-d0e27d37dd87"
 title: "Fix session loading and replay"
 started_at: "2026-06-15T13:38:19.648Z"

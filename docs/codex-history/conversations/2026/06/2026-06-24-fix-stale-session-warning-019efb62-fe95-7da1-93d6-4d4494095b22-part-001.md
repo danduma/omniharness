@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019efb62-fe95-7da1-93d6-4d4494095b22"
 title: "Fix stale session warning"
 started_at: "2026-06-24T20:47:09.495Z"

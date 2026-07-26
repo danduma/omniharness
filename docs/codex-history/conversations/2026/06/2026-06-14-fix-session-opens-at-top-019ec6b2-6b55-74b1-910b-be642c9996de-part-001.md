@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019ec6b2-6b55-74b1-910b-be642c9996de"
 title: "Fix session opens at top"
 started_at: "2026-06-14T15:14:02.236Z"

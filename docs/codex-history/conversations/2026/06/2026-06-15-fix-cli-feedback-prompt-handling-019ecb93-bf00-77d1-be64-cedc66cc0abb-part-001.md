@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019ecb93-bf00-77d1-be64-cedc66cc0abb"
 title: "Fix CLI feedback prompt handling"
 started_at: "2026-06-15T13:58:38.131Z"

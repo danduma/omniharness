@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019f2d4b-f68f-7a12-af08-ea106eeaf1fa"
 title: "Fix Claude Code auth errors"
 started_at: "2026-07-04T13:23:00.915Z"

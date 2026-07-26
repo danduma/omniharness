@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019ec6c7-4c64-72d1-a22e-134185cd20de"
 title: "OH multi server single app"
 started_at: "2026-06-14T15:36:50.565Z"

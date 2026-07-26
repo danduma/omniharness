@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019f1380-22b8-76a1-8e79-11c2cf1a5f88"
 title: "Fix Gemini API key missing error"
 started_at: "2026-06-29T13:09:52.470Z"

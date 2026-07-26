@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019f05aa-b96a-73b1-952d-6bace01598b5"
 title: "Find typing lag cause"
 started_at: "2026-06-26T20:41:42.553Z"

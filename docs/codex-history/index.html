@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Codex conversation archive</title>
+  <title>Agent conversation archive</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -59,13 +59,14 @@
     .search-row { display: flex; gap: 7px; }
     input, select { min-width: 0; width: 100%; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-strong); color: var(--text); padding: 9px 10px; }
     .search-button { border: 0; border-radius: 9px; background: var(--accent); color: var(--background); padding: 9px 13px; font-weight: 700; }
-    .filter-row { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .filter-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
     #search-progress { min-height: 18px; color: var(--muted); font-size: 12px; }
     .conversation-list { overflow: auto; padding: 9px; }
     .conversation-button { width: 100%; margin: 0 0 6px; padding: 12px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--text); text-align: left; }
     .conversation-button:hover, .conversation-button[aria-current="true"] { border-color: var(--line); background: var(--accent-soft); }
     .conversation-title { display: block; font-weight: 700; }
     .conversation-subtitle { display: flex; justify-content: space-between; gap: 10px; margin-top: 5px; color: var(--muted); font-size: 12px; }
+    .provider-badge { display: inline-flex; width: fit-content; margin-bottom: 5px; border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; color: var(--accent); font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
 
     main { min-width: 0; padding: 32px clamp(18px, 5vw, 72px) 80px; }
     .content { max-width: 980px; margin: 0 auto; }
@@ -102,7 +103,7 @@
     <aside class="sidebar">
       <header class="sidebar-header">
         <p class="eyebrow">Local record</p>
-        <h1>Codex archive</h1>
+        <h1>Agent archive</h1>
         <p class="archive-meta" id="archive-meta">Loading manifest…</p>
       </header>
       <form class="filters" id="search-form">
@@ -111,6 +112,11 @@
           <button class="search-button" type="submit">Search</button>
         </div>
         <div class="filter-row">
+          <select id="provider-filter" aria-label="Filter by provider">
+            <option value="">All providers</option>
+            <option value="codex">Codex</option>
+            <option value="claude">Claude</option>
+          </select>
           <select id="status-filter" aria-label="Filter by status">
             <option value="">All statuses</option>
             <option value="complete">Complete</option>
@@ -134,11 +140,12 @@
   <script>
     "use strict";
 
-    const state = { manifest: null, visible: [], selectedId: null, searchRun: 0 };
+    const state = { manifest: null, visible: [], selectedKey: null, searchRun: 0 };
     const listElement = document.getElementById("conversation-list");
     const contentElement = document.getElementById("content");
     const progressElement = document.getElementById("search-progress");
     const searchInput = document.getElementById("search");
+    const providerInput = document.getElementById("provider-filter");
     const statusInput = document.getElementById("status-filter");
     const monthInput = document.getElementById("month-filter");
 
@@ -226,9 +233,14 @@
     }
 
     function filtersMatch(conversation) {
+      const provider = providerInput.value;
       const status = statusInput.value;
       const month = monthInput.value;
-      return (!status || conversation.status === status) && (!month || String(conversation.startedAt).startsWith(month));
+      return (!provider || conversation.provider === provider) && (!status || conversation.status === status) && (!month || String(conversation.startedAt).startsWith(month));
+    }
+
+    function conversationKey(conversation) {
+      return `${conversation.provider || "codex"}:${conversation.id}`;
     }
 
     function renderList(conversations) {
@@ -238,7 +250,8 @@
         return;
       }
       listElement.innerHTML = conversations.map(conversation => `
-        <button class="conversation-button" data-id="${escapeHtml(conversation.id)}" aria-current="${conversation.id === state.selectedId}">
+        <button class="conversation-button" data-key="${escapeHtml(conversationKey(conversation))}" aria-current="${conversationKey(conversation) === state.selectedKey}">
+          <span class="provider-badge">${escapeHtml(conversation.provider)}</span>
           <span class="conversation-title">${escapeHtml(conversation.title)}</span>
           <span class="conversation-subtitle"><span>${escapeHtml(formatDate(conversation.updatedAt))}</span><span>${escapeHtml(conversation.status)}</span></span>
         </button>`).join("");
@@ -279,10 +292,10 @@
       return `<details class="event ${escapeHtml(kind)}"><summary>${heading}<span class="event-time">${escapeHtml(time)}</span></summary><div class="event-body">${body}</div></details>`;
     }
 
-    async function selectConversation(id) {
-      const conversation = state.manifest.conversations.find(item => item.id === id);
+    async function selectConversation(key) {
+      const conversation = state.manifest.conversations.find(item => conversationKey(item) === key);
       if (!conversation) return;
-      state.selectedId = id;
+      state.selectedKey = key;
       renderList(state.visible);
       contentElement.innerHTML = '<div class="empty">Loading conversation…</div>';
       try {
@@ -290,7 +303,7 @@
         const events = parseEvents(markdown);
         contentElement.innerHTML = `
           <header class="conversation-header">
-            <p class="eyebrow">${escapeHtml(conversation.id)}</p>
+            <p class="eyebrow">${escapeHtml(conversation.provider)} · ${escapeHtml(conversation.id)}</p>
             <h1>${escapeHtml(conversation.title)}</h1>
             <div class="metadata">
               <span class="status">${escapeHtml(conversation.status)}</span>
@@ -339,10 +352,11 @@
       searchEveryTranscript(searchInput.value.trim());
     });
     statusInput.addEventListener("change", () => searchEveryTranscript(searchInput.value.trim()));
+    providerInput.addEventListener("change", () => searchEveryTranscript(searchInput.value.trim()));
     monthInput.addEventListener("change", () => searchEveryTranscript(searchInput.value.trim()));
     listElement.addEventListener("click", event => {
-      const button = event.target.closest("[data-id]");
-      if (button) selectConversation(button.dataset.id);
+      const button = event.target.closest("[data-key]");
+      if (button) selectConversation(button.dataset.key);
     });
     contentElement.addEventListener("click", async event => {
       const link = event.target.closest("a[data-lazy-output]");
@@ -369,9 +383,15 @@
         const response = await fetch("manifest.json");
         if (!response.ok) throw new Error(`Manifest request failed (${response.status})`);
         state.manifest = await response.json();
-        const conversations = Array.isArray(state.manifest.conversations) ? state.manifest.conversations : [];
+        const conversations = (Array.isArray(state.manifest.conversations) ? state.manifest.conversations : [])
+          .map(conversation => ({ ...conversation, provider: conversation.provider || "codex" }));
         state.manifest.conversations = conversations;
-        document.getElementById("archive-meta").textContent = `${conversations.length} conversations · ${state.manifest.projectRoot || "repository"}`;
+        const counts = conversations.reduce((result, conversation) => {
+          result[conversation.provider] = (result[conversation.provider] || 0) + 1;
+          return result;
+        }, {});
+        const providerSummary = ["codex", "claude"].filter(provider => counts[provider]).map(provider => `${counts[provider]} ${provider}`).join(" · ");
+        document.getElementById("archive-meta").textContent = `${conversations.length} conversations${providerSummary ? ` · ${providerSummary}` : ""} · ${state.manifest.projectRoot || "repository"}`;
         progressElement.textContent = `${conversations.length} conversations`;
         renderList(conversations.filter(filtersMatch));
       } catch (error) {
@@ -384,4 +404,3 @@
   </script>
 </body>
 </html>
-

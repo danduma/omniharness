@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019ec6fb-7a2d-7100-9a72-f3cd19ec1851"
 title: "Codex conversation 019ec6fb"
 started_at: "2026-06-14T16:33:50.152Z"

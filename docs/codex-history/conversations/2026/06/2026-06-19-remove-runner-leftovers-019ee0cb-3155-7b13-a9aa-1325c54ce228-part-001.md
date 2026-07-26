@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019ee0cb-3155-7b13-a9aa-1325c54ce228"
 title: "Remove Runner leftovers"
 started_at: "2026-06-19T16:51:13.408Z"

@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019ed25f-7558-78e0-8c6c-88c0a8ba0731"
 title: "Fix queued messages after steer"
 started_at: "2026-06-16T21:38:51.896Z"

@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019f2144-122c-7cd3-9535-f375020f18bf"
 title: "Remove OmniHarness from commits"
 started_at: "2026-07-02T05:18:57.098Z"

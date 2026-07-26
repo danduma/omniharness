@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019f510a-6840-7f40-88d9-33d938ce93a7"
 title: "OH: implement new ACP commands for CC"
 started_at: "2026-07-11T11:57:44.439Z"

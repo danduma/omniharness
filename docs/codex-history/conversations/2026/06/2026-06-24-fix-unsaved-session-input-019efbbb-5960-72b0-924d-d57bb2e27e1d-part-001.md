@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019efbbb-5960-72b0-924d-d57bb2e27e1d"
 title: "Fix unsaved session input"
 started_at: "2026-06-24T22:23:39.915Z"

@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019efb71-2174-7f92-a6da-17a80986f422"
 title: "Prevent unwanted implementation"
 started_at: "2026-06-24T21:02:35.922Z"

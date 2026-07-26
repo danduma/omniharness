@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019f05a9-9cb6-7da2-8f01-8e6335b480e4"
 title: "Fix queued message duplication"
 started_at: "2026-06-26T20:40:29.659Z"

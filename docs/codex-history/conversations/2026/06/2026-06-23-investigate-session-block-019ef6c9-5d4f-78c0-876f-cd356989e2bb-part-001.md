@@ -1,4 +1,5 @@
 ---
+provider: "codex"
 codex_thread_id: "019ef6c9-5d4f-78c0-876f-cd356989e2bb"
 title: "Investigate session block"
 started_at: "2026-06-23T23:20:52.326Z"
