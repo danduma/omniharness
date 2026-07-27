@@ -32,25 +32,42 @@ import { requestJson as defaultRequestJson } from "@/lib/app-errors";
  * message can be revised in place — see the
  * `appends changed bridge message revisions so streaming prose can expand`
  * test in `tests/server/workers/output-store.test.ts`). It also
- * back-fills the same user_input id onto a newer worker's stream
- * when a run cycles through workers; the backfill timestamp is "when
- * the backfill ran", not "when the user actually sent the message".
+ * writes the same user_input id onto a newer worker's stream when a run
+ * cycles through workers.
  *
  * Coalesce policy:
  *   - Keep the entry at its FIRST appearance in the input order, so
  *     conversational position doesn't jump when text grows.
  *   - Use the LATEST revision's text / metadata (text grows; latest
  *     revision is the finished one).
- *   - Keep the EARLIEST timestamp — for streaming assistant entries
- *     all revisions share a timestamp anyway, but for back-filled
- *     user_input the earliest occurrence is the original send time
- *     and any later occurrence is a re-appended backfill we want to
- *     ignore for ordering purposes.
+ *   - Take the timestamp from the copy on the NEWEST worker, because that
+ *     is the one the live thread actually contains. Neither "earliest" nor
+ *     "latest" works on its own: a rewind re-delivers a message with a new
+ *     timestamp (newest is right, earliest pins it back above output it was
+ *     rewound past), while `reconcileWorkerUserMessagesInStream` backfills
+ *     history onto a fresh worker with the original `createdAt` (earliest is
+ *     right, latest drags the opening prompt into the middle of the day).
+ *     Worker order settles both. Copies from the same worker — streaming
+ *     revisions, which share a timestamp anyway — keep the earliest.
  *   - Entries without an id pass through unchanged.
+ *
+ * `workerOrder` is the run's workers in creation order. Without it (a single
+ * worker stream, or a caller that has no worker list yet) the earliest
+ * timestamp is kept, which is the conservative choice: a message stays where
+ * it already is.
  */
-export function coalesceWorkerEntriesById(entries: ReadonlyArray<WorkerEntry>): WorkerEntry[] {
+export function coalesceWorkerEntriesById(
+  entries: ReadonlyArray<WorkerEntry>,
+  workerOrder: ReadonlyArray<string> = [],
+): WorkerEntry[] {
+  const workerRank = new Map(workerOrder.map((workerId, index) => [workerId, index]));
+  const rankOf = (entry: WorkerEntry) => {
+    const workerId = (entry as { workerId?: unknown }).workerId;
+    return typeof workerId === "string" ? workerRank.get(workerId) ?? -1 : -1;
+  };
+
   const positionByKey = new Map<string, number>();
-  const earliestTimestampByKey = new Map<string, string>();
+  const placementByKey = new Map<string, { timestamp: string; rank: number }>();
   const result: WorkerEntry[] = [];
   for (const entry of entries) {
     const key = typeof entry.id === "string" && entry.id ? entry.id : null;
@@ -62,25 +79,29 @@ export function coalesceWorkerEntriesById(entries: ReadonlyArray<WorkerEntry>): 
     if (existingPosition === undefined) {
       positionByKey.set(key, result.length);
       if (entry.timestamp) {
-        earliestTimestampByKey.set(key, entry.timestamp);
+        placementByKey.set(key, { timestamp: entry.timestamp, rank: rankOf(entry) });
       }
       result.push(entry);
     } else {
-      const earliest = earliestTimestampByKey.get(key);
+      const held = placementByKey.get(key);
       const candidate = entry.timestamp;
-      let preservedTimestamp = entry.timestamp;
-      if (earliest && candidate) {
-        // Smaller ISO string compares as smaller datetime for the same
-        // timezone offset — all our timestamps are emitted with a `Z`
-        // suffix, so string compare matches Date compare.
-        preservedTimestamp = candidate < earliest ? candidate : earliest;
-        if (preservedTimestamp !== earliest) {
-          earliestTimestampByKey.set(key, preservedTimestamp);
-        }
-      } else if (earliest) {
-        preservedTimestamp = earliest;
+      const candidateRank = rankOf(entry);
+      let preservedTimestamp = candidate;
+      if (held && candidate) {
+        // Smaller ISO string compares as earlier datetime for the same
+        // timezone offset — all our timestamps are emitted with a `Z` suffix,
+        // so string compare matches Date compare.
+        const keepCandidate = candidateRank > held.rank
+          || (candidateRank === held.rank && candidate < held.timestamp);
+        preservedTimestamp = keepCandidate ? candidate : held.timestamp;
+        placementByKey.set(key, {
+          timestamp: preservedTimestamp,
+          rank: Math.max(candidateRank, held.rank),
+        });
+      } else if (held) {
+        preservedTimestamp = held.timestamp;
       } else if (candidate) {
-        earliestTimestampByKey.set(key, candidate);
+        placementByKey.set(key, { timestamp: candidate, rank: candidateRank });
       }
       result[existingPosition] = { ...entry, timestamp: preservedTimestamp };
     }

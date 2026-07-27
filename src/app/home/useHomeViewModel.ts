@@ -25,6 +25,42 @@ import { isPermanentAutoResumeFailure } from "./auto-resume-selection";
 
 const EMPTY_RUNS: RunRecord[] = [];
 const EMPTY_PLANS: PlanRecord[] = [];
+const RECOVERY_SUCCESS_EVENT_TYPES = new Set([
+  "direct_retry_worker_already_active",
+  "worker_session_resumed",
+  "worker_session_recreated",
+  "worker_session_recreated_from_transcript",
+  "worker_prompted",
+  "recovery_resolved",
+  "run_completed",
+  "auto_commit_created",
+  "auto_commit_push_created",
+]);
+
+function timestampMs(value: string | null | undefined) {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function hasSuccessfulRecoveryAfterFailure(run: RunRecord, events: ExecutionEventRecord[]) {
+  if (run.status !== "failed") {
+    return false;
+  }
+
+  const failureTime = timestampMs(run.failedAt ?? run.updatedAt ?? run.createdAt);
+  if (failureTime === null) {
+    return false;
+  }
+
+  return events.some((event) => {
+    if (!RECOVERY_SUCCESS_EVENT_TYPES.has(event.eventType)) {
+      return false;
+    }
+    const eventTime = timestampMs(event.createdAt);
+    return eventTime !== null && eventTime >= failureTime;
+  });
+}
 
 export interface UseHomeViewModelParams {
   state: EventStreamState;
@@ -408,6 +444,9 @@ export function useHomeViewModel({
     if (!selectedRun || selectedRun.status !== "failed" || !selectedRun.lastError) {
       return null;
     }
+    if (hasSuccessfulRecoveryAfterFailure(selectedRun, selectedRunExecutionEvents)) {
+      return null;
+    }
 
     // Only show "Reconnecting" when an auto-resume will actually run.
     // Planning runs surface the real error and rely on the user to act.
@@ -446,7 +485,7 @@ export function useHomeViewModel({
         ? [`Current ${workerLabel} status: ${workerStatus}`]
         : [],
     };
-  }, [failedWorkerAvailability, selectedRun, workerFailureDetail]);
+  }, [failedWorkerAvailability, selectedRun, selectedRunExecutionEvents, workerFailureDetail]);
 
   const awaitingUserQuestionMessage = useMemo(() => {
     if (selectedRun?.status !== "awaiting_user") {

@@ -130,6 +130,26 @@ function memoryStorage() {
 }
 
 describe("EventStreamStateManager", () => {
+  it("does not merge a locally deleted run back into a scoped catalog", () => {
+    const manager = new EventStreamStateManager(
+      multiRunState({
+        runs: ["run-a", "run-b"],
+        messageRunId: "run-a",
+        message: "selected",
+        checksum: "sha256:before-delete",
+        catalogComplete: false,
+      }),
+      { deferCacheHydration: true, initialSnapshotSource: "server" },
+    );
+
+    manager.updateLocal((current) => ({
+      ...current,
+      runs: current.runs.filter((candidate) => candidate.id !== "run-b"),
+    }));
+
+    expect(manager.getSnapshot().runs.map((candidate) => candidate.id)).toEqual(["run-a"]);
+  });
+
   it("keeps supervisor confirmation messages when a partial live update only includes the user checkpoint", () => {
     const userMessage: EventStreamState["messages"][number] = {
       id: "user-message",

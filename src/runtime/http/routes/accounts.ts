@@ -1,8 +1,20 @@
 import { db } from "@/server/db";
-import { accounts } from "@/server/db/schema";
+import {
+  accountSecrets,
+  accountUsageSnapshots,
+  accounts,
+  creditEvents,
+  runs,
+  settings,
+  workerCredentialAllocations,
+  workerTokenUsage,
+} from "@/server/db/schema";
 import { requireApiSession } from "@/server/auth/guards";
 import { toAccountDto } from "@/server/accounts/dto";
-import { runAccountInventoryMigration } from "@/server/accounts/migration";
+import {
+  deletedAccountSettingKey,
+  runAccountInventoryMigration,
+} from "@/server/accounts/migration";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { toNextRequest } from "./next-request";
 import { eq } from "drizzle-orm";
@@ -53,13 +65,59 @@ function pathAccountId(request: Request, params: Record<string, string> | undefi
   const prefix = "/api/accounts/";
   if (!pathname.startsWith(prefix)) return "";
   const remainder = pathname.slice(prefix.length);
-  return decodeURIComponent(suffix && remainder.endsWith(suffix)
+  const encodedId = suffix && remainder.endsWith(suffix)
     ? remainder.slice(0, -suffix.length)
-    : remainder);
+    : remainder;
+  try {
+    return decodeURIComponent(encodedId);
+  } catch {
+    return encodedId;
+  }
 }
 
 function jsonValidationError(message: string) {
   return Response.json({ error: { code: "account.invalid", message } }, { status: 400 });
+}
+
+function accountDeletionSetting(accountId: string, deleted: boolean, now: Date) {
+  const key = deletedAccountSettingKey(accountId);
+  if (!deleted) {
+    return db.delete(settings).where(eq(settings.key, key));
+  }
+  return db.insert(settings).values({
+      key,
+      value: accountId,
+      updatedAt: now,
+    }).onConflictDoUpdate({
+      target: settings.key,
+      set: {
+        value: accountId,
+        updatedAt: now,
+      },
+    });
+}
+
+function emitAccountDeleteFailure(input: {
+  accountId: string;
+  workerType: string | null;
+  reason: string;
+  message: string;
+  cause?: Error;
+}) {
+  emitNamedEvent({
+    kind: "account.delete_failed",
+    accountId: input.accountId,
+    workerType: input.workerType,
+    reason: input.reason,
+  });
+  emitNamedEvent({
+    kind: "error.surfaced",
+    code: "account.delete.failed",
+    message: input.message,
+    surface: "toast",
+    accountId: input.accountId,
+    cause: input.cause ? { name: input.cause.name, message: input.cause.message } : null,
+  });
 }
 
 async function getAccounts(request: Request) {
@@ -98,7 +156,8 @@ async function postAccount(request: Request) {
   if (!AUTH_MODES.has(authMode)) return jsonValidationError("authMode is not supported.");
   if (!authRef) return jsonValidationError("authRef is required.");
 
-  await db.insert(accounts).values({
+  const clearDeletion = accountDeletionSetting(id, false, now);
+  await db.batch([db.insert(accounts).values({
     id,
     cliType: optionalString(body.cliType) ?? null,
     provider,
@@ -114,7 +173,7 @@ async function postAccount(request: Request) {
     metadataJson: optionalMetadata(body.metadata) ?? null,
     createdAt: now,
     updatedAt: now,
-  });
+  }), clearDeletion]);
   emitNamedEvent({
     kind: "account.created",
     accountId: id,
@@ -145,27 +204,72 @@ export const handleAccountsRequest: OmniHttpHandler = async (request) => {
 };
 
 export const handleAccountDetailRequest: OmniHttpHandler = async (request, context) => {
+  let failedAccountId: string | null = null;
+  let failedWorkerType: string | null = null;
   try {
+    const isDelete = request.method === "DELETE";
+    if (isDelete) {
+      failedAccountId = pathAccountId(request, context.params);
+    }
     const auth = await requireApiSession(toNextRequest(request), {
       source: "Accounts",
-      action: "Update account",
+      action: isDelete ? "Delete account" : "Update account",
       enforceSameOrigin: true,
     });
     if (auth.response) {
+      if (isDelete && failedAccountId) {
+        emitAccountDeleteFailure({
+          accountId: failedAccountId,
+          workerType: null,
+          reason: auth.response.status === 403 ? "same_origin_refused" : "authentication_refused",
+          message: `Could not delete account: request was refused with status ${auth.response.status}.`,
+        });
+      }
       return auth.response;
     }
-    if (request.method !== "PATCH") {
+    if (request.method !== "PATCH" && request.method !== "DELETE") {
       return Response.json({ error: { code: "method_not_allowed", message: "Method not allowed." } }, {
         status: 405,
-        headers: { allow: "PATCH" },
+        headers: { allow: "PATCH, DELETE" },
       });
     }
 
-    const id = pathAccountId(request, context.params);
+    const id = failedAccountId ?? pathAccountId(request, context.params);
     const existing = await db.select().from(accounts).where(eq(accounts.id, id)).get();
     if (!existing) {
+      if (isDelete) {
+        emitAccountDeleteFailure({
+          accountId: id,
+          workerType: null,
+          reason: "not_found",
+          message: "Could not delete account: account not found.",
+        });
+      }
       return Response.json({ error: { code: "account.not_found", message: "Account not found." } }, { status: 404 });
     }
+    failedAccountId = id;
+    failedWorkerType = existing.cliType;
+
+    if (isDelete) {
+      const rememberDeletion = accountDeletionSetting(id, true, new Date());
+      await db.batch([
+        db.update(runs).set({ preferredWorkerAccountId: null }).where(eq(runs.preferredWorkerAccountId, id)),
+        db.delete(creditEvents).where(eq(creditEvents.accountId, id)),
+        db.delete(workerCredentialAllocations).where(eq(workerCredentialAllocations.accountId, id)),
+        db.delete(workerTokenUsage).where(eq(workerTokenUsage.accountId, id)),
+        db.delete(accountUsageSnapshots).where(eq(accountUsageSnapshots.accountId, id)),
+        db.delete(accountSecrets).where(eq(accountSecrets.accountId, id)),
+        db.delete(accounts).where(eq(accounts.id, id)),
+        rememberDeletion,
+      ]);
+      emitNamedEvent({
+        kind: "account.deleted",
+        accountId: id,
+        workerType: existing.cliType,
+      });
+      return Response.json({ ok: true, accountId: id });
+    }
+
     const body = asRecord(await request.json());
     const patch: Partial<typeof accounts.$inferInsert> = { updatedAt: new Date() };
     const changedKeys: string[] = [];
@@ -246,10 +350,20 @@ export const handleAccountDetailRequest: OmniHttpHandler = async (request, conte
     const row = await db.select().from(accounts).where(eq(accounts.id, id)).get();
     return Response.json(toAccountDto(row!));
   } catch (error) {
+    if (request.method === "DELETE" && failedAccountId) {
+      const cause = error instanceof Error ? error : new Error(String(error));
+      emitAccountDeleteFailure({
+        accountId: failedAccountId,
+        workerType: failedWorkerType,
+        reason: cause.message,
+        message: `Could not delete account: ${cause.message}`,
+        cause,
+      });
+    }
     return errorResponse(error, {
       status: 500,
       source: "Accounts",
-      action: "Update account",
+      action: request.method === "DELETE" ? "Delete account" : "Update account",
     });
   }
 };

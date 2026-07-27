@@ -17,7 +17,8 @@ vi.mock("@/server/bridge-client", () => ({
   getAgent: mockGetAgent,
 }));
 
-vi.mock("child_process", () => ({
+vi.mock("child_process", async (importOriginal) => ({
+  ...await importOriginal<typeof import("child_process")>(),
   execFileSync: mockExecFileSync,
 }));
 
@@ -145,7 +146,7 @@ describe("attemptWorkerFailover", () => {
       title: "Test worker",
     });
 
-    expect(result.state).toBe("failed_over");
+    expect(result.state, JSON.stringify(result)).toBe("failed_over");
     if (result.state !== "failed_over") return;
     expect(result.newType).toBe("claude");
     expect(mockAskAgent).toHaveBeenCalledTimes(2);
@@ -204,6 +205,41 @@ describe("attemptWorkerFailover", () => {
     const kinds = __getRingForTests().map((entry) => entry.event.kind);
     expect(kinds).not.toContain("worker.failover_started");
     expect(kinds).not.toContain("worker.failover_completed");
+  });
+
+  it("keeps a gateway-routed Claude worker alive when only an incompatible replacement is available", async () => {
+    const runId = await seedRun(["claude", "codex"]);
+    const workerId = await seedWorker(runId, "claude");
+    const { db } = await import("@/server/db");
+    const schema = await import("@/server/db/schema");
+    await db.update(schema.workers).set({
+      effectiveLaunchModel: "cliproxyapi:gpt-5.6-sol",
+      launchCredentialSource: "gateway",
+    }).where(eq(schema.workers.id, workerId));
+
+    const { attemptWorkerFailover } = await import("@/server/supervisor/worker-failover");
+    const result = await attemptWorkerFailover({
+      runId,
+      outgoingWorkerId: workerId,
+      outgoingWorkerType: "claude",
+      quotaText: "quota exhausted; try again in 30 minutes",
+      originalPrompt: "Refactor the auth module",
+      allowedTypes: ["claude", "codex"],
+      env: {},
+      cwd: "/tmp",
+      title: "Test worker",
+    });
+
+    expect(result).toMatchObject({ state: "no_replacement", reason: expect.stringMatching(/gateway-routed/i) });
+    expect(mockCancelAgent).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    const run = await db.select().from(schema.runs).where(eq(schema.runs.id, runId)).get();
+    expect(run?.status).toBe("quota_waiting");
+    const { __getRingForTests } = await import("@/server/events/named-events");
+    expect(__getRingForTests().map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "worker.failover_failed",
+      stage: "selection",
+    }));
   });
 
   it("falls back to a synthetic handoff when the outgoing worker times out", async () => {

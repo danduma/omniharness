@@ -12,4 +12,12 @@ export async function register() {
   ensureSupervisorRuntimeStarted().catch((error) => {
     console.error("Failed to start supervisor runtime at boot", error);
   });
+
+  const { ensureClaudeModelGatewayStartedAtBoot, registerClaudeModelGatewayShutdownHandlers } = await import(
+    "@/server/integrations/claude-model-gateway"
+  );
+  registerClaudeModelGatewayShutdownHandlers();
+  ensureClaudeModelGatewayStartedAtBoot().catch((error) => {
+    console.error("Failed to start Claude model gateway at boot", error);
+  });
 }

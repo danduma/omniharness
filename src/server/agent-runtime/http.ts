@@ -101,6 +101,7 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
           env?: Record<string, string>;
           accountId?: string | null;
           credentialProfile?: string | null;
+          credentialSource?: "gateway" | null;
           mcpServers?: unknown;
         }>(req);
         if (typeof body.type !== "string" || body.type.trim().length === 0) {
@@ -120,6 +121,7 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
           env: body.env,
           accountId: body.accountId ?? null,
           credentialProfile: body.credentialProfile ?? null,
+          credentialSource: body.credentialSource ?? undefined,
           mcpServers,
         }));
         return;
@@ -164,15 +166,16 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
       ) {
         const body = await readJson(req);
         const optionId = typeof body.optionId === "string" ? body.optionId : undefined;
+        const requestId = typeof body.requestId === "number" ? body.requestId : undefined;
         const result = parts[2] === "approve"
-          ? manager.approvePermission(parts[1], optionId)
-          : manager.denyPermission(parts[1], optionId);
+          ? manager.approvePermission(parts[1], optionId, requestId)
+          : manager.denyPermission(parts[1], optionId, requestId);
         writeJson(res, 200, result);
         return;
       }
 
       if (parts.length === 3 && parts[0] === "agents" && method === "POST" && parts[2] === "elicitation") {
-        const body = await readJson<{ action?: unknown; content?: unknown }>(req);
+        const body = await readJson<{ action?: unknown; content?: unknown; requestId?: unknown }>(req);
         const action = body.action;
         if (action !== "accept" && action !== "decline" && action !== "cancel") {
           writeJson(res, 400, { error: "action must be one of 'accept', 'decline', 'cancel'" });
@@ -186,7 +189,20 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
                 : {}) as Record<string, string | number | boolean | string[]>,
             }
           : { action };
-        writeJson(res, 200, manager.respondElicitation(parts[1], response));
+        writeJson(res, 200, manager.respondElicitation(parts[1], response, typeof body.requestId === "number" ? body.requestId : undefined));
+        return;
+      }
+
+      if (parts.length === 3 && parts[0] === "agents" && method === "POST" && parts[2] === "acp") {
+        const body = await readJson<{ method?: unknown; params?: unknown; notification?: unknown }>(req);
+        if (typeof body.method !== "string" || !body.method.trim()) {
+          writeJson(res, 400, { error: "missing ACP method" });
+          return;
+        }
+        const params = typeof body.params === "object" && body.params !== null && !Array.isArray(body.params)
+          ? body.params as Record<string, unknown>
+          : {};
+        writeJson(res, 200, await manager.invokeAcpMethod(parts[1], body.method, params, body.notification === true));
         return;
       }
 

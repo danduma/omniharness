@@ -1,0 +1,15 @@
+{
+  // The lifecycle harness runs its server in a real subprocess under raw tsx.
+  // This project is CommonJS, so tsx compiles the graph to CJS and Node resolves
+  // bare imports with the "require" condition. `@danduma/i18n` publishes only an
+  // "import" condition, so the subprocess dies at startup with
+  // ERR_PACKAGE_PATH_NOT_EXPORTED. Pointing the specifier straight at the built
+  // entry bypasses the exports map without changing how the app itself builds.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*"],
+      "@danduma/i18n": ["./node_modules/@danduma/i18n/dist/index.js"]
+    }
+  }
+}

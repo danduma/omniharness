@@ -1,5 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
-import { askAgent, spawnAgent, getAgent } from "@/server/bridge-client";
+import { askAgent, spawnAgent, getAgent, type AgentRecord } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
@@ -8,7 +8,11 @@ import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { formatErrorMessage } from "@/server/runs/failures";
 import { markRecoveryIncidentResolved } from "@/server/runs/recovery-incidents";
 import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
+import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
+import { persistWorkerSnapshot } from "@/server/workers/snapshots";
+import { appendSupervisorInputOnDelivery } from "@/server/workers/stream-writer";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
+import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { extractQuotaResetInfo } from "./reset-parser";
 import { handleWorkerQuotaExhaustion, type QuotaRecoveryResult } from "./recovery";
@@ -78,6 +82,7 @@ async function promptResumedQuotaWorker(args: {
   worker: typeof workers.$inferSelect;
 }) {
   const prompt = buildQuotaResumePrompt(args.worker);
+  const deliveredAt = new Date();
   await recordSupervisorIntervention({
     runId: args.runId,
     workerId: args.worker.id,
@@ -86,10 +91,31 @@ async function promptResumedQuotaWorker(args: {
     interventionType: "recovery",
   });
   const response = await askAgent(args.worker.id, prompt);
+  let snapshot: AgentRecord | null = null;
+  try {
+    snapshot = await getAgent(args.worker.id, { retryIndefinitely: false });
+    await persistWorkerSnapshot(args.worker.id, snapshot);
+  } catch {
+    // The ask response is still the durable fallback when the bridge snapshot is unavailable.
+  }
+  await appendSupervisorInputOnDelivery({
+    runId: args.runId,
+    workerId: args.worker.id,
+    text: prompt,
+    deliveredAt,
+  });
+  await appendAskResponseFallbackEntry({
+    runId: args.runId,
+    workerId: args.worker.id,
+    responseText: response.response,
+    snapshot,
+  });
   const latestWorker = await db.select().from(workers).where(eq(workers.id, args.worker.id)).get();
 
   await db.update(workers).set({
     status: response.state,
+    currentText: "",
+    lastText: "",
     outputLog: appendWorkerOutput(latestWorker?.outputLog ?? args.worker.outputLog, response.response),
     updatedAt: new Date(),
   }).where(eq(workers.id, args.worker.id));
@@ -132,6 +158,7 @@ export async function resumeQuotaExhaustedWorkers(args: {
     }
 
     const workerMode = resolveWorkerLaunchMode(worker.bridgeSessionMode, yoloModeEnabled);
+    const launchSelection = resolveWorkerLaunchSelection(worker, args.run);
     try {
       let resumedWorker;
       try {
@@ -141,9 +168,9 @@ export async function resumeQuotaExhaustedWorkers(args: {
           name: worker.id,
           ...(workerMode ? { mode: workerMode } : {}),
           env: envParams,
-          ...(args.run.preferredWorkerAccountId ? { accountId: args.run.preferredWorkerAccountId } : {}),
-          ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
-          ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
+          ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
+          ...(launchSelection.model ? { model: launchSelection.model } : {}),
+          ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
           resumeSessionId: sessionId,
         });
       } catch (error) {
@@ -163,6 +190,8 @@ export async function resumeQuotaExhaustedWorkers(args: {
         status: resumedWorker.state,
         bridgeSessionId: resumedWorker.sessionId ?? sessionId,
         bridgeSessionMode: resumedWorker.sessionMode ?? worker.bridgeSessionMode ?? null,
+        currentText: resumedWorker.currentText ?? "",
+        lastText: resumedWorker.lastText ?? "",
         updatedAt: new Date(),
       }).where(eq(workers.id, worker.id));
       if (shouldPromptResumedWorker(resumedWorker.state)) {

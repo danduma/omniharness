@@ -9,7 +9,7 @@ import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
 import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
-import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
+import { appendAttachmentContext, normalizeChatAttachments, resolveImageAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import { getAppDataPath } from "@/server/app-root";
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
@@ -20,6 +20,8 @@ import { runWorkerTurn } from "./worker-turn-gate";
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
 import { persistRunFailure } from "@/server/runs/failures";
 import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
+import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
+import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import {
   serializeQueuedConversationMessage,
   type BusyMessageAction,
@@ -69,6 +71,27 @@ export function isAgentBusyError(error: unknown) {
 
 export function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function handleQueuedWorkerQuotaError(args: {
+  runId: string;
+  workerId: string;
+  workerType?: string | null;
+  error: unknown;
+}) {
+  const quotaInfo = extractQuotaResetInfo(args.error, { provider: args.workerType });
+  if (!quotaInfo.isQuotaError) {
+    return false;
+  }
+
+  await handleWorkerQuotaExhaustion({
+    runId: args.runId,
+    workerId: args.workerId,
+    text: quotaInfo.rawText,
+    provider: args.workerType,
+  });
+  notifyEventStreamSubscribers();
+  return true;
 }
 
 function timestampMs(value: Date | string | number | null | undefined) {
@@ -550,6 +573,9 @@ async function deliverQueuedWorkerSteering(args: {
       return;
     }
 
+    // Anchor the user's message before the ask: this is the user-initiated
+    // send-now path, and the bridge starts streaming output during askAgent, so
+    // appending afterwards would order the reply ahead of the prompt.
     await appendQueuedUserInput(deliveredAt);
     notifyEventStreamSubscribers();
 
@@ -558,7 +584,11 @@ async function deliverQueuedWorkerSteering(args: {
       return;
     }
 
-    const response = await askAgent(args.worker.id, workerPromptForRun(args.run, args.content));
+    const queuedPrompt = workerPromptForRun(args.run, args.content);
+    const queuedImages = resolveImageAttachments(args.attachments, getAppDataPath);
+    const response = queuedImages.length
+      ? await askAgent(args.worker.id, queuedPrompt, queuedImages)
+      : await askAgent(args.worker.id, queuedPrompt);
     await persistDeliveredWorkerResponse({
       run: args.run,
       workerId: args.worker.id,
@@ -629,6 +659,20 @@ async function continueQueuedWorkerSteering(args: {
       notifyEventStreamSubscribers();
       return;
     }
+    if (await handleQueuedWorkerQuotaError({
+      runId: args.run.id,
+      workerId: args.worker.id,
+      workerType: args.worker.type,
+      error,
+    })) {
+      await db.update(queuedConversationMessages).set({
+        status: "pending",
+        lastError: null,
+        updatedAt: new Date(),
+      }).where(eq(queuedConversationMessages.id, args.messageId));
+      return;
+    }
+
     await db.update(queuedConversationMessages).set({
       status: isAgentBusyError(error) ? "pending" : "failed",
       lastError: errorMessage(error),
@@ -699,6 +743,7 @@ export async function sendQueuedConversationMessageNow({
   const normalizedAttachments = normalizeChatAttachments(record.attachmentsJson ? JSON.parse(record.attachmentsJson) : []);
   const workerContent = appendAttachmentContext(record.content, normalizedAttachments, {
     resolvePath: (storagePath) => getAppDataPath(storagePath),
+    imagesInlined: true,
   });
   const startedAt = new Date();
 
@@ -919,7 +964,10 @@ export async function drainQueuedImplementationMessages(runId: string) {
             interventionType: "continue",
           });
           interventionId = intervention.id;
-          const response = await askAgent(worker.id, workerContent);
+          const steerImages = resolveImageAttachments(normalizedAttachments, getAppDataPath);
+          const response = steerImages.length
+            ? await askAgent(worker.id, workerContent, steerImages)
+            : await askAgent(worker.id, workerContent);
           const deliveredAt = new Date();
           const userMessage = {
             id: randomUUID(),
@@ -976,6 +1024,21 @@ export async function drainQueuedImplementationMessages(runId: string) {
         });
         deliveredCount += 1;
       } catch (error) {
+        if (await handleQueuedWorkerQuotaError({
+          runId,
+          workerId: worker.id,
+          workerType: worker.type,
+          error,
+        })) {
+          await db.update(queuedConversationMessages).set({
+            targetWorkerId: worker.id,
+            status: "pending",
+            lastError: null,
+            updatedAt: new Date(),
+          }).where(eq(queuedConversationMessages.id, record.id));
+          continue;
+        }
+
         const failedAt = new Date();
         await db.update(queuedConversationMessages).set({
           targetWorkerId: worker.id,
@@ -1056,6 +1119,7 @@ export async function drainQueuedWorkerMessages({
     const normalizedAttachments = normalizeChatAttachments(record.attachmentsJson ? JSON.parse(record.attachmentsJson) : []);
     const workerContent = appendAttachmentContext(record.content, normalizedAttachments, {
       resolvePath: (storagePath) => getAppDataPath(storagePath),
+      imagesInlined: true,
     });
     const startedAt = new Date();
 
@@ -1129,6 +1193,14 @@ export async function drainQueuedWorkerMessages({
           return;
         }
 
+        // Background drain, not a user-initiated send: record the message only
+        // once the ask has actually landed. A busy worker leaves the row
+        // pending for a later drain, and pre-appending here would show the user
+        // a message that was never delivered — and re-show it on every retry.
+        const drainImages = resolveImageAttachments(normalizedAttachments, getAppDataPath);
+        const response = drainImages.length
+          ? await askAgent(workerId, workerPromptForRun(run, workerContent), drainImages)
+          : await askAgent(workerId, workerPromptForRun(run, workerContent));
         await appendUserInputOnDelivery({
           id: userMessage.id,
           runId,
@@ -1143,7 +1215,6 @@ export async function drainQueuedWorkerMessages({
           })),
         });
         await db.insert(messages).values(userMessage);
-        const response = await askAgent(workerId, workerPromptForRun(run, workerContent));
         await persistDeliveredWorkerResponse({
           run,
           workerId,
@@ -1165,6 +1236,20 @@ export async function drainQueuedWorkerMessages({
       });
       deliveredCount += 1;
     } catch (error) {
+      if (await handleQueuedWorkerQuotaError({
+        runId,
+        workerId,
+        workerType: worker.type,
+        error,
+      })) {
+        await db.update(queuedConversationMessages).set({
+          status: "pending",
+          lastError: null,
+          updatedAt: new Date(),
+        }).where(eq(queuedConversationMessages.id, record.id));
+        continue;
+      }
+
       const failedAt = new Date();
       await db.update(queuedConversationMessages).set({
         status: isAgentBusyError(error) ? "pending" : "failed",

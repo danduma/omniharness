@@ -7,6 +7,7 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: [
     "omni.longevipedia.net",
     "horse-battery-staple.omniharness.dev",
+    "lunar-copper-harbor.omniharness.dev",
   ],
   htmlLimitedBots: /.*/,
   async rewrites() {

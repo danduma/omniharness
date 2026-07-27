@@ -1,6 +1,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import type { SupportedWorkerType } from "@/server/supervisor/worker-types";
+import { mergeClaudeGatewayModels, type ClaudeGatewayModelInput } from "@/lib/claude-model-gateway";
 
 const execFileAsync = promisify(execFile);
 
@@ -32,13 +33,16 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
     { value: "gpt-5.4", label: "GPT-5.4" },
     { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
+    { value: "claude-sonnet-5", label: "Claude Sonnet 5" },
     { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
   ],
   claude: [
+    { value: "claude-opus-5", label: "Claude Opus 5" },
     { value: "claude-fable-5", label: "Claude Fable 5" },
     { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
     { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
     { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+    { value: "claude-sonnet-5", label: "Claude Sonnet 5" },
     { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
     { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
   ],
@@ -51,6 +55,7 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
     { value: "openai/gpt-5.4", label: "GPT-5.4" },
     { value: "openai/gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "openai/gpt-5.3-codex", label: "GPT-5.3 Codex" },
+    { value: "anthropic/claude-sonnet-5", label: "Claude Sonnet 5" },
     { value: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4" },
   ],
 };
@@ -119,6 +124,23 @@ function buildHardcodedCatalog(): WorkerModelCatalog {
     claude: [...HARDCODED_WORKER_MODELS.claude],
     gemini: [...HARDCODED_WORKER_MODELS.gemini],
     opencode: [...HARDCODED_WORKER_MODELS.opencode],
+  };
+}
+
+export function mergeClaudeGatewayModelsIntoCatalog(
+  catalog: WorkerModelCatalog,
+  input: { custom?: ClaudeGatewayModelInput[]; discovered?: ClaudeGatewayModelInput[] },
+): WorkerModelCatalog {
+  const gatewayModels = mergeClaudeGatewayModels(input).map((model) => ({
+    value: model.value,
+    label: model.label,
+  }));
+  return {
+    ...catalog,
+    codex: [...catalog.codex],
+    claude: mergeModelOptions(catalog.claude, gatewayModels),
+    gemini: [...catalog.gemini],
+    opencode: [...catalog.opencode],
   };
 }
 

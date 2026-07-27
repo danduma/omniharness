@@ -32,6 +32,7 @@ import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
+import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
 
 const processBootTime = new Date();
 
@@ -387,11 +388,15 @@ async function orchestratePlanningReview(reviewRunId: string) {
           if (!isRecoverablePlannerAgentMissingError(error)) {
             throw error;
           }
+          const launchSelection = resolveWorkerLaunchSelection(plannerWorker, run);
           const spawnParams = {
             type: plannerWorker.type,
             cwd: plannerWorker.cwd,
             name: plannerName,
             env: envParams,
+            ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
+            ...(launchSelection.model ? { model: launchSelection.model } : {}),
+            ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
           };
           const savedSessionId = plannerWorker.bridgeSessionId?.trim() || null;
           let resumed = false;

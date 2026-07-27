@@ -23,6 +23,7 @@ type SnapshotRequester = (
 interface LiveEventConnectionManagerOptions {
   selectedRunId?: string | null;
   initialLastEventId?: string | number | null;
+  cursor?: LiveEventCursorManager;
   EventSourceConstructor?: typeof EventSource;
   requestJson?: JsonRequester;
   requestSnapshot?: SnapshotRequester;
@@ -31,6 +32,7 @@ interface LiveEventConnectionManagerOptions {
   sidebarWorkerActivity?: Pick<SidebarWorkerActivityManager, "onKnownSeqs" | "onWakeUp">;
   applyUpdate: (state: EventStreamState) => void;
   reportError: (error: AppErrorDescriptor) => void;
+  onStreamResync?: () => void;
   fallbackIntervalMs?: number;
   fallbackCooldownMs?: number;
   snapshotValidationIntervalMs?: number | null;
@@ -96,6 +98,37 @@ function normalizeLastEventId(lastEventId: string | number | null | undefined) {
   return value || null;
 }
 
+function compareEventIds(left: string, right: string) {
+  if (/^\d+$/.test(left) && /^\d+$/.test(right)) {
+    const leftValue = BigInt(left);
+    const rightValue = BigInt(right);
+    return leftValue === rightValue ? 0 : leftValue > rightValue ? 1 : -1;
+  }
+  return left === right ? 0 : 1;
+}
+
+export class LiveEventCursorManager {
+  private lastEventId: string | null = null;
+
+  constructor(initialLastEventId?: string | number | null) {
+    this.advance(initialLastEventId);
+  }
+
+  getCurrent() {
+    return this.lastEventId;
+  }
+
+  advance(lastEventId: string | number | null | undefined) {
+    const normalized = normalizeLastEventId(lastEventId);
+    if (!normalized) return false;
+    if (this.lastEventId && compareEventIds(normalized, this.lastEventId) <= 0) {
+      return false;
+    }
+    this.lastEventId = normalized;
+    return true;
+  }
+}
+
 export function buildEventStreamUrl(selectedRunId?: string | null, lastEventId?: string | number | null) {
   const runParam = encodeRunParam(selectedRunId, "?");
   const lastEventIdParam = encodeLastEventIdParam(lastEventId, runParam ? "&" : "?");
@@ -136,6 +169,7 @@ export class LiveEventConnectionManager {
   private readonly sidebarWorkerActivity: Pick<SidebarWorkerActivityManager, "onKnownSeqs" | "onWakeUp">;
   private readonly applyUpdate: (state: EventStreamState) => void;
   private readonly reportError: (error: AppErrorDescriptor) => void;
+  private readonly onStreamResync?: () => void;
   private readonly fallbackIntervalMs: number;
   private readonly fallbackCooldownMs: number;
   private readonly snapshotValidationIntervalMs: number | null;
@@ -147,12 +181,13 @@ export class LiveEventConnectionManager {
   private snapshotPollPromise: Promise<boolean> | null = null;
   private reconnectingAfterResync = false;
   private lastSnapshotPollAt = 0;
-  private lastEventId: string | null;
+  private readonly cursor: LiveEventCursorManager;
   private connectionGeneration = 0;
 
   constructor(options: LiveEventConnectionManagerOptions) {
     this.selectedRunId = options.selectedRunId;
-    this.lastEventId = normalizeLastEventId(options.initialLastEventId);
+    this.cursor = options.cursor ?? new LiveEventCursorManager(options.initialLastEventId);
+    this.cursor.advance(options.initialLastEventId);
     this.EventSourceConstructor = options.EventSourceConstructor ?? EventSource;
     const requestJson = options.requestJson;
     this.requestSnapshot = options.requestSnapshot
@@ -167,6 +202,7 @@ export class LiveEventConnectionManager {
     this.sidebarWorkerActivity = options.sidebarWorkerActivity ?? sidebarWorkerActivityManager;
     this.applyUpdate = options.applyUpdate;
     this.reportError = options.reportError;
+    this.onStreamResync = options.onStreamResync;
     this.fallbackIntervalMs = options.fallbackIntervalMs ?? SNAPSHOT_FALLBACK_INTERVAL_MS;
     this.fallbackCooldownMs = options.fallbackCooldownMs ?? SNAPSHOT_FALLBACK_COOLDOWN_MS;
     this.snapshotValidationIntervalMs = options.snapshotValidationIntervalMs === undefined
@@ -187,7 +223,7 @@ export class LiveEventConnectionManager {
   }
 
   private openEventSource() {
-    this.eventSource = new this.EventSourceConstructor(buildEventStreamUrl(this.selectedRunId, this.lastEventId));
+    this.eventSource = new this.EventSourceConstructor(buildEventStreamUrl(this.selectedRunId, this.cursor.getCurrent()));
     this.eventSource.addEventListener("update", (event) => {
       this.handleUpdateEvent(event);
     });
@@ -225,6 +261,9 @@ export class LiveEventConnectionManager {
 
   private handleUpdateEvent(event: MessageEvent) {
     try {
+      if (event.lastEventId && !this.cursor.advance(event.lastEventId)) {
+        return;
+      }
       const data = JSON.parse(event.data) as EventStreamState;
       this.stopFallbackPolling();
       this.applyUpdate(data);
@@ -277,6 +316,7 @@ export class LiveEventConnectionManager {
 
   private async handleStreamResyncRequired() {
     this.workerEntries.onStreamResync();
+    this.onStreamResync?.();
     if (!this.active || this.reconnectingAfterResync) {
       return;
     }
@@ -404,9 +444,6 @@ export class LiveEventConnectionManager {
   }
 
   private setLastEventId(lastEventId: string | number | null | undefined) {
-    const normalized = normalizeLastEventId(lastEventId);
-    if (normalized) {
-      this.lastEventId = normalized;
-    }
+    this.cursor.advance(lastEventId);
   }
 }

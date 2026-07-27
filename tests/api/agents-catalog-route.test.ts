@@ -18,7 +18,8 @@ vi.mock("@/server/supervisor/worker-availability", () => ({
   isSpawnableWorkerType: mockIsSpawnableWorkerType,
 }));
 
-vi.mock("@/server/worker-models", () => ({
+vi.mock("@/server/worker-models", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/server/worker-models")>(),
   WorkerModelCatalogManager: vi.fn().mockImplementation(() => ({
     getCatalogSnapshot: mockGetCatalogSnapshot,
   })),

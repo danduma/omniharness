@@ -167,4 +167,10 @@ describe("auto-resume selection guards", () => {
       clearTimeout(timer);
     }
   });
+
+  it("does not auto-resume resource admission failures", () => {
+    expect(isPermanentAutoResumeFailure(
+      ":Cannot spawn worker because system resources are low (disk free 6912 MB, below 8192 MB). Free disk space before retrying.",
+    )).toBe(true);
+  });
 });

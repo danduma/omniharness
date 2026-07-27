@@ -10,6 +10,14 @@ const CONVERSATION_BOTTOM_THRESHOLD_PX = 8;
 const CONVERSATION_MEANINGFUL_OVERFLOW_PX = 112;
 const SCROLL_AREA_VIEWPORT_SELECTOR = '[data-slot="scroll-area-viewport"], [data-radix-scroll-area-viewport]';
 
+function textVersion(value: string | null | undefined) {
+  const text = value ?? "";
+  if (text.length <= 128) {
+    return text;
+  }
+  return `${text.length}:${text.slice(0, 64)}:${text.slice(-64)}`;
+}
+
 export function shouldConversationFollowLatest(
   metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
 ) {
@@ -73,14 +81,14 @@ export function getConversationOutputVersion(
 
   const messageVersion = (messages ?? [])
     .filter((message) => message.runId === selectedRunId)
-    .map((message) => `${message.id}:${message.createdAt}:${message.content.length}`)
+    .map((message) => `${message.id}:${message.createdAt}:${textVersion(message.content)}`)
     .join("|");
   const agentVersion = (agents ?? [])
     .map((agent) => {
       const outputEntriesVersion = (agent.outputEntries ?? [])
-        .map((entry) => `${entry.id}:${entry.text.length}:${entry.timestamp}`)
+        .map((entry) => `${entry.id}:${entry.type}:${entry.status ?? ""}:${textVersion(entry.text)}`)
         .join(",");
-      return `${agent.name}:${agent.currentText?.length ?? 0}:${agent.lastText?.length ?? 0}:${outputEntriesVersion}`;
+      return `${agent.name}:${textVersion(agent.currentText)}:${textVersion(agent.lastText)}:${outputEntriesVersion}`;
     })
     .join("|");
 
@@ -116,12 +124,30 @@ interface UseRunSelectionEffectsProps {
   setSelectedModel: React.Dispatch<React.SetStateAction<string>>;
   selectedEffort: string;
   setSelectedEffort: React.Dispatch<React.SetStateAction<string>>;
+  selectedWorkerAccountId: string;
+  setSelectedWorkerAccountId: React.Dispatch<React.SetStateAction<string>>;
   availableWorkerTypes: WorkerType[];
   configuredAllowedWorkerTypes: WorkerType[];
   apiKeys: Record<string, string>;
   setApiKeys: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   readMarkers: Record<string, string>;
   setReadMarkers: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+}
+
+export function resolveRunComposerSelection(args: {
+  run: RunRecord;
+  activeAllowedWorkerTypes: WorkerType[];
+}) {
+  const preferredWorker = parseWorkerType(args.run.preferredWorkerType);
+  const worker: ComposerWorkerOption = preferredWorker && args.activeAllowedWorkerTypes.includes(preferredWorker)
+    ? preferredWorker
+    : "auto";
+  return {
+    worker,
+    model: resolveComposerModelValue(args.run.preferredWorkerModel),
+    effort: resolveComposerEffortLabel(args.run.preferredWorkerEffort),
+    accountId: args.run.preferredWorkerAccountId?.trim() || "auto",
+  };
 }
 
 export function useRunSelectionEffects({
@@ -140,6 +166,8 @@ export function useRunSelectionEffects({
   setSelectedModel,
   selectedEffort,
   setSelectedEffort,
+  selectedWorkerAccountId,
+  setSelectedWorkerAccountId,
   availableWorkerTypes,
   configuredAllowedWorkerTypes,
   apiKeys,
@@ -268,20 +296,21 @@ export function useRunSelectionEffects({
       return;
     }
 
-    const preferredFromRun = parseWorkerType(selectedRun.preferredWorkerType);
-    const nextSelected: ComposerWorkerOption = preferredFromRun && activeAllowedWorkerTypes.includes(preferredFromRun)
-      ? preferredFromRun
-      : "auto";
-    if (nextSelected !== selectedCliAgent) {
-      setSelectedCliAgent(nextSelected);
+    const runSelection = resolveRunComposerSelection({
+      run: selectedRun,
+      activeAllowedWorkerTypes,
+    });
+    if (runSelection.worker !== selectedCliAgent) {
+      setSelectedCliAgent(runSelection.worker);
     }
-    const nextModel = resolveComposerModelValue(selectedRun.preferredWorkerModel);
-    if (nextModel && nextModel !== selectedModel) {
-      setSelectedModel(nextModel);
+    if (runSelection.model && runSelection.model !== selectedModel) {
+      setSelectedModel(runSelection.model);
     }
-    const nextEffort = resolveComposerEffortLabel(selectedRun.preferredWorkerEffort);
-    if (nextEffort && nextEffort !== selectedEffort) {
-      setSelectedEffort(nextEffort);
+    if (runSelection.effort && runSelection.effort !== selectedEffort) {
+      setSelectedEffort(runSelection.effort);
+    }
+    if (runSelection.accountId !== selectedWorkerAccountId) {
+      setSelectedWorkerAccountId(runSelection.accountId);
     }
     setHydratedRunSelectionId(selectedRunId);
   }, [
@@ -292,12 +321,14 @@ export function useRunSelectionEffects({
     selectedCliAgent,
     selectedEffort,
     selectedModel,
+    selectedWorkerAccountId,
     selectedRun,
     selectedRunId,
     setHydratedRunSelectionId,
     setSelectedCliAgent,
     setSelectedEffort,
     setSelectedModel,
+    setSelectedWorkerAccountId,
   ]);
 
   useEffect(() => {

@@ -45,6 +45,9 @@ describe("derivePendingElicitationsFromWorkerEntries", () => {
       requestedAt: "2026-06-24T20:06:34.022Z",
       sessionId: "claude-session",
       toolCallId: "toolu_ask",
+      mode: "form",
+      elicitationId: null,
+      url: null,
       message: "Please answer the following questions.",
       requestedSchema: {
         type: "object",

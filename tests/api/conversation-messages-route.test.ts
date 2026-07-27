@@ -1398,7 +1398,8 @@ describe("POST /api/conversations/[id]/messages", () => {
       .map((message) => message.content);
     expect(persistedOrder).toHaveLength(2);
     expect(new Set(persistedOrder)).toEqual(new Set(["First rapid note", "Second rapid note"]));
-    expect(mockAskAgent.mock.calls.map((call) => call[1])).toEqual(persistedOrder);
+    expect(mockAskAgent.mock.calls.map((call) => call[1]))
+      .toEqual(persistedOrder.map((content) => expect.stringContaining(content)));
 
     const entries = await readWorkerOutputEntries(runId, workerId);
     expect(entries.filter((entry) => (entry as { type?: string }).type === "user_input").map((entry) => entry.text)).toEqual(persistedOrder);
@@ -1466,7 +1467,7 @@ describe("POST /api/conversations/[id]/messages", () => {
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
     expect(storedMessages.map((message) => message.id)).toContain(missingMessageId);
     expect(storedMessages.map((message) => message.content)).toContain("Do not accept this yet.");
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "Do not accept this yet.");
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("Do not accept this yet."));
     expect((await readWorkerOutputEntries(runId, workerId)).some((entry) => entry.id === missingMessageId)).toBe(true);
   });
 
@@ -1558,8 +1559,8 @@ describe("POST /api/conversations/[id]/messages", () => {
       () => Promise.resolve(mockAskAgent.mock.calls),
       (calls) => calls.length >= 2,
     );
-    expect(mockAskAgent).toHaveBeenNthCalledWith(1, workerId, "Please continue the demo work.");
-    expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, "Please continue the demo work.");
+    expect(mockAskAgent).toHaveBeenNthCalledWith(1, workerId, expect.stringContaining("Please continue the demo work."));
+    expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, expect.stringContaining("Please continue the demo work."));
 
     await waitFor(
       async () => db.select().from(runs).where(eq(runs.id, runId)).get(),
@@ -1671,8 +1672,8 @@ describe("POST /api/conversations/[id]/messages", () => {
       () => Promise.resolve(mockAskAgent.mock.calls),
       (calls) => calls.length >= 2,
     );
-    expect(mockAskAgent).toHaveBeenNthCalledWith(1, workerId, "continue");
-    expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, "continue");
+    expect(mockAskAgent).toHaveBeenNthCalledWith(1, workerId, expect.stringContaining("continue"));
+    expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, expect.stringContaining("continue"));
 
     await waitFor(
       async () => db.select().from(runs).where(eq(runs.id, runId)).get(),
@@ -1892,7 +1893,7 @@ describe("POST /api/conversations/[id]/messages", () => {
 
     expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
     expect(mockAskAgent).toHaveBeenCalledTimes(2);
-    expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, "continue");
+    expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, expect.stringContaining("continue"));
 
     const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     const resumeEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
@@ -1972,8 +1973,8 @@ describe("POST /api/conversations/[id]/messages", () => {
 
     await delay(20);
 
-    expect(mockAskAgent).toHaveBeenCalledWith(activeWorkerId, "you did it?");
-    expect(mockAskAgent).not.toHaveBeenCalledWith(cancelledWorkerId, "you did it?");
+    expect(mockAskAgent).toHaveBeenCalledWith(activeWorkerId, expect.stringContaining("you did it?"));
+    expect(mockAskAgent).not.toHaveBeenCalledWith(cancelledWorkerId, expect.stringContaining("you did it?"));
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
     // Worker response now lives in the unified worker stream — only
     // the user-role row is written to `messages` after delivery.
@@ -2138,7 +2139,7 @@ describe("POST /api/conversations/[id]/queued-messages interrupt routes", () => 
 
     await waitForConversationBackgroundTasksForTests();
 
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "First note");
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("First note"));
     const stored = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, first.id)).get();
     expect(stored?.status).toBe("delivered");
   });
@@ -2158,7 +2159,7 @@ describe("POST /api/conversations/[id]/queued-messages interrupt routes", () => 
     const rows = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.status).toBe("delivered");
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "Stop and run the linter.");
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("Stop and run the linter."));
   });
 
   it("returns an interrupted queued message to pending when busy delivery loses the turn fence", async () => {

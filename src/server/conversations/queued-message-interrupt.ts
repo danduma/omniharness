@@ -7,7 +7,7 @@ import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
-import { appendAttachmentContext, normalizeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
+import { appendAttachmentContext, normalizeChatAttachments, resolveImageAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import { getAppDataPath } from "@/server/app-root";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import { persistRunFailure } from "@/server/runs/failures";
@@ -25,6 +25,7 @@ import {
 } from "./queued-messages";
 import {
   advanceWorkerTurnGeneration,
+  isWorkerTurnSupersededError,
   isWorkerTurnGenerationCurrent,
   runWorkerTurn,
   trackConversationBackgroundTask,
@@ -283,6 +284,7 @@ async function interruptAndDeliver(args: {
   );
   const workerContent = appendAttachmentContext(record.content, normalizedAttachments, {
     resolvePath: (storagePath) => getAppDataPath(storagePath),
+    imagesInlined: true,
   });
 
   const userMessage = {
@@ -309,6 +311,7 @@ async function interruptAndDeliver(args: {
     }).catch((error) => {
       console.error("Queued message interrupt delivery failed:", error);
     }),
+    { runId },
   );
 
   return {
@@ -399,7 +402,10 @@ async function deliverInterruptedQueuedMessage(args: {
       const workerPrompt = run.mode === "direct" || run.mode === "commit"
         ? buildDirectWorkerPrompt(workerContent)
         : workerContent;
-      const response = await askAgent(worker.id, workerPrompt);
+      const imageAttachments = resolveImageAttachments(attachments, getAppDataPath);
+      const response = imageAttachments.length
+        ? await askAgent(worker.id, workerPrompt, imageAttachments)
+        : await askAgent(worker.id, workerPrompt);
       const finishedAt = new Date();
 
       // Before any terminal persistence, confirm a newer interrupt has not
@@ -449,6 +455,10 @@ async function deliverInterruptedQueuedMessage(args: {
       notifyEventStreamSubscribers();
     });
   } catch (error) {
+    if (isWorkerTurnSupersededError(error)) {
+      notifyEventStreamSubscribers();
+      return;
+    }
     await handleInterruptDeliveryError({ run, worker, record, userMessage, error, generation, source, requestedAt });
   }
 }

@@ -240,4 +240,93 @@ describe("GET /api/conversations/[id]/transcript", () => {
       await cleanupRun(runId, planId);
     }
   });
+
+  it("hides the branch a rewind discarded across every transcript page", async () => {
+    process.env.OMNIHARNESS_TEST_BYPASS_AUTH = "true";
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const oldWorkerId = `${runId}-worker-1`;
+    const newWorkerId = `${runId}-worker-2`;
+    const now = new Date();
+
+    try {
+      await db.insert(plans).values({
+        id: planId,
+        path: "vibes/ad-hoc/direct.md",
+        status: "running",
+        createdAt: now,
+        updatedAt: now,
+      });
+      await db.insert(runs).values({
+        id: runId,
+        planId,
+        mode: "direct",
+        status: "running",
+        createdAt: now,
+        updatedAt: now,
+      });
+      const workerRow = {
+        runId,
+        type: "claude",
+        status: "idle",
+        cwd: "/workspace/app",
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        createdAt: now,
+        updatedAt: now,
+      };
+      await db.insert(workers).values([
+        // The rewind supersedes seq 2 (the original delivery of the edited
+        // message) through seq 3 (the stream tip when the user hit save).
+        { ...workerRow, id: oldWorkerId, supersededSeqRanges: '[{"from":2,"through":3}]' },
+        { ...workerRow, id: newWorkerId, createdAt: new Date(now.getTime() + 1_000) },
+      ]);
+
+      await appendWorkerEntry(runId, oldWorkerId, {
+        id: "kept-1",
+        type: "message",
+        text: "before the rewind",
+        timestamp: new Date(now.getTime() + 1).toISOString(),
+      });
+      await appendWorkerEntry(runId, oldWorkerId, {
+        id: "edited-message",
+        type: "user_input",
+        text: "original wording",
+        timestamp: new Date(now.getTime() + 2).toISOString(),
+      });
+      await appendWorkerEntry(runId, oldWorkerId, {
+        id: "discarded-answer",
+        type: "message",
+        text: "answer from the discarded attempt",
+        timestamp: new Date(now.getTime() + 3).toISOString(),
+      });
+      await appendWorkerEntry(runId, newWorkerId, {
+        id: "edited-message",
+        type: "user_input",
+        text: "edited wording",
+        timestamp: new Date(now.getTime() + 4).toISOString(),
+      });
+
+      const tailResponse = await GET(
+        new NextRequest(`http://localhost/api/conversations/${runId}/transcript?limit=50`),
+        { params: Promise.resolve({ id: runId }) },
+      );
+      const tail = await tailResponse.json() as { entries: Array<{ id: string; text: string }> };
+
+      expect(tailResponse.status).toBe(200);
+      expect(tail.entries.map((entry) => entry.text)).toEqual(["before the rewind", "edited wording"]);
+
+      // Incremental polling must not re-add them either.
+      const afterResponse = await GET(
+        new NextRequest(`http://localhost/api/conversations/${runId}/transcript?afterToken=${encodeAfterToken({ [oldWorkerId]: 0, [newWorkerId]: 0 })}`),
+        { params: Promise.resolve({ id: runId }) },
+      );
+      const after = await afterResponse.json() as { entries: Array<{ id: string; text: string }> };
+      expect(after.entries.map((entry) => entry.text)).toEqual(["before the rewind", "edited wording"]);
+    } finally {
+      await cleanupRun(runId, planId);
+    }
+  });
 });

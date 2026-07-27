@@ -17,7 +17,7 @@ Testing:
 
 Lifecycle observability rules (full doc: `docs/architecture/lifecycle-observability-and-testing.md`):
 - Every server-side decision (spawn, reattach, recreate, give up, refuse, delete, fail) emits a typed named event via `emitNamedEvent` from `@/server/events/named-events`. Silent early returns and bare `catch {}` are bugs.
-- User-relevant failures additionally emit `error.surfaced` with a stable `code` (typed union in `named-events.ts`), `surface`, and at least one of `runId`/`workerId`/`conversationId`. Never funnel through a blanket wrapper in `api-errors.ts`.
+- User-relevant failures additionally emit `error.surfaced` with a stable `code` (typed union in `named-events.ts`), `surface`, and at least one relevant subject id such as `runId`/`workerId`/`conversationId`/`accountId`. Never funnel through a blanket wrapper in `api-errors.ts`.
 - All SSE frames carry an `id:`. Clients reconnect with `Last-Event-ID`; the server replays from the ring buffer or emits `stream.resync_required`. Snapshot bootstrap is `GET /api/events?snapshot=1` (anchor id in the `x-omni-last-event-id` response header).
 - Dev-only event log: `GET /api/events/log?since=<id>&runId=<id>` returns the ring buffer as JSON. Use this when triaging "X didn't happen" bug reports — if the event isn't there, the server didn't do the thing, and the next step is finding the silent branch.
 - Chaos is a client-side concern. Never add fault-injection code paths to server code.

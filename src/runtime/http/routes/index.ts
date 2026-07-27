@@ -5,10 +5,11 @@ import { handleAuthLogoutRequest } from "./auth-logout";
 import { handleAuthPairRequest } from "./auth-pair";
 import { handleAuthPairRedeemRequest } from "./auth-pair-redeem";
 import { handleSettingsRequest } from "./settings";
+import { handleClaudeModelGatewayRequest } from "./claude-model-gateway";
 import { handleAccountDetailRequest, handleAccountStatusRequest, handleAccountsRequest } from "./accounts";
 import { handleAgentsRequest } from "./agents";
 import { handleAgentsCatalogRequest } from "./agents-catalog";
-import { handleAgentDetailRequest, handleAgentElicitationRequest, handleAgentPermissionRequest } from "./agent-detail";
+import { handleAgentAcpRequest, handleAgentDetailRequest, handleAgentElicitationRequest, handleAgentPermissionRequest } from "./agent-detail";
 import { handlePrewarmWorkerRequest } from "./prewarm-worker";
 import { handleLlmModelsRequest } from "./llm-models";
 import { handleCodexAuthStatusRequest } from "./codex-auth-status";
@@ -57,14 +58,19 @@ export function createOmniRuntimeHttpRegistry() {
     .route("POST", "/api/auth/pair/redeem", handleAuthPairRedeemRequest)
     .route("GET", "/api/settings", handleSettingsRequest)
     .route("POST", "/api/settings", handleSettingsRequest)
+    .route("GET", "/api/integrations/claude-model-gateway", handleClaudeModelGatewayRequest)
+    .route("POST", "/api/integrations/claude-model-gateway", handleClaudeModelGatewayRequest)
+    .route("OPTIONS", "/api/integrations/claude-model-gateway", handleClaudeModelGatewayRequest)
     .route("GET", "/api/accounts", handleAccountsRequest)
     .route("POST", "/api/accounts", handleAccountsRequest)
     .route("PATCH", "/api/accounts/:id", handleAccountDetailRequest)
+    .route("DELETE", "/api/accounts/:id", handleAccountDetailRequest)
     .route("POST", "/api/accounts/:id/status", handleAccountStatusRequest)
     .route("GET", "/api/agents", handleAgentsRequest)
     .route("GET", "/api/agents/:name", handleAgentDetailRequest)
     .route("POST", "/api/agents/:name/elicitation", handleAgentElicitationRequest)
     .route("POST", "/api/agents/:name/permission", handleAgentPermissionRequest)
+    .route("POST", "/api/agents/:name/acp", handleAgentAcpRequest)
     .route("GET", "/api/agents/catalog", handleAgentsCatalogRequest)
     .route("POST", "/api/agents/prewarm-worker", handlePrewarmWorkerRequest)
     .route("POST", "/api/llm-models", handleLlmModelsRequest)
@@ -113,10 +119,11 @@ export { handleAuthLogoutRequest } from "./auth-logout";
 export { handleAuthPairRequest } from "./auth-pair";
 export { handleAuthPairRedeemRequest } from "./auth-pair-redeem";
 export { handleSettingsRequest } from "./settings";
+export { handleClaudeModelGatewayRequest } from "./claude-model-gateway";
 export { handleAccountDetailRequest, handleAccountStatusRequest, handleAccountsRequest } from "./accounts";
 export { handleAgentsRequest } from "./agents";
 export { handleAgentsCatalogRequest } from "./agents-catalog";
-export { handleAgentDetailRequest, handleAgentElicitationRequest, handleAgentPermissionRequest } from "./agent-detail";
+export { handleAgentAcpRequest, handleAgentDetailRequest, handleAgentElicitationRequest, handleAgentPermissionRequest } from "./agent-detail";
 export { handlePrewarmWorkerRequest } from "./prewarm-worker";
 export { handleLlmModelsRequest } from "./llm-models";
 export { handleCodexAuthStatusRequest } from "./codex-auth-status";

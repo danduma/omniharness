@@ -16,7 +16,6 @@ const TOOL_CALL_UPDATE_SUMMARY_CHARS = 2_000;
 const RAW_ARRAY_ITEMS = 200;
 const RAW_OBJECT_KEYS = 100;
 const RAW_DEPTH = 8;
-const OUTPUT_TRUNCATION_MARKER = "[Earlier runtime output omitted]\n";
 const ARCHIVE_MARKER_ID = "output-archive-marker";
 const DEFAULT_PAGE_LIMIT = 100;
 const MAX_PAGE_LIMIT = 500;
@@ -47,8 +46,7 @@ export function appendBoundedText(existing: string, chunk: string, maxChars = LI
   if (next.length <= maxChars) {
     return next;
   }
-  const tailLength = Math.max(0, maxChars - OUTPUT_TRUNCATION_MARKER.length);
-  return OUTPUT_TRUNCATION_MARKER + next.slice(-tailLength);
+  return next.slice(-Math.max(0, maxChars));
 }
 
 export function appendBoundedThoughts(existing: string, chunk: string, maxChars = LIVE_OUTPUT_ENTRY_TEXT_CHARS) {

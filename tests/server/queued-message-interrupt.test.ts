@@ -134,7 +134,7 @@ describe("queued conversation message interrupt", () => {
 
     const stored = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queued.id)).get();
     expect(stored?.status).toBe("delivered");
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "Actually, focus on the failing test first.");
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("Actually, focus on the failing test first."));
 
     const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     expect(worker?.turnGeneration).toBe(1);
@@ -153,7 +153,7 @@ describe("queued conversation message interrupt", () => {
     await waitForConversationBackgroundTasksForTests();
 
     expect(mockAskAgent).toHaveBeenCalledTimes(1);
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "First note");
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("First note"));
     const stored = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, first.id)).get();
     expect(stored?.status).toBe("delivered");
   });
@@ -169,7 +169,7 @@ describe("queued conversation message interrupt", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.id).toBe(result.queuedMessage.id);
     expect(rows[0]?.status).toBe("delivered");
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "Stop and run the linter.");
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("Stop and run the linter."));
   });
 
   it("keeps the queued message pending when cancelling the turn fails", async () => {

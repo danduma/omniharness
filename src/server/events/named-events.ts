@@ -17,6 +17,7 @@
  * `/api/events?snapshot=1` and resume from the new cursor.
  */
 import { notifyEventStreamSubscribers } from "./live-updates";
+import type { ClaudeSessionModelReason } from "@/lib/claude-session-model";
 
 // ---------------------------------------------------------------------------
 // Event union
@@ -27,6 +28,7 @@ export type SurfacedErrorCode =
   | "plan.review.failed"
   | "conversation.delete.foreign_key"
   | "conversation.delete.failed"
+  | "conversation.delete.worker_cancel_failed"
   | "conversation.continue.failed"
   | "process.spawn.failed"
   | "process.cwd.invalid"
@@ -39,8 +41,11 @@ export type SurfacedErrorCode =
   | "runtime.resource_pressure"
   | "runtime.settings_apply_failed"
   | "runtime.start_failed"
+  | "acp.method.failed"
+  | "acp.compatibility.unsupported"
   | "account.invalid_explicit"
   | "account.login_required"
+  | "account.delete.failed"
   | "account.quota_switch_failed"
   | "account.resolution_failed"
   | "account.secret_decryption_failed"
@@ -66,15 +71,26 @@ export type SurfacedErrorCode =
   | "worker.poll.failed"
   | "worker.resume.failed"
   | "worker.snapshot.invalid"
+  | "worker.prompt.image_attachment_unreadable"
+  | "worker.model.version_unavailable"
+  | "worker.model.pin_unsupported"
   | "codex_auth_missing"
   | "codex_auth_refresh_failed"
   | "codex_auth_unavailable"
+  | "claude_gateway.install_failed"
+  | "claude_gateway.oauth_failed"
+  | "claude_gateway.model_discovery_failed"
+  | "claude_gateway.not_ready"
+  | "claude_gateway.unsupported_platform"
+  | "claude_gateway.invalid_configuration"
   | "internal";
 
 export type FailoverStage = "selection" | "handoff" | "spawn";
 export type HandoffSource = "worker" | "synthetic";
 
 export type ErrorSurface = "toast" | "banner" | "log";
+
+export type ClaudeModelPinReason = ClaudeSessionModelReason;
 
 export type RuntimeSurface = "web" | "electron" | "vscode" | "cli" | "test";
 
@@ -150,7 +166,34 @@ export type WorkerEvent =
   | { kind: "worker.terminal"; runId: string; workerId: string; status: string }
   | { kind: "worker.reattached"; runId: string; workerId: string }
   | { kind: "worker.recreated"; runId: string; workerId: string }
+  | { kind: "worker.delete_race_cancelled"; runId: string; workerId: string }
   | { kind: "worker.session_metadata_repaired"; runId: string; workerId: string }
+  // A retry/edit rewound the conversation past output this worker already
+  // wrote; those seqs stay on disk but drop out of the conversation view.
+  | {
+      kind: "worker.branch_superseded";
+      runId: string;
+      workerId: string;
+      targetMessageId: string;
+      fromSeq: number;
+      throughSeq: number;
+    }
+  // Claude sessions inherit the CLI's own model choice unless we pin one, which
+  // is how workers ended up on 1M-context variants the subscription cannot run.
+  | {
+      kind: "worker.model_pinned";
+      workerId: string;
+      requestedModel: string | null;
+      selectedModel: string;
+      reason: ClaudeModelPinReason;
+    }
+  | {
+      kind: "worker.model_pin_failed";
+      workerId: string;
+      requestedModel: string | null;
+      selectedModel: string;
+      reason: string;
+    }
   // Wake-up frame for the unified worker conversation stream. Carries
   // only (workerId, seq); clients fetch the entry via
   // GET /api/workers/:workerId/entries?afterSeq=. See
@@ -243,6 +286,8 @@ export type AccountEvent =
   | { kind: "account.detected"; accountId: string; workerType: string; provider: string; authMode: string }
   | { kind: "account.created"; accountId: string; workerType: string | null; provider: string; authMode: string }
   | { kind: "account.updated"; accountId: string; workerType: string | null; changedKeys: string[] }
+  | { kind: "account.deleted"; accountId: string; workerType: string | null }
+  | { kind: "account.delete_failed"; accountId: string; workerType: string | null; reason: string }
   | { kind: "account.status_checked"; accountId: string; workerType: string | null; status: string | null }
   | {
       kind: "account.credential_selected";
@@ -364,6 +409,7 @@ export type ErrorSurfacedEvent = {
   runId?: string;
   workerId?: string;
   conversationId?: string;
+  accountId?: string;
   cause?: { name: string; message: string } | null;
 };
 
@@ -425,6 +471,33 @@ export type ArtifactEvent =
       reason: string;
     };
 
+export type AcpEvent =
+  | { kind: "acp.method_started"; workerId: string; method: string; notification: boolean }
+  | { kind: "acp.method_completed"; workerId: string; method: string; notification: boolean }
+  | { kind: "acp.method_failed"; workerId: string; method: string; notification: boolean; reason: string }
+  | { kind: "acp.interaction_requested"; workerId: string; interaction: "permission" | "elicitation"; requestId: number }
+  | { kind: "acp.interaction_resolved"; workerId: string; interaction: "permission" | "elicitation"; requestId: number; outcome: string }
+  | { kind: "acp.resource_created"; workerId: string; resource: "terminal" | "mcp"; resourceId: string }
+  | { kind: "acp.resource_released"; workerId: string; resource: "terminal" | "mcp"; resourceId: string };
+
+export type ClaudeModelGatewayEvent =
+  | { kind: "claude_gateway.install_started"; operationId: string }
+  | { kind: "claude_gateway.install_completed"; operationId: string; version: string; source: "managed" | "system" }
+  | { kind: "claude_gateway.install_failed"; operationId: string; reason: string }
+  | { kind: "claude_gateway.service_starting"; operationId: string; mode: "managed" | "external" }
+  | { kind: "claude_gateway.service_started"; operationId: string; mode: "managed" | "external" }
+  | { kind: "claude_gateway.service_start_failed"; operationId: string; mode: "managed" | "external"; reason: string }
+  | { kind: "claude_gateway.service_probe_failed"; mode: "managed" | "external"; reason: string }
+  | { kind: "claude_gateway.oauth_probe_failed"; mode: "managed" | "external"; reason: string }
+  | { kind: "claude_gateway.service_stopped"; operationId: string; mode: "managed" | "external" }
+  | { kind: "claude_gateway.service_stop_failed"; operationId: string; mode: "managed" | "external"; reason: string }
+  | { kind: "claude_gateway.oauth_started"; operationId: string }
+  | { kind: "claude_gateway.oauth_completed"; operationId: string }
+  | { kind: "claude_gateway.oauth_failed"; operationId: string; reason: string }
+  | { kind: "claude_gateway.models_refreshed"; operationId: string; count: number }
+  | { kind: "claude_gateway.models_refresh_failed"; operationId: string; reason: string }
+  | { kind: "claude_gateway.spawn_refused"; runId?: string; workerId?: string; reason: string };
+
 export type NamedEvent =
   | RuntimeEvent
   | WorkerEvent
@@ -436,7 +509,9 @@ export type NamedEvent =
   | SessionEvent
   | ErrorSurfacedEvent
   | StreamControlEvent
-  | ArtifactEvent;
+  | ArtifactEvent
+  | AcpEvent
+  | ClaudeModelGatewayEvent;
 
 // Internal: snapshot marker stored in the ring so `Last-Event-ID` resume
 // from immediately after a snapshot remains resolvable. The marker itself

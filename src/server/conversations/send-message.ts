@@ -16,15 +16,16 @@ import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallba
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
+import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
-import { appendAttachmentContext, normalizeChatAttachments, parseChatAttachmentsJson, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
+import { appendAttachmentContext, normalizeChatAttachments, parseChatAttachmentsJson, resolveImageAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import { getAppDataPath } from "@/server/app-root";
 import { normalizeWorkerType, SUPPORTED_WORKER_TYPES, type SupportedWorkerType } from "@/server/supervisor/worker-types";
 import { createQueuedConversationMessage, type BusyMessageAction } from "./queued-messages";
 import { interruptWithDraftMessage } from "./queued-message-interrupt";
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
-import { runConversationMutation, runWorkerTurn, trackConversationBackgroundTask } from "./worker-turn-gate";
+import { isWorkerTurnSupersededError, runConversationMutation, runWorkerTurn, trackConversationBackgroundTask } from "./worker-turn-gate";
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
 import { isManualStopCommand } from "@/app/home/busy-message-behavior";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -32,6 +33,8 @@ import { cancelSupervisorWake } from "@/server/supervisor/wake";
 import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
 import { stopRunObserver } from "@/server/supervisor/observer";
 import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
+import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
+import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
@@ -58,6 +61,26 @@ function isSupervisedRun(run: { mode?: string | null; phase?: string | null }) {
 
 function isAgentBusyError(error: unknown) {
   return /\bagent is busy\b/i.test(formatErrorMessage(error));
+}
+
+async function handleDirectWorkerQuotaError(args: {
+  run: RunRecord;
+  worker: WorkerRecord;
+  error: unknown;
+}) {
+  const quotaInfo = extractQuotaResetInfo(args.error, { provider: args.worker.type });
+  if (!quotaInfo.isQuotaError) {
+    return false;
+  }
+
+  await handleWorkerQuotaExhaustion({
+    runId: args.run.id,
+    workerId: args.worker.id,
+    text: quotaInfo.rawText,
+    provider: args.worker.type,
+  });
+  notifyEventStreamSubscribers();
+  return true;
 }
 
 function isAgentNotFoundError(error: unknown) {
@@ -327,15 +350,16 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
   const { env: envParams } = await readRuntimeEnvFromSettings();
+  const launchSelection = resolveWorkerLaunchSelection(worker, run);
   const spawnParams = {
     type: worker.type,
     cwd: worker.cwd,
     name: worker.id,
     ...(workerMode ? { mode: workerMode } : {}),
     env: envParams,
-    ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
-    ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
-    ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+    ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
+    ...(launchSelection.model ? { model: launchSelection.model } : {}),
+    ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
   };
   let resumedWorker;
   let recreatedFromRejectedEmptySession = false;
@@ -548,15 +572,6 @@ async function askDirectWorkerWithResume(run: RunRecord, worker: WorkerRecord, c
   }
 }
 
-function resolveImageAttachmentPaths(attachments: ChatAttachment[]): Array<{ path: string; mimeType: string }> {
-  return attachments
-    .filter((a) => a.kind === "image" && a.storagePath)
-    .map((a) => ({
-      path: getAppDataPath(a.storagePath!),
-      mimeType: a.mimeType || "image/png",
-    }));
-}
-
 async function continueWorkerConversation({
   run,
   worker,
@@ -615,7 +630,7 @@ async function continueWorkerConversation({
       notifyEventStreamSubscribers();
     }
 
-    const imageAttachments = resolveImageAttachmentPaths(attachments);
+    const imageAttachments = resolveImageAttachments(attachments, getAppDataPath);
     const response = await askDirectWorkerWithResume(run, worker, content, imageAttachments);
     if (!userInputAppended) {
       // Append user_input on delivery — `askDirectWorkerWithResume` has
@@ -685,6 +700,10 @@ async function continueWorkerConversation({
 
     notifyEventStreamSubscribers();
   } catch (error) {
+    if (isWorkerTurnSupersededError(error)) {
+      notifyEventStreamSubscribers();
+      return;
+    }
     const currentWorker = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
     if (isWorkerCancelled(currentWorker)) {
       notifyEventStreamSubscribers();
@@ -705,6 +724,10 @@ async function continueWorkerConversation({
       }).where(eq(runs.id, run.id));
       notifyEventStreamSubscribers();
       throw Object.assign(error instanceof Error ? error : new Error(formatErrorMessage(error)), { status: 409 });
+    }
+
+    if (await handleDirectWorkerQuotaError({ run, worker, error })) {
+      return;
     }
 
     await db.update(workers).set({
@@ -962,6 +985,7 @@ async function sendConversationMessageUnlocked({
   const attachmentsJson = serializeChatAttachments(normalizedAttachments);
   const workerContent = appendAttachmentContext(trimmedContent, normalizedAttachments, {
     resolvePath: (storagePath) => getAppDataPath(storagePath),
+    imagesInlined: true,
   });
   if (!trimmedContent && normalizedAttachments.length === 0) {
     throw Object.assign(new Error("Message content or attachment is required"), { status: 400 });
@@ -1218,7 +1242,7 @@ async function sendConversationMessageUnlocked({
       // Already appended above.
       appendUserInputBeforeAsk: false,
       allowCancelledWorkerResume,
-    })));
+    })), { runId });
     turn.catch((error) => {
       if (isAgentBusyError(error)) {
         return;

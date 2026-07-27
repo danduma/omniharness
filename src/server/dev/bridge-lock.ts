@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { execFileSync } from "child_process";
+import { isProcessAlive as isSharedProcessAlive } from "@/server/process-ownership";
 
 export interface BridgeLockRecord {
   pid: number;
@@ -41,13 +42,7 @@ export function readBridgeLock(lockPath: string): BridgeLockRecord | null {
 }
 
 export function isProcessAlive(pid: number) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const code = error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-    return code !== "ESRCH";
-  }
+  return isSharedProcessAlive(pid);
 }
 
 export function isBridgeStarterCommand(command: string) {

@@ -9,6 +9,7 @@ import {
   appendWorkerEntry,
   compactWorkerOutputFile,
   readWorkerEntriesSince,
+  readWorkerEntriesTail,
   readWorkerLatestSeq,
   readWorkerOutputEntries,
   workerOutputFilePathFor,
@@ -272,6 +273,43 @@ describe("readWorkerEntriesSince", () => {
 
       expect(tail.entries.map((entry) => entry.seq)).toEqual([1996, 1997, 1998, 1999, 2000]);
       expect(tail.latestSeq).toBe(2000);
+    } finally {
+      await cleanupRun(runId);
+    }
+  });
+
+  it("does not cut into the middle of a fragmented assistant message on tail reads", async () => {
+    const runId = uniqueId("run");
+    const workerId = uniqueId("worker");
+    try {
+      await appendWorkerEntry(runId, workerId, {
+        id: "tool-before",
+        type: "tool_call",
+        text: "Read File",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        toolCallId: "tool-before",
+        status: "completed",
+      });
+
+      for (let i = 0; i < 150; i += 1) {
+        await appendWorkerEntry(runId, workerId, {
+          id: `message-fragment-${i}`,
+          type: "message",
+          text: i === 0 ? "This" : ` fragment-${i}`,
+          timestamp: new Date(1700000000000 + i).toISOString(),
+          authorRole: "assistant",
+          channel: "agent",
+        });
+      }
+
+      const tail = await readWorkerEntriesTail(runId, workerId, 100);
+
+      expect(tail).not.toBeNull();
+      expect(tail?.entries).toHaveLength(150);
+      expect(tail?.entries[0]).toMatchObject({ id: "message-fragment-0", text: "This" });
+      expect(tail?.entries.at(-1)).toMatchObject({ id: "message-fragment-149", text: " fragment-149" });
+      expect(tail?.latestSeq).toBe(151);
+      expect(tail?.hasOlder).toBe(true);
     } finally {
       await cleanupRun(runId);
     }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AppRequestError } from "@/lib/app-errors";
-import { buildEventStreamUrl, LiveEventConnectionManager } from "@/app/home/LiveEventConnectionManager";
+import { buildEventStreamUrl, LiveEventConnectionManager, LiveEventCursorManager } from "@/app/home/LiveEventConnectionManager";
 import type { EventStreamState } from "@/app/home/types";
 
 function createState(id: string): EventStreamState {
@@ -51,9 +51,9 @@ class MockEventSource {
     this.listeners.set(event, [...(this.listeners.get(event) ?? []), listener]);
   }
 
-  emit(event: string, data: unknown) {
+  emit(event: string, data: unknown, lastEventId = "") {
     for (const listener of this.listeners.get(event) ?? []) {
-      listener({ data: JSON.stringify(data) } as MessageEvent);
+      listener({ data: JSON.stringify(data), lastEventId } as MessageEvent);
     }
   }
 
@@ -221,12 +221,14 @@ describe("LiveEventConnectionManager", () => {
   it("routes worker entry wake-ups and resync controls through the worker stream manager", () => {
     MockEventSource.instances = [];
     const workerEntries = createWorkerEntriesNotifier();
+    const onStreamResync = vi.fn();
     const manager = new LiveEventConnectionManager({
       EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
       requestJson: vi.fn().mockResolvedValue(createState("persisted-initial")),
       applyUpdate: vi.fn(),
       reportError: vi.fn(),
       workerEntries,
+      onStreamResync,
     });
 
     manager.start();
@@ -235,6 +237,7 @@ describe("LiveEventConnectionManager", () => {
 
     expect(workerEntries.onWakeUp).toHaveBeenCalledWith({ workerId: "worker-1", seq: 3 });
     expect(workerEntries.onStreamResync).toHaveBeenCalledTimes(1);
+    expect(onStreamResync).toHaveBeenCalledTimes(1);
 
     manager.stop();
   });
@@ -333,6 +336,69 @@ describe("LiveEventConnectionManager", () => {
       globalThis.fetch = originalFetch;
       vi.useRealTimers();
     }
+  });
+
+  it("ignores replayed updates older than a persisted snapshot anchor", async () => {
+    vi.useFakeTimers();
+    MockEventSource.instances = [];
+    const applyUpdate = vi.fn();
+    const requestSnapshot = vi.fn().mockResolvedValue({
+      data: createState("persisted-done"),
+      lastEventId: "100",
+    });
+    const manager = new LiveEventConnectionManager({
+      selectedRunId: "run-1",
+      initialLastEventId: "10",
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestSnapshot,
+      applyUpdate,
+      reportError: vi.fn(),
+    });
+
+    manager.start();
+    await flushAsyncWork();
+    MockEventSource.instances[0]?.emit("update", createState("stale-running"), "42");
+
+    expect(applyUpdate).toHaveBeenCalledTimes(1);
+    expect(applyUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      runs: [expect.objectContaining({ id: "persisted-done" })],
+    }));
+
+    manager.stop();
+    vi.useRealTimers();
+  });
+
+  it("carries the latest event cursor across selected-run connections", async () => {
+    vi.useFakeTimers();
+    MockEventSource.instances = [];
+    const cursor = new LiveEventCursorManager("10");
+    const first = new LiveEventConnectionManager({
+      selectedRunId: "run-a",
+      cursor,
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestSnapshot: vi.fn().mockResolvedValue({ data: createState("run-a"), lastEventId: "100" }),
+      applyUpdate: vi.fn(),
+      reportError: vi.fn(),
+    });
+
+    first.start();
+    await flushAsyncWork();
+    first.stop();
+
+    const second = new LiveEventConnectionManager({
+      selectedRunId: "run-b",
+      cursor,
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestSnapshot: vi.fn().mockResolvedValue({ data: createState("run-b"), lastEventId: "101" }),
+      applyUpdate: vi.fn(),
+      reportError: vi.fn(),
+    });
+    second.start();
+
+    expect(MockEventSource.instances[1]?.url).toBe("/api/events?runId=run-b&lastEventId=100");
+
+    second.stop();
+    vi.useRealTimers();
   });
 
   it("keeps validating persisted snapshots after an open stream reconnects without a changed payload", async () => {

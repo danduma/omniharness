@@ -6,6 +6,7 @@ import {
   shouldTerminalConnectorExtend,
   shouldTerminalFollowLatest,
   shouldTerminalKeepFollowingLatest,
+  shouldTerminalResetInitialPosition,
 } from "@/components/Terminal";
 
 const terminalSource = fs.readFileSync(
@@ -255,6 +256,7 @@ test("terminal only follows live output while the viewport is already near the b
   expect(terminalSource).not.toContain("shouldForceFollowPendingAssistant");
   expect(terminalSource).toContain("const activityChanged = previousActivityVersionRef.current !== activityVersion;");
   expect(terminalSource).toContain("const isFirstRenderedActivity = filteredActivity.length > 0 && !hasPositionedFirstActivityRef.current;");
+  expect(terminalSource).toContain("shouldTerminalResetInitialPosition");
   expect(terminalSource).toContain('const scrollBehavior: ScrollBehavior = isFirstRenderedActivity ? "auto" : "smooth";');
   expect(terminalSource).toContain('scrollTerminalToBottom(container, "auto")');
 
@@ -281,6 +283,24 @@ test("terminal only follows live output while the viewport is already near the b
     clientHeight: 300,
     scrollHeight: 1000,
   }, 700)).toBe(false);
+
+  expect(shouldTerminalResetInitialPosition({
+    previousFirstActivityId: "entry-20",
+    nextFirstActivityId: "entry-1",
+    scrollAnchorChanged: false,
+  })).toBe(false);
+
+  expect(shouldTerminalResetInitialPosition({
+    previousFirstActivityId: null,
+    nextFirstActivityId: "entry-20",
+    scrollAnchorChanged: false,
+  })).toBe(true);
+
+  expect(shouldTerminalResetInitialPosition({
+    previousFirstActivityId: "entry-20",
+    nextFirstActivityId: "entry-20",
+    scrollAnchorChanged: true,
+  })).toBe(true);
 });
 
 test("terminal activity version ignores pending assistant timestamp churn", () => {

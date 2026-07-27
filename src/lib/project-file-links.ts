@@ -5,10 +5,30 @@ export type ProjectFileReference = {
   column?: number;
 };
 
+export function buildProjectFileFullPath({ root, relativePath }: Pick<ProjectFileReference, "root" | "relativePath">) {
+  const separator = root.includes("\\") && !root.includes("/") ? "\\" : "/";
+  const trimmedRoot = root.replace(/[\\/]+$/, "");
+  const trimmedRelativePath = relativePath
+    .replace(/^[\\/]+/, "")
+    .replace(separator === "\\" ? /\//g : /\\/g, separator);
+
+  return `${trimmedRoot || separator}${trimmedRoot ? separator : ""}${trimmedRelativePath}`;
+}
+
 const LOCALHOST_NAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
+function decodePathSegments(value: string) {
+  return value.replace(/(?:%[0-9a-f]{2})+/gi, (encoded) => {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      return encoded;
+    }
+  });
+}
+
 function normalizePath(value: string) {
-  return decodeURIComponent(value)
+  return decodePathSegments(value)
     .replace(/\\/g, "/")
     .replace(/\/+/g, "/")
     .replace(/\/$/, "");
@@ -48,6 +68,28 @@ function stripLineColumn(value: string) {
   };
 }
 
+function isSafeRelativeProjectPath(value: string) {
+  if (
+    !value
+    || value.startsWith("/")
+    || /^[a-z][a-z0-9+.-]*:/i.test(value)
+    || value.includes("\0")
+    || /\s/.test(value)
+  ) {
+    return false;
+  }
+
+  const normalized = value.replace(/^\.\//, "");
+  return Boolean(
+    normalized
+    && normalized.includes("/")
+    && !normalized.startsWith("../")
+    && normalized !== ".."
+    && !normalized.includes("/../")
+    && !normalized.endsWith("/..")
+  );
+}
+
 export function parseProjectFileReference(value: string, projectRoot: string | null | undefined): ProjectFileReference | null {
   const root = normalizePath(projectRoot ?? "");
   if (!root) {
@@ -60,6 +102,15 @@ export function parseProjectFileReference(value: string, projectRoot: string | n
   }
 
   const { pathPart, line, column } = stripLineColumn(normalizePath(candidate));
+  if (isSafeRelativeProjectPath(pathPart)) {
+    return {
+      root,
+      relativePath: pathPart.replace(/^\.\//, ""),
+      ...(line ? { line } : {}),
+      ...(column ? { column } : {}),
+    };
+  }
+
   if (pathPart !== root && !pathPart.startsWith(`${root}/`)) {
     return null;
   }
@@ -76,4 +127,3 @@ export function parseProjectFileReference(value: string, projectRoot: string | n
     ...(column ? { column } : {}),
   };
 }
-

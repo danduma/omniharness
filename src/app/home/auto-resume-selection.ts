@@ -45,7 +45,7 @@ export function cancelInactiveAutoResumeTimers<TEntry extends { timerId: ReturnT
 }
 
 export function isPermanentAutoResumeFailure(failureKey: string | null | undefined) {
-  return /\b(?:api key|authentication required|auth(?:entication)? failed|billing required|api billing|cap_exceeded|insufficient quota|resource exhausted)\b/i.test(failureKey ?? "");
+  return /\b(?:api key|authentication required|auth(?:entication)? failed|billing required|api billing|cap_exceeded|insufficient quota|resource exhausted|system resources are low|worker\.spawn\.resource_exhausted)\b/i.test(failureKey ?? "");
 }
 
 export function shouldFireAutoResumeTimer<TEntry extends {

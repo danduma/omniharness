@@ -170,6 +170,8 @@ export function SettingsDialog({
                 workerCatalogQuery={workerCatalogQuery}
                 onRefreshWorkerCatalog={onRefreshWorkerCatalog}
                 workerCatalogRefreshing={workerCatalogRefreshing}
+                secretStates={secretStates}
+                settingsDirtyKeys={settingsDraft.dirtyKeys}
               />
             ) : null}
             {activeSettingsTab === "runtime" ? (

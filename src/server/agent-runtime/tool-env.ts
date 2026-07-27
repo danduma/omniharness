@@ -61,6 +61,10 @@ type CommandLookupInput = {
 const CODEX_ARGV0_TOOL_NAMES = platform() === "linux"
   ? ["apply_patch", "applypatch", "codex-linux-sandbox"]
   : ["apply_patch", "applypatch"];
+export const NATIVE_CODEX_APPLICATION_CANDIDATES = [
+  "/Applications/Codex.app/Contents/Resources/codex",
+  "/Applications/ChatGPT.app/Contents/Resources/codex",
+] as const;
 const DEFAULT_REQUIRED_TOOLS = [
   "apply_patch",
   "applypatch",
@@ -250,7 +254,7 @@ function nativeCodexCandidates(env: EnvLike): string[] {
   const explicit = env.OMNIHARNESS_CODEX_NATIVE_BINARY || env.CODEX_NATIVE_BINARY;
   const candidates = [
     explicit,
-    "/Applications/Codex.app/Contents/Resources/codex",
+    ...NATIVE_CODEX_APPLICATION_CANDIDATES,
   ];
 
   const codexCommand = resolveCommand("codex", { env });

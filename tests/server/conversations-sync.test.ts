@@ -146,6 +146,92 @@ describe("syncConversationSessions", () => {
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
   });
 
+  it("preserves direct quota waits even when the bridge still reports a live worker", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+    const resumeAt = new Date(now.getTime() + 60 * 60_000);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-quota.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      lastError: "stale failure",
+      title: "Direct quota wait",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "cred-exhausted",
+      cwd: process.cwd(),
+      bridgeSessionId: "claude-session-1",
+      bridgeSessionMode: "full-access",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "You've hit your session limit · resets 10:40am (Europe/Madrid)",
+      lastText: "You've hit your session limit · resets 10:40am (Europe/Madrid)",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(recoveryIncidents).values({
+      id: randomUUID(),
+      runId,
+      workerId,
+      queuedMessageId: null,
+      kind: "quota_exhausted",
+      status: "open",
+      autoAttemptCount: 0,
+      lastError: "session limit",
+      details: JSON.stringify({
+        recoveryState: "quota_waiting",
+        recommendedAction: "wait_for_quota_reset",
+        resumeAt: resumeAt.toISOString(),
+      }),
+      detectedAt: now,
+      updatedAt: now,
+      resolvedAt: null,
+    });
+
+    await syncConversationSessions([{
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "working",
+      sessionId: "claude-session-1",
+      sessionMode: "full-access",
+      currentText: "still live",
+      lastText: "",
+      renderedOutput: "",
+      outputEntries: [],
+      pendingPermissions: [],
+      pendingElicitations: [],
+      stderrBuffer: [],
+      stopReason: null,
+      lastError: null,
+    }], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+
+    expect(run?.status).toBe("quota_waiting");
+    expect(run?.lastError).toBeNull();
+    expect(worker?.status).toBe("cred-exhausted");
+    expect(worker?.currentText).toContain("session limit");
+    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+  });
+
   it("marks a selected planning run for recovery when its active worker is missing without a saved session", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -833,6 +919,77 @@ describe("syncConversationSessions", () => {
     expect(queued?.status).toBe("delivered");
     expect(run?.status).toBe("running");
     expect(worker?.status).toBe("working");
+  });
+
+  it("does not rewrite an unchanged direct worker that is still awaiting the same elicitation", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const originalUpdatedAt = new Date("2026-07-11T10:00:00.000Z");
+    const question = "Which niche can you reach first?";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-elicitation-noop.md",
+      status: "running",
+      createdAt: originalUpdatedAt,
+      updatedAt: originalUpdatedAt,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "awaiting_user",
+      title: "Direct elicitation no-op",
+      createdAt: originalUpdatedAt,
+      updatedAt: originalUpdatedAt,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: question,
+      lastText: question,
+      workerNumber: 1,
+      createdAt: originalUpdatedAt,
+      updatedAt: originalUpdatedAt,
+    });
+
+    await syncConversationSessions([{
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "working",
+      sessionId: "elicitation-session",
+      sessionMode: "full-access",
+      currentText: question,
+      lastText: question,
+      renderedOutput: question,
+      outputEntries: [],
+      pendingElicitations: [{
+        requestId: 2,
+        requestedAt: originalUpdatedAt.toISOString(),
+        sessionId: "elicitation-session",
+        toolCallId: "ask-tool",
+        message: question,
+        requestedSchema: { type: "object", properties: {} },
+      }],
+      pendingPermissions: [],
+      stderrBuffer: [],
+      stopReason: null,
+    }], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+
+    expect(run?.status).toBe("awaiting_user");
+    expect(run?.updatedAt).toEqual(originalUpdatedAt);
+    expect(worker?.status).toBe("working");
+    expect(worker?.updatedAt).toEqual(originalUpdatedAt);
   });
 
   it("drains an awaiting direct worker when the list snapshot only has an open elicitation entry", async () => {

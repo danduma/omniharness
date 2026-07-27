@@ -9,6 +9,7 @@ import type { GitWorkspaceTarget } from "@/lib/git-workspace";
 import { GitWorkspaceError } from "@/server/git/workspaces";
 import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
 import { RUN_ID_PATTERN } from "@/server/runs/ids";
+import { RuntimeHttpError } from "@/server/agent-runtime/types";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -118,6 +119,9 @@ function readRequestedRunId(value: unknown) {
 }
 
 export const handleConversationsRequest: OmniHttpHandler = async (request) => {
+  let requestedRunIdForError: string | null = null;
+  let requestedWorkerTypeForError: string | null = null;
+  let requestedAccountIdForError: string | null = null;
   try {
     if (request.method !== "POST") {
       return Response.json({ error: { code: "method_not_allowed", message: "Method not allowed." } }, {
@@ -141,6 +145,13 @@ export const handleConversationsRequest: OmniHttpHandler = async (request) => {
     const attachments = normalizeChatAttachments(body?.attachments);
     const externalClaudeSessionId = readExternalClaudeSessionId(body?.externalClaudeSessionId);
     const mode = externalClaudeSessionId ? "direct" : normalizeConversationMode(body?.mode);
+    requestedRunIdForError = readRequestedRunId(body?.requestedRunId);
+    requestedWorkerTypeForError = typeof body?.preferredWorkerType === "string" && body.preferredWorkerType
+      ? body.preferredWorkerType
+      : externalClaudeSessionId ? "claude" : null;
+    requestedAccountIdForError = typeof body?.preferredWorkerAccountId === "string" && body.preferredWorkerAccountId
+      ? body.preferredWorkerAccountId
+      : null;
     const hasProcessArgv = sessionType === "process" && Array.isArray(body?.process?.argv) && body.process.argv.length > 0;
     const hasProcessCommand = sessionType === "process" && typeof body?.process?.command === "string" && body.process.command.trim();
     if (!command && attachments.length === 0 && !hasProcessArgv && !hasProcessCommand && !externalClaudeSessionId) {
@@ -165,16 +176,14 @@ export const handleConversationsRequest: OmniHttpHandler = async (request) => {
       projectPath: typeof body?.projectPath === "string" ? body.projectPath : null,
       gitWorkspaceTarget: readGitWorkspaceTarget(body?.gitWorkspaceTarget),
       gitWorkspaceLaunch: readGitWorkspaceLaunch(body?.gitWorkspaceLaunch),
-      preferredWorkerType: typeof body?.preferredWorkerType === "string" && body.preferredWorkerType
-        ? body.preferredWorkerType
-        : externalClaudeSessionId ? "claude" : null,
+      preferredWorkerType: requestedWorkerTypeForError,
       preferredWorkerModel: typeof body?.preferredWorkerModel === "string" ? body.preferredWorkerModel : null,
       preferredWorkerEffort: typeof body?.preferredWorkerEffort === "string" ? body.preferredWorkerEffort : null,
-      preferredWorkerAccountId: typeof body?.preferredWorkerAccountId === "string" ? body.preferredWorkerAccountId : null,
+      preferredWorkerAccountId: requestedAccountIdForError,
       allowedWorkerTypes: Array.isArray(body?.allowedWorkerTypes) || typeof body?.allowedWorkerTypes === "string"
         ? body.allowedWorkerTypes
         : null,
-      requestedRunId: readRequestedRunId(body?.requestedRunId),
+      requestedRunId: requestedRunIdForError,
       attachments,
       externalClaudeSessionId,
       process: sessionType === "process" && body?.process && typeof body.process === "object"
@@ -190,9 +199,21 @@ export const handleConversationsRequest: OmniHttpHandler = async (request) => {
     return Response.json({ ok: true, ...result });
   } catch (error) {
     const gitStatus = gitWorkspaceStatus(error);
+    if (error instanceof RuntimeHttpError && requestedAccountIdForError && /^Account "/.test(error.message)) {
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "account.invalid_explicit",
+        message: error.message,
+        surface: "toast",
+        ...(requestedRunIdForError ? { runId: requestedRunIdForError } : {}),
+        cause: { name: error.name, message: error.message },
+      });
+    }
     const explicitStatus = typeof (error as { status?: unknown })?.status === "number"
       ? (error as { status: number }).status
-      : null;
+      : error instanceof RuntimeHttpError
+        ? error.statusCode
+        : null;
     return errorResponse(error, {
       status: gitStatus ?? explicitStatus ?? 500,
       source: "Conversations",

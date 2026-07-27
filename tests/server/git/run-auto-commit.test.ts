@@ -63,7 +63,8 @@ describe("runMilestoneAutoCommit", () => {
     const result = await runMilestoneAutoCommit("run-direct-commit", "Direct run completed.");
 
     expect(result?.status).toBe("created");
-    expect(git(repo, ["log", "-1", "--pretty=%s"])).toBe("OmniHarness: Direct implementation");
+    expect(git(repo, ["log", "-1", "--pretty=%s"])).toBe("Direct implementation");
+    expect(git(repo, ["log", "-1", "--pretty=%B"])).not.toContain("OmniHarness");
     const event = await db.select().from(executionEvents).get();
     expect(event?.eventType).toBe("auto_commit_created");
   });

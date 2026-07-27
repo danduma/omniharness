@@ -244,6 +244,7 @@ export function buildOptimisticCreatedConversationSnapshot(args: {
   projectPath: string | null;
   mode: ConversationModeOption;
   preferredWorkerType?: string | null;
+  preferredWorkerAccountId?: string | null;
   createdAt?: string;
   now?: Date;
 }): CreatedConversationSnapshot {
@@ -269,6 +270,7 @@ export function buildOptimisticCreatedConversationSnapshot(args: {
       projectPath: args.projectPath,
       title: buildInitialConversationTitle(args.content ?? ""),
       preferredWorkerType: args.preferredWorkerType ?? null,
+      preferredWorkerAccountId: args.preferredWorkerAccountId ?? null,
     },
   };
 }
@@ -327,6 +329,40 @@ function isCreatedConversationSnapshotServerVisible(
   return hasRun && hasPlan && hasMessage;
 }
 
+function appendServerVisibleCreatedConversationRecords(
+  current: EventStreamState,
+  snapshot: CreatedConversationSnapshot,
+): EventStreamState {
+  const plan = snapshot.plan;
+  const message = snapshot.message;
+  const runId = snapshot.run?.id;
+  const messageScopeIsComplete = Boolean(
+    runId
+    && current.messageScope?.complete
+    && current.messageScope.runIds.includes(runId),
+  );
+  const currentPlans = current.plans || [];
+  const currentMessages = current.messages || [];
+  const shouldAppendPlan = Boolean(
+    plan && !currentPlans.some((existingPlan) => existingPlan.id === plan.id),
+  );
+  const shouldAppendMessage = Boolean(
+    message
+    && !messageScopeIsComplete
+    && !currentMessages.some((existingMessage) => existingMessage.id === message.id),
+  );
+
+  if (!shouldAppendPlan && !shouldAppendMessage) {
+    return current;
+  }
+
+  return {
+    ...current,
+    plans: shouldAppendPlan && plan ? [...currentPlans, plan] : currentPlans,
+    messages: shouldAppendMessage && message ? [...currentMessages, message] : currentMessages,
+  };
+}
+
 export function mergePendingCreatedConversationSnapshots(
   incomingState: EventStreamState,
   pendingSnapshots: Map<string, CreatedConversationSnapshot>,
@@ -339,11 +375,23 @@ export function mergePendingCreatedConversationSnapshots(
   let nextState = incomingState;
 
   for (const snapshot of Array.from(pendingSnapshots.values())) {
+    const incomingHasRun = Boolean(
+      snapshot.run
+      && (incomingState.runs || []).some((existingRun) => existingRun.id === snapshot.run?.id),
+    );
     if (isCreatedConversationSnapshotServerVisible(incomingState, snapshot)) {
       // A stale in-flight SSE snapshot can still arrive after the server has
       // caught up once, so keep the optimistic create snapshot around until an
       // explicit delete/archive removes it from the pending map.
       snapshot.serverVisibleAtMs ??= nowMs;
+      continue;
+    }
+
+    if (snapshot.serverVisibleAtMs !== undefined && incomingHasRun) {
+      // Selected-run snapshots intentionally omit messages from other runs.
+      // Preserve any out-of-scope creation records without merging the old
+      // creation-time run over the server's newer lifecycle status.
+      nextState = appendServerVisibleCreatedConversationRecords(nextState, snapshot);
       continue;
     }
 
@@ -1377,6 +1425,7 @@ export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel
     if (selectedModel === "GPT-5.4 Mini" || normalizedLower === "gpt-5.4-mini") return "openai/gpt-5.4-mini";
     if (selectedModel === "GPT-5.3 Codex" || normalizedLower === "gpt-5.3-codex") return "openai/gpt-5.3-codex";
     if (selectedModel === "Claude Sonnet 4" || normalizedLower === "claude-sonnet-4") return "anthropic/claude-sonnet-4";
+    if (selectedModel === "Claude Sonnet 5" || normalizedLower === "claude-sonnet-5") return "anthropic/claude-sonnet-5";
   }
 
   if (workerType === "codex") {
@@ -1384,6 +1433,7 @@ export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel
     if (selectedModel === "GPT-5.4 Mini" || normalizedLower === "openai/gpt-5.4-mini") return "gpt-5.4-mini";
     if (selectedModel === "GPT-5.3 Codex" || normalizedLower === "openai/gpt-5.3-codex") return "gpt-5.3-codex";
     if (selectedModel === "Claude Sonnet 4" || normalizedLower === "anthropic/claude-sonnet-4") return "claude-sonnet-4";
+    if (selectedModel === "Claude Sonnet 5" || normalizedLower === "anthropic/claude-sonnet-5") return "claude-sonnet-5";
   }
 
   return normalized;
@@ -1403,6 +1453,9 @@ export function resolveComposerModelValue(preferredModel: string | null | undefi
   }
   if (normalized === "claude-sonnet-4" || normalized === "anthropic/claude-sonnet-4") {
     return preferredModel.includes("/") ? "anthropic/claude-sonnet-4" : "claude-sonnet-4";
+  }
+  if (normalized === "claude-sonnet-5" || normalized === "anthropic/claude-sonnet-5") {
+    return preferredModel.includes("/") ? "anthropic/claude-sonnet-5" : "claude-sonnet-5";
   }
 
   return preferredModel.trim();

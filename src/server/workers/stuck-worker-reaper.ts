@@ -21,11 +21,16 @@ import { db } from "@/server/db";
 import { messages, runs, workers } from "@/server/db/schema";
 import { askAgent, cancelAgent, getAgent, type AgentRecord } from "@/server/bridge-client";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
+import type { WorkerEntry } from "@/server/workers/entries-types";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { resumeMissingDirectWorker } from "@/server/conversations/send-message";
 import { syncConversationSessions } from "@/server/conversations/sync";
-import { updateDirectRunStatusFromWorkerOutput } from "@/server/conversations/direct-run-status";
+import {
+  directWorkerOutputHasPendingHumanInput,
+  updateDirectRunStatusFromWorkerOutput,
+} from "@/server/conversations/direct-run-status";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
+import { closeStaleHumanInputEntries } from "@/server/workers/human-input-entries";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 
 const DEFAULT_STUCK_TIMEOUT_MS = 5 * 60_000;
@@ -66,6 +71,31 @@ function readAgentUpdatedAtMs(agent: AgentRecord | null): number | null {
 
 function isActiveAgentState(state: string) {
   return state === "working" || state === "starting";
+}
+
+/**
+ * A worker blocked on a question or a permission prompt is not stuck — it is
+ * waiting on the user, and the user is allowed to take longer than the stuck
+ * timeout to answer. It looks identical to a hung worker from here: status
+ * stays 'working' (createElicitation sets it) and the stream goes quiet the
+ * moment the request is raised.
+ *
+ * Reaping one destroys exactly the thing the user is interacting with: the
+ * teardown cancels the pending elicitation, respawns the session and
+ * re-delivers the last user message, so the answer the user finally submits
+ * lands on a runtime that no longer has the request and fails with
+ * `no_pending_elicitations`.
+ */
+function streamHasOpenHumanInput(entries: readonly WorkerEntry[]) {
+  return directWorkerOutputHasPendingHumanInput({ outputEntries: entries });
+}
+
+function bridgeHasOpenHumanInput(liveAgent: AgentRecord) {
+  return directWorkerOutputHasPendingHumanInput({
+    pendingPermissions: liveAgent.pendingPermissions,
+    pendingElicitations: liveAgent.pendingElicitations,
+    outputEntries: liveAgent.outputEntries,
+  });
 }
 
 /**
@@ -173,6 +203,47 @@ export async function reapStuckDirectWorkers(now: Date = new Date()): Promise<Re
       // re-runs already-completed work — and did so in an endless loop,
       // since the raw redelivery below never persisted its result either.
       const liveAgent = await readLiveAgent(worker.id);
+
+      // Quiet + 'working' can also mean "blocked on the user", and the user is
+      // allowed to take longer than the stuck timeout to answer. It looks
+      // identical to a hung worker from here: `createElicitation` sets the
+      // state to 'working' and the stream goes silent the moment the question
+      // is raised. Reaping one destroys exactly what the user is interacting
+      // with — the teardown cancels the pending request, respawns the session
+      // and re-delivers the last user message, so the answer they finally
+      // submit fails with `no_pending_elicitations`.
+      //
+      // The bridge is authoritative when we can reach it: it owns the promise
+      // the agent is actually blocked on. The durable stream is the fallback,
+      // and the only signal when the bridge is unreachable.
+      if (liveAgent ? bridgeHasOpenHumanInput(liveAgent) : streamHasOpenHumanInput(entries)) {
+        skipped++;
+        continue;
+      }
+
+      // The stream advertises a request the bridge does not hold. That row is
+      // an orphan — a torn-down turn that never got its terminal row — and
+      // left alone it would exempt this worker from the watchdog forever
+      // while telling every UI surface a dead question is still answerable.
+      // Close it, then carry on reaping.
+      if (liveAgent && streamHasOpenHumanInput(entries)) {
+        const closed = await closeStaleHumanInputEntries({
+          workerId: worker.id,
+          kind: "elicitation",
+          reason: "the worker is no longer waiting for an answer",
+        }) + await closeStaleHumanInputEntries({
+          workerId: worker.id,
+          kind: "permission",
+          reason: "the worker is no longer waiting for a decision",
+        });
+        if (closed > 0) {
+          process.stderr.write(
+            `[stuck-reaper] worker ${worker.id} had ${closed} orphaned human-input row(s) the bridge no longer holds; closed them\n`,
+          );
+          notifyEventStreamSubscribers();
+        }
+      }
+
       const liveAgentState = normalizeStatus(liveAgent?.state);
       const liveAgentQuiesced = Boolean(liveAgent)
         && liveAgentState !== "error"

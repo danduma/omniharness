@@ -2,7 +2,7 @@ import { chatAttachmentKindFromMimeType, type PendingChatAttachment } from "@/li
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { StateManager, type StateUpdate } from "@/lib/state-manager";
 import { DEFAULT_CONVERSATION_SIDEBAR_WIDTH, DEFAULT_SERVER_SETTINGS, DEFAULT_TERMINAL_PANEL_WIDTH, DEFAULT_WORKERS_SIDEBAR_WIDTH, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "./constants";
-import type { ComposerWorkerOption, ConversationModeOption, ConversationSidebarTab, EventStreamState, LlmProfileTab, MessageRecord, SettingsTab } from "./types";
+import type { ComposerWorkerOption, ConversationModeOption, ConversationSidebarTab, EventStreamState, LlmProfileTab, MessageRecord, SettingsTab, SidebarRun } from "./types";
 import type { CreatedConversationSnapshot } from "./utils";
 
 export type ThemeMode = "day" | "night";
@@ -98,6 +98,7 @@ export type HomeUiState = {
   settingsDiagnostics: AppErrorDescriptor[];
   composerDraftsByRun: Record<string, ComposerDraft>;
   conversationSidebarTab: ConversationSidebarTab;
+  deletingRun: SidebarRun | null;
 };
 
 const initialHomeUiState: HomeUiState = {
@@ -144,7 +145,7 @@ const initialHomeUiState: HomeUiState = {
   selectedConversationMode: "direct",
   selectedCliAgent: "auto",
   selectedWorkerAccountId: "auto",
-  selectedModel: "gpt-5.4",
+  selectedModel: "claude-opus-5",
   selectedEffort: "High",
   hydratedRunSelectionId: null,
   attachments: [],
@@ -156,6 +157,7 @@ const initialHomeUiState: HomeUiState = {
   settingsDiagnostics: [],
   composerDraftsByRun: {},
   conversationSidebarTab: "projects",
+  deletingRun: null,
 };
 
 export class HomeUiStateManager extends StateManager<HomeUiState> {
@@ -426,6 +428,7 @@ export const homeUiSetters = {
   setRuntimeErrors: homeUiStateManager.createSetter("runtimeErrors"),
   setSettingsDiagnostics: homeUiStateManager.createSetter("settingsDiagnostics"),
   setConversationSidebarTab: homeUiStateManager.createSetter("conversationSidebarTab"),
+  setDeletingRun: homeUiStateManager.createSetter("deletingRun"),
 };
 
 export type HomePendingCreatedConversationSnapshots = Map<string, CreatedConversationSnapshot>;

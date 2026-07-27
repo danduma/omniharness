@@ -39,6 +39,10 @@ const PRE_WORKER_RECOVERY_EVENT_TYPES = new Set([
 ]);
 const ACTIVE_WORKER_STATUS_PATTERN = /\b(working|stuck|starting|pending|busy|running)\b/i;
 
+function shouldResumeQuotaWorkersWithoutSupervisor(run: typeof runs.$inferSelect | null | undefined): run is typeof runs.$inferSelect {
+  return Boolean(run && run.status === "quota_waiting" && run.mode !== "implementation");
+}
+
 function scheduleDurableWakeBackup(runId: string, nextDeadline: number, delayMs: number) {
   if (delayMs <= 0) {
     return;
@@ -295,6 +299,40 @@ export async function executeSupervisorWake(runId: string) {
   }
 
   if (!run || !isRunnableImplementationRun(run)) {
+    if (shouldResumeQuotaWorkersWithoutSupervisor(run) && dueDurableWake) {
+      await db.update(runs).set({
+        status: "running",
+        failedAt: null,
+        lastError: null,
+        updatedAt: new Date(),
+      }).where(eq(runs.id, runId));
+      if (dueDurableWake.reason === "quota_wait") {
+        const quotaResumeResult = await resumeQuotaExhaustedWorkers({ run });
+        if (quotaResumeResult.state === "none" && quotaResumeResult.resumedCount === 0) {
+          const reason = "Quota reset arrived, but no resumable worker session was available.";
+          await db.update(runs).set({
+            status: "needs_recovery",
+            lastError: reason,
+            updatedAt: new Date(),
+          }).where(eq(runs.id, runId));
+          await recordExecutionEvent({
+            runId,
+            eventType: "quota_resume_missing_session",
+            details: { summary: reason, reason: "quota_wait" },
+          });
+          emitNamedEvent({
+            kind: "error.surfaced",
+            code: "recovery.needs_user",
+            message: reason,
+            surface: "banner",
+            runId,
+          });
+        }
+      }
+      await releaseSupervisorWakeLease(runId, leaseId);
+      return;
+    }
+
     emitNamedEvent({ kind: "supervisor.wake_skipped", runId, reason: "run_not_runnable" });
     stopRunObserver(runId);
     await releaseSupervisorWakeLease(runId, leaseId);

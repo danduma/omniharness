@@ -1,6 +1,7 @@
 import type { WorkerStreamState } from "./WorkerEntriesManager";
 import { coalesceWorkerEntriesById } from "./WorkerEntriesManager";
 import type { WorkerEntry } from "@/server/workers/entries-types";
+import { withoutSupersededEntries, type SupersededSeqRange } from "@/lib/superseded-entries";
 
 export type ConversationLoadState = {
   snapshotLoaded: boolean;
@@ -69,15 +70,29 @@ export function shouldShowDirectConversationLoading(args: ConversationLoadState)
 export function selectDirectConversationEntries<T extends WorkerEntry>(args: {
   transcriptEntries: T[];
   directWorkerEntries: T[];
+  // Ranges the live worker wrote for a branch a retry/edit discarded. The
+  // transcript already drops them server-side; the live stream is served from
+  // the raw JSONL (no database read on that hot path), so they are filtered
+  // here before the two sources are merged — otherwise the rewound turn walks
+  // straight back into the conversation.
+  supersededSeqRanges?: SupersededSeqRange[];
+  // The run's workers in creation order, so a message that exists on more than
+  // one of them is placed where the newest worker has it.
+  workerOrder?: ReadonlyArray<string>;
 }) {
+  const directWorkerEntries = withoutSupersededEntries(
+    args.directWorkerEntries,
+    args.supersededSeqRanges ?? [],
+  );
+
   if (args.transcriptEntries.length === 0) {
-    return args.directWorkerEntries;
+    return directWorkerEntries;
   }
 
   return coalesceWorkerEntriesById([
     ...args.transcriptEntries,
-    ...args.directWorkerEntries,
-  ]) as T[];
+    ...directWorkerEntries,
+  ], args.workerOrder ?? []) as T[];
 }
 
 export function resolveDirectWorkerStreamRefreshInterval(args: {

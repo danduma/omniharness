@@ -13,6 +13,7 @@
     "node": ">=22.13 <26"
   },
   "scripts": {
+    "smoke:claude-model-gateway": "tsx scripts/smoke-claude-model-gateway.ts",
     "preinstall": "node ./scripts/check-pnpm.mjs",
     "predev": "node ./scripts/check-pnpm.mjs --verify-native",
     "dev": "pnpm exec tsx scripts/dev.ts",
@@ -29,13 +30,17 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:e2e:live:claude": "playwright test --config playwright.live.config.ts",
+    "test:e2e:live:cleanup": "tsx scripts/cleanup-live-agent-journey.ts",
+    "test:e2e:live:unit": "vitest run --config vitest.live.config.ts",
     "electron:build": "node ./apps/electron/scripts/build.mjs",
     "vscode:build": "node ./apps/vscode/scripts/build.mjs",
     "test:lifecycle": "vitest run tests/lifecycle",
+    "check:acp": "tsx scripts/check-acp-compatibility.ts",
     "measure:dev": "node ./scripts/measure-local-dev.mjs"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^0.14.1",
+    "@agentclientprotocol/sdk": "0.25.0",
     "@ai-sdk/openai": "^3.0.64",
     "@base-ui/react": "^1.4.1",
     "@danduma/i18n": "github:danduma/i18n#ab2a85dddd2e176b61bec18d55736dbdd151fe41",

@@ -1449,7 +1449,7 @@ describe("GET /api/events", () => {
     expect(payload.frontendErrors).toEqual([]);
   });
 
-  it("reuses cached persisted snapshots until a live update notification arrives", async () => {
+  it("reads persisted snapshots fresh even when no live update notification arrives", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
     const now = new Date();
@@ -1479,8 +1479,8 @@ describe("GET /api/events", () => {
       updatedAt: new Date(now.getTime() + 1000),
     }).where(eq(runs.id, runId));
 
-    const cachedResponse = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
-    const cachedPayload = await cachedResponse.json();
+    const freshResponse = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const freshPayload = await freshResponse.json();
 
     notifyEventStreamSubscribers();
 
@@ -1488,7 +1488,7 @@ describe("GET /api/events", () => {
     const invalidatedPayload = await invalidatedResponse.json();
 
     expect(firstPayload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Cached title before notification");
-    expect(cachedPayload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Cached title before notification");
+    expect(freshPayload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Updated title after cache");
     expect(invalidatedPayload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Updated title after cache");
   });
 

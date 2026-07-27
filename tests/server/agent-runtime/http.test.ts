@@ -412,11 +412,21 @@ process.stdin.on('data', (chunk) => {
           mode: 'form',
           sessionId: message.params.sessionId,
           toolCallId: 'ask-call-1',
-          message: 'Which option do you want?',
+          message: 'Do you have unfair access to any of these niches?',
           requestedSchema: {
             type: 'object',
             properties: {
-              question_0: { type: 'string', oneOf: [{ const: 'A' }, { const: 'B' }] },
+              question_0: {
+                type: 'array',
+                title: 'Niche access',
+                items: { anyOf: [
+                  { const: 'Agencies / freelancer world', title: 'Agencies / freelancer world' },
+                  { const: 'Legal / professional services', title: 'Legal / professional services' },
+                  { const: 'Property / recruiting', title: 'Property / recruiting' },
+                  { const: 'No special access', title: 'No special access' },
+                ] },
+              },
+              customAnswer: { type: 'string', title: 'Other', description: 'Type your own answer (optional).' },
             },
           },
         },
@@ -1323,7 +1333,8 @@ process.stdout.write(JSON.stringify({
     expect(agentJson.outputEntries[0].text).toContain("not in the current terminal output");
     expect(agentJson.currentText).toBe("");
     expect(agentJson.lastText.length).toBeLessThanOrEqual(100_000);
-    expect(agentJson.lastText).toContain("Earlier runtime output omitted");
+    expect(agentJson.lastText).not.toContain("Earlier runtime output omitted");
+    expect(agentJson.lastText).toBe("x".repeat(100_000));
     expect(agentJson.outputEntries.every((entry: { text: string }) => entry.text.length <= 5_000)).toBe(true);
     const lastEntry = agentJson.outputEntries.at(-1);
     expect(lastEntry.raw.rawOutput.formatted_output.length).toBeLessThanOrEqual(4_050);
@@ -1396,7 +1407,7 @@ process.stdout.write(JSON.stringify({
         const response = await fetch(`${baseUrl}/agents/permission-worker`);
         expect(response.status).toBe(200);
         return response.json() as Promise<{
-          pendingPermissions?: Array<{ toolCall?: { kind?: string; title?: string } | null }>;
+          pendingPermissions?: Array<{ requestId: number; toolCall?: { kind?: string; title?: string } | null }>;
           outputEntries?: Array<{ type: string; status?: string; raw?: unknown }>;
         }>;
       },
@@ -1406,9 +1417,13 @@ process.stdout.write(JSON.stringify({
       kind: "execute",
       title: "Run command",
     });
+    // The request id is an opaque handle the runtime issues, not a number the
+    // caller gets to predict — assert the round-trip uses the id it published.
+    const requestId = pendingAgent.pendingPermissions![0]!.requestId;
+    expect(requestId).toEqual(expect.any(Number));
     const requestEntry = pendingAgent.outputEntries?.find((entry) => entry.type === "permission" && entry.status === "pending");
     expect(requestEntry).toMatchObject({
-      raw: expect.objectContaining({ requestId: 1 }),
+      raw: expect.objectContaining({ requestId }),
     });
 
     const approveResponse = await fetch(`${baseUrl}/agents/permission-worker/approve`, {
@@ -1427,13 +1442,13 @@ process.stdout.write(JSON.stringify({
       {
         text: "Permission requested for execute: Run command: allow_always Always Allow, allow_once Allow, reject_once Reject",
         status: "pending",
-        raw: expect.objectContaining({ requestId: 1 }),
+        raw: expect.objectContaining({ requestId }),
       },
       {
-        text: "Permission approved for request 1: allow_once Allow",
+        text: `Permission approved for request ${requestId}: allow_once Allow`,
         status: "approved",
         raw: expect.objectContaining({
-          requestId: 1,
+          requestId,
           decision: "approve",
           optionId: "allow_once",
           toolCall: expect.objectContaining({ kind: "execute", title: "Run command" }),
@@ -1479,23 +1494,33 @@ process.stdout.write(JSON.stringify({
         const response = await fetch(`${baseUrl}/agents/elicitation-worker`);
         expect(response.status).toBe(200);
         return response.json() as Promise<{
-          pendingElicitations?: Array<{ message?: string | null; toolCallId?: string | null }>;
+          pendingElicitations?: Array<{ requestId: number; message?: string | null; toolCallId?: string | null }>;
         }>;
       },
       (agent) => (agent.pendingElicitations?.length ?? 0) === 1,
     );
     expect(pendingAgent.pendingElicitations?.[0]).toMatchObject({
-      message: "Which option do you want?",
+      message: "Do you have unfair access to any of these niches?",
       toolCallId: "ask-call-1",
     });
+    // Opaque handle issued by the runtime — never assume it starts at 1.
+    const requestId = pendingAgent.pendingElicitations![0]!.requestId;
+    expect(requestId).toEqual(expect.any(Number));
+
+    const staleResponse = await fetch(`${baseUrl}/agents/elicitation-worker/elicitation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId: 999, action: "decline" }),
+    });
+    expect(staleResponse.status).toBe(409);
 
     const respondResponse = await fetch(`${baseUrl}/agents/elicitation-worker/elicitation`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "accept", content: { question_0: "A" } }),
+      body: JSON.stringify({ requestId, action: "accept", content: { question_0: ["Agencies / freelancer world", "Property / recruiting"], customAnswer: "I know two founders" } }),
     });
     expect(respondResponse.status).toBe(200);
-    expect(await respondResponse.json()).toMatchObject({ action: "accept", requestId: 1 });
+    expect(await respondResponse.json()).toMatchObject({ action: "accept", requestId });
     expect(await askPromise.then((response) => response.status)).toBe(200);
 
     const agentResponse = await fetch(`${baseUrl}/agents/elicitation-worker`);
@@ -1504,7 +1529,7 @@ process.stdout.write(JSON.stringify({
       outputEntries: Array<{ type: string; text: string; status?: string }>;
     };
     // The agent echoes back the answer the client returned over elicitation/create.
-    expect(agent.lastText).toContain('"question_0":"A"');
+    expect(agent.lastText).toContain('"question_0":["Agencies / freelancer world","Property / recruiting"]');
     const elicitationEntries = agent.outputEntries.filter((entry) => entry.type === "elicitation");
     expect(elicitationEntries.map((entry) => entry.status)).toEqual(["pending", "answered"]);
   }, 30_000);
@@ -1554,7 +1579,7 @@ process.stdout.write(JSON.stringify({
       (agent) => (agent.pendingElicitations?.length ?? 0) === 1,
     );
     expect(pendingAgent.pendingElicitations?.[0]).toMatchObject({
-      message: "Which option do you want?",
+      message: "Do you have unfair access to any of these niches?",
       toolCallId: "ask-call-1",
     });
     expect(pendingAgent.outputEntries?.filter((entry) => entry.type === "elicitation").map((entry) => entry.status)).toEqual(["pending"]);
@@ -1568,7 +1593,7 @@ process.stdout.write(JSON.stringify({
     const respondResponse = await fetch(`${baseUrl}/agents/full-access-elicitation-worker/elicitation`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "accept", content: { question_0: "B" } }),
+      body: JSON.stringify({ action: "accept", content: { question_0: ["No special access"] } }),
     });
     expect(respondResponse.status).toBe(200);
     expect(await askPromise.then((response) => response.status)).toBe(200);
@@ -1578,7 +1603,7 @@ process.stdout.write(JSON.stringify({
       lastText: string;
       outputEntries: Array<{ type: string; status?: string }>;
     };
-    expect(agent.lastText).toContain('"question_0":"B"');
+    expect(agent.lastText).toContain('"question_0":["No special access"]');
     expect(agent.outputEntries.filter((entry) => entry.type === "elicitation").map((entry) => entry.status)).toEqual(["pending", "answered"]);
   }, 30_000);
 
@@ -2414,7 +2439,9 @@ process.stdout.write(JSON.stringify({
       readTextFile: true,
       writeTextFile: true,
     });
-    expect(initialize.params.clientCapabilities.elicitation).toEqual({ form: {} });
+    expect(initialize.params.clientCapabilities.elicitation).toEqual({ form: {}, url: {} });
+    expect(initialize.params.clientCapabilities.terminal).toBe(true);
+    expect(initialize.params.clientCapabilities.plan).toEqual({});
     expect(events.find((event) => event.method === "fs/read_text_file/response").result).toEqual({ content: "before\n" });
     expect(events.find((event) => event.method === "fs/write_text_file/response").result).toEqual({});
 

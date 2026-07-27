@@ -7,6 +7,10 @@ documents the May 2026 reload/worker-streaming latency incident and the
 resource-ownership rules for keeping page bootstrap, SSE, and worker stream
 paths responsive while agents are running.
 
+## Interactive protocol invariant
+
+An advertised interactive agent capability is operational only when the complete user journey is implemented: receive the request, append it to the unified worker stream, render an actionable control in the main conversation, submit the exact protocol response, and append a terminal outcome before resolving the agent request. Side-panel-only controls do not satisfy this invariant. Every form shape and permission option emitted by a supported adapter must be covered by a finite wire-to-UI regression matrix.
+
 Related: `docs/architecture/timing-determinism-audit.md` records the May 20,
 2026 audit of race-prone frontend and control-plane patterns: cached snapshots
 pretending to be authoritative, stale async callbacks, timer-owned actions,
@@ -170,6 +174,11 @@ A failure that does not produce an `error.surfaced` event is a bug — even if
 the underlying behaviour is technically correct — because it is invisible to
 the user and to the tests.
 
+The event carries the stable id of the subject that failed. Conversation and
+worker failures use `runId`, `conversationId`, or `workerId`; account-only
+settings failures use `accountId` rather than pretending an account is a
+conversation.
+
 ### Rule 3: the event stream is SSE-spec compliant
 
 - Every frame has an `id:` field. IDs are monotonic.
@@ -236,6 +245,13 @@ Required shape:
   already passed.
 - Do not paper over storage `ENOENT` from cleanup races by retrying file writes;
   the ownership bug is untracked background work.
+
+Production deletion follows the same ownership rule. A conversation delete
+installs a run-scoped deletion fence before cancelling workers or removing
+rows. Initial worker startup checks that fence both before and after spawn, so
+a worker that finishes spawning during deletion is cancelled before its prompt
+can run. The fence remains until every tracked background task for the run has
+settled; a one-shot best-effort cancel is not sufficient.
 
 Asserting on rendered DOM state is the wrong granularity. We assert on the
 server's *decisions*, which are now first-class events.
@@ -318,6 +334,40 @@ If a snapshot violates this invariant, it surfaces a `Lifecycle` frontend
 error instead of leaving the UI stuck on "Loading Omni's question". The error
 is not a substitute for the invariant; it is the safety rail that makes any
 future violation observable.
+
+### Rule 11: terminal user actions retire recovery ownership first
+
+A user stop is not complete when only `runs.status` and `workers.status` are
+terminal. Before publishing the terminal run state, the server synchronously
+cancels volatile and durable wakes, clears wake leases, and resolves every open
+recovery incident with its normal named event. Otherwise a later sync or timer
+still owns permission to reactivate the run. Once cancelled, the run rejects
+late live-worker snapshots from the interrupted turn even when the provider
+continues reporting `working` briefly.
+
+Conversation deletion follows the same ownership rule. Before deleting a
+worker or run, enumerate and delete every row that references it, including
+credential allocations and token usage. Route tests must insert a row in each
+worker-referencing table so new foreign keys cannot silently make deletion
+partial or impossible.
+
+### Rule 12: dependent selections cross the boundary together
+
+Worker type, account, model, and effort are one compound composer selection.
+The value shown in the composer, sent to prewarm, and submitted to conversation
+creation must come from the same compatibility resolution. A raw account id
+from a previously selected worker type is not an explicit preference for the
+new worker.
+
+Run selection restores the whole compound selection, including the account.
+Optimistic run snapshots must carry the same selection fields as the durable
+run so selecting a newly created conversation cannot replace an explicit
+account with `auto` before the authoritative snapshot arrives.
+
+The server still validates every explicit account selection, but it does so
+before creating plan, run, worker, message, or artifact state. Rejections use
+the original client error status and emit `error.surfaced` with a stable code;
+they never leave a partially created conversation for snapshots to discover.
 
 ---
 
@@ -504,6 +554,25 @@ Future audit passes should look at:
 - ~~Every `if (!latestRun)` short-circuit that stops the observer.~~
   Covered by the above — those now emit `supervisor.stopped` with
   reason `run_terminated`.
+
+### Claude model gateway lifecycle
+
+The managed Claude model gateway follows the same control-plane rules as workers and
+sessions. One server singleton owns its redacted status, monotonic revision, current
+operation, OAuth polling, and model cache. The operational API and canonical event
+snapshot expose that same status; clients must not infer readiness from cached models.
+
+Install, start, stop, OAuth, and model-refresh decisions emit typed
+`claude_gateway.*` events on the existing ring buffer. User-relevant failures also
+emit `error.surfaced` with a stable `claude_gateway.*` code (or the existing exact
+`process.*` code). Tokens, provider auth-file contents, and OAuth URLs never enter
+events or snapshots.
+
+At boot, enabled configurations are checked after database readiness without blocking
+on downloads or OAuth. Managed mode adopts or starts only a process whose saved PID
+and command identity prove OmniHarness ownership. External mode performs bounded
+readiness requests and never signals a process. Stop disables future autostart and
+preserves binaries, configuration, logs, and provider credentials.
 
 ### Scenario catalog (`tests/lifecycle/scenarios/`)
 

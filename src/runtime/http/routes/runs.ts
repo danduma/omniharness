@@ -1,12 +1,13 @@
 import { randomUUID } from "crypto";
 import fs from "fs";
-import { eq } from "drizzle-orm";
+import { eq, lt } from "drizzle-orm";
 import { db } from "@/server/db";
 import { cancelAgent, cancelAgentTerminalProcess } from "@/server/bridge-client";
 import { errorResponse } from "@/server/api-errors";
 import { recoverRun } from "@/server/runs/recovery";
 import { stopRunObserver } from "@/server/supervisor/observer";
 import { cancelSupervisorWake } from "@/server/supervisor/wake";
+import { cancelDurableSupervisorWake } from "@/server/supervisor/wake-schedule";
 import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
 import { getAppDataPath } from "@/server/app-root";
 import { requireApiSession } from "@/server/auth/guards";
@@ -18,6 +19,7 @@ import { compactRunOutputs } from "@/server/workers/output-store";
 import { cleanupRunArtifacts } from "@/server/artifacts/cleanup";
 import { pauseForClarifications } from "@/server/clarifications/loop";
 import { isArchivableRunStatus, isTerminalRunStatus } from "@/server/runs/status";
+import { markRecoveryIncidentResolved } from "@/server/runs/recovery-incidents";
 import {
   plans,
   runs,
@@ -34,6 +36,8 @@ import {
   settings,
   workerCounters,
   workerAssignments,
+  workerCredentialAllocations,
+  workerTokenUsage,
   planningReviewRuns,
   planningReviewRounds,
   planningReviewFindings,
@@ -50,6 +54,11 @@ import { stopLiveProcessForDelete } from "@/server/session-providers/process-sto
 import type { OmniHttpHandler, OmniRequestContext } from "@/runtime/http/registry";
 import { startSlowProbe } from "@/server/slow-probe";
 import { toNextRequest } from "./next-request";
+import {
+  completeConversationDeletion,
+  requestConversationDeletion,
+  waitForConversationBackgroundTasks,
+} from "@/server/conversations/worker-turn-gate";
 
 function normalizeTitle(input: unknown) {
   return String(input ?? "").trim().replace(/\s+/g, " ");
@@ -76,7 +85,8 @@ function isActiveWorkerStatus(status: string | null | undefined) {
 }
 
 function isSupervisorStopAlreadySettled(status: string | null | undefined) {
-  return normalizeWorkerStatus(status) !== "running";
+  const normalized = normalizeWorkerStatus(status);
+  return normalized !== "running" && normalized !== "quota_waiting";
 }
 
 function isPermanentAccountFailure(message: string | null | undefined) {
@@ -209,6 +219,8 @@ async function cancelWorker(worker: typeof workers.$inferSelect) {
   const previousStatus = worker.status;
   await db.update(workers).set({
     status: "cancelled",
+    currentText: "",
+    lastText: worker.currentText || worker.lastText,
     updatedAt: new Date(),
   }).where(eq(workers.id, worker.id));
 
@@ -229,6 +241,28 @@ async function cancelWorker(worker: typeof workers.$inferSelect) {
       runId: worker.runId,
       workerId: worker.id,
       status: "cancelled",
+    });
+  }
+}
+
+async function settleRunRecoveryAfterUserStop(runId: string) {
+  cancelSupervisorWake(runId);
+  await cancelDurableSupervisorWake(runId);
+  await clearSupervisorWakeLease(runId);
+
+  const incidents = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
+  const unresolvedIncidents = incidents.filter((incident) => (
+    incident.status === "open"
+    || incident.status === "recovering"
+    || incident.status === "needs_user"
+  ));
+  for (const incident of unresolvedIncidents) {
+    await markRecoveryIncidentResolved({
+      incidentId: incident.id,
+      runId,
+      workerId: incident.workerId,
+      summary: "Recovery cancelled because the user stopped the conversation.",
+      details: { reason: "user_stopped" },
     });
   }
 }
@@ -287,7 +321,7 @@ async function markRunRead(runId: string, run: typeof runs.$inferSelect) {
 
   const now = new Date();
   const lastReadAt = new Date(lastReadAtIso);
-  await db.insert(conversationReadMarkers)
+  const changedMarkers = await db.insert(conversationReadMarkers)
     .values({
       runId,
       lastReadAt,
@@ -300,7 +334,16 @@ async function markRunRead(runId: string, run: typeof runs.$inferSelect) {
         lastReadAt,
         updatedAt: now,
       },
-    });
+      setWhere: lt(conversationReadMarkers.lastReadAt, lastReadAt),
+    })
+    .returning({ lastReadAt: conversationReadMarkers.lastReadAt });
+
+  if (changedMarkers.length === 0) {
+    const currentMarker = await db.select({
+      lastReadAt: conversationReadMarkers.lastReadAt,
+    }).from(conversationReadMarkers).where(eq(conversationReadMarkers.runId, runId)).get();
+    return currentMarker?.lastReadAt.toISOString() ?? lastReadAt.toISOString();
+  }
 
   emitNamedEvent({ kind: "conversation.read", runId, lastReadAt: lastReadAt.toISOString() });
   return lastReadAt.toISOString();
@@ -338,6 +381,18 @@ export const handleRunPatchRequest: OmniHttpHandler = async (request, context) =
       });
     }
 
+    // Validate the payload before touching storage: a malformed request is
+    // malformed whether or not the run exists, and answering 404 for it hides
+    // the actual problem from the caller.
+    const patchedTitle = hasTitlePatch ? normalizeTitle(body?.title) : null;
+    if (hasTitlePatch && !patchedTitle) {
+      return errorResponse("Title cannot be empty", {
+        status: 400,
+        source: "Runs",
+        action: "Rename",
+      });
+    }
+
     const existingRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     if (!existingRun) {
       return errorResponse("Run not found", {
@@ -350,18 +405,10 @@ export const handleRunPatchRequest: OmniHttpHandler = async (request, context) =
     const updates: { title?: string; projectPath?: string } = {};
     const responsePayload: Record<string, unknown> = { ok: true, runId };
 
-    if (hasTitlePatch) {
+    if (hasTitlePatch && patchedTitle) {
       patchActionLabel = "Rename";
-      const title = normalizeTitle(body?.title);
-      if (!title) {
-        return errorResponse("Title cannot be empty", {
-          status: 400,
-          source: "Runs",
-          action: patchActionLabel,
-        });
-      }
-      updates.title = title;
-      responsePayload.title = title;
+      updates.title = patchedTitle;
+      responsePayload.title = patchedTitle;
     }
 
     if (hasProjectPathPatch) {
@@ -529,9 +576,8 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
         });
       }
 
-      cancelSupervisorWake(runId);
       stopRunObserver(runId);
-      await clearSupervisorWakeLease(runId);
+      await settleRunRecoveryAfterUserStop(runId);
 
       const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
       const activeWorkers = runWorkers.filter((worker) => isActiveWorkerStatus(worker.status));
@@ -585,6 +631,7 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
       const updatedRunWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
       const hasActiveWorker = updatedRunWorkers.some((candidate) => isActiveWorkerStatus(candidate.status));
       if (!hasActiveWorker) {
+        await settleRunRecoveryAfterUserStop(runId);
         await db.update(runs).set({
           status: "cancelled",
           updatedAt: new Date(),
@@ -748,6 +795,8 @@ export const handleRunDeleteRequest: OmniHttpHandler = async (request, context) 
       });
     }
 
+    requestConversationDeletion(runId);
+
     cancelSupervisorWake(runId);
     stopRunObserver(runId);
 
@@ -769,6 +818,11 @@ export const handleRunDeleteRequest: OmniHttpHandler = async (request, context) 
       }
     }
 
+    // The bridge acknowledges cancellation before an in-flight worker turn
+    // has necessarily finished unwinding. Keep the run and its artifact
+    // streams available until every server-owned turn for this run settles.
+    await waitForConversationBackgroundTasks(runId);
+
     if (workerIds.length > 0) {
       for (const workerId of workerIds) {
         await db.delete(creditEvents).where(eq(creditEvents.workerId, workerId));
@@ -784,6 +838,8 @@ export const handleRunDeleteRequest: OmniHttpHandler = async (request, context) 
     await db.delete(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId));
     await db.delete(conversationReadMarkers).where(eq(conversationReadMarkers.runId, runId));
     await db.delete(workerAssignments).where(eq(workerAssignments.runId, runId));
+    await db.delete(workerCredentialAllocations).where(eq(workerCredentialAllocations.runId, runId));
+    await db.delete(workerTokenUsage).where(eq(workerTokenUsage.runId, runId));
     await db.delete(planningReviewFindings).where(eq(planningReviewFindings.runId, runId));
     await db.delete(planningReviewRounds).where(eq(planningReviewRounds.runId, runId));
     await db.delete(planningReviewRuns).where(eq(planningReviewRuns.runId, runId));
@@ -816,10 +872,14 @@ export const handleRunDeleteRequest: OmniHttpHandler = async (request, context) 
       }
     }
     emitNamedEvent({ kind: "conversation.deleted", runId });
+    completeConversationDeletion(runId);
     notifyEventStreamSubscribers();
 
     return Response.json({ ok: true, runId });
   } catch (error) {
+    if (deleteFailedRunId) {
+      completeConversationDeletion(deleteFailedRunId);
+    }
     const cause = error instanceof Error ? error : new Error(String(error));
     const fkMatch = /FOREIGN KEY constraint failed/i.test(cause.message);
     const blockingTable = fkMatch

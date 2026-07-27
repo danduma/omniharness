@@ -1,11 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockNotifyEventStreamSubscribers } = vi.hoisted(() => ({
+const {
+  mockNotifyEventStreamSubscribers,
+  mockPrepareClaudeGatewayLaunch,
+  mockCaptureWorkerTurnGeneration,
+  mockIsWorkerTurnGenerationCurrent,
+} = vi.hoisted(() => ({
   mockNotifyEventStreamSubscribers: vi.fn(),
+  mockPrepareClaudeGatewayLaunch: vi.fn(),
+  mockCaptureWorkerTurnGeneration: vi.fn().mockResolvedValue(null),
+  mockIsWorkerTurnGenerationCurrent: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock("@/server/events/live-updates", () => ({
   notifyEventStreamSubscribers: mockNotifyEventStreamSubscribers,
+}));
+
+vi.mock("@/server/integrations/claude-model-gateway/worker-env", () => ({
+  prepareClaudeGatewayLaunch: mockPrepareClaudeGatewayLaunch,
+}));
+
+vi.mock("@/server/conversations/worker-turn-gate", () => ({
+  captureWorkerTurnGeneration: mockCaptureWorkerTurnGeneration,
+  isWorkerTurnGenerationCurrent: mockIsWorkerTurnGenerationCurrent,
+  isWorkerTurnSupersededError: (error: unknown) => /newer worker turn/i.test(
+    error instanceof Error ? error.message : String(error),
+  ),
 }));
 
 describe("bridge client", () => {
@@ -15,6 +35,40 @@ describe("bridge client", () => {
   beforeEach(() => {
     vi.resetModules();
     mockNotifyEventStreamSubscribers.mockClear();
+    mockPrepareClaudeGatewayLaunch.mockReset();
+    mockPrepareClaudeGatewayLaunch.mockResolvedValue(null);
+    mockCaptureWorkerTurnGeneration.mockReset();
+    mockCaptureWorkerTurnGeneration.mockResolvedValue(null);
+    mockIsWorkerTurnGenerationCurrent.mockReset();
+    mockIsWorkerTurnGenerationCurrent.mockResolvedValue(true);
+  });
+
+  it("routes encoded Claude models through the prepared gateway request for spawn and prewarm", async () => {
+    mockPrepareClaudeGatewayLaunch.mockResolvedValue({
+      encodedModel: "cliproxyapi:gpt-5.6-sol",
+      rawModel: "gpt-5.6-sol",
+      credentialSource: "gateway",
+      environment: { ANTHROPIC_AUTH_TOKEN: "secret", ANTHROPIC_BASE_URL: "http://127.0.0.1:8317" },
+    });
+    const bodies: Array<Record<string, unknown>> = [];
+    global.fetch = vi.fn(async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(JSON.stringify({ name: "worker-1", state: "idle", ok: true, key: "key", size: 1, warmed: true }), { status: 200 });
+    }) as typeof fetch;
+    const { prewarmWorker, spawnAgent } = await import("@/server/bridge-client");
+    await spawnAgent({ type: "claude", cwd: "/tmp", name: "worker-1", model: "cliproxyapi:gpt-5.6-sol", accountId: null, env: { KEEP: "yes" } });
+    await prewarmWorker({ type: "claude", cwd: "/tmp", model: "cliproxyapi:gpt-5.6-sol", accountId: null, env: { KEEP: "yes" } });
+    expect(mockPrepareClaudeGatewayLaunch).toHaveBeenCalledTimes(2);
+    expect(mockPrepareClaudeGatewayLaunch.mock.calls[0]?.[0]).toMatchObject({ workerId: "worker-1" });
+    for (const body of bodies) {
+      expect(body).toMatchObject({
+        type: "claude",
+        model: "gpt-5.6-sol",
+        accountId: null,
+        credentialSource: "gateway",
+        env: { KEEP: "yes", ANTHROPIC_AUTH_TOKEN: "secret", ANTHROPIC_BASE_URL: "http://127.0.0.1:8317" },
+      });
+    }
   });
 
   afterEach(() => {
@@ -149,6 +203,29 @@ describe("bridge client", () => {
     await expect(askAgent("worker-1", "hello")).rejects.toThrow(/^Ask failed: Agent is busy: worker-1$/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not restart an ask after a newer worker turn retires it", async () => {
+    vi.useFakeTimers();
+    const reset = new TypeError(
+      "fetch failed",
+      { cause: Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }) },
+    );
+    const fetchMock = vi.fn().mockRejectedValue(reset);
+    mockCaptureWorkerTurnGeneration.mockResolvedValueOnce(4);
+    mockIsWorkerTurnGenerationCurrent
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(false);
+    global.fetch = fetchMock as typeof fetch;
+
+    const { askAgent } = await import("@/server/bridge-client");
+    const request = askAgent("worker-1", "old prompt");
+    const expectation = expect(request).rejects.toThrow(/newer worker turn/i);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expectation;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mockIsWorkerTurnGenerationCurrent).toHaveBeenCalledTimes(2);
   });
 
   it("preserves structured bridge error messages instead of collapsing them to status text", async () => {

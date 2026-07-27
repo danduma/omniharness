@@ -62,11 +62,22 @@ export const workers = sqliteTable('workers', {
   lastText: text('last_text').notNull().default(''),
   bridgeSessionId: text('bridge_session_id'),
   bridgeSessionMode: text('bridge_session_mode'),
+  effectiveLaunchModel: text('effective_launch_model'),
+  effectiveLaunchEffort: text('effective_launch_effort'),
+  launchCredentialSource: text('launch_credential_source'),
   // Monotonic fence advanced every time a turn is interrupted. A delivery
   // captures the generation it started under; stale completions from an
   // interrupted (older) turn compare their captured value and refuse to
   // persist terminal status/queue/response updates when it no longer matches.
   turnGeneration: integer('turn_generation').notNull().default(0),
+  // Seq ranges this worker wrote for branches the user discarded via
+  // retry/edit, as JSON `[{"from":n,"through":m}]`. A rewind to message M
+  // supersedes everything from M's original delivery through the stream tip at
+  // recovery time; the re-delivered message and its new answer land after that
+  // (on a fresh worker, or further down this worker's stream when the ACP
+  // session is resumed in place). Readers hide superseded entries so the
+  // conversation shows one coherent thread instead of every abandoned attempt.
+  supersededSeqRanges: text('superseded_seq_ranges'),
   activeWorkStartedAt: integer('active_work_started_at', { mode: 'timestamp' }),
   activeWorkDurationMs: integer('active_work_duration_ms').notNull().default(0),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),

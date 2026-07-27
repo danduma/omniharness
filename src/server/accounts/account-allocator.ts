@@ -62,11 +62,11 @@ function envKeyFromAuthRef(authRef: string) {
 }
 
 function hasAvailableAutomaticCredential(account: AccountRow, env: EnvLike | undefined) {
-  if (account.authMode !== "api_key") {
-    return true;
+  if (account.authMode === "api_key" || account.authMode === "credential_command") {
+    const envKey = envKeyFromAuthRef(account.authRef);
+    return Boolean(envKey && env?.[envKey]?.trim());
   }
-  const envKey = envKeyFromAuthRef(account.authRef);
-  return Boolean(envKey && env?.[envKey]?.trim());
+  return true;
 }
 
 function parseIncidentDetails(details: string | null): Record<string, unknown> {
@@ -111,14 +111,30 @@ function accountMatchesWorkerType(account: AccountRow, workerType: string) {
   return !account.cliType || normalizeWorkerType(account.cliType) === normalizeWorkerType(workerType);
 }
 
-function sortByPriority(a: AccountRow, b: AccountRow) {
-  if (b.priority !== a.priority) return b.priority - a.priority;
-  return a.createdAt.getTime() - b.createdAt.getTime();
-}
-
 function latestUsableCapacity(snapshot: AccountUsageSnapshotRow | undefined) {
   if (!snapshot) return Number.NEGATIVE_INFINITY;
   return snapshot.remainingTokens ?? Math.max(0, snapshot.usedTokens * -1);
+}
+
+function credentialSpecificity(account: AccountRow, env: EnvLike | undefined) {
+  if (account.authMode === "api_key" || account.authMode === "credential_command") {
+    return hasAvailableAutomaticCredential(account, env) ? 50 : 0;
+  }
+  if (account.authMode === "credential_profile") return 40;
+  if (account.authMode === "isolated_cli_home") return 35;
+  const envKey = envKeyFromAuthRef(account.authRef);
+  if (envKey && env?.[envKey]?.trim()) return 30;
+  if (account.authMode === "local_session") return 20;
+  return 10;
+}
+
+function sortByAutomaticPriority(env: EnvLike | undefined) {
+  return (a: AccountRow, b: AccountRow) => {
+    if (b.priority !== a.priority) return b.priority - a.priority;
+    const byCredential = credentialSpecificity(b, env) - credentialSpecificity(a, env);
+    if (byCredential !== 0) return byCredential;
+    return a.createdAt.getTime() - b.createdAt.getTime();
+  };
 }
 
 async function listCandidateAccounts(workerType: string) {
@@ -194,9 +210,9 @@ async function chooseAutomaticAccount(
   if (usable.length === 0) return { account: null, reason: "no usable automatic account inventory row" };
 
   if (strategy === "subscription_then_api") {
-    const subscription = usable.filter((account) => account.type === "subscription").sort(sortByPriority)[0];
+    const subscription = usable.filter((account) => account.type === "subscription").sort(sortByAutomaticPriority(env))[0];
     if (subscription) return { account: subscription, reason: "selected highest-priority subscription account" };
-    const api = usable.filter((account) => account.type === "api").sort(sortByPriority)[0];
+    const api = usable.filter((account) => account.type === "api").sort(sortByAutomaticPriority(env))[0];
     return { account: api ?? null, reason: api ? "selected API account after subscription options were unavailable" : "no subscription or API account was usable" };
   }
 
@@ -204,7 +220,7 @@ async function chooseAutomaticAccount(
     const counts = await countAllocationsByAccount(normalizeWorkerType(workerType));
     const account = [...usable].sort((a, b) => {
       const byCount = (counts.get(a.id) ?? 0) - (counts.get(b.id) ?? 0);
-      return byCount || sortByPriority(a, b);
+      return byCount || sortByAutomaticPriority(env)(a, b);
     })[0];
     return { account, reason: "selected least-used enabled account" };
   }
@@ -213,13 +229,54 @@ async function chooseAutomaticAccount(
     const snapshots = await latestSnapshotsByAccount(normalizeWorkerType(workerType));
     const account = [...usable].sort((a, b) => {
       const byRemaining = latestUsableCapacity(snapshots.get(b.id)) - latestUsableCapacity(snapshots.get(a.id));
-      return byRemaining || sortByPriority(a, b);
+      return byRemaining || sortByAutomaticPriority(env)(a, b);
     })[0];
     return { account, reason: "selected account with most remaining quota" };
   }
 
-  const account = [...usable].sort(sortByPriority)[0];
+  const account = [...usable].sort(sortByAutomaticPriority(env))[0];
   return { account, reason: strategy === "wait_for_reset" ? "selected priority account for wait policy" : "selected highest-priority enabled account" };
+}
+
+async function requireExplicitAccount(args: {
+  workerType: string;
+  accountId: string;
+  now: Date;
+}) {
+  const account = await db
+    .select()
+    .from(accounts)
+    .where(eq(accounts.id, args.accountId))
+    .get();
+  if (!account) {
+    throw new RuntimeHttpError(400, `Account "${args.accountId}" was not found.`);
+  }
+  if (!accountMatchesWorkerType(account, args.workerType)) {
+    throw new RuntimeHttpError(400, `Account "${account.id}" cannot be used for ${args.workerType} workers.`);
+  }
+  if (!isUsable(account)) {
+    throw new RuntimeHttpError(400, `Account "${account.id}" is not currently usable.`);
+  }
+  const blockedAccountIds = await quotaBlockedAccountIds(args.now);
+  if (blockedAccountIds.has(account.id)) {
+    throw new RuntimeHttpError(400, `Account "${account.id}" is quota blocked.`);
+  }
+  return account;
+}
+
+export async function validateExplicitWorkerAccount(input: {
+  workerType: string;
+  accountId: string;
+  now?: Date;
+}) {
+  const workerType = normalizeWorkerType(input.workerType);
+  const accountId = input.accountId.trim();
+  await runAccountInventoryMigration();
+  return requireExplicitAccount({
+    workerType,
+    accountId,
+    now: input.now ?? new Date(),
+  });
 }
 
 export async function allocateWorkerAccount(input: AccountAllocationInput): Promise<AccountAllocation> {
@@ -229,24 +286,11 @@ export async function allocateWorkerAccount(input: AccountAllocationInput): Prom
   const candidates = await listCandidateAccounts(workerType);
 
   if (input.explicitAccountId?.trim()) {
-    const account = await db
-      .select()
-      .from(accounts)
-      .where(and(eq(accounts.id, input.explicitAccountId.trim())))
-      .get();
-    if (!account) {
-      throw new RuntimeHttpError(400, `Account "${input.explicitAccountId}" was not found.`);
-    }
-    if (!accountMatchesWorkerType(account, workerType)) {
-      throw new RuntimeHttpError(400, `Account "${account.id}" cannot be used for ${workerType} workers.`);
-    }
-    if (!isUsable(account)) {
-      throw new RuntimeHttpError(400, `Account "${account.id}" is not currently usable.`);
-    }
-    const blockedAccountIds = await quotaBlockedAccountIds(input.now ?? new Date());
-    if (blockedAccountIds.has(account.id)) {
-      throw new RuntimeHttpError(400, `Account "${account.id}" is quota blocked.`);
-    }
+    const account = await requireExplicitAccount({
+      workerType,
+      accountId: input.explicitAccountId.trim(),
+      now: input.now ?? new Date(),
+    });
     const allocation = {
       account,
       strategy: "manual" as const,

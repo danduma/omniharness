@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { plans, runs } from "@/server/db/schema";
 
@@ -121,5 +122,36 @@ describe("directWorkerOutputHasPendingHumanInput", () => {
     });
 
     expect(mockRunMilestoneAutoCommit).toHaveBeenCalledWith("run-direct-auto-commit", "Done.");
+  });
+
+  it("preserves the run activity timestamp when repeated input observations do not change state", async () => {
+    const originalUpdatedAt = new Date("2026-07-11T10:00:00.000Z");
+    await db.insert(plans).values({
+      id: "plan-direct-awaiting-noop",
+      path: "vibes/ad-hoc/direct-awaiting-noop.md",
+      status: "running",
+      createdAt: originalUpdatedAt,
+      updatedAt: originalUpdatedAt,
+    });
+    await db.insert(runs).values({
+      id: "run-direct-awaiting-noop",
+      planId: "plan-direct-awaiting-noop",
+      mode: "direct",
+      title: "Direct awaiting no-op",
+      status: "awaiting_user",
+      createdAt: originalUpdatedAt,
+      updatedAt: originalUpdatedAt,
+    });
+
+    await updateDirectRunStatusFromWorkerOutput({
+      runId: "run-direct-awaiting-noop",
+      workerId: "worker-1",
+      workerStatus: "working",
+      pendingElicitations: [{ requestId: 2 }],
+    });
+
+    const run = await db.select().from(runs).where(eq(runs.id, "run-direct-awaiting-noop")).get();
+    expect(run?.status).toBe("awaiting_user");
+    expect(run?.updatedAt).toEqual(originalUpdatedAt);
   });
 });

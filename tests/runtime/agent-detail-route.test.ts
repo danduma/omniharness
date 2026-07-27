@@ -4,9 +4,10 @@ import { db } from "@/server/db";
 import { plans, runs, workers } from "@/server/db/schema";
 import { createOmniRuntimeHttpRegistry } from "@/runtime/http/routes";
 
-const { mockGetAgent, mockGetAgentOutput } = vi.hoisted(() => ({
+const { mockGetAgent, mockGetAgentOutput, mockInvokeAgentAcpMethod } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
   mockGetAgentOutput: vi.fn(),
+  mockInvokeAgentAcpMethod: vi.fn(),
 }));
 
 vi.mock("@/server/bridge-client", async () => {
@@ -15,15 +16,17 @@ vi.mock("@/server/bridge-client", async () => {
     ...actual,
     getAgent: mockGetAgent,
     getAgentOutput: mockGetAgentOutput,
+    invokeAgentAcpMethod: mockInvokeAgentAcpMethod,
   };
 });
 
-import { handleAgentDetailRequest } from "@/runtime/http/routes/agent-detail";
+import { handleAgentAcpRequest, handleAgentDetailRequest } from "@/runtime/http/routes/agent-detail";
 
 describe("portable GET /api/agents/:name", () => {
   beforeEach(() => {
     mockGetAgent.mockReset();
     mockGetAgentOutput.mockReset();
+    mockInvokeAgentAcpMethod.mockReset();
   });
 
   it("returns a persisted fallback snapshot when the bridge temporarily loses the worker", async () => {
@@ -154,5 +157,25 @@ describe("portable GET /api/agents/:name", () => {
       name: workerId,
       state: "working",
     }));
+  });
+
+  it("forwards typed ACP operations through the authenticated app route", async () => {
+    mockInvokeAgentAcpMethod.mockResolvedValue({ ok: true, result: { sessions: [] } });
+    const response = await handleAgentAcpRequest(
+      new Request("http://localhost/api/agents/worker-1/acp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: "http://localhost" },
+        body: JSON.stringify({ method: "session/list", params: { cwd: "/tmp/project" } }),
+      }),
+      { surface: "test", params: { name: "worker-1" } },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockInvokeAgentAcpMethod).toHaveBeenCalledWith(
+      "worker-1",
+      "session/list",
+      { cwd: "/tmp/project" },
+      false,
+    );
   });
 });

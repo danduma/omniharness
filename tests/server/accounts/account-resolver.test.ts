@@ -82,6 +82,74 @@ describe("account resolver", () => {
     expect(resolved.allowGlobalCredentialBridge).toBe(false);
   });
 
+  it("resolves account-backed credential commands through the existing command loader", async () => {
+    const temp = mkdtempSync(join(tmpdir(), "omni-account-command-"));
+    const command = join(temp, "credential-provider.sh");
+    writeFileSync(command, [
+      "#!/bin/sh",
+      "printf '%s\\n' '{\"env\":{\"ANTHROPIC_API_KEY\":\"command-key\"}}'",
+      "",
+    ].join("\n"), { mode: 0o700 });
+    const accountId = await insertAccount({
+      cliType: "claude",
+      provider: "anthropic",
+      type: "external",
+      authMode: "credential_command",
+      authRef: "setting:OMNIHARNESS_CREDENTIAL_COMMAND_CLAUDE",
+    });
+
+    const resolved = await resolveAccountCredentials({
+      workerType: "claude",
+      cwd: temp,
+      env: {
+        HOME: "/Users/tester",
+        OMNIHARNESS_CREDENTIAL_COMMAND_CLAUDE: command,
+      },
+      accountId,
+    });
+
+    expect(resolved.account?.id).toBe(accountId);
+    expect(resolved.env.ANTHROPIC_API_KEY).toBe("command-key");
+    expect(resolved.credentialProfile.status).toMatchObject({
+      name: "claude",
+      source: "command",
+      envKeys: ["ANTHROPIC_API_KEY"],
+    });
+    expect(resolved.allowGlobalCredentialBridge).toBe(false);
+  });
+
+  it("clears Anthropic API env when resolving Claude local session accounts", async () => {
+    const accountId = await insertAccount({
+      cliType: "claude",
+      provider: "anthropic",
+      type: "subscription",
+      authMode: "local_session",
+      authRef: "local-session:claude",
+    });
+
+    const resolved = await resolveAccountCredentials({
+      workerType: "claude",
+      cwd: process.cwd(),
+      env: {
+        HOME: "/Users/tester",
+        ANTHROPIC_API_KEY: "api-key-should-not-win",
+        ANTHROPIC_AUTH_TOKEN: "auth-token-should-not-win",
+        ANTHROPIC_BASE_URL: "https://api.example.test",
+      },
+      accountId,
+    });
+
+    expect(resolved.account?.id).toBe(accountId);
+    expect(resolved.env).toEqual({ CLAUDE_CONFIG_DIR: join("/Users/tester", ".claude") });
+    expect(resolved.unset).toEqual([
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_AUTH_TOKEN",
+      "ANTHROPIC_BASE_URL",
+      "CLAUDE_CODE_OAUTH_TOKEN",
+    ]);
+    expect(resolved.allowGlobalCredentialBridge).toBe(false);
+  });
+
   it("resolves API-key accounts from hydrated runtime env settings", async () => {
     const accountId = await insertAccount({
       cliType: "gemini",

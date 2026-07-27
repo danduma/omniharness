@@ -10,27 +10,15 @@ export type PendingPermission = {
   resolve: (response: acp.RequestPermissionResponse) => void;
 };
 
-// The SDK pinned here (@agentclientprotocol/sdk@0.14.1) predates the
-// `elicitation/create` method, so its types don't model it. The
-// claude-agent-acp adapter speaks it (to surface the built-in AskUserQuestion
-// tool as a form), and reaches us through the `extMethod` escape hatch. These
-// minimal shapes mirror the adapter's CreateElicitationRequest / Response.
-export type ElicitationCreateParams = {
-  mode?: string;
+export type ElicitationCreateParams = acp.CreateElicitationRequest & {
   sessionId?: string;
-  toolCallId?: string;
-  message?: string;
-  requestedSchema?: {
-    type?: string;
-    properties?: Record<string, unknown>;
-    required?: string[];
-  };
+  toolCallId?: string | null;
+  requestedSchema?: acp.ElicitationSchema;
+  elicitationId?: string;
+  url?: string;
 };
-
-export type ElicitationContentValue = string | number | boolean | string[];
-
 export type ElicitationResponse =
-  | { action: "accept"; content: Record<string, ElicitationContentValue> }
+  | { action: "accept"; content: Record<string, acp.ElicitationContentValue> }
   | { action: "decline" }
   | { action: "cancel" };
 
@@ -43,7 +31,9 @@ export type PendingElicitation = {
 
 export type OutputEntry = {
   id: string;
-  type: "message" | "thought" | "tool_call" | "tool_call_update" | "permission" | "elicitation";
+  type: "message" | "thought" | "tool_call" | "tool_call_update" | "permission" | "elicitation"
+    | "user_message_chunk" | "plan" | "plan_update" | "plan_removed" | "available_commands"
+    | "current_mode" | "config_option" | "session_info" | "usage" | "agent_content" | "user_content";
   text: string;
   timestamp: string;
   toolCallId?: string;
@@ -79,13 +69,17 @@ export type AgentRecord = {
   name: string;
   type: string;
   cwd: string;
+  additionalDirectories: string[];
   child: ChildProcessWithoutNullStreams;
   connection: acp.ClientSideConnection;
+  runtimeClient: { dispose(): void };
   sessionId: string;
   state: AgentState;
   lastError: string | null;
   stderrBuffer: string[];
   protocolVersion: string | number | null;
+  agentCapabilities: Record<string, unknown> | null;
+  authMethods: unknown[];
   requestedModel: string | null;
   effectiveModel: string | null;
   requestedEffort: string | null;
@@ -140,12 +134,14 @@ export type StartAgentInput = {
   args?: string[];
   env?: Record<string, string>;
   credentialProfile?: string;
-  accountId?: string;
+  accountId?: string | null;
+  credentialSource?: "gateway";
   mode?: string;
   model?: string;
   effort?: string;
   skillRoots?: string[];
   mcpServers?: acp.McpServer[];
+  additionalDirectories?: string[];
   resumeSessionId?: string;
 };
 

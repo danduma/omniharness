@@ -13,7 +13,7 @@
  * auto-approve decision a live full-access request would have produced.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { AgentRuntimeManager } from "@/server/agent-runtime/manager";
@@ -54,6 +54,48 @@ process.stdin.on('data', (chunk) => {
 process.stdin.on('end', () => process.exit(0));
 `;
 
+const configurableAcpScript = `#!/usr/bin/env node
+const fs = require('node:fs');
+process.stdin.setEncoding('utf8');
+let buffer = '';
+function write(message) { process.stdout.write(JSON.stringify(message) + '\\n'); }
+function configOptions(currentValue) {
+  return [{
+    id: 'effort',
+    name: 'Effort',
+    category: 'thought_level',
+    type: 'select',
+    currentValue,
+    options: [
+      { value: 'default', name: 'Default' },
+      { value: 'low', name: 'Low' },
+      { value: 'high', name: 'High' },
+    ],
+  }];
+}
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\\r?\\n/g);
+  buffer = lines.pop() ?? '';
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (process.env.REQUEST_LOG) fs.appendFileSync(process.env.REQUEST_LOG, JSON.stringify(message) + '\\n');
+    if (message.id === undefined || message.id === null) continue;
+    if (message.method === 'initialize') {
+      write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+    } else if (message.method === 'session/new') {
+      write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-config', configOptions: configOptions('default') } });
+    } else if (message.method === 'session/set_config_option') {
+      write({ jsonrpc: '2.0', id: message.id, result: { configOptions: configOptions(message.params.value) } });
+    } else {
+      write({ jsonrpc: '2.0', id: message.id, result: {} });
+    }
+  }
+});
+process.stdin.on('end', () => process.exit(0));
+`;
+
 async function startAgent(manager: AgentRuntimeManager, dir: string, name: string) {
   const command = join(dir, `acp-${name}.js`);
   writeFileSync(command, acpScript, { mode: 0o755 });
@@ -85,6 +127,45 @@ afterEach(() => {
 });
 
 describe("AgentRuntimeManager setMode permission draining", () => {
+  it("applies a requested Claude effort through the session config before reporting it effective", async () => {
+    const dir = createTempDir("omni-claude-effort-");
+    const command = join(dir, "configurable-acp.js");
+    const requestLog = join(dir, "requests.jsonl");
+    writeFileSync(command, configurableAcpScript, { mode: 0o755 });
+    const manager = new AgentRuntimeManager({
+      env: { ...process.env, OMNIHARNESS_MEMORY_TRACE: "0" } as Record<string, string>,
+    });
+    try {
+      const status = await manager.startAgent({
+        type: "claude",
+        name: "claude-low",
+        cwd: dir,
+        command,
+        args: [],
+        effort: "low",
+        env: { REQUEST_LOG: requestLog },
+      });
+
+      expect(status.requestedEffort).toBe("low");
+      expect(status.effectiveEffort).toBe("low");
+      const requests = readFileSync(requestLog, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
+      expect(requests).toContainEqual(expect.objectContaining({
+        method: "session/set_config_option",
+        params: expect.objectContaining({
+          sessionId: "session-config",
+          configId: "effort",
+          value: "low",
+        }),
+      }));
+    } finally {
+      await manager.stopAgent("claude-low");
+      manager.shutdownPools();
+    }
+  });
+
   it("auto-approves queued pending permissions when switching into full-access", async () => {
     const dir = createTempDir("omni-permission-mode-");
     const manager = new AgentRuntimeManager({

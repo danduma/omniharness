@@ -111,6 +111,38 @@ export function directWorkerOutputHasPendingHumanInput(source: WorkerOutputSourc
   );
 }
 
+// Trailing "?", tolerating closing quotes/brackets and trailing punctuation.
+const QUESTION_TAIL_PATTERN = /\?["'”’)\]]*[.\s]*$/;
+
+function endsWithQuestion(text: string) {
+  const lastLine = text
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1);
+  return Boolean(lastLine && QUESTION_TAIL_PATTERN.test(lastLine));
+}
+
+/**
+ * A worker can block on the user without ever raising a structured permission
+ * or elicitation — it just asks in prose and goes idle. Treating that as "done"
+ * marks the conversation finished in the UI while the worker is in fact waiting
+ * for an answer, so the question is never surfaced and never answered.
+ */
+export function directWorkerOutputAsksBlockingQuestion(source: WorkerOutputSource) {
+  // Deliberately entry-derived only. `outputLog`/`lastText` on a persisted
+  // worker row are stale prose that outlive the turn, and reconciling an
+  // already-finished conversation off them would flip it back to awaiting_user
+  // forever. Message entries only exist for a turn that actually just spoke.
+  const latestText = firstNonEmptyText([
+    latestVisibleEntryText(source.outputEntries),
+    latestVisibleEntryText(parseOutputEntriesJson(source.outputEntriesJson)),
+  ]);
+
+  return endsWithQuestion(latestText);
+}
+
 export function resolveDirectRunStatusFromWorkerOutput(source: WorkerOutputSource) {
   if (directWorkerOutputHasPendingHumanInput(source)) {
     return "awaiting_user";
@@ -120,7 +152,8 @@ export function resolveDirectRunStatusFromWorkerOutput(source: WorkerOutputSourc
     return "running";
   }
 
-  return "done";
+  // Only once the worker has stopped: a question mid-turn is just narration.
+  return directWorkerOutputAsksBlockingQuestion(source) ? "awaiting_user" : "done";
 }
 
 export async function updateDirectRunStatusFromWorkerOutput(args: WorkerOutputSource & {
@@ -134,12 +167,14 @@ export async function updateDirectRunStatusFromWorkerOutput(args: WorkerOutputSo
 
   const nextStatus = resolveDirectRunStatusFromWorkerOutput(args);
   const now = new Date();
-  await db.update(runs).set({
-    status: nextStatus,
-    failedAt: null,
-    lastError: null,
-    updatedAt: now,
-  }).where(eq(runs.id, args.runId));
+  if (run.status !== nextStatus || run.failedAt || run.lastError) {
+    await db.update(runs).set({
+      status: nextStatus,
+      failedAt: null,
+      lastError: null,
+      updatedAt: now,
+    }).where(eq(runs.id, args.runId));
+  }
 
   if (nextStatus === "awaiting_user" && run.status !== "awaiting_user") {
     emitNamedEvent({

@@ -398,6 +398,18 @@ describe("buildActiveConversationGroups", () => {
     expect(result).toHaveLength(1);
   });
 
+  it("does not keep a cancelled run visible from recent user or worker activity", () => {
+    const groups = [makeGroup("/proj/a", [{ id: "run-1", status: "cancelled", createdAt: ANCIENT }])];
+    const result = buildActiveConversationGroups({
+      ...BASE_ARGS,
+      groups,
+      messages: [makeMsg({ createdAt: RECENT })],
+      workerOutputObservedAtByRunId: { "run-1": RECENT },
+      readMarkers: { "run-1": NOW.toString() },
+    });
+    expect(result).toHaveLength(0);
+  });
+
   it("keeps selected run visible even when read, not working, and not recent", () => {
     const groups = [makeGroup("/proj/a", [{ id: "run-1", status: "done", createdAt: ANCIENT }])];
     const result = buildActiveConversationGroups({

@@ -289,16 +289,36 @@ export const workerCardManager = new class extends StateManager<{
     [workerId]: false,
   }));
 
-  setElicitationDraft = (key: string, value: string) => this.setKey("elicitationDraftsByKey", (current) => ({
-    ...current,
-    [key]: value,
-  }));
+  setElicitationDraft = (key: string, value: string) => {
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(`omniharness:elicitation:${key}`, value);
+    }
+    this.setKey("elicitationDraftsByKey", (current) => ({
+      ...current,
+      [key]: value,
+    }));
+  };
+
+  readElicitationDraft = (key: string) => {
+    const current = this.getSnapshot().elicitationDraftsByKey[key];
+    if (current !== undefined) return current;
+    return typeof window === "undefined"
+      ? ""
+      : window.sessionStorage.getItem(`omniharness:elicitation:${key}`) ?? "";
+  };
 
   clearElicitationDrafts = (prefix: string) => this.setKey("elicitationDraftsByKey", (current) => {
     const next = { ...current };
     for (const key of Object.keys(next)) {
       if (key.startsWith(prefix)) {
         delete next[key];
+      }
+    }
+    if (typeof window !== "undefined") {
+      const storagePrefix = `omniharness:elicitation:${prefix}`;
+      for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
+        const key = window.sessionStorage.key(index);
+        if (key?.startsWith(storagePrefix)) window.sessionStorage.removeItem(key);
       }
     }
     return next;

@@ -85,7 +85,11 @@ CREATE TABLE IF NOT EXISTS workers (
   last_text text NOT NULL DEFAULT '',
   bridge_session_id text,
   bridge_session_mode text,
+  effective_launch_model text,
+  effective_launch_effort text,
+  launch_credential_source text,
   turn_generation integer NOT NULL DEFAULT 0,
+  superseded_seq_ranges text,
   active_work_started_at integer,
   active_work_duration_ms integer NOT NULL DEFAULT 0,
   created_at integer NOT NULL,
@@ -636,8 +640,24 @@ if (!workerColumnNames.has("bridge_session_mode")) {
   await client.execute("ALTER TABLE workers ADD COLUMN bridge_session_mode text;");
 }
 
+if (!workerColumnNames.has("effective_launch_model")) {
+  await client.execute("ALTER TABLE workers ADD COLUMN effective_launch_model text;");
+}
+
+if (!workerColumnNames.has("effective_launch_effort")) {
+  await client.execute("ALTER TABLE workers ADD COLUMN effective_launch_effort text;");
+}
+
+if (!workerColumnNames.has("launch_credential_source")) {
+  await client.execute("ALTER TABLE workers ADD COLUMN launch_credential_source text;");
+}
+
 if (!workerColumnNames.has("turn_generation")) {
   await client.execute("ALTER TABLE workers ADD COLUMN turn_generation integer NOT NULL DEFAULT 0;");
+}
+
+if (!workerColumnNames.has("superseded_seq_ranges")) {
+  await client.execute("ALTER TABLE workers ADD COLUMN superseded_seq_ranges text;");
 }
 
 if (!workerColumnNames.has("active_work_started_at")) {

@@ -2,13 +2,14 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, BookOpen, Ellipsis, FileText, LoaderCircle, RefreshCw, WrapText } from "lucide-react";
+import { AlertTriangle, BookOpen, Copy, Ellipsis, FileText, LoaderCircle, RefreshCw, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MarkdownContent } from "@/components/MarkdownContent";
@@ -16,6 +17,7 @@ import { fileViewerPanelManager } from "@/components/component-state-managers";
 import { requestJson } from "@/lib/app-errors";
 import { formatBytes } from "@/lib/chat-attachments";
 import { t, useI18nSnapshot } from "@/lib/i18n";
+import { buildProjectFileFullPath } from "@/lib/project-file-links";
 import { detectSyntaxLanguage, highlightCodeLine } from "@/lib/syntax-highlighting";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
@@ -105,6 +107,15 @@ export function FileViewerPanel({
                 <WrapText className="h-4 w-4" />
                 <span>{t("fileViewer.menu.wordWrap")}</span>
               </DropdownMenuCheckboxItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => {
+                  void navigator.clipboard.writeText(buildProjectFileFullPath({ root, relativePath }));
+                }}
+              >
+                <Copy className="h-4 w-4" />
+                <span>{t("fileViewer.menu.copyFullPath")}</span>
+              </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => {
                   void fileQuery.refetch();

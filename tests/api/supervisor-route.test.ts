@@ -238,10 +238,17 @@ describe("POST /api/supervisor", () => {
     expect(response.status).toBe(200);
 
     const payload = await response.json();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // persistRunFailure updates the run and then writes the error message
+    // across several awaits, so a single macrotask tick is not enough.
+    const deadline = Date.now() + 2_000;
+    let runMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
+    while (!runMessages.some((message) => message.content.includes("API key not valid"))) {
+      if (Date.now() > deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      runMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
+    }
 
     const insertedRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
-    const runMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
 
     expect(insertedRun?.status).toBe("failed");
     expect(runMessages.some((message) => message.content.includes("API key not valid"))).toBe(true);

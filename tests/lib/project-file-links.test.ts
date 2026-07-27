@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { parseProjectFileReference } from "@/lib/project-file-links";
+import * as projectFileLinks from "@/lib/project-file-links";
+
+const { parseProjectFileReference } = projectFileLinks;
 
 describe("parseProjectFileReference", () => {
   const root = "/Users/masterman/NLP/omniharness";
@@ -27,6 +29,23 @@ describe("parseProjectFileReference", () => {
     });
   });
 
+  it("parses relative project paths with optional line numbers", () => {
+    expect(parseProjectFileReference(
+      "docs/plans/launch-conversion-readiness.md:12",
+      root,
+    )).toEqual({
+      root,
+      relativePath: "docs/plans/launch-conversion-readiness.md",
+      line: 12,
+    });
+  });
+
+  it("rejects relative paths that escape the project", () => {
+    expect(parseProjectFileReference("../outside.md", root)).toBeNull();
+    expect(parseProjectFileReference("docs/../../outside.md", root)).toBeNull();
+    expect(parseProjectFileReference("docs/..", root)).toBeNull();
+  });
+
   it("rejects links outside the current project root", () => {
     expect(parseProjectFileReference(
       "http://localhost:3050/Users/masterman/NLP/other/src/index.ts:1",
@@ -39,5 +58,28 @@ describe("parseProjectFileReference", () => {
       "https://example.com/Users/masterman/NLP/omniharness/src/index.ts:1",
       root,
     )).toBeNull();
+  });
+
+  it("does not throw when a possible path contains a literal percent sign", () => {
+    expect(parseProjectFileReference("Progress is 100%", root)).toBeNull();
+    expect(parseProjectFileReference("docs/100%-complete.md", root)).toEqual({
+      root,
+      relativePath: "docs/100%-complete.md",
+    });
+  });
+});
+
+describe("buildProjectFileFullPath", () => {
+  it("builds the absolute path copied from a project file reference", () => {
+    const buildProjectFileFullPath = (projectFileLinks as Record<string, unknown>).buildProjectFileFullPath;
+
+    expect(buildProjectFileFullPath).toBeTypeOf("function");
+    expect((buildProjectFileFullPath as (reference: {
+      root: string;
+      relativePath: string;
+    }) => string)({
+      root: "/Users/masterman/NLP/omniharness/",
+      relativePath: "/src/components/Terminal.tsx",
+    })).toBe("/Users/masterman/NLP/omniharness/src/components/Terminal.tsx");
   });
 });

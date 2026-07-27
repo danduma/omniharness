@@ -314,6 +314,22 @@ function applyElicitationOptimisticUpdate(current: EventStreamState, workerId: s
   };
 }
 
+/**
+ * True when the runtime rejected the answer because it no longer holds that
+ * request — the turn was cancelled, the worker was respawned, or the question
+ * was already answered from another surface.
+ *
+ * Restoring the optimistic removal in that case puts a dead question back on
+ * screen next to the error: every retry fails the same way and the only way
+ * out is a reload. The request really is gone, so let the removal stand and
+ * say why.
+ */
+function isAlreadyResolvedHumanInputError(error: unknown) {
+  const descriptor = buildInlineError(error);
+  return descriptor.status === 409
+    || /\bno_pending_(?:elicitations|permissions)\b/i.test(descriptor.message);
+}
+
 function applyPermissionOptimisticUpdate(current: EventStreamState, workerId: string, requestId: number) {
   return {
     ...current,
@@ -772,6 +788,7 @@ export function useHomeMutations({
         projectPath: payload.projectPath,
         mode: selectedConversationMode,
         preferredWorkerType: selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent,
+        preferredWorkerAccountId,
       });
       pendingCreatedConversationSnapshotsRef.current.set(requestedRunId, optimisticSnapshot);
       setCommand("");
@@ -1075,23 +1092,33 @@ export function useHomeMutations({
       setState((current) => applyElicitationOptimisticUpdate(current, variables.workerId, variables.requestId));
       return { previousState };
     },
-    mutationFn: async ({ workerId, action, content }) => requestJson<{ ok: true }>(`/api/agents/${encodeURIComponent(workerId)}/elicitation`, {
+    mutationFn: async ({ workerId, requestId, action, content }) => requestJson<{ ok: true }>(`/api/agents/${encodeURIComponent(workerId)}/elicitation`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(action === "accept" ? { action, content: content ?? {} } : { action }),
+      body: JSON.stringify(action === "accept" ? { requestId, action, content: content ?? {} } : { requestId, action }),
     }, {
       source: "Agent runtime",
       action: "Respond to worker question",
     }),
     onError: (error, _variables, context) => {
-      if (context?.previousState) {
+      const alreadyResolved = isAlreadyResolvedHumanInputError(error);
+      if (!alreadyResolved && context?.previousState) {
         setState(context.previousState);
       }
+      const descriptor = buildInlineError(error, {
+        source: "Agent runtime",
+        action: "Respond to worker question",
+      });
       setRuntimeErrors((current) => mergeAppErrors(current, [
-        buildInlineError(error, {
-          source: "Agent runtime",
-          action: "Respond to worker question",
-        }),
+        alreadyResolved
+          ? {
+              ...descriptor,
+              source: "Agent runtime",
+              action: "Respond to worker question",
+              message: "This question is no longer open — the worker stopped waiting for an answer.",
+              suggestion: "Send your answer as a normal message instead.",
+            }
+          : descriptor,
       ]));
     },
   });
@@ -1107,23 +1134,33 @@ export function useHomeMutations({
       setState((current) => applyPermissionOptimisticUpdate(current, variables.workerId, variables.requestId));
       return { previousState };
     },
-    mutationFn: async ({ workerId, decision, optionId }) => requestJson<{ ok: true }>(`/api/agents/${encodeURIComponent(workerId)}/permission`, {
+    mutationFn: async ({ workerId, requestId, decision, optionId }) => requestJson<{ ok: true }>(`/api/agents/${encodeURIComponent(workerId)}/permission`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(optionId ? { decision, optionId } : { decision }),
+      body: JSON.stringify(optionId ? { requestId, decision, optionId } : { requestId, decision }),
     }, {
       source: "Agent runtime",
       action: "Respond to permission request",
     }),
     onError: (error, _variables, context) => {
-      if (context?.previousState) {
+      const alreadyResolved = isAlreadyResolvedHumanInputError(error);
+      if (!alreadyResolved && context?.previousState) {
         setState(context.previousState);
       }
+      const descriptor = buildInlineError(error, {
+        source: "Agent runtime",
+        action: "Respond to permission request",
+      });
       setRuntimeErrors((current) => mergeAppErrors(current, [
-        buildInlineError(error, {
-          source: "Agent runtime",
-          action: "Respond to permission request",
-        }),
+        alreadyResolved
+          ? {
+              ...descriptor,
+              source: "Agent runtime",
+              action: "Respond to permission request",
+              message: "This permission request is no longer open — the worker stopped waiting for a decision.",
+              suggestion: "The tool call it was guarding did not run. Ask the worker to retry it if you still want it.",
+            }
+          : descriptor,
       ]));
     },
   });

@@ -6,7 +6,7 @@ import { messages as dbMessages, plans, runs, settings, workers } from "@/server
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { createAdHocPlan } from "@/server/runs/ad-hoc-plan";
 import { startSupervisorRun } from "@/server/supervisor/start";
-import { askAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
+import { askAgent, cancelAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
 import { queueConversationTitleGeneration } from "@/server/conversation-title";
 import { resolveOmniRequest, type ConversationMode } from "./modes";
 import { normalizeWorkerType, parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
@@ -21,7 +21,7 @@ import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { getAppDataPath, getAppRoot } from "@/server/app-root";
-import { appendAttachmentContext, normalizeChatAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
+import { appendAttachmentContext, normalizeChatAttachments, resolveImageAttachments, serializeChatAttachments, type ChatAttachment, type ResolvedImageAttachment } from "@/lib/chat-attachments";
 import {
   GIT_AUTO_COMMIT_MILESTONES_SETTING,
   GIT_PUSH_ON_COMMIT_SETTING,
@@ -29,7 +29,12 @@ import {
 } from "@/lib/commit-workflow";
 import { captureGitBaseline } from "@/server/git/auto-commit";
 import { serializeMessageRecord } from "./message-records";
-import { runWorkerTurn, trackConversationBackgroundTask } from "./worker-turn-gate";
+import {
+  isConversationDeletionRequested,
+  isWorkerTurnSupersededError,
+  runWorkerTurn,
+  trackConversationBackgroundTask,
+} from "./worker-turn-gate";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
@@ -42,7 +47,11 @@ import { globalClaudeConfigDir, isGlobalGeminiSession } from "@/server/external-
 import { homedir } from "os";
 import { join } from "path";
 import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
-import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
+import { allocateWorkerAccount, validateExplicitWorkerAccount } from "@/server/accounts/account-allocator";
+import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
+import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
+import { decodeClaudeGatewayModel } from "@/lib/claude-model-gateway";
+import { prepareClaudeGatewayLaunch } from "@/server/integrations/claude-model-gateway/worker-env";
 
 
 function buildInitialWorkerPrompt(mode: ConversationMode, command: string, projectRoot: string) {
@@ -55,6 +64,17 @@ function buildInitialWorkerPrompt(mode: ConversationMode, command: string, proje
   }
 
   return command;
+}
+
+async function shouldCancelInitialWorkerStartup(runId: string, workerId: string): Promise<boolean> {
+  if (isConversationDeletionRequested(runId)) {
+    return true;
+  }
+  const [run, worker] = await Promise.all([
+    db.select({ id: runs.id }).from(runs).where(eq(runs.id, runId)).get(),
+    db.select({ id: workers.id, runId: workers.runId }).from(workers).where(eq(workers.id, workerId)).get(),
+  ]);
+  return !run || !worker || worker.runId !== runId;
 }
 
 function hasVisibleWorkerOutput(responseText: string, snapshot: AgentRecord | null) {
@@ -85,6 +105,27 @@ function buildEmptyWorkerOutputMessage(snapshot: AgentRecord | null, responseSta
 
 function isAgentBusyError(error: unknown) {
   return /\bagent is busy\b/i.test(formatErrorMessage(error));
+}
+
+async function handleInitialWorkerQuotaError(args: {
+  runId: string;
+  workerId: string;
+  workerType: string;
+  error: unknown;
+}) {
+  const quotaInfo = extractQuotaResetInfo(args.error, { provider: args.workerType });
+  if (!quotaInfo.isQuotaError) {
+    return false;
+  }
+
+  await handleWorkerQuotaExhaustion({
+    runId: args.runId,
+    workerId: args.workerId,
+    text: quotaInfo.rawText,
+    provider: args.workerType,
+  });
+  notifyEventStreamSubscribers();
+  return true;
 }
 
 function toErrorCause(error: unknown) {
@@ -318,6 +359,7 @@ async function runInitialWorkerTurn(args: {
   agent: AgentRecord;
   mode: "direct" | "planning" | "commit";
   command: string;
+  imageAttachments?: ResolvedImageAttachment[];
 }) {
   try {
     await db.update(workers).set({
@@ -336,7 +378,10 @@ async function runInitialWorkerTurn(args: {
     }
     notifyEventStreamSubscribers();
 
-    const response = await askAgent(args.workerId, buildInitialWorkerPrompt(args.mode, args.command, args.cwd));
+    const initialPrompt = buildInitialWorkerPrompt(args.mode, args.command, args.cwd);
+    const response = args.imageAttachments?.length
+      ? await askAgent(args.workerId, initialPrompt, args.imageAttachments)
+      : await askAgent(args.workerId, initialPrompt);
     let snapshot: AgentRecord | null = null;
     try {
       snapshot = await getAgent(args.workerId);
@@ -413,6 +458,19 @@ async function runInitialWorkerTurn(args: {
 
     notifyEventStreamSubscribers();
   } catch (error) {
+    if (isWorkerTurnSupersededError(error)) {
+      notifyEventStreamSubscribers();
+      return;
+    }
+    if (await handleInitialWorkerQuotaError({
+      runId: args.runId,
+      workerId: args.workerId,
+      workerType: args.workerType,
+      error,
+    })) {
+      return;
+    }
+
     if (isAgentBusyError(error)) {
       const now = new Date();
       await db.update(workers).set({
@@ -451,8 +509,12 @@ async function startDirectWorkerConversation(args: {
   preferredWorkerEffort?: string | null;
   preferredWorkerAccountId?: string | null;
   command: string;
+  imageAttachments?: ResolvedImageAttachment[];
   externalClaudeSessionId?: string | null;
 }) {
+  if (await shouldCancelInitialWorkerStartup(args.runId, args.workerId)) {
+    return;
+  }
   let agent: AgentRecord;
   try {
     const { env: envParams } = await readRuntimeEnvFromSettings();
@@ -480,7 +542,37 @@ async function startDirectWorkerConversation(args: {
       effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
       ...(args.externalClaudeSessionId ? { resumeSessionId: args.externalClaudeSessionId } : {}),
     });
+    if (await shouldCancelInitialWorkerStartup(args.runId, args.workerId)) {
+      try {
+        await cancelAgent(args.workerId);
+        emitNamedEvent({
+          kind: "worker.delete_race_cancelled",
+          runId: args.runId,
+          workerId: args.workerId,
+        });
+      } catch (error) {
+        emitNamedEvent({
+          kind: "error.surfaced",
+          code: "conversation.delete.worker_cancel_failed",
+          message: `A worker finished starting after its conversation was deleted and could not be stopped: ${formatErrorMessage(error)}`,
+          surface: "toast",
+          runId: args.runId,
+          workerId: args.workerId,
+          cause: error instanceof Error ? { name: error.name, message: error.message } : undefined,
+        });
+      }
+      return;
+    }
   } catch (error) {
+    if (await handleInitialWorkerQuotaError({
+      runId: args.runId,
+      workerId: args.workerId,
+      workerType: args.workerType,
+      error,
+    })) {
+      return;
+    }
+
     await persistInitialWorkerSpawnFailure({
       runId: args.runId,
       workerId: args.workerId,
@@ -519,6 +611,7 @@ async function startDirectWorkerConversation(args: {
       agent,
       mode: "direct",
       command: args.command,
+      imageAttachments: args.imageAttachments,
     }));
   } catch (error) {
     if (isAgentBusyError(error)) {
@@ -565,6 +658,22 @@ export async function createConversation(args: {
   const phase = isExternalClaudeResume ? null : resolvedRequest.phase;
   const usePlanner = !isExternalClaudeResume && (phase === "planning" || mode === "planning");
   const requestedProjectPath = args.projectPath?.trim() || getAppRoot();
+  const requestedModel = args.preferredWorkerModel?.trim() || null;
+  const isGatewayRoute = decodeClaudeGatewayModel(requestedModel) !== null;
+  if (isGatewayRoute) {
+    const requestedWorkerType = args.preferredWorkerType?.trim()
+      ? normalizeWorkerType(args.preferredWorkerType)
+      : isExternalClaudeResume
+        ? "claude"
+        : parseAllowedWorkerTypes(
+          Array.isArray(args.allowedWorkerTypes) ? JSON.stringify(args.allowedWorkerTypes) : args.allowedWorkerTypes ?? null,
+        )[0] || "codex";
+    await prepareClaudeGatewayLaunch({
+      type: requestedWorkerType,
+      model: requestedModel,
+      accountId: args.preferredWorkerAccountId?.trim() || null,
+    });
+  }
   let createdWorktree: { projectPath: string; target: GitWorkspaceTarget } | null = null;
   let runCreated = false;
 
@@ -580,7 +689,9 @@ export async function createConversation(args: {
     const attachmentsJson = serializeChatAttachments(attachments);
     const workerPrompt = appendAttachmentContext(command, attachments, {
       resolvePath: (storagePath) => getAppDataPath(storagePath),
+      imagesInlined: true,
     });
+    const workerImageAttachments = resolveImageAttachments(attachments, getAppDataPath);
     const preferredWorkerType = args.preferredWorkerType?.trim()
       ? normalizeWorkerType(args.preferredWorkerType)
       : isExternalClaudeResume
@@ -595,6 +706,14 @@ export async function createConversation(args: {
           ? args.allowedWorkerTypes
           : null,
     );
+
+    const explicitAccountId = args.preferredWorkerAccountId?.trim() || null;
+    if (explicitAccountId) {
+      await validateExplicitWorkerAccount({
+        workerType: preferredWorkerType || allowedWorkerTypes[0] || "codex",
+        accountId: explicitAccountId,
+      });
+    }
 
     const planPath = createAdHocPlan(command, attachments);
     // During the Omni planning phase no implementation has begun, so defer the
@@ -701,19 +820,22 @@ export async function createConversation(args: {
         // edit). The messages table was being treated as the single source of
         // truth, leaving direct conversations with no recoverable transcript.
         initialPrompt: command,
+        effectiveLaunchModel: requestedModel,
+        effectiveLaunchEffort: args.preferredWorkerEffort?.trim().toLowerCase() || null,
+        launchCredentialSource: isGatewayRoute ? "gateway" : "account",
         createdAt: new Date(),
         updatedAt: new Date(),
       });
       const { env: allocationEnvParams } = await readRuntimeEnvFromSettings();
-      const accountAllocation = await allocateWorkerAccount({
-        workerType,
-        runId,
-        workerId,
-        explicitAccountId: args.preferredWorkerAccountId?.trim() || null,
-        strategy: args.preferredWorkerAccountId?.trim() ? "manual" : "priority",
-        env: allocationEnvParams,
-      });
-      const workerAccountId = accountAllocation.account?.id ?? null;
+      const accountAllocation = isGatewayRoute ? null : await allocateWorkerAccount({
+          workerType,
+          runId,
+          workerId,
+          explicitAccountId: args.preferredWorkerAccountId?.trim() || null,
+          strategy: args.preferredWorkerAccountId?.trim() ? "manual" : "priority",
+          env: allocationEnvParams,
+        });
+      const workerAccountId = accountAllocation?.account?.id ?? null;
       if (!args.externalClaudeSessionId || command) {
         await appendUserInputOnDelivery({
           id: initialMessageId,
@@ -752,9 +874,10 @@ export async function createConversation(args: {
           preferredWorkerEffort: args.preferredWorkerEffort,
           preferredWorkerAccountId: workerAccountId,
           command: workerPrompt,
+          imageAttachments: workerImageAttachments,
           externalClaudeSessionId: args.externalClaudeSessionId,
         });
-        trackConversationBackgroundTask(initialDirectTurn).catch((error) => {
+        trackConversationBackgroundTask(initialDirectTurn, { runId }).catch((error) => {
           console.error("Initial direct conversation worker failed:", error);
         });
       } else {
@@ -777,7 +900,33 @@ export async function createConversation(args: {
               model: args.preferredWorkerModel?.trim() || undefined,
               effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
             });
+            if (await shouldCancelInitialWorkerStartup(runId, workerId)) {
+              try {
+                await cancelAgent(workerId);
+                emitNamedEvent({ kind: "worker.delete_race_cancelled", runId, workerId });
+              } catch (error) {
+                emitNamedEvent({
+                  kind: "error.surfaced",
+                  code: "conversation.delete.worker_cancel_failed",
+                  message: `A worker finished starting after its conversation was deleted and could not be stopped: ${formatErrorMessage(error)}`,
+                  surface: "toast",
+                  runId,
+                  workerId,
+                  cause: error instanceof Error ? { name: error.name, message: error.message } : undefined,
+                });
+              }
+              return;
+            }
           } catch (error) {
+            if (await handleInitialWorkerQuotaError({
+              runId,
+              workerId,
+              workerType,
+              error,
+            })) {
+              return;
+            }
+
             await persistInitialWorkerSpawnFailure({
               runId,
               workerId,
@@ -797,6 +946,7 @@ export async function createConversation(args: {
               agent,
               mode: "planning",
               command: workerPrompt,
+              imageAttachments: workerImageAttachments,
             }));
           } catch (error) {
             if (isAgentBusyError(error)) {
@@ -805,7 +955,7 @@ export async function createConversation(args: {
             console.error(`Initial planning conversation turn failed:`, error);
           }
         })();
-        void trackConversationBackgroundTask(initialPlanningTurn);
+        void trackConversationBackgroundTask(initialPlanningTurn, { runId });
       }
 
       if (generateTitle) {

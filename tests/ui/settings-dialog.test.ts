@@ -98,6 +98,10 @@ test("models, agents, and runtime panels preserve server-backed settings", () =>
   expect(settingsSource).toContain('t("settings.agents.moveWorkerUp"');
   expect(settingsSource).toContain('t("settings.agents.moveWorkerDown"');
   expect(settingsSource).toContain('t("settings.agents.monthlyTokens")');
+  expect(settingsSource).toContain('t("settings.agents.deleteAccount"');
+  expect(settingsSource).toContain('t("settings.agents.accountDisabled")');
+  expect(settingsSource).toContain("Trash2");
+  expect(settingsSource).not.toContain('"bg-muted/50 text-muted-foreground line-through"');
   expect(settingsSource).toContain('t("settings.agents.defaultWorker")');
   expect(settingsSource).toContain('t("settings.agents.dangerouslySkipPermissions")');
   expect(settingsSource).toContain('t("settings.agents.toggleDangerouslySkipPermissions")');

@@ -13,7 +13,7 @@ function sanitizeCommitSubject(value: string | null | undefined) {
     .replace(/[\r\n]/g, " ")
     .trim();
   const title = normalized || "completed implementation run";
-  return `OmniHarness: ${title.length > 64 ? `${title.slice(0, 61).trimEnd()}...` : title}`;
+  return title.length > 72 ? `${title.slice(0, 69).trimEnd()}...` : title;
 }
 
 function buildCommitBody(run: RunRecord, summary: string) {
@@ -22,7 +22,7 @@ function buildCommitBody(run: RunRecord, summary: string) {
     "",
     `Run: ${run.id}`,
     `Plan: ${run.planId}`,
-    "Created by OmniHarness milestone auto-commit.",
+    "Created by milestone auto-commit.",
     "No branch or worktree was created by this workflow.",
   ].join("\n");
 }

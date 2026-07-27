@@ -1279,4 +1279,41 @@ describe("agent output normalization", () => {
 
     expect(summary).toBe("Implemented the compact worker summary.");
   });
+
+  it("collapses an API error that a retried turn repeats verbatim", () => {
+    const errorText = "API Error: Usage credits required for 1M context \u00b7 turn on usage credits at claude.ai/settings/usage, or use --model to switch to standard context";
+    const retries: AgentOutputEntry[] = Array.from({ length: 12 }, (_, index) => ({
+      id: `retry-${index}`,
+      type: "message",
+      text: errorText,
+      timestamp: `2026-07-25T09:36:${String(30 + index).padStart(2, "0")}.000Z`,
+    }));
+
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        {
+          id: "answer",
+          type: "message",
+          text: "Looking into the playback gate now.",
+          timestamp: "2026-07-25T09:33:37.636Z",
+        },
+        ...retries,
+      ],
+    });
+
+    const messages = activity.filter((item) => item.kind === "message");
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toMatchObject({ kind: "message", text: errorText, id: "retry-0" });
+  });
+
+  it("keeps distinct consecutive messages separate", () => {
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        { id: "first", type: "message", text: "Ran the tests.", timestamp: "2026-07-25T09:33:37.636Z" },
+        { id: "second", type: "message", text: "They all passed.", timestamp: "2026-07-25T09:33:38.636Z" },
+      ],
+    });
+
+    expect(activity.filter((item) => item.kind === "message")).toHaveLength(2);
+  });
 });

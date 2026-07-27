@@ -3,6 +3,7 @@ import { isTerminalRunStatus } from "@/lib/run-status";
 import type { AgentOutputEntry } from "@/lib/agent-output";
 
 const DIRECT_WORKING_STATUSES = new Set(["starting", "working", "stuck", "recovering"]);
+const DIRECT_WAITING_RUN_STATUSES = new Set(["quota_waiting", "needs_recovery"]);
 const TERMINAL_HUMAN_INPUT_STATUSES = new Set([
   "answered",
   "approved",
@@ -98,6 +99,10 @@ export function resolveDirectControlPendingAssistantStatus(args: {
   }
 
   if (isTerminalRunStatus(args.selectedRunStatus)) {
+    return null;
+  }
+
+  if (DIRECT_WAITING_RUN_STATUSES.has((args.selectedRunStatus ?? "").trim().toLowerCase())) {
     return null;
   }
 

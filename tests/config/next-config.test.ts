@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { test, expect } from "vitest";
+import nextConfig from "@/../next.config";
 
 const nextConfigSource = fs.readFileSync(
   path.resolve(process.cwd(), "next.config.ts"),
@@ -15,4 +16,12 @@ test("next config rewrites direct conversation ids onto the app shell", () => {
 
 test("next config keeps metadata in the initial head for PWA installability", () => {
   expect(nextConfigSource).toContain("htmlLimitedBots: /.*/");
+});
+
+test("next dev allows JavaScript requests from the configured public origin", () => {
+  const envSource = fs.readFileSync(path.resolve(process.cwd(), ".env"), "utf8");
+  const publicOrigin = envSource.match(/^OMNIHARNESS_PUBLIC_ORIGIN=(.+)$/m)?.[1]?.trim();
+
+  expect(publicOrigin).toBeTruthy();
+  expect(nextConfig.allowedDevOrigins).toContain(new URL(publicOrigin!).hostname);
 });

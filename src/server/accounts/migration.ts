@@ -1,9 +1,20 @@
+import { execFileSync } from "child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
+import { homedir } from "os";
 import { join, resolve } from "path";
 import yaml from "js-yaml";
-import { eq } from "drizzle-orm";
+import { and, eq, exists } from "drizzle-orm";
 import { db } from "@/server/db";
-import { accounts, settings } from "@/server/db/schema";
+import {
+  accountSecrets,
+  accountUsageSnapshots,
+  accounts,
+  creditEvents,
+  runs,
+  settings,
+  workerCredentialAllocations,
+  workerTokenUsage,
+} from "@/server/db/schema";
 import { getAppRoot } from "@/server/app-root";
 import { emitNamedEvent } from "@/server/events/named-events";
 
@@ -47,6 +58,9 @@ const API_KEY_ACCOUNTS: Array<{ key: string; workerType: WorkerType; provider: s
   { key: "GOOGLE_API_KEY", workerType: "gemini", provider: "google" },
 ];
 
+const CLAUDE_IDENTITY_REFRESH_MS = 6 * 60 * 60 * 1000;
+export const DELETED_ACCOUNT_SETTING_PREFIX = "OMNIHARNESS_DELETED_ACCOUNT:";
+
 export type AccountInventoryMigrationResult = {
   normalizedExisting: number;
   importedConfigAccounts: number;
@@ -84,12 +98,126 @@ function normalizeAccountType(value: string | null | undefined) {
   return "external";
 }
 
+function isClaudeLocalSessionAccount(input: {
+  cliType?: string | null;
+  provider?: string | null;
+  type?: string | null;
+  authRef?: string | null;
+}) {
+  const cliType = normalizeWorkerType(input.cliType ?? undefined);
+  const provider = input.provider?.trim().toLowerCase() ?? "";
+  const accountType = input.type?.trim().toLowerCase() ?? "";
+  const authRef = input.authRef?.trim().toUpperCase() ?? "";
+  return (
+    (cliType === "claude" || provider === "anthropic" || provider === "claude" || provider === "claude-code")
+    && accountType === "subscription"
+    && (authRef === "" || authRef.startsWith("CLAUDE_CODE_TOKEN") || authRef.startsWith("LOCAL"))
+  );
+}
+
+function authForImportedAccount(input: {
+  cliType: WorkerType | null;
+  provider: string;
+  type: "subscription" | "api" | "external";
+  authRef: string;
+}) {
+  if (isClaudeLocalSessionAccount(input)) {
+    return { authMode: "local_session", authRef: "local-session:claude" };
+  }
+  return { authMode: "legacy_ref", authRef: input.authRef };
+}
+
 function settingCommandKey(workerType: WorkerType) {
   return `OMNIHARNESS_CREDENTIAL_COMMAND_${workerType.toUpperCase()}`;
 }
 
 function getSettingValue(rows: Array<typeof settings.$inferSelect>, key: string) {
   return rows.find((row) => row.key === key)?.value?.trim() || "";
+}
+
+export function deletedAccountSettingKey(accountId: string) {
+  return `${DELETED_ACCOUNT_SETTING_PREFIX}${encodeURIComponent(accountId)}`;
+}
+
+function deletedAccountIdsFromSettings(rows: Array<typeof settings.$inferSelect>) {
+  return new Set(rows
+    .filter((row) => row.key.startsWith(DELETED_ACCOUNT_SETTING_PREFIX))
+    .map((row) => row.value.trim())
+    .filter(Boolean));
+}
+
+function parseMetadata(metadataJson: string | null | undefined): Record<string, unknown> {
+  if (!metadataJson) return {};
+  try {
+    const parsed = JSON.parse(metadataJson) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function asString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function metadataIdentity(metadata: Record<string, unknown>) {
+  const identity = metadata.identity;
+  return identity && typeof identity === "object" && !Array.isArray(identity)
+    ? identity as Record<string, unknown>
+    : {};
+}
+
+function shouldRefreshClaudeIdentity(row: AccountRow, now: Date) {
+  const metadata = parseMetadata(row.metadataJson);
+  const identity = metadataIdentity(metadata);
+  if (!asString(identity.email)) return true;
+  const checkedAt = asString(identity.checkedAt);
+  if (!checkedAt) return true;
+  const checkedTime = new Date(checkedAt).getTime();
+  return !Number.isFinite(checkedTime) || now.getTime() - checkedTime > CLAUDE_IDENTITY_REFRESH_MS;
+}
+
+function readClaudeLocalSessionIdentity(now: Date) {
+  try {
+    const env = {
+      ...process.env,
+      CLAUDE_CONFIG_DIR: join(process.env.HOME?.trim() || homedir(), ".claude"),
+      ANTHROPIC_API_KEY: "",
+      ANTHROPIC_AUTH_TOKEN: "",
+      ANTHROPIC_BASE_URL: "",
+      CLAUDE_CODE_OAUTH_TOKEN: "",
+    };
+    const raw = execFileSync("claude", ["auth", "status"], {
+      env,
+      encoding: "utf8",
+      timeout: 2_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return {
+      email: asString(parsed.email),
+      authMethod: asString(parsed.authMethod),
+      apiProvider: asString(parsed.apiProvider),
+      subscriptionType: asString(parsed.subscriptionType),
+      checkedAt: now.toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function mergeIdentityMetadata(row: AccountRow, now: Date) {
+  if (row.cliType !== "claude" || row.authMode !== "local_session" || !shouldRefreshClaudeIdentity(row, now)) {
+    return null;
+  }
+  const identity = readClaudeLocalSessionIdentity(now);
+  if (!identity) return null;
+  return JSON.stringify({
+    ...parseMetadata(row.metadataJson),
+    identity,
+  });
 }
 
 function defaultConfigPath() {
@@ -179,6 +307,23 @@ async function normalizeExistingAccounts(now: Date) {
     const cliType = inferWorkerType(row.provider, row.authRef);
     if (!row.cliType && cliType) patch.cliType = cliType;
     if (!row.authMode) patch.authMode = "legacy_ref";
+    if (row.authMode === "legacy_ref" && isClaudeLocalSessionAccount({
+      cliType: row.cliType ?? cliType,
+      provider: row.provider,
+      type: row.type,
+      authRef: row.authRef,
+    })) {
+      patch.authMode = "local_session";
+      patch.authRef = "local-session:claude";
+    }
+    const rowAfterAuthPatch = {
+      ...row,
+      ...patch,
+    };
+    const metadataJson = mergeIdentityMetadata(rowAfterAuthPatch, now);
+    if (metadataJson && metadataJson !== row.metadataJson) {
+      patch.metadataJson = metadataJson;
+    }
     if (row.updatedAt === null) patch.updatedAt = now;
     if (row.priority === null || row.priority === undefined) patch.priority = index;
     const changedKeys = Object.keys(patch);
@@ -195,7 +340,7 @@ async function normalizeExistingAccounts(now: Date) {
   return changed;
 }
 
-async function importConfigAccounts(configPath: string, now: Date) {
+async function importConfigAccounts(configPath: string, now: Date, deletedAccountIds: Set<string>) {
   let imported = 0;
   let skippedInvalidConfigRows = 0;
   let parsed: { rows: LegacyAccountConfig[]; skipped: number };
@@ -217,18 +362,22 @@ async function importConfigAccounts(configPath: string, now: Date) {
     const id = typeof row.id === "string" ? row.id.trim() : "";
     const provider = typeof row.provider === "string" ? row.provider.trim() : "";
     const authRef = typeof row.auth_ref === "string" ? row.auth_ref.trim() : "";
+    if (deletedAccountIds.has(id)) continue;
     if (!id || !provider || !authRef) {
       skippedInvalidConfigRows += 1;
       continue;
     }
+    const cliType = inferWorkerType(provider, authRef);
+    const type = normalizeAccountType(typeof row.type === "string" ? row.type : null);
+    const auth = authForImportedAccount({ cliType, provider, type, authRef });
     const result = await upsertAccount({
       id,
-      cliType: inferWorkerType(provider, authRef),
+      cliType,
       provider,
-      type: normalizeAccountType(typeof row.type === "string" ? row.type : null),
+      type,
       label: id,
-      authMode: "legacy_ref",
-      authRef,
+      authMode: auth.authMode,
+      authRef: auth.authRef,
       capacity: typeof row.capacity === "number" ? row.capacity : null,
       resetSchedule: typeof row.reset_schedule === "string" ? row.reset_schedule : null,
       priority: index,
@@ -251,15 +400,20 @@ function profileDirectories(profilesDir: string) {
     });
 }
 
-async function importSettingsAccounts(now: Date) {
-  const rows = await db.select().from(settings);
+async function importSettingsAccounts(
+  now: Date,
+  rows: Array<typeof settings.$inferSelect>,
+  deletedAccountIds: Set<string>,
+) {
   let imported = 0;
 
   for (const workerType of WORKER_TYPES) {
     const commandKey = settingCommandKey(workerType);
     if (getSettingValue(rows, commandKey)) {
+      const accountId = `credential-command-${workerType}`;
+      if (deletedAccountIds.has(accountId)) continue;
       const result = await upsertAccount({
-        id: `credential-command-${workerType}`,
+        id: accountId,
         cliType: workerType,
         provider: WORKER_TO_PROVIDER[workerType],
         type: "external",
@@ -277,8 +431,10 @@ async function importSettingsAccounts(now: Date) {
   for (const profileName of profileDirectories(profilesDir)) {
     const workerType = normalizeWorkerType(profileName);
     if (!workerType) continue;
+    const accountId = `credential-profile-${workerType}`;
+    if (deletedAccountIds.has(accountId)) continue;
     const result = await upsertAccount({
-      id: `credential-profile-${workerType}`,
+      id: accountId,
       cliType: workerType,
       provider: WORKER_TO_PROVIDER[workerType],
       type: "external",
@@ -293,8 +449,10 @@ async function importSettingsAccounts(now: Date) {
 
   for (const apiKey of API_KEY_ACCOUNTS) {
     if (!getSettingValue(rows, apiKey.key)) continue;
+    const accountId = `api-key-${apiKey.workerType}-${apiKey.key.toLowerCase().replace(/_/g, "-")}`;
+    if (deletedAccountIds.has(accountId)) continue;
     const result = await upsertAccount({
-      id: `api-key-${apiKey.workerType}-${apiKey.key.toLowerCase().replace(/_/g, "-")}`,
+      id: accountId,
       cliType: apiKey.workerType,
       provider: apiKey.provider,
       type: "api",
@@ -310,13 +468,82 @@ async function importSettingsAccounts(now: Date) {
   return imported;
 }
 
+async function removeAccountsDeletedDuringMigration() {
+  const latestSettingRows = await db.select().from(settings);
+  const deletedAccountIds = deletedAccountIdsFromSettings(latestSettingRows);
+  if (deletedAccountIds.size === 0) return;
+
+  for (const accountId of deletedAccountIds) {
+    const existingAccount = await db.select({ cliType: accounts.cliType })
+      .from(accounts)
+      .where(eq(accounts.id, accountId))
+      .get();
+    try {
+      const markerStillExists = () => exists(
+        db.select({ key: settings.key })
+          .from(settings)
+          .where(eq(settings.key, deletedAccountSettingKey(accountId))),
+      );
+      const cleanupResults = await db.batch([
+        db.update(runs)
+          .set({ preferredWorkerAccountId: null })
+          .where(and(eq(runs.preferredWorkerAccountId, accountId), markerStillExists()))
+          .returning({ id: runs.id }),
+        db.delete(creditEvents)
+          .where(and(eq(creditEvents.accountId, accountId), markerStillExists()))
+          .returning({ id: creditEvents.id }),
+        db.delete(workerCredentialAllocations)
+          .where(and(eq(workerCredentialAllocations.accountId, accountId), markerStillExists()))
+          .returning({ id: workerCredentialAllocations.id }),
+        db.delete(workerTokenUsage)
+          .where(and(eq(workerTokenUsage.accountId, accountId), markerStillExists()))
+          .returning({ id: workerTokenUsage.id }),
+        db.delete(accountUsageSnapshots)
+          .where(and(eq(accountUsageSnapshots.accountId, accountId), markerStillExists()))
+          .returning({ id: accountUsageSnapshots.id }),
+        db.delete(accountSecrets)
+          .where(and(eq(accountSecrets.accountId, accountId), markerStillExists()))
+          .returning({ id: accountSecrets.id }),
+        db.delete(accounts)
+          .where(and(eq(accounts.id, accountId), markerStillExists()))
+          .returning({ id: accounts.id }),
+      ]);
+      if (cleanupResults.every((rows) => rows.length === 0)) continue;
+      emitNamedEvent({
+        kind: "account.deleted",
+        accountId,
+        workerType: existingAccount?.cliType ?? null,
+      });
+    } catch (error) {
+      const cause = error instanceof Error ? error : new Error(String(error));
+      emitNamedEvent({
+        kind: "account.delete_failed",
+        accountId,
+        workerType: existingAccount?.cliType ?? null,
+        reason: "migration_tombstone_cleanup_failed",
+      });
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "account.delete.failed",
+        message: `Could not keep deleted account ${accountId} removed during account refresh: ${cause.message}`,
+        surface: "log",
+        accountId,
+        cause: { name: cause.name, message: cause.message },
+      });
+    }
+  }
+}
+
 export async function runAccountInventoryMigration(
   options: RunAccountInventoryMigrationOptions = {},
 ): Promise<AccountInventoryMigrationResult> {
   const now = options.now ?? new Date();
+  const settingRows = await db.select().from(settings);
+  const deletedAccountIds = deletedAccountIdsFromSettings(settingRows);
   const normalizedExisting = await normalizeExistingAccounts(now);
-  const config = await importConfigAccounts(options.configPath ?? defaultConfigPath(), now);
-  const importedSettingAccounts = await importSettingsAccounts(now);
+  const config = await importConfigAccounts(options.configPath ?? defaultConfigPath(), now, deletedAccountIds);
+  const importedSettingAccounts = await importSettingsAccounts(now, settingRows, deletedAccountIds);
+  await removeAccountsDeletedDuringMigration();
   return {
     normalizedExisting,
     importedConfigAccounts: config.imported,

@@ -3,7 +3,13 @@ import { execFileSync } from "child_process";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildManagedPath, createToolDiagnostics, resolveCommand, withCodexStandardTooling } from "@/server/agent-runtime/tool-env";
+import {
+  NATIVE_CODEX_APPLICATION_CANDIDATES,
+  buildManagedPath,
+  createToolDiagnostics,
+  resolveCommand,
+  withCodexStandardTooling,
+} from "@/server/agent-runtime/tool-env";
 
 const tempDirs: string[] = [];
 
@@ -25,6 +31,10 @@ afterEach(() => {
 });
 
 describe("agent runtime tool environment diagnostics", () => {
+  it("finds the native Codex binary bundled with the ChatGPT app", () => {
+    expect(NATIVE_CODEX_APPLICATION_CANDIDATES).toContain("/Applications/ChatGPT.app/Contents/Resources/codex");
+  });
+
   it("tracks the non-negotiable ACP filesystem and shell tool surface", () => {
     const binDir = createTempDir("omni-tool-env-bin-");
     for (const tool of ["rg", "git", "node", "bash", "sh", "ls"]) {

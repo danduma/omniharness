@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   appendOutputEntry,
+  appendBoundedText,
   appendBoundedThoughts,
   appendMessageChunk,
   openAgentOutputArchive,
@@ -26,6 +27,16 @@ describe("agent runtime output store", () => {
     tempRoots.push(root);
     return root;
   }
+
+  describe("appendBoundedText", () => {
+    it("keeps recent text without adding an omitted-output placeholder", () => {
+      const result = appendBoundedText("first line\n", "second line\nthird line", 27);
+
+      expect(result.length).toBeLessThanOrEqual(27);
+      expect(result).toBe("line\nsecond line\nthird line");
+      expect(result).not.toContain("Earlier runtime output omitted");
+    });
+  });
 
   it("keeps giant tool update summaries compact for display and archive storage", () => {
     const verboseOutput = [

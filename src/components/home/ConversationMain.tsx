@@ -32,6 +32,9 @@ import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "@/app/home/GitWorkspaceManager";
 import { preflightConfirmationActionsManager } from "@/app/home/PreflightConfirmationActionsManager";
 import { useWorkerStream } from "@/app/home/WorkerEntriesManager";
+import { derivePendingElicitationsFromWorkerEntries } from "@/app/home/worker-elicitations";
+import { InlineElicitation, type ElicitationResponseInput } from "@/components/agent-interactions/InlineElicitation";
+import { InlinePermission, type PermissionResponseInput } from "@/components/agent-interactions/InlinePermission";
 import { useConversationTranscript } from "@/app/home/ConversationTranscriptManager";
 import { isTerminalRunStatus } from "@/lib/run-status";
 import { deriveConversationLoadState, resolveDirectWorkerStreamRefreshInterval, selectDirectConversationEntries, shouldShowDirectConversationLoading } from "@/app/home/direct-worker-stream-loading";
@@ -476,11 +479,13 @@ function WorkerOutputMessage({
   agent,
   projectRoot,
   onOpenProjectFile,
+  onCopy,
 }: {
   message: MessageRecord;
   agent: AgentSnapshot | null;
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
+  onCopy?: (content: string, messageId: string) => void | Promise<void>;
 }) {
   const { fullOutputOpenByMessageId } = useManagerSnapshot(conversationMainManager);
   const fullOutputOpen = Boolean(fullOutputOpenByMessageId[message.id]);
@@ -499,7 +504,7 @@ function WorkerOutputMessage({
 
   return (
     <Collapsible open={fullOutputOpen} onOpenChange={(open) => conversationMainManager.setFullOutputOpen(message.id, open)}>
-      <div className="omni-worker-output overflow-hidden rounded-lg">
+      <div className="omni-worker-output group/worker-output-actions overflow-hidden rounded-lg">
         <div className="space-y-3 p-4">
           <MarkdownContent
             content={summaryText}
@@ -507,6 +512,13 @@ function WorkerOutputMessage({
             projectRoot={projectRoot}
             onOpenProjectFile={onOpenProjectFile}
           />
+          {summaryText.trim() && onCopy ? (
+            <WorkerOutputCopyAction
+              messageId={message.id}
+              content={summaryText}
+              onCopy={onCopy}
+            />
+          ) : null}
           <CollapsibleTrigger
             className="omni-worker-output-toggle inline-flex items-center gap-1.5 rounded-md text-xs font-medium transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label={fullOutputOpen ? "Hide full worker output" : "Show full worker output"}
@@ -528,6 +540,44 @@ function WorkerOutputMessage({
         </CollapsibleContent>
       </div>
     </Collapsible>
+  );
+}
+
+function WorkerOutputCopyAction({
+  messageId,
+  content,
+  onCopy,
+}: {
+  messageId: string;
+  content: string;
+  onCopy: (content: string, messageId: string) => void | Promise<void>;
+}) {
+  useI18nSnapshot();
+  const { copiedMessageId } = useManagerSnapshot(conversationCopyNoticeManager);
+
+  return (
+    <div className="flex w-full justify-end">
+      <span className="relative inline-flex flex-col items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover/worker-output-actions:opacity-100">
+        <button
+          type="button"
+          aria-label={t("conversation.message.copyAria")}
+          title={t("conversation.message.copyAria")}
+          onClick={() => void onCopy(content, messageId)}
+          className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Copy className="h-4 w-4" />
+        </button>
+        {copiedMessageId === messageId ? (
+          <span
+            role="status"
+            aria-live="polite"
+            className="pointer-events-none absolute top-full z-20 mt-1 whitespace-nowrap rounded-md border border-border/70 bg-popover px-2 py-1 text-[11px] font-medium leading-none text-popover-foreground shadow-sm"
+          >
+            {t("conversation.message.copiedNotice")}
+          </span>
+        ) : null}
+      </span>
+    </div>
   );
 }
 
@@ -598,11 +648,13 @@ interface ConversationMainProps {
   recoveryState: RunRecoveryState | null;
   recoveryIncidents: RecoveryIncidentRecord[];
   resumeRunRecovery: { isPending: boolean };
+  stopRunRecovery: { isPending: boolean };
   showRecoverableRunningState: boolean;
   hasStuckWorker: boolean;
   latestUserCheckpoint: MessageRecord | null;
   handleRetryMessage: (messageId: string) => void;
   handleResumeRunRecovery: () => void;
+  handleStopRecoveryWait: () => void;
   handleStartEditingMessage: (message: Pick<MessageRecord, "id" | "content">) => void;
   handleForkMessage: (message: Pick<MessageRecord, "id" | "content">) => void;
   handleForkMessageIntoWorktree: (message: Pick<MessageRecord, "id" | "content">) => void;
@@ -630,6 +682,10 @@ interface ConversationMainProps {
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
   onOpenWorkerActivity?: (workerId: string) => void;
+  onRespondElicitation?: (input: ElicitationResponseInput) => void;
+  onRespondPermission?: (input: PermissionResponseInput) => void;
+  respondingElicitationRequestId?: number | null;
+  respondingPermissionRequestId?: number | null;
 }
 
 function FailoverChip({ events }: { events: ExecutionEventRecord[] }) {
@@ -745,11 +801,13 @@ export function ConversationMain({
   recoveryState,
   recoveryIncidents,
   resumeRunRecovery,
+  stopRunRecovery,
   showRecoverableRunningState,
   hasStuckWorker,
   latestUserCheckpoint,
   handleRetryMessage,
   handleResumeRunRecovery,
+  handleStopRecoveryWait,
   handleStartEditingMessage,
   handleForkMessage,
   handleForkMessageIntoWorktree,
@@ -773,6 +831,10 @@ export function ConversationMain({
   projectRoot,
   onOpenProjectFile,
   onOpenWorkerActivity,
+  onRespondElicitation,
+  onRespondPermission,
+  respondingElicitationRequestId = null,
+  respondingPermissionRequestId = null,
 }: ConversationMainProps) {
   useI18nSnapshot();
   const { hasOutputBelow } = useManagerSnapshot(conversationMainManager);
@@ -818,10 +880,29 @@ export function ConversationMain({
       }),
     },
   );
+  // The run's worker list, not the entries loaded so far, decides how the
+  // conversation is ordered — otherwise the rule flips from seq to timestamp
+  // the moment the first transcript page arrives and the list re-sorts under
+  // the reader. Undefined until the transcript answers, which leaves the
+  // Terminal on its own inference for that first paint.
+  const conversationRanOnMultipleWorkers = conversationTranscript.workerIds.length > 0
+    ? conversationTranscript.workerIds.length > 1
+    : undefined;
   const conversationEntries = selectDirectConversationEntries({
     transcriptEntries: conversationTranscript.entries,
     directWorkerEntries: directWorkerStream.entries,
+    supersededSeqRanges: primaryConversationAgent?.supersededSeqRanges,
+    workerOrder: conversationTranscript.workerIds,
   });
+  const pendingElicitations = useMemo(() => {
+    const live = primaryConversationAgent?.pendingElicitations ?? [];
+    const liveIds = new Set(live.map((item) => item.requestId));
+    return [
+      ...live,
+      ...derivePendingElicitationsFromWorkerEntries(directWorkerStream.entries)
+        .filter((item) => !liveIds.has(item.requestId)),
+    ];
+  }, [directWorkerStream.entries, primaryConversationAgent?.pendingElicitations]);
   const isUsingConversationTranscriptEntries = conversationTranscript.entries.length > 0;
   const allowDirectUserMessageFallback = Boolean(
     !unifiedWorkerStreamEnabled
@@ -976,7 +1057,10 @@ export function ConversationMain({
   <ScrollArea className="h-full" ref={scrollRef}>
     {selectedRunId ? (
       isDirectConversation ? (
-        <div className="omni-conversation-text-scale mx-auto flex w-full max-w-6xl flex-col gap-4 p-4 pb-8 sm:p-6 sm:pb-8">
+        <div
+          className="omni-conversation-text-scale mx-auto flex w-full max-w-6xl flex-col gap-4 p-4 pb-8 sm:p-6 sm:pb-8"
+          data-testid="conversation-transcript"
+        >
           {!isSelectedConversationPreviewAvailable ? (
             <div
               className="flex flex-col items-center justify-center gap-3 pt-24 text-sm text-muted-foreground sm:pt-32"
@@ -999,6 +1083,7 @@ export function ConversationMain({
                     ? conversationEntries
                     : undefined
                 }
+                multiWorkerOrdering={conversationRanOnMultipleWorkers}
                 allowUserMessageFallback={allowDirectUserMessageFallback}
                 getUserMessageActions={getUserMessageActions}
                 editingUserMessageId={editingMessageId}
@@ -1036,6 +1121,24 @@ export function ConversationMain({
                         : undefined
                 }
               />
+              {primaryConversationWorkerId && pendingElicitations[0] ? (
+                <InlineElicitation
+                  workerId={primaryConversationWorkerId}
+                  elicitation={pendingElicitations[0]}
+                  onRespond={onRespondElicitation}
+                  disabled={respondingElicitationRequestId === pendingElicitations[0].requestId}
+                  className="mt-4"
+                />
+              ) : null}
+              {primaryConversationWorkerId && primaryConversationAgent?.pendingPermissions?.[0] ? (
+                <InlinePermission
+                  workerId={primaryConversationWorkerId}
+                  permission={primaryConversationAgent.pendingPermissions[0]}
+                  onRespond={onRespondPermission}
+                  disabled={respondingPermissionRequestId === primaryConversationAgent.pendingPermissions[0].requestId}
+                  className="mt-4"
+                />
+              ) : null}
             </DirectControlTerminalColumn>
           )}
           {appErrors.length > 0 ? (
@@ -1060,14 +1163,28 @@ export function ConversationMain({
               />
             </div>
           ) : null}
-        </div>
-      ) : (
-        <div className="omni-conversation-text-scale mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 pb-8 sm:gap-6 sm:p-6 sm:pb-8">
-          {isImplementationConversation ? (
+          {recoveryState ? (
             <RunRecoveryNotice
               recoveryState={recoveryState}
               isResuming={resumeRunRecovery.isPending}
+              isStopping={stopRunRecovery.isPending}
               onResume={handleResumeRunRecovery}
+              onStop={handleStopRecoveryWait}
+            />
+          ) : null}
+        </div>
+      ) : (
+        <div
+          className="omni-conversation-text-scale mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 pb-8 sm:gap-6 sm:p-6 sm:pb-8"
+          data-testid="conversation-transcript"
+        >
+          {recoveryState ? (
+            <RunRecoveryNotice
+              recoveryState={recoveryState}
+              isResuming={resumeRunRecovery.isPending}
+              isStopping={stopRunRecovery.isPending}
+              onResume={handleResumeRunRecovery}
+              onStop={handleStopRecoveryWait}
             />
           ) : null}
           {isImplementationConversation ? <FailoverChip events={executionEvents} /> : null}
@@ -1173,6 +1290,7 @@ export function ConversationMain({
                     agent={conversationAgents.find((agent) => agent.name === inferWorkerIdFromMessage(msg)) ?? null}
                     projectRoot={projectRoot}
                     onOpenProjectFile={onOpenProjectFile}
+                    onCopy={handleCopyDirectMessage}
                   />
                 ) : (
                   <div className={cn(

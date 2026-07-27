@@ -7,6 +7,7 @@ import { emitNamedEvent } from "@/server/events/named-events";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { normalizeRunStatus } from "@/server/runs/status";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
+import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { resolveDirectRunStatusFromWorkerOutput } from "@/server/conversations/direct-run-status";
 import { writeWorkerOutputEntries } from "@/server/workers/output-store";
@@ -159,6 +160,7 @@ async function resumeSavedWorkerSession(args: {
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(args.worker.bridgeSessionMode, yoloModeEnabled);
   const { env: envParams } = await readRuntimeEnvFromSettings();
+  const launchSelection = resolveWorkerLaunchSelection(args.worker, args.run);
 
   await markRecoveryIncidentRecovering({
     incidentId: args.incidentId,
@@ -186,9 +188,9 @@ async function resumeSavedWorkerSession(args: {
       name: args.worker.id,
       ...(workerMode ? { mode: workerMode } : {}),
       env: envParams,
-      ...(args.run.preferredWorkerAccountId ? { accountId: args.run.preferredWorkerAccountId } : {}),
-      ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
-      ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
+      ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
+      ...(launchSelection.model ? { model: launchSelection.model } : {}),
+      ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
       resumeSessionId: sessionId,
     }) as AgentRecord;
   } catch (error) {
@@ -214,9 +216,9 @@ async function resumeSavedWorkerSession(args: {
       name: args.worker.id,
       ...(workerMode ? { mode: workerMode } : {}),
       env: envParams,
-      ...(args.run.preferredWorkerAccountId ? { accountId: args.run.preferredWorkerAccountId } : {}),
-      ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
-      ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
+      ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
+      ...(launchSelection.model ? { model: launchSelection.model } : {}),
+      ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
     }) as AgentRecord;
     recreatedFromMissingSession = true;
   }

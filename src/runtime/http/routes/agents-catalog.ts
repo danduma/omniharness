@@ -9,7 +9,8 @@ import type { WorkerCommandResolver, WorkerCommandRunner } from "@/server/superv
 import { SUPPORTED_WORKER_TYPES, WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
 import { buildAppError, errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
-import { WorkerModelCatalogManager, type WorkerModelCatalog } from "@/server/worker-models";
+import { mergeClaudeGatewayModelsIntoCatalog, WorkerModelCatalogManager, type WorkerModelCatalog } from "@/server/worker-models";
+import { readClaudeGatewayModelsFromSettingRows } from "@/server/integrations/claude-model-gateway/settings";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { toNextRequest } from "./next-request";
 
@@ -148,6 +149,19 @@ export const handleAgentsCatalogRequest: OmniHttpHandler = async (request) => {
     ]);
 
     const byType = new Map(doctorSnapshot.results.map((result) => [result.type, result]));
+    let workerModels = workerModelResult.catalog;
+    const catalogDiagnostics: ReturnType<typeof buildAppError>[] = [];
+    try {
+      workerModels = mergeClaudeGatewayModelsIntoCatalog(
+        workerModelResult.catalog,
+        readClaudeGatewayModelsFromSettingRows(allSettings),
+      );
+    } catch (error) {
+      catalogDiagnostics.push(buildAppError(error, {
+        source: "Claude model gateway",
+        action: "Load configured models",
+      }));
+    }
     const { env: runtimeSettingsEnv, decryptionFailures } = hydrateRuntimeEnvFromSettings(allSettings);
     const workerDetectionEnv = {
       ...process.env,
@@ -156,6 +170,7 @@ export const handleAgentsCatalogRequest: OmniHttpHandler = async (request) => {
 
     return Response.json({
       diagnostics: [
+        ...catalogDiagnostics,
         ...decryptionFailures.map((failure) => buildAppError(
           `Unable to decrypt runtime setting "${failure.key}".`,
           {
@@ -165,7 +180,7 @@ export const handleAgentsCatalogRequest: OmniHttpHandler = async (request) => {
         )),
         ...(doctorSnapshot.diagnostic ? [doctorSnapshot.diagnostic] : []),
       ],
-      workerModels: workerModelResult.catalog,
+      workerModels,
       workerModelsRefreshing: workerModelResult.refreshing,
       workers: SUPPORTED_WORKER_TYPES.map((type) => {
         const detectionOptions = {
