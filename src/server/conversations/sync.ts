@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { withSqliteBusyRetry } from "@/server/db/retry";
-import { messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
+import { messages, queuedConversationMessages, recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { listAgents, normalizeAgentRecord, type AgentRecord } from "@/server/bridge-client";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
@@ -38,6 +38,29 @@ function hasAgentOutput(agent: ReturnType<typeof normalizeAgentRecord>) {
 
 function normalizedStatus(value: string | null | undefined) {
   return value?.trim().toLowerCase().split(":")[0]?.trim() ?? "";
+}
+
+function parseIncidentDetails(details: string | null | undefined): Record<string, unknown> {
+  if (!details) {
+    return {};
+  }
+  try {
+    const parsed: unknown = JSON.parse(details);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function incidentResumeAt(details: string | null | undefined) {
+  const value = parseIncidentDetails(details).resumeAt;
+  if (typeof value !== "string") {
+    return null;
+  }
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
 }
 
 function isCompletedEntryStatus(value: string | null | undefined) {
@@ -466,8 +489,36 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
   const allWorkers = selectedRunId
     ? await db.select().from(workers).where(eq(workers.runId, selectedRunId))
     : await db.select().from(workers);
+  const openQuotaIncidents = (selectedRunId
+    ? await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, selectedRunId))
+    : await db.select().from(recoveryIncidents)
+  ).filter((incident) => (
+    incident.kind === "quota_exhausted"
+    && (incident.status === "open" || incident.status === "recovering")
+    && (incidentResumeAt(incident.details)?.getTime() ?? 0) > Date.now()
+  ));
 
   for (const run of allRuns) {
+    // A user cancellation is authoritative. The bridge can report the old
+    // turn as working until cancellation reaches the provider, but that late
+    // snapshot must not reopen recovery or revive the conversation.
+    if (isCancelledWorkerStatus(run.status)) {
+      continue;
+    }
+
+    const quotaIncident = openQuotaIncidents.find((incident) => incident.runId === run.id);
+    if (quotaIncident) {
+      if (run.status !== "quota_waiting" || run.lastError || run.failedAt) {
+        await withSqliteBusyRetry(() => db.update(runs).set({
+          status: "quota_waiting",
+          failedAt: null,
+          lastError: null,
+          updatedAt: new Date(),
+        }).where(eq(runs.id, run.id)));
+      }
+      continue;
+    }
+
     const staleBusyFailure = isAgentBusyRunFailure(run);
     const staleImplementationTransientFailure = isRecoverableImplementationTransientFailure(run);
     const staleImplementationConnectionFailure = isRecoverableImplementationConnectionFailure(run);
@@ -610,13 +661,21 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
     const nextRunState = resolveSyncedRunState(run, agent);
     const quiescedDirectWorker = isDirectRunMode(run.mode) && directLiveAgentHasCompletedTurn(agent);
     const nextWorkerStatus = quiescedDirectWorker ? "idle" : agent.state;
-    await withSqliteBusyRetry(() => db.update(workers).set({
-      status: nextWorkerStatus,
-      cwd: agent.cwd || worker.cwd,
-      currentText: quiescedDirectWorker ? "" : agent.currentText,
-      lastText: agent.lastText,
-      updatedAt: new Date(),
-    }).where(eq(workers.id, worker.id)));
+    const nextWorkerCwd = agent.cwd || worker.cwd;
+    const nextWorkerCurrentText = quiescedDirectWorker ? "" : agent.currentText;
+    const workerChanged = worker.status !== nextWorkerStatus
+      || worker.cwd !== nextWorkerCwd
+      || worker.currentText !== nextWorkerCurrentText
+      || worker.lastText !== agent.lastText;
+    if (workerChanged) {
+      await withSqliteBusyRetry(() => db.update(workers).set({
+        status: nextWorkerStatus,
+        cwd: nextWorkerCwd,
+        currentText: nextWorkerCurrentText,
+        lastText: agent.lastText,
+        updatedAt: new Date(),
+      }).where(eq(workers.id, worker.id)));
+    }
     if (worker.status !== nextWorkerStatus) {
       emitNamedEvent({
         kind: "worker.status",

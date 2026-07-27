@@ -107,6 +107,38 @@ describe("account allocator", () => {
     expect(allocation.reason).toContain("highest-priority");
   });
 
+  it("prefers configured credentials over stale legacy rows with equal priority", async () => {
+    const workerType = `claude-${randomUUID()}`;
+    await insertAccount({
+      id: `test-account-${randomUUID()}`,
+      cliType: workerType,
+      provider: "anthropic",
+      type: "subscription",
+      label: "",
+      authMode: "legacy_ref",
+      authRef: "TOKEN",
+      createdAt: new Date("2026-06-29T12:00:00.000Z"),
+    });
+    const apiAccountId = await insertAccount({
+      id: `api-key-${randomUUID()}`,
+      cliType: workerType,
+      provider: "anthropic",
+      type: "api",
+      label: "claude API key",
+      authMode: "api_key",
+      authRef: "setting:ANTHROPIC_API_KEY",
+      createdAt: new Date("2026-06-29T13:00:00.000Z"),
+    });
+
+    const allocation = await allocateWorkerAccount({
+      workerType,
+      env: { ANTHROPIC_API_KEY: "runtime-key" },
+      strategy: "priority",
+    });
+
+    expect(allocation.account?.id).toBe(apiAccountId);
+  });
+
   it("balances by the latest remaining quota snapshot", async () => {
     const workerType = `codex-${randomUUID()}`;
     const small = await insertAccount({ cliType: workerType, priority: 10, label: "small-quota" });

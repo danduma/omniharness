@@ -7,10 +7,7 @@ import { eq } from "drizzle-orm";
 import type { AgentOutputEntry } from "@/lib/agent-output";
 import type { AgentRecord } from "@/server/bridge-client";
 import { getAppDataPath } from "@/server/app-root";
-import { db } from "@/server/db";
-import { runs } from "@/server/db/schema";
 import { resolveArtifactStreamLocation } from "@/server/artifacts/append-only-store";
-import { commitArtifactAppend, ensureArtifactStreamRow, readArtifactStreamMetadata } from "@/server/artifacts/stream-metadata";
 import {
   appendIndexEntry,
   findIndexPointForSeq,
@@ -57,6 +54,10 @@ function legacyRunDir(runId: string) {
   return path.join(runDataDir(), runId);
 }
 
+// Must match the `workers/` prefix in `streamRelativePath` for the
+// "worker_entries" kind (src/server/artifacts/append-only-store.ts).
+const WORKER_STREAM_DIR_NAME = "workers";
+
 function legacyWorkerFilePath(runId: string, workerId: string) {
   return path.join(legacyRunDir(runId), `${workerId}.jsonl`);
 }
@@ -102,6 +103,7 @@ async function workerStreamPaths(
   const key = chainKey(runId, workerId);
   if (mode === "write" && !ensuredForWriteByKey.has(key)) {
     try {
+      const { ensureArtifactStreamRow } = await import("@/server/artifacts/stream-metadata");
       const row = await ensureArtifactStreamRow({
         runId,
         kind: "worker_entries",
@@ -129,9 +131,19 @@ async function workerStreamPaths(
   const cached = workerStreamPathsCache.get(key);
   if (cached) return cached;
 
+  const legacyPaths = legacyWorkerStreamPaths(runId, workerId);
+  if (existsSync(legacyPaths.filePath) || existsSync(legacyPaths.compressedFilePath)) {
+    workerStreamPathsCache.set(key, legacyPaths);
+    return legacyPaths;
+  }
+
   // Read-mode cold path. We do NOT insert an artifact_streams row here
   // — that's exclusively a write responsibility.
   let resolved: WorkerStreamPaths;
+  const [{ db }, { runs }] = await Promise.all([
+    import("@/server/db"),
+    import("@/server/db/schema"),
+  ]);
   const run = await db
     .select({ projectPath: runs.projectPath })
     .from(runs)
@@ -739,6 +751,7 @@ async function refreshChainCaches(runId: string, workerId: string): Promise<{ ne
   // process already claimed even if our file view is stale.
   let dbLatestSeq = 0;
   try {
+    const { readArtifactStreamMetadata } = await import("@/server/artifacts/stream-metadata");
     const metadata = await readArtifactStreamMetadata({
       runId,
       kind: "worker_entries",
@@ -883,6 +896,7 @@ export async function appendWorkerEntryWithResult(
       }
       nextSeqByKey.set(chainKey(runId, workerId), nextSeq + 1);
       await rememberWorkerFileState(runId, workerId);
+      const { commitArtifactAppend } = await import("@/server/artifacts/stream-metadata");
       await commitArtifactAppend({
         streamId: { runId, kind: "worker_entries", ownerId: workerId },
         seq: compact.seq,
@@ -1005,6 +1019,7 @@ export async function writeWorkerOutputEntries(
       await rememberWorkerFileState(runId, workerId);
       const latestEntry = appendedEntries.at(-1);
       if (latestEntry && typeof latestEntry.seq === "number" && Number.isFinite(latestEntry.seq)) {
+        const { commitArtifactAppend } = await import("@/server/artifacts/stream-metadata");
         await commitArtifactAppend({
           streamId: { runId, kind: "worker_entries", ownerId: workerId },
           seq: latestEntry.seq,
@@ -1142,6 +1157,25 @@ export async function readWorkerOutputEntries(
 ): Promise<OutputEntry[]> {
   const entries = await readCanonicalPersistedEntries(runId, workerId);
   return entries as unknown as OutputEntry[];
+}
+
+/**
+ * Seq of the entry with this id, or null when the worker never wrote it.
+ * Used by run recovery to find where a re-delivered user message first
+ * landed on the worker that is being rewound.
+ */
+export async function findWorkerEntrySeqById(
+  runId: string,
+  workerId: string,
+  entryId: string,
+): Promise<number | null> {
+  const entries = await readCanonicalPersistedEntries(runId, workerId);
+  for (const entry of entries) {
+    if (entry.id === entryId && typeof entry.seq === "number") {
+      return entry.seq;
+    }
+  }
+  return null;
 }
 
 /**
@@ -1283,7 +1317,92 @@ export async function readWorkerEntriesTail(
   if (limit <= 0) {
     return { entries: [], latestSeq: 0, hasOlder: true };
   }
-  return readWorkerEntriesTailJsonl(runId, workerId, limit);
+  const tail = await readWorkerEntriesTailJsonl(runId, workerId, limit);
+  if (!tail) {
+    return null;
+  }
+  return expandTailToMessageFragmentBoundary(runId, workerId, tail);
+}
+
+function isWorkerMessageFragmentCandidate(entry: WorkerEntry | null | undefined) {
+  if (!entry || entry.type !== "message" || entry.toolCallId || entry.status) {
+    return false;
+  }
+  const text = entry.text ?? "";
+  return text.length > 0 && text.length <= 24;
+}
+
+function hasWorkerMessageFragmentEvidence(entries: WorkerEntry[]) {
+  if (entries.length < 4) {
+    return false;
+  }
+
+  const totalLength = entries.reduce((sum, entry) => sum + (entry.text?.length ?? 0), 0);
+  if (totalLength < 32) {
+    return false;
+  }
+
+  return entries.some((entry) => {
+    const text = entry.text ?? "";
+    return /^\s/.test(text)
+      || /\s$/.test(text)
+      || /^[`.,:;!?()[\]{}<>=+\-_/\\\n]/.test(text);
+  });
+}
+
+function tailStartsWithFragmentedAssistantMessage(entries: WorkerEntry[]) {
+  const initialRun: WorkerEntry[] = [];
+  for (const entry of entries) {
+    if (!isWorkerMessageFragmentCandidate(entry)) {
+      break;
+    }
+    initialRun.push(entry);
+  }
+  return hasWorkerMessageFragmentEvidence(initialRun);
+}
+
+async function expandTailToMessageFragmentBoundary(
+  runId: string,
+  workerId: string,
+  tail: { entries: WorkerEntry[]; latestSeq: number; hasOlder: boolean },
+): Promise<{ entries: WorkerEntry[]; latestSeq: number; hasOlder: boolean }> {
+  if (!tail.hasOlder || !tailStartsWithFragmentedAssistantMessage(tail.entries)) {
+    return tail;
+  }
+
+  const firstTailSeq = tail.entries[0]?.seq;
+  if (typeof firstTailSeq !== "number") {
+    return tail;
+  }
+
+  const all = await readCanonicalPersistedEntries(runId, workerId);
+  const firstTailIndex = all.findIndex((entry) => entry.seq === firstTailSeq);
+  if (firstTailIndex <= 0) {
+    return tail;
+  }
+
+  let fragmentStartIndex = firstTailIndex;
+  while (
+    fragmentStartIndex > 0
+    && isWorkerMessageFragmentCandidate(all[fragmentStartIndex])
+    && isWorkerMessageFragmentCandidate(all[fragmentStartIndex - 1])
+  ) {
+    fragmentStartIndex -= 1;
+  }
+
+  if (fragmentStartIndex === firstTailIndex) {
+    return tail;
+  }
+
+  const expanded = all
+    .slice(fragmentStartIndex)
+    .filter((entry) => entry.seq <= tail.latestSeq);
+  const firstExpandedSeq = expanded[0]?.seq;
+  return {
+    entries: expanded,
+    latestSeq: tail.latestSeq,
+    hasOlder: fragmentStartIndex > 0 || (typeof firstExpandedSeq === "number" && firstExpandedSeq > 1),
+  };
 }
 
 async function readWorkerEntriesTailJsonl(
@@ -1951,7 +2070,10 @@ export async function expandWorkerOutputFile(runId: string, workerId: string): P
 }
 
 export async function compactRunOutputs(runId: string): Promise<{ compactedWorkerIds: string[] }> {
-  const { workers } = await import("@/server/db/schema");
+  const [{ db }, { workers }] = await Promise.all([
+    import("@/server/db"),
+    import("@/server/db/schema"),
+  ]);
   const runWorkers = await db
     .select({ id: workers.id })
     .from(workers)
@@ -2006,27 +2128,34 @@ export async function compactStaleWorkerOutputs(options: {
       continue;
     }
     if (!stat.isDirectory()) continue;
-    let workerFiles: string[];
-    try {
-      workerFiles = await fs.readdir(runPath);
-    } catch {
-      continue;
-    }
-    for (const file of workerFiles) {
-      if (!file.endsWith(".jsonl")) continue;
-      const filePath = path.join(runPath, file);
-      let fileStat;
+    // Legacy transcripts sit directly in the run directory; once a run has an
+    // `artifact_streams` row they are written to a `workers/` subdirectory
+    // instead. Scanning only the flat layout meant no modern transcript was
+    // ever swept, so run-data grew without bound.
+    for (const dir of [runPath, path.join(runPath, WORKER_STREAM_DIR_NAME)]) {
+      let workerFiles: string[];
       try {
-        fileStat = await fs.stat(filePath);
+        workerFiles = await fs.readdir(dir);
       } catch {
         continue;
       }
-      if (now - fileStat.mtimeMs < minAgeMs) continue;
-      candidates.push({
-        runId: entry,
-        workerId: file.slice(0, -".jsonl".length),
-        filePath,
-      });
+      for (const file of workerFiles) {
+        if (!file.endsWith(".jsonl")) continue;
+        const filePath = path.join(dir, file);
+        let fileStat;
+        try {
+          fileStat = await fs.stat(filePath);
+        } catch {
+          continue;
+        }
+        if (!fileStat.isFile()) continue;
+        if (now - fileStat.mtimeMs < minAgeMs) continue;
+        candidates.push({
+          runId: entry,
+          workerId: file.slice(0, -".jsonl".length),
+          filePath,
+        });
+      }
     }
   }
 
@@ -2084,6 +2213,17 @@ export async function deleteWorkerOutputFile(runId: string, workerId: string) {
 
 export function workerOutputFilePathFor(runId: string, workerId: string) {
   return legacyWorkerFilePath(runId, workerId);
+}
+
+/**
+ * The path a worker's transcript actually lives at. Once a run has an
+ * `artifact_streams` row the stream can be located under the run's project
+ * path rather than the legacy run-data directory, so `workerOutputFilePathFor`
+ * only tells the truth for runs that never got a row.
+ */
+export async function resolveWorkerOutputFilePaths(runId: string, workerId: string) {
+  const paths = await workerStreamPaths(runId, workerId, "read");
+  return { filePath: paths.filePath, compressedFilePath: paths.compressedFilePath };
 }
 
 /** @internal — vitest only */

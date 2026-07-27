@@ -516,3 +516,153 @@ test("unified stream orders revised message by its first seen seq number so it d
   // Assistant response should remain at the top (its first seen seq 1 is before user msg seq 2)
   expect(text.indexOf("Assistant response")).toBeLessThan(text.indexOf("User option"));
 });
+
+test("a rewound message renders once, at its re-delivery, not back where it was first sent", () => {
+  Object.assign(globalThis, { React });
+
+  // What an edit leaves behind: the original delivery and everything the
+  // abandoned attempt produced still sit on the first worker's stream, and the
+  // edited message is re-delivered on a second worker. Both copies carry the
+  // same entry id, so the transcript used to render the message twice — once
+  // above the output it had already been rewound past.
+  const entries: WorkerEntry[] = [
+    {
+      id: "edited-message",
+      seq: 695,
+      type: "user_input",
+      text: "when I reload it opens the same video",
+      timestamp: "2026-07-25T09:36:34.136Z",
+      authorRole: "user",
+      attachments: [],
+    },
+    {
+      id: "discarded-answer",
+      seq: 700,
+      type: "message",
+      text: "Answer from the discarded attempt",
+      timestamp: "2026-07-25T09:36:40.000Z",
+    },
+    {
+      id: "edited-message",
+      seq: 2,
+      type: "user_input",
+      text: "when I reload it opens the same video",
+      timestamp: "2026-07-25T10:06:43.720Z",
+      authorRole: "user",
+      attachments: [],
+    },
+    {
+      id: "new-answer",
+      seq: 3,
+      type: "message",
+      text: "Answer after the edit",
+      timestamp: "2026-07-25T10:06:50.000Z",
+    },
+  ];
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries,
+    showTextSizeControl: false,
+  }));
+
+  const occurrences = html.split("when I reload it opens the same video").length - 1;
+  expect(occurrences).toBe(1);
+  expect(html.indexOf("when I reload it opens the same video")).toBeLessThan(html.indexOf("Answer after the edit"));
+});
+
+test("ordering does not flip from seq to timestamp when the transcript page arrives", () => {
+  Object.assign(globalThis, { React });
+
+  // Live-stream entries carry no workerId, so a multi-worker conversation used
+  // to look single-worker on cold load and sort by seq — then re-sort by
+  // timestamp once the transcript landed. `multiWorkerOrdering` states the
+  // answer up front, so both paints agree.
+  const liveEntries: WorkerEntry[] = [
+    {
+      id: "old-worker-answer",
+      seq: 900,
+      type: "message",
+      text: "earlier worker output",
+      timestamp: "2026-07-25T09:00:00.000Z",
+    },
+    {
+      id: "new-worker-answer",
+      seq: 2,
+      type: "message",
+      text: "later worker output",
+      timestamp: "2026-07-25T10:00:00.000Z",
+    },
+  ];
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries: liveEntries,
+    multiWorkerOrdering: true,
+    showTextSizeControl: false,
+  }));
+
+  expect(html.indexOf("earlier worker output")).toBeLessThan(html.indexOf("later worker output"));
+});
+
+test("single-worker conversations still order by seq", () => {
+  Object.assign(globalThis, { React });
+
+  const entries: WorkerEntry[] = [
+    {
+      id: "thinking-backdated",
+      seq: 1,
+      type: "message",
+      text: "written first",
+      timestamp: "2026-07-25T10:00:05.000Z",
+    },
+    {
+      id: "second",
+      seq: 2,
+      type: "message",
+      text: "written second",
+      timestamp: "2026-07-25T10:00:01.000Z",
+    },
+  ];
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries,
+    multiWorkerOrdering: false,
+    showTextSizeControl: false,
+  }));
+
+  expect(html.indexOf("written first")).toBeLessThan(html.indexOf("written second"));
+});
+
+test("a re-delivered user message sits with the answer it produced, not its original send time", () => {
+  Object.assign(globalThis, { React });
+
+  const entries: WorkerEntry[] = [
+    {
+      id: "older-answer",
+      seq: 1,
+      type: "message",
+      text: "answer from before the rewind",
+      timestamp: "2026-07-25T09:40:00.000Z",
+      workerId: "run-worker-1",
+    } as WorkerEntry,
+    {
+      id: "redelivered",
+      seq: 2,
+      type: "user_input",
+      text: "the edited question",
+      timestamp: "2026-07-25T10:06:43.000Z",
+      authorRole: "user",
+      attachments: [],
+      workerId: "run-worker-2",
+    } as WorkerEntry,
+  ];
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries,
+    multiWorkerOrdering: true,
+    // The database still carries the pre-edit createdAt for this message.
+    userMessages: [{ id: "redelivered", content: "the edited question", createdAt: "2026-07-25T09:36:34.136Z" }],
+    showTextSizeControl: false,
+  }));
+
+  expect(html.indexOf("answer from before the rewind")).toBeLessThan(html.indexOf("the edited question"));
+});

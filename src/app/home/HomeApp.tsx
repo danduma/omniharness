@@ -4,6 +4,15 @@ import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
 import { X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { BootShell } from "@/components/BootShell";
 import { LoginShell } from "@/components/LoginShell";
 import { AttachmentImagePreviewDialog } from "@/components/AttachmentImagePreviewDialog";
@@ -54,7 +63,7 @@ import { useHomeLifecycle } from "./useHomeLifecycle";
 import { shallowEqualRecord, useManagerSelector, useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { useRunRecoveryState } from "./useRunRecoveryState";
 import { useRunSelectionEffects } from "./useRunSelectionEffects";
-import type { ConversationSidebarTab, EventStreamState, MessageRecord, SidebarGroup } from "./types";
+import type { ConversationSidebarTab, EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord, SidebarGroup } from "./types";
 import type { HomeBootstrapPayload } from "./bootstrap.server";
 import { useHomeQueries } from "./useHomeQueries";
 import { useHomeViewModel } from "./useHomeViewModel";
@@ -64,12 +73,14 @@ import { useConversationActions } from "./useConversationActions";
 import { useHomeLayoutController } from "./useHomeLayoutController";
 import { useTerminalPanelResize } from "./useTerminalPanelResize";
 import { ComposerContainer } from "./ComposerContainer";
+import { formatAccountOptionLabel, resolveCompatibleComposerAccountId } from "./account-labels";
 import { sessionStateManager } from "./SessionStateManager";
 import { t } from "@/lib/i18n";
 import { StateManager } from "@/lib/state-manager";
 import { workersSidebarManager } from "@/components/component-state-managers";
 import { requestJson } from "@/lib/app-errors";
 import type { AccountRecord } from "./types";
+import { decodeClaudeGatewayModel } from "@/lib/claude-model-gateway";
 
 const FolderPickerDialog = dynamic(
   () => import("@/components/FolderPickerDialog").then((m) => m.FolderPickerDialog),
@@ -102,7 +113,59 @@ const InteractiveTerminal = dynamic(
 
 const ONBOARDING_SEEN_STORAGE_KEY = "omni.onboarding.seen";
 const EMPTY_PROJECT_FILES: string[] = [];
+const RECOVER_ERROR_CLEARING_EVENT_TYPES = new Set([
+  "direct_retry_worker_already_active",
+  "worker_session_resumed",
+  "worker_session_recreated",
+  "worker_session_recreated_from_transcript",
+  "worker_prompted",
+  "recovery_resolved",
+  "run_completed",
+  "auto_commit_created",
+  "auto_commit_push_created",
+]);
 let appliedHomeBootstrapId: string | null = null;
+
+function eventCreatedAtMs(event: Pick<ExecutionEventRecord, "createdAt">) {
+  const time = new Date(event.createdAt).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function hasRecoverErrorClearingEvent(events: ExecutionEventRecord[], submittedAt: number | undefined) {
+  const submittedAtMs = typeof submittedAt === "number" && Number.isFinite(submittedAt) && submittedAt > 0
+    ? submittedAt
+    : null;
+  return events.some((event) => {
+    if (!RECOVER_ERROR_CLEARING_EVENT_TYPES.has(event.eventType)) {
+      return false;
+    }
+    if (submittedAtMs === null) {
+      return true;
+    }
+    const eventTime = eventCreatedAtMs(event);
+    return eventTime !== null && eventTime >= submittedAtMs;
+  });
+}
+
+function shouldShowRecoverRunError(args: {
+  error: unknown;
+  variablesRunId: string | null | undefined;
+  selectedRunId: string | null;
+  selectedRun: RunRecord | null;
+  selectedRunExecutionEvents: ExecutionEventRecord[];
+  submittedAt: number | undefined;
+}) {
+  if (!args.error || !args.variablesRunId || args.variablesRunId !== args.selectedRunId) {
+    return false;
+  }
+  if (args.selectedRun && args.selectedRun.status !== "failed" && args.selectedRun.status !== "needs_recovery") {
+    return false;
+  }
+  if (hasRecoverErrorClearingEvent(args.selectedRunExecutionEvents, args.submittedAt)) {
+    return false;
+  }
+  return true;
+}
 
 class AutoResumeExhaustionManager extends StateManager<Set<string>> {
   constructor() {
@@ -251,6 +314,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     settingsDiagnostics,
     conversationSidebarTab,
     showExternalSessionsPicker,
+    deletingRun,
   } = useManagerSelector(homeUiStateManager, selectHomeAppState, shallowEqualRecord);
 
   const {
@@ -334,7 +398,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
   const setState = useCallback<React.Dispatch<React.SetStateAction<EventStreamState>>>(
     (action) => {
       stateManager.setSnapshotCacheScope(selectedRunId);
-      stateManager.update(action);
+      stateManager.updateLocal(action);
     },
     [selectedRunId, stateManager],
   );
@@ -607,13 +671,21 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     }
   }, [catalogWorkers, setShowOnboarding]);
 
+  const effectiveComposerWorkerType = selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent;
+  const gatewayModelSelected = effectiveComposerWorkerType === "claude" && decodeClaudeGatewayModel(selectedModel) !== null;
+  const effectiveSelectedWorkerAccountId = gatewayModelSelected ? "auto" : resolveCompatibleComposerAccountId({
+    accounts: state.accounts ?? [],
+    workerType: effectiveComposerWorkerType,
+    selectedAccountId: selectedWorkerAccountId,
+  });
+
   // Mutations
   const mutations = useHomeMutations({
     state,
     setState,
     selectedRunId,
     selectedCliAgent,
-    selectedWorkerAccountId,
+    selectedWorkerAccountId: effectiveSelectedWorkerAccountId,
     selectedConversationMode,
     selectedModel,
     selectedEffort,
@@ -758,6 +830,8 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     setSelectedModel,
     selectedEffort,
     setSelectedEffort,
+    selectedWorkerAccountId,
+    setSelectedWorkerAccountId,
     availableWorkerTypes,
     configuredAllowedWorkerTypes,
     apiKeys,
@@ -777,23 +851,25 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     setSelectedModel(activeWorkerModelOptions[0].value);
   }, [activeWorkerModelOptions, vm.activeWorkerModelType, selectedModel, setSelectedModel]);
 
-  const effectiveComposerWorkerType = selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent;
   const composerAccountOptions = useMemo(() => {
-    const options = [{ value: "auto", label: t("conversation.composer.account.auto") }];
+    const options = [{
+      value: "auto",
+      label: gatewayModelSelected
+        ? t("conversation.composer.account.gatewayProvider")
+        : t("conversation.composer.account.auto"),
+    }];
+    if (gatewayModelSelected) return options;
     if (!effectiveComposerWorkerType) return options;
     for (const account of state.accounts ?? []) {
       if (!account.enabled) continue;
       if (account.cliType && account.cliType !== effectiveComposerWorkerType) continue;
       options.push({
         value: account.id,
-        label: account.label || `${account.provider} ${account.type}`,
+        label: formatAccountOptionLabel(account),
       });
     }
     return options;
-  }, [effectiveComposerWorkerType, state.accounts]);
-  const effectiveSelectedWorkerAccountId = composerAccountOptions.some((option) => option.value === selectedWorkerAccountId)
-    ? selectedWorkerAccountId
-    : "auto";
+  }, [effectiveComposerWorkerType, gatewayModelSelected, state.accounts]);
 
   // Pre-warm the worker the user is about to use. Overlapping ACP startup
   // (~3–30 s depending on CLI) with composer typing keeps "press Send → first
@@ -1020,7 +1096,14 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     // B. Mismatch → suppress. We also reset the mutation on session
     // switch (effect below) so the error doesn't reappear if the user
     // navigates back to the original run.
-    recoverRunError: recoverRun.variables?.runId && recoverRun.variables.runId === selectedRunId
+    recoverRunError: shouldShowRecoverRunError({
+      error: recoverRun.error,
+      variablesRunId: recoverRun.variables?.runId,
+      selectedRunId,
+      selectedRun,
+      selectedRunExecutionEvents,
+      submittedAt: recoverRun.submittedAt,
+    })
       ? recoverRun.error
       : null,
     renameRunError: renameRun.error,
@@ -1090,17 +1173,19 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     || WORKER_OPTIONS.find((o) => o.value === autoSelectedWorkerType)?.label
     || "Direct worker";
   const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct";
+  const selectedRunStatus = selectedRun?.status ?? null;
   const directControlPendingAssistantStatus = resolveDirectControlPendingAssistantStatus({
     isDirectConversation,
     pendingConversationWorkerId,
     busyConversationWorkerId,
-    selectedRunStatus: selectedRun?.status,
+    selectedRunStatus,
     workerStatuses: selectedRunWorkersForDisplay.map((worker) => worker.status),
     agentStates: conversationAgents.map((agent) => agent.state),
     hasAgentCurrentText: conversationAgents.some((agent) => Boolean(agent.currentText?.trim())),
     hasPendingHumanInput: conversationAgents.some(hasPendingHumanInputSignal),
   });
-  const showDirectControlWorkingIndicator = directControlPendingAssistantStatus !== null;
+  const isSelectedRunQuotaWaiting = selectedRunStatus === "quota_waiting";
+  const showDirectControlWorkingIndicator = directControlPendingAssistantStatus !== null && !isSelectedRunQuotaWaiting;
   const welcomeRepoName = resolveRepoName(currentProjectScope);
   const pairDeviceAvailabilityError = !authEnabled
     ? "Phone pairing requires OmniHarness auth. Set OMNIHARNESS_AUTH_PASSWORD or OMNIHARNESS_AUTH_PASSWORD_HASH and restart, then open Connect Phone again."
@@ -1124,6 +1209,11 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
     stopWorkerMutate,
     stoppableConversationWorkerId,
   ]);
+
+  const handleStopRecoveryWait = useCallback(() => {
+    if (!selectedRunId || isStopConversationPending) return;
+    stopSupervisorMutate({ runId: selectedRunId });
+  }, [isStopConversationPending, selectedRunId, stopSupervisorMutate]);
 
   const handleComposerEditQueuedMessage = useCallback((message: { id: string; runId: string; content: string }) => {
     const nextCommand = message.content;
@@ -1348,7 +1438,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
               stopWorkerTerminalProcess.mutate({ runId: selectedRunId, workerId, terminalProcess });
             }
           }}
-          onRespondElicitation={(input) => respondElicitation.mutate(input)}
+          onRespondElicitation={(input) => respondElicitation.mutateAsync(input)}
           onRespondPermission={(input) => respondPermission.mutate(input)}
           onLoadWorkerHistory={handleLoadWorkerHistory}
           stoppingWorkerId={stopWorker.variables?.workerId ?? null}
@@ -1396,11 +1486,13 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           recoveryState={selectedRecoveryState}
           recoveryIncidents={selectedRecoveryIncidents}
           resumeRunRecovery={{ isPending: isResumeRunRecoveryPendingForSelectedRun }}
+          stopRunRecovery={{ isPending: isStopConversationPending }}
           showRecoverableRunningState={showRecoverableRunningState}
           hasStuckWorker={hasStuckWorker}
           latestUserCheckpoint={latestUserCheckpoint}
           handleRetryMessage={actions.handleRetryMessage}
           handleResumeRunRecovery={actions.handleResumeRunRecovery}
+          handleStopRecoveryWait={handleStopRecoveryWait}
           handleStartEditingMessage={actions.handleStartEditingMessage}
           handleForkMessage={actions.handleForkMessage}
           handleForkMessageIntoWorktree={actions.handleForkMessageIntoWorktree}
@@ -1428,6 +1520,10 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
           projectRoot={currentProjectScope}
           onOpenProjectFile={actions.handleOpenProjectFile}
           onOpenWorkerActivity={handleOpenWorkerActivity}
+          onRespondElicitation={(input) => respondElicitation.mutateAsync(input)}
+          onRespondPermission={(input) => respondPermission.mutate(input)}
+          respondingElicitationRequestId={respondElicitation.isPending && respondElicitation.variables?.workerId === vm.primaryConversationAgent?.name ? respondElicitation.variables.requestId : null}
+          respondingPermissionRequestId={respondPermission.isPending && respondPermission.variables?.workerId === vm.primaryConversationAgent?.name ? respondPermission.variables.requestId : null}
         />
 
         {selectedRunId ? renderComposer("w-full") : null}
@@ -1492,7 +1588,7 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
                   stopWorkerTerminalProcess.mutate({ runId: selectedRunId, workerId, terminalProcess });
                 }
               }}
-              onRespondElicitation={(input) => respondElicitation.mutate(input)}
+              onRespondElicitation={(input) => respondElicitation.mutateAsync(input)}
               onRespondPermission={(input) => respondPermission.mutate(input)}
               onLoadWorkerHistory={handleLoadWorkerHistory}
               stoppingWorkerId={stopWorker.variables?.workerId ?? null}
@@ -1560,6 +1656,42 @@ export function HomeApp({ bootstrap }: { bootstrap?: HomeBootstrapPayload | null
         onClose={() => setShowExternalSessionsPicker(false)}
         onResumed={(runId) => actions.handleSelectRun(runId)}
       />
+
+      <Dialog
+        open={deletingRun !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            actions.handleCancelDeleteRun();
+          }
+        }}
+      >
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>{t("conversation.delete.title")}</DialogTitle>
+            <DialogDescription>
+              {t("conversation.delete.description", { title: deletingRun?.title || "" })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={actions.handleCancelDeleteRun}
+              disabled={deleteRun.isPending}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={actions.handleConfirmDeleteRun}
+              disabled={deleteRun.isPending}
+            >
+              {t("conversation.sidebar.delete")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

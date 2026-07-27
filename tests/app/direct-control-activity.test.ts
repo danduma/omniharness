@@ -49,6 +49,18 @@ describe("shouldShowDirectControlPendingAssistant", () => {
     })).toBe(null);
   });
 
+  it("does not show Working while the direct run is waiting for quota reset", () => {
+    expect(resolveDirectControlPendingAssistantStatus({
+      isDirectConversation: true,
+      pendingConversationWorkerId: null,
+      busyConversationWorkerId: "run-1-worker-1",
+      selectedRunStatus: "quota_waiting",
+      workerStatuses: ["working"],
+      agentStates: ["working"],
+      hasAgentCurrentText: true,
+    })).toBe(null);
+  });
+
   it("does show Working after the pending input row is answered for the same request", () => {
     const outputEntries = [
       {

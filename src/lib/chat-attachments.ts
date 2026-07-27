@@ -126,6 +126,12 @@ export interface AttachmentContextOptions {
   // (typically `getAppDataPath`). Without it the worker tries to read a
   // file that doesn't exist under its cwd.
   resolvePath?: (storagePath: string) => string;
+  // True when the caller also delivers image attachments as real image
+  // content blocks on the same prompt (see `resolveImageAttachments`).
+  // The worker then already has the pixels and must not be told to go
+  // read the image off disk — asking it to retype a UUID path is how
+  // images silently went missing.
+  imagesInlined?: boolean;
 }
 
 export function formatAttachmentContext(
@@ -138,15 +144,40 @@ export function formatAttachmentContext(
   }
 
   const resolvePath = options.resolvePath ?? ((p: string) => p);
-  const lines = normalized.map((attachment) => [
-    `- ${attachment.name}`,
-    `kind: ${attachment.kind}`,
-    `mime: ${attachment.mimeType || "unknown"}`,
-    `size: ${formatBytes(attachment.size)}`,
-    `path: ${resolvePath(attachment.storagePath!)}`,
-  ].join(" | "));
+  const inlineImages = options.imagesInlined === true;
+  const sections: string[] = [];
 
-  return `Attached files available to inspect:\n${lines.join("\n")}`;
+  const images = normalized.filter((attachment) => attachment.kind === "image");
+  const files = normalized.filter((attachment) => attachment.kind !== "image");
+
+  if (images.length > 0) {
+    const lines = images.map((attachment) => [
+      `- ${attachment.name}`,
+      `mime: ${attachment.mimeType || "unknown"}`,
+      `size: ${formatBytes(attachment.size)}`,
+      // Inlined images are already in the prompt; a path would only invite
+      // a redundant (and easily mistyped) disk read.
+      ...(inlineImages ? [] : [`path: ${resolvePath(attachment.storagePath!)}`]),
+    ].join(" | "));
+    sections.push(
+      inlineImages
+        ? `Attached images (included directly in this message):\n${lines.join("\n")}`
+        : `Attached images, readable from disk at the paths shown:\n${lines.join("\n")}`,
+    );
+  }
+
+  if (files.length > 0) {
+    const lines = files.map((attachment) => [
+      `- ${attachment.name}`,
+      `kind: ${attachment.kind}`,
+      `mime: ${attachment.mimeType || "unknown"}`,
+      `size: ${formatBytes(attachment.size)}`,
+      `path: ${resolvePath(attachment.storagePath!)}`,
+    ].join(" | "));
+    sections.push(`Attached files available to inspect:\n${lines.join("\n")}`);
+  }
+
+  return sections.join("\n\n");
 }
 
 export function appendAttachmentContext(
@@ -161,12 +192,25 @@ export function appendAttachmentContext(
     return trimmedContent;
   }
 
-  const hasImages = normalizeChatAttachments(attachments).some((a) => a.kind === "image" && a.storagePath);
-  const toolHint = hasImages
-    ? "\n\nTo view attached images, use the `view_image` tool with the file path shown above."
-    : "";
+  return trimmedContent ? `${trimmedContent}\n\n${context}` : context;
+}
 
-  const fullContext = context + toolHint;
+export interface ResolvedImageAttachment {
+  path: string;
+  mimeType: string;
+}
 
-  return trimmedContent ? `${trimmedContent}\n\n${fullContext}` : fullContext;
+// Resolve image attachments to absolute paths so a caller can read them and
+// attach them as image content blocks. Callers on the server pass
+// `getAppDataPath` as the resolver, matching `formatAttachmentContext`.
+export function resolveImageAttachments(
+  attachments: ChatAttachment[],
+  resolvePath: (storagePath: string) => string,
+): ResolvedImageAttachment[] {
+  return normalizeChatAttachments(attachments)
+    .filter((attachment) => attachment.kind === "image" && attachment.storagePath)
+    .map((attachment) => ({
+      path: resolvePath(attachment.storagePath!),
+      mimeType: attachment.mimeType || "image/png",
+    }));
 }

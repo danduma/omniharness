@@ -31,7 +31,7 @@ const globalsSource = fs.readFileSync(path.resolve(process.cwd(), "src/app/globa
 
 test("composer uses a filled textarea shell with inline cli agent, model, and effort controls", () => {
   expect(pageSource).toContain('selectedCliAgent: "auto"');
-  expect(pageSource).toContain('selectedModel: "gpt-5.4"');
+  expect(pageSource).toContain('selectedModel: "claude-opus-5"');
   expect(pageSource).toContain('selectedEffort: "High"');
   expect(pageSource).toContain('themeMode === "night"');
   expect(pageSource).toContain('rounded-[2rem] border border-[#dededd] bg-[#fdfdfc]');
@@ -76,6 +76,7 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(composerSelectSource).toContain("options.map");
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)');
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)');
+  expect(pageSource).toContain('if (savedModel) {\n      setSelectedModel(savedModel);\n    }');
   expect(pageSource).toContain('window.localStorage.getItem(getEffortStorageKey(savedWorker, savedModel))');
   expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_WORKER_STORAGE_KEY, selectedCliAgent)');
   expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_MODEL_STORAGE_KEY, selectedModel)');
@@ -88,6 +89,11 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain('setHydratedRunSelectionId: homeUiStateManager.createSetter("hydratedRunSelectionId")');
   expect(pageSource).toContain('if (!selectedRunId || !selectedRun) {');
   expect(pageSource).toContain('if (hydratedRunSelectionId === selectedRunId) {');
+});
+
+test("composer never sends an account that belongs to a different worker type", () => {
+  expect(pageSource).toContain("resolveCompatibleComposerAccountId({");
+  expect(pageSource).toContain("selectedWorkerAccountId: effectiveSelectedWorkerAccountId");
 });
 
 test("direct mode requires an explicit cli agent and tightens dropdown alignment", () => {

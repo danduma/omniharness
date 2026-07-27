@@ -1209,6 +1209,63 @@ describe("home utils", () => {
     expect(pendingSnapshots.has("run-1")).toBe(true);
   });
 
+  it("does not restore a stale running status when a selected-run snapshot omits another run's message", () => {
+    const pendingMessage = {
+      id: "message-b",
+      runId: "run-b",
+      role: "user" as const,
+      kind: "checkpoint",
+      content: "Start session B",
+      createdAt: "2026-04-27T00:01:00.000Z",
+    };
+    const pendingSnapshots = new Map([
+      ["run-b", {
+        plan: { id: "plan-b", path: "vibes/ad-hoc/b.md" },
+        run: buildRun({ id: "run-b", planId: "plan-b", status: "running" }),
+        message: pendingMessage,
+      }],
+    ]);
+    const terminalRun = buildRun({
+      id: "run-b",
+      planId: "plan-b",
+      status: "done",
+      updatedAt: "2026-04-27T00:02:00.000Z",
+    });
+    const fullyVisibleState: EventStreamState = {
+      messages: [pendingMessage],
+      plans: [{ id: "plan-b", path: "vibes/ad-hoc/b.md" }],
+      runs: [terminalRun],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+      messageScope: { runIds: ["run-b"], complete: true },
+    };
+
+    mergePendingCreatedConversationSnapshots(fullyVisibleState, pendingSnapshots, 1_000);
+
+    const selectedRunSnapshot: EventStreamState = {
+      ...fullyVisibleState,
+      messages: [{
+        id: "message-a",
+        runId: "run-a",
+        role: "user",
+        kind: "checkpoint",
+        content: "Continue session A",
+        createdAt: "2026-04-27T00:03:00.000Z",
+      }],
+      messageScope: { runIds: ["run-a"], complete: true },
+    };
+
+    const merged = mergePendingCreatedConversationSnapshots(selectedRunSnapshot, pendingSnapshots, 2_000);
+
+    expect(merged.runs.find((run) => run.id === "run-b")?.status).toBe("done");
+    expect(merged.messages.map((message) => message.id)).toEqual(["message-a", "message-b"]);
+  });
+
   it("keeps a newly created conversation through stale payloads after a stable server-visible window", () => {
     const pendingSnapshots = new Map([
       ["run-1", {
@@ -1351,6 +1408,20 @@ describe("home utils", () => {
       path: "/workspace/app/.omniharness/pending/client-run-1.md",
     });
     expect(next.runs.map((run) => run.id)).toEqual(["client-run-1", "existing-run"]);
+  });
+
+  it("keeps the explicitly selected account in an optimistic conversation snapshot", () => {
+    const snapshot = buildOptimisticCreatedConversationSnapshot({
+      runId: "run-account-selection",
+      content: "Start with my selected Claude account",
+      projectPath: null,
+      mode: "direct",
+      preferredWorkerType: "claude",
+      preferredWorkerAccountId: "claude-sub-1",
+      createdAt: "2026-07-11T12:00:00.000Z",
+    });
+
+    expect(snapshot.run?.preferredWorkerAccountId).toBe("claude-sub-1");
   });
 
   it("restores persisted collapsed project paths from localStorage JSON", () => {

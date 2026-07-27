@@ -325,6 +325,25 @@ export class EventStreamStateManager {
     return this.state;
   }
 
+  /**
+   * Apply an explicit local mutation without treating its intentionally
+   * removed records as a partial server catalog that needs merging.
+   */
+  updateLocal(action: EventStreamStateAction) {
+    const incoming = typeof action === "function" ? action(this.state) : action;
+    const nextState = {
+      ...incoming,
+      snapshotSource: this.state.snapshotSource,
+    };
+    if (Object.is(nextState, this.state)) {
+      return this.state;
+    }
+    this.state = nextState;
+    this.snapshotCache.rememberState(nextState, this.snapshotCacheScope);
+    this.listeners.forEach((listener) => listener(this.state));
+    return this.state;
+  }
+
   updateFromServer(action: EventStreamStateAction) {
     return this.update(action, { snapshotSource: "server" });
   }

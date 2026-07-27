@@ -61,6 +61,7 @@ export type RunRecord = {
   preferredWorkerType?: string | null;
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
+  preferredWorkerAccountId?: string | null;
   allowedWorkerTypes?: string | null;
   specPath?: string | null;
   artifactPlanPath?: string | null;
@@ -209,6 +210,7 @@ export type AgentSnapshot = {
   name: string;
   type?: string;
   cwd?: string;
+  additionalDirectories?: string[];
   state: string;
   requestedModel?: string | null;
   effectiveModel?: string | null;
@@ -216,7 +218,11 @@ export type AgentSnapshot = {
   effectiveEffort?: string | null;
   sessionMode?: string | null;
   sessionId?: string | null;
+  // Seq ranges this worker wrote for turns a retry/edit rewound past.
+  supersededSeqRanges?: Array<{ from: number; through: number }>;
   protocolVersion?: string | number | null;
+  agentCapabilities?: Record<string, unknown> | null;
+  authMethods?: unknown[];
   lastError?: string | null;
   recentStderr?: string[];
   pendingPermissions?: Array<{
@@ -236,6 +242,9 @@ export type AgentSnapshot = {
     requestedAt: string;
     sessionId?: string | null;
     toolCallId?: string | null;
+    mode?: "form" | "url" | null;
+    elicitationId?: string | null;
+    url?: string | null;
     message?: string | null;
     requestedSchema?: {
       type?: string;
@@ -383,6 +392,7 @@ export type EventStreamState = {
   };
   workerEntrySeqs?: Record<string, number>;
   workerEntries?: Record<string, WorkerEntry[]>;
+  claudeModelGateway?: import("@/lib/claude-model-gateway").ClaudeModelGatewayStatus;
 };
 
 export type AccountRecord = {

@@ -5,6 +5,9 @@ export type PendingWorkerElicitation = {
   requestedAt: string;
   sessionId?: string | null;
   toolCallId?: string | null;
+  mode?: "form" | "url" | null;
+  elicitationId?: string | null;
+  url?: string | null;
   message?: string | null;
   requestedSchema?: {
     type?: string;
@@ -76,6 +79,9 @@ function pendingFromEntry(entry: WorkerEntry): PendingWorkerElicitation | null {
     requestedAt: entry.timestamp,
     sessionId: asString(raw.sessionId),
     toolCallId: asString(raw.toolCallId ?? entry.toolCallId),
+    mode: raw.mode === "form" || raw.mode === "url" ? raw.mode : null,
+    elicitationId: asString(raw.elicitationId),
+    url: asString(raw.url),
     message: asString(raw.message),
     requestedSchema: asRequestedSchema(raw.requestedSchema),
   };

@@ -19,6 +19,7 @@ import {
   type WorkerTerminalProcess,
 } from "@/lib/worker-terminal-processes";
 import { t, useI18nSnapshot } from "@/lib/i18n";
+import { InlineElicitation } from "@/components/agent-interactions/InlineElicitation";
 
 export type WorkerCardAgent = AgentTerminalPayload & {
   name: string;
@@ -43,6 +44,9 @@ export type WorkerCardAgent = AgentTerminalPayload & {
     requestedAt: string;
     sessionId?: string | null;
     toolCallId?: string | null;
+    mode?: "form" | "url" | null;
+    elicitationId?: string | null;
+    url?: string | null;
     message?: string | null;
     requestedSchema?: {
       type?: string;
@@ -203,6 +207,16 @@ const WORKER_CARD_BRIDGE_TYPES = new Set<BridgeWorkerEntryType>([
   "tool_call",
   "tool_call_update",
   "permission",
+  "elicitation",
+  "plan",
+  "plan_update",
+  "plan_removed",
+  "available_commands",
+  "current_mode",
+  "config_option",
+  "session_info",
+  "usage",
+  "agent_content",
 ]);
 
 function isWorkerCardBridgeEntry(entry: WorkerEntry): entry is WorkerEntry & AgentOutputEntry {
@@ -511,7 +525,7 @@ function fieldOptions(property: Record<string, unknown>) {
     .map((value) => ({ value, label: value }));
 }
 
-function elicitationFields(elicitation: PendingElicitationRecord) {
+function _elicitationFields(elicitation: PendingElicitationRecord) {
   const properties = elicitation.requestedSchema?.properties ?? {};
   const entries = Object.entries(properties);
   if (entries.length === 0) {
@@ -549,7 +563,7 @@ function ElicitationWarning({
   pendingElicitations: PendingElicitationRecord[];
   onRespondElicitation?: WorkerCardProps["onRespondElicitation"];
 }) {
-  const { elicitationOpenByWorkerId, elicitationDraftsByKey } = useManagerSnapshot(workerCardManager);
+  const { elicitationOpenByWorkerId } = useManagerSnapshot(workerCardManager);
   const open = Boolean(elicitationOpenByWorkerId[workerId]);
   const popupRef = useRef<HTMLDivElement>(null);
   const current = pendingElicitations[0];
@@ -574,24 +588,6 @@ function ElicitationWarning({
     return null;
   }
 
-  const fields = elicitationFields(current);
-  const draftPrefix = `${workerId}:${current.requestId}:`;
-  const content = Object.fromEntries(fields.map((field) => [
-    field.name,
-    elicitationDraftsByKey[`${draftPrefix}${field.name}`] ?? "",
-  ]));
-  const missingRequired = fields.some((field) => field.required && !String(content[field.name] ?? "").trim());
-  const submit = (action: "accept" | "decline" | "cancel") => {
-    onRespondElicitation?.({
-      workerId,
-      requestId: current.requestId,
-      action,
-      ...(action === "accept" ? { content } : {}),
-    });
-    workerCardManager.clearElicitationDrafts(draftPrefix);
-    workerCardManager.closeElicitation(workerId);
-  };
-
   return (
     <div ref={popupRef} className="relative">
       <button
@@ -609,61 +605,15 @@ function ElicitationWarning({
         ) : null}
       </button>
       {open ? (
-        <div className="absolute right-0 top-10 z-30 w-96 max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-popover p-3.5 text-popover-foreground shadow-[0_22px_70px_rgba(15,23,42,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#131517] dark:shadow-[0_22px_70px_rgba(0,0,0,0.45)]">
-          <div className="mb-1 text-[11px] font-medium text-foreground dark:text-zinc-100">{t("worker.elicitation.title")}</div>
-          <div className="text-[11px] leading-5 text-muted-foreground dark:text-zinc-400">{current.message || t("worker.elicitation.defaultQuestion")}</div>
-          <div className="mt-3 space-y-2.5">
-            {fields.map((field) => {
-              const draftKey = `${draftPrefix}${field.name}`;
-              const value = elicitationDraftsByKey[draftKey] ?? "";
-              return (
-                <label key={field.name} className="block space-y-1.5 text-[11px]">
-                  <span className="block font-medium text-foreground dark:text-zinc-100">{field.label}</span>
-                  {field.description ? (
-                    <span className="block text-[10.5px] leading-4 text-muted-foreground dark:text-zinc-500">{field.description}</span>
-                  ) : null}
-                  {field.options.length > 0 ? (
-                    <select
-                      className="h-8 w-full rounded-md border border-border bg-background px-2 text-[11px] text-foreground outline-none focus:border-primary"
-                      value={value}
-                      onChange={(event) => workerCardManager.setElicitationDraft(draftKey, event.target.value)}
-                    >
-                      <option value="">{t("worker.elicitation.selectPlaceholder")}</option>
-                      {field.options.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      className="h-8 w-full rounded-md border border-border bg-background px-2 text-[11px] text-foreground outline-none focus:border-primary"
-                      value={value}
-                      placeholder={t("worker.elicitation.inputPlaceholder")}
-                      onChange={(event) => workerCardManager.setElicitationDraft(draftKey, event.target.value)}
-                    />
-                  )}
-                </label>
-              );
-            })}
-          </div>
-          <div className="mt-3 flex justify-end gap-2">
-            <button
-              type="button"
-              className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] font-medium text-muted-foreground hover:text-foreground"
-              onClick={() => submit("decline")}
-            >
-              <X className="h-3 w-3" />
-              {t("worker.elicitation.skip")}
-            </button>
-            <button
-              type="button"
-              className="inline-flex h-7 items-center gap-1 rounded-md bg-primary px-2 text-[11px] font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={!onRespondElicitation || missingRequired}
-              onClick={() => submit("accept")}
-            >
-              <Check className="h-3 w-3" />
-              {t("worker.elicitation.submit")}
-            </button>
-          </div>
+        <div className="absolute right-0 top-10 z-30 w-[30rem] max-w-[calc(100vw-2rem)] text-popover-foreground shadow-[0_22px_70px_rgba(15,23,42,0.16)] dark:shadow-[0_22px_70px_rgba(0,0,0,0.45)]">
+          <InlineElicitation
+            workerId={workerId}
+            elicitation={current}
+            onRespond={onRespondElicitation ? async (input) => {
+              await onRespondElicitation(input);
+              workerCardManager.closeElicitation(workerId);
+            } : undefined}
+          />
         </div>
       ) : null}
     </div>

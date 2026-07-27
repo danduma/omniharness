@@ -58,7 +58,12 @@ export function FolderPickerDialog({
         <DialogHeader className="shrink-0 gap-3 border-b bg-muted/20 p-4">
           <div className="min-w-0">
             <DialogTitle>{t("folder.picker.title")}</DialogTitle>
-            <div className="mt-1 truncate text-xs text-muted-foreground" title={data?.current || t("folder.picker.loading")}>
+            <div
+              className="mt-1 truncate text-xs text-muted-foreground"
+              data-testid="folder-picker-current-path"
+              data-parent-path={data?.parent || ""}
+              title={data?.current || t("folder.picker.loading")}
+            >
               {data?.current || t("folder.picker.loading")}
             </div>
           </div>
@@ -86,8 +91,8 @@ export function FolderPickerDialog({
           {data && (
             <div className="space-y-1">
               {data.parent && data.parent !== data.current && (
-                <Button 
-                  variant="ghost" 
+                <Button
+                  variant="ghost"
                   className="w-full justify-start h-8 px-2 text-sm text-muted-foreground"
                   onClick={() => handleNavigate(data.parent)}
                   >
@@ -96,9 +101,10 @@ export function FolderPickerDialog({
               )}
               {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
               {directories.map((dir: any) => (
-                <Button 
-                  key={dir.path}
-                  variant="ghost" 
+                 <Button
+                   key={dir.path}
+                   data-folder-path={dir.path}
+                  variant="ghost"
                   className="w-full justify-start h-8 px-2 text-sm truncate"
                   onClick={() => handleNavigate(dir.path)}
                 >

@@ -1,4 +1,5 @@
 import { join } from "path";
+import { homedir } from "os";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { accounts } from "@/server/db/schema";
@@ -64,6 +65,17 @@ function envKeyFromAuthRef(authRef: string) {
 
 function emptyCredentialProfile(): CredentialProfileResolution {
   return { env: {}, unset: [], status: null };
+}
+
+function localSessionUnsetKeys(workerType: string) {
+  if (workerType !== "claude") return [];
+  return ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN"];
+}
+
+function localSessionEnv(workerType: string, env: EnvLike): Record<string, string> {
+  if (workerType !== "claude") return {};
+  const home = env.HOME?.trim() || homedir();
+  return { CLAUDE_CONFIG_DIR: join(home, ".claude") };
 }
 
 export async function resolveAccountCredentials(input: {
@@ -134,6 +146,30 @@ export async function resolveAccountCredentials(input: {
     };
   }
 
+  if (account.authMode === "credential_command") {
+    const commandKey = envKeyFromAuthRef(account.authRef);
+    if (!commandKey || !input.env[commandKey]?.trim()) {
+      throw new RuntimeHttpError(400, `Account "${account.id}" credential command is not configured.`);
+    }
+    const credentialProfile = await resolveCredentialProfile({
+      type: input.workerType,
+      cwd: input.cwd,
+      env: input.env,
+      requestedProfile: null,
+      configuredProfile: null,
+    });
+    if (credentialProfile.status?.source !== "command") {
+      throw new RuntimeHttpError(400, `Account "${account.id}" credential command did not return credentials.`);
+    }
+    return {
+      account,
+      env: credentialProfile.env,
+      unset: credentialProfile.unset,
+      credentialProfile,
+      allowGlobalCredentialBridge: false,
+    };
+  }
+
   if (account.authMode === "api_key") {
     const envKey = envKeyFromAuthRef(account.authRef);
     const value = envKey ? input.env[envKey]?.trim() : "";
@@ -153,10 +189,10 @@ export async function resolveAccountCredentials(input: {
     const credentialProfile = emptyCredentialProfile();
     return {
       account,
-      env: credentialProfile.env,
-      unset: credentialProfile.unset,
+      env: account.authMode === "local_session" ? localSessionEnv(input.workerType, input.env) : credentialProfile.env,
+      unset: account.authMode === "local_session" ? localSessionUnsetKeys(input.workerType) : credentialProfile.unset,
       credentialProfile,
-      allowGlobalCredentialBridge: true,
+      allowGlobalCredentialBridge: account.authMode !== "local_session",
     };
   }
 

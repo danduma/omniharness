@@ -19,10 +19,19 @@ import {
   executionEvents,
   creditEvents,
   accounts,
+  recoveryIncidents,
   settings,
+  supervisorScheduledWakes,
   workerAssignments,
+  workerCredentialAllocations,
+  workerTokenUsage,
 } from "@/server/db/schema";
 import { PATCH, DELETE, POST } from "@/app/api/runs/[id]/route";
+import {
+  isConversationDeletionRequested,
+  trackConversationBackgroundTask,
+  waitForConversationBackgroundTasksForTests,
+} from "@/server/conversations/worker-turn-gate";
 
 const {
   mockAskAgent,
@@ -306,6 +315,44 @@ describe("POST /api/runs/[id]", () => {
     expect(marker?.lastReadAt).toEqual(completedAt);
   });
 
+  it("does not emit another read event when the persisted marker is already current", async () => {
+    __resetNamedEventsForTests();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const createdAt = new Date("2026-07-11T10:00:00.000Z");
+    const awaitingAt = new Date("2026-07-11T10:05:00.000Z");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/idempotent-mark-read.md",
+      status: "running",
+      createdAt,
+      updatedAt: awaitingAt,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Idempotent mark read",
+      status: "awaiting_user",
+      createdAt,
+      updatedAt: awaitingAt,
+    });
+
+    const markRead = () => POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "mark_read" }),
+    }), { params: Promise.resolve({ id: runId }) });
+
+    expect((await markRead()).status).toBe(200);
+    expect((await markRead()).status).toBe(200);
+
+    const readEvents = getNamedEventsSince(0).events.filter((entry) => (
+      entry.event.kind === "conversation.read" && entry.event.runId === runId
+    ));
+    expect(readEvents).toHaveLength(1);
+  });
+
   it("archives a conversation without deleting its persisted records", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -530,6 +577,162 @@ describe("POST /api/runs/[id]", () => {
     expect(mockCancelSupervisorWake).not.toHaveBeenCalled();
     expect(mockStopRunObserver).not.toHaveBeenCalled();
     expect(stopEvents.filter((event) => event.eventType === "supervisor_stopped")).toHaveLength(1);
+  });
+
+  it("stops a quota-waiting run instead of treating it as already settled", async () => {
+    __resetNamedEventsForTests();
+    mockCancelAgent.mockClear();
+    mockStopRunObserver.mockClear();
+    mockCancelSupervisorWake.mockClear();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const incidentId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/stop-quota-wait.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Stop quota wait",
+      status: "quota_waiting",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "cred-exhausted",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(recoveryIncidents).values({
+      id: incidentId,
+      runId,
+      workerId,
+      kind: "quota_exhausted",
+      status: "open",
+      details: JSON.stringify({ recoveryState: "quota_waiting", resumeAt: new Date(now.getTime() + 60_000).toISOString() }),
+      detectedAt: now,
+      updatedAt: now,
+    });
+    await db.insert(supervisorScheduledWakes).values({
+      runId,
+      wakeAt: new Date(now.getTime() + 60_000),
+      reason: "quota_wait",
+      source: "test",
+      incidentId,
+      details: JSON.stringify({ recoveryState: "quota_waiting" }),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "stop_supervisor" }),
+    }), { params: Promise.resolve({ id: runId }) });
+    const payload = await response.json();
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const updatedIncident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.id, incidentId)).get();
+    const scheduledWake = await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get();
+    const stopEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    const namedEvents = getNamedEventsSince(0).events.map((entry) => entry.event);
+
+    expect(response.status).toBe(200);
+    expect(payload).toMatchObject({ ok: true, runId });
+    expect(payload).not.toHaveProperty("alreadyStopped");
+    expect(updatedRun?.status).toBe("cancelled");
+    expect(updatedIncident?.status).toBe("resolved");
+    expect(updatedIncident?.resolvedAt).toBeInstanceOf(Date);
+    expect(scheduledWake).toBeUndefined();
+    expect(mockCancelSupervisorWake).toHaveBeenCalledWith(runId);
+    expect(mockStopRunObserver).toHaveBeenCalledWith(runId);
+    expect(mockCancelAgent).not.toHaveBeenCalled();
+    expect(stopEvents.some((event) => event.eventType === "supervisor_stopped")).toBe(true);
+    expect(namedEvents).toContainEqual({
+      kind: "recovery.resolved",
+      runId,
+      incidentId,
+    });
+  });
+
+  it("keeps a direct quota-waiting conversation stopped after stop_worker", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const incidentId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/stop-direct-quota-wait.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Stop direct quota wait",
+      status: "quota_waiting",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "cred-exhausted",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(recoveryIncidents).values({
+      id: incidentId,
+      runId,
+      workerId,
+      kind: "quota_exhausted",
+      status: "open",
+      details: JSON.stringify({ resumeAt: new Date(now.getTime() + 60_000).toISOString() }),
+      detectedAt: now,
+      updatedAt: now,
+    });
+    await db.insert(supervisorScheduledWakes).values({
+      runId,
+      wakeAt: new Date(now.getTime() + 60_000),
+      reason: "quota_wait",
+      source: "test",
+      incidentId,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "stop_worker", workerId }),
+    }), { params: Promise.resolve({ id: runId }) });
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const updatedIncident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.id, incidentId)).get();
+    const scheduledWake = await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get();
+
+    expect(response.status).toBe(200);
+    expect(updatedRun?.status).toBe("cancelled");
+    expect(updatedWorker?.status).toBe("cancelled");
+    expect(updatedIncident?.status).toBe("resolved");
+    expect(scheduledWake).toBeUndefined();
   });
 
   it("stops a single direct worker without stopping the supervisor", async () => {
@@ -788,6 +991,8 @@ describe("POST /api/runs/[id]", () => {
       status: "working",
       cwd: process.cwd(),
       outputLog: "",
+      currentText: "Still streaming stale work",
+      lastText: "",
       createdAt: now,
       updatedAt: now,
     });
@@ -813,6 +1018,8 @@ describe("POST /api/runs/[id]", () => {
     expect(mockCancelAgent).toHaveBeenCalledWith(targetWorkerId);
     expect(updatedRun?.status).toBe("cancelled");
     expect(updatedWorker?.status).toBe("cancelled");
+    expect(updatedWorker?.currentText).toBe("");
+    expect(updatedWorker?.lastText).toBe("Still streaming stale work");
     expect(stopEvent?.eventType).toBe("worker_cancelled");
     expect(JSON.parse(stopEvent?.details || "{}")).toMatchObject({ runCancelled: true });
   });
@@ -1842,6 +2049,200 @@ describe("POST /api/runs/[id]", () => {
     }));
   });
 
+  it("does not fail direct recovery when the saved worker is already active", async () => {
+    mockAskAgent.mockClear();
+    mockGetAgent.mockClear();
+    mockSpawnAgent.mockClear();
+    mockStartSupervisorRun.mockClear();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const userMessageId = randomUUID();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: path.join("vibes", "ad-hoc", `${randomUUID()}.md`),
+      status: "failed",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Already active recovery",
+      projectPath: "/workspace/app",
+      status: "failed",
+      lastError: `Ask failed: Agent not found: ${workerId}`,
+      failedAt: new Date("2026-05-10T10:55:35Z"),
+      createdAt: new Date("2026-05-10T10:55:30Z"),
+      updatedAt: new Date("2026-05-10T10:55:35Z"),
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "error",
+      cwd: "/workspace/app",
+      outputLog: "",
+      bridgeSessionId: "saved-session",
+      bridgeSessionMode: "full-access",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(messages).values({
+      id: userMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "continue the walkthrough",
+      createdAt: new Date("2026-05-10T10:55:32Z"),
+    });
+
+    mockSpawnAgent.mockRejectedValueOnce(new Error(`Agent already exists: ${workerId}`));
+    mockGetAgent.mockResolvedValueOnce({
+      name: workerId,
+      type: "claude",
+      state: "working",
+      cwd: "/workspace/app",
+      sessionId: "saved-session",
+      sessionMode: "full-access",
+      currentText: "Already working",
+      lastText: "",
+      outputEntries: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
+    }), { params: Promise.resolve({ id: runId }) });
+    const payload = await response.json();
+    const storedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const storedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+
+    expect(response.status).toBe(200);
+    expect(payload).toMatchObject({ ok: true, runId });
+    expect(mockAskAgent).not.toHaveBeenCalled();
+    expect(storedRun?.status).toBe("running");
+    expect(storedRun?.lastError).toBeNull();
+    expect(storedRun?.failedAt).toBeNull();
+    expect(storedWorker?.status).toBe("working");
+    expect(events.some((event) => event.eventType === "direct_retry_worker_already_active")).toBe(true);
+  });
+
+  it("parks direct saved-session recovery when Claude hits its session limit", async () => {
+    vi.useFakeTimers();
+    const localNow = new Date(2026, 6, 5, 16, 0, 0, 0);
+    vi.setSystemTime(localNow);
+    try {
+      mockAskAgent.mockClear();
+      mockCancelAgent.mockClear();
+      mockGetAgent.mockClear();
+      mockSpawnAgent.mockClear();
+      mockStartSupervisorRun.mockClear();
+      const planId = randomUUID();
+      const runId = randomUUID();
+      const workerId = `${runId}-worker-1`;
+      const userMessageId = randomUUID();
+
+      await db.insert(plans).values({
+        id: planId,
+        path: path.join("vibes", "ad-hoc", `${randomUUID()}.md`),
+        status: "running",
+        createdAt: localNow,
+        updatedAt: localNow,
+      });
+
+      await db.insert(runs).values({
+        id: runId,
+        planId,
+        mode: "direct",
+        title: "Direct Claude quota resume",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "claude",
+        preferredWorkerModel: "claude-sonnet-5",
+        preferredWorkerEffort: "high",
+        status: "failed",
+        lastError: `Ask failed: Agent not found: ${workerId}`,
+        failedAt: localNow,
+        createdAt: localNow,
+        updatedAt: localNow,
+      });
+
+      await db.insert(workers).values({
+        id: workerId,
+        runId,
+        type: "claude",
+        status: "error",
+        cwd: "/workspace/app",
+        bridgeSessionId: "saved-session",
+        bridgeSessionMode: "direct",
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "Previous answer.",
+        createdAt: localNow,
+        updatedAt: localNow,
+      });
+
+      await db.insert(messages).values({
+        id: userMessageId,
+        runId,
+        role: "user",
+        kind: "checkpoint",
+        content: "continue the walkthrough",
+        createdAt: localNow,
+      });
+
+      mockSpawnAgent.mockResolvedValueOnce({
+        name: workerId,
+        type: "claude",
+        state: "idle",
+        cwd: "/workspace/app",
+        sessionId: "resumed-session",
+        sessionMode: "direct",
+        lastText: "Previous answer.",
+        currentText: "",
+        outputEntries: [],
+        stderrBuffer: [],
+        stopReason: null,
+      });
+      mockAskAgent.mockRejectedValueOnce(Object.assign(
+        new Error("Ask failed: Internal error: You've hit your session limit · resets 4:50pm (Europe/Madrid)"),
+        { data: { errorKind: "rate_limit" } },
+      ));
+
+      const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+        method: "POST",
+        body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
+      }), { params: Promise.resolve({ id: runId }) });
+      const payload = await response.json();
+
+      const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+      const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+      const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
+      const wake = await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get();
+      const details = incident?.details ? JSON.parse(incident.details) as Record<string, unknown> : {};
+
+      expect(response.status).toBe(200);
+      expect(payload).toMatchObject({ ok: true, runId, recoveryState: "quota_waiting" });
+      expect(updatedRun?.status).toBe("quota_waiting");
+      expect(updatedRun?.lastError).toBeNull();
+      expect(updatedWorker?.status).toBe("cred-exhausted");
+      expect(incident).toMatchObject({ kind: "quota_exhausted", status: "open" });
+      expect(details.recommendedAction).toBe("wait_for_quota_reset");
+      expect(details.quotaResetSource).toBe("time-of-day");
+      expect(wake?.wakeAt.getHours()).toBe(16);
+      expect(wake?.wakeAt.getMinutes()).toBe(50);
+      expect(wake?.wakeAt.getSeconds()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("retries a direct conversation with a fresh worker when saved session metadata is missing", async () => {
     __resetNamedEventsForTests();
     mockAskAgent.mockClear();
@@ -2668,19 +3069,69 @@ describe("DELETE /api/runs/[id]", () => {
       createdAt: new Date(),
     });
 
+    await db.insert(workerCredentialAllocations).values({
+      id: randomUUID(),
+      runId,
+      workerId,
+      workerType: "codex",
+      accountId,
+      strategy: "manual",
+      selectionReason: "delete regression test",
+      explicit: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await db.insert(workerTokenUsage).values({
+      id: randomUUID(),
+      runId,
+      workerId,
+      workerType: "codex",
+      accountId,
+      model: "gpt-5",
+      inputTokens: 10,
+      outputTokens: 5,
+      occurredAt: new Date(),
+      createdAt: new Date(),
+    });
+
+    let finishBackgroundTurn!: () => void;
+    const backgroundTurn = new Promise<void>((resolve) => {
+      finishBackgroundTurn = resolve;
+    });
+    trackConversationBackgroundTask(backgroundTurn, { runId });
+
     const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
       method: "DELETE",
     });
 
-    const response = await DELETE(request, { params: Promise.resolve({ id: runId }) });
+    let deletionSettled = false;
+    const responsePromise = DELETE(request, { params: Promise.resolve({ id: runId }) }).then((response) => {
+      deletionSettled = true;
+      return response;
+    });
+
+    await vi.waitFor(() => {
+      expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
+    });
+    expect(deletionSettled).toBe(false);
+    expect(await db.select().from(runs).where(eq(runs.id, runId)).get()).toBeDefined();
+    expect(isConversationDeletionRequested(runId)).toBe(true);
+
+    finishBackgroundTurn();
+    const response = await responsePromise;
     expect(response.status).toBe(200);
     expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
+    await waitForConversationBackgroundTasksForTests();
+    expect(isConversationDeletionRequested(runId)).toBe(false);
 
     expect(await db.select().from(runs).where(eq(runs.id, runId)).get()).toBeUndefined();
     expect(await db.select().from(plans).where(eq(plans.id, planId)).get()).toBeUndefined();
     expect(await db.select().from(workers).where(eq(workers.id, workerId)).get()).toBeUndefined();
     expect(await db.select().from(planItems).where(eq(planItems.id, itemId)).get()).toBeUndefined();
     expect(await db.select().from(workerAssignments).where(eq(workerAssignments.runId, runId))).toHaveLength(0);
+    expect(await db.select().from(workerCredentialAllocations).where(eq(workerCredentialAllocations.runId, runId))).toHaveLength(0);
+    expect(await db.select().from(workerTokenUsage).where(eq(workerTokenUsage.runId, runId))).toHaveLength(0);
     expect(fs.existsSync(adHocAbsolutePath)).toBe(false);
   });
 });

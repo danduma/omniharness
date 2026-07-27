@@ -233,4 +233,31 @@ describe("shouldShowDirectWorkerStreamInitialLoading", () => {
       selectedRunIsTerminal: true,
     })).toBe(5_000);
   });
+
+
+  it("drops live entries the transcript already hid as a discarded branch", () => {
+    // The transcript filters superseded seqs server-side; the live worker
+    // stream is served straight off the JSONL, so a rewound turn would sneak
+    // back in through the merge without this filter.
+    const survivingEntry = { ...entry(4), text: "answer after the rewind", workerId: "worker-1" };
+    const discardedEntry = { ...entry(2), text: "answer from the discarded attempt", workerId: "worker-1" };
+
+    expect(selectDirectConversationEntries({
+      transcriptEntries: [{ ...entry(1), text: "before the rewind", workerId: "worker-1" }],
+      directWorkerEntries: [discardedEntry, survivingEntry],
+      supersededSeqRanges: [{ from: 2, through: 3 }],
+    })).toEqual([
+      { ...entry(1), text: "before the rewind", workerId: "worker-1" },
+      survivingEntry,
+    ]);
+  });
+
+  it("keeps every live entry when nothing was rewound", () => {
+    const entries = [entry(1), entry(2)];
+    expect(selectDirectConversationEntries({
+      transcriptEntries: [],
+      directWorkerEntries: entries,
+      supersededSeqRanges: [],
+    })).toEqual(entries);
+  });
 });

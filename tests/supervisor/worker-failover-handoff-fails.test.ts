@@ -16,7 +16,8 @@ vi.mock("@/server/bridge-client", () => ({
   getAgent: mockGetAgent,
 }));
 
-vi.mock("child_process", () => ({
+vi.mock("child_process", async (importOriginal) => ({
+  ...await importOriginal<typeof import("child_process")>(),
   execFileSync: mockExecFileSync,
 }));
 

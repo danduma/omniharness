@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { EventStreamState, RunRecord } from "@/app/home/types";
+import type { EventStreamState, ExecutionEventRecord, RunRecord } from "@/app/home/types";
 
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
@@ -43,6 +43,19 @@ function createRun(overrides: Partial<RunRecord> = {}): RunRecord {
   };
 }
 
+function createExecutionEvent(overrides: Partial<ExecutionEventRecord> = {}): ExecutionEventRecord {
+  return {
+    id: "event-1",
+    runId: "run-1",
+    workerId: "run-1-worker-1",
+    planItemId: null,
+    eventType: "worker_session_resumed",
+    details: JSON.stringify({ summary: "Recovered worker." }),
+    createdAt: "2026-05-13T00:02:00.000Z",
+    ...overrides,
+  };
+}
+
 function useRenderViewModel(
   state: EventStreamState,
   workerCatalogData: Parameters<typeof useHomeViewModel>[0]["workerCatalogData"] = undefined,
@@ -62,8 +75,9 @@ function useRenderViewModel(
 }
 
 describe("useHomeViewModel", () => {
-  it("offers Claude Fable 5 from the frontend fallback worker model options", () => {
-    expect(getWorkerModelOptions(undefined, "claude").slice(0, 2)).toEqual([
+  it("offers Claude Opus 5 as the frontend fallback default", () => {
+    expect(getWorkerModelOptions(undefined, "claude").slice(0, 3)).toEqual([
+      { value: "claude-opus-5", label: "Claude Opus 5" },
       { value: "claude-fable-5", label: "Claude Fable 5" },
       { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
     ]);
@@ -224,6 +238,43 @@ describe("useHomeViewModel", () => {
       action: "Run failed",
       message: 'Spawn failed: failed to start gemini agent via gemini: {"code":-32000,"message":"Gemini API key is missing or not configured."}',
     });
+  });
+
+  it("does not show a stale failed-run notice after newer recovery success", () => {
+    const viewModel = useRenderViewModel(createState({
+      runs: [createRun({
+        mode: "direct",
+        status: "failed",
+        lastError: "Ask failed: Agent not found: run-1-worker-2",
+        failedAt: "2026-05-13T00:01:00.000Z",
+        updatedAt: "2026-05-13T00:01:00.000Z",
+      })],
+      plans: [{ id: "plan-1", path: "/workspace/project" }],
+      messages: [{
+        id: "message-1",
+        runId: "run-1",
+        role: "user",
+        kind: "checkpoint",
+        content: "Do the thing",
+        createdAt: "2026-05-13T00:00:00.000Z",
+      }],
+      executionEvents: [
+        createExecutionEvent({
+          id: "event-success",
+          eventType: "auto_commit_created",
+          createdAt: "2026-05-13T00:03:00.000Z",
+          details: JSON.stringify({ summary: "Auto-commit created after recovery." }),
+        }),
+        createExecutionEvent({
+          id: "event-failed",
+          eventType: "run_failed",
+          createdAt: "2026-05-13T00:01:00.000Z",
+          details: JSON.stringify({ summary: "Ask failed: Agent not found: run-1-worker-2" }),
+        }),
+      ],
+    }));
+
+    expect(viewModel.conversationFailure).toBeNull();
   });
 
   it("does not show stale stuck-worker recovery once the supervisor is awaiting input", () => {

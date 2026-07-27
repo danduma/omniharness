@@ -18,6 +18,7 @@ import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { db } from "@/server/db";
 import { runs, workers } from "@/server/db/schema";
+import { parseSupersededSeqRanges, type SupersededSeqRange, withoutSupersededEntries } from "@/lib/superseded-entries";
 import { readWorkerEntriesBefore, readWorkerEntriesSince, readWorkerEntriesTail } from "@/server/workers/output-store";
 import type { WorkerEntry } from "@/server/workers/entries-types";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
@@ -164,7 +165,7 @@ export const handleConversationTranscriptRequest: OmniHttpHandler = async (reque
     }
 
     const runWorkers = await db
-      .select({ id: workers.id, createdAt: workers.createdAt })
+      .select({ id: workers.id, createdAt: workers.createdAt, supersededSeqRanges: workers.supersededSeqRanges })
       .from(workers)
       .where(eq(workers.runId, runId));
     probe.mark("workers");
@@ -182,6 +183,16 @@ export const handleConversationTranscriptRequest: OmniHttpHandler = async (reque
       return a.id.localeCompare(b.id);
     });
     sortedWorkers.forEach((worker, index) => workerCreationOrder.set(worker.id, index));
+
+    // Entries a retry/edit rewound past stay on disk but must not re-enter the
+    // conversation: they are the branch the user discarded, and their copy of
+    // the rewound user message would render a second time above the new one.
+    const supersededByWorker = new Map<string, SupersededSeqRange[]>();
+    for (const worker of sortedWorkers) {
+      supersededByWorker.set(worker.id, parseSupersededSeqRanges(worker.supersededSeqRanges));
+    }
+    const visibleEntriesFor = (workerId: string, entries: WorkerEntry[]) =>
+      withoutSupersededEntries(entries, supersededByWorker.get(workerId) ?? []);
 
     const url = new URL(request.url);
     const limit = parseLimit(url.searchParams.get("limit")) ?? DEFAULT_TRANSCRIPT_LIMIT;
@@ -211,7 +222,7 @@ export const handleConversationTranscriptRequest: OmniHttpHandler = async (reque
         if (workerHasOlder) {
           hasOlder = true;
         }
-        for (const entry of entries) {
+        for (const entry of visibleEntriesFor(workerId, entries)) {
           merged.push({ ...entry, workerId });
         }
         const earliestSeq = earliestReturnedSeq(entries);
@@ -265,7 +276,7 @@ export const handleConversationTranscriptRequest: OmniHttpHandler = async (reque
         if (workerHasOlder) {
           hasOlder = true;
         }
-        for (const entry of entries) {
+        for (const entry of visibleEntriesFor(workerId, entries)) {
           merged.push({ ...entry, workerId });
         }
       }
@@ -293,7 +304,7 @@ export const handleConversationTranscriptRequest: OmniHttpHandler = async (reque
     const merged: ConversationTranscriptEntry[] = [];
     const nextCursors: Record<string, number> = { ...incomingToken.cursors };
     for (const { workerId, entries, latestSeq } of perWorkerResults) {
-      for (const entry of entries) {
+      for (const entry of visibleEntriesFor(workerId, entries)) {
         merged.push({ ...entry, workerId });
       }
       // readWorkerEntriesSince may cap a large forward page. Only

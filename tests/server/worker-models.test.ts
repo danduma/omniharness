@@ -1,7 +1,28 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildWorkerModelCatalog, WorkerModelCatalogManager } from "@/server/worker-models";
+import { buildWorkerModelCatalog, mergeClaudeGatewayModelsIntoCatalog, WorkerModelCatalogManager } from "@/server/worker-models";
 
 describe("worker model catalog", () => {
+  it("adds encoded gateway models after native Claude models without duplicates", async () => {
+    const catalog = await buildWorkerModelCatalog({ runCommand: async () => "" });
+    const merged = mergeClaudeGatewayModelsIntoCatalog(catalog, {
+      custom: [
+        { id: "gpt-5.6-sol", label: "GPT-5.6 SOL" },
+        { id: "team/custom", label: "Team Custom" },
+      ],
+      discovered: [
+        { id: "gpt-5.6-sol", label: "Duplicate" },
+        { id: "new/model" },
+      ],
+    });
+    expect(merged.claude.slice(0, catalog.claude.length)).toEqual(catalog.claude);
+    expect(merged.claude.slice(catalog.claude.length)).toEqual([
+      { value: "cliproxyapi:gpt-5.6-sol", label: "GPT-5.6 SOL" },
+      { value: "cliproxyapi:team/custom", label: "Team Custom" },
+      { value: "cliproxyapi:new/model", label: "new/model" },
+    ]);
+    expect(catalog.claude.some((model) => model.value.startsWith("cliproxyapi:"))).toBe(false);
+  });
+
   it("keeps hardcoded models and adds newly discovered Codex and OpenCode models", async () => {
     const catalog = await buildWorkerModelCatalog({
       runCommand: async (command, args) => {
@@ -43,12 +64,13 @@ describe("worker model catalog", () => {
     ]);
   });
 
-  it("offers Claude Fable 5 before older Claude Code options", async () => {
+  it("offers Claude Opus 5 as the default Claude Code model", async () => {
     const catalog = await buildWorkerModelCatalog({
       runCommand: async () => "",
     });
 
-    expect(catalog.claude.slice(0, 2)).toEqual([
+    expect(catalog.claude.slice(0, 3)).toEqual([
+      { value: "claude-opus-5", label: "Claude Opus 5" },
       { value: "claude-fable-5", label: "Claude Fable 5" },
       { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
     ]);

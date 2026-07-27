@@ -172,6 +172,9 @@ function ConversationComposerInner({
   return (
   <div className={cn("relative z-20 w-full shrink-0 bg-background p-3 sm:p-4", className)}>
     <form
+      data-selected-cli-harness={selectedCliAgent}
+      data-selected-worker-model={selectedModel}
+      data-selected-worker-effort={selectedEffort}
       onSubmit={(event) => {
         if (isStopButtonVisible) {
           event.preventDefault();

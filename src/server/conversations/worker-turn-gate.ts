@@ -5,6 +5,14 @@ import { workers } from "@/server/db/schema";
 const workerTurnChains = new Map<string, Promise<void>>();
 const conversationMutationChains = new Map<string, Promise<void>>();
 const backgroundTasks = new Set<Promise<void>>();
+const backgroundTasksByRunId = new Map<string, Set<Promise<void>>>();
+const conversationDeletionRequests = new Set<string>();
+const completedConversationDeletionRequests = new Set<string>();
+
+export function isWorkerTurnSupersededError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\bworker turn (?:was )?superseded by a newer worker turn\b/i.test(message);
+}
 
 function runOnChain<T>(
   chains: Map<string, Promise<void>>,
@@ -37,6 +45,20 @@ export async function readWorkerTurnGeneration(workerId: string): Promise<number
     .where(eq(workers.id, workerId))
     .get();
   return record?.turnGeneration ?? 0;
+}
+
+/**
+ * Capture a worker turn generation when the worker exists. A null result means
+ * the bridge request is not backed by a persisted conversation worker and
+ * therefore cannot participate in the database turn fence.
+ */
+export async function captureWorkerTurnGeneration(workerId: string): Promise<number | null> {
+  const record = await db
+    .select({ turnGeneration: workers.turnGeneration })
+    .from(workers)
+    .where(eq(workers.id, workerId))
+    .get();
+  return record?.turnGeneration ?? null;
 }
 
 /**
@@ -86,13 +108,71 @@ export function runConversationMutation<T>(runId: string, task: () => Promise<T>
   return runOnChain(conversationMutationChains, runId, task);
 }
 
-export function trackConversationBackgroundTask<T>(task: Promise<T>): Promise<T> {
+export function trackConversationBackgroundTask<T>(
+  task: Promise<T>,
+  options: { runId?: string } = {},
+): Promise<T> {
+  const runId = options.runId?.trim() || null;
   const tracked = task.then(() => undefined, () => undefined);
   backgroundTasks.add(tracked);
+  if (runId) {
+    const runTasks = backgroundTasksByRunId.get(runId) ?? new Set<Promise<void>>();
+    runTasks.add(tracked);
+    backgroundTasksByRunId.set(runId, runTasks);
+  }
   void tracked.finally(() => {
     backgroundTasks.delete(tracked);
+    if (runId) {
+      const runTasks = backgroundTasksByRunId.get(runId);
+      runTasks?.delete(tracked);
+      if (!runTasks || runTasks.size === 0) {
+        backgroundTasksByRunId.delete(runId);
+      }
+      if (completedConversationDeletionRequests.has(runId) && !backgroundTasksByRunId.has(runId)) {
+        completedConversationDeletionRequests.delete(runId);
+        conversationDeletionRequests.delete(runId);
+      }
+    }
   });
   return task;
+}
+
+export function requestConversationDeletion(runId: string): void {
+  completedConversationDeletionRequests.delete(runId);
+  conversationDeletionRequests.add(runId);
+}
+
+export function isConversationDeletionRequested(runId: string): boolean {
+  return conversationDeletionRequests.has(runId);
+}
+
+export function completeConversationDeletion(runId: string): void {
+  if (!backgroundTasksByRunId.has(runId)) {
+    conversationDeletionRequests.delete(runId);
+    completedConversationDeletionRequests.delete(runId);
+    return;
+  }
+  completedConversationDeletionRequests.add(runId);
+}
+
+export async function waitForConversationBackgroundTasks(
+  runId: string,
+  timeoutMs = 30_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while ((backgroundTasksByRunId.get(runId)?.size ?? 0) > 0) {
+    const remaining = deadline - Date.now();
+    const runTasks = Array.from(backgroundTasksByRunId.get(runId) ?? []);
+    if (remaining <= 0) {
+      throw new Error(
+        `Timed out waiting for ${runTasks.length} background task(s) for conversation ${runId}`,
+      );
+    }
+    await Promise.race([
+      Promise.all(runTasks),
+      new Promise((resolve) => setTimeout(resolve, Math.min(remaining, 25))),
+    ]);
+  }
 }
 
 export async function waitForConversationBackgroundTasksForTests(timeoutMs = 1_000): Promise<void> {
@@ -113,4 +193,7 @@ export function __resetWorkerTurnChainsForTests() {
   workerTurnChains.clear();
   conversationMutationChains.clear();
   backgroundTasks.clear();
+  backgroundTasksByRunId.clear();
+  conversationDeletionRequests.clear();
+  completedConversationDeletionRequests.clear();
 }

@@ -6,7 +6,7 @@ export default defineConfig({
   test: {
     environment: "node",
     setupFiles: ["./tests/setup.ts"],
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.{ts,tsx}"],
     exclude: ["tests/e2e/**"],
     // Lifecycle scenarios spawn subprocesses and assert against SSE
     // tails over real ports; the default 5s test timeout is too tight

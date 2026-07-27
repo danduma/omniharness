@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import { verify } from "@node-rs/argon2";
 import { promisify } from "util";
+import { isProcessAlive as isSharedProcessAlive } from "@/server/process-ownership";
 
 const execFileAsync = promisify(execFile);
 
@@ -278,12 +279,7 @@ export function createNodeRestartSystem(config: RestartControlConfig): RestartSy
       return [...pids];
     },
     isProcessAlive: async (pid) => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
+      return isSharedProcessAlive(pid);
     },
     readPidFile: async () => {
       try {

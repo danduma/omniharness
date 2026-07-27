@@ -13,6 +13,7 @@ overrides:
 
 allowBuilds:
   "@danduma/i18n": true
+  '@danduma/i18n@https://codeload.github.com/danduma/i18n/tar.gz/ab2a85dddd2e176b61bec18d55736dbdd151fe41': true
   better-sqlite3: true
   esbuild: true
   msw: true

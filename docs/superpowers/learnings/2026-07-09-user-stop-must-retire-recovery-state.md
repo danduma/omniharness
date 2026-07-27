@@ -1,0 +1,10 @@
+# User Stop Must Retire Recovery State
+
+**Date:** 2026-07-09
+**Context:** OmniHarness direct-conversation stop and delete lifecycle
+**Symptom:** A quota-waiting conversation changed back to an active state after the user stopped it, and deleting the same conversation failed with a worker foreign-key constraint.
+**Root Cause:** The stop route marked the run and worker as cancelled but left the open quota recovery incident and durable wake active, so live synchronization could restore `quota_waiting`. Even after those were retired, the synchronizer still allowed a late bridge snapshot from the cancelled turn to revive a direct run as `running`. The delete route removed workers before deleting `worker_credential_allocations` and `worker_token_usage` rows that referenced them.
+**Fix:** User-stop finalization now synchronously cancels durable wakes, clears the wake lease, resolves open recovery incidents with named events, and only then marks the run cancelled. Live synchronization treats user cancellation as authoritative and ignores late provider snapshots for cancelled runs. Conversation deletion now removes credential-allocation and token-usage rows before deleting workers.
+**Verification:** `pnpm exec vitest run tests/lifecycle/scenarios/quota-stop-terminal.test.ts` reproduces the late-live-snapshot race and passes after the fix. `pnpm exec vitest run tests/api/run-route.test.ts` passes the stop, repeated-stop, exact direct-worker stop, named-event, and dependent-record deletion regressions.
+**Prevention:** Treat recovery incidents, scheduled wakes, and leases as one owned lifecycle set. Terminal user actions must retire the whole set before publishing terminal state. Before deleting a parent row, enumerate every live foreign key to that parent and cover each dependent table in the route test.
+**Skill/Doc Updates:** The project lifecycle architecture document now states these terminal-stop and deletion invariants. The existing control-plane and client/server state skills already require explicit terminal states, named events, and dependency-aware deletes, so no general skill change was needed.

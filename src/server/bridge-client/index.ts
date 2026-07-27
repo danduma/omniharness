@@ -1,6 +1,12 @@
 import { isRecoverableConnectionSupervisorError, isTransientSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import type { AgentOutputEntry } from "@/lib/agent-output";
+import { prepareClaudeGatewayLaunch, type ClaudeGatewayCredentialSource } from "@/server/integrations/claude-model-gateway/worker-env";
+import {
+  captureWorkerTurnGeneration,
+  isWorkerTurnSupersededError,
+  isWorkerTurnGenerationCurrent,
+} from "@/server/conversations/worker-turn-gate";
 
 export const BRIDGE_URL = process.env.OMNIHARNESS_BRIDGE_URL?.trim() || "http://127.0.0.1:7800";
 const BRIDGE_CONNECTION_RESET_MAX_BACKOFF_MS = 15 * 60_000;
@@ -10,8 +16,12 @@ export interface AgentRecord {
   name: string;
   type: string;
   cwd: string;
+  additionalDirectories?: string[];
   state: string; // 'idle' | 'working' | 'stopped' | 'error'
   sessionId?: string | null;
+  protocolVersion?: string | number | null;
+  agentCapabilities?: Record<string, unknown> | null;
+  authMethods?: unknown[];
   requestedModel?: string | null;
   effectiveModel?: string | null;
   requestedEffort?: string | null;
@@ -50,6 +60,9 @@ export interface AgentRecord {
     requestedAt: string;
     sessionId?: string | null;
     toolCallId?: string | null;
+    mode?: "form" | "url" | null;
+    elicitationId?: string | null;
+    url?: string | null;
     message?: string | null;
     requestedSchema?: {
       type?: string;
@@ -137,11 +150,23 @@ function stripRepeatedActionPrefix(detail: string, action: string) {
 }
 
 function isNonRetryableBridgeFailureDetail(detail: string) {
-  return /\bAgent session did not include a session id\b/i.test(detail);
+  // `no_pending_*` means the runtime already resolved that request (the user
+  // answered from another surface, or the turn was cancelled). Retrying can
+  // only steal the *next* request's slot, and it delays the conflict the
+  // caller needs to see.
+  return /\bAgent session did not include a session id\b/i.test(detail)
+    || /\bno_pending_(?:elicitations|permissions)\b/i.test(detail);
 }
 
 function isAgentBusyError(error: unknown) {
   return /\bagent is busy\b/i.test(describeError(error));
+}
+
+function workerTurnSupersededError(name: string) {
+  return Object.assign(
+    new Error(`Worker turn superseded by a newer worker turn: ${name}`),
+    { code: "WORKER_TURN_SUPERSEDED", retryable: false },
+  );
 }
 
 function asString(value: unknown, fallback = "") {
@@ -219,6 +244,9 @@ function asPendingElicitations(value: unknown): AgentRecord["pendingElicitations
       requestedAt: asString(item.requestedAt),
       sessionId: typeof item.sessionId === "string" ? item.sessionId : null,
       toolCallId: typeof item.toolCallId === "string" ? item.toolCallId : null,
+      mode: (item.mode === "form" || item.mode === "url" ? item.mode : null) as "form" | "url" | null,
+      elicitationId: asNullableString(item.elicitationId),
+      url: asNullableString(item.url),
       message: typeof item.message === "string" ? item.message : null,
       requestedSchema:
         typeof item.requestedSchema === "object" && item.requestedSchema !== null
@@ -260,11 +288,13 @@ function normalizeModelForWorkerType(type: string, model?: string) {
   if (normalizedType === "codex") {
     if (normalizedModel.startsWith("openai/gpt-")) return normalizedModel.slice("openai/".length);
     if (normalizedModel === "anthropic/claude-sonnet-4") return "claude-sonnet-4";
+    if (normalizedModel === "anthropic/claude-sonnet-5") return "claude-sonnet-5";
   }
 
   if (normalizedType === "opencode") {
     if (normalizedModel.startsWith("gpt-")) return `openai/${normalizedModel}`;
     if (normalizedModel === "claude-sonnet-4") return "anthropic/claude-sonnet-4";
+    if (normalizedModel === "claude-sonnet-5") return "anthropic/claude-sonnet-5";
   }
 
   if (normalizedType === "gemini" && normalizedModel === "gemini-3") {
@@ -360,7 +390,15 @@ async function requestBridge<T>(path: string, init: RequestInit, action: string,
     const detail = describeError(error);
     const normalizedDetail = stripRepeatedActionPrefix(detail, action);
 
-    throw new Error(`${action} failed: ${normalizedDetail}`);
+    // Keep the bridge's HTTP status on the rethrown error. Dropping it turned
+    // every conflict (409 `no_pending_elicitations`) into an opaque 500 by the
+    // time it reached the browser, so the UI could not tell "this request is
+    // already resolved" apart from "the runtime broke".
+    const status = (error as { status?: unknown } | null)?.status;
+    throw Object.assign(
+      new Error(`${action} failed: ${normalizedDetail}`),
+      typeof status === "number" ? { status } : {},
+    );
   }
 }
 
@@ -516,13 +554,22 @@ export async function prewarmWorker(params: {
   accountId?: string | null;
   credentialProfile?: string | null;
   mcpServers?: BridgeMcpServer[];
+  credentialSource?: ClaudeGatewayCredentialSource;
 }) {
+  const gateway = await prepareClaudeGatewayLaunch(params);
+  const preparedParams = gateway ? {
+    ...params,
+    model: gateway.rawModel,
+    accountId: null,
+    credentialSource: gateway.credentialSource,
+    env: { ...(params.env ?? {}), ...gateway.environment },
+  } : params;
   return requestBridge<PrewarmWorkerResult>(
     "/prewarm/worker",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params),
+      body: JSON.stringify(preparedParams),
     },
     "Prewarm worker",
     { retryIndefinitely: false },
@@ -536,18 +583,25 @@ export async function spawnAgent(params: {
   mode?: string;
   env?: Record<string, string>;
   credentialProfile?: string;
-  accountId?: string;
+  accountId?: string | null;
   model?: string;
   effort?: string;
   skillRoots?: string[];
   mcpServers?: BridgeMcpServer[];
   resumeSessionId?: string;
+  credentialSource?: ClaudeGatewayCredentialSource;
 }) {
-  const normalizedModel = params.model ? normalizeModelForWorkerType(params.type, params.model) : undefined;
+  const gateway = await prepareClaudeGatewayLaunch({ ...params, workerId: params.name });
+  const normalizedModel = gateway?.rawModel ?? (params.model ? normalizeModelForWorkerType(params.type, params.model) : undefined);
   const { model: _model, ...restParams } = params;
   const normalizedParams = {
     ...restParams,
     ...(normalizedModel ? { model: normalizedModel } : {}),
+    ...(gateway ? {
+      accountId: null,
+      credentialSource: gateway.credentialSource,
+      env: { ...(params.env ?? {}), ...gateway.environment },
+    } : {}),
   };
 
   return requestBridge<AgentRecord>(
@@ -562,8 +616,22 @@ export async function spawnAgent(params: {
 }
 
 export async function askAgent(name: string, prompt: string, imageAttachments?: Array<{ path: string; mimeType: string }>) {
+  const capturedTurnGeneration = await captureWorkerTurnGeneration(name);
+  const assertTurnIsCurrent = async () => {
+    if (
+      capturedTurnGeneration !== null
+      && !(await isWorkerTurnGenerationCurrent(name, capturedTurnGeneration))
+    ) {
+      throw workerTurnSupersededError(name);
+    }
+  };
+
   try {
     return await retrySupervisorRequest(async () => {
+      // Cancellation closes the active ask stream. Before retrying what looks
+      // like a transient connection failure, confirm an interrupt has not
+      // advanced this persisted worker's generation.
+      await assertTurnIsCurrent();
       const path = `/agents/${name}/ask?stream=true`;
       const body: Record<string, unknown> = { prompt };
       if (imageAttachments?.length) {
@@ -589,7 +657,11 @@ export async function askAgent(name: string, prompt: string, imageAttachments?: 
           retryable: isAgentBusyError(detail) ? false : undefined,
         });
       }
-      return readAskStream(res);
+      const result = await readAskStream(res);
+      // Some runtimes acknowledge cancellation with a normal terminal frame
+      // instead of a connection error. Fence that late success as well.
+      await assertTurnIsCurrent();
+      return result;
     }, {
       maxDelayMs: BRIDGE_CONNECTION_RESET_MAX_BACKOFF_MS,
       operationLabel: `Ask /agents/${name}/ask`,
@@ -597,6 +669,9 @@ export async function askAgent(name: string, prompt: string, imageAttachments?: 
         isRecoverableConnectionSupervisorError(error) && !isBridgeConnectionRefused(error),
     });
   } catch (error) {
+    if (isWorkerTurnSupersededError(error)) {
+      throw error;
+    }
     if (isBridgeConnectionRefused(error)) {
       throw new Error(
         `OmniHarness agent runtime is not running at ${BRIDGE_URL}. Start it with pnpm dev or ` +
@@ -690,25 +765,25 @@ export async function getTask(taskId: string) {
   return requestBridge<TaskRecord>(`/tasks/${taskId}`, {}, "Get task");
 }
 
-export async function approvePermission(name: string, optionId?: string) {
+export async function approvePermission(name: string, optionId?: string, requestId?: number) {
   return requestBridge<unknown>(
     `/agents/${name}/approve`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(optionId ? { optionId } : {}),
+      body: JSON.stringify({ ...(optionId ? { optionId } : {}), ...(requestId !== undefined ? { requestId } : {}) }),
     },
     "Approve",
   );
 }
 
-export async function denyPermission(name: string, optionId?: string) {
+export async function denyPermission(name: string, optionId?: string, requestId?: number) {
   return requestBridge<unknown>(
     `/agents/${name}/deny`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(optionId ? { optionId } : {}),
+      body: JSON.stringify({ ...(optionId ? { optionId } : {}), ...(requestId !== undefined ? { requestId } : {}) }),
     },
     "Deny",
   );
@@ -719,13 +794,13 @@ export type ElicitationAnswer =
   | { action: "decline" }
   | { action: "cancel" };
 
-export async function respondElicitation(name: string, answer: ElicitationAnswer) {
+export async function respondElicitation(name: string, answer: ElicitationAnswer, requestId?: number) {
   return requestBridge<unknown>(
     `/agents/${name}/elicitation`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(answer),
+      body: JSON.stringify({ ...answer, ...(requestId !== undefined ? { requestId } : {}) }),
     },
     "Respond elicitation",
   );
@@ -740,5 +815,22 @@ export async function setWorkerMode(name: string, mode: string) {
       body: JSON.stringify({ mode }),
     },
     "Set mode",
+  );
+}
+
+export async function invokeAgentAcpMethod(
+  name: string,
+  method: string,
+  params: Record<string, unknown> = {},
+  notification = false,
+) {
+  return requestBridge<{ ok: true; result?: unknown }>(
+    `/agents/${name}/acp`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method, params, notification }),
+    },
+    "Invoke ACP method",
   );
 }

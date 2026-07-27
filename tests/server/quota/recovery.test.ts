@@ -134,6 +134,39 @@ describe("quota recovery handlers", () => {
     expect(wake?.wakeAt.getTime()).toBe(now.getTime() + 30 * 60_000 + 1_000);
   });
 
+  it("parks Claude session-limit errors with a scheduled auto-resume instead of failing the run", async () => {
+    const localNow = new Date(2026, 6, 5, 10, 0, 0, 0);
+    vi.setSystemTime(localNow);
+    const runId = await insertRun();
+    const workerId = await insertWorker(runId);
+
+    const result = await handleWorkerQuotaExhaustion({
+      runId,
+      workerId,
+      text: "Internal error: You've hit your session limit · resets 10:40am (Europe/Madrid)",
+      provider: "claude",
+      now: localNow,
+    });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
+    const wake = await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get();
+    const details = incident?.details ? JSON.parse(incident.details) as Record<string, unknown> : {};
+
+    expect(result.state).toBe("quota_wait");
+    expect(run?.status).toBe("quota_waiting");
+    expect(run?.lastError).toBeNull();
+    expect(worker?.status).toBe("cred-exhausted");
+    expect(incident).toMatchObject({ kind: "quota_exhausted", status: "open" });
+    expect(details.recoveryState).toBe("quota_waiting");
+    expect(details.recommendedAction).toBe("wait_for_quota_reset");
+    expect(details.quotaResetSource).toBe("time-of-day");
+    expect(wake?.wakeAt.getHours()).toBe(10);
+    expect(wake?.wakeAt.getMinutes()).toBe(40);
+    expect(wake?.wakeAt.getSeconds()).toBe(1);
+  });
+
   it("moves quota without a parseable reset to needs_recovery instead of looping", async () => {
     const runId = await insertRun();
 

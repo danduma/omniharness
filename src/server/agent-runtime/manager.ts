@@ -4,9 +4,18 @@ import { mkdir, readFile, writeFile } from "fs/promises";
 import { request as httpRequest } from "http";
 import { request as httpsRequest } from "https";
 import { homedir } from "os";
-import { basename, dirname, join } from "path";
+import { basename, dirname, isAbsolute, join } from "path";
 import { Readable, Writable } from "stream";
 import * as acp from "@agentclientprotocol/sdk";
+import {
+  appendElicitationOutcomeEntry as appendExtractedElicitationOutcomeEntry,
+  appendPermissionOutcomeEntry as appendExtractedPermissionOutcomeEntry,
+  findAutoApprovePermissionOptionId as findExtractedAutoApprovePermissionOptionId,
+  findPermissionOptionId as findExtractedPermissionOptionId,
+  RuntimeClient as ExtractedRuntimeClient,
+} from "./acp/runtime-client";
+import { operationalClientCapabilities } from "./acp/capability-registry";
+import { invokeAgentRequest, sendAgentNotification } from "./acp/agent-methods";
 import { sanitizeAcpStream } from "./acp-stream-sanitizer";
 import { applyCodexBridgeEnv, buildCodexConfigArgs, shouldSetRequestedMode } from "./codex";
 import { buildGeminiArgs, isFullAccessAgentMode, resolveFullGeminiUuid } from "./gemini";
@@ -56,6 +65,9 @@ import {
   type SystemResourceSnapshotProvider,
 } from "./resource-admission";
 import { emitNamedEvent } from "@/server/events/named-events";
+import { validateClaudeGatewayRuntimeRequest } from "@/lib/claude-model-gateway";
+import { resolveClaudeSessionModel, type ClaudeSessionModelOption } from "@/lib/claude-session-model";
+import type { ResolvedAccountCredentials } from "@/server/accounts/account-resolver";
 
 const MAX_STDERR_LINES = 50;
 const ENDPOINT_TIMEOUT_MS = 750;
@@ -463,6 +475,42 @@ function asNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function findSessionConfigOption(options: unknown[], configId: string): Record<string, unknown> | null {
+  const normalizedId = configId.trim().toLowerCase();
+  for (const option of options) {
+    const record = asRecord(option);
+    if (asNonEmptyString(record?.id)?.toLowerCase() === normalizedId) {
+      return record;
+    }
+  }
+  return null;
+}
+
+function sessionConfigValue(options: unknown[], configId: string): string | null {
+  return asNonEmptyString(findSessionConfigOption(options, configId)?.currentValue);
+}
+
+/**
+ * Flatten a select config option's choices. The ACP adapter allows a choice to
+ * be a group (`{ name, options: [...] }`) instead of a leaf value.
+ */
+function sessionConfigChoices(option: Record<string, unknown> | null): ClaudeSessionModelOption[] {
+  const choices = Array.isArray(option?.options) ? option.options : [];
+  return choices.flatMap((choice) => {
+    const record = asRecord(choice);
+    if (!record) {
+      return [];
+    }
+    if (Array.isArray(record.options)) {
+      return sessionConfigChoices(record);
+    }
+    const value = asNonEmptyString(record.value);
+    return value
+      ? [{ value, name: asNonEmptyString(record.name), description: asNonEmptyString(record.description) }]
+      : [];
+  });
+}
+
 export function normalizeMcpServers(value: unknown, field: string): acp.McpServer[] {
   if (value == null) {
     return [];
@@ -476,8 +524,8 @@ export function normalizeMcpServers(value: unknown, field: string): acp.McpServe
     if (!record) {
       throw new RuntimeHttpError(400, `${field}[${index}] must be an object.`);
     }
-    if (record.type !== "stdio" && record.type !== "http" && record.type !== "sse") {
-      throw new RuntimeHttpError(400, `${field}[${index}].type must be stdio, http, or sse.`);
+    if (record.type !== "stdio" && record.type !== "http" && record.type !== "sse" && record.type !== "acp") {
+      throw new RuntimeHttpError(400, `${field}[${index}].type must be stdio, http, sse, or acp.`);
     }
     if (typeof record.name !== "string" || record.name.trim().length === 0) {
       throw new RuntimeHttpError(400, `${field}[${index}].name is required.`);
@@ -493,6 +541,18 @@ export function normalizeMcpServers(value: unknown, field: string): acp.McpServe
         command: record.command.trim(),
         args: asStringArray(record.args, `${field}[${index}].args`),
         env: normalizeNameValueList(record.env, `${field}[${index}].env`),
+        ...(record._meta != null ? { _meta: record._meta as Record<string, unknown> } : {}),
+      };
+    }
+
+    if (record.type === "acp") {
+      if (typeof record.id !== "string" || record.id.trim().length === 0) {
+        throw new RuntimeHttpError(400, `${field}[${index}].id is required for ACP MCP servers.`);
+      }
+      return {
+        type: "acp",
+        id: record.id.trim(),
+        name: record.name.trim(),
         ...(record._meta != null ? { _meta: record._meta as Record<string, unknown> } : {}),
       };
     }
@@ -860,7 +920,7 @@ function readCachedEndpointCheck(urlString: string): EndpointCheckResult | null 
   return cached?.result ?? null;
 }
 
-class RuntimeClient implements acp.Client {
+class _RuntimeClient implements acp.Client {
   constructor(
     private readonly getRecord: () => AgentRecord | undefined,
     private readonly publishChunk: (name: string, chunk: string) => void,
@@ -1039,7 +1099,7 @@ function buildElicitationRequestText(params: ElicitationCreateParams) {
   return message ? `Question for user: ${message}${fieldsSuffix}` : `Question for user${fieldsSuffix}`;
 }
 
-function appendElicitationOutcomeEntry(record: AgentRecord, requestId: number, response: ElicitationResponse) {
+function _appendElicitationOutcomeEntry(record: AgentRecord, requestId: number, response: ElicitationResponse) {
   const status = response.action === "accept" ? "answered" : response.action === "decline" ? "skipped" : "cancelled";
   const summary = response.action === "accept"
     ? Object.entries(response.content)
@@ -1087,7 +1147,7 @@ function isModeSwitchPermission(params: acp.RequestPermissionRequest) {
   return asNonEmptyString(toolCall?.kind) === "switch_mode";
 }
 
-function findPermissionOptionId(params: acp.RequestPermissionRequest, mode: "approve" | "deny", explicitOptionId?: string) {
+function _findPermissionOptionId(params: acp.RequestPermissionRequest, mode: "approve" | "deny", explicitOptionId?: string) {
   if (explicitOptionId && params.options.some((option) => option.optionId === explicitOptionId)) {
     return explicitOptionId;
   }
@@ -1369,9 +1429,12 @@ export class AgentRuntimeManager {
       name: record.name,
       type: record.type,
       cwd: record.cwd,
+      additionalDirectories: record.additionalDirectories,
       state: record.state,
       sessionId: record.sessionId,
       protocolVersion: record.protocolVersion,
+      agentCapabilities: record.agentCapabilities,
+      authMethods: record.authMethods,
       requestedModel: record.requestedModel,
       effectiveModel: record.effectiveModel,
       requestedEffort: record.requestedEffort,
@@ -1414,6 +1477,9 @@ export class AgentRuntimeManager {
         requestedAt: item.requestedAt,
         sessionId: item.params.sessionId ?? null,
         toolCallId: item.params.toolCallId ?? null,
+        mode: item.params.mode,
+        elicitationId: item.params.elicitationId ?? null,
+        url: item.params.url ?? null,
         message: item.params.message ?? null,
         requestedSchema: item.params.requestedSchema ?? null,
       })),
@@ -1468,15 +1534,20 @@ export class AgentRuntimeManager {
   }
 
   async startAgent(input: StartAgentInput) {
-    this.applyRuntimeSettings(input.env ?? {}, { emit: false });
     this.lastAgentUseAt = Date.now();
     const type = input.type?.trim() || "opencode";
+    const gatewayOverlay = validateClaudeGatewayRuntimeRequest({ ...input, type });
+    if (!gatewayOverlay) this.applyRuntimeSettings(input.env ?? {}, { emit: false });
     const name = input.name?.trim();
     if (!name) {
       throw new RuntimeHttpError(400, "Agent name is required");
     }
 
     const cwd = input.cwd || process.cwd();
+    const additionalDirectories = asStringArray(input.additionalDirectories, "additionalDirectories");
+    if (additionalDirectories.some((directory) => !isAbsolute(directory))) {
+      throw new RuntimeHttpError(400, "additionalDirectories must contain absolute paths.");
+    }
     let resumeSessionId = input.resumeSessionId?.trim() || null;
     if (type === "gemini" && resumeSessionId) {
       resumeSessionId = await resolveFullGeminiUuid(resumeSessionId, cwd);
@@ -1524,7 +1595,13 @@ export class AgentRuntimeManager {
       ...(configuredAgent?.env || {}),
       ...(input.env || {}),
     }, cwd);
-    const accountCredentials = await resolveAccountCredentials({
+    const accountCredentials: ResolvedAccountCredentials = gatewayOverlay ? {
+      account: null,
+      env: {},
+      unset: [],
+      credentialProfile: { env: {}, unset: [], status: null },
+      allowGlobalCredentialBridge: false,
+    } : await resolveAccountCredentials({
       workerType: type,
       cwd,
       env: finalEnv,
@@ -1550,6 +1627,7 @@ export class AgentRuntimeManager {
     if (type === "claude" && accountCredentials.allowGlobalCredentialBridge) {
       applyClaudeKeychainOAuthToken(finalEnv);
     }
+    if (gatewayOverlay) Object.assign(finalEnv, gatewayOverlay);
 
     const requestedMode = input.mode || configuredAgent?.mode;
     const defaultCommand = input.command || configuredAgent?.command || type;
@@ -1562,7 +1640,8 @@ export class AgentRuntimeManager {
     const eligibleForPool =
       (useGeminiDefault || useClaudeDefault || useCodexFallback || useOpencodeDefault)
       && !resumeSessionId
-      && skillRoots.length === 0;
+      && skillRoots.length === 0
+      && additionalDirectories.length === 0;
     const poolKey = eligibleForPool
       ? computeWorkerPoolKey({
           type,
@@ -1578,7 +1657,7 @@ export class AgentRuntimeManager {
 
     let recordRef: { current?: AgentRecord };
     let stderrBuffer: string[];
-    let client: RuntimeClient;
+    let client: ExtractedRuntimeClient;
     let child: ChildProcessWithoutNullStreams | undefined;
     let connection: acp.ClientSideConnection | undefined;
     let init: unknown;
@@ -1588,7 +1667,7 @@ export class AgentRuntimeManager {
     if (pooledMember) {
       recordRef = pooledMember.recordRef;
       stderrBuffer = pooledMember.stderrBuffer;
-      client = pooledMember.client as RuntimeClient;
+      client = pooledMember.client as ExtractedRuntimeClient;
       child = pooledMember.child;
       connection = pooledMember.connection;
       init = pooledMember.init;
@@ -1597,7 +1676,7 @@ export class AgentRuntimeManager {
     } else {
       recordRef = { current: undefined };
       stderrBuffer = [];
-      client = new RuntimeClient(() => recordRef.current, (agentName, chunk) => this.publishChunk(agentName, chunk));
+      client = new ExtractedRuntimeClient(() => recordRef.current, (agentName, chunk) => this.publishChunk(agentName, chunk), [cwd, ...additionalDirectories]);
       const candidates = (useCodexFallback
         ? [{ command: "codex-acp", args: [] as string[] }]
         : useClaudeDefault
@@ -1632,6 +1711,7 @@ export class AgentRuntimeManager {
               DEFAULT_AGENT_STARTUP_TIMEOUT_MS,
             ),
             mcpServers,
+            additionalDirectories,
             skillRoots,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             getClient: () => client,
@@ -1680,6 +1760,109 @@ export class AgentRuntimeManager {
       }
     }
 
+    let sessionConfigOptions = Array.isArray(sessionRecord?.configOptions)
+      ? sessionRecord.configOptions
+      : [];
+
+    // Pin the model before effort: the adapter recomputes the effort options
+    // whenever the model changes. Without this the session silently inherits
+    // the user's global `/model` selection (including 1M-context variants that
+    // fail every turn with "Usage credits required for 1M context") and the
+    // model chosen in OmniHarness is never applied at all.
+    let pinnedModel: string | null = null;
+    const modelConfig = findSessionConfigOption(sessionConfigOptions, "model");
+    const modelConfigId = asNonEmptyString(modelConfig?.id);
+    if (connection && type === "claude" && !gatewayOverlay && !modelConfigId && requestedModel) {
+      // No model config option means there is no way to honour the request.
+      // Say so — otherwise the run is recorded against a model it never used.
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "worker.model.pin_unsupported",
+        message: `This Claude CLI session exposes no model option, so the requested model "${requestedModel}" could not be applied; the worker runs on the CLI default.`,
+        surface: "toast",
+        workerId: name,
+        cause: null,
+      });
+    }
+    if (connection && type === "claude" && !gatewayOverlay && modelConfigId) {
+      const modelResolution = resolveClaudeSessionModel({
+        options: sessionConfigChoices(modelConfig),
+        requested: requestedModel,
+        current: sessionConfigValue(sessionConfigOptions, "model"),
+      });
+      if (modelResolution.status === "unavailable") {
+        // Refuse rather than run the wrong version. A worker the user launched
+        // as Opus 5 that quietly executes on Opus 4.8 is worse than a failed
+        // launch: every answer it gives is attributed to a model that never ran.
+        const message = `Requested model "${modelResolution.requested}" (version ${modelResolution.requestedVersion}) is not offered by this Claude CLI; the closest option runs version ${modelResolution.offeredVersion}. Available: ${modelResolution.available.join(", ")}`;
+        emitNamedEvent({
+          kind: "error.surfaced",
+          code: "worker.model.version_unavailable",
+          message,
+          surface: "toast",
+          workerId: name,
+          cause: null,
+        });
+        throw new RuntimeHttpError(409, message);
+      }
+      if (modelResolution.status === "pin") {
+        try {
+          const result = await connection.setSessionConfigOption({
+            sessionId,
+            configId: modelConfigId,
+            value: modelResolution.value,
+          });
+          const resultRecord = asRecord(result);
+          if (Array.isArray(resultRecord?.configOptions)) {
+            sessionConfigOptions = resultRecord.configOptions;
+          }
+          pinnedModel = sessionConfigValue(sessionConfigOptions, "model") ?? modelResolution.value;
+          emitNamedEvent({
+            kind: "worker.model_pinned",
+            workerId: name,
+            requestedModel,
+            selectedModel: pinnedModel,
+            reason: modelResolution.reason,
+          });
+        } catch (modelError: unknown) {
+          process.stderr.write(`[${name}] could not pin Claude model to "${modelResolution.value}": ${describeUnknownError(modelError)}\n`);
+          emitNamedEvent({
+            kind: "worker.model_pin_failed",
+            workerId: name,
+            requestedModel,
+            selectedModel: modelResolution.value,
+            reason: describeUnknownError(modelError),
+          });
+        }
+      }
+    }
+
+    let effectiveEffort = sessionConfigValue(sessionConfigOptions, "effort");
+    const effortConfig = findSessionConfigOption(sessionConfigOptions, "effort");
+    const effortConfigId = asNonEmptyString(effortConfig?.id);
+    if (
+      connection
+      && type === "claude"
+      && requestedEffort
+      && effortConfigId
+      && effectiveEffort !== requestedEffort
+    ) {
+      try {
+        const result = await connection.setSessionConfigOption({
+          sessionId,
+          configId: effortConfigId,
+          value: requestedEffort,
+        });
+        const resultRecord = asRecord(result);
+        if (Array.isArray(resultRecord?.configOptions)) {
+          sessionConfigOptions = resultRecord.configOptions;
+        }
+        effectiveEffort = sessionConfigValue(sessionConfigOptions, "effort");
+      } catch (effortError: unknown) {
+        process.stderr.write(`[${name}] could not set Claude effort to "${requestedEffort}": ${describeUnknownError(effortError)}\n`);
+      }
+    }
+
     const created = nowIso();
     const initRecord = asRecord(init);
     const protocolVersion = typeof initRecord?.protocolVersion === "number" || typeof initRecord?.protocolVersion === "string"
@@ -1689,19 +1872,23 @@ export class AgentRuntimeManager {
       name,
       type,
       cwd,
+      additionalDirectories,
       child,
       connection,
+      runtimeClient: client,
       sessionId,
       state: "idle",
       lastError: null,
       stderrBuffer,
       protocolVersion,
+      agentCapabilities: asRecord(initRecord?.agentCapabilities),
+      authMethods: Array.isArray(initRecord?.authMethods) ? initRecord.authMethods : [],
       requestedModel,
-      effectiveModel: requestedModel,
+      effectiveModel: pinnedModel ?? requestedModel,
       requestedEffort,
-      effectiveEffort: null,
+      effectiveEffort,
       credentialProfile: accountCredentials.credentialProfile.status,
-      sessionMode: requestedMode || null,
+      sessionMode: requestedMode || currentModeId || null,
       contextUsage: null,
       lastText: "",
       currentText: "",
@@ -1720,11 +1907,33 @@ export class AgentRuntimeManager {
       createdAt: created,
       updatedAt: created,
     };
+    if (modesRecord) {
+      appendOutputEntry(record, {
+        type: "current_mode",
+        text: requestedMode || currentModeId || "",
+        raw: {
+          sessionUpdate: "current_mode_update",
+          currentModeId: requestedMode || currentModeId,
+          availableModes: modesRecord.availableModes,
+        },
+      });
+    }
+    if (sessionConfigOptions.length > 0) {
+      appendOutputEntry(record, {
+        type: "config_option",
+        text: sessionConfigOptions.flatMap((option) => {
+          const optionRecord = asRecord(option);
+          return asNonEmptyString(optionRecord?.name) ?? asNonEmptyString(optionRecord?.id) ?? [];
+        }).join("\n"),
+        raw: { sessionUpdate: "config_option_update", configOptions: sessionConfigOptions },
+      });
+    }
     recordRef.current = record;
     this.agents.set(name, record);
 
     child.on("exit", (code, signal) => {
       const target = this.agents.get(name);
+      target?.runtimeClient.dispose();
       if (!target) {
         return;
       }
@@ -1765,6 +1974,7 @@ export class AgentRuntimeManager {
       void record.connection.cancel(cancelParams).catch(() => undefined);
       this.cancelAllPendingPermissions(record);
       this.cancelAllPendingElicitations(record);
+      record.runtimeClient.dispose();
       cleanupSkillLinks(record.managedSkillLinks);
       record.state = "stopped";
       record.updatedAt = nowIso();
@@ -1785,6 +1995,64 @@ export class AgentRuntimeManager {
       this.agents.delete(name);
     }
     return true;
+  }
+
+  async invokeAcpMethod(
+    name: string,
+    method: string,
+    params: Record<string, unknown>,
+    notification = false,
+  ) {
+    const record = this.agents.get(name);
+    if (!record) throw new RuntimeHttpError(404, `Agent not found: ${name}`);
+    emitNamedEvent({ kind: "acp.method_started", workerId: name, method, notification });
+    try {
+      if (notification) {
+        await sendAgentNotification(record.connection, method, params);
+        record.updatedAt = nowIso();
+        emitNamedEvent({ kind: "acp.method_completed", workerId: name, method, notification });
+        return { ok: true };
+      }
+      const result = await this.runAgentRequest(record, () => invokeAgentRequest(record.connection, method, params));
+      const resultRecord = asRecord(result);
+      const nextSessionId = asNonEmptyString(resultRecord?.sessionId);
+      if (nextSessionId) record.sessionId = nextSessionId;
+      if (method === acp.AGENT_METHODS.session_set_mode) {
+        record.sessionMode = asNonEmptyString(params.modeId) ?? record.sessionMode;
+        appendOutputEntry(record, {
+          type: "current_mode",
+          text: record.sessionMode ?? "",
+          raw: { sessionUpdate: "current_mode_update", currentModeId: record.sessionMode },
+        });
+      }
+      if (method === acp.AGENT_METHODS.session_set_config_option && Array.isArray(resultRecord?.configOptions)) {
+        appendOutputEntry(record, {
+          type: "config_option",
+          text: resultRecord.configOptions.flatMap((option) => asNonEmptyString(asRecord(option)?.name) ?? []).join("\n"),
+          raw: { sessionUpdate: "config_option_update", configOptions: resultRecord.configOptions },
+        });
+      }
+      record.updatedAt = nowIso();
+      emitNamedEvent({ kind: "acp.method_completed", workerId: name, method, notification });
+      return { ok: true, result };
+    } catch (error) {
+      emitNamedEvent({
+        kind: "acp.method_failed",
+        workerId: name,
+        method,
+        notification,
+        reason: describeUnknownError(error),
+      });
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "acp.method.failed",
+        message: describeUnknownError(error),
+        surface: "log",
+        workerId: name,
+        cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+      });
+      throw error;
+    }
   }
 
   async askAgent(name: string, prompt: string, imageAttachments?: Array<{ path: string; mimeType: string }>, onChunk?: (chunk: string) => void): Promise<AskResult> {
@@ -1816,10 +2084,18 @@ export class AgentRuntimeManager {
               data,
               mimeType: img.mimeType || "image/png",
             });
-          } catch {
-            // If an image file can't be read, skip it rather than failing the
-            // entire prompt. The text annotation in the prompt still tells the
-            // agent the file existed at the time of upload.
+          } catch (error) {
+            // Skip an unreadable image rather than failing the whole prompt,
+            // but never silently: the agent is about to answer a question
+            // about a picture it cannot see, and that must be diagnosable.
+            emitNamedEvent({
+              kind: "error.surfaced",
+              code: "worker.prompt.image_attachment_unreadable",
+              message: `Image attachment could not be read and was dropped from the prompt: ${img.path}`,
+              surface: "toast",
+              workerId: name,
+              cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+            });
           }
         }
       }
@@ -1933,6 +2209,11 @@ export class AgentRuntimeManager {
     await this.runAgentRequest(record, () => record.connection.setSessionMode(setModeParams));
     record.sessionMode = mode;
     record.updatedAt = nowIso();
+    appendOutputEntry(record, {
+      type: "current_mode",
+      text: mode,
+      raw: { sessionUpdate: "current_mode_update", currentModeId: mode },
+    });
     // Switching into a full-access mode means every *new* permission request is
     // auto-approved (see requestPermission). Permission requests that queued up
     // while the session was in an interactive mode would otherwise linger in
@@ -1946,20 +2227,20 @@ export class AgentRuntimeManager {
     return { ok: true, name: record.name, mode, autoApprovedPending };
   }
 
-  approvePermission(name: string, optionId?: string) {
-    return this.resolvePermission(name, "approve", optionId);
+  approvePermission(name: string, optionId?: string, requestId?: number) {
+    return this.resolvePermission(name, "approve", optionId, requestId);
   }
 
-  denyPermission(name: string, optionId?: string) {
-    return this.resolvePermission(name, "deny", optionId);
+  denyPermission(name: string, optionId?: string, requestId?: number) {
+    return this.resolvePermission(name, "deny", optionId, requestId);
   }
 
-  respondElicitation(name: string, response: ElicitationResponse) {
+  respondElicitation(name: string, response: ElicitationResponse, requestId?: number) {
     const record = this.agents.get(name);
     if (!record) {
       throw new RuntimeHttpError(404, "not_found");
     }
-    const pending = this.resolvePendingElicitation(record, response);
+    const pending = this.resolvePendingElicitation(record, response, requestId);
     if (!pending) {
       throw new RuntimeHttpError(409, "no_pending_elicitations");
     }
@@ -1992,9 +2273,11 @@ export class AgentRuntimeManager {
     env?: Record<string, string>;
     accountId?: string | null;
     credentialProfile?: string | null;
+    credentialSource?: "gateway";
     mcpServers?: acp.McpServer[];
   }): Promise<{ ok: true; key: string; size: number; warmed: boolean }> {
-    this.applyRuntimeSettings(input.env ?? {}, { emit: false });
+    const gatewayOverlay = validateClaudeGatewayRuntimeRequest(input);
+    if (!gatewayOverlay) this.applyRuntimeSettings(input.env ?? {}, { emit: false });
     const type = input.type;
     const cwd = input.cwd || process.cwd();
     const requestedModel = input.model?.trim() || null;
@@ -2011,7 +2294,13 @@ export class AgentRuntimeManager {
       ...(configuredAgent?.env || {}),
       ...(input.env || {}),
     }, cwd);
-    const accountCredentials = await resolveAccountCredentials({
+    const accountCredentials: ResolvedAccountCredentials = gatewayOverlay ? {
+      account: null,
+      env: {},
+      unset: [],
+      credentialProfile: { env: {}, unset: [], status: null },
+      allowGlobalCredentialBridge: false,
+    } : await resolveAccountCredentials({
       workerType: type,
       cwd,
       env: finalEnv,
@@ -2037,6 +2326,7 @@ export class AgentRuntimeManager {
     if (type === "claude" && accountCredentials.allowGlobalCredentialBridge) {
       applyClaudeKeychainOAuthToken(finalEnv);
     }
+    if (gatewayOverlay) Object.assign(finalEnv, gatewayOverlay);
 
     const requestedMode = input.mode || configuredAgent?.mode || null;
     const poolKey = computeWorkerPoolKey({
@@ -2067,7 +2357,7 @@ export class AgentRuntimeManager {
     try {
       const recordRef: { current?: AgentRecord } = {};
       const stderrBuffer: string[] = [];
-      const client = new RuntimeClient(() => recordRef.current, (agentName, chunk) => this.publishChunk(agentName, chunk));
+      const client = new ExtractedRuntimeClient(() => recordRef.current, (agentName, chunk) => this.publishChunk(agentName, chunk), cwd);
 
       const result = await this.spawnAgentConnection({
         cwd,
@@ -2128,6 +2418,7 @@ export class AgentRuntimeManager {
     mode: string | null;
     env?: Record<string, string>;
     mcpServers: acp.McpServer[];
+    additionalDirectories?: string[];
   }) {
     setImmediate(() => {
       this.prewarmWorker(input).catch((error) => {
@@ -2158,6 +2449,7 @@ export class AgentRuntimeManager {
     env: NodeJS.ProcessEnv;
     startupTimeoutMs: number;
     mcpServers: acp.McpServer[];
+    additionalDirectories?: string[];
     skillRoots: string[];
     resumeSessionId?: string;
     getClient: () => acp.Client;
@@ -2217,28 +2509,22 @@ export class AgentRuntimeManager {
       try {
         const initializeParams = {
           protocolVersion: acp.PROTOCOL_VERSION,
-          clientCapabilities: {
-            fs: {
-              readTextFile: true,
-              writeTextFile: true,
-            },
-            // Advertise form elicitation so the claude-agent-acp adapter
-            // re-enables the built-in AskUserQuestion tool (it disables it for
-            // clients that can't render a form). Handled via RuntimeClient.extMethod.
-            elicitation: {
-              form: {},
-            },
-          },
+          clientInfo: { name: "OmniHarness", version: "0.1.0" },
+          clientCapabilities: operationalClientCapabilities(),
         } as Parameters<acp.ClientSideConnection["initialize"]>[0];
         const init = await Promise.race([
           suppressClosedPipeAcpWriteConsoleError(() => connection.initialize(initializeParams)),
           processFailure,
           startupTimeout("Agent ACP initialize", input.startupTimeoutMs),
         ]);
+        if (init.protocolVersion !== acp.PROTOCOL_VERSION) {
+          throw new RuntimeHttpError(400, `Unsupported ACP protocol version: ${String(init.protocolVersion)}`);
+        }
         const sessionMeta = buildSessionMeta(input.agentType, input.skillRoots);
         const sessionSetupParams = {
           cwd: input.cwd,
           mcpServers: input.mcpServers,
+          ...(input.additionalDirectories?.length ? { additionalDirectories: input.additionalDirectories } : {}),
           ...(sessionMeta ? { _meta: sessionMeta } : {}),
         } as Parameters<acp.ClientSideConnection["newSession"]>[0];
         const session = input.resumeSessionId
@@ -2281,9 +2567,9 @@ export class AgentRuntimeManager {
       const resumeParams = {
         sessionId,
         ...sessionSetupParams,
-      } as Parameters<acp.ClientSideConnection["unstable_resumeSession"]>[0];
+      } as Parameters<acp.ClientSideConnection["resumeSession"]>[0];
       return await Promise.race([
-        suppressClosedPipeAcpWriteConsoleError(() => connection.unstable_resumeSession(resumeParams)),
+        suppressClosedPipeAcpWriteConsoleError(() => connection.resumeSession(resumeParams)),
         spawnError,
         startupTimeout("Agent ACP resume session", startupTimeoutMs),
       ]);
@@ -2342,11 +2628,11 @@ export class AgentRuntimeManager {
     let count = 0;
     let pending: PendingPermission | undefined;
     while ((pending = record.pendingPermissions.shift())) {
-      const optionId = findAutoApprovePermissionOptionId(pending.params);
+      const optionId = findExtractedAutoApprovePermissionOptionId(pending.params);
+      appendExtractedPermissionOutcomeEntry(record, pending.requestId, pending.params, "approve", optionId);
       pending.resolve(optionId
         ? { outcome: { outcome: "selected", optionId } }
         : { outcome: { outcome: "cancelled" } });
-      appendPermissionOutcomeEntry(record, pending.requestId, pending.params, "approve", optionId);
       count += 1;
     }
     if (count > 0) {
@@ -2355,13 +2641,15 @@ export class AgentRuntimeManager {
     return count;
   }
 
-  private resolvePendingElicitation(record: AgentRecord, response: ElicitationResponse): PendingElicitation | null {
-    const pending = record.pendingElicitations.shift();
+  private resolvePendingElicitation(record: AgentRecord, response: ElicitationResponse, expectedRequestId?: number): PendingElicitation | null {
+    const index = expectedRequestId === undefined ? 0 : record.pendingElicitations.findIndex((candidate) => candidate.requestId === expectedRequestId);
+    const pending = index >= 0 ? record.pendingElicitations.splice(index, 1)[0] : undefined;
     if (!pending) {
       return null;
     }
+    appendExtractedElicitationOutcomeEntry(record, pending.requestId, response);
+    emitNamedEvent({ kind: "acp.interaction_resolved", workerId: record.name, interaction: "elicitation", requestId: pending.requestId, outcome: response.action });
     pending.resolve(response);
-    appendElicitationOutcomeEntry(record, pending.requestId, response);
     record.updatedAt = nowIso();
     return pending;
   }
@@ -2374,12 +2662,12 @@ export class AgentRuntimeManager {
     return count;
   }
 
-  private resolvePermission(name: string, decision: "approve" | "deny", explicitOptionId?: string) {
+  private resolvePermission(name: string, decision: "approve" | "deny", explicitOptionId?: string, expectedRequestId?: number) {
     const record = this.agents.get(name);
     if (!record) {
       throw new RuntimeHttpError(404, "not_found");
     }
-    const pending = this.resolvePendingPermission(record, decision, explicitOptionId);
+    const pending = this.resolvePendingPermission(record, decision, explicitOptionId, expectedRequestId);
     if (!pending) {
       throw new RuntimeHttpError(409, "no_pending_permissions");
     }
@@ -2392,22 +2680,24 @@ export class AgentRuntimeManager {
     };
   }
 
-  private resolvePendingPermission(record: AgentRecord, decision: "approve" | "deny" | "cancel", explicitOptionId?: string): PendingPermission | null {
-    const pending = record.pendingPermissions.shift();
+  private resolvePendingPermission(record: AgentRecord, decision: "approve" | "deny" | "cancel", explicitOptionId?: string, expectedRequestId?: number): PendingPermission | null {
+    const index = expectedRequestId === undefined ? 0 : record.pendingPermissions.findIndex((candidate) => candidate.requestId === expectedRequestId);
+    const pending = index >= 0 ? record.pendingPermissions.splice(index, 1)[0] : undefined;
     if (!pending) {
       return null;
     }
 
     if (decision === "cancel") {
+      appendExtractedPermissionOutcomeEntry(record, pending.requestId, pending.params, decision, null);
       pending.resolve({ outcome: { outcome: "cancelled" } });
-      appendPermissionOutcomeEntry(record, pending.requestId, pending.params, decision, null);
     } else {
-      const optionId = findPermissionOptionId(pending.params, decision, explicitOptionId);
+      const optionId = findExtractedPermissionOptionId(pending.params, decision, explicitOptionId);
+      appendExtractedPermissionOutcomeEntry(record, pending.requestId, pending.params, decision, optionId);
       pending.resolve(optionId
         ? { outcome: { outcome: "selected", optionId } }
         : { outcome: { outcome: "cancelled" } });
-      appendPermissionOutcomeEntry(record, pending.requestId, pending.params, decision, optionId);
     }
+    emitNamedEvent({ kind: "acp.interaction_resolved", workerId: record.name, interaction: "permission", requestId: pending.requestId, outcome: decision });
     record.updatedAt = nowIso();
     return pending;
   }

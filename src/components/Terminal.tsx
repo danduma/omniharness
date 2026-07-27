@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useLayoutEffect, useMemo, useRef, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { ALargeSmall, Check, ChevronDown, Copy, LoaderCircle } from "lucide-react";
 import { MarkdownContent } from "@/components/MarkdownContent";
+import { ProjectFileContextMenu } from "@/components/ProjectFileContextMenu";
 import { attachmentImagePreviewManager, conversationCopyNoticeManager, terminalUiManager } from "@/components/component-state-managers";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -33,6 +34,13 @@ interface TerminalProps {
    * docs/architecture/worker-conversation-stream.md.
    */
   entries?: WorkerEntry[];
+  /**
+   * True when the conversation ran across more than one worker, so `seq` (which
+   * restarts per worker) cannot order it. Pass the run's worker count rather
+   * than letting the Terminal guess from the entries it has loaded — the guess
+   * changes as pages arrive and re-sorts the list mid-read.
+   */
+  multiWorkerOrdering?: boolean;
   allowUserMessageFallback?: boolean;
   getUserMessageActions?: (message: TerminalUserMessage) => TerminalUserMessageAction[];
   editingUserMessageId?: string | null;
@@ -140,6 +148,18 @@ export function shouldTerminalKeepFollowingLatest(
   }
 
   return shouldTerminalFollowLatest(metrics);
+}
+
+export function shouldTerminalResetInitialPosition({
+  previousFirstActivityId,
+  nextFirstActivityId,
+  scrollAnchorChanged,
+}: {
+  previousFirstActivityId: string | null;
+  nextFirstActivityId: string | null;
+  scrollAnchorChanged: boolean;
+}) {
+  return scrollAnchorChanged || (previousFirstActivityId === null && nextFirstActivityId !== null);
 }
 
 export function getTerminalActivityVersion(activity: TerminalActivityItem[]) {
@@ -321,6 +341,29 @@ function activityKindOrder(activity: TerminalActivityItem) {
     default:
       return 6;
   }
+}
+
+/**
+ * Keep one activity item per message id: the last delivery wins. Items without
+ * a messageId (or without a duplicate) pass through untouched, and the survivor
+ * keeps the position of the newest copy so a re-delivered message renders where
+ * it was actually sent again, not where it was originally sent.
+ */
+function dedupeUserActivityByMessageId<T extends TerminalActivityItemWithOrder>(items: T[]): T[] {
+  // Last occurrence wins: the entries feeding this list arrive oldest-first
+  // (the transcript is sorted server-side), so the final copy of a message id
+  // is its most recent delivery. `streamSeq` cannot break the tie — it is
+  // per-worker, and the re-delivery starts a new worker's numbering.
+  const lastIndexByMessageId = new Map<string, number>();
+  items.forEach((item, index) => {
+    if (item.kind === "user_message") {
+      lastIndexByMessageId.set(item.messageId, index);
+    }
+  });
+
+  return items.filter((item, index) => (
+    item.kind !== "user_message" || lastIndexByMessageId.get(item.messageId) === index
+  ));
 }
 
 function activityStreamSeq(
@@ -1154,17 +1197,22 @@ function ProjectFileReferenceText({
     }
 
     nodes.push(
-      <button
+      <ProjectFileContextMenu
         key={`${match.index}:${token}`}
-        type="button"
-        className="inline font-mono text-inherit underline decoration-current/35 underline-offset-4 hover:decoration-current"
-        onClick={(event) => {
-          event.stopPropagation();
-          onOpenProjectFile(reference);
-        }}
+        reference={reference}
+        onOpen={onOpenProjectFile}
       >
-        {token}
-      </button>,
+        <button
+          type="button"
+          className="inline font-mono text-inherit underline decoration-current/35 underline-offset-4 hover:decoration-current"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenProjectFile(reference);
+          }}
+        >
+          {token}
+        </button>
+      </ProjectFileContextMenu>,
     );
     lastIndex = match.index + token.length;
   }
@@ -1708,6 +1756,70 @@ function WorkSummaryActivity({
   );
 }
 
+function ProtocolActivityContent({
+  activity,
+  projectRoot,
+  onOpenProjectFile,
+}: {
+  activity: Extract<AgentActivityItem, { kind: "protocol" }>;
+  projectRoot?: string | null;
+  onOpenProjectFile?: (file: ProjectFileReference) => void;
+}) {
+  const raw = typeof activity.raw === "object" && activity.raw !== null
+    ? activity.raw as Record<string, unknown>
+    : null;
+  const content = raw && typeof raw.content === "object" && raw.content !== null
+    ? raw.content as Record<string, unknown>
+    : null;
+
+  if (activity.protocolType === "content" && content?.type === "image" && typeof content.data === "string") {
+    const mimeType = typeof content.mimeType === "string" ? content.mimeType : "image/png";
+    return (
+      <Image
+        unoptimized
+        src={`data:${mimeType};base64,${content.data}`}
+        alt={t("terminal.protocol.content")}
+        width={960}
+        height={640}
+        className="mt-2 max-h-[32rem] w-auto max-w-full rounded-lg border border-border object-contain"
+      />
+    );
+  }
+  if (activity.protocolType === "content" && content?.type === "audio" && typeof content.data === "string") {
+    const mimeType = typeof content.mimeType === "string" ? content.mimeType : "audio/mpeg";
+    return <audio aria-label={t("terminal.protocol.content")} className="mt-2 w-full" controls src={`data:${mimeType};base64,${content.data}`} />;
+  }
+  if (activity.protocolType === "content" && content?.type === "terminal") {
+    const output = typeof content.output === "string" ? content.output : activity.text;
+    return <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-background p-3 font-mono text-xs">{output}</pre>;
+  }
+  if (activity.protocolType === "content" && content?.type === "resource_link") {
+    const uri = typeof content.uri === "string" ? content.uri : activity.text;
+    const name = typeof content.name === "string" ? content.name : uri;
+    return /^https?:\/\//i.test(uri)
+      ? <a href={uri} target="_blank" rel="noreferrer noopener" className="mt-1 block break-all font-mono text-xs text-sky-700 underline dark:text-sky-300">{name}</a>
+      : <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{name}{name !== uri ? ` — ${uri}` : ""}</p>;
+  }
+  if (activity.protocolType === "content" && content?.type === "resource") {
+    const resource = typeof content.resource === "object" && content.resource !== null
+      ? content.resource as Record<string, unknown>
+      : null;
+    const resourceText = typeof resource?.text === "string" ? resource.text : activity.text;
+    return <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted/30 p-3 text-xs">{resourceText}</pre>;
+  }
+  if (activity.protocolType === "plan" || activity.protocolType === "plan_update") {
+    return (
+      <MarkdownContent
+        content={activity.text}
+        projectRoot={projectRoot}
+        onOpenProjectFile={onOpenProjectFile}
+        className="mt-1 text-sm leading-6 text-foreground"
+      />
+    );
+  }
+  return activity.text ? <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{activity.text}</p> : null;
+}
+
 function ActivityRow({
   activity,
   connectorExtendsAfter = false,
@@ -1743,6 +1855,15 @@ function ActivityRow({
 }) {
   useI18nSnapshot();
   const { copiedMessageId } = useManagerSnapshot(conversationCopyNoticeManager);
+
+  const copyAgentMessage = async (content: string, messageId: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      conversationCopyNoticeManager.showCopiedMessage(messageId);
+    } catch (error) {
+      console.error("Copy message failed:", error);
+    }
+  };
 
   if (activity.kind === "user_message") {
     const isEditing = activity.messageId === editingUserMessageId
@@ -1866,19 +1987,45 @@ function ActivityRow({
       <TimelineMarker running={running} tone={markerTone} variant={variant} />
       <div className="min-w-0 flex-1">
         {activity.kind === "message" ? (
-          <MarkdownContent
-            content={activity.text}
-            projectRoot={projectRoot}
-            onOpenProjectFile={onOpenProjectFile}
-            className={cn(
-              conversationMessageTextSize
-                ? "text-sm leading-6"
-                : "text-[length:var(--terminal-message-size)] leading-[1.55]",
-              variant === "native"
-                ? "text-foreground"
-                : "text-foreground [&_blockquote]:border-border/70 [&_blockquote]:bg-muted/30 [&_blockquote]:text-muted-foreground [&_code]:bg-muted/70 [&_code]:text-inherit [&_h3]:text-inherit [&_h4]:text-inherit [&_pre]:border-border/70 [&_pre]:bg-muted/30 [&_pre]:text-inherit [&_strong]:text-inherit dark:text-zinc-100/95 dark:[&_blockquote]:border-white/10 dark:[&_blockquote]:bg-white/5 dark:[&_blockquote]:text-zinc-300 dark:[&_code]:bg-white/10 dark:[&_pre]:border-white/10 dark:[&_pre]:bg-white/5",
-            )}
-          />
+          <div className="group/agent-message">
+            <MarkdownContent
+              content={activity.text}
+              projectRoot={projectRoot}
+              onOpenProjectFile={onOpenProjectFile}
+              className={cn(
+                conversationMessageTextSize
+                  ? "text-sm leading-6"
+                  : "text-[length:var(--terminal-message-size)] leading-[1.55]",
+                variant === "native"
+                  ? "text-foreground"
+                  : "text-foreground [&_blockquote]:border-border/70 [&_blockquote]:bg-muted/30 [&_blockquote]:text-muted-foreground [&_code]:bg-muted/70 [&_code]:text-inherit [&_h3]:text-inherit [&_h4]:text-inherit [&_pre]:border-border/70 [&_pre]:bg-muted/30 [&_pre]:text-inherit [&_strong]:text-inherit dark:text-zinc-100/95 dark:[&_blockquote]:border-white/10 dark:[&_blockquote]:bg-white/5 dark:[&_blockquote]:text-zinc-300 dark:[&_code]:bg-white/10 dark:[&_pre]:border-white/10 dark:[&_pre]:bg-white/5",
+              )}
+            />
+            {activity.text.trim() ? (
+              <div className="mt-1 flex items-center justify-end text-muted-foreground/70">
+                <span className="relative inline-flex flex-col items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover/agent-message:opacity-100">
+                  <button
+                    type="button"
+                    aria-label={t("conversation.message.copyAria")}
+                    title={t("conversation.message.copyAria")}
+                    onClick={() => void copyAgentMessage(activity.text, activity.id)}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <Copy className="h-4 w-4" />
+                  </button>
+                  {copiedMessageId === activity.id ? (
+                    <span
+                      role="status"
+                      aria-live="polite"
+                      className="pointer-events-none absolute top-full z-20 mt-1 whitespace-nowrap rounded-md border border-border/70 bg-popover px-2 py-1 text-[11px] font-medium leading-none text-popover-foreground shadow-sm"
+                    >
+                      {t("conversation.message.copiedNotice")}
+                    </span>
+                  ) : null}
+                </span>
+              </div>
+            ) : null}
+          </div>
         ) : null}
         {activity.kind === "thinking" ? (
           <ThoughtActivity
@@ -1944,6 +2091,16 @@ function ActivityRow({
             </div>
           )
         ) : null}
+        {activity.kind === "protocol" ? (
+          <div className="rounded-xl border border-border bg-muted/20 px-3 py-2.5">
+            <div className="text-xs font-semibold text-foreground">{t(activity.title)}</div>
+            <ProtocolActivityContent
+              activity={activity}
+              projectRoot={projectRoot}
+              onOpenProjectFile={onOpenProjectFile}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -1953,6 +2110,7 @@ export function Terminal({
   agent,
   userMessages = [],
   entries,
+  multiWorkerOrdering,
   allowUserMessageFallback = false,
   getUserMessageActions,
   editingUserMessageId = null,
@@ -2053,11 +2211,29 @@ export function Terminal({
         ? { ...item, streamSeq: activityStreamSeq(item, seqByActivityId) ?? undefined }
         : item
     ));
+    // `seq` is per-worker, so it only orders a conversation that ran on a
+    // single worker; across workers we have to fall back to timestamps.
+    //
+    // Which rule applies must NOT be read off the entries that happen to be
+    // loaded. Only transcript entries carry `workerId`, so a cold conversation
+    // looked single-worker (seq order) until the transcript page landed and
+    // flipped it to timestamp order, visibly re-shuffling the list under the
+    // reader. `multiWorkerOrdering` comes from the run's worker list, which is
+    // known before any page is fetched; the entry scan is only a fallback for
+    // callers that render a stream without one.
+    const entriesArr = (entries ?? []) as unknown as Array<{ workerId?: unknown }>;
+    const workerIdsInEntries = new Set<string>();
+    for (const entry of entriesArr) {
+      if (typeof entry.workerId === "string" && entry.workerId.length > 0) {
+        workerIdsInEntries.add(entry.workerId);
+      }
+    }
+    const isMultiWorkerOrdering = multiWorkerOrdering ?? workerIdsInEntries.size > 1;
     const canPlaceFallbackUserMessages = usingUnifiedStream && allowUserMessageFallback;
     const userActivity: TerminalActivityItemWithOrder[] = usingUnifiedStream
       ? [
         ...(visibleEntries ?? [])
-          .filter((entry) => entry.type === "user_input" || entry.type === "supervisor_input")
+          .filter((entry) => entry.type === "user_input" || entry.type === "supervisor_input" || entry.type === "user_message_chunk")
           .map((entry) => ({ source: "stream" as const, entry })),
         ...(canPlaceFallbackUserMessages ? userMessages : [])
           .filter((message) => !(entries ?? []).some((entry) => workerEntryMatchesUserMessage(entry, message)))
@@ -2065,7 +2241,15 @@ export function Terminal({
       ]
         .map((entry) => {
           if (entry.source === "fallback") {
-            const messageSeq = inferFallbackUserMessageSeq(entry.message.createdAt, entries ?? []);
+            // A message the stream has no entry for is placed by guessing a
+            // fractional seq next to the entry it precedes. That guess only
+            // means something while one worker's numbering orders the list;
+            // across workers the seqs come from different counters, so a
+            // borrowed one would sort this message against an unrelated
+            // sequence. Leave it out and let the timestamp place it.
+            const messageSeq = isMultiWorkerOrdering
+              ? undefined
+              : inferFallbackUserMessageSeq(entry.message.createdAt, entries ?? []);
             return {
               id: `user:${entry.message.id}`,
               kind: "user_message" as const,
@@ -2086,13 +2270,18 @@ export function Terminal({
             size: attachment.sizeBytes,
           }));
 
-          // Stream entry timestamps can drift from the original message
-          // createdAt when a user_input row gets re-appended onto a
-          // newer worker's stream (the entry id is preserved but the
-          // timestamp is whatever new Date() was when the append ran).
-          // The DB row is the source of truth for "when did the user
-          // send this", so override the entry timestamp with
-          // userMessages.createdAt whenever the ids match.
+          // Two different questions, two different answers:
+          //
+          //  - Where does this message belong in the thread? The stream entry
+          //    knows: it is the delivery that produced the output around it.
+          //    A rewind re-delivers a message with its original `createdAt`
+          //    intact, so preferring the database row used to drag the message
+          //    back above output it had already been rewound past.
+          //  - When did the user send it? The database row, which is what
+          //    retry/edit/fork act on.
+          //
+          // History backfilled into a newer worker's stream is appended with
+          // the original `createdAt` as its timestamp, so the two agree there.
           const matchingUserMessage = entry.entry.type === "user_input"
             ? userMessages.find((m) => m.id === entry.entry.id)
             : null;
@@ -2103,7 +2292,7 @@ export function Terminal({
             kind: "user_message" as const,
             messageId: entry.entry.id,
             text: entry.entry.text,
-            timestamp: authoritativeTimestamp,
+            timestamp: entry.entry.timestamp || authoritativeTimestamp,
             attachments,
             streamSeq: entry.entry.seq,
             actions: entry.entry.type === "user_input" ? getUserMessageActions?.({
@@ -2123,7 +2312,14 @@ export function Terminal({
         attachments: message.attachments ?? [],
         actions: getUserMessageActions?.(message) ?? [],
       }));
-    const latestActivityTimestamp = [...userActivity, ...agentActivity]
+    // One message id must render exactly once. A rewind (retry / edit)
+    // re-delivers the same message on a new worker, so the same id can exist on
+    // two streams — and a transcript recorded before superseded ranges existed
+    // still carries both. Two items sharing a React key made the list thrash
+    // (rows appearing, disappearing, and jumping position as the two copies
+    // sorted apart), so keep the newest delivery and drop the rewound copy.
+    const dedupedUserActivity = dedupeUserActivityByMessageId(userActivity);
+    const latestActivityTimestamp = [...dedupedUserActivity, ...agentActivity]
       .map((item) => activityTimestampMs(item.timestamp))
       .reduce((latest, timestamp) => Math.max(latest, timestamp), 0);
     const shouldShowPendingAssistantActivity = showPendingAssistantIndicator;
@@ -2136,22 +2332,8 @@ export function Terminal({
         }]
       : [];
 
-    // Multi-worker conversations (transcript endpoint) tag every entry
-    // with a `workerId` field. When we see more than one workerId in
-    // play we can't trust seq as a primary key — it's per-worker — so
-    // we sort by timestamp first. For single-worker streams seq still
-    // wins (it's the actual write order, robust against clock skew on
-    // entries the SDK back-dates to their thinking-started time).
-    const entriesArr = (entries ?? []) as unknown as Array<{ workerId?: unknown }>;
-    const workerIdsInEntries = new Set<string>();
-    for (const entry of entriesArr) {
-      if (typeof entry.workerId === "string" && entry.workerId.length > 0) {
-        workerIdsInEntries.add(entry.workerId);
-      }
-    }
-    const isMultiWorker = workerIdsInEntries.size > 1;
-    const sorted = [...userActivity, ...agentActivity, ...pendingAssistantActivity].sort((a, b) => {
-      if (isMultiWorker) {
+    const sorted = [...dedupedUserActivity, ...agentActivity, ...pendingAssistantActivity].sort((a, b) => {
+      if (isMultiWorkerOrdering) {
         const timeDelta = activityTimestampMs(a.timestamp) - activityTimestampMs(b.timestamp);
         if (timeDelta !== 0) {
           return timeDelta;
@@ -2171,7 +2353,7 @@ export function Terminal({
       return activityKindOrder(a) - activityKindOrder(b) || a.id.localeCompare(b.id);
     });
     return summarizeWorkBlocks ? summarizeWorkIntervals(sorted) : sorted;
-  }, [agent, allowUserMessageFallback, entries, getUserMessageActions, pendingAssistantStatus, showPendingAssistantIndicator, summarizeWorkBlocks, userMessages]);
+  }, [agent, allowUserMessageFallback, entries, getUserMessageActions, multiWorkerOrdering, pendingAssistantStatus, showPendingAssistantIndicator, summarizeWorkBlocks, userMessages]);
   const filteredActivity = useMemo(
     () => activityFilter ? activity.filter(activityFilter) : activity,
     [activity, activityFilter],
@@ -2223,11 +2405,16 @@ export function Terminal({
     const previousActivityVersion = previousActivityVersionRef.current;
     const activityChanged = previousActivityVersionRef.current !== activityVersion;
     previousActivityVersionRef.current = activityVersion;
+    const previousFirstActivityId = firstActivityIdRef.current;
     const firstActivityId = filteredActivity[0]?.id ?? null;
-    if (firstActivityId !== firstActivityIdRef.current) {
+    if (shouldTerminalResetInitialPosition({
+      previousFirstActivityId,
+      nextFirstActivityId: firstActivityId,
+      scrollAnchorChanged,
+    })) {
       hasPositionedFirstActivityRef.current = false;
-      firstActivityIdRef.current = firstActivityId;
     }
+    firstActivityIdRef.current = firstActivityId;
 
     const isFirstRenderedActivity = filteredActivity.length > 0 && !hasPositionedFirstActivityRef.current;
     if (

@@ -28,7 +28,8 @@ import { buildPlannerSystemPrompt } from "@/server/prompts";
 import { appendAttachmentContext, parseChatAttachmentsJson } from "@/lib/chat-attachments";
 import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/supervisor/worker-types";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
-import { readWorkerOutputEntries } from "@/server/workers/output-store";
+import { findWorkerEntrySeqById, readWorkerLatestSeq, readWorkerOutputEntries } from "@/server/workers/output-store";
+import { parseSupersededSeqRanges, serializeSupersededSeqRanges } from "@/lib/superseded-entries";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import { appendWorkerSessionMetadata, readWorkerSessionMetadata } from "@/server/workers/session-metadata";
@@ -36,11 +37,14 @@ import { buildTranscriptReplayPrompt, canRecreateRejectedSavedSession, isRejecte
 import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
 import { updateDirectRunStatusFromWorkerOutput } from "@/server/conversations/direct-run-status";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
+import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { createBranchWorktree } from "@/server/git/workspaces";
 import { pendingOrphanWorktreeError } from "@/server/git/orphan-recovery";
 import { markRecoveryIncidentResolved } from "@/server/runs/recovery-incidents";
+import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
+import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
 import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
 
@@ -130,6 +134,57 @@ async function cancelRunWorkers(runId: string) {
   }
 }
 
+/**
+ * Mark what the run's workers produced for a rewound message as a discarded
+ * branch, so the append-only streams stop replaying an attempt the user threw
+ * away. Called by the in-place rewinds (retry / edit); forks are excluded
+ * because they leave the source run untouched.
+ *
+ * The rewound message itself stays visible by default: a rerun can still fail
+ * (busy agent, spawn error), and hiding the only copy of a message the user can
+ * see in their conversation would be worse than showing a stale answer under
+ * it. `includeTargetEntry` is passed once the message has demonstrably been
+ * re-delivered somewhere else, which is what makes the old copy redundant.
+ */
+async function supersedeDiscardedBranch(runId: string, targetMessageId: string, options: {
+  includeTargetEntry?: boolean;
+  excludeWorkerIds?: string[];
+} = {}) {
+  const excluded = new Set(options.excludeWorkerIds ?? []);
+  const runWorkers = await db
+    .select({ id: workers.id, supersededSeqRanges: workers.supersededSeqRanges })
+    .from(workers)
+    .where(eq(workers.runId, runId));
+
+  for (const worker of runWorkers) {
+    if (excluded.has(worker.id)) {
+      continue;
+    }
+    const targetSeq = await findWorkerEntrySeqById(runId, worker.id, targetMessageId);
+    if (targetSeq === null) {
+      continue;
+    }
+    const from = options.includeTargetEntry ? targetSeq : targetSeq + 1;
+    const through = await readWorkerLatestSeq(runId, worker.id);
+    if (through < from) {
+      continue;
+    }
+    const ranges = [...parseSupersededSeqRanges(worker.supersededSeqRanges), { from, through }];
+    await db.update(workers).set({
+      supersededSeqRanges: serializeSupersededSeqRanges(ranges),
+      updatedAt: new Date(),
+    }).where(eq(workers.id, worker.id));
+    emitNamedEvent({
+      kind: "worker.branch_superseded",
+      runId,
+      workerId: worker.id,
+      targetMessageId,
+      fromSeq: from,
+      throughSeq: through,
+    });
+  }
+}
+
 async function clearRunDerivedState(runId: string, planId: string) {
   await db.delete(clarifications).where(eq(clarifications.runId, runId));
   await db.delete(executionEvents).where(eq(executionEvents.runId, runId));
@@ -208,6 +263,7 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string, 
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(undefined, yoloModeEnabled);
   const { env: envParams } = await readRuntimeEnvFromSettings();
+  const launchSelection = resolveWorkerLaunchSelection({}, run);
 
   await db.insert(workers).values({
     id: workerId,
@@ -220,18 +276,21 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string, 
     outputEntriesJson: "[]",
     currentText: "",
     lastText: "",
+    effectiveLaunchModel: launchSelection.model,
+    effectiveLaunchEffort: launchSelection.effort,
+    launchCredentialSource: launchSelection.credentialSource,
     createdAt: now,
     updatedAt: now,
   });
   emitNamedEvent({ kind: "worker.spawned", runId: run.id, workerId, workerType });
-  const accountAllocation = await allocateWorkerAccount({
+  const accountAllocation = launchSelection.credentialSource === "gateway" ? null : await allocateWorkerAccount({
     workerType,
     runId: run.id,
     workerId,
     explicitAccountId: run.preferredWorkerAccountId ?? null,
     strategy: run.preferredWorkerAccountId ? "manual" : "priority",
   });
-  const workerAccountId = accountAllocation.account?.id ?? null;
+  const workerAccountId = accountAllocation?.account?.id ?? null;
 
   let spawned = false;
   try {
@@ -242,8 +301,8 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string, 
       ...(workerMode ? { mode: workerMode } : {}),
       env: envParams,
       ...(workerAccountId ? { accountId: workerAccountId } : {}),
-      model: run.preferredWorkerModel?.trim() || undefined,
-      effort: run.preferredWorkerEffort?.trim().toLowerCase() || undefined,
+      model: launchSelection.model ?? undefined,
+      effort: launchSelection.effort ?? undefined,
     });
     spawned = true;
     await db.update(workers).set({
@@ -268,7 +327,31 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string, 
       text: content,
       deliveredAt: new Date(),
     });
-    const response = await askAgent(workerId, buildDirectWorkerPrompt(run.mode, content, cwd));
+    if (userInputId) {
+      // The message now exists on this worker, so the copy the rewound worker
+      // still holds is a duplicate rather than the user's only record of it.
+      // Retiring it here (and not before the append) keeps a failed rerun from
+      // erasing the message from the conversation entirely.
+      await supersedeDiscardedBranch(run.id, userInputId, {
+        includeTargetEntry: true,
+        excludeWorkerIds: [workerId],
+      });
+    }
+    let response;
+    try {
+      response = await askAgent(workerId, buildDirectWorkerPrompt(run.mode, content, cwd));
+    } catch (error) {
+      const quotaResult = await handleDirectWorkerAskQuotaError({
+        runId: run.id,
+        workerId,
+        workerType: agent.type || workerType,
+        error,
+      });
+      if (quotaResult) {
+        return quotaResult;
+      }
+      throw error;
+    }
     let snapshot: AgentRecord | null = null;
     try {
       snapshot = await getAgent(workerId);
@@ -354,6 +437,14 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string, 
 function isAgentAlreadyExistsError(error: unknown, workerId: string) {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   return message.includes("agent already exists") && message.includes(workerId.toLowerCase());
+}
+
+function isAgentBusyError(error: unknown) {
+  return /\bagent is busy\b/i.test(formatErrorMessage(error));
+}
+
+function isRecoveredWorkerAlreadyActive(state: string | null | undefined) {
+  return /\b(working|running|busy|starting|pending|recovering)\b/i.test(state ?? "");
 }
 
 function compareWorkersByCreatedAtThenId(
@@ -458,10 +549,13 @@ async function resumeDirectRunFromSavedSession(
     await db.delete(messages).where(inArray(messages.id, laterMessageIds));
   }
 
+  await supersedeDiscardedBranch(run.id, targetMessage.id);
+
   const sessionMode = worker.bridgeSessionMode?.trim();
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
   const { env: envParams } = await readRuntimeEnvFromSettings();
+  const launchSelection = resolveWorkerLaunchSelection(worker, run);
   let resumedWorker: AgentRecord | null = null;
   let recreatedFromRejectedEmptySession = false;
   let replayPrompt: string | null = null;
@@ -472,9 +566,9 @@ async function resumeDirectRunFromSavedSession(
       name: worker.id,
       ...(workerMode ? { mode: workerMode } : {}),
       env: envParams,
-      ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
-      ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
-      ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+      ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
+      ...(launchSelection.model ? { model: launchSelection.model } : {}),
+      ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
       resumeSessionId: sessionId,
     });
   } catch (error) {
@@ -507,9 +601,9 @@ async function resumeDirectRunFromSavedSession(
         name: worker.id,
         ...(workerMode ? { mode: workerMode } : {}),
         env: envParams,
-        ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
-        ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
-        ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+        ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
+        ...(launchSelection.model ? { model: launchSelection.model } : {}),
+        ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
       });
       recreatedFromRejectedEmptySession = true;
     } else if (isRejectedSavedSessionErrorMessage(formatErrorMessage(error))) {
@@ -543,9 +637,9 @@ async function resumeDirectRunFromSavedSession(
             name: worker.id,
             ...(workerMode ? { mode: workerMode } : {}),
             env: envParams,
-            ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
-            ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
-            ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+            ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
+            ...(launchSelection.model ? { model: launchSelection.model } : {}),
+            ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
             resumeSessionId: sessionId,
           });
         } catch (materializedResumeError) {
@@ -591,9 +685,9 @@ async function resumeDirectRunFromSavedSession(
           name: worker.id,
           ...(workerMode ? { mode: workerMode } : {}),
           env: envParams,
-          ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
-          ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
-          ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+          ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
+          ...(launchSelection.model ? { model: launchSelection.model } : {}),
+          ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
         });
         replayPrompt = await buildTranscriptReplayPrompt({
           runId: run.id,
@@ -667,7 +761,63 @@ async function resumeDirectRunFromSavedSession(
     updatedAt: resumedAt,
   }).where(eq(runs.id, run.id));
 
-  const response = await askAgent(worker.id, replayPrompt ?? buildDirectMessagePrompt(run.mode, targetMessage, content, worker.cwd));
+  if (isRecoveredWorkerAlreadyActive(resumedWorker.state)) {
+    await recordExecutionEvent({
+      runId: run.id,
+      workerId: worker.id,
+      planItemId: null,
+      eventType: "direct_retry_worker_already_active",
+      details: {
+        summary: `Skipped duplicate direct retry prompt because ${worker.id} is already active.`,
+        workerState: resumedWorker.state,
+      },
+      createdAt: new Date(),
+    });
+    return { runId: run.id };
+  }
+
+  let response;
+  try {
+    response = await askAgent(worker.id, replayPrompt ?? buildDirectMessagePrompt(run.mode, targetMessage, content, worker.cwd));
+  } catch (error) {
+    if (isAgentBusyError(error)) {
+      let busySnapshot: AgentRecord | null = null;
+      try {
+        busySnapshot = await getAgent(worker.id);
+        await persistWorkerSnapshot(worker.id, busySnapshot);
+      } catch {
+        // The busy response itself proves the worker is alive; avoid failing recovery.
+      }
+      await db.update(workers).set({
+        status: busySnapshot?.state ?? "working",
+        bridgeSessionId: busySnapshot?.sessionId ?? resumedWorker.sessionId ?? (recreatedFromRejectedEmptySession ? null : sessionId),
+        bridgeSessionMode: busySnapshot?.sessionMode ?? resumedWorker.sessionMode ?? sessionMode ?? null,
+        updatedAt: new Date(),
+      }).where(eq(workers.id, worker.id));
+      await recordExecutionEvent({
+        runId: run.id,
+        workerId: worker.id,
+        planItemId: null,
+        eventType: "direct_retry_worker_already_active",
+        details: {
+          summary: `Skipped duplicate direct retry prompt because ${worker.id} is already busy.`,
+          reason: formatErrorMessage(error),
+        },
+        createdAt: new Date(),
+      });
+      return { runId: run.id };
+    }
+    const quotaResult = await handleDirectWorkerAskQuotaError({
+      runId: run.id,
+      workerId: worker.id,
+      workerType: resumedWorker.type || worker.type,
+      error,
+    });
+    if (quotaResult) {
+      return quotaResult;
+    }
+    throw error;
+  }
   await appendUserInputOnDelivery({
     id: targetMessage.id,
     runId: run.id,
@@ -731,6 +881,8 @@ async function startImplementationRerun(
   if (laterMessageIds.length > 0) {
     await db.delete(messages).where(inArray(messages.id, laterMessageIds));
   }
+
+  await supersedeDiscardedBranch(args.runId, args.targetMessageId);
 
   if (args.action === "edit") {
     await db.update(messages).set({
@@ -802,6 +954,31 @@ async function resolveOpenRecoveryIncidentsForRun(runId: string, workerId: strin
       details: { reason: "manual_recovery_completed" },
     });
   }
+}
+
+async function handleDirectWorkerAskQuotaError(args: {
+  runId: string;
+  workerId: string;
+  workerType?: string | null;
+  error: unknown;
+}) {
+  const quotaInfo = extractQuotaResetInfo(args.error, { provider: args.workerType });
+  if (!quotaInfo.isQuotaError) {
+    return null;
+  }
+
+  const result = await handleWorkerQuotaExhaustion({
+    runId: args.runId,
+    workerId: args.workerId,
+    text: quotaInfo.rawText,
+    provider: args.workerType,
+  });
+
+  return {
+    runId: args.runId,
+    recoveryState: result.state === "quota_wait" ? "quota_waiting" : "needs_recovery",
+    resumeAt: result.state === "quota_wait" ? result.resumeAt.toISOString() : null,
+  };
 }
 
 export async function recoverRun(args: RecoverRunArgs) {
@@ -995,6 +1172,8 @@ export async function recoverRun(args: RecoverRunArgs) {
   if (laterMessageIds.length > 0) {
     await db.delete(messages).where(inArray(messages.id, laterMessageIds));
   }
+
+  await supersedeDiscardedBranch(args.runId, args.targetMessageId);
 
   if (args.action === "edit") {
     await db.update(messages).set({

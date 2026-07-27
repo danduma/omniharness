@@ -86,6 +86,15 @@ export type AgentActivityItem =
     }
   | {
       id: string;
+      kind: "protocol";
+      title: string;
+      text: string;
+      timestamp: string;
+      protocolType: "elicitation" | "plan" | "plan_update" | "plan_removed" | "available_commands" | "current_mode" | "config_option" | "session_info" | "usage" | "content";
+      raw?: unknown;
+    }
+  | {
+      id: string;
       kind: "work_summary";
       durationMs: number;
       timestamp: string;
@@ -1183,12 +1192,28 @@ export function formatActivityStatus(status: string): string {
     .join(" ");
 }
 
+/**
+ * Index of the last item that is part of the conversation itself. Protocol
+ * chips (usage counters, session info, config options) are metadata that the
+ * agent interleaves with its own output, so they do not break the adjacency of
+ * two consecutive assistant messages.
+ */
+function lastConversationItemIndex(items: AgentActivityItem[]): number | null {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (items[index]?.kind !== "protocol") {
+      return index;
+    }
+  }
+  return null;
+}
+
 export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentActivityItem[] {
   const items: AgentActivityItem[] = [];
   const toolIndexById = new Map<string, number>();
   const messageIndexById = new Map<string, number>();
   const permissionDetailByRequestId = new Map<number, string>();
   const permissionIndexByRequestId = new Map<number, number>();
+  const protocolIndexByKey = new Map<string, number>();
   const thoughtLocationById = new Map<string, { activity: MutableThinkingActivity; index: number }>();
   const outputEntries = coalesceFragmentedMessageEntries(
     Array.isArray(snapshot.outputEntries) ? snapshot.outputEntries : [],
@@ -1267,6 +1292,17 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
           continue;
         }
       }
+      // A retried turn re-emits the identical assistant message once per
+      // attempt — an API error such as "Usage credits required for 1M context"
+      // arrives a dozen times in a row. Each retry is a distinct entry id, so
+      // the id map above cannot collapse them; fold them into the bubble that
+      // is already on screen instead of repeating it.
+      const previousIndex = lastConversationItemIndex(items);
+      const previousItem = previousIndex == null ? null : items[previousIndex];
+      if (previousItem?.kind === "message" && previousItem.text === text) {
+        messageIndexById.set(entry.id, previousIndex as number);
+        continue;
+      }
       messageIndexById.set(entry.id, items.length);
       items.push({
         id: entry.id,
@@ -1315,6 +1351,54 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
         timestamp: entry.timestamp,
         status,
       });
+      continue;
+    }
+
+    const protocolTitleByType: Partial<Record<WorkerEntryType, string>> = {
+      elicitation: "terminal.protocol.elicitation",
+      plan: "terminal.protocol.plan",
+      plan_update: "terminal.protocol.planUpdated",
+      plan_removed: "terminal.protocol.planRemoved",
+      current_mode: "terminal.protocol.mode",
+      config_option: "terminal.protocol.configuration",
+      session_info: "terminal.protocol.sessionInfo",
+      usage: "terminal.protocol.usage",
+      agent_content: "terminal.protocol.content",
+      user_content: "terminal.protocol.content",
+    };
+    const protocolTitle = protocolTitleByType[entry.type];
+    if (protocolTitle) {
+      finishOpenThinking(entry.timestamp);
+      const raw = asRecord(entry.raw);
+      const plan = asRecord(raw?.plan);
+      const protocolContent = asRecord(raw?.content);
+      const protocolKey = entry.type === "elicitation" && (typeof raw?.requestId === "number" || typeof raw?.requestId === "string")
+        ? `elicitation:${String(raw.requestId)}`
+        : (entry.type === "plan_update" || entry.type === "plan_removed") && typeof (plan?.id ?? raw?.id) === "string"
+          ? `plan:${String(plan?.id ?? raw?.id)}`
+          : entry.type === "plan"
+            ? "plan:legacy"
+            : entry.type === "agent_content" && protocolContent?.type === "terminal" && typeof protocolContent.terminalId === "string"
+              ? `terminal:${protocolContent.terminalId}`
+            : ["current_mode", "config_option", "session_info", "usage"].includes(entry.type)
+              ? `latest:${entry.type}`
+              : `entry:${entry.id}`;
+      const protocolActivity: Extract<AgentActivityItem, { kind: "protocol" }> = {
+        id: entry.id,
+        kind: "protocol",
+        title: protocolTitle,
+        text: normalizeMultilineText(entry.text || "").trim(),
+        timestamp: entry.timestamp,
+        protocolType: (entry.type === "agent_content" || entry.type === "user_content" ? "content" : entry.type) as Extract<AgentActivityItem, { kind: "protocol" }>["protocolType"],
+        raw: entry.raw,
+      };
+      const existingIndex = protocolIndexByKey.get(protocolKey);
+      if (existingIndex !== undefined && items[existingIndex]?.kind === "protocol") {
+        items[existingIndex] = protocolActivity;
+      } else {
+        protocolIndexByKey.set(protocolKey, items.length);
+        items.push(protocolActivity);
+      }
       continue;
     }
 

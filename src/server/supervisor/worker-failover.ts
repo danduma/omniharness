@@ -27,6 +27,8 @@ import {
 } from "@/server/supervisor/worker-types";
 import { runs } from "@/server/db/schema";
 import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
+import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
+import { prepareClaudeGatewayLaunch } from "@/server/integrations/claude-model-gateway/worker-env";
 
 export type FailoverEnv = Record<string, string | undefined>;
 
@@ -119,6 +121,9 @@ async function reserveReplacementWorkerRow(args: {
   cwd: string;
   title: string;
   initialPrompt: string;
+  launchModel: string | null;
+  launchEffort: string | null;
+  launchCredentialSource: "gateway" | "account";
 }) {
   const { workerId, workerNumber } = await allocateWorkerIdentity(args.runId);
   await db.insert(workers).values({
@@ -130,6 +135,9 @@ async function reserveReplacementWorkerRow(args: {
     workerNumber,
     title: args.title,
     initialPrompt: args.initialPrompt,
+    effectiveLaunchModel: args.launchModel,
+    effectiveLaunchEffort: args.launchEffort,
+    launchCredentialSource: args.launchCredentialSource,
     outputLog: "",
     outputEntriesJson: "",
     currentText: "",
@@ -192,6 +200,9 @@ export async function attemptWorkerFailover(
     now,
     failoverPending: true,
   }));
+  const outgoingWorker = await db.select().from(workers).where(eq(workers.id, args.outgoingWorkerId)).get();
+  const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
+  const launchSelection = resolveWorkerLaunchSelection(outgoingWorker ?? {}, run ?? {});
 
   let replacementSelection: Awaited<ReturnType<typeof selectSpawnableWorkerTypeAsync>> | null = null;
   let replacementSelectionError: unknown = null;
@@ -208,7 +219,12 @@ export async function attemptWorkerFailover(
     // failure: the run will be parked in quota_waiting like today.
   }
 
-  if (!replacementSelection || replacementSelection.type === args.outgoingWorkerType) {
+  const gatewayCompatibilityFailure = launchSelection.credentialSource === "gateway"
+    && replacementSelection?.type !== "claude"
+    ? "A gateway-routed Claude worker cannot fail over to a non-Claude replacement."
+    : null;
+
+  if (!replacementSelection || replacementSelection.type === args.outgoingWorkerType || gatewayCompatibilityFailure) {
     await setIncidentFailoverFlag(block.incidentId, "resolved");
     const park = await parkRunForQuotaWait({
       runId: args.runId,
@@ -218,11 +234,11 @@ export async function attemptWorkerFailover(
       now,
     });
     void park;
-    const selectionFailureReason = replacementSelectionError instanceof Error
+    const selectionFailureReason = gatewayCompatibilityFailure ?? (replacementSelectionError instanceof Error
       ? replacementSelectionError.message
       : replacementSelectionError
         ? String(replacementSelectionError)
-        : null;
+        : null);
     if (selectionFailureReason) {
       await recordFailoverEvent({
         runId: args.runId,
@@ -246,7 +262,9 @@ export async function attemptWorkerFailover(
     }
     return {
       state: "no_replacement",
-      reason: replacementSelection
+      reason: gatewayCompatibilityFailure
+        ? gatewayCompatibilityFailure
+        : replacementSelection
         ? `No alternative worker is available (only ${args.outgoingWorkerType} allowed/spawnable).`
         : selectionFailureReason
           ? `Worker availability check failed: ${selectionFailureReason}`
@@ -320,18 +338,28 @@ export async function attemptWorkerFailover(
   let currentType: SupportedWorkerType = replacementType;
   let lastError: unknown = null;
   const blockedNow = new Set<SupportedWorkerType>([args.outgoingWorkerType]);
-  const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
   while (attempts < maxAttempts) {
     attempts += 1;
-    const newWorkerId = await reserveReplacementWorkerRow({
-      runId: args.runId,
-      workerType: currentType,
-      cwd: args.cwd,
-      title: args.title,
-      initialPrompt: seed,
-    });
+    let newWorkerId: string | null = null;
     try {
-      const accountAllocation = await allocateWorkerAccount({
+      await prepareClaudeGatewayLaunch({
+        type: currentType,
+        model: launchSelection.model,
+        accountId: launchSelection.accountId,
+        runId: args.runId,
+        workerId: args.outgoingWorkerId,
+      });
+      newWorkerId = await reserveReplacementWorkerRow({
+        runId: args.runId,
+        workerType: currentType,
+        cwd: args.cwd,
+        title: args.title,
+        initialPrompt: seed,
+        launchModel: launchSelection.model,
+        launchEffort: launchSelection.effort,
+        launchCredentialSource: launchSelection.credentialSource,
+      });
+      const accountAllocation = launchSelection.credentialSource === "gateway" ? null : await allocateWorkerAccount({
         workerType: currentType,
         runId: args.runId,
         workerId: newWorkerId,
@@ -339,13 +367,15 @@ export async function attemptWorkerFailover(
         strategy: run?.preferredWorkerAccountId ? "manual" : "priority",
         env: compactEnv(args.env),
       });
-      const workerAccountId = accountAllocation.account?.id ?? null;
+      const workerAccountId = accountAllocation?.account?.id ?? null;
       const spawned = await bridge.spawnAgent({
         type: currentType,
         cwd: args.cwd,
         name: newWorkerId,
         env: compactEnv(args.env),
         ...(workerAccountId ? { accountId: workerAccountId } : {}),
+        ...(launchSelection.model ? { model: launchSelection.model } : {}),
+        ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
       });
       await db.update(workers).set({
         bridgeSessionId: spawned.sessionId ?? null,
@@ -443,7 +473,7 @@ export async function attemptWorkerFailover(
     } catch (error) {
       lastError = error;
       const quotaInfo = extractQuotaResetInfo(error, { provider: currentType });
-      if (quotaInfo.isQuotaError) {
+      if (quotaInfo.isQuotaError && newWorkerId) {
         await recordWorkerQuotaBlock({
           runId: args.runId,
           workerId: newWorkerId,
@@ -487,11 +517,11 @@ export async function attemptWorkerFailover(
           break;
         }
       } else {
-        await db.update(workers).set({
+        if (newWorkerId) await db.update(workers).set({
           status: "error",
           updatedAt: new Date(),
         }).where(eq(workers.id, newWorkerId));
-        emitNamedEvent({
+        if (newWorkerId) emitNamedEvent({
           kind: "worker.status",
           runId: args.runId,
           workerId: newWorkerId,
@@ -504,7 +534,7 @@ export async function attemptWorkerFailover(
           message: `Replacement worker spawn failed.`,
           surface: "log",
           runId: args.runId,
-          workerId: newWorkerId,
+          ...(newWorkerId ? { workerId: newWorkerId } : {}),
           cause: {
             name: error instanceof Error ? error.name : "Error",
             message: truncate(error instanceof Error ? error.message : String(error)),

@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { StateManager } from "@/lib/state-manager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
-import { ArrowDown, ArrowUp, Plus, Power, RefreshCw } from "lucide-react";
+import { ArrowDown, ArrowUp, Plus, Power, RefreshCw, Trash2, X } from "lucide-react";
 import { WORKER_OPTIONS } from "@/app/home/constants";
 import type { AccountRecord, WorkerAvailability, WorkerModelCatalog, WorkerType } from "@/app/home/types";
 import { buildInlineError, parseBooleanSetting, parseWorkerType, parseWorkerTypes } from "@/app/home/utils";
@@ -14,6 +14,7 @@ import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { getWorkerAvailabilityMessage } from "./worker-availability-copy";
+import { ClaudeModelGatewaySettings } from "./ClaudeModelGatewaySettings";
 
 interface AgentsSettingsPanelProps {
   settings: Record<string, string>;
@@ -32,6 +33,8 @@ interface AgentsSettingsPanelProps {
   };
   onRefreshWorkerCatalog: () => void;
   workerCatalogRefreshing: boolean;
+  secretStates?: Record<string, { configured: boolean }>;
+  settingsDirtyKeys?: Set<string>;
 }
 
 export function AgentsSettingsPanel({
@@ -46,10 +49,16 @@ export function AgentsSettingsPanel({
   workerCatalogQuery,
   onRefreshWorkerCatalog,
   workerCatalogRefreshing,
+  secretStates,
+  settingsDirtyKeys,
 }: AgentsSettingsPanelProps) {
   useI18nSnapshot();
-  const manager = useMemo(() => new StateManager({ accountActionError: null as unknown, pendingAccountAction: null as string | null }), []);
-  const { accountActionError, pendingAccountAction } = useManagerSnapshot(manager);
+  const manager = useMemo(() => new StateManager({
+    accountActionError: null as unknown,
+    pendingAccountAction: null as string | null,
+    confirmingDeleteAccountId: null as string | null,
+  }), []);
+  const { accountActionError, pendingAccountAction, confirmingDeleteAccountId } = useManagerSnapshot(manager);
   const configuredAllowedWorkerTypes = parseWorkerTypes(settings.WORKER_ALLOWED_TYPES);
   const configuredAllowedWorkerSet = new Set(configuredAllowedWorkerTypes);
   const availableWorkerTypes = new Set(
@@ -169,6 +178,18 @@ export function AgentsSettingsPanel({
     onAccountsChanged(accounts.map((item) => (item.id === nextAccount.id ? nextAccount : item)));
   });
 
+  const deleteAccount = (account: AccountRecord) => {
+    void runAccountAction(`delete:${account.id}`, async () => {
+      await requestJson<{ ok: true; accountId: string }>(`/api/accounts/${encodeURIComponent(account.id)}`, {
+        method: "DELETE",
+      }, {
+        source: t("settings.agents.accountActionErrorSource"),
+        action: t("settings.agents.deleteAccountAction"),
+      });
+      onAccountsChanged(accounts.filter((item) => item.id !== account.id));
+    }).finally(() => manager.setKey("confirmingDeleteAccountId", null));
+  };
+
   const refreshAccountStatus = (account: AccountRecord) => runAccountAction(`status:${account.id}`, async () => {
     const nextAccount = await requestJson<AccountRecord>(`/api/accounts/${encodeURIComponent(account.id)}/status`, {
       method: "POST",
@@ -210,6 +231,7 @@ export function AgentsSettingsPanel({
 
   return (
     <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
+      <ClaudeModelGatewaySettings settings={settings} setSetting={setSetting} dirtyKeys={settingsDirtyKeys} secretStates={secretStates} />
       <div className="flex items-center gap-3">
         <label className="shrink-0 text-xs font-semibold text-muted-foreground" htmlFor="WORKER_DEFAULT_TYPE">
           {t("settings.agents.defaultWorker")}
@@ -339,10 +361,15 @@ export function AgentsSettingsPanel({
                                   "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px]",
                                   account.enabled
                                     ? "bg-muted text-foreground/80"
-                                    : "bg-muted/50 text-muted-foreground line-through",
+                                    : "bg-muted/50 text-muted-foreground",
                                 )}
                               >
                                 <span>{account.label || `${account.provider} ${account.type}`}</span>
+                                {!account.enabled ? (
+                                  <span className="rounded bg-background/70 px-1 text-[9px] font-semibold uppercase tracking-wide no-underline">
+                                    {t("settings.agents.accountDisabled")}
+                                  </span>
+                                ) : null}
                                 <button
                                   type="button"
                                   className="rounded-sm p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
@@ -361,8 +388,48 @@ export function AgentsSettingsPanel({
                                   disabled={pendingAccountAction !== null}
                                   onClick={() => setAccountEnabled(account, !account.enabled)}
                                 >
-                                  <Power className="h-3 w-3" aria-hidden="true" />
+                                  {pendingAccountAction === `enabled:${account.id}` ? (
+                                    <RefreshCw className="h-3 w-3 animate-spin" aria-hidden="true" />
+                                  ) : (
+                                    <Power className="h-3 w-3" aria-hidden="true" />
+                                  )}
                                 </button>
+                                {confirmingDeleteAccountId === account.id ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="rounded-sm bg-destructive/10 px-1 py-0.5 font-semibold text-destructive hover:bg-destructive/20"
+                                      aria-label={t("settings.agents.confirmDeleteAccountAction", { account: account.label || account.id })}
+                                      disabled={pendingAccountAction !== null}
+                                      onClick={() => deleteAccount(account)}
+                                    >
+                                      {pendingAccountAction === `delete:${account.id}` ? (
+                                        <RefreshCw className="h-3 w-3 animate-spin" aria-hidden="true" />
+                                      ) : (
+                                        t("settings.agents.confirmDeleteAccountLabel")
+                                      )}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="rounded-sm p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
+                                      aria-label={t("settings.agents.cancelDeleteAccount", { account: account.label || account.id })}
+                                      disabled={pendingAccountAction !== null}
+                                      onClick={() => manager.setKey("confirmingDeleteAccountId", null)}
+                                    >
+                                      <X className="h-3 w-3" aria-hidden="true" />
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="rounded-sm p-0.5 text-muted-foreground hover:bg-background hover:text-destructive"
+                                    aria-label={t("settings.agents.deleteAccount", { account: account.label || account.id })}
+                                    disabled={pendingAccountAction !== null}
+                                    onClick={() => manager.setKey("confirmingDeleteAccountId", account.id)}
+                                  >
+                                    <Trash2 className="h-3 w-3" aria-hidden="true" />
+                                  </button>
+                                )}
                               </span>
                             ))}
                           </div>

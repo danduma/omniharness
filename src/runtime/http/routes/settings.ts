@@ -9,6 +9,12 @@ import { updateRuntimeSettings } from "@/server/bridge-client";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { readSystemResourceSnapshot } from "@/server/agent-runtime/resource-admission";
 import { RUNTIME_RESOURCE_SETTING_KEYS } from "@/lib/runtime-resource-settings";
+import {
+  CLAUDE_MODEL_GATEWAY_SETTING_KEYS,
+  normalizeClaudeGatewayBaseUrl,
+  validateClaudeGatewayModel,
+} from "@/lib/claude-model-gateway";
+import { readClaudeModelGatewaySettings } from "@/server/integrations/claude-model-gateway/settings";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { toNextRequest } from "./next-request";
 
@@ -18,6 +24,36 @@ function isInternalSettingKey(key: string) {
 
 function describeError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function validateClaudeGatewayDraft(body: Record<string, unknown>) {
+  const gatewayKeys = new Set<string>(Object.values(CLAUDE_MODEL_GATEWAY_SETTING_KEYS));
+  if (!Object.keys(body).some((key) => gatewayKeys.has(key))) return;
+  for (const [key, value] of Object.entries(body)) {
+    if (gatewayKeys.has(key) && typeof value !== "string") throw new Error(`Gateway setting ${key} must be a string.`);
+  }
+  const current = await readClaudeModelGatewaySettings();
+  const mode = body[CLAUDE_MODEL_GATEWAY_SETTING_KEYS.mode] ?? current.mode;
+  if (mode !== "managed" && mode !== "external") throw new Error("Invalid Claude model gateway mode.");
+  const enabled = body[CLAUDE_MODEL_GATEWAY_SETTING_KEYS.enabled];
+  if (enabled !== undefined && enabled !== "true" && enabled !== "false") {
+    throw new Error("Claude model gateway enabled setting must be true or false.");
+  }
+  const baseUrl = body[CLAUDE_MODEL_GATEWAY_SETTING_KEYS.baseUrl];
+  normalizeClaudeGatewayBaseUrl(typeof baseUrl === "string" ? baseUrl : current.baseUrl);
+  const rawModels = body[CLAUDE_MODEL_GATEWAY_SETTING_KEYS.models];
+  if (typeof rawModels === "string") {
+    const parsed = JSON.parse(rawModels) as unknown;
+    if (!Array.isArray(parsed)) throw new Error("Claude model gateway models must be an array.");
+    parsed.forEach((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("Claude model gateway models must contain objects.");
+      const model = entry as { id?: unknown; label?: unknown };
+      if (typeof model.id !== "string" || (model.label != null && typeof model.label !== "string")) {
+        throw new Error("Claude model gateway model fields are invalid.");
+      }
+      validateClaudeGatewayModel({ id: model.id, ...(typeof model.label === "string" ? { label: model.label } : {}) });
+    });
+  }
 }
 
 async function getSettings(request: Request) {
@@ -78,7 +114,12 @@ async function postSettings(request: Request) {
     return auth.response;
   }
 
-  const body = await request.json();
+  const body = await request.json() as Record<string, unknown>;
+  try {
+    await validateClaudeGatewayDraft(body);
+  } catch (error) {
+    return Response.json({ error: { code: "invalid_gateway_settings", message: describeError(error) } }, { status: 400 });
+  }
   let projectSettingValue: string | null = null;
   const runtimeResourceSettings: Record<string, string> = {};
   const runtimeResourceKeys = new Set<string>(Object.values(RUNTIME_RESOURCE_SETTING_KEYS));

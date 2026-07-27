@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { AgentRuntimeManager } from "@/server/agent-runtime/manager";
@@ -137,15 +137,14 @@ describe("Gemini runtime args", () => {
       const projectDir = createTempDir("omni-resolve-project-");
       const chatsDir = join(projectDir, ".omniharness/cli-home/gemini/.gemini/tmp/some-project/chats");
       
-      const fs = require("fs");
-      fs.mkdirSync(chatsDir, { recursive: true });
+      mkdirSync(chatsDir, { recursive: true });
       
       const sessionFileContent = JSON.stringify({
         sessionId: "1aba5d6a-def8-4e87-ab58-699f3aa83822",
         kind: "main",
       }) + "\n";
       
-      fs.writeFileSync(join(chatsDir, "session-2026-06-30T14-50-1aba5d6a.jsonl"), sessionFileContent);
+      writeFileSync(join(chatsDir, "session-2026-06-30T14-50-1aba5d6a.jsonl"), sessionFileContent);
       
       const resolved = await resolveFullGeminiUuid("1aba5d6a", projectDir);
       expect(resolved).toBe("1aba5d6a-def8-4e87-ab58-699f3aa83822");
@@ -155,15 +154,14 @@ describe("Gemini runtime args", () => {
       const projectDir = createTempDir("omni-resolve-project-");
       const chatsDir = join(projectDir, ".omniharness/cli-home/gemini/.gemini/tmp/some-project/chats");
       
-      const fs = require("fs");
-      fs.mkdirSync(chatsDir, { recursive: true });
+      mkdirSync(chatsDir, { recursive: true });
       
       const sessionFileContent = JSON.stringify({
         sessionId: "98765432-abcd-ef01-2345-6789abcdef01",
         kind: "main",
       }) + "\n";
       
-      fs.writeFileSync(join(chatsDir, "session-2026-06-30T14-50-98765432.jsonl"), sessionFileContent);
+      writeFileSync(join(chatsDir, "session-2026-06-30T14-50-98765432.jsonl"), sessionFileContent);
       
       // Test suffix extract and resolve
       const resolved = await resolveFullGeminiUuid("omniharness-98765432", projectDir);

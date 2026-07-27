@@ -215,7 +215,7 @@ function parseRelativeDurationAt(text: string, now: Date) {
 }
 
 function parseTimeOfDay(text: string, now: Date): Date | null {
-  const match = text.match(/\b(?:until|after|at|reset(?:s)? at|try again at)\s+(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\b/i);
+  const match = text.match(/\b(?:until|after|at|reset(?:s)?(?:\s+at)?|try again at)\s+(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\b/i);
   if (!match) {
     return null;
   }

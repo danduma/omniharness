@@ -178,6 +178,7 @@ function ConversationProjectGroupList({
           >
             <div
               data-project-drag-row="true"
+              data-project-path={group.path}
               className="group mb-1 flex items-center justify-between gap-0.5 rounded px-2 hover:bg-muted/30"
               onDragOver={(event) => {
                 if (!canDragProject) return;
@@ -297,6 +298,7 @@ function ConversationProjectGroupList({
                   return (
                     <div
                       key={run.id}
+                      data-conversation-run-id={run.id}
                       onClick={() => selectRun(run.id)}
                       onDoubleClick={(event) => {
                         const target = event.target;

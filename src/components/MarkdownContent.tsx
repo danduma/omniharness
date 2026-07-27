@@ -1,4 +1,5 @@
 import React from "react";
+import { ProjectFileContextMenu } from "@/components/ProjectFileContextMenu";
 import { parseProjectFileReference, type ProjectFileReference } from "@/lib/project-file-links";
 import { cn } from "@/lib/utils";
 
@@ -81,14 +82,19 @@ function renderLink({
   const reference = projectRoot ? parseProjectFileReference(href, projectRoot) : null;
   if (reference && onOpenProjectFile) {
     return (
-      <button
+      <ProjectFileContextMenu
         key={keyValue}
-        type="button"
-        className={cn("inline text-left", linkClassName(inheritTextColor))}
-        onClick={() => onOpenProjectFile(reference)}
+        reference={reference}
+        onOpen={onOpenProjectFile}
       >
-        {label}
-      </button>
+        <button
+          type="button"
+          className={cn("inline text-left", linkClassName(inheritTextColor))}
+          onClick={() => onOpenProjectFile(reference)}
+        >
+          {label}
+        </button>
+      </ProjectFileContextMenu>
     );
   }
 
@@ -103,6 +109,56 @@ function renderLink({
       {label}
     </a>
   ) : label;
+}
+
+function renderCodeSpan({
+  text,
+  keyValue,
+  inheritTextColor,
+  projectRoot,
+  onOpenProjectFile,
+}: {
+  text: string;
+  keyValue: string;
+  inheritTextColor: boolean;
+  projectRoot?: string | null;
+  onOpenProjectFile?: (file: ProjectFileReference) => void;
+}) {
+  const className = cn(
+    "rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em]",
+    inheritTextColor ? "text-current" : "text-foreground",
+  );
+  const reference = projectRoot ? parseProjectFileReference(text, projectRoot) : null;
+
+  if (reference && onOpenProjectFile) {
+    return (
+      <ProjectFileContextMenu
+        key={keyValue}
+        reference={reference}
+        onOpen={onOpenProjectFile}
+      >
+        <button
+          type="button"
+          className={cn(
+            "inline text-left underline decoration-current/35 underline-offset-4 transition-colors hover:decoration-current",
+            className,
+          )}
+          onClick={() => onOpenProjectFile(reference)}
+        >
+          {text}
+        </button>
+      </ProjectFileContextMenu>
+    );
+  }
+
+  return (
+    <code
+      key={keyValue}
+      className={className}
+    >
+      {text}
+    </code>
+  );
 }
 
 function renderInlineMarkdown(
@@ -133,24 +189,26 @@ function renderInlineMarkdown(
         onOpenProjectFile,
       }));
     } else if (match[4]) {
-      nodes.push(
-        <code
-          key={`${keyPrefix}-code-${match.index}`}
-          className={cn(
-            "rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em]",
-            inheritTextColor ? "text-current" : "text-foreground",
-          )}
-        >
-          {match[4]}
-        </code>,
-      );
+      nodes.push(renderCodeSpan({
+        text: match[4],
+        keyValue: `${keyPrefix}-code-${match.index}`,
+        inheritTextColor,
+        projectRoot,
+        onOpenProjectFile,
+      }));
     } else if (match[5]) {
       nodes.push(
         <strong
           key={`${keyPrefix}-strong-${match.index}`}
           className={cn("font-semibold", inheritTextColor ? "text-current" : "text-foreground")}
         >
-          {match[5]}
+          {renderInlineMarkdown(
+            match[5],
+            `${keyPrefix}-strong-${match.index}`,
+            inheritTextColor,
+            projectRoot,
+            onOpenProjectFile,
+          )}
         </strong>,
       );
     } else if (match[6]) {

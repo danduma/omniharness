@@ -17,6 +17,7 @@ import { isLongWorkerCompletionText, normalizeWorkerStatus } from "@/server/supe
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { appendLifecycleEntry } from "@/server/workers/stream-writer";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
+import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent, type SupervisorStopReason } from "@/server/events/named-events";
@@ -826,14 +827,16 @@ async function reviveWorkerFromSavedSession(args: {
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
   const { env: envParams } = await readRuntimeEnvFromSettings();
+  const launchSelection = resolveWorkerLaunchSelection(args.worker, args.run);
   const spawnParams = {
     type: args.worker.type,
     cwd: args.worker.cwd,
     name: args.worker.id,
     ...(workerMode ? { mode: workerMode } : {}),
     env: envParams,
-    ...(args.run.preferredWorkerModel ? { model: args.run.preferredWorkerModel } : {}),
-    ...(args.run.preferredWorkerEffort ? { effort: args.run.preferredWorkerEffort } : {}),
+    ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
+    ...(launchSelection.model ? { model: launchSelection.model } : {}),
+    ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
   };
 
   let resumedWorker: bridge.AgentRecord;

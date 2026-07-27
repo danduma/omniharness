@@ -2,7 +2,7 @@ accounts:
   - id: "claude-sub-1"
     provider: "anthropic"
     type: "subscription"
-    auth_ref: "CLAUDE_CODE_TOKEN_1"
+    auth_ref: "local-session:claude"
     capacity: 50
     reset_schedule: "0 0 * * *"
   - id: "claude-api-1"

@@ -1,5 +1,6 @@
-import { RotateCcw, ShieldAlert } from "lucide-react";
+import { CircleStop, RotateCcw, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import type { RunRecoveryState } from "@/app/home/types";
 import { recoveryDescriptionKey, recoveryTitleKey, recoveryTone } from "@/app/home/recovery-utils";
@@ -19,11 +20,15 @@ function formatRecoveryTime(value: string | null | undefined) {
 export function RunRecoveryNotice({
   recoveryState,
   isResuming,
+  isStopping = false,
   onResume,
+  onStop,
 }: {
   recoveryState: RunRecoveryState | null;
   isResuming: boolean;
+  isStopping?: boolean;
   onResume: () => void;
+  onStop?: () => void;
 }) {
   useI18nSnapshot();
   if (!recoveryState) {
@@ -38,6 +43,10 @@ export function RunRecoveryNotice({
   const description = descriptionKey.startsWith("recovery.")
     ? t(descriptionKey, { resumeAt: resetTime ?? t("recovery.notice.pendingReset") })
     : descriptionKey;
+  const autoResumeLabel = t("recovery.notice.autoResumeAt", {
+    resumeAt: resetTime ?? t("recovery.notice.pendingReset"),
+  });
+  const showQuotaControls = recoveryState.kind === "quota_waiting";
 
   return (
     <div
@@ -59,7 +68,7 @@ export function RunRecoveryNotice({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="font-semibold text-foreground">{title}</p>
-            {canResume ? (
+            {canResume && !showQuotaControls ? (
               <Button
                 type="button"
                 size="sm"
@@ -76,7 +85,51 @@ export function RunRecoveryNotice({
           <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">
             {description}
           </p>
-          {recoveryState.kind === "quota_waiting" && resetTime ? (
+          {showQuotaControls ? (
+            <div className="mt-3 flex flex-col gap-2 rounded-md border border-border/60 bg-background/70 p-2 sm:flex-row sm:items-center sm:justify-between">
+              <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-foreground">
+                <Switch
+                  checked
+                  disabled={!onStop || isStopping}
+                  onCheckedChange={(checked) => {
+                    if (!checked) {
+                      onStop?.();
+                    }
+                  }}
+                  aria-label={t("recovery.notice.autoResumeAria")}
+                />
+                <span className="min-w-0 break-words">{autoResumeLabel}</span>
+              </label>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                {canResume ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={isResuming}
+                    onClick={onResume}
+                    aria-label={t("recovery.notice.resume")}
+                  >
+                    <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                    {t("recovery.notice.resume")}
+                  </Button>
+                ) : null}
+                {onStop ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="destructive"
+                    disabled={isStopping}
+                    onClick={onStop}
+                    aria-label={t("recovery.notice.stop")}
+                  >
+                    <CircleStop className="mr-2 h-3.5 w-3.5" />
+                    {t("recovery.notice.stop")}
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          ) : recoveryState.kind === "quota_waiting" && resetTime ? (
             <p className="mt-1 text-[11px] text-muted-foreground">
               {t("recovery.notice.quotaResumeAt", { resumeAt: resetTime })}
             </p>

@@ -27,7 +27,18 @@ export type BridgeWorkerEntryType =
   | "tool_call"
   | "tool_call_update"
   | "permission"
-  | "elicitation";
+  | "elicitation"
+  | "user_message_chunk"
+  | "plan"
+  | "plan_update"
+  | "plan_removed"
+  | "available_commands"
+  | "current_mode"
+  | "config_option"
+  | "session_info"
+  | "usage"
+  | "agent_content"
+  | "user_content";
 
 export type ServerWorkerEntryType =
   | "user_input"
@@ -62,6 +73,17 @@ const BRIDGE_TYPES: ReadonlySet<WorkerEntryType> = new Set<WorkerEntryType>([
   "tool_call_update",
   "permission",
   "elicitation",
+  "user_message_chunk",
+  "plan",
+  "plan_update",
+  "plan_removed",
+  "available_commands",
+  "current_mode",
+  "config_option",
+  "session_info",
+  "usage",
+  "agent_content",
+  "user_content",
 ]);
 
 const SERVER_TYPES: ReadonlySet<WorkerEntryType> = new Set<WorkerEntryType>([

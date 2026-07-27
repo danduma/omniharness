@@ -27,6 +27,7 @@ import {
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 import * as wakeSchedule from "@/server/supervisor/wake-schedule";
 import { resetDurableSupervisorWakeSchedulerForTests } from "@/server/supervisor/wake-schedule";
+import { readWorkerOutputEntries } from "@/server/workers/output-store";
 
 const { mockAskAgent, mockGetAgent, mockSpawnAgent, mockSupervisorRun, mockStopRunObserver } = vi.hoisted(() => ({
   mockAskAgent: vi.fn(),
@@ -423,6 +424,125 @@ describe("executeSupervisorWake", () => {
       runId,
       workerId,
     }));
+  });
+
+  it("resumes direct quota-waiting workers from saved sessions without starting the supervisor", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const incidentId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-quota-resume.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "quota_waiting",
+      preferredWorkerAccountId: "claude-sub-1",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "cred-exhausted",
+      cwd: process.cwd(),
+      outputLog: "",
+      currentText: "You've hit your session limit · resets 10:40am (Europe/Madrid)",
+      lastText: "You've hit your session limit · resets 10:40am (Europe/Madrid)",
+      bridgeSessionId: "claude-session-1",
+      bridgeSessionMode: "full-access",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(recoveryIncidents).values({
+      id: incidentId,
+      runId,
+      workerId,
+      queuedMessageId: null,
+      kind: "quota_exhausted",
+      status: "open",
+      autoAttemptCount: 0,
+      lastError: "You've hit your session limit · resets 10:40am (Europe/Madrid)",
+      details: JSON.stringify({
+        recoveryState: "quota_waiting",
+        recommendedAction: "wait_for_quota_reset",
+        resumeAt: now.toISOString(),
+      }),
+      detectedAt: now,
+      updatedAt: now,
+      resolvedAt: null,
+    });
+    await db.insert(supervisorScheduledWakes).values({
+      runId,
+      wakeAt: new Date(now.getTime() - 1_000),
+      reason: "quota_wait",
+      source: "time-of-day",
+      incidentId,
+      details: JSON.stringify({ incidentId }),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockSpawnAgent.mockResolvedValue({
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "claude-session-1",
+      sessionMode: "full-access",
+      currentText: "",
+      lastText: "",
+      pendingPermissions: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+    mockAskAgent.mockResolvedValue({
+      name: workerId,
+      state: "idle",
+      stopReason: null,
+      response: "Resumed the direct Claude Code session.",
+    });
+
+    await executeSupervisorWake(runId);
+    cancelSupervisorWake(runId);
+
+    expect(mockSpawnAgent).toHaveBeenCalledWith({
+      type: "claude",
+      cwd: process.cwd(),
+      name: workerId,
+      mode: "full-access",
+      env: {},
+      accountId: "claude-sub-1",
+      resumeSessionId: "claude-session-1",
+    });
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      workerId,
+      expect.stringContaining("Continue the interrupted work"),
+    );
+    expect(mockSupervisorRun).not.toHaveBeenCalled();
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const incidents = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
+    const streamEntries = await readWorkerOutputEntries(runId, workerId);
+    expect(run?.status).toBe("running");
+    expect(run?.lastError).toBeNull();
+    expect(worker?.status).toBe("idle");
+    expect(worker?.currentText).toBe("");
+    expect(worker?.lastText).toBe("");
+    expect(worker?.outputLog).toContain("Resumed the direct Claude Code session.");
+    expect(streamEntries.some((entry) => entry.type === "supervisor_input" && entry.text.includes("Continue the interrupted work"))).toBe(true);
+    expect(streamEntries.some((entry) => entry.type === "message" && entry.text.includes("Resumed the direct Claude Code session."))).toBe(true);
+    expect(incidents.every((incident) => incident.status === "resolved")).toBe(true);
   });
 
   it("breaks an orphaned lease when an idle worker already produced completion evidence", async () => {

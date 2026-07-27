@@ -1,11 +1,12 @@
 import { eq } from "drizzle-orm";
-import { approvePermission, denyPermission, getAgent, getAgentOutput, respondElicitation, type AgentRecord, type ElicitationAnswer } from "@/server/bridge-client";
+import { approvePermission, denyPermission, getAgent, getAgentOutput, invokeAgentAcpMethod, respondElicitation, type AgentRecord, type ElicitationAnswer } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { runs, workers } from "@/server/db/schema";
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { buildLiveWorkerSnapshot } from "@/server/workers/live-snapshots";
+import { closeStaleHumanInputEntries } from "@/server/workers/human-input-entries";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
 import { formatErrorMessage } from "@/server/runs/failures";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
@@ -22,6 +23,17 @@ const HISTORY_MESSAGE_CHUNK_MAX_GAP_MS = 3_000;
 function isMissingAgentError(error: unknown) {
   const message = formatErrorMessage(error).toLowerCase();
   return message.includes("404") || message.includes("not_found") || message.includes("agent not found");
+}
+
+/**
+ * Human-input responses race the runtime: by the time the user clicks, the
+ * request may already have been answered elsewhere or torn down with the turn.
+ * That is a 409 from the runtime, and the client renders it very differently
+ * from a genuine failure — so don't flatten it into a 500.
+ */
+function humanInputErrorStatus(error: unknown) {
+  const status = (error as { status?: unknown } | null)?.status;
+  return status === 409 ? 409 : 500;
 }
 
 type WorkerOutputEntry = NonNullable<AgentRecord["outputEntries"]>[number];
@@ -229,12 +241,22 @@ export const handleAgentElicitationRequest: OmniHttpHandler = async (request, co
     ? { action, content: normalizeElicitationContent(body?.content) }
     : { action };
   try {
-    const result = await respondElicitation(name, answer);
+    const result = await respondElicitation(name, answer, typeof body?.requestId === "number" ? body.requestId : undefined);
     notifyEventStreamSubscribers();
     return Response.json(result);
   } catch (error) {
+    const status = humanInputErrorStatus(error);
+    if (status === 409) {
+      await closeStaleHumanInputEntries({
+        workerId: name,
+        kind: "elicitation",
+        requestId: typeof body?.requestId === "number" ? body.requestId : undefined,
+        reason: "the worker is no longer waiting for an answer",
+      });
+      notifyEventStreamSubscribers();
+    }
     return errorResponse(error, {
-      status: 500,
+      status,
       source: "Agent runtime",
       action: "Respond to worker question",
     });
@@ -277,18 +299,57 @@ export const handleAgentPermissionRequest: OmniHttpHandler = async (request, con
     });
   }
   const optionId = typeof body?.optionId === "string" && body.optionId.trim() ? body.optionId : undefined;
+  const requestId = typeof body?.requestId === "number" ? body.requestId : undefined;
 
   try {
     const result = decision === "approve"
-      ? await approvePermission(name, optionId)
-      : await denyPermission(name, optionId);
+      ? await approvePermission(name, optionId, requestId)
+      : await denyPermission(name, optionId, requestId);
     notifyEventStreamSubscribers();
     return Response.json(result);
   } catch (error) {
+    const status = humanInputErrorStatus(error);
+    if (status === 409) {
+      await closeStaleHumanInputEntries({
+        workerId: name,
+        kind: "permission",
+        requestId,
+        reason: "the worker is no longer waiting for a decision",
+      });
+      notifyEventStreamSubscribers();
+    }
     return errorResponse(error, {
-      status: 500,
+      status,
       source: "Agent runtime",
       action: "Respond to permission request",
     });
+  }
+};
+
+export const handleAgentAcpRequest: OmniHttpHandler = async (request, context) => {
+  if (request.method !== "POST") {
+    return Response.json({ error: { code: "method_not_allowed", message: "Method not allowed." } }, { status: 405, headers: { allow: "POST" } });
+  }
+  const auth = await requireApiSession(toNextRequest(request), {
+    source: "Agent runtime",
+    action: "Invoke ACP method",
+    enforceSameOrigin: true,
+  });
+  if (auth.response) return auth.response;
+  const name = context.params?.name;
+  if (!name) return errorResponse("Worker name is required.", { status: 400, source: "Agent runtime", action: "Invoke ACP method" });
+  const body = await request.json();
+  if (typeof body?.method !== "string" || !body.method.trim()) {
+    return errorResponse("ACP method is required.", { status: 400, source: "Agent runtime", action: "Invoke ACP method" });
+  }
+  const params = typeof body.params === "object" && body.params !== null && !Array.isArray(body.params)
+    ? body.params as Record<string, unknown>
+    : {};
+  try {
+    const result = await invokeAgentAcpMethod(name, body.method, params, body.notification === true);
+    notifyEventStreamSubscribers();
+    return Response.json(result);
+  } catch (error) {
+    return errorResponse(error, { status: 500, source: "Agent runtime", action: "Invoke ACP method" });
   }
 };

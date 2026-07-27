@@ -30,9 +30,13 @@ export interface SubprocessHandle {
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..", "..");
 const RUNNER_PATH = path.resolve(PROJECT_ROOT, "tests/lifecycle/harness/subprocess-runner.ts");
 const TSX_PATH = path.resolve(PROJECT_ROOT, "node_modules/.bin/tsx");
+// See tsconfig.lifecycle-subprocess.json: raw tsx compiles this CJS project to
+// CommonJS, and one dependency ships an ESM-only exports map that CJS
+// resolution cannot see.
+const RUNNER_TSCONFIG = path.resolve(PROJECT_ROOT, "tsconfig.lifecycle-subprocess.json");
 
 async function spawnRunner(omniRoot: string): Promise<{ child: ChildProcess; port: number }> {
-  const child = spawn(TSX_PATH, [RUNNER_PATH], {
+  const child = spawn(TSX_PATH, ["--tsconfig", RUNNER_TSCONFIG, RUNNER_PATH], {
     cwd: PROJECT_ROOT,
     env: {
       ...process.env,

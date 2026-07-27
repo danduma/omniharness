@@ -1,5 +1,6 @@
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
+import { CLAUDE_MODEL_GATEWAY_SETTING_KEYS } from "@/lib/claude-model-gateway";
 import { decryptSettingValue, shouldEncryptSetting } from "@/server/settings/crypto";
 
 interface StoredSetting {
@@ -7,12 +8,15 @@ interface StoredSetting {
   value: string;
 }
 
+const CLAUDE_GATEWAY_CONTROL_SETTING_KEYS = new Set<string>(Object.values(CLAUDE_MODEL_GATEWAY_SETTING_KEYS));
+
 export interface RuntimeSettingDecryptionFailure {
   key: string;
 }
 
 function isRuntimeEnvSettingKey(key: string) {
-  return /^[A-Z][A-Z0-9_]*$/.test(key);
+  return /^[A-Z][A-Z0-9_]*$/.test(key)
+    && !CLAUDE_GATEWAY_CONTROL_SETTING_KEYS.has(key);
 }
 
 export function hydrateRuntimeEnvFromSettings(settings: StoredSetting[]) {

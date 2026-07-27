@@ -80,4 +80,21 @@ describe("hydrateRuntimeEnvFromSettings", () => {
       decryptionFailures: [],
     });
   });
+
+  it("never exposes Claude gateway control settings to native or routed worker base environments", () => {
+    const result = hydrateRuntimeEnvFromSettings([
+      { key: "CLAUDE_MODEL_GATEWAY_MODE", value: "managed" },
+      { key: "CLAUDE_MODEL_GATEWAY_ENABLED", value: "true" },
+      { key: "CLAUDE_MODEL_GATEWAY_BASE_URL", value: "http://127.0.0.1:8317" },
+      { key: "CLAUDE_MODEL_GATEWAY_API_TOKEN", value: "enc:v1:api-secret" },
+      { key: "CLAUDE_MODEL_GATEWAY_MANAGEMENT_TOKEN", value: "enc:v1:management-secret" },
+      { key: "CLAUDE_MODEL_GATEWAY_MODELS", value: "[]" },
+      { key: "ANTHROPIC_API_KEY", value: "enc:v1:native-secret" },
+    ]);
+
+    expect(result.env).toEqual({ ANTHROPIC_API_KEY: "decrypted:native-secret" });
+    expect(Object.keys(result.env)).not.toContain(expect.stringMatching(/^CLAUDE_MODEL_GATEWAY_/));
+    expect(JSON.stringify(result)).not.toContain("api-secret");
+    expect(JSON.stringify(result)).not.toContain("management-secret");
+  });
 });

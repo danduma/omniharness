@@ -166,6 +166,7 @@ export interface RunActiveClassification {
 export function classifySidebarRun(args: SidebarRunActivityArgs): RunActiveClassification {
   const { run, readMarkers, nowMs } = args;
   const lastReadAt = readMarkers[run.id] ?? null;
+  const normalizedStatus = normalizeRunStatus(run.status);
 
   const latestUnreadAt = getRunLatestUnreadTimestamp(run, args.messages);
   const isUnread = isRunUnread({ latestMessageAt: latestUnreadAt, lastReadAt });
@@ -173,7 +174,9 @@ export function classifySidebarRun(args: SidebarRunActivityArgs): RunActiveClass
   const isWorking = isSidebarRunCurrentlyWorking(args);
 
   const recentActivityAt = getSidebarRunLastActivityAt(args);
+  const allowsRecentActivity = normalizedStatus !== "cancelled" && normalizedStatus !== "canceled";
   const isRecent =
+    allowsRecentActivity &&
     recentActivityAt !== null &&
     nowMs - parseTimestampMs(recentActivityAt) <= ACTIVE_SESSION_ACTIVITY_WINDOW_MS;
 

@@ -5,6 +5,7 @@ import { db } from "@/server/db";
 import { messages, plans, runs, workers } from "@/server/db/schema";
 import {
   __resetOutputStoreCachesForTests,
+  readWorkerOutputEntries,
   writeWorkerOutputEntries,
 } from "@/server/workers/output-store";
 
@@ -190,6 +191,233 @@ describe("reapStuckDirectWorkers", () => {
     expect(mockCancelAgent).not.toHaveBeenCalled();
     expect(mockResumeMissingDirectWorker).not.toHaveBeenCalled();
     expect(mockAskAgent).not.toHaveBeenCalled();
+  });
+
+  it("leaves a worker blocked on a question alone, however long the user takes", async () => {
+    const TEN_MIN_AGO = new Date(Date.now() - 10 * 60_000);
+    const { runId, workerId } = await setupRun({
+      mode: "direct",
+      workerStatus: "working",
+      workerUpdatedAt: TEN_MIN_AGO,
+    });
+
+    const userMessageId = randomUUID();
+    await db.insert(messages).values({
+      id: userMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "continue",
+      createdAt: TEN_MIN_AGO,
+    });
+    await writeUserInputEntry(runId, workerId, {
+      id: userMessageId,
+      text: "continue",
+      timestamp: TEN_MIN_AGO,
+    });
+    // The worker asked the user a question and went quiet waiting for it —
+    // indistinguishable from a hung worker by idle time alone.
+    await writeWorkerOutputEntries(runId, workerId, [
+      {
+        id: randomUUID(),
+        type: "elicitation",
+        text: "Question for user: which approach? (2 fields)",
+        status: "pending",
+        timestamp: TEN_MIN_AGO.toISOString(),
+        raw: { requestId: 2, message: "which approach?" },
+        seq: 2,
+      },
+    ]);
+
+    const outcome = await reapStuckDirectWorkers();
+
+    expect(outcome.ok).toBe(true);
+    // Reaping cancels the pending elicitation and respawns the session, so the
+    // answer the user is about to submit would fail with no_pending_elicitations.
+    expect(mockCancelAgent).not.toHaveBeenCalled();
+    expect(mockResumeMissingDirectWorker).not.toHaveBeenCalled();
+    expect(mockAskAgent).not.toHaveBeenCalled();
+
+    const after = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(after?.status).toBe("working");
+
+    // Park it: later tests in this file mock a single shared bridge snapshot
+    // for every worker the DB has accumulated, which would not report this
+    // worker's pending question.
+    await db.update(workers).set({ status: "idle" }).where(eq(workers.id, workerId));
+  });
+
+  it("closes an orphaned question row the bridge no longer holds, then reaps", async () => {
+    const TEN_MIN_AGO = new Date(Date.now() - 10 * 60_000);
+    const { runId, workerId } = await setupRun({
+      mode: "direct",
+      workerStatus: "working",
+      workerUpdatedAt: TEN_MIN_AGO,
+    });
+
+    const userMessageId = randomUUID();
+    await db.insert(messages).values({
+      id: userMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "continue",
+      createdAt: TEN_MIN_AGO,
+    });
+    await writeUserInputEntry(runId, workerId, {
+      id: userMessageId,
+      text: "continue",
+      timestamp: TEN_MIN_AGO,
+    });
+    // A `pending` row whose turn was torn down without ever writing a terminal
+    // row. Left alone it exempts this worker from the watchdog forever while
+    // telling the UI a dead question is still answerable.
+    await writeWorkerOutputEntries(runId, workerId, [
+      {
+        id: randomUUID(),
+        type: "elicitation",
+        text: "Question for user: orphaned",
+        status: "pending",
+        timestamp: TEN_MIN_AGO.toISOString(),
+        raw: { requestId: 11 },
+        seq: 2,
+      },
+    ]);
+
+    // The bridge is reachable and holds no pending request — it is
+    // authoritative, so the row is an orphan.
+    mockGetAgent.mockResolvedValue({
+      name: workerId,
+      type: "codex",
+      cwd: "/tmp",
+      state: "working",
+      stopReason: null,
+      currentText: "",
+      lastText: "",
+      stderrBuffer: [],
+      outputEntries: [],
+      pendingElicitations: [],
+      updatedAt: TEN_MIN_AGO.toISOString(),
+    });
+    mockCancelAgent.mockResolvedValue({ ok: true });
+    mockResumeMissingDirectWorker.mockResolvedValue({ name: workerId, state: "idle" });
+    mockAskAgent.mockResolvedValue({ response: "ok", state: "idle" });
+
+    await reapStuckDirectWorkers();
+
+    const rows = (await readWorkerOutputEntries(runId, workerId))
+      .filter((entry) => entry.type === "elicitation");
+    expect(rows.at(-1)?.status).toBe("cancelled");
+    // And the worker was not left exempt.
+    expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
+  });
+
+  it("reaps again once the question has been answered", async () => {
+    const TEN_MIN_AGO = new Date(Date.now() - 10 * 60_000);
+    const { runId, workerId } = await setupRun({
+      mode: "direct",
+      workerStatus: "working",
+      workerUpdatedAt: TEN_MIN_AGO,
+    });
+
+    const userMessageId = randomUUID();
+    await db.insert(messages).values({
+      id: userMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "continue",
+      createdAt: TEN_MIN_AGO,
+    });
+    await writeUserInputEntry(runId, workerId, {
+      id: userMessageId,
+      text: "continue",
+      timestamp: TEN_MIN_AGO,
+    });
+    // A terminal row for the same requestId closes the question: the worker is
+    // quiet for its own reasons again, so the watchdog is back in charge.
+    await writeWorkerOutputEntries(runId, workerId, [
+      {
+        id: randomUUID(),
+        type: "elicitation",
+        text: "Question for user: which approach? (2 fields)",
+        status: "pending",
+        timestamp: TEN_MIN_AGO.toISOString(),
+        raw: { requestId: 2 },
+        seq: 2,
+      },
+      {
+        id: randomUUID(),
+        type: "elicitation",
+        text: "Question answered for request 2",
+        status: "answered",
+        timestamp: TEN_MIN_AGO.toISOString(),
+        raw: { requestId: 2, action: "accept" },
+        seq: 3,
+      },
+    ]);
+
+    mockCancelAgent.mockResolvedValue({ ok: true });
+    mockResumeMissingDirectWorker.mockResolvedValue({ name: workerId, state: "idle" });
+    mockAskAgent.mockResolvedValue({ response: "ok", state: "idle" });
+
+    const outcome = await reapStuckDirectWorkers();
+
+    expect(outcome.ok).toBe(true);
+    expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "continue");
+  });
+
+  it("leaves a worker alone when only the live bridge snapshot knows about the pending question", async () => {
+    const TEN_MIN_AGO = new Date(Date.now() - 10 * 60_000);
+    const { runId, workerId } = await setupRun({
+      mode: "direct",
+      workerStatus: "working",
+      workerUpdatedAt: TEN_MIN_AGO,
+    });
+
+    const userMessageId = randomUUID();
+    await db.insert(messages).values({
+      id: userMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "continue",
+      createdAt: TEN_MIN_AGO,
+    });
+    await writeUserInputEntry(runId, workerId, {
+      id: userMessageId,
+      text: "continue",
+      timestamp: TEN_MIN_AGO,
+    });
+
+    // The elicitation was raised just before this sweep; the durable stream
+    // has not caught up, but the bridge is already blocked on it.
+    mockGetAgent.mockResolvedValue({
+      name: workerId,
+      type: "codex",
+      cwd: "/tmp",
+      state: "working",
+      stopReason: null,
+      currentText: "",
+      lastText: "",
+      stderrBuffer: [],
+      outputEntries: [],
+      pendingElicitations: [{ requestId: 7, requestedAt: new Date().toISOString() }],
+      updatedAt: new Date().toISOString(),
+    });
+
+    const outcome = await reapStuckDirectWorkers();
+
+    expect(outcome.ok).toBe(true);
+    expect(mockCancelAgent).not.toHaveBeenCalled();
+    expect(mockResumeMissingDirectWorker).not.toHaveBeenCalled();
+    expect(mockAskAgent).not.toHaveBeenCalled();
+
+    // This worker's exemption lives only in the mocked bridge snapshot, which
+    // is reset between tests. Park it so later sweeps in this file — which
+    // scan every direct worker the DB has accumulated — don't reap it.
+    await db.update(workers).set({ status: "idle" }).where(eq(workers.id, workerId));
   });
 
   it("skips implementation-mode workers entirely (supervisor owns those)", async () => {

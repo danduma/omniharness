@@ -1,6 +1,7 @@
 import type { AgentRecord } from "@/server/bridge-client";
 import { normalizeAgentRecord } from "@/server/bridge-client";
 import { formatErrorMessage } from "@/server/runs/failures";
+import { parseSupersededSeqRanges, type SupersededSeqRange } from "@/lib/superseded-entries";
 
 type WorkerOutputEntry = NonNullable<AgentRecord["outputEntries"]>[number];
 
@@ -16,6 +17,7 @@ type PersistedWorkerRecord = {
   lastText: string;
   bridgeSessionId: string | null;
   bridgeSessionMode: string | null;
+  supersededSeqRanges?: string | null;
   createdAt?: Date | string | null;
   updatedAt?: Date | string | null;
 };
@@ -43,6 +45,10 @@ type PersistedRunRecord = {
 };
 
 export type LiveWorkerSnapshot = AgentRecord & {
+  // Seq ranges this worker wrote for branches a retry/edit discarded. The
+  // stream keeps them; the conversation view drops them so a rewound turn
+  // is not replayed alongside the one that replaced it.
+  supersededSeqRanges: SupersededSeqRange[];
   bridgeLastError: string | null;
   runLastError: string | null;
   outputLog: string;
@@ -211,6 +217,7 @@ export function buildLiveWorkerSnapshot(args: {
       cwd: normalizedAgent.cwd || worker?.cwd || "",
       sessionId: normalizedAgent.sessionId ?? worker?.bridgeSessionId ?? null,
       sessionMode: normalizedAgent.sessionMode ?? worker?.bridgeSessionMode ?? null,
+      supersededSeqRanges: parseSupersededSeqRanges(worker?.supersededSeqRanges),
       requestedModel,
       effectiveModel: normalizedAgent.effectiveModel ?? null,
       requestedEffort,
@@ -249,6 +256,7 @@ export function buildLiveWorkerSnapshot(args: {
     requestedEffort,
     effectiveEffort: null,
     sessionMode: worker?.bridgeSessionMode ?? null,
+    supersededSeqRanges: parseSupersededSeqRanges(worker?.supersededSeqRanges),
     lastError: runLastError,
     bridgeLastError,
     runLastError,

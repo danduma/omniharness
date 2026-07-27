@@ -22,6 +22,39 @@ describe("coalesceWorkerEntriesById", () => {
     ]);
   });
 
+  it("places a re-delivered message where the newest worker has it", () => {
+    // A rewind re-delivers the message on a new worker with a new timestamp.
+    // That copy is the live one; the older worker's copy belongs to the branch
+    // the user discarded.
+    const out = coalesceWorkerEntriesById([
+      { ...user(695, "the question", "edited", "2026-07-25T09:36:34.136Z"), workerId: "run-worker-1" } as WorkerEntry,
+      { ...user(2, "the question", "edited", "2026-07-25T10:06:43.720Z"), workerId: "run-worker-2" } as WorkerEntry,
+    ], ["run-worker-1", "run-worker-2"]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ id: "edited", timestamp: "2026-07-25T10:06:43.720Z" });
+  });
+
+  it("keeps history backfilled onto a newer worker at its original send time", () => {
+    // `reconcileWorkerUserMessagesInStream` replays old messages onto a fresh
+    // worker using the original createdAt. The opening prompt must stay at the
+    // top of the conversation, not move to whenever the replay ran.
+    const out = coalesceWorkerEntriesById([
+      { ...user(1, "opening prompt", "first", "2026-05-24T12:06:59.692Z"), workerId: "run-worker-1" } as WorkerEntry,
+      { ...user(220, "opening prompt", "first", "2026-05-24T15:28:06.421Z"), workerId: "run-worker-2" } as WorkerEntry,
+      { ...user(25, "opening prompt", "first", "2026-05-24T12:06:59.000Z"), workerId: "run-worker-3" } as WorkerEntry,
+    ], ["run-worker-1", "run-worker-2", "run-worker-3"]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ id: "first", timestamp: "2026-05-24T12:06:59.000Z" });
+  });
+
+  it("keeps the earliest timestamp when there is no worker order to judge by", () => {
+    const out = coalesceWorkerEntriesById([
+      user(695, "the question", "edited", "2026-07-25T09:36:34.136Z"),
+      user(2, "the question", "edited", "2026-07-25T10:06:43.720Z"),
+    ]);
+    expect(out[0]).toMatchObject({ id: "edited", timestamp: "2026-07-25T09:36:34.136Z" });
+  });
+
   it("preserves entries without an id verbatim", () => {
     const noId = { seq: 5, type: "message", text: "synthetic" } as WorkerEntry;
     const out = coalesceWorkerEntriesById([asst(1, "first"), noId, asst(2, "second")]);

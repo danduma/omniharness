@@ -17,6 +17,7 @@ const pageSource = [
   "src/lib/conversation-visuals.ts",
   "src/lib/commit-workflow.ts",
   "src/components/home/ConversationMain.tsx",
+  "src/components/home/RunRecoveryNotice.tsx",
   "src/components/home/ConversationSidebar.tsx",
   "src/components/home/HomeHeader.tsx",
   "src/components/home/SettingsDialog.tsx",
@@ -29,6 +30,13 @@ const homeAppSource = [
 ].map(readSource).join("\n");
 const markdownContentSource = readSource("src/components/MarkdownContent.tsx");
 const terminalSource = readSource("src/components/Terminal.tsx");
+
+test("conversations do not dump the agent command catalog into the transcript", () => {
+  const conversationMainSource = readSource("src/components/home/ConversationMain.tsx");
+
+  expect(conversationMainSource).not.toContain("AgentCommandMenu");
+  expect(conversationMainSource).not.toContain('item.type === "available_commands"');
+});
 
 test("conversation rows expose rename and delete actions", () => {
   expect(pageSource).toContain('Rename');
@@ -475,7 +483,7 @@ test("direct control conversations show a tiny animated working indicator while 
   expect(pageSource).toContain("pendingAssistantStatus={directControlPendingAssistantStatus ?? undefined}");
   expect(pageSource).toContain("const hasBusyConversation = isSupervisorRunning || Boolean(stoppableConversationWorkerId);");
   expect(pageSource).toContain("const directControlPendingAssistantStatus = resolveDirectControlPendingAssistantStatus({");
-  expect(pageSource).toContain("const showDirectControlWorkingIndicator = directControlPendingAssistantStatus !== null;");
+  expect(pageSource).toContain("const showDirectControlWorkingIndicator = directControlPendingAssistantStatus !== null && !isSelectedRunQuotaWaiting;");
   expect(pageSource).toContain("workerStatuses: selectedRunWorkersForDisplay.map((worker) => worker.status)");
   expect(terminalSource).toContain("showPendingAssistantIndicator = false");
   expect(terminalSource).toContain("pendingAssistantActivity");
@@ -498,6 +506,17 @@ test("direct control conversations show a tiny animated working indicator while 
   expect(terminalSource).toContain("animationDuration:");
   expect(terminalSource).toContain("relative z-10 mt-3 flex w-full justify-start px-1");
   expect(terminalSource).toContain("animationDelay:");
+});
+
+test("direct control quota waits show recovery controls instead of only the working indicator", () => {
+  expect(pageSource).toContain("selectedRunStatus: selectedRun?.status");
+  expect(pageSource).toContain('selectedRunStatus === "quota_waiting"');
+  expect(pageSource).toContain("<RunRecoveryNotice");
+  expect(pageSource).toContain("onStop={handleStopRecoveryWait}");
+  expect(pageSource).toContain("stopRunRecovery={{ isPending: isStopConversationPending }}");
+  expect(pageSource).toContain("isStopping={stopRunRecovery.isPending}");
+  expect(pageSource).toContain('t("recovery.notice.autoResumeAt"');
+  expect(pageSource).toContain('t("recovery.notice.stop"');
 });
 
 test("direct control pending state does not reserve blank scrollable transcript height", () => {

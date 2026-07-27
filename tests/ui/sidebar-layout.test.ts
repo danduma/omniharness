@@ -72,8 +72,18 @@ const planningArtifactsSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/PlanningArtifactsPanel.tsx"),
   "utf8"
 );
+const folderPickerSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/components/FolderPickerDialog.tsx"),
+  "utf8"
+);
 
 test("desktop conversation rail constrains overflowing run content", () => {
+  expect(pageSource).toContain('data-project-path={group.path}');
+  expect(pageSource).toContain('data-conversation-run-id={run.id}');
+  expect(pageSource).toContain('stateManager.updateLocal(action)');
+  expect(pageSource).toContain('data-selected-cli-harness={selectedCliAgent}');
+  expect(pageSource).toContain('data-selected-worker-model={selectedModel}');
+  expect(pageSource).toContain('data-selected-worker-effort={selectedEffort}');
   expect(pageSource).toContain('leftSidebarOpen: true');
   expect(pageSource).toContain('leftSidebarWidth: DEFAULT_CONVERSATION_SIDEBAR_WIDTH');
   expect(pageSource).toContain('setLeftSidebarOpen: homeUiStateManager.createSetter("leftSidebarOpen")');
@@ -165,6 +175,16 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('hasSingleVisibleWorker ? "flex h-full min-h-full flex-col" : visibleWorkers.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col"');
   expect(pageSource).toContain('className="flex h-full min-h-[16rem] flex-1 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground"');
   expect(pageSource).not.toContain('className="flex h-32 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground"');
+});
+
+test("folder picker exposes stable path identity for local browser journeys", () => {
+  expect(folderPickerSource).toContain('data-testid="folder-picker-current-path"');
+  expect(folderPickerSource).toContain('data-parent-path={data?.parent || ""}');
+  expect(folderPickerSource).toContain('data-folder-path={dir.path}');
+});
+
+test("conversation transcript exposes one stable browser-test target", () => {
+  expect(pageSource).toContain('data-testid="conversation-transcript"');
 });
 
 test("workers sidebar is conversation-scoped and resizable", () => {
@@ -492,6 +512,15 @@ test("conversation output version ignores state refreshes without new rendered o
   expect(getConversationOutputVersion("run-1", baseMessages, baseAgents)).toBe(
     getConversationOutputVersion("run-1", [...baseMessages], baseAgents.map((agent) => ({ ...agent })))
   );
+  expect(getConversationOutputVersion("run-1", baseMessages, baseAgents)).toBe(
+    getConversationOutputVersion("run-1", baseMessages, [{
+      ...baseAgents[0],
+      outputEntries: [{
+        ...baseAgents[0].outputEntries[0],
+        timestamp: "2026-05-09T00:00:02.000Z",
+      }],
+    }])
+  );
   expect(getConversationOutputVersion("run-1", baseMessages, baseAgents)).not.toBe(
     getConversationOutputVersion("run-1", [{ ...baseMessages[0], content: "hello again" }], baseAgents)
   );
@@ -549,6 +578,8 @@ test("terminal renderer owns reusable planning transcript behavior", () => {
   expect(terminalSource).toContain("activity.filter(activityFilter)");
   expect(terminalSource).toContain("const open = (thoughtOpenById[activity.id] ?? thoughtsDefaultOpen) || activity.inProgress;");
   expect(terminalSource).toContain("const open = toolGroupOpenById[activity.id] ?? toolGroupsDefaultOpen;");
+  expect(terminalSource).toContain("group-hover/agent-message:opacity-100");
+  expect(terminalSource).toContain("conversationCopyNoticeManager.showCopiedMessage(messageId)");
   expect(terminalSource).toContain("{emptyState}");
 });
 
@@ -604,6 +635,11 @@ test("worker cards collapse into one header summary and keep expanded-only statu
 test("implementation worker messages show a compact latest turn with expandable full output", () => {
   expect(pageSource).toContain("function WorkerOutputMessage");
   expect(pageSource).toContain("extractLatestPlainTextTurn");
+  expect(pageSource).toContain("function WorkerOutputCopyAction");
+  expect(pageSource).toContain('aria-label={t("conversation.message.copyAria")}');
+  expect(pageSource).toContain('onClick={() => void onCopy(content, messageId)}');
+  expect(pageSource).toContain("copiedMessageId === messageId");
+  expect(pageSource).toContain("group-hover/worker-output-actions:opacity-100");
   expect(pageSource).toContain('aria-label={fullOutputOpen ? "Hide full worker output" : "Show full worker output"}');
   expect(pageSource).toContain('{fullOutputOpen ? "Hide full output" : "Show full output"}');
   expect(pageSource).toContain("agent={fullOutputAgent}");

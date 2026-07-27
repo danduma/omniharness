@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { randomUUID } from "crypto";
 import { db } from "@/server/db";
 import { eq } from "drizzle-orm";
-import { artifactStreams, executionEvents, messages, plans, runs, settings, workerCounters, workers } from "@/server/db/schema";
+import { accounts, artifactStreams, executionEvents, messages, plans, queuedConversationMessages, runs, settings, supervisorInterventions, workerCounters, workerCredentialAllocations, workerTokenUsage, workers } from "@/server/db/schema";
 import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
 import { GIT_AUTO_COMMIT_MILESTONES_SETTING, GIT_PUSH_ON_COMMIT_SETTING } from "@/lib/commit-workflow";
 import { getAppDataPath, getAppRoot } from "@/server/app-root";
@@ -15,6 +16,7 @@ import {
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 import {
   __resetWorkerTurnChainsForTests,
+  advanceWorkerTurnGeneration,
   waitForConversationBackgroundTasksForTests,
 } from "@/server/conversations/worker-turn-gate";
 import { ResourceAdmissionError } from "@/server/agent-runtime/resource-admission";
@@ -26,6 +28,7 @@ const {
   mockEnsureSupervisorRuntimeStarted,
   mockSpawnAgent,
   mockAskAgent,
+  mockCancelAgent,
   mockGetAgent,
   mockNotifyEventStreamSubscribers,
   mockValidateWorkspaceTarget,
@@ -51,6 +54,7 @@ const {
     response: "Acknowledged.",
     state: "working",
   }),
+  mockCancelAgent: vi.fn().mockResolvedValue({ ok: true }),
   mockGetAgent: vi.fn().mockResolvedValue({
     name: "worker-1",
     type: "codex",
@@ -87,6 +91,7 @@ vi.mock("@/server/supervisor/runtime-watchdog", () => ({
 vi.mock("@/server/bridge-client", () => ({
   spawnAgent: mockSpawnAgent,
   askAgent: mockAskAgent,
+  cancelAgent: mockCancelAgent,
   getAgent: mockGetAgent,
 }));
 
@@ -114,6 +119,16 @@ import { POST } from "@/app/api/conversations/route";
 
 function delay(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 async function waitFor<T>(read: () => T | Promise<T>, predicate: (value: T) => boolean, timeoutMs = 1_000) {
@@ -176,6 +191,7 @@ describe("POST /api/conversations", () => {
     mockEnsureSupervisorRuntimeStarted.mockClear();
     mockSpawnAgent.mockClear();
     mockAskAgent.mockClear();
+    mockCancelAgent.mockClear();
     mockGetAgent.mockClear();
     mockNotifyEventStreamSubscribers.mockClear();
     mockValidateWorkspaceTarget.mockReset();
@@ -188,6 +204,12 @@ describe("POST /api/conversations", () => {
     await db.delete(executionEvents);
     await db.delete(artifactStreams);
     await db.delete(messages);
+    // Everything that carries a worker_id FK must go before `workers`, or the
+    // delete fails and every later test in this file dies in beforeEach.
+    await db.delete(queuedConversationMessages);
+    await db.delete(supervisorInterventions);
+    await db.delete(workerCredentialAllocations);
+    await db.delete(workerTokenUsage);
     await db.delete(workers);
     await db.delete(workerCounters);
     await db.delete(runs);
@@ -197,6 +219,50 @@ describe("POST /api/conversations", () => {
 
   afterEach(async () => {
     await waitForConversationBackgroundTasksForTests();
+  });
+
+  it("rejects an incompatible explicit account before persisting the conversation", async () => {
+    const accountId = `claude-${randomUUID()}`;
+    const requestedRunId = randomUUID();
+    const now = new Date();
+    await db.insert(accounts).values({
+      id: accountId,
+      provider: "anthropic",
+      type: "subscription",
+      cliType: "claude",
+      label: "Claude test subscription",
+      authMode: "local_session",
+      authRef: "local-session:claude-test",
+      enabled: true,
+      priority: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    try {
+      const response = await POST(new NextRequest("http://localhost/api/conversations", {
+        method: "POST",
+        body: JSON.stringify({
+          mode: "direct",
+          command: "Start with OpenCode",
+          projectPath: "/workspace/app",
+          requestedRunId,
+          preferredWorkerType: "opencode",
+          preferredWorkerAccountId: accountId,
+        }),
+      }));
+
+      expect(response.status).toBe(400);
+      expect(await db.select().from(runs).where(eq(runs.id, requestedRunId)).get()).toBeUndefined();
+      expect(await db.select().from(workers).where(eq(workers.runId, requestedRunId))).toHaveLength(0);
+      expect(getNamedEventsSince(0).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+        kind: "error.surfaced",
+        code: "account.invalid_explicit",
+        runId: requestedRunId,
+      }));
+    } finally {
+      await db.delete(accounts).where(eq(accounts.id, accountId));
+    }
   });
 
   it("writes the direct initial prompt before bridge activity emitted during askAgent", async () => {
@@ -262,6 +328,42 @@ describe("POST /api/conversations", () => {
     expect(userIndex).toBe(0);
     expect(userIndex).toBeLessThan(bridgeIndex);
     expect(entries[userIndex]?.text).toBe(command);
+  });
+
+  it("does not let a cancelled initial ask overwrite a newer interrupt generation", async () => {
+    const initialAsk = deferred<{ response: string; state: string }>();
+    mockAskAgent.mockReturnValueOnce(initialAsk.promise);
+    const requestedRunId = "a11ce0000001";
+
+    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command: "Build the first version.",
+        projectPath: "/workspace/app",
+        requestedRunId,
+        preferredWorkerType: "codex",
+      }),
+    }));
+    expect(response.status).toBe(200);
+
+    const workerId = `${requestedRunId}-worker-1`;
+    await waitFor(() => mockAskAgent.mock.calls.length, (count) => count > 0);
+
+    await advanceWorkerTurnGeneration(workerId, {
+      status: "idle",
+      clearCurrentText: true,
+      updatedAt: new Date(),
+    });
+    await db.update(runs).set({ status: "done", updatedAt: new Date() }).where(eq(runs.id, requestedRunId));
+
+    initialAsk.reject(new Error("Ask failed: Worker turn superseded by a newer worker turn."));
+    await waitForConversationBackgroundTasksForTests();
+
+    const storedRun = await db.select().from(runs).where(eq(runs.id, requestedRunId)).get();
+    const storedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(storedRun?.status).toBe("done");
+    expect(storedWorker?.status).toBe("idle");
   });
 
   it("captures commit workflow metadata for direct conversations", async () => {
@@ -701,6 +803,11 @@ describe("POST /api/conversations", () => {
       expect(["starting", "working"]).toContain(createdRun?.status);
       expect(initialMessages.filter((message) => message.role === "worker")).toHaveLength(0);
     } finally {
+      // The route returns before the background turn reaches askAgent, so the
+      // resolver does not exist yet at this point. Resolving blind used to leave
+      // the mocked ask pending forever, hanging the background task and every
+      // test after it in this file.
+      await waitFor(() => resolveAskRef[0], (resolve) => Boolean(resolve));
       resolveAskRef[0]?.({ response: "Let's shape the plan.", state: "idle" });
       await responsePromise.catch(() => null);
     }
@@ -852,6 +959,9 @@ describe("POST /api/conversations", () => {
     const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
 
     expect(createdRun?.mode).toBe("direct");
+    // The route answers before the worker spawns, so give the background turn a
+    // chance to run rather than asserting on spawn synchronously.
+    await waitFor(() => mockSpawnAgent.mock.calls.length, (count) => count > 0);
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
     await waitFor(() => mockAskAgent.mock.calls.length, (count) => count > 0);
     expect(mockAskAgent).toHaveBeenCalledTimes(1);
@@ -1022,10 +1132,11 @@ describe("POST /api/conversations", () => {
         OMNIHARNESS_CREDENTIAL_COMMAND_ARGS_CLAUDE: "[\"credential-profile\"]",
       }),
     }));
-    await waitFor(
-      () => db.select().from(runs).where(eq(runs.id, payload.runId)).get(),
-      (run) => run?.status === "done",
-    );
+    // Let the background turn settle. The default worker mock stays "working",
+    // so this run lands on "running" — waiting for "done" could never succeed.
+    await waitForConversationBackgroundTasksForTests();
+    expect(await db.select().from(runs).where(eq(runs.id, payload.runId)).get())
+      .toMatchObject({ status: "running" });
   });
 
   it("returns a direct conversation before worker spawn completes", async () => {
@@ -1580,8 +1691,52 @@ describe("POST /api/conversations", () => {
       () => Promise.resolve(mockAskAgent.mock.calls),
       (calls) => calls.length > 0,
     );
-    expect(mockAskAgent.mock.calls[0]?.[1]).toContain("Attached files available to inspect:");
-    expect(mockAskAgent.mock.calls[0]?.[1]).toContain(`path: ${getAppDataPath("attachments/upload-1/attachment-1-screen.png")}`);
+    // The image must reach the worker as a real image content block. It used to
+    // be handed over as a UUID path in the prompt text for the worker to read
+    // back — one mistyped hex digit and the worker answered questions about a
+    // screenshot it never saw.
+    expect(mockAskAgent.mock.calls[0]?.[2]).toEqual([
+      { path: getAppDataPath("attachments/upload-1/attachment-1-screen.png"), mimeType: "image/png" },
+    ]);
+    expect(mockAskAgent.mock.calls[0]?.[1]).toContain("Attached images (included directly in this message):");
+    expect(mockAskAgent.mock.calls[0]?.[1]).not.toContain(getAppDataPath("attachments/upload-1/attachment-1-screen.png"));
+    expect(mockAskAgent.mock.calls[0]?.[1]).not.toContain("view_image");
+  });
+
+  it("cancels a direct worker that finishes spawning after its conversation was deleted", async () => {
+    const spawn = deferred<Awaited<ReturnType<typeof mockSpawnAgent>>>();
+    mockSpawnAgent.mockReturnValueOnce(spawn.promise);
+
+    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command: "Start slowly",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "claude",
+      }),
+    }));
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    const workerId = `${payload.runId}-worker-1`;
+
+    await db.delete(messages).where(eq(messages.runId, payload.runId));
+    await db.delete(workers).where(eq(workers.runId, payload.runId));
+    spawn.resolve({
+      name: workerId,
+      type: "claude",
+      state: "idle",
+      cwd: "/workspace/app",
+      lastText: "",
+      currentText: "",
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    await waitForConversationBackgroundTasksForTests();
+
+    expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
+    expect(mockAskAgent).not.toHaveBeenCalled();
   });
 
 });

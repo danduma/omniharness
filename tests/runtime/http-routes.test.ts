@@ -159,6 +159,31 @@ describe("portable runtime HTTP routes", () => {
     });
   });
 
+  it("validates the complete Claude gateway draft before saving any settings", async () => {
+    const session = await createAuthSession({
+      label: "Gateway settings validation",
+      userAgent: "Vitest",
+      authMethod: "password_login",
+    });
+    const response = await handleSettingsRequest(new Request("http://localhost/api/settings", {
+      method: "POST",
+      headers: {
+        cookie: `omni_session=${session.tokenValue}`,
+        origin: "http://localhost",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        UNRELATED_SETTING: "must-not-be-written",
+        CLAUDE_MODEL_GATEWAY_MODE: "unsafe-sidecar",
+        CLAUDE_MODEL_GATEWAY_BASE_URL: "not a url",
+      }),
+    }), { surface: "test" });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "invalid_gateway_settings" } });
+    expect(await db.select().from(settings)).toEqual([]);
+  });
+
   it("mounts migrated routes in the shared runtime route registry", async () => {
     const session = await createAuthSession({
       label: "Mounted runtime registry",

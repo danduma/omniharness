@@ -12,6 +12,8 @@ import { buildMastraModelConfig, getSupervisorModelConfig, validateSupervisorMod
 import { CodexAuthMissingError, CodexAuthRefreshFailedError } from "@/server/supervisor/codex-auth";
 import { SUPERVISOR_SYSTEM_PROMPT } from "@/server/supervisor/prompt";
 import { hydrateRuntimeEnvFromSettings, readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
+import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
+import { prepareClaudeGatewayLaunch } from "@/server/integrations/claude-model-gateway/worker-env";
 import { buildSupervisorTools } from "@/server/supervisor/tools";
 import { buildSupervisorTurnContext } from "@/server/supervisor/context";
 import { buildSupervisorModelMessages } from "@/server/supervisor/context-window";
@@ -700,6 +702,9 @@ async function reserveWorkerRow(args: {
   initialPrompt: string;
   workerRole: WorkerRole;
   allocationKey: string;
+  launchModel: string | null;
+  launchEffort: string | null;
+  launchCredentialSource: "gateway" | "account";
 }) {
   const { workerId, workerNumber } = await allocateWorkerIdentity(args.runId);
 
@@ -714,6 +719,9 @@ async function reserveWorkerRow(args: {
     allocationKey: args.allocationKey,
     title: args.title,
     initialPrompt: args.initialPrompt,
+    effectiveLaunchModel: args.launchModel,
+    effectiveLaunchEffort: args.launchEffort,
+    launchCredentialSource: args.launchCredentialSource,
     outputLog: "",
     outputEntriesJson: "",
     currentText: "",
@@ -893,15 +901,16 @@ async function resumeWorkerFromSavedSessionForSupervisor(runId: string, workerId
 
   const mode = normalizeBridgeWorkerMode(worker.bridgeSessionMode);
   const { env: envParams } = await readRuntimeEnvFromSettings();
+  const launchSelection = resolveWorkerLaunchSelection(worker, run);
   const spawnParams = {
     type: worker.type,
     cwd: worker.cwd,
     name: worker.id,
     ...(mode ? { mode } : {}),
     env: envParams,
-    ...(run.preferredWorkerAccountId ? { accountId: run.preferredWorkerAccountId } : {}),
-    ...(run.preferredWorkerModel ? { model: run.preferredWorkerModel } : {}),
-    ...(run.preferredWorkerEffort ? { effort: run.preferredWorkerEffort } : {}),
+    ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
+    ...(launchSelection.model ? { model: launchSelection.model } : {}),
+    ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
   };
   let resumedWorker: bridge.AgentRecord;
   let recreatedFromMissingSession = false;
@@ -1318,6 +1327,12 @@ export class Supervisor {
               return { state: "wait", delayMs: 5_000 };
             }
           }
+          const launchSelection = resolveWorkerLaunchSelection({}, run ?? {});
+          await prepareClaudeGatewayLaunch({
+            type: workerType.type,
+            model: launchSelection.model,
+            accountId: launchSelection.accountId,
+          });
           const workerId = await reserveWorkerRow({
             runId: this.runId,
             workerType: workerType.type,
@@ -1326,10 +1341,13 @@ export class Supervisor {
             initialPrompt: prompt,
             workerRole: requestedAllocation.role,
             allocationKey: requestedAllocation.allocationKey,
+            launchModel: launchSelection.model,
+            launchEffort: launchSelection.effort,
+            launchCredentialSource: launchSelection.credentialSource,
           });
-          const preferredModel = run?.preferredWorkerModel ?? null;
-          const preferredEffort = run?.preferredWorkerEffort ?? null;
-          const accountAllocation = await allocateWorkerAccount({
+          const preferredModel = launchSelection.model;
+          const preferredEffort = launchSelection.effort;
+          const accountAllocation = launchSelection.credentialSource === "gateway" ? null : await allocateWorkerAccount({
             workerType: workerType.type,
             runId: this.runId,
             workerId,
@@ -1337,7 +1355,7 @@ export class Supervisor {
             strategy: run?.preferredWorkerAccountId ? "manual" : "priority",
             env: envParams,
           });
-          const workerAccountId = accountAllocation.account?.id ?? null;
+          const workerAccountId = accountAllocation?.account?.id ?? null;
 
           let spawnedWorker: bridge.AgentRecord;
           try {

@@ -1,12 +1,30 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, like } from "drizzle-orm";
 import { db } from "@/server/db";
-import { accounts } from "@/server/db/schema";
+import {
+  accountSecrets,
+  accountUsageSnapshots,
+  accounts,
+  creditEvents,
+  plans,
+  runs,
+  settings,
+  workerCredentialAllocations,
+  workers,
+  workerTokenUsage,
+} from "@/server/db/schema";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 import {
   handleAccountDetailRequest,
   handleAccountStatusRequest,
   handleAccountsRequest,
 } from "@/runtime/http/routes/accounts";
+
+const DELETED_ACCOUNT_SETTING_PREFIX = "OMNIHARNESS_DELETED_ACCOUNT:";
+
+function deletedAccountSettingKey(accountId: string) {
+  return `${DELETED_ACCOUNT_SETTING_PREFIX}${encodeURIComponent(accountId)}`;
+}
 
 function jsonRequest(url: string, method: string, body: unknown) {
   return new Request(url, {
@@ -22,9 +40,16 @@ function jsonRequest(url: string, method: string, body: unknown) {
 describe("account management routes", () => {
   beforeEach(async () => {
     await db.delete(accounts);
+    await db.delete(settings).where(like(settings.key, `${DELETED_ACCOUNT_SETTING_PREFIX}%`));
+    __resetNamedEventsForTests();
   });
 
   it("creates an account without returning its credential reference", async () => {
+    await db.insert(settings).values({
+      key: deletedAccountSettingKey("codex-work"),
+      value: "codex-work",
+      updatedAt: new Date("2026-07-14T09:00:00.000Z"),
+    });
     const response = await handleAccountsRequest(jsonRequest("http://localhost/api/accounts", "POST", {
       id: "codex-work",
       cliType: "codex",
@@ -51,6 +76,8 @@ describe("account management routes", () => {
     expect(await db.select().from(accounts).where(eq(accounts.id, "codex-work")).get()).toMatchObject({
       authRef: "setting:OPENAI_API_KEY",
     });
+    expect(await db.select().from(settings).where(eq(settings.key, deletedAccountSettingKey("codex-work"))).get())
+      .toBeUndefined();
   });
 
   it("updates mutable account fields and preserves the secret pointer by default", async () => {
@@ -111,5 +138,189 @@ describe("account management routes", () => {
     expect(payload.status).toBe("available");
     expect(payload.statusCheckedAt).toEqual(expect.any(String));
     expect(JSON.stringify(payload)).not.toContain("secret-local-session");
+  });
+
+  it("deletes an account and its dependent records without deleting run history", async () => {
+    const now = new Date("2026-07-14T10:00:00.000Z");
+    const accountId = "test-account-delete-route";
+    const planId = "plan-account-delete-route";
+    const runId = "run-account-delete-route";
+    const workerId = "worker-account-delete-route";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/test-account-delete-route.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(accounts).values({
+      id: accountId,
+      cliType: "claude",
+      provider: "anthropic",
+      type: "api",
+      label: "Disposable account",
+      authMode: "api_key",
+      authRef: "setting:DISPOSABLE_ACCOUNT",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      preferredWorkerType: "claude",
+      preferredWorkerAccountId: accountId,
+      status: "completed",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "completed",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(accountSecrets).values({
+      id: "secret-account-delete-route",
+      accountId,
+      secretKind: "api_key",
+      encryptedValue: "enc:v1:redacted",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workerCredentialAllocations).values({
+      id: "allocation-account-delete-route",
+      runId,
+      workerId,
+      workerType: "claude",
+      accountId,
+      strategy: "manual",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workerTokenUsage).values({
+      id: "usage-account-delete-route",
+      runId,
+      workerId,
+      workerType: "claude",
+      accountId,
+      inputTokens: 1,
+      outputTokens: 2,
+      occurredAt: now,
+      createdAt: now,
+    });
+    await db.insert(accountUsageSnapshots).values({
+      id: "snapshot-account-delete-route",
+      accountId,
+      workerType: "claude",
+      windowKey: "2026-07",
+      source: "test",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(creditEvents).values({
+      id: "credit-account-delete-route",
+      accountId,
+      workerId,
+      eventType: "exhausted",
+      createdAt: now,
+    });
+
+    try {
+      const response = await handleAccountDetailRequest(jsonRequest(
+        `http://localhost/api/accounts/${accountId}`,
+        "DELETE",
+        {},
+      ), { surface: "test", params: { id: accountId } });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ ok: true, accountId });
+      expect(await db.select().from(accounts).where(eq(accounts.id, accountId))).toHaveLength(0);
+      expect(await db.select().from(accountSecrets).where(eq(accountSecrets.accountId, accountId))).toHaveLength(0);
+      expect(await db.select().from(workerCredentialAllocations).where(eq(workerCredentialAllocations.accountId, accountId))).toHaveLength(0);
+      expect(await db.select().from(workerTokenUsage).where(eq(workerTokenUsage.accountId, accountId))).toHaveLength(0);
+      expect(await db.select().from(accountUsageSnapshots).where(eq(accountUsageSnapshots.accountId, accountId))).toHaveLength(0);
+      expect(await db.select().from(creditEvents).where(eq(creditEvents.accountId, accountId))).toHaveLength(0);
+      expect(await db.select().from(runs).where(eq(runs.id, runId)).get()).toMatchObject({
+        preferredWorkerAccountId: null,
+      });
+      expect(await db.select().from(workers).where(eq(workers.id, workerId))).toHaveLength(1);
+      expect(await db.select().from(settings).where(eq(settings.key, deletedAccountSettingKey(accountId))).get())
+        .toMatchObject({ value: accountId });
+      expect(getNamedEventsSince(0).events.map((entry) => entry.event)).toContainEqual({
+        kind: "account.deleted",
+        accountId,
+        workerType: "claude",
+      });
+    } finally {
+      await db.delete(creditEvents).where(eq(creditEvents.accountId, accountId));
+      await db.delete(workerCredentialAllocations).where(eq(workerCredentialAllocations.accountId, accountId));
+      await db.delete(workerTokenUsage).where(eq(workerTokenUsage.accountId, accountId));
+      await db.delete(accountUsageSnapshots).where(eq(accountUsageSnapshots.accountId, accountId));
+      await db.delete(accountSecrets).where(eq(accountSecrets.accountId, accountId));
+      await db.delete(workers).where(eq(workers.id, workerId));
+      await db.delete(runs).where(eq(runs.id, runId));
+      await db.delete(accounts).where(eq(accounts.id, accountId));
+      await db.delete(plans).where(eq(plans.id, planId));
+      await db.delete(settings).where(eq(settings.key, deletedAccountSettingKey(accountId)));
+    }
+  });
+
+  it("records a rejected deletion when the account does not exist", async () => {
+    const accountId = "missing-account-delete-route";
+    const response = await handleAccountDetailRequest(jsonRequest(
+      `http://localhost/api/accounts/${accountId}`,
+      "DELETE",
+      {},
+    ), { surface: "test", params: { id: accountId } });
+
+    expect(response.status).toBe(404);
+    expect(getNamedEventsSince(0).events.map((entry) => entry.event)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "account.delete_failed",
+        accountId,
+        reason: "not_found",
+      }),
+      expect.objectContaining({
+        kind: "error.surfaced",
+        code: "account.delete.failed",
+        accountId,
+      }),
+    ]));
+  });
+
+  it("records a rejected deletion when authentication fails", async () => {
+    const originalBypass = process.env.OMNIHARNESS_TEST_BYPASS_AUTH;
+    delete process.env.OMNIHARNESS_TEST_BYPASS_AUTH;
+    const accountId = "unauthorized-account-delete-route";
+
+    try {
+      const response = await handleAccountDetailRequest(jsonRequest(
+        `http://localhost/api/accounts/${accountId}`,
+        "DELETE",
+        {},
+      ), { surface: "test", params: { id: accountId } });
+
+      expect(response.status).toBe(401);
+      expect(getNamedEventsSince(0).events.map((entry) => entry.event)).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          kind: "account.delete_failed",
+          accountId,
+          reason: "authentication_refused",
+        }),
+        expect.objectContaining({
+          kind: "error.surfaced",
+          code: "account.delete.failed",
+          accountId,
+        }),
+      ]));
+    } finally {
+      if (originalBypass === undefined) delete process.env.OMNIHARNESS_TEST_BYPASS_AUTH;
+      else process.env.OMNIHARNESS_TEST_BYPASS_AUTH = originalBypass;
+    }
   });
 });

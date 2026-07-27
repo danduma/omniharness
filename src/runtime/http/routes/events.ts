@@ -27,6 +27,7 @@ import { reconcilePersistedReloadZombies } from "@/server/runs/persisted-zombie-
 import { toAccountDto } from "@/server/accounts/dto";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { startSlowProbe } from "@/server/slow-probe";
+import { getClaudeModelGatewayService } from "@/server/integrations/claude-model-gateway";
 import { toNextRequest } from "./next-request";
 
 const STREAM_REFRESH_INTERVAL_MS = 15_000;
@@ -126,6 +127,7 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}, prob
         lastText: workers.lastText,
         bridgeSessionId: workers.bridgeSessionId,
         bridgeSessionMode: workers.bridgeSessionMode,
+        supersededSeqRanges: workers.supersededSeqRanges,
         workerNumber: workers.workerNumber,
         title: workers.title,
         initialPrompt: workers.initialPrompt,
@@ -442,6 +444,7 @@ function buildEventPayload(
   frontendErrors: AppErrorPayload[] = [],
   options: EventPayloadOptions = {},
   workerEntrySeqs: Record<string, number> = {},
+  claudeModelGateway = getClaudeModelGatewayService().getSnapshot(),
 ) {
   const selectedRunId = resolveVisibleSelectedRunId(records, options);
   const runIds = visibleSelectedRunIds(records, options);
@@ -542,6 +545,7 @@ function buildEventPayload(
       },
     },
     workerEntrySeqs,
+    claudeModelGateway,
   });
 }
 
@@ -762,7 +766,10 @@ export const handleEventsRequest: OmniHttpHandler = async (request) => {
 
   if (isSnapshot) {
     const payload = persistedOnly
-      ? await buildSharedPersistedEventPayload(eventPayloadOptions, probe ?? undefined)
+      // `persisted=1` is the canonical verification surface used after
+      // lifecycle mutations. It must reflect SQLite now, even when a route
+      // bundle did not share the in-process notification version.
+      ? await buildPersistedEventPayload(eventPayloadOptions, probe ?? undefined)
       : await (async () => {
         const { ensureSupervisorRuntimeStarted } = await import("@/server/supervisor/runtime-watchdog");
         await ensureSupervisorRuntimeStarted();

@@ -76,6 +76,7 @@ export function useConversationActions({
     setMobileWorkersOpen,
     setApiKeys,
     setSelectedConversationMode,
+    setDeletingRun,
   } = homeUiSetters;
 
   const autoCommitMilestonesEnabled = parseBooleanSetting(apiKeys[GIT_AUTO_COMMIT_MILESTONES_SETTING], false);
@@ -226,11 +227,20 @@ export function useConversationActions({
   };
 
   const handleDeleteRun = (run: SidebarRun) => {
-    if (!window.confirm(`Delete "${run.title}"? This cannot be undone.`)) {
-      return;
-    }
+    setDeletingRun(run);
+  };
+
+  const handleCancelDeleteRun = () => {
+    setDeletingRun(null);
+  };
+
+  const handleConfirmDeleteRun = () => {
+    const snap = homeUiStateManager.getSnapshot();
+    const run = snap.deletingRun;
+    if (!run) return;
 
     mutations.deleteRun.mutate({ runId: run.id });
+    setDeletingRun(null);
   };
 
   const handleArchiveRun = (run: SidebarRun) => {
@@ -393,6 +403,8 @@ export function useConversationActions({
     handleCancelMovingRun,
     handleConfirmMoveRunToProject,
     handleDeleteRun,
+    handleCancelDeleteRun,
+    handleConfirmDeleteRun,
     handleArchiveRun,
     handleRetryMessage,
     handleResumeRunRecovery,

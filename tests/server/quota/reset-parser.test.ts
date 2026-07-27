@@ -75,7 +75,8 @@ describe("quota reset parser", () => {
   });
 
   it("rolls time-only reset phrases to the next day when already passed", () => {
-    const info = parseQuotaResetText("quota exhausted until 9:30 AM", { now });
+    const localNow = new Date(2026, 4, 10, 10, 0, 0, 0);
+    const info = parseQuotaResetText("quota exhausted until 9:30 AM", { now: localNow });
 
     expect(info).toMatchObject({
       isQuotaError: true,
@@ -87,6 +88,20 @@ describe("quota reset parser", () => {
     expect(info.resetAt?.getDate()).toBe(11);
     expect(info.resetAt?.getHours()).toBe(9);
     expect(info.resetAt?.getMinutes()).toBe(30);
+  });
+
+  it("parses Claude session-limit reset text without a space before AM/PM", () => {
+    const localNow = new Date(2026, 6, 5, 10, 0, 0, 0);
+    const info = parseQuotaResetText("You've hit your session limit · resets 10:40am (Europe/Madrid)", { now: localNow });
+
+    expect(info).toMatchObject({
+      isQuotaError: true,
+      source: "time-of-day",
+      confidence: "medium",
+    });
+    expect(info.resetAt?.getHours()).toBe(10);
+    expect(info.resetAt?.getMinutes()).toBe(40);
+    expect(info.retryAfterMs).toBe(40 * 60_000);
   });
 
   it("classifies quota text without reset as unschedulable", () => {

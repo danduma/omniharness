@@ -50,6 +50,63 @@ describe("MarkdownContent - Horizontal Rule rendering", () => {
   });
 });
 
+describe("MarkdownContent - Project file links", () => {
+  const projectRoot = "/Users/masterman/NLP/omniharness";
+
+  it("renders code containing a literal percent sign without crashing", () => {
+    expect(() => MarkdownContent({
+      content: "Progress is `100%`",
+      projectRoot,
+      onOpenProjectFile: () => {},
+    })).not.toThrow();
+  });
+
+  it("links backticked relative project paths to the project file opener", () => {
+    const tree = MarkdownContent({
+      content: "- `docs/strategy/2026-07-09-conversion-funnel-audit.md` - full findings",
+      projectRoot,
+      onOpenProjectFile: () => {},
+    });
+
+    const buttonNodes = findReactNodes(tree, (n) => n.type === "button");
+    expect(buttonNodes.length).toBe(1);
+    expect(buttonNodes[0].props.children).toBe("docs/strategy/2026-07-09-conversion-funnel-audit.md");
+
+    const opened: unknown[] = [];
+    const callbackTree = MarkdownContent({
+      content: "`docs/plans/launch-conversion-readiness.md:12`",
+      projectRoot,
+      onOpenProjectFile: (file) => opened.push(file),
+    });
+    const callbackButton = findReactNodes(callbackTree, (n) => n.type === "button")[0];
+    callbackButton.props.onClick();
+
+    expect(opened).toEqual([{
+      root: projectRoot,
+      relativePath: "docs/plans/launch-conversion-readiness.md",
+      line: 12,
+    }]);
+  });
+
+  it("links relative project paths nested inside bold code formatting", () => {
+    const opened: unknown[] = [];
+    const tree = MarkdownContent({
+      content: "- **`docs/strategy/2026-07-09-conversion-funnel-audit.md`** - full findings",
+      projectRoot,
+      onOpenProjectFile: (file) => opened.push(file),
+    });
+
+    const buttonNodes = findReactNodes(tree, (n) => n.type === "button");
+    expect(buttonNodes.length).toBe(1);
+    buttonNodes[0].props.onClick();
+
+    expect(opened).toEqual([{
+      root: projectRoot,
+      relativePath: "docs/strategy/2026-07-09-conversion-funnel-audit.md",
+    }]);
+  });
+});
+
 describe("MarkdownContent - Table rendering", () => {
   it("renders a standard markdown table with headers, borders and correct values", () => {
     const content = [

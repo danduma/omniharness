@@ -16,7 +16,8 @@ import {
   WORKER_OPTIONS,
 } from "./constants";
 import { conversationNotificationManager } from "./ConversationNotificationManager";
-import { LiveEventConnectionManager } from "./LiveEventConnectionManager";
+import { claudeModelGatewayManager } from "./ClaudeModelGatewayManager";
+import { LiveEventConnectionManager, LiveEventCursorManager } from "./LiveEventConnectionManager";
 import type { ComposerWorkerOption, EventStreamState } from "./types";
 import { buildConversationPath, buildInlineError, parseBrowserConversationRoute, parseCollapsedProjectPaths } from "./utils";
 
@@ -127,6 +128,11 @@ export function useHomeLifecycle({
   const didHydrateWorkersSidebarWidthRef = useRef(false);
   const didSkipWorkersSidebarInitialPersistRef = useRef(false);
   const didHydrateEffortRef = useRef(false);
+  const liveEventCursorRef = useRef<LiveEventCursorManager | null>(null);
+  if (liveEventCursorRef.current === null) {
+    liveEventCursorRef.current = new LiveEventCursorManager(initialLastEventId);
+  }
+  const liveEventCursor = liveEventCursorRef.current;
 
   useEffect(() => {
     if (!shouldStartLiveEventConnection({ appUnlocked, routeReady })) {
@@ -143,6 +149,9 @@ export function useHomeLifecycle({
       const nextState = filterEventStreamState?.(data) ?? data;
       (applyServerEventStreamState ?? setState)(nextState);
       conversationNotificationManager.handleEventStreamState(nextState);
+      if (nextState.claudeModelGateway) {
+        claudeModelGatewayManager.applyLiveStatus(nextState.claudeModelGateway);
+      }
       setHasReceivedInitialEventStreamPayload(true);
       setRuntimeErrors((current) => mergeAppErrors(
         current.filter((error) => error.source !== "Events"),
@@ -153,8 +162,10 @@ export function useHomeLifecycle({
     const connectionManager = new LiveEventConnectionManager({
       selectedRunId,
       initialLastEventId,
+      cursor: liveEventCursor,
       getSnapshotChecksum,
       applyUpdate: applyEventStreamUpdate,
+      onStreamResync: () => claudeModelGatewayManager.resetRevisionAuthority(),
       reportError: (error) => {
         if (!isActive) {
           return;
@@ -170,6 +181,7 @@ export function useHomeLifecycle({
     };
   }, [
     appUnlocked,
+    liveEventCursor,
     initialLastEventId,
     filterEventStreamState,
     getSnapshotChecksum,
