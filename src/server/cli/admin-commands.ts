@@ -32,7 +32,7 @@ export function parseRunnerAdminArgs(argv: string[]) {
       confirmRunnerInstanceId = readFlagValue(argv, index, arg);
       index += 1;
     } else {
-      throw new Error(`Unknown runner administration option: ${arg}`);
+      throw new Error(`Unknown server administration option: ${arg}`);
     }
   }
   if (!runnerUrl) {
@@ -78,7 +78,7 @@ export async function runRunnerRekeyCommand(
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     const message = (body as { error?: { message?: string } } | null)?.error?.message;
-    throw new Error(message || `Runner rekey failed with HTTP ${response.status}.`);
+    throw new Error(message || `Server rekey failed with HTTP ${response.status}.`);
   }
   return { body, warning: credential.warning };
 }

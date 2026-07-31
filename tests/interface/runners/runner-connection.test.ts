@@ -16,6 +16,7 @@ function profile(overrides: Partial<RunnerProfile> = {}): RunnerProfile {
     runnerInstanceId: "runner-1",
     label: "Runner",
     baseUrl: "https://runner.example",
+    savedPassword: null,
     authTransport: "bearer",
     credentialRef: "credential-1",
     schemaVersion: 1,

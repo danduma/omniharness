@@ -12,7 +12,7 @@ export interface RunnerLockRecord {
 export class RunnerAlreadyRunningError extends Error {
   constructor(readonly owner: RunnerLockRecord) {
     super(
-      `Another OmniHarness runner (pid ${owner.pid}) owns ${owner.host}:${owner.port}.`,
+      `Another OmniHarness server (pid ${owner.pid}) owns ${owner.host}:${owner.port}.`,
     );
     this.name = "RunnerAlreadyRunningError";
   }

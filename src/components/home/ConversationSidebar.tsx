@@ -14,6 +14,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { OmniHarnessMark } from "@/components/OmniHarnessMark";
 import { CliBrandIcon } from "@/components/cli-brand-icons";
 import { PRODUCT_NAME, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "@/interface/home/constants";
+import { RunnerControls } from "@/interface/runners/RunnerControls";
 import { getRunLatestUnreadTimestamp, isRunUnread } from "@/lib/conversation-state";
 import { getConversationVisualKind, type ConversationVisualKind } from "@/lib/conversation-visuals";
 import type { ManualCommitAction } from "@/lib/commit-workflow";
@@ -606,6 +607,7 @@ export interface ConversationSidebarProps {
   setThemeMode: React.Dispatch<React.SetStateAction<"day" | "night">>;
   onCollapse?: () => void;
   onOpenExternalSessions?: () => void;
+  runnerControlsMode?: "desktop" | "mobile";
 }
 
 export function ConversationSidebar({
@@ -658,6 +660,7 @@ export function ConversationSidebar({
   setThemeMode,
   onCollapse,
   onOpenExternalSessions,
+  runnerControlsMode = "desktop",
 }: ConversationSidebarProps) {
   useI18nSnapshot();
   const themeModeLabel = t(themeMode === "night" ? "theme.mode.switchDay" : "theme.mode.switchNight");
@@ -709,6 +712,11 @@ export function ConversationSidebar({
             </Button>
           ) : null}
         </div>
+        <RunnerControls
+          placement="sidebar"
+          controlId={runnerControlsMode === "mobile" ? "runner-switcher-mobile" : "runner-switcher"}
+          renderDialogs={runnerControlsMode === "desktop"}
+        />
         <div className="flex items-stretch gap-0">
           <Button variant="ghost" className="h-9 min-w-0 flex-1 justify-start px-2 text-sm text-[#333333] hover:bg-[#deddda] hover:text-[#1f1f1f] dark:text-zinc-200 dark:hover:bg-muted/70 dark:hover:text-zinc-100" onClick={startNewPlan}>
             <Plus className="mr-2 h-4 w-4 shrink-0" /> {t("conversation.sidebar.newSession")}

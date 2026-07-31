@@ -33,8 +33,8 @@ export const handleRunnerSettingsRequest: OmniHttpHandler = async (request) => {
     return methodNotAllowed("PATCH");
   }
   const auth = await requireApiSession(request, {
-    source: "Runner",
-    action: "Rename runner",
+    source: "Server",
+    action: "Rename server",
     enforceSameOrigin: true,
   });
   if (auth.response) {
@@ -76,8 +76,8 @@ export const handleRunnerRekeyRequest: OmniHttpHandler = async (request) => {
     return methodNotAllowed("POST");
   }
   const auth = await requireApiSession(request, {
-    source: "Runner",
-    action: "Rekey runner",
+    source: "Server",
+    action: "Rekey server",
     enforceSameOrigin: true,
   });
   if (auth.response) {
@@ -93,7 +93,7 @@ export const handleRunnerRekeyRequest: OmniHttpHandler = async (request) => {
     return Response.json({
       error: {
         code: "runner.identity_confirmation_required",
-        message: "Confirm the current runner identity before rekeying a remote runner.",
+        message: "Confirm the current server identity before rekeying a remote server.",
       },
     }, { status: 409 });
   }

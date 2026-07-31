@@ -8,6 +8,7 @@ export type RunnerProfile = {
   runnerInstanceId: string | null;
   label: string;
   baseUrl: string;
+  savedPassword: string | null;
   authTransport: RunnerAuthTransport;
   credentialRef: string | null;
   schemaVersion: typeof RUNNER_PROFILE_SCHEMA_VERSION;

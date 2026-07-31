@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { shouldStartLiveEventConnection } from "@/interface/home/useHomeLifecycle";
+import {
+  shouldStartLiveEventConnection,
+  shouldSubscribeToRunnerSnapshot,
+} from "@/interface/home/useHomeLifecycle";
 
 describe("home lifecycle", () => {
   it("does not start live events before the route has hydrated", () => {
@@ -14,5 +17,22 @@ describe("home lifecycle", () => {
       appUnlocked: true,
       routeReady: true,
     })).toBe(true);
+  });
+
+  it("uses a run-scoped event connection when a runner-backed app selects a conversation", () => {
+    expect(shouldSubscribeToRunnerSnapshot({
+      hasRunnerConnection: true,
+      selectedRunId: null,
+    })).toBe(true);
+
+    expect(shouldSubscribeToRunnerSnapshot({
+      hasRunnerConnection: true,
+      selectedRunId: "run-1",
+    })).toBe(false);
+
+    expect(shouldSubscribeToRunnerSnapshot({
+      hasRunnerConnection: false,
+      selectedRunId: null,
+    })).toBe(false);
   });
 });

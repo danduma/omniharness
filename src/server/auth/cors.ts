@@ -66,7 +66,7 @@ export async function buildBearerCorsPreflight(
     return Response.json({
       error: {
         code: "auth.cors_origin_rejected",
-        message: "Browser origin is not authorized for this runner.",
+        message: "Browser origin is not authorized for this server.",
       },
     }, { status: 403 });
   }

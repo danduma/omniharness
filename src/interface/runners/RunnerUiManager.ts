@@ -109,7 +109,12 @@ export class RunnerUiManager extends StateManager<RunnerUiSnapshot> {
   }
 
   openEdit(
-    profile: { id: string; label: string; baseUrl: string },
+    profile: {
+      id: string;
+      label: string;
+      baseUrl: string;
+      savedPassword?: string | null;
+    },
     returnFocusId: string,
   ) {
     this.update({
@@ -118,6 +123,7 @@ export class RunnerUiManager extends StateManager<RunnerUiSnapshot> {
       profileId: profile.id,
       label: profile.label,
       baseUrl: profile.baseUrl,
+      password: profile.savedPassword ?? "",
       returnFocusId,
     });
   }

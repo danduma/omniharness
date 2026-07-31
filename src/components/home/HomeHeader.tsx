@@ -24,7 +24,6 @@ import { t, useI18nSnapshot } from "@/lib/i18n";
 import { ConversationSidebar } from "./ConversationSidebar";
 import { RunWorkspaceBadge } from "./RunWorkspaceBadge";
 import { ThemeModeToggle } from "./ThemeModeToggle";
-import { RunnerControls } from "@/interface/runners/RunnerControls";
 
 const SideWindow = lazy(
   () => import("./SideWindow").then((m) => ({ default: m.SideWindow })),
@@ -313,6 +312,7 @@ export function HomeHeader({
               </SheetTitle>
             </SheetHeader>
             <ConversationSidebar
+              runnerControlsMode="mobile"
               filteredProjects={filteredProjects as SidebarGroup[]}
               activeProjects={activeProjects as SidebarGroup[]}
               conversationSidebarTab={conversationSidebarTab}
@@ -367,7 +367,6 @@ export function HomeHeader({
       </Sheet>
 
       <div className="flex min-w-0 items-center gap-2">
-        <RunnerControls />
         {titleLabel || rootFolderLabel ? (
           <div className="flex min-w-0 items-baseline gap-2">
             {titleLabel && selectedRun ? (

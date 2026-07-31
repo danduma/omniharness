@@ -3,7 +3,7 @@ provider: "claude"
 codex_thread_id: "c0a69384-d0e5-4a99-894d-19814912df53"
 title: "Review Interface/Runner split architecture spec"
 started_at: "2026-07-30T21:59:21.529Z"
-updated_at: "2026-07-30T21:59:21.547Z"
+updated_at: "2026-07-30T22:03:10.003Z"
 working_directory: "/Users/masterman/NLP/omniharness"
 archive_status: "unknown"
 part: 1
@@ -813,5 +813,148 @@ B) once boundaries settle, and runner-to-runner work handoff.
 
 
 uuid: 8fc7af91-2ee7-43dc-91db-95af4bb193d4
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-30T22:01:41.519Z","phase":null} -->
+## Claude thinking · 2026-07-30T22:01:41.519Z
+
+
+
+uuid: fa599e37-168e-47e6-96c0-9e194c2c2a57
+parent: 1f2249f2-289c-4f4e-affe-4b80664e874d
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-07-30T22:03:10.003Z","phase":null} -->
+## Claude · 2026-07-30T22:03:10.003Z
+
+I did not inspect the repo or run anything — this is a read of the artifact only.
+
+# 1. Verdict
+
+**HARDEN.** The spec is close: the boundary strategy, milestone dark-shipping, epoch/resync model, and honesty about mobile background limits are all better than typical. But there are five items that would stall or mislead a file-by-file plan — one security hole, one internal contradiction in the SSE resume path, one capability that's in your stated goal and absent from the design, one transport-abstraction sequencing error, and one unspecified product migration for existing Electron users. Everything else below is tightening.
+
+# 2. Highest-impact findings
+
+### A. Cross-origin bearer login is an open password oracle (security, blocking)
+
+§4.3.2 makes `POST /api/auth/login` (bearer form) callable **from any non-null HTTP(S) origin with a reflected `Access-Control-Allow-Origin`**. Because the response is readable cross-origin, any web page a user visits can script password attempts against `http://127.0.0.1:3050` (and any runner URL it knows), and on success **read the bearer token out of the response body and exfiltrate it**. Rate limiting doesn't close this; it only slows it and hands an attacker a lockout DoS against the legitimate user. This is the classic drive-by-localhost / DNS-rebinding shape, and it's worse here because the credential is a single shared password with no second factor.
+
+The design also can't actually satisfy its own requirement as written: runner B cannot know runner A's interface origin in advance, so "reflect whatever origin asks" was the only way to make §4.3.2 work.
+
+**Fix:** make cross-origin login an explicit, per-origin grant rather than open reflection.
+- Add `OMNIHARNESS_ALLOWED_INTERFACE_ORIGINS` (exact origins, no wildcards). Only listed origins get ACAO on `/api/auth/login`; everything else gets no CORS headers (browser blocks the read) and is audited as `auth.login_origin_rejected`.
+- For the "add runner B from runner A's UI" flow without pre-configuration, use a **runner-side approval step**: the login attempt from an unknown origin returns 403 with a code, and the origin is added via `omni runner allow-origin <origin>` or a same-origin admin toggle on B. That is a one-time action per pairing, which matches how often this actually happens.
+- Independently: reject bearer login where `Origin` is a loopback address but the request arrives on a non-loopback socket, and keep the existing plaintext refusal.
+- Note in §9 that this is the one place where the "shared password, no accounts" model is weakest, and that the existing QR/pair-token flow (§4.3.9) is a strictly better UX for this specific step if you ever want to revive it.
+
+### B. SSE resume contradicts itself: `Last-Event-ID` can't be sent by the clients you designed
+
+§4.3.3 says `LiveEventConnectionManager` **closes native `EventSource` auto-retry** and constructs a fresh connection with a fresh ticket per attempt. A freshly constructed `EventSource` has no `lastEventId`, so the browser will **not** send the `Last-Event-ID` header. §5 story 6 and §7 both assert resume "via `Last-Event-ID`". As specified, every reconnect will full-resync.
+
+**Fix:**
+- Pass the cursor explicitly: `GET /api/events?ticket=…&cursor=<epoch>:<seq>`. Server accepts both the header and the query param; query wins when both are present. State that the cursor is **not** a secret (unlike the ticket) and is safe in the URL and logs.
+- Specify heartbeats explicitly against your "every frame carries an id" constraint: heartbeats are SSE **comment lines** (`:hb`), carry no id, and do not consume sequence numbers or ring slots. If you instead make them id-bearing events, say so and account for ring-buffer pressure — this materially changes how long a cursor stays resumable.
+- Specify cursor persistence: per (`runnerInstanceId`), where it's stored, and that it is cleared on `stream.resync_required` and on epoch change.
+- Define the ring-eviction → resync decision as a server-side rule (`cursor sequence < ring floor` ⇒ id-bearing `stream.resync_required`), since that's the branch the tests in §7 need to hit deterministically.
+
+### C. Per-device revocable sessions exist in the schema but there's no way to list or revoke them
+
+Your stated goal is "per-device revocable cookie or bearer sessions." §4.3 stores `clientLabel`, `transport`, `boundOrigin`, `clientKind` and calls sessions "separately revocable," and §6 audits "session revocation" — but **no route, CLI command, or UI is specified for enumerating or revoking a session.** Today, a lost phone cannot be de-authorized short of rotating the password (and password rotation's effect on existing sessions is also unspecified).
+
+**Fix:** add to M4:
+- `GET /api/auth/sessions` → `{ id, clientLabel, transport, clientKind, boundOrigin, createdAt, lastUsedAt, currentSession: bool }` (never token material).
+- `DELETE /api/auth/sessions/:id` and `DELETE /api/auth/sessions` (all-but-current), emitting `auth.session_revoked`.
+- `omni auth sessions list|revoke`.
+- Define the TTL model, which is currently a hand-wave ("same expiry/revocation rules"): browser-bearer and cookie sessions need a short-ish absolute TTL; native sessions need a long one or users retype the shared password constantly. Specify absolute TTL, idle TTL, whether `lastUsedAt` updates on every request (write amplification on SQLite — consider coarse bucketing), and max concurrent sessions.
+- Specify password rotation semantics: does `auth:password set` revoke all sessions? (Recommend yes, with `--keep-sessions`.) This is a user story worth adding to §5.
+- Add a client "log out / forget runner" flow that revokes the server session *and* clears the platform credential, not just the local one.
+
+### D. The streaming transport abstraction is sequenced too late — M7 (and M6) will force a second sweep of M3's work
+
+§3 describes `RuntimeAPIs` as taking an injectable `fetch`/`EventSource`. But Capacitor (§4.5) and Electron (§4.5) both move networking into a native/main process where **`EventSource` does not exist** and frames arrive over a bridge/IPC. M3 migrates all 29 call sites, including `InteractiveTerminal.tsx`, against the *current* shape. M6 and M7 then have to change that shape again across every stream consumer.
+
+**Fix:** promote the stream contract into M1/M3, before the 29-site sweep:
+
+```ts
+openStream(path: string, opts: { cursor?: string; signal: AbortSignal })
+  → { onFrame, onError, onOpen, close }   // no EventSource in the type
+```
+
+Web implements it with ticket-fetch + `EventSource`; Electron with IPC; Capacitor with the native adapter. Add to the same contract, since all three transports need them: per-platform **redirect suppression** (§4.3.5 says `redirect: "manual"` but URLSession/OkHttp/Electron `net` each need their own opt-out, asserted in the bridge tests), and ticket acquisition, so no platform accidentally puts a ticket in a JS-visible place.
+
+### E. Electron's migration for existing users is undefined
+
+§4.7 states "The Electron app does not launch or own a runner process in v1," and §4.2/M2 keep "its current local runtime transport" for four milestones before M6 flips it to a pure remote client. If today's desktop app is self-contained, then at M6 an existing user updates and lands on "Connect a runner (URL + password)" with **no runner to connect to** and no path to create one. That's a shipped regression disguised as a milestone.
+
+**Fix:** pick one and write it down explicitly, with a story in §5:
+1. Electron continues to spawn/adopt a co-located runner and auto-provisions a non-deletable local profile (recommended — preserves the product, and §4.7's co-location capability flag already exists to gate native pickers); or
+2. Electron becomes remote-only and M6 ships a migration screen plus documented `pnpm runner` install instructions, and the release is called out as breaking.
+
+Also decide whether the local profile in case (1) uses cookie or bearer auth, and whether the desktop user must set a shared password at all for a purely loopback deployment — right now §4.3.6 says a runner with no valid password fails to start, which would break a first-launch desktop install.
+
+### F. `connect-src 'self' https:` defeats the CSP argument you're relying on
+
+§4.3 explicitly justifies `localStorage` token storage by saying CSP + no-third-party-scripts is "the protection boundary," then sets `connect-src` to allow **any HTTPS origin**. Under the exact threat you named (same-origin script injection), that policy permits token exfiltration to anywhere. The mitigation and the threat model don't meet.
+
+**Fix:** be honest and compensate elsewhere rather than claiming a boundary you don't have.
+- State plainly that `connect-src` cannot be tightened for a user-configurable multi-runner client, so CSP mitigates script *injection*, not *exfiltration*.
+- Add `require-trusted-types-for 'script'` and `trusted-types` to the header, plus the existing `object-src 'none'` / `base-uri 'none'` (add `base-uri`, it's missing) — these actually reduce injection probability.
+- For the **mobile bundle specifically**, `connect-src 'self'` only, since all runner traffic goes through the native bridge. Add the test: a WebView `fetch()` to a runner origin must be CSP-blocked. Without this, a regression silently falls back to unauthenticated/unbridged WebView requests.
+- Consider keeping web bearer tokens in memory + a short-lived refresh in `localStorage`, or accept `localStorage` and document the residual risk in §9. Either is fine; the current text does neither.
+
+### G. Missing runtime details that will bite during implementation
+
+- **Per-origin connection budget.** `startOmniServer` is HTTP/1.1. A browser allows ~6 connections per origin; main event stream + several terminal streams + normal fetches will deadlock the app. Specify a cap on concurrent terminal streams per runner, or multiplex terminal output over the main event stream, or require HTTP/2 behind TLS. This is not theoretical at 3–4 open terminals.
+- **Inactive-runner stream cost.** §4.5 says switching "does not close streams." So a background runner's terminal streams keep pushing PTY output into client memory indefinitely. Specify a bounded per-connection buffer and a policy for non-visible runners (recommend: keep the event stream, detach terminal streams and re-attach with a scrollback fetch on activation).
+- **Profile count.** "All connections remain open" with no cap. Define behavior at N profiles (recommend: hard cap + explicit "idle" state beyond it), especially for mobile battery/data.
+- **Gateway port collision in the two-runner test.** §4.2 says gateway settings are instance-scoped, but the Claude model gateway child needs an actual ephemeral-port strategy or the second runner's gateway will collide. Name the mechanism.
+- **Dev proxy and `Origin`.** §4.3 rejects browser-kind bearer sessions with missing `Origin`. Behind the Vite dev proxy the runner may see `localhost:5173`, the rewritten host, or nothing depending on `changeOrigin`. Specify the dev configuration and add it to the parity/auth tests, or you'll discover it as a "works in prod, broken in dev" bug.
+
+### H. `apiRevision` and the PWA skew case are currently untestable / self-bricking
+
+`apiRevision` is "bumped on breaking API change" with no mechanical trigger — it will rot within two months. Worse: §4.5 says out-of-range runners are **blocked, not warned**, while §4.4's service worker precaches hashed assets. Upgrade the runner, and the installed PWA can serve stale JS that hard-blocks against its own hosting runner, with no in-app path out.
+
+**Fix:**
+- Tie the bump to the §7 route-contract fixtures: a fixture diff without an `apiRevision` bump fails CI. Name the file that holds the interface's supported range and its M4 initial value.
+- Special-case the **same-origin, non-deletable profile**: an `apiRevision` mismatch there triggers SW update + reload (once, with a loop guard), not a hard block. Hard block stays for remote profiles only.
+- Specify SW activation semantics (`skipWaiting`/`clientsClaim` or not) — it directly determines whether the above recovery works.
+- Same for `omni runner rekey`: define that the same-origin profile re-pins automatically on a valid session, otherwise rekey bricks the local web app.
+
+### I. Acceptance gaps in §5
+
+Add stories (each maps to something the design already implies but nothing gates):
+- Revoke a session from another device; the revoked client transitions to needs-reauth without affecting other profiles.
+- Password rotation and its session effect.
+- `runner.stopping`: clients show "runner stopping," back off, and **do not** issue a snapshot storm — this is a specific design decision in §4.2 with no acceptance behind it.
+- API-only mode observed by a client (§4.1 calls it "a supported deployment"; nothing tests a client against it).
+- Saving an unreachable runner profile (allowed or not?), and editing `baseUrl` clearing credentials.
+- Upgrade migration: existing local drafts keyed by `conversationId` only → `(runnerInstanceId, conversationId)`. §4.5's "identity-learned rekey" is written abstractly; the concrete case is the one-time upgrade of today's users, and it should be named as such.
+- Runner rename: `runner.name` is "user-configurable" but no route or UI is specified.
+
+### J. Smaller, cheap to fix
+
+- §7 route parity: specify `Set-Cookie` normalization (attribute order/casing differ between `NextResponse.cookies` and raw headers) or the gate will fail on noise.
+- §6 "the switcher surfaces the last error per profile verbatim" conflicts mildly with §4.3.8 redaction. State that the client renders the already-redacted server payload, and give client-side failures **stable codes** (mirroring `error.surfaced` codes) so tests assert codes, not strings.
+- §4.1 memory gate: name the workload script and require a deterministic fixture agent, not a live model call. Also fix the ordering against Gate 3 — the `< 2 GB` dev threshold cannot be asserted at M1 (Next still serves the UI); M1 records the baseline, M2 asserts the threshold.
+- `runner.static_ui_enabled` / `runner.static_ui_missing`: state that exactly one is emitted once at boot, so the lifecycle test can assert on it.
+- Add `base-uri 'none'` to the CSP list (currently absent).
+- `capacitor.config.ts` should be stated to point `webDir` at `dist/interface`, given the single-package constraint.
+- Switcher state derivation: make explicit that `healthz` 200 + bootstrap 401 ⇒ `needs-reauth`, and `healthz` failure ⇒ `offline`. It's implied but it's the rule three specs depend on.
+
+# 3. What I'd deliberately leave alone
+
+- **Approach A (one package, two build targets) over the monorepo extraction.** Correctly reasoned; the ESLint boundary + split `tsc` projects + Vite build failure is a sufficient three-layer backstop. Don't let anyone relitigate this mid-implementation.
+- **Keeping the API server and ACP bridge as two co-located processes** and the single-process in-memory event bus as a hard constraint. Documented, load-bearing, and changing it would double the scope.
+- **Bearer tokens as replayable secrets; no DPoP, no device keys, no multi-user roles.** The spec says this out loud instead of implying stronger guarantees. That honesty is worth more than the crypto would be here.
+- **The mobile background-suspension carve-out** and the notifications scoping in §4.8. Exactly the right call to refuse to claim delivery you can't make; don't let a "but can't we just…" during M7 erode it.
+- **Keeping the existing pairing/QR flow alive but load-bearing on nothing.** Cheap optionality. (My finding A note about reviving it for origin approval is a suggestion, not a dependency.)
+- **Milestone shape: parity gate → Next deletion → dark auth → web multi-runner → native.** The dark-ship of M4 and the "each milestone leaves shipped shells working" rule are the main things preventing this from becoming a six-week broken-trunk project. Fix the sequencing defect in finding D by moving the *stream contract* earlier, not by reordering milestones.
+- **Error-transparency posture** (full details + stack traces to the frontend) with redaction layered on top, and the §6 carve-out putting client-owned failures in client diagnostics rather than forcing them through `error.surfaced`. That carve-out is a correct reading of the constraint, not a violation of it.
+- **The memory gate as a controlled local benchmark rather than a CI assertion.** Right call; just make the workload deterministic per finding J.
+
+uuid: ba0f8177-bbf1-47ea-a2f8-8880e3db6500
+parent: fa599e37-168e-47e6-96c0-9e194c2c2a57
 
 <!-- /codex-event -->

@@ -1305,7 +1305,11 @@ export function HomeApp({
           onPointerDown={layout.handleLeftSidebarResizeStart}
         />
         <div className={`flex h-full min-w-0 flex-1 transition-transform duration-150 ease-out motion-reduce:transition-none ${leftSidebarOpen ? "translate-x-0" : "-translate-x-3"}`}>
-          <ConversationSidebar {...sharedSidebarProps} onCollapse={() => setLeftSidebarOpen(false)} />
+          <ConversationSidebar
+            {...sharedSidebarProps}
+            runnerControlsMode="desktop"
+            onCollapse={() => setLeftSidebarOpen(false)}
+          />
         </div>
       </div>
 

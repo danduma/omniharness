@@ -102,7 +102,7 @@ export async function startRunnerProcess(
 
     const runtime = createOmniRuntime({
       surface: "web",
-      label: "OmniHarness Runner",
+      label: "OmniHarness Server",
       hooks: {
         async onStop() {
           getTerminalManager().killAll();

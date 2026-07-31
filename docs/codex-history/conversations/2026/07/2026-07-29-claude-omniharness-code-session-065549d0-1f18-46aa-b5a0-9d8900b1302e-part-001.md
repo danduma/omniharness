@@ -208,6 +208,58 @@ parts: 1
 
 <!-- /codex-event -->
 
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "065549d0-1f18-46aa-b5a0-9d8900b1302e"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "065549d0-1f18-46aa-b5a0-9d8900b1302e"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "065549d0-1f18-46aa-b5a0-9d8900b1302e"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "065549d0-1f18-46aa-b5a0-9d8900b1302e"
+}
+```
+
+<!-- /codex-event -->
+
 <!-- codex-event:{"kind":"user","timestamp":"2026-07-29T11:18:25.821Z","phase":null} -->
 ## User · 2026-07-29T11:18:25.821Z
 

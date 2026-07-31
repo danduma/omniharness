@@ -8,7 +8,6 @@ import {
   LoaderCircle,
   Play,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { t, useI18nSnapshot } from "@/lib/i18n";
@@ -18,11 +17,6 @@ import {
   runnerStatusMessageKey,
   type RunnerUiDialog,
 } from "./RunnerUiManager";
-
-export type RunnerActivity = {
-  needsInput: number;
-  running: number;
-};
 
 function statusTone(status: RunnerConnectionStatus) {
   if (status === "online") return "bg-emerald-500";
@@ -34,16 +28,18 @@ function statusTone(status: RunnerConnectionStatus) {
 export function RunnerSwitcherButton({
   runnerName,
   status,
-  activity,
   expanded,
   surface = "web",
+  id = "runner-switcher",
+  className,
   onClick,
 }: {
   runnerName: string;
   status: RunnerConnectionStatus;
-  activity: RunnerActivity;
   expanded: boolean;
   surface?: RuntimeSurface;
+  id?: string;
+  className?: string;
   onClick?: () => void;
 }) {
   useI18nSnapshot();
@@ -51,9 +47,12 @@ export function RunnerSwitcherButton({
 
   return (
     <Button
-      id="runner-switcher"
+      id={id}
       variant="ghost"
-      className="h-9 min-w-0 max-w-[15rem] justify-start gap-2 px-2 motion-reduce:transition-none"
+      className={cn(
+        "h-9 min-w-0 max-w-[15rem] justify-start gap-2 px-2 motion-reduce:transition-none",
+        className,
+      )}
       aria-label={t("runner.switcher.aria", {
         runner: runnerName,
         status: statusLabel,
@@ -67,20 +66,6 @@ export function RunnerSwitcherButton({
         aria-hidden="true"
       />
       <span className="min-w-0 truncate text-sm font-semibold">{runnerName}</span>
-      {activity.needsInput > 0 ? (
-        <Badge variant="destructive" aria-label={t("runner.activity.needsInput", {
-          count: activity.needsInput,
-        })}>
-          {activity.needsInput}
-        </Badge>
-      ) : null}
-      {activity.running > 0 ? (
-        <Badge variant="secondary" aria-label={t("runner.activity.running", {
-          count: activity.running,
-        })}>
-          {activity.running}
-        </Badge>
-      ) : null}
       <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground" />
     </Button>
   );

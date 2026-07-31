@@ -4,7 +4,7 @@ function normalizeRunnerUrl(value: string) {
   const url = new URL(value);
   const loopback = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
   if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
-    throw new Error("Remote runners require HTTPS; loopback HTTP is allowed for local development.");
+    throw new Error("Remote servers require HTTPS; loopback HTTP is allowed for local development.");
   }
   url.pathname = "/";
   url.search = "";
@@ -19,7 +19,7 @@ async function readError(response: Response) {
   if (typeof body?.error === "string") {
     return body.error;
   }
-  return body?.error?.message || `Runner request failed with HTTP ${response.status}.`;
+  return body?.error?.message || `Server request failed with HTTP ${response.status}.`;
 }
 
 export async function createRemoteConversation(input: {

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
@@ -14,7 +15,8 @@ import type {
 } from "@/shared/bootstrap";
 
 const RUNNER_IDENTITY_SETTING_KEY = "__runner_identity_v1";
-const DEFAULT_RUNNER_NAME = "OmniHarness Runner";
+const LEGACY_DEFAULT_RUNNER_NAME = "OmniHarness Runner";
+const FALLBACK_SERVER_NAME = "OmniHarness Server";
 
 export type StoredRunnerIdentity = {
   runnerInstanceId: string;
@@ -92,30 +94,54 @@ function parseStoredIdentity(value: string | null): StoredRunnerIdentity | null 
 
 export async function ensureRunnerIdentity(
   store: RunnerIdentityStore = databaseIdentityStore,
+  machineName: () => string = hostname,
 ): Promise<StoredRunnerIdentity> {
   const existing = parseStoredIdentity(await store.read());
   if (existing) {
+    const normalizedName = existing.name === LEGACY_DEFAULT_RUNNER_NAME
+      ? defaultServerName(machineName)
+      : stripLocalSuffix(existing.name);
+    if (normalizedName !== existing.name) {
+      const migrated = {
+        ...existing,
+        name: normalizedName,
+      };
+      await store.write(JSON.stringify(migrated));
+      return migrated;
+    }
     return existing;
   }
 
   const candidate: StoredRunnerIdentity = {
     runnerInstanceId: randomUUID(),
-    name: DEFAULT_RUNNER_NAME,
+    name: defaultServerName(machineName),
   };
   await store.writeIfAbsent(JSON.stringify(candidate));
   return parseStoredIdentity(await store.read()) ?? candidate;
 }
 
+function defaultServerName(machineName: () => string) {
+  try {
+    return stripLocalSuffix(normalizeRunnerName(machineName()));
+  } catch {
+    return FALLBACK_SERVER_NAME;
+  }
+}
+
+function stripLocalSuffix(name: string) {
+  return name.replace(/\.local$/i, "");
+}
+
 function normalizeRunnerName(name: string) {
   const normalized = name.trim().replace(/\s+/g, " ");
   if (!normalized) {
-    throw new TypeError("Runner name is required.");
+    throw new TypeError("Server name is required.");
   }
   if (normalized.length > 80) {
-    throw new TypeError("Runner name must be 80 characters or fewer.");
+    throw new TypeError("Server name must be 80 characters or fewer.");
   }
   if (/[\u0000-\u001f\u007f]/.test(normalized)) {
-    throw new TypeError("Runner name cannot contain control characters.");
+    throw new TypeError("Server name cannot contain control characters.");
   }
   return normalized;
 }

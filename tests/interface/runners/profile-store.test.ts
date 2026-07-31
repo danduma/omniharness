@@ -233,4 +233,34 @@ describe("RunnerProfileStore", () => {
       cursors: { events: "epoch:99" },
     }));
   });
+
+  it("persists a server password until it is cleared or the server is forgotten", async () => {
+    const created = createStore();
+    await created.store.hydrate();
+    const profile = await created.store.addProfile({
+      label: "Remote",
+      baseUrl: "https://server.example",
+      password: "saved-password",
+    });
+
+    expect(created.store.getProfile(profile.id)?.savedPassword).toBe("saved-password");
+
+    const restored = new RunnerProfileStore({
+      storage: created.storage,
+      credentialStore: created.credentials.store,
+      locationOrigin: "https://app.example.test",
+    });
+    await restored.hydrate();
+    expect(restored.getProfile(profile.id)?.savedPassword).toBe("saved-password");
+
+    await restored.editProfile(profile.id, { password: "replacement-password" });
+    expect(restored.getProfile(profile.id)?.savedPassword).toBe("replacement-password");
+
+    await restored.editProfile(profile.id, { password: "" });
+    expect(restored.getProfile(profile.id)?.savedPassword).toBeNull();
+
+    await restored.editProfile(profile.id, { password: "saved-again" });
+    await restored.forgetProfile(profile.id);
+    expect(created.storage.getItem("omniharness.runnerProfiles")).not.toContain("saved-again");
+  });
 });

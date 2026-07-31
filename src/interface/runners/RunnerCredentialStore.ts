@@ -63,7 +63,7 @@ function createUuid() {
 function canonicalOrigin(value: string) {
   const url = new URL(value);
   if (url.username || url.password) {
-    throw new TypeError("Runner origins cannot contain credentials.");
+    throw new TypeError("Server origins cannot contain credentials.");
   }
   return url.origin;
 }
@@ -187,10 +187,10 @@ export class WebRunnerCredentialStore implements RunnerCredentialStore {
       throw new Error("Credential is no longer available.");
     }
     if (credential.origin !== canonicalOrigin(binding.origin)) {
-      throw new Error("Credential binding does not match the runner origin.");
+      throw new Error("Credential binding does not match the server origin.");
     }
     if (credential.runnerInstanceId !== binding.runnerInstanceId) {
-      throw new Error("Credential identity does not match the runner identity.");
+      throw new Error("Credential identity does not match the server identity.");
     }
     return consumer(credential.token);
   }
@@ -201,7 +201,7 @@ export class WebRunnerCredentialStore implements RunnerCredentialStore {
       throw new Error("Credential is no longer available.");
     }
     if (credential.origin !== canonicalOrigin(binding.origin)) {
-      throw new Error("Credential binding does not match the runner origin.");
+      throw new Error("Credential binding does not match the server origin.");
     }
     this.persist({
       ...this.document,

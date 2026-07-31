@@ -30,15 +30,43 @@ describe("runner identity", () => {
   it("creates one durable identity and reuses it on later starts", async () => {
     const store = new MemoryIdentityStore();
 
-    const first = await ensureRunnerIdentity(store);
-    const second = await ensureRunnerIdentity(store);
+    const first = await ensureRunnerIdentity(store, () => "studio-mac.local");
+    const second = await ensureRunnerIdentity(store, () => "studio-mac.local");
 
     expect(first.runnerInstanceId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
     expect(second).toEqual(first);
-    expect(first.name).toBe("OmniHarness Runner");
+    expect(first.name).toBe("studio-mac");
     expect(store.writes).toBe(1);
+  });
+
+  it("replaces the legacy generic name with the machine hostname", async () => {
+    const store = new MemoryIdentityStore();
+    store.value = JSON.stringify({
+      runnerInstanceId: "9237c221-755b-4c42-bf8f-f2dad4c93f37",
+      name: "OmniHarness Runner",
+    });
+
+    await expect(ensureRunnerIdentity(store, () => "build-server")).resolves.toEqual({
+      runnerInstanceId: "9237c221-755b-4c42-bf8f-f2dad4c93f37",
+      name: "build-server",
+    });
+    expect(store.value).toContain('"name":"build-server"');
+  });
+
+  it("removes .local from an already saved server name", async () => {
+    const store = new MemoryIdentityStore();
+    store.value = JSON.stringify({
+      runnerInstanceId: "9237c221-755b-4c42-bf8f-f2dad4c93f37",
+      name: "MiniMax.local",
+    });
+
+    await expect(ensureRunnerIdentity(store, () => "unused-hostname")).resolves.toEqual({
+      runnerInstanceId: "9237c221-755b-4c42-bf8f-f2dad4c93f37",
+      name: "MiniMax",
+    });
+    expect(store.value).toContain('"name":"MiniMax"');
   });
 
   it("converges concurrent first starts on the stored identity", async () => {
