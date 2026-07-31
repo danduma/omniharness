@@ -7,20 +7,18 @@ import {
 } from "@/interface/runners/RunnerSwitcher";
 
 describe("runner switcher UI", () => {
-  it("renders an accessible active runner control with bounded activity", () => {
+  it("renders an accessible active server control without conversation counters", () => {
     const html = renderToStaticMarkup(
       <RunnerSwitcherButton
         runnerName="Studio"
         status="online"
-        activity={{ needsInput: 2, running: 4 }}
         expanded={false}
       />,
     );
 
     expect(html).toContain('id="runner-switcher"');
-    expect(html).toContain('aria-label="Switch runner. Studio is Online."');
-    expect(html).toContain("2");
-    expect(html).toContain("4");
+    expect(html).toContain('aria-label="Switch server. Studio is Online."');
+    expect(html).not.toContain('data-slot="badge"');
   });
 
   it("shows runner controls in the remote-only Electron shell", () => {
@@ -28,7 +26,6 @@ describe("runner switcher UI", () => {
       <RunnerSwitcherButton
         runnerName="Local"
         status="online"
-        activity={{ needsInput: 0, running: 0 }}
         expanded={false}
         surface="electron"
       />,
@@ -41,7 +38,7 @@ describe("runner switcher UI", () => {
       ["tls-untrusted", "Review certificate"],
       ["identity-mismatch", "Review identity"],
       ["incompatible", "Update required"],
-      ["deferred", "Runner is waiting"],
+      ["deferred", "Server is waiting"],
     ] as const) {
       const html = renderToStaticMarkup(
         <RunnerConnectionStatusPanel

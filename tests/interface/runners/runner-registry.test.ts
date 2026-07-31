@@ -13,6 +13,7 @@ function profile(id: string): RunnerProfile {
     runnerInstanceId: `runner-${id}`,
     label: id,
     baseUrl: `https://${id}.example`,
+    savedPassword: null,
     authTransport: "bearer",
     credentialRef: `credential-${id}`,
     schemaVersion: 1,

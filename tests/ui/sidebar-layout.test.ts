@@ -75,6 +75,23 @@ const folderPickerSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/FolderPickerDialog.tsx"),
   "utf8"
 );
+const conversationSidebarSource = readSource("src/components/home/ConversationSidebar.tsx");
+const homeHeaderSource = readSource("src/components/home/HomeHeader.tsx");
+
+test("runner controls live under the OmniHarness brand in the conversation sidebar", () => {
+  expect(conversationSidebarSource).toContain('import { RunnerControls } from "@/interface/runners/RunnerControls";');
+  expect(conversationSidebarSource).toContain('placement="sidebar"');
+  expect(homeHeaderSource).not.toContain('import { RunnerControls } from "@/interface/runners/RunnerControls";');
+  expect(homeHeaderSource).not.toContain("<RunnerControls />");
+});
+
+test("the server password field is available in both web and native edit dialogs", () => {
+  const runnerControlsSource = readSource("src/interface/runners/RunnerControls.tsx");
+
+  expect(runnerControlsSource).toContain('id="runner-password"');
+  expect(runnerControlsSource).not.toContain('{nativeAuthorization ? (\n              <Field>');
+  expect(runnerControlsSource).toContain('password: draft.password');
+});
 
 test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('data-project-path={group.path}');

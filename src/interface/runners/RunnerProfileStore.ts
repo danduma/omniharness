@@ -31,10 +31,10 @@ function createUuid() {
 function canonicalBaseUrl(value: string) {
   const url = new URL(value);
   if (url.username || url.password) {
-    throw new TypeError("Runner URLs cannot contain credentials.");
+    throw new TypeError("Server URLs cannot contain credentials.");
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new TypeError("Runner URLs must use HTTP or HTTPS.");
+    throw new TypeError("Server URLs must use HTTP or HTTPS.");
   }
   return url.origin;
 }
@@ -45,6 +45,7 @@ function sameOriginProfile(origin: string, now: string): RunnerProfile {
     runnerInstanceId: null,
     label: new URL(origin).host,
     baseUrl: origin,
+    savedPassword: null,
     authTransport: "cookie",
     credentialRef: null,
     schemaVersion: RUNNER_PROFILE_SCHEMA_VERSION,
@@ -115,6 +116,9 @@ function normalizeProfile(value: unknown, origin: string, now: string): RunnerPr
         : null,
       label: candidate.label.trim() || new URL(rawUrl).host,
       baseUrl: isSameOrigin ? origin : canonicalBaseUrl(rawUrl),
+      savedPassword: typeof candidate.savedPassword === "string"
+        ? candidate.savedPassword
+        : null,
       authTransport: candidate.authTransport === "cookie" ? "cookie" : "bearer",
       credentialRef: typeof candidate.credentialRef === "string"
         ? candidate.credentialRef
@@ -266,7 +270,7 @@ export class RunnerProfileStore extends StateManager<RunnerProfileStoreSnapshot>
   scopeKey(profileId: string) {
     const profile = this.getProfile(profileId);
     if (!profile) {
-      throw new Error("Runner profile not found.");
+      throw new Error("Server profile not found.");
     }
     return profile.runnerInstanceId ?? profile.id;
   }
@@ -291,13 +295,14 @@ export class RunnerProfileStore extends StateManager<RunnerProfileStoreSnapshot>
     });
   }
 
-  async addProfile(input: { label: string; baseUrl: string }) {
+  async addProfile(input: { label: string; baseUrl: string; password?: string }) {
     const current = this.getSnapshot();
     const profile: RunnerProfile = {
       id: this.randomUUID(),
       runnerInstanceId: null,
       label: input.label.trim() || new URL(input.baseUrl).host,
       baseUrl: canonicalBaseUrl(input.baseUrl),
+      savedPassword: input.password || null,
       authTransport: "bearer",
       credentialRef: null,
       schemaVersion: RUNNER_PROFILE_SCHEMA_VERSION,
@@ -312,7 +317,7 @@ export class RunnerProfileStore extends StateManager<RunnerProfileStoreSnapshot>
   async attachCredential(profileId: string, credentialRef: string) {
     const current = this.getSnapshot();
     if (!this.getProfile(profileId)) {
-      throw new Error("Runner profile not found.");
+      throw new Error("Server profile not found.");
     }
     this.persist({
       ...current,
@@ -325,19 +330,19 @@ export class RunnerProfileStore extends StateManager<RunnerProfileStoreSnapshot>
   async setActiveRunner(profileId: string) {
     const current = this.getSnapshot();
     if (!current.profiles.some((profile) => profile.id === profileId)) {
-      throw new Error("Runner profile not found.");
+      throw new Error("Server profile not found.");
     }
     this.persist({ ...current, activeRunnerId: profileId });
   }
 
   async editProfile(
     profileId: string,
-    patch: { label?: string; baseUrl?: string },
+    patch: { label?: string; baseUrl?: string; password?: string },
   ) {
     const current = this.getSnapshot();
     const profile = this.getProfile(profileId);
     if (!profile) {
-      throw new Error("Runner profile not found.");
+      throw new Error("Server profile not found.");
     }
     const nextBaseUrl = patch.baseUrl === undefined
       ? profile.baseUrl
@@ -349,6 +354,9 @@ export class RunnerProfileStore extends StateManager<RunnerProfileStoreSnapshot>
         ? profile.label
         : patch.label.trim() || new URL(nextBaseUrl).host,
       baseUrl: nextBaseUrl,
+      savedPassword: patch.password === undefined
+        ? profile.savedPassword
+        : patch.password || null,
       credentialRef: urlChanged ? null : profile.credentialRef,
     };
     this.persist({
@@ -396,11 +404,11 @@ export class RunnerProfileStore extends StateManager<RunnerProfileStoreSnapshot>
     const current = this.getSnapshot();
     const profile = this.getProfile(profileId);
     if (!profile) {
-      throw new Error("Runner profile not found.");
+      throw new Error("Server profile not found.");
     }
     const observed = runnerInstanceId.trim();
     if (!observed) {
-      throw new TypeError("Runner identity is required.");
+      throw new TypeError("Server identity is required.");
     }
     if (
       profile.runnerInstanceId

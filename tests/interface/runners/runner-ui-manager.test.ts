@@ -50,8 +50,13 @@ describe("RunnerUiManager", () => {
       id: "studio",
       label: "Studio",
       baseUrl: "https://studio.example.test",
+      savedPassword: "saved-password",
     }, "runner-studio-menu");
-    expect(manager.getSnapshot()).toMatchObject({ dialog: "edit", profileId: "studio" });
+    expect(manager.getSnapshot()).toMatchObject({
+      dialog: "edit",
+      profileId: "studio",
+      password: "saved-password",
+    });
 
     manager.openSessions("studio", "runner-studio-menu");
     expect(manager.getSnapshot()).toMatchObject({ dialog: "sessions", profileId: "studio" });

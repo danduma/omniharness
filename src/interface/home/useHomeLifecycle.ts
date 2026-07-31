@@ -166,7 +166,10 @@ export function useHomeLifecycle({
       ));
     };
 
-    if (runnerConnection) {
+    if (runnerConnection && shouldSubscribeToRunnerSnapshot({
+      hasRunnerConnection: true,
+      selectedRunId,
+    })) {
       const applyRunnerSnapshot = () => {
         const snapshot = runnerConnection.getSnapshot().snapshot;
         if (snapshot) {
@@ -588,4 +591,11 @@ export function useHomeLifecycle({
 
 export function shouldStartLiveEventConnection(args: { appUnlocked: boolean; routeReady: boolean }) {
   return args.appUnlocked && args.routeReady;
+}
+
+export function shouldSubscribeToRunnerSnapshot(args: {
+  hasRunnerConnection: boolean;
+  selectedRunId: string | null;
+}) {
+  return args.hasRunnerConnection && !args.selectedRunId;
 }

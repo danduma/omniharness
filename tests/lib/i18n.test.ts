@@ -68,6 +68,16 @@ describe("OmniHarness i18n adapter", () => {
     expect(Object.keys(ko).sort()).toEqual(englishKeys);
   });
 
+  it("uses server terminology in every user-facing locale value", () => {
+    const dictionaries = [en, es, fr, de, itLocale, pt, zhCN, ja, ko];
+
+    for (const dictionary of dictionaries) {
+      for (const value of Object.values(dictionary)) {
+        expect(value.replaceAll("{runner}", "")).not.toMatch(/\brunners?\b/i);
+      }
+    }
+  });
+
   it("defers missing key notifications until after translation returns", async () => {
     let notificationCount = 0;
     const unsubscribe = i18nManager.subscribe(() => {

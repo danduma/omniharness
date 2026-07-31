@@ -5,7 +5,7 @@ type TokenEnvironment = Record<string, string | undefined>;
 function normalizeToken(value: string | null | undefined) {
   const token = value?.trim() ?? "";
   if (!token) {
-    throw new Error("A remote runner token is required. Set OMNI_TOKEN, use --token-file, or use --token-stdin.");
+    throw new Error("A remote server token is required. Set OMNI_TOKEN, use --token-file, or use --token-stdin.");
   }
   return token;
 }
@@ -32,7 +32,7 @@ export async function resolveRemoteRunnerToken(input: {
     Boolean(input.legacyToken),
   ].filter(Boolean).length;
   if (configuredSources > 1) {
-    throw new Error("Choose exactly one remote runner token source.");
+    throw new Error("Choose exactly one remote server token source.");
   }
 
   if (input.legacyToken) {

@@ -154,7 +154,7 @@ function disabledInterface() {
         return new Response("Not found", { status: 404 });
       }
       return new Response(
-        "<!doctype html><title>OmniHarness Runner</title><p>The runner API is available, but no interface build is installed.</p>",
+        "<!doctype html><title>OmniHarness Server</title><p>The server API is available, but no interface build is installed.</p>",
         {
           status: 200,
           headers: {

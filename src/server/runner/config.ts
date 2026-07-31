@@ -44,7 +44,7 @@ function readArgs(argv: string[]) {
       continue;
     }
     if (!["--port", "--host", "--bridge-url", "--static-dir"].includes(flag)) {
-      throw new TypeError(`Unknown runner option: ${flag}`);
+      throw new TypeError(`Unknown server option: ${flag}`);
     }
     const value = argv[index + 1];
     if (!value || value.startsWith("--")) {

@@ -29,6 +29,12 @@ pnpm runner
 The default API/UI address is `http://0.0.0.0:3050`; the managed bridge defaults
 to `http://127.0.0.1:7800`.
 
+Port `3050` is also the existing public-tunnel origin contract. Replacing the
+web framework or static-interface implementation does not authorize changing
+that deployed port or the configured public hostname. During a cutover, start
+the replacement runner on the existing origin first and verify the public
+health endpoint before changing any tunnel route.
+
 Supported runner options:
 
 ```text

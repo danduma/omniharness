@@ -120,7 +120,7 @@ async function resolveConnection(
     : null;
   if (context.resolveProfile) {
     const profile = await context.resolveProfile(id);
-    if (!profile) throw new Error("VS Code runner profile was not found.");
+    if (!profile) throw new Error("VS Code server profile was not found.");
     return profile;
   }
   if (!context.serverUrl) throw new Error("OmniHarness server URL is required.");

@@ -132,7 +132,7 @@ export class ManagedBridgeController {
       this.update({
         status: "starting",
         ownership: "none",
-        reason: "Another runner is starting the bridge.",
+        reason: "Another server is starting the bridge.",
       });
       emitNamedEvent({
         kind: "runner.bridge_lock_contended",

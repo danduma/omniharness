@@ -84,7 +84,7 @@ export function createWebRunnerRuntimeFactory(
     if (!profile.credentialRef) {
       throw {
         code: "runtime.http_401",
-        message: "Runner authorization is required.",
+        message: "Server authorization is required.",
       };
     }
     return credentialStore.useCredential(
@@ -135,8 +135,9 @@ export function createDefaultRunnerRegistry() {
         profiles: [{
           id: "electron-legacy-local",
           runnerInstanceId: null,
-          label: "Local runner",
+          label: "Local server",
           baseUrl: "http://127.0.0.1:3050",
+          savedPassword: null,
           authTransport: "bearer",
           credentialRef: null,
           schemaVersion: 1,
@@ -271,7 +272,7 @@ export function RunnerRegistryProvider({
 export function useRunnerRegistry() {
   const value = useContext(RunnerRegistryContext);
   if (!value) {
-    throw new Error("Runner registry is not available.");
+    throw new Error("Server registry is not available.");
   }
   return value.registry;
 }
@@ -283,7 +284,7 @@ export function useOptionalRunnerRegistryContext() {
 export function useRunnerRegistryContext() {
   const value = useOptionalRunnerRegistryContext();
   if (!value) {
-    throw new Error("Runner registry is not available.");
+    throw new Error("Server registry is not available.");
   }
   return value;
 }

@@ -114,7 +114,7 @@ function normalizeRuntimeError(error: unknown): RuntimeApiError {
           : "runtime.connection_failed",
       message: typeof candidate.message === "string"
         ? candidate.message
-        : "Runner connection failed.",
+        : "Server connection failed.",
       ...(candidate.details !== undefined ? { details: candidate.details } : {}),
     };
   }
@@ -326,7 +326,7 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
       if (!isBootstrapPayload(payload)) {
         throw {
           code: "runtime.bootstrap_invalid",
-          message: "Runner bootstrap response is invalid.",
+          message: "Server bootstrap response is invalid.",
         };
       }
       const compatibility = assessApiCompatibility(payload.runner);
@@ -336,7 +336,7 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
           observedRunnerInstanceId: payload.runner.runnerInstanceId,
           lastError: {
             code: "runtime.incompatible",
-            message: "Runner API revisions are incompatible.",
+            message: "Server API revisions are incompatible.",
           },
         });
         return;
@@ -355,7 +355,7 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
           observedRunnerInstanceId: identity.observedRunnerInstanceId,
           lastError: {
             code: "runner.identity_mismatch",
-            message: "The endpoint reports a different runner identity.",
+            message: "The endpoint reports a different server identity.",
           },
         });
         return;
@@ -388,7 +388,7 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
           status: "needs-reauth",
           lastError: {
             code: "runtime.http_401",
-            message: "Runner authorization is required.",
+            message: "Server authorization is required.",
           },
         });
       } else if (payload.runner.readinessState !== "stopping") {
@@ -452,7 +452,7 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
         status: "needs-reauth",
         lastError: {
           code: "runtime.http_401",
-          message: "Runner authorization is required.",
+          message: "Server authorization is required.",
         },
         retryAt: null,
       });
@@ -480,7 +480,7 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
           observedRunnerInstanceId: observed,
           lastError: {
             code: "runner.identity_mismatch",
-            message: "The runner was rekeyed and needs identity confirmation.",
+            message: "The server was rekeyed and needs identity confirmation.",
           },
         });
       }
@@ -606,7 +606,7 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
     lastEventId?: string | null,
   ) {
     if (!this.getSnapshot().active || !this.runtime) {
-      throw new Error("Terminal streams are available only on the active runner.");
+      throw new Error("Terminal streams are available only on the active server.");
     }
     this.terminalStreams.get(terminalId)?.close();
     const subscription = this.runtime.terminals.openStream(

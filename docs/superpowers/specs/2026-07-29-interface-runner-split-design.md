@@ -35,7 +35,7 @@ Motivations, in priority order:
 | Native shells v1 | **Electron desktop** (existing `apps/electron`, converted to a pure remote client) plus **Capacitor iOS/Android** (`apps/mobile`, sharing the Vite bundle). PWA and VSCode remain supported. Tauri is out of scope. |
 | Multi-runner UI v1 | **Runner switcher with concurrent connections**: save N runner profiles; keep every authenticated profile connected while the app is active; show one runner's workspace at a time. Merged cross-runner views remain out of scope. |
 | Backend topology | **Keep two services** as today: the omni API server and the agent-runtime bridge (port 7800) stay separate processes. Clients only ever talk to the API server; the bridge keeps binding to localhost by default (`OMNIHARNESS_AGENT_RUNTIME_HOST`). A "runner" deployment = both processes co-located on one machine sharing one filesystem, managed by one start script. |
-| Authentication v1 | **One shared runner password.** Cookie clients and bearer clients use the same password login. Login creates a separately revocable session token; clients never store the password. Pairing tokens and QR authentication are not required by the new client flow. |
+| Authentication v1 | **One shared runner password.** Cookie clients and bearer clients use the same password login. Login creates a separately revocable session token. A user may save the shared password in that server's local client profile; it remains there until they clear the field or forget the server. Pairing tokens and QR authentication are not required by the new client flow. |
 
 ## 3. Verified current state (what we build on)
 
@@ -286,8 +286,9 @@ VSCode, the Vite dev server, and the CLI.
    `{"password":"…","tokenTransport":"cookie"|"bearer","clientLabel":"…"}`.
    Cookie remains the default for same-origin compatibility. Bearer login
    returns one opaque session token in the response body. The password is
-   verified once and is never persisted by a client; every device/profile gets
-   a separately revocable session row.
+   verified by the server and may also be retained in the local server profile
+   when the user saves it in Add server or Edit server. Every device/profile
+   still gets a separately revocable session row.
 
    Guards accept `Authorization: Bearer <token>`; same-origin enforcement is
    skipped for bearer requests because the credential is not ambient. Session
@@ -410,6 +411,11 @@ VSCode, the Vite dev server, and the CLI.
      override. "Forget runner" first attempts server revocation, always clears
      the local credential, and surfaces a warning if the server was unreachable.
 8. **Client storage**:
+   - Each saved server profile may contain the shared password in its platform
+     profile storage. It remains there without an expiry until the user clears
+     the Edit server password field or forgets the server. This is an explicit
+     convenience tradeoff: the saved password is readable by code with access
+     to that client profile and is not a replacement for revocable sessions.
    - Web/PWA stores bearer session tokens in the versioned runner-profile store
      in `localStorage`; the CSP/no-third-party-script policy is the protection
      boundary.
@@ -524,6 +530,7 @@ type RunnerProfile = {
   id: string;                 // client uuid for list keys only — NOT identity
   runnerInstanceId?: string;  // learned at first successful login/connect
   label: string; baseUrl: string;
+  savedPassword: string | null; // local convenience copy; clear/forget removes it
   authTransport: "cookie" | "bearer";
   credentialRef?: string;     // token lives behind the platform credential store
   schemaVersion: 1;
@@ -631,6 +638,12 @@ type RunnerProfile = {
     rolling five-minute window applies jittered exponential delay before the
     next snapshot fetch (capped at five minutes) and marks the profile
     degraded. One slow connection cannot create a snapshot/resubscribe storm.
+  - Scope completeness: a runner connection's always-live global catalog
+    snapshot may populate navigation, but it must never satisfy or bypass a
+    selected conversation's full-load gate. Selecting `/session/:runId`
+    always starts or reuses a run-scoped snapshot and SSE connection carrying
+    that `runId`; global updates cannot overwrite the scoped authority while
+    the conversation is selected.
   - Mutations carry their `runnerId`. A mutation completing after a switch is
     **not** treated as cancelled: its cache updates apply to the originating
     runner's query keys (which may not be on screen), and failures surface

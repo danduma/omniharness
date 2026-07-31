@@ -41,7 +41,7 @@ import {
   useOptionalRunnerRegistryContext,
   useRunnerConnections,
 } from "./RunnerRegistryProvider";
-import { countRunnerActivity, runnerStatusMessageKey } from "./RunnerUiManager";
+import { runnerStatusMessageKey } from "./RunnerUiManager";
 import {
   RunnerConnectionStatusPanel,
   RunnerSwitcherButton,
@@ -69,14 +69,36 @@ function errorCode(error: unknown) {
   return "runner.error.generic";
 }
 
-export function RunnerControls() {
+export function RunnerControls({
+  placement = "header",
+  controlId = "runner-switcher",
+  renderDialogs = true,
+}: {
+  placement?: "header" | "sidebar";
+  controlId?: string;
+  renderDialogs?: boolean;
+}) {
   useI18nSnapshot();
   const context = useOptionalRunnerRegistryContext();
   if (!context) return null;
-  return <ConnectedRunnerControls />;
+  return (
+    <ConnectedRunnerControls
+      placement={placement}
+      controlId={controlId}
+      renderDialogs={renderDialogs}
+    />
+  );
 }
 
-function ConnectedRunnerControls() {
+function ConnectedRunnerControls({
+  placement,
+  controlId,
+  renderDialogs,
+}: {
+  placement: "header" | "sidebar";
+  controlId: string;
+  renderDialogs: boolean;
+}) {
   useI18nSnapshot();
   const context = useOptionalRunnerRegistryContext()!;
   const connections = useRunnerConnections();
@@ -152,6 +174,7 @@ function ConnectedRunnerControls() {
         const profile = await context.profileStore.addProfile({
           label: draft.label,
           baseUrl: draft.baseUrl,
+          password: draft.password,
         });
         await authorizeProfile(profile.id, draft.password);
         return;
@@ -161,9 +184,12 @@ function ConnectedRunnerControls() {
         const profile = await context.profileStore.editProfile(draft.profileId, {
           label: draft.label,
           baseUrl: draft.baseUrl,
+          password: draft.password,
         });
         if (previous?.baseUrl !== profile.baseUrl || (
-          nativeAuthorization && draft.password
+          nativeAuthorization
+          && draft.password
+          && previous?.savedPassword !== draft.password
         )) {
           await authorizeProfile(profile.id, draft.password);
         } else {
@@ -265,7 +291,7 @@ function ConnectedRunnerControls() {
   const statusAction = () => {
     if (active.status === "needs-reauth") {
       if (nativeAuthorization) {
-        context.uiManager.openEdit(activeProfile, "runner-switcher");
+        context.uiManager.openEdit(activeProfile, controlId);
       } else {
         void authorizeProfile(active.profileId);
       }
@@ -274,7 +300,7 @@ function ConnectedRunnerControls() {
         active.profileId,
         active.runnerInstanceId ?? "",
         active.observedRunnerInstanceId ?? "",
-        "runner-switcher",
+        controlId,
       );
     } else if (active.status === "tls-untrusted") {
       const details = active.lastError?.details as { fingerprint?: unknown } | null;
@@ -283,7 +309,7 @@ function ConnectedRunnerControls() {
         typeof details?.fingerprint === "string"
           ? details.fingerprint
           : t("common.unknown"),
-        "runner-switcher",
+        controlId,
       );
     } else {
       void context.registry.getConnection(active.profileId)?.retry();
@@ -297,16 +323,18 @@ function ConnectedRunnerControls() {
           <RunnerSwitcherButton
             runnerName={active.runnerName}
             status={active.status}
-            activity={countRunnerActivity(active.snapshot)}
             expanded={false}
             surface={surface}
+            id={controlId}
+            className={placement === "sidebar"
+              ? "w-full max-w-none text-[#333333] hover:bg-[#deddda] hover:text-[#1f1f1f] dark:text-zinc-200 dark:hover:bg-muted/70 dark:hover:text-zinc-100"
+              : undefined}
           />
         )} />
         <DropdownMenuContent align="start" className="w-[min(22rem,calc(100vw-1rem))]">
           <DropdownMenuGroup>
             <DropdownMenuLabel>{t("runner.switcher.label")}</DropdownMenuLabel>
             {connections.map((connection) => {
-              const activity = countRunnerActivity(connection.snapshot);
               return (
                 <DropdownMenuItem
                   key={connection.profileId}
@@ -320,9 +348,6 @@ function ConnectedRunnerControls() {
                     <span className="block truncate font-medium">{connection.runnerName}</span>
                     <span className="block truncate text-xs text-muted-foreground">
                       {t(runnerStatusMessageKey(connection.status))}
-                      {activity.needsInput > 0
-                        ? ` · ${t("runner.activity.shortNeedsInput", { count: activity.needsInput })}`
-                        : ""}
                     </span>
                   </span>
                   {connection.profileId === active.profileId
@@ -333,7 +358,7 @@ function ConnectedRunnerControls() {
             })}
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => context.uiManager.openAdd("runner-switcher")}>
+          <DropdownMenuItem onClick={() => context.uiManager.openAdd(controlId)}>
             <Plus />
             {t("runner.action.add")}
           </DropdownMenuItem>
@@ -370,28 +395,35 @@ function ConnectedRunnerControls() {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <RunnerDialog
-        ui={ui}
-        onClose={() => context.uiManager.close()}
-        onDraft={(patch) => context.uiManager.setDraft(patch)}
-        onSubmit={() => void submitProfile()}
-        onConfirm={() => void handleDialogAction()}
-        onAuthorize={() => void authorizeProfile(active.profileId)}
-        onRevoke={(sessionId) => void revokeSession(sessionId)}
-        nativeAuthorization={nativeAuthorization}
-      />
-
-      <div className="absolute inset-x-0 top-14 z-20">
-        <RunnerConnectionStatusPanel
-          runnerName={active.runnerName}
-          status={active.status}
-          onAction={
-            activeProfile.isSameOrigin && active.status === "needs-reauth"
-              ? undefined
-              : statusAction
-          }
+      {renderDialogs ? (
+        <RunnerDialog
+          ui={ui}
+          onClose={() => context.uiManager.close()}
+          onDraft={(patch) => context.uiManager.setDraft(patch)}
+          onSubmit={() => void submitProfile()}
+          onConfirm={() => void handleDialogAction()}
+          onAuthorize={() => void authorizeProfile(active.profileId)}
+          onRevoke={(sessionId) => void revokeSession(sessionId)}
+          nativeAuthorization={nativeAuthorization}
         />
-      </div>
+      ) : null}
+
+      {active.status !== "online" ? (
+        <div className={placement === "sidebar"
+          ? "mt-1 overflow-hidden rounded-md border border-border/60 [&>section]:border-b-0"
+          : "absolute inset-x-0 top-14 z-20"}
+        >
+          <RunnerConnectionStatusPanel
+            runnerName={active.runnerName}
+            status={active.status}
+            onAction={
+              activeProfile.isSameOrigin && active.status === "needs-reauth"
+                ? undefined
+                : statusAction
+            }
+          />
+        </div>
+      ) : null}
     </>
   );
 }
@@ -450,24 +482,22 @@ function RunnerDialog({
               />
               <FieldDescription>{t("runner.field.urlHelp")}</FieldDescription>
             </Field>
-            {nativeAuthorization ? (
-              <Field>
-                <FieldLabel htmlFor="runner-password">
-                  {t("runner.field.password")}
-                </FieldLabel>
-                <Input
-                  id="runner-password"
-                  type="password"
-                  value={ui.password}
-                  onChange={(event) => onDraft({ password: event.target.value })}
-                  placeholder={t("runner.field.passwordPlaceholder")}
-                  autoComplete="current-password"
-                />
-                <FieldDescription>
-                  {t("runner.field.passwordHelp")}
-                </FieldDescription>
-              </Field>
-            ) : null}
+            <Field>
+              <FieldLabel htmlFor="runner-password">
+                {t("runner.field.password")}
+              </FieldLabel>
+              <Input
+                id="runner-password"
+                type="password"
+                value={ui.password}
+                onChange={(event) => onDraft({ password: event.target.value })}
+                placeholder={t("runner.field.passwordPlaceholder")}
+                autoComplete="current-password"
+              />
+              <FieldDescription>
+                {t("runner.field.passwordHelp")}
+              </FieldDescription>
+            </Field>
           </FieldGroup>
         ) : null}
         {ui.dialog === "sessions" ? (
