@@ -3,14 +3,20 @@ export type StateListener = () => void;
 
 export class StateManager<TState> {
   private state: TState;
+  private readonly initialState: TState;
   private readonly listeners = new Set<StateListener>();
 
   constructor(initialState: TState) {
     this.state = initialState;
+    this.initialState = initialState;
   }
 
   getSnapshot() {
     return this.state;
+  }
+
+  getInitialSnapshot() {
+    return this.initialState;
   }
 
   subscribe(listener: StateListener) {

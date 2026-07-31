@@ -14,13 +14,13 @@ describe("restart control config", () => {
   it("uses remote-safe defaults and lets env override ports", () => {
     const config = resolveRestartControlConfig("/repo", {
       OMNIHARNESS_REMOTE_RESTART_TOKEN: "secret-token",
-      OMNIHARNESS_REMOTE_RESTART_PORTS: "3035, 3050,7800",
+      OMNIHARNESS_REMOTE_RESTART_PORTS: "3050, 5173,7800",
     });
 
     expect(config.host).toBe("0.0.0.0");
     expect(config.port).toBe(3099);
     expect(config.token).toBe("secret-token");
-    expect(config.managedPorts).toEqual([3035, 3050, 7800]);
+    expect(config.managedPorts).toEqual([3050, 5173, 7800]);
     expect(config.pidFile).toBe("/repo/.omniharness/remote-restart.pid.json");
     expect(config.logFile).toBe("/repo/.omniharness/remote-restart.log");
     expect(config.commands.dev).toEqual({ command: "pnpm", args: ["run", "dev"] });
@@ -123,7 +123,7 @@ describe("restart controller", () => {
       "signal:-777:SIGTERM",
       "wait:777",
       "rm-pid",
-      "find:3035,3050,7800",
+      "find:3050,5173,7800",
       "signal:101:SIGTERM",
       "signal:202:SIGTERM",
       "wait:101,202",

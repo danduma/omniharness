@@ -21,8 +21,22 @@
 
 # production
 /build
+/dist/
 /apps/vscode/dist/
 /apps/electron/dist/
+
+# generated mobile build and local signing state
+/apps/mobile/ios/App/Pods/
+/apps/mobile/ios/DerivedData/
+/apps/mobile/android/.gradle/
+/apps/mobile/android/**/build/
+/apps/mobile/android/local.properties
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.mobileprovision
+*.xcarchive
 
 # misc
 .DS_Store

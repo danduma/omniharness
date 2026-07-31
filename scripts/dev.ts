@@ -1,469 +1,82 @@
-import { execFileSync, spawn, type ChildProcess } from "child_process";
-import fs from "fs";
-import path from "path";
-import process from "process";
-import { acquireBridgeLock, isBridgeStarterProcessAlive, releaseBridgeLock, resolveBridgeLockPath } from "../src/server/dev/bridge-lock";
-import { describeBridgeToolingProblem } from "../src/server/dev/bridge-health";
-import { bridgeNeedsBuild, resolveBridgeDir, resolveBridgeUrl, shouldAutoStartBridge } from "../src/server/dev/managed-bridge";
-import { detectNextDevRouteEnoent, type NextDevRouteEnoentRecovery } from "./dev-web-recovery";
-import { isNextDevReadyLine, prewarmDevPaths, resolveDevPrewarmBaseUrl, resolveDevPrewarmPaths } from "./dev-prewarm";
+import { spawn, type ChildProcess } from "node:child_process";
+import process from "node:process";
 import { resolvePnpmArgs, resolvePnpmCommand } from "./package-manager-command";
 
-const repoRoot = process.cwd();
-const serverMode = process.env.OMNIHARNESS_SERVER_MODE === "production" ? "production" : "development";
-const logLabel = serverMode === "production" ? "start" : "dev";
 const pnpmCommand = resolvePnpmCommand();
 const pnpmArgs = (args: readonly string[]) => resolvePnpmArgs(args);
-const webPort = process.env.PORT || "3050";
-process.env.PORT = webPort;
-const webHost = process.env.OMNIHARNESS_WEB_HOST?.trim() || "0.0.0.0";
-const proxyPort = process.env.OMNIHARNESS_DEV_PROXY_PORT?.trim() || "3035";
-const shouldLaunchProxy = serverMode === "development" && process.env.OMNIHARNESS_DEV_PROXY !== "0";
-process.env.OMNIHARNESS_DEV_PROXY_PORT = proxyPort;
-process.env.OMNIHARNESS_DEV_PROXY_TARGET ||= `http://127.0.0.1:${webPort}`;
-const bridgeUrl = resolveBridgeUrl(process.env);
-const bridgeDir = resolveBridgeDir(repoRoot, process.env);
-const bridgeLockPath = resolveBridgeLockPath(repoRoot);
-const BRIDGE_READY_TIMEOUT_MS = 90_000;
-const webCommand = serverMode === "production"
-  ? [pnpmCommand, pnpmArgs(["exec", "next", "start", "-H", webHost, "-p", webPort])] as const
-  : [pnpmCommand, pnpmArgs(["run", "dev:web", "--hostname", webHost, "--port", webPort])] as const;
-const proxyCommand = [pnpmCommand, pnpmArgs(["run", "dev:proxy"])] as const;
-const bridgeCommand = [pnpmCommand, pnpmArgs(["exec", "tsx", "scripts/agent-runtime.ts"])] as const;
-const setupCommands = [
-  { label: "runtime install", command: pnpmCommand, args: pnpmArgs(["install"]) },
-  { label: "runtime build", command: pnpmCommand, args: pnpmArgs(["build"]) },
-] as const;
+const children = new Set<ChildProcess>();
+let stopping = false;
 
-let managedBridgeChild: ChildProcess | null = null;
-let webChild: ChildProcess | null = null;
-let proxyChild: ChildProcess | null = null;
-let shuttingDown = false;
-let ownsBridgeLock = false;
-let webRecoveryTimer: NodeJS.Timeout | null = null;
-let webRecoveryChild: ChildProcess | null = null;
-let webPrewarmStarted = false;
-
-function bridgePort() {
-  try {
-    return new URL(bridgeUrl).port || "80";
-  } catch {
-    return null;
-  }
-}
-
-function prefixStream(stream: NodeJS.ReadableStream | null, prefix: string, onLine?: (line: string) => void) {
-  if (!stream) {
-    return;
-  }
-
-  stream.on("data", (chunk) => {
-    const text = String(chunk);
-    const lines = text.split(/\r?\n/);
-    lines.forEach((line, index) => {
-      if (line.length === 0 && index === lines.length - 1) {
-        return;
+function prefixOutput(child: ChildProcess, label: string) {
+  for (const stream of [child.stdout, child.stderr]) {
+    stream?.on("data", (chunk) => {
+      const lines = String(chunk).split(/\r?\n/);
+      for (const line of lines) {
+        if (line) {
+          process.stdout.write(`[${label}] ${line}\n`);
+        }
       }
-      onLine?.(line);
-      process.stdout.write(`[${prefix}] ${line}\n`);
     });
-  });
+  }
 }
 
-function spawnManaged(command: string, args: string[], cwd: string, prefix: string, onLine?: (line: string) => void) {
-  const child = spawn(command, args, {
-    cwd,
+function start(label: string, args: readonly string[]) {
+  const child = spawn(pnpmCommand, pnpmArgs(args), {
+    cwd: process.cwd(),
     env: process.env,
     stdio: ["inherit", "pipe", "pipe"],
   });
-
-  prefixStream(child.stdout, prefix, onLine);
-  prefixStream(child.stderr, prefix, onLine);
+  children.add(child);
+  prefixOutput(child, label);
+  child.once("error", (error) => {
+    process.stderr.write(`[${label}] ${error.message}\n`);
+    void stopAll(1);
+  });
+  child.once("exit", (code, signal) => {
+    children.delete(child);
+    if (!stopping) {
+      process.stderr.write(
+        `[${label}] exited with ${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}\n`,
+      );
+      void stopAll(code && code > 0 ? code : 1);
+    }
+  });
   return child;
 }
 
-function waitForExit(child: ChildProcess, label: string) {
-  return new Promise<void>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code, signal) => {
-      if (code === 0) {
-        resolve();
-        return;
+async function stopChild(child: ChildProcess) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
       }
-
-      reject(new Error(`${label} exited with ${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}.`));
+    }, 5_000);
+    child.once("exit", () => {
+      clearTimeout(timeout);
+      resolve();
     });
+    child.kill("SIGTERM");
   });
 }
 
-async function runSetupCommand(command: string, args: string[], cwd: string, label: string) {
-  const child = spawnManaged(command, args, cwd, label);
-  await waitForExit(child, label);
-}
-
-async function isBridgeReady() {
-  try {
-    const agentsResponse = await fetch(`${bridgeUrl}/agents`);
-    if (!agentsResponse.ok) {
-      return false;
-    }
-
-    const doctorResponse = await fetch(`${bridgeUrl}/doctor`);
-    if (!doctorResponse.ok) {
-      return false;
-    }
-
-    return describeBridgeToolingProblem(await doctorResponse.json()) === null;
-  } catch {
-    return false;
-  }
-}
-
-async function describeReachableBridgeProblem() {
-  try {
-    const agentsResponse = await fetch(`${bridgeUrl}/agents`);
-    if (!agentsResponse.ok) {
-      return null;
-    }
-
-    const doctorResponse = await fetch(`${bridgeUrl}/doctor`);
-    if (!doctorResponse.ok) {
-      return `doctor returned HTTP ${doctorResponse.status}`;
-    }
-
-    return describeBridgeToolingProblem(await doctorResponse.json());
-  } catch {
-    return null;
-  }
-}
-
-function findBridgeListenerPids() {
-  const port = bridgePort();
-  if (!port) {
-    return [];
-  }
-
-  try {
-    const output = execFileSync("lsof", ["-tiTCP:" + port, "-sTCP:LISTEN"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 1500,
-    });
-
-    return output
-      .split(/\r?\n/g)
-      .map((line) => Number.parseInt(line.trim(), 10))
-      .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
-  } catch {
-    return [];
-  }
-}
-
-async function waitForBridgeToStop(timeoutMs: number) {
-  const startedAt = Date.now();
-
-  while (Date.now() - startedAt < timeoutMs) {
-    if (findBridgeListenerPids().length === 0) {
-      return true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-
-  return false;
-}
-
-async function stopStaleLocalBridge(reason: string) {
-  const pids = findBridgeListenerPids();
-  if (pids.length === 0) {
-    return false;
-  }
-
-  console.log(`[${logLabel}] Restarting stale local agent runtime at ${bridgeUrl}: ${reason}`);
-  for (const pid of pids) {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // The process may have exited between lsof and kill.
-    }
-  }
-
-  if (await waitForBridgeToStop(5_000)) {
-    fs.rmSync(bridgeLockPath, { force: true });
-    return true;
-  }
-
-  for (const pid of pids) {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // The process may have exited after SIGTERM.
-    }
-  }
-
-  const stopped = await waitForBridgeToStop(2_000);
-  if (stopped) {
-    fs.rmSync(bridgeLockPath, { force: true });
-  }
-  return stopped;
-}
-
-async function waitForBridgeReady(timeoutMs: number) {
-  const startedAt = Date.now();
-
-  while (Date.now() - startedAt < timeoutMs) {
-    if (await isBridgeReady()) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-
-  throw new Error(`Timed out waiting for OmniHarness agent runtime at ${bridgeUrl}.`);
-}
-
-async function ensureManagedBridge() {
-  if (await isBridgeReady()) {
-    console.log(`[dev] Reusing running agent runtime at ${bridgeUrl}`);
+async function stopAll(exitCode: number) {
+  if (stopping) {
     return;
   }
-
-  const reachableBridgeProblem = await describeReachableBridgeProblem();
-  if (reachableBridgeProblem) {
-    if (shouldAutoStartBridge(process.env, bridgeUrl) && await stopStaleLocalBridge(reachableBridgeProblem)) {
-      return ensureManagedBridge();
-    }
-
-    throw new Error(
-      `OmniHarness agent runtime is already running at ${bridgeUrl}, but it is missing required standard tools: ` +
-      `${reachableBridgeProblem}. Restart the agent runtime so new workers get the current Codex tool wiring.`,
-    );
-  }
-
-  if (!shouldAutoStartBridge(process.env, bridgeUrl)) {
-    throw new Error(
-      `OmniHarness agent runtime is not reachable at ${bridgeUrl}. ` +
-      `Start it yourself or point OMNIHARNESS_BRIDGE_URL at a running runtime.`,
-    );
-  }
-
-  if (!fs.existsSync(bridgeDir)) {
-    throw new Error(
-      `OmniHarness runtime directory not found at ${bridgeDir}. ` +
-      `Set OMNIHARNESS_RUNTIME_DIR or start the runtime manually.`,
-    );
-  }
-
-  const lockResult = acquireBridgeLock(
-    bridgeLockPath,
-    {
-      pid: process.pid,
-      bridgeUrl,
-      startedAt: Date.now(),
-    },
-    isBridgeStarterProcessAlive,
-  );
-
-  if (lockResult.status === "locked") {
-    console.log(
-      `[${logLabel}] Another OmniHarness process (${lockResult.owner?.pid}) is starting the agent runtime. Waiting for ${bridgeUrl}...`,
-    );
-    await waitForBridgeReady(BRIDGE_READY_TIMEOUT_MS);
-    return;
-  }
-
-  ownsBridgeLock = true;
-
-  try {
-    if (!fs.existsSync(path.join(bridgeDir, "node_modules"))) {
-      await runSetupCommand(setupCommands[0].command, [...setupCommands[0].args], bridgeDir, setupCommands[0].label);
-    }
-
-    if (bridgeNeedsBuild(bridgeDir)) {
-      await runSetupCommand(setupCommands[1].command, [...setupCommands[1].args], bridgeDir, setupCommands[1].label);
-    }
-
-    console.log(`[${logLabel}] Starting OmniHarness agent runtime from ${bridgeDir}`);
-    managedBridgeChild = spawnManaged(bridgeCommand[0], [...bridgeCommand[1]], bridgeDir, "bridge");
-
-    managedBridgeChild.once("exit", (code, signal) => {
-      if (!shuttingDown) {
-        console.error(`[${logLabel}] OmniHarness agent runtime exited unexpectedly with ${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}.`);
-        shutdown(code ?? 1);
-      }
-    });
-
-    await waitForBridgeReady(BRIDGE_READY_TIMEOUT_MS);
-  } catch (error) {
-    releaseBridgeLock(bridgeLockPath, process.pid);
-    ownsBridgeLock = false;
-    throw error;
-  }
+  stopping = true;
+  await Promise.all([...children].map(stopChild));
+  process.exit(exitCode);
 }
 
-function removeStaleRouteArtifact(recovery: NextDevRouteEnoentRecovery) {
-  try {
-    fs.rmSync(recovery.artifactDir, { recursive: true, force: true });
-  } catch (error) {
-    console.error(
-      `[${logLabel}] Failed to remove stale Next route artifact ${recovery.artifactDir}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
-function relaunchWebAfterRecovery(previousWebChild: ChildProcess | null) {
-  webRecoveryTimer = null;
-
-  if (shuttingDown) {
-    return;
-  }
-
-  if (!previousWebChild || previousWebChild.exitCode !== null || previousWebChild.signalCode !== null || previousWebChild.killed) {
-    if (webChild === previousWebChild) {
-      webChild = null;
-    }
-    launchWeb();
-    return;
-  }
-
-  webRecoveryChild = previousWebChild;
-  previousWebChild.once("exit", () => {
-    if (shuttingDown) {
-      return;
-    }
-    if (webChild === previousWebChild) {
-      webChild = null;
-    }
-    webRecoveryChild = null;
-    launchWeb();
-  });
-  previousWebChild.kill("SIGTERM");
-}
-
-function scheduleWebRecovery(recovery: NextDevRouteEnoentRecovery) {
-  if (serverMode !== "development" || shuttingDown || webRecoveryTimer) {
-    return;
-  }
-
-  const relativeRouteFile = path.relative(repoRoot, recovery.routeFile);
-  console.error(`[${logLabel}] Next dev lost ${relativeRouteFile}; restarting only the web UI to recover HMR.`);
-  removeStaleRouteArtifact(recovery);
-  webRecoveryTimer = setTimeout(() => relaunchWebAfterRecovery(webChild), 100);
-}
-
-function startDevPrewarm() {
-  if (serverMode !== "development" || webPrewarmStarted) {
-    return;
-  }
-
-  const paths = resolveDevPrewarmPaths(process.env);
-  if (paths.length === 0) {
-    webPrewarmStarted = true;
-    return;
-  }
-
-  webPrewarmStarted = true;
-  const baseUrl = resolveDevPrewarmBaseUrl(webHost, webPort);
-  console.log(`[${logLabel}] Prewarming Next dev routes: ${paths.join(", ")}`);
-  void prewarmDevPaths({ baseUrl, paths }).then((results) => {
-    const failures = results.filter((result) => result.error);
-    for (const result of results) {
-      const status = result.error ? `failed: ${result.error}` : `HTTP ${result.status}`;
-      console.log(`[${logLabel}] Prewarmed ${result.path} (${status}, ${result.elapsedMs}ms)`);
-    }
-    if (failures.length > 0) {
-      console.warn(`[${logLabel}] ${failures.length} dev prewarm request${failures.length === 1 ? "" : "s"} failed; continuing.`);
-    }
-  }).catch((error) => {
-    console.warn(`[${logLabel}] Dev route prewarm failed: ${error instanceof Error ? error.message : String(error)}`);
-  });
-}
-
-function handleWebOutputLine(line: string) {
-  const recovery = detectNextDevRouteEnoent(line, repoRoot);
-  if (recovery) {
-    scheduleWebRecovery(recovery);
-  }
-  if (isNextDevReadyLine(line)) {
-    startDevPrewarm();
-  }
-}
-
-function launchWeb() {
-  console.log(`[${logLabel}] Starting OmniHarness web UI in ${serverMode} mode on ${webHost}:${webPort}`);
-  const child = spawnManaged(webCommand[0], [...webCommand[1]], repoRoot, "web", handleWebOutputLine);
-  webChild = child;
-
-  child.once("exit", (code, signal) => {
-    if (webRecoveryChild === child) {
-      return;
-    }
-    if (!shuttingDown) {
-      console.error(`[${logLabel}] Web UI exited unexpectedly with ${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}.`);
-      shutdown(code ?? 1);
-    }
-  });
-}
-
-function launchProxy() {
-  if (!shouldLaunchProxy) {
-    return;
-  }
-
-  console.log(`[${logLabel}] Starting compressed tunnel proxy on 127.0.0.1:${proxyPort}`);
-  proxyChild = spawnManaged(proxyCommand[0], [...proxyCommand[1]], repoRoot, "proxy");
-
-  proxyChild.once("exit", (code, signal) => {
-    if (!shuttingDown) {
-      console.error(`[${logLabel}] Tunnel proxy exited unexpectedly with ${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}.`);
-      shutdown(code ?? 1);
-    }
-  });
-}
-
-function shutdown(exitCode = 0) {
-  if (shuttingDown) {
-    return;
-  }
-
-  shuttingDown = true;
-
-  if (webChild && !webChild.killed) {
-    webChild.kill("SIGTERM");
-  }
-
-  if (proxyChild && !proxyChild.killed) {
-    proxyChild.kill("SIGTERM");
-  }
-
-  if (managedBridgeChild && !managedBridgeChild.killed) {
-    managedBridgeChild.kill("SIGTERM");
-  }
-
-  if (ownsBridgeLock) {
-    releaseBridgeLock(bridgeLockPath, process.pid);
-    ownsBridgeLock = false;
-  }
-
-  setTimeout(() => {
-    process.exit(exitCode);
-  }, 100);
-}
-
-async function main() {
-  await ensureManagedBridge();
-  launchWeb();
-  launchProxy();
-
-  console.log(`[${logLabel}] OmniHarness will use agent runtime at ${bridgeUrl}`);
-  console.log(`[${logLabel}] Next.js will print the local and network UI URLs when it is ready.`);
-  if (shouldLaunchProxy) {
-    console.log(`[${logLabel}] Point Cloudflare Tunnel at http://localhost:${proxyPort} for compressed remote dev.`);
-  }
-}
-
-process.on("SIGINT", () => shutdown(0));
-process.on("SIGTERM", () => shutdown(0));
-
-main().catch((error) => {
-  console.error(`[${logLabel}] ${error instanceof Error ? error.message : String(error)}`);
-  shutdown(1);
+process.once("SIGINT", () => {
+  void stopAll(0);
 });
+process.once("SIGTERM", () => {
+  void stopAll(0);
+});
+
+start("runner", ["run", "runner", "--no-static"]);
+start("interface", ["run", "dev:interface"]);

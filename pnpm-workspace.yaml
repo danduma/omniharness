@@ -1,3 +1,6 @@
+packages:
+  - "apps/mobile"
+
 packageManagerStrict: warn
 
 overrides:
@@ -13,10 +16,15 @@ overrides:
 
 allowBuilds:
   "@danduma/i18n": true
-  '@danduma/i18n@https://codeload.github.com/danduma/i18n/tar.gz/ab2a85dddd2e176b61bec18d55736dbdd151fe41': true
+  "@vscode/vsce-sign": false
   better-sqlite3: true
   esbuild: true
+  keytar: false
   msw: true
   node-pty: true
   sharp: true
   unrs-resolver: true
+
+minimumReleaseAgeExclude:
+  - '@vitejs/plugin-react@6.0.5'
+  - vite@8.2.0

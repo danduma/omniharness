@@ -1,5 +1,4 @@
-import { useCallback, type Dispatch, type SetStateAction } from "react";
-import dynamic from "next/dynamic";
+import { lazy, useCallback, type Dispatch, type SetStateAction } from "react";
 import { Bug, ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, Menu, MoreHorizontal, PanelLeft, PanelRight, Pencil, RotateCw, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
@@ -15,24 +14,24 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Switch } from "@/components/ui/switch";
 import { OmniHarnessMark } from "@/components/OmniHarnessMark";
 import { requestBugDropOpen } from "@/components/BugDropBootstrap";
-import { PRODUCT_NAME } from "@/app/home/constants";
-import type { ProjectDropPlacement } from "@/app/home/utils";
-import type { AgentSnapshot, ConversationSidebarTab, MessageRecord, RunRecord, SidebarGroup, SidebarRun, SupervisorInterventionRecord } from "@/app/home/types";
+import { PRODUCT_NAME } from "@/interface/home/constants";
+import type { ProjectDropPlacement } from "@/interface/home/utils";
+import type { AgentSnapshot, ConversationSidebarTab, MessageRecord, RunRecord, SidebarGroup, SidebarRun, SupervisorInterventionRecord } from "@/interface/home/types";
 import type { ManualCommitAction } from "@/lib/commit-workflow";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { ConversationSidebar } from "./ConversationSidebar";
+import { RunWorkspaceBadge } from "./RunWorkspaceBadge";
 import { ThemeModeToggle } from "./ThemeModeToggle";
+import { RunnerControls } from "@/interface/runners/RunnerControls";
 
-const SideWindow = dynamic(
-  () => import("./SideWindow").then((m) => m.SideWindow),
-  { ssr: false },
+const SideWindow = lazy(
+  () => import("./SideWindow").then((m) => ({ default: m.SideWindow })),
 );
 
-const InteractiveTerminal = dynamic(
-  () => import("@/components/InteractiveTerminal").then((m) => m.InteractiveTerminal),
-  { ssr: false },
+const InteractiveTerminal = lazy(
+  () => import("@/components/InteractiveTerminal").then((m) => ({ default: m.InteractiveTerminal })),
 );
 
 interface HomeHeaderProps {
@@ -368,6 +367,7 @@ export function HomeHeader({
       </Sheet>
 
       <div className="flex min-w-0 items-center gap-2">
+        <RunnerControls />
         {titleLabel || rootFolderLabel ? (
           <div className="flex min-w-0 items-baseline gap-2">
             {titleLabel && selectedRun ? (
@@ -430,6 +430,7 @@ export function HomeHeader({
                 {rootFolderLabel}
               </span>
             ) : null}
+            <RunWorkspaceBadge run={selectedRun} fallbackPath={activeConversationCwd} />
             {selectedRun ? (
               <DropdownMenu>
                 <DropdownMenuTrigger

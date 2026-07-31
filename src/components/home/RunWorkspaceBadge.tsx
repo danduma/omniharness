@@ -1,5 +1,5 @@
 import { FolderGit2, GitBranch } from "lucide-react";
-import type { RunRecord } from "@/app/home/types";
+import type { RunRecord } from "@/interface/home/types";
 import type { GitWorkspaceRunSnapshot } from "@/lib/git-workspace";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";

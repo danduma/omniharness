@@ -1,4 +1,7 @@
-import { createI18nManager, type I18nSnapshot } from "@danduma/i18n";
+import {
+  createI18nManager,
+  type I18nSnapshot,
+} from "@/shared/i18n-manager";
 import en from "../../shared/locales/en.json";
 
 export const OMNI_LOCALE_STORAGE_KEY = "omni-locale";

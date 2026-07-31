@@ -3,8 +3,8 @@
 import { useEffect } from "react";
 import { ArrowLeft, Cpu, FileText, PanelRightClose, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { sideWindowManager, type SideWindowFileTab } from "@/app/home/SideWindowManager";
-import type { AgentSnapshot, SupervisorInterventionRecord } from "@/app/home/types";
+import { sideWindowManager, type SideWindowFileTab } from "@/interface/home/SideWindowManager";
+import type { AgentSnapshot, SupervisorInterventionRecord } from "@/interface/home/types";
 import { buildWorkerLists, type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";

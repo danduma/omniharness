@@ -3,8 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
-import { projectMemoryPanelManager } from "@/app/home/ProjectMemoryPanelManager";
+import { projectMemoryPanelManager } from "@/interface/home/ProjectMemoryPanelManager";
 import { t, useI18nSnapshot } from "@/lib/i18n";
+import { useRuntimeAPIs } from "@/runtime-api/provider";
 
 interface ProjectMemorySettingsPanelProps {
   projectPath: string | null;
@@ -20,12 +21,14 @@ function formatBytes(size: number) {
 
 export function ProjectMemorySettingsPanel({ projectPath, globalMemoryEnabled }: ProjectMemorySettingsPanelProps) {
   useI18nSnapshot();
+  const runtimeApis = useRuntimeAPIs();
+  projectMemoryPanelManager.configure(runtimeApis.settings.projectMemory);
   const state = useManagerSnapshot(projectMemoryPanelManager);
 
   useEffect(() => {
     projectMemoryPanelManager.setProjectPath(projectPath);
     void projectMemoryPanelManager.reloadList();
-  }, [projectPath]);
+  }, [projectPath, runtimeApis.settings.projectMemory]);
 
   useEffect(() => {
     if (state.projectPath && state.selectedPath) {

@@ -6,8 +6,8 @@ import {
   selectDirectConversationEntries,
   shouldShowDirectConversationLoading,
   shouldShowDirectWorkerStreamInitialLoading,
-} from "@/app/home/direct-worker-stream-loading";
-import type { WorkerStreamState } from "@/app/home/WorkerEntriesManager";
+} from "@/interface/home/direct-worker-stream-loading";
+import type { WorkerStreamState } from "@/interface/home/WorkerEntriesManager";
 import type { WorkerEntry } from "@/server/workers/entries-types";
 
 function buildState(overrides: Partial<WorkerStreamState> = {}): WorkerStreamState {

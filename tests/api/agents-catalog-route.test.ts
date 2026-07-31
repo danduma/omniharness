@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
 
@@ -25,7 +24,7 @@ vi.mock("@/server/worker-models", async (importOriginal) => ({
   })),
 }));
 
-import { GET } from "@/app/api/agents/catalog/route";
+import { agentsCatalogRoute as GET } from "@/../tests/helpers/runtime-routes";
 
 describe("GET /api/agents/catalog", () => {
   beforeEach(() => {
@@ -104,7 +103,7 @@ describe("GET /api/agents/catalog", () => {
         : { ok: false, type, reason: `${type} unavailable` }
     ));
 
-    const response = await GET(new NextRequest("http://localhost/api/agents/catalog"));
+    const response = await GET(new Request("http://localhost/api/agents/catalog"));
     expect(response.status).toBe(200);
 
     const payload = await response.json();
@@ -176,7 +175,7 @@ describe("GET /api/agents/catalog", () => {
         : { ok: false, type, reason: `${type} unavailable` }
     ));
 
-    const response = await GET(new NextRequest("http://localhost/api/agents/catalog"));
+    const response = await GET(new Request("http://localhost/api/agents/catalog"));
     expect(response.status).toBe(200);
 
     const payload = await response.json();
@@ -225,7 +224,7 @@ describe("GET /api/agents/catalog", () => {
         }
     ));
 
-    const response = await GET(new NextRequest("http://localhost/api/agents/catalog"));
+    const response = await GET(new Request("http://localhost/api/agents/catalog"));
     expect(response.status).toBe(200);
 
     const payload = await response.json();
@@ -249,7 +248,7 @@ describe("GET /api/agents/catalog", () => {
         : { ok: false, type, reason: `${type} unavailable` }
     ));
 
-    const response = await GET(new NextRequest("http://localhost/api/agents/catalog"));
+    const response = await GET(new Request("http://localhost/api/agents/catalog"));
     expect(response.status).toBe(200);
 
     const payload = await response.json();

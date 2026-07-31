@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/server/db";
 import { executionEvents, recoveryIncidents } from "@/server/db/schema";
 
-import * as eventsRoute from "@/app/api/events/route";
+import { eventsRouteModule as eventsRoute } from "@/../tests/helpers/runtime-routes";
 
 import { startLifecycleHarness, type LifecycleServer } from "../harness/server";
 import { LifecycleClient } from "../harness/client";
@@ -19,6 +19,7 @@ import { Chaos, NO_CHAOS } from "../harness/chaos";
 import { clearLifecycleSchema, seedDirectRun } from "../harness/fixtures";
 import { __resetNamedEventsForTests, emitNamedEvent } from "@/server/events/named-events";
 import { openRecoveryIncident } from "@/server/runs/recovery-incidents";
+import { compareEventStreamIds } from "@/shared/runtime";
 
 let server: LifecycleServer;
 let client: LifecycleClient;
@@ -82,7 +83,7 @@ describe("lifecycle harness — end-to-end events", () => {
     const terminal = await client.waitFor("worker.terminal", { timeoutMs: 10_000 });
     const spawned = client.events.filterByEvent("worker.spawned")[0]!;
     const status = client.events.filterByEvent("worker.status")[0]!;
-    expect(Number(spawned.id)).toBeLessThan(Number(status.id));
-    expect(Number(status.id)).toBeLessThan(Number(terminal.id));
+    expect(compareEventStreamIds(spawned.id!, status.id!)).toBe(-1);
+    expect(compareEventStreamIds(status.id!, terminal.id!)).toBe(-1);
   });
 });

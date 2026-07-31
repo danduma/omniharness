@@ -1,23 +1,16 @@
 import { getAuthConfigurationError, isAuthEnabled } from "@/server/auth/config";
-import { verifyConfiguredAuthPassword } from "@/server/auth/password";
 import { createAuthSession } from "@/server/auth/session";
 import { insertAuthEvent } from "@/server/auth/audit";
 import { errorResponse } from "@/server/api-errors";
 import { isSameOriginRequest } from "@/server/auth/guards";
-import { getLoginRateLimitStatus, recordFailedLoginAttempt, recordSuccessfulLoginAttempt } from "@/server/auth/rate-limit";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 import { setSessionCookie } from "./cookies";
-
-function firstHeaderValue(value: string | null) {
-  return value?.split(",")[0]?.trim() || null;
-}
-
-function getClientIp(request: Request) {
-  return firstHeaderValue(request.headers.get("x-forwarded-for"))
-    || firstHeaderValue(request.headers.get("x-real-ip"))
-    || null;
-}
+import {
+  getRequestNetworkIdentity,
+  hasBrowserProvenanceHeaders,
+  isSecureOrLoopbackRequest,
+} from "@/server/auth/trusted-proxy";
+import { verifyPasswordLoginAttempt } from "@/server/auth/login-attempt";
 
 export const handleAuthLoginRequest: OmniHttpHandler = async (request) => {
   try {
@@ -38,19 +31,47 @@ export const handleAuthLoginRequest: OmniHttpHandler = async (request) => {
       });
     }
 
-    if (!isSameOriginRequest(toNextRequest(request))) {
-      return errorResponse("Cross-site request rejected.", {
+    const body = await request.json();
+    const password = typeof body?.password === "string" ? body.password : "";
+    const tokenTransport = body?.tokenTransport === "bearer" ? "bearer" : "cookie";
+    const label = typeof body?.clientLabel === "string"
+      ? body.clientLabel
+      : typeof body?.label === "string"
+        ? body.label
+        : "";
+    const networkIdentity = getRequestNetworkIdentity(request);
+    if (!isSecureOrLoopbackRequest(networkIdentity)) {
+      return errorResponse("Password login requires HTTPS for non-loopback clients.", {
         status: 403,
         source: "Auth",
         action: "Log in",
       });
     }
 
-    const body = await request.json();
-    const password = typeof body?.password === "string" ? body.password : "";
-    const label = typeof body?.label === "string" ? body.label : "";
-    const ipAddress = getClientIp(request);
-    const userAgent = request.headers.get("user-agent") ?? null;
+    if (tokenTransport === "bearer") {
+      if (
+        hasBrowserProvenanceHeaders(request)
+      ) {
+        await insertAuthEvent({
+          eventType: "auth.native_login_rejected",
+          details: {
+            ipAddress: networkIdentity.clientAddress,
+            userAgent: request.headers.get("user-agent") ?? null,
+          },
+        });
+        return errorResponse("Native bearer login requires an originless secure or loopback request.", {
+          status: 403,
+          source: "Auth",
+          action: "Log in",
+        });
+      }
+    } else if (!isSameOriginRequest(request)) {
+      return errorResponse("Cross-site request rejected.", {
+        status: 403,
+        source: "Auth",
+        action: "Log in",
+      });
+    }
 
     if (!password.trim()) {
       return errorResponse("Password is required.", {
@@ -60,56 +81,44 @@ export const handleAuthLoginRequest: OmniHttpHandler = async (request) => {
       });
     }
 
-    const rateLimitStatus = getLoginRateLimitStatus(ipAddress);
-    if (rateLimitStatus.locked) {
-      const response = errorResponse("Too many login attempts. Try again later.", {
-        status: 429,
+    const attempt = await verifyPasswordLoginAttempt({
+      request,
+      password,
+      purpose: "password_login",
+    });
+    if (!attempt.ok) {
+      const response = errorResponse(attempt.message, {
+        status: attempt.status,
         source: "Auth",
         action: "Log in",
       });
-      response.headers.set("Retry-After", String(rateLimitStatus.retryAfterSeconds));
-      await insertAuthEvent({
-        eventType: "auth.login_rate_limited",
-        details: {
-          ipAddress,
-          userAgent,
-          retryAfterSeconds: rateLimitStatus.retryAfterSeconds,
-        },
-      });
+      if (attempt.retryAfterSeconds > 0) {
+        response.headers.set("Retry-After", String(attempt.retryAfterSeconds));
+      }
       return response;
     }
 
-    const valid = await verifyConfiguredAuthPassword(password);
-    if (!valid) {
-      recordFailedLoginAttempt(ipAddress);
-      await insertAuthEvent({
-        eventType: "auth.login_failed",
-        details: {
-          ipAddress,
-          userAgent,
-        },
-      });
-      return errorResponse("Incorrect password.", {
-        status: 401,
-        source: "Auth",
-        action: "Log in",
-      });
-    }
-
-    recordSuccessfulLoginAttempt(ipAddress);
     const session = await createAuthSession({
-      label: label.trim() || "Browser session",
-      userAgent,
+      label: label.trim() || (
+        tokenTransport === "bearer" ? "Native session" : "Browser session"
+      ),
+      userAgent: attempt.userAgent,
       authMethod: "password_login",
+      transport: tokenTransport,
+      clientKind: tokenTransport === "bearer" ? "native" : "browser",
+      boundOrigin: null,
     });
 
     await insertAuthEvent({
       eventType: "auth.login_succeeded",
       sessionId: session.sessionId,
       details: {
-        label: label.trim() || "Browser session",
-        ipAddress,
-        userAgent,
+        label: label.trim() || (
+          tokenTransport === "bearer" ? "Native session" : "Browser session"
+        ),
+        ipAddress: attempt.ipAddress,
+        userAgent: attempt.userAgent,
+        transport: tokenTransport,
       },
     });
 
@@ -117,8 +126,11 @@ export const handleAuthLoginRequest: OmniHttpHandler = async (request) => {
       ok: true,
       sessionId: session.sessionId,
       expiresAt: session.expiresAt,
+      ...(tokenTransport === "bearer" ? { token: session.tokenValue } : {}),
     });
-    setSessionCookie(response, session.tokenValue, session.expiresAt);
+    if (tokenTransport === "cookie") {
+      setSessionCookie(response, session.tokenValue, session.expiresAt);
+    }
     return response;
   } catch (error) {
     return errorResponse(error, {

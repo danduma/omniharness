@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { BusyMessageQueueManager } from "@/app/home/BusyMessageQueueManager";
-import type { QueuedConversationMessageRecord } from "@/app/home/types";
+import { BusyMessageQueueManager } from "@/interface/home/BusyMessageQueueManager";
+import type { QueuedConversationMessageRecord } from "@/interface/home/types";
 
 function buildQueuedMessage(overrides: Partial<QueuedConversationMessageRecord>): QueuedConversationMessageRecord {
   return {

@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/server/db";
 import { executionEvents, recoveryIncidents } from "@/server/db/schema";
 
-import * as eventsRoute from "@/app/api/events/route";
+import { eventsRouteModule as eventsRoute } from "@/../tests/helpers/runtime-routes";
 
 import { startLifecycleHarness, type LifecycleServer } from "../harness/server";
 import { LifecycleClient } from "../harness/client";
@@ -22,6 +22,7 @@ import {
   emitNamedEvent,
   getEventCursor,
 } from "@/server/events/named-events";
+import { parseEventStreamId } from "@/shared/runtime";
 
 let server: LifecycleServer;
 let client: LifecycleClient;
@@ -73,6 +74,6 @@ describe("lifecycle harness — SSE resume", () => {
     expect(client.events.filterByEvent("worker.status")).toHaveLength(1);
     // Pre-drop events shouldn't have been replayed (we still hold them
     // in the recorder from earlier — that's fine).
-    expect(Number(terminal.id)).toBe(expectedCursor);
+    expect(parseEventStreamId(terminal.id)?.sequence).toBe(expectedCursor);
   });
 });

@@ -16,6 +16,7 @@ import { createRunId, RUN_ID_PATTERN } from "@/server/runs/ids";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { appendLifecycleEntry, appendUserInputOnDelivery } from "@/server/workers/stream-writer";
+import { writeWorkerOutputEntries } from "@/server/workers/output-store";
 import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -43,7 +44,12 @@ import { setProjectGitWorkspaceDefaultTarget } from "@/server/projects/config";
 import { pendingOrphanWorktreeError } from "@/server/git/orphan-recovery";
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
 import { isResourceAdmissionError } from "@/server/agent-runtime/resource-admission";
-import { globalClaudeConfigDir, isGlobalGeminiSession } from "@/server/external-sessions/discovery";
+import {
+  globalClaudeConfigDir,
+  isGlobalGeminiSession,
+  loadExternalClaudeSession,
+  type LoadedExternalClaudeSession,
+} from "@/server/external-sessions/discovery";
 import { homedir } from "os";
 import { join } from "path";
 import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
@@ -64,6 +70,77 @@ function buildInitialWorkerPrompt(mode: ConversationMode, command: string, proje
   }
 
   return command;
+}
+
+async function importExternalClaudeHistory(args: {
+  runId: string;
+  workerId: string;
+  sessionId: string;
+  session: LoadedExternalClaudeSession | null;
+}) {
+  if (!args.session) {
+    const message = `Claude session ${args.sessionId} resumed, but its local transcript could not be found.`;
+    emitNamedEvent({
+      kind: "external_session.import_failed",
+      runId: args.runId,
+      workerId: args.workerId,
+      provider: "claude",
+      sessionId: args.sessionId,
+      reason: message,
+    });
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "external_session.import_failed",
+      message,
+      surface: "toast",
+      runId: args.runId,
+      workerId: args.workerId,
+    });
+    return;
+  }
+
+  try {
+    await writeWorkerOutputEntries(
+      args.runId,
+      args.workerId,
+      args.session.entries.map((entry) => ({
+        ...entry,
+        raw: {
+          ...(entry.raw && typeof entry.raw === "object" ? entry.raw : {}),
+          source: "external_claude",
+          externalSessionId: args.sessionId,
+          sourceEntryId: entry.id,
+        },
+      })),
+    );
+    emitNamedEvent({
+      kind: "external_session.imported",
+      runId: args.runId,
+      workerId: args.workerId,
+      provider: "claude",
+      sessionId: args.sessionId,
+      entryCount: args.session.entries.length,
+    });
+  } catch (error) {
+    const reason = formatErrorMessage(error);
+    emitNamedEvent({
+      kind: "external_session.import_failed",
+      runId: args.runId,
+      workerId: args.workerId,
+      provider: "claude",
+      sessionId: args.sessionId,
+      reason,
+    });
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "external_session.import_failed",
+      message: `Claude resumed, but OmniHarness could not load its previous conversation: ${reason}`,
+      surface: "toast",
+      runId: args.runId,
+      workerId: args.workerId,
+      cause: error instanceof Error ? { name: error.name, message: error.message } : undefined,
+    });
+  }
 }
 
 async function shouldCancelInitialWorkerStartup(runId: string, workerId: string): Promise<boolean> {
@@ -654,6 +731,13 @@ export async function createConversation(args: {
   // planning runs, or an Omni run that still needs a plan.
   const resolvedRequest = resolveOmniRequest(args.mode, command);
   const isExternalClaudeResume = Boolean(args.externalClaudeSessionId?.trim());
+  const externalSessionId = args.externalClaudeSessionId?.trim() || null;
+  const requestedExternalWorkerType = args.preferredWorkerType?.trim()
+    ? normalizeWorkerType(args.preferredWorkerType)
+    : "claude";
+  const externalClaudeSession = externalSessionId && requestedExternalWorkerType === "claude"
+    ? await loadExternalClaudeSession(externalSessionId)
+    : null;
   const mode = isExternalClaudeResume ? "direct" : resolvedRequest.runMode;
   const phase = isExternalClaudeResume ? null : resolvedRequest.phase;
   const usePlanner = !isExternalClaudeResume && (phase === "planning" || mode === "planning");
@@ -697,7 +781,7 @@ export async function createConversation(args: {
       : isExternalClaudeResume
         ? "claude"
         : null;
-    const defaultTitle = getDefaultConversationTitle(mode, command);
+    const defaultTitle = externalClaudeSession?.title?.trim() || getDefaultConversationTitle(mode, command);
     const generateTitle = shouldGenerateConversationTitle(mode, command);
     const allowedWorkerTypes = parseAllowedWorkerTypes(
       Array.isArray(args.allowedWorkerTypes)
@@ -826,6 +910,14 @@ export async function createConversation(args: {
         createdAt: new Date(),
         updatedAt: new Date(),
       });
+      if (externalSessionId && workerType === "claude") {
+        await importExternalClaudeHistory({
+          runId,
+          workerId,
+          sessionId: externalSessionId,
+          session: externalClaudeSession,
+        });
+      }
       const { env: allocationEnvParams } = await readRuntimeEnvFromSettings();
       const accountAllocation = isGatewayRoute ? null : await allocateWorkerAccount({
           workerType,

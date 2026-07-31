@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildDirectTerminalUserMessages, buildWorkerTerminalUserMessages } from "@/lib/worker-terminal-messages";
-import type { AgentSnapshot, SupervisorInterventionRecord } from "@/app/home/types";
+import type { AgentSnapshot, SupervisorInterventionRecord } from "@/interface/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 
 function buildWorker(overrides: Partial<ConversationWorkerRecord> = {}): ConversationWorkerRecord {

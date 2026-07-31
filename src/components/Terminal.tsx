@@ -1,11 +1,10 @@
 "use client";
 
-import Image from "next/image";
 import { useLayoutEffect, useMemo, useRef, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { ALargeSmall, Check, ChevronDown, Copy, LoaderCircle } from "lucide-react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { ProjectFileContextMenu } from "@/components/ProjectFileContextMenu";
-import { attachmentImagePreviewManager, conversationCopyNoticeManager, terminalUiManager } from "@/components/component-state-managers";
+import { conversationCopyNoticeManager, terminalUiManager } from "@/components/component-state-managers";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
@@ -14,14 +13,25 @@ import {
   getTerminalTextSizeStyle,
   TERMINAL_TEXT_SIZE_LEVELS,
   type TerminalTextSizeLevel,
-} from "@/app/home/AppearancePreferencesManager";
+} from "@/interface/home/AppearancePreferencesManager";
 import { buildAgentOutputActivity, formatActivityStatus, type AgentActivityItem, type AgentOutputEntry, type AgentToolGroupCounts } from "@/lib/agent-output";
-import type { WorkerEntry } from "@/server/workers/entries-types";
-import { formatBytes, type ChatAttachment } from "@/lib/chat-attachments";
+import type { WorkerEntry } from "@/shared/worker-entries";
+import type { ChatAttachment } from "@/lib/chat-attachments";
 import { parseProjectFileReference, type ProjectFileReference } from "@/lib/project-file-links";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { t, useI18nSnapshot } from "@/lib/i18n";
+import { UserMessageAttachments } from "@/components/terminal/UserMessageAttachments";
+import {
+  shouldTerminalKeepFollowingLatest,
+  shouldTerminalResetInitialPosition,
+} from "@/components/terminal/scroll-state";
+
+export {
+  shouldTerminalFollowLatest,
+  shouldTerminalKeepFollowingLatest,
+  shouldTerminalResetInitialPosition,
+} from "@/components/terminal/scroll-state";
 
 interface TerminalProps {
   agent?: AgentTerminalPayload | null;
@@ -127,40 +137,10 @@ const TERMINAL_REVEAL_CLASS = "grid transition-[grid-template-rows,opacity,trans
 const TERMINAL_REVEAL_OPEN_CLASS = "grid-rows-[1fr] opacity-100 translate-y-0";
 const TERMINAL_REVEAL_CLOSED_CLASS = "grid-rows-[0fr] opacity-0 -translate-y-1 pointer-events-none";
 const TERMINAL_TOOL_STATUSES = new Set(["completed", "done", "failed", "error", "cancelled"]);
-const TERMINAL_BOTTOM_THRESHOLD_PX = 1;
 const TERMINAL_TOP_THRESHOLD_PX = 4;
 export { TERMINAL_TEXT_SIZE_LEVELS };
 export type TerminalZoomLevel = TerminalTextSizeLevel;
 export const getTerminalZoomStyle = getTerminalTextSizeStyle;
-
-export function shouldTerminalFollowLatest(
-  metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
-) {
-  return metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop <= TERMINAL_BOTTOM_THRESHOLD_PX;
-}
-
-export function shouldTerminalKeepFollowingLatest(
-  metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
-  previousScrollTop: number,
-) {
-  if (metrics.scrollTop < previousScrollTop) {
-    return false;
-  }
-
-  return shouldTerminalFollowLatest(metrics);
-}
-
-export function shouldTerminalResetInitialPosition({
-  previousFirstActivityId,
-  nextFirstActivityId,
-  scrollAnchorChanged,
-}: {
-  previousFirstActivityId: string | null;
-  nextFirstActivityId: string | null;
-  scrollAnchorChanged: boolean;
-}) {
-  return scrollAnchorChanged || (previousFirstActivityId === null && nextFirstActivityId !== null);
-}
 
 export function getTerminalActivityVersion(activity: TerminalActivityItem[]) {
   return activity.map((item) => {
@@ -1066,58 +1046,6 @@ function PendingAssistantActivity({ status }: { status: TerminalPendingAssistant
   );
 }
 
-function terminalAttachmentUrl(attachment: ChatAttachment) {
-  return attachment.previewUrl
-    || (attachment.storagePath
-      ? `/api/attachments?path=${encodeURIComponent(attachment.storagePath)}&mimeType=${encodeURIComponent(attachment.mimeType)}`
-      : "");
-}
-
-function UserMessageAttachments({ attachments }: { attachments: ChatAttachment[] }) {
-  if (attachments.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="mt-3 flex flex-wrap gap-2">
-      {attachments.map((attachment) => {
-        const url = terminalAttachmentUrl(attachment);
-        return attachment.kind === "image" && url ? (
-          <button
-            type="button"
-            key={attachment.id}
-            onClick={() => attachmentImagePreviewManager.open({ url, name: attachment.name, size: attachment.size })}
-            className="group/attachment inline-flex max-w-full items-center gap-2 overflow-hidden rounded-xl border border-border/60 bg-[#e9e9e9] p-1.5 pr-3 text-xs dark:border-white/10 dark:bg-black/15"
-            title={`Preview ${attachment.name}`}
-            aria-label={`Preview ${attachment.name}`}
-          >
-            <Image
-              src={url}
-              alt={attachment.name}
-              width={72}
-              height={72}
-              unoptimized
-              className="h-[72px] w-[72px] rounded-lg object-cover transition-transform group-hover/attachment:scale-105"
-            />
-            <span className="flex min-w-0 flex-col">
-              <span className="truncate font-medium">{attachment.name}</span>
-              <span className="opacity-60">{formatBytes(attachment.size)}</span>
-            </span>
-          </button>
-        ) : (
-          <div
-            key={attachment.id}
-            className="inline-flex max-w-full items-center gap-2 rounded-full border border-border/60 bg-[#e9e9e9] px-3 py-1.5 text-xs dark:border-white/10 dark:bg-black/15"
-          >
-            <span className="truncate">{attachment.name}</span>
-            <span className="shrink-0 opacity-60">{formatBytes(attachment.size)}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function UserMessageEditForm({
   messageId,
   value,
@@ -1705,7 +1633,11 @@ function WorkSummaryActivity({
   );
 
   return (
-    <div className="space-y-1.5">
+    // No `space-y` here: the reveal panel below collapses to zero height when
+    // closed, but a sibling margin would still be paid, leaving a sliver of
+    // dead space under every collapsed "Worked for …" row. The gap belongs
+    // inside the panel (see `pt-2`), where the clip removes it too.
+    <div>
       <button
         type="button"
         className="group/work-summary flex w-full items-center gap-1.5 text-left"
@@ -1735,7 +1667,7 @@ function WorkSummaryActivity({
         aria-hidden={!open}
       >
         <div className="min-h-0 overflow-hidden">
-          <div className="space-y-2 pb-0.5 pt-0.5">
+          <div className="space-y-2 pb-0.5 pt-2">
             {nestedItems.map((item, index) => (
               <WorkSummaryNestedItem
                 key={item.id}
@@ -1775,8 +1707,7 @@ function ProtocolActivityContent({
   if (activity.protocolType === "content" && content?.type === "image" && typeof content.data === "string") {
     const mimeType = typeof content.mimeType === "string" ? content.mimeType : "image/png";
     return (
-      <Image
-        unoptimized
+      <img
         src={`data:${mimeType};base64,${content.data}`}
         alt={t("terminal.protocol.content")}
         width={960}
@@ -1987,7 +1918,7 @@ function ActivityRow({
       <TimelineMarker running={running} tone={markerTone} variant={variant} />
       <div className="min-w-0 flex-1">
         {activity.kind === "message" ? (
-          <div className="group/agent-message">
+          <div className="relative group/agent-message">
             <MarkdownContent
               content={activity.text}
               projectRoot={projectRoot}
@@ -2002,8 +1933,16 @@ function ActivityRow({
               )}
             />
             {activity.text.trim() ? (
-              <div className="mt-1 flex items-center justify-end text-muted-foreground/70">
-                <span className="relative inline-flex flex-col items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover/agent-message:opacity-100">
+              // Overlaid, not stacked. As an in-flow row this reserved
+              // mt-1 + h-6 = 28px of blank, non-interactive space under every
+              // single assistant message — `opacity-0` hides a control but
+              // never takes it out of layout — which read as unexplained gaps
+              // between the transcript's rows. Absolute positioning keeps the
+              // button exactly where it was on hover while costing no height,
+              // and `pointer-events` stay off until it is actually revealed so
+              // the corner never eats a click or a text selection.
+              <div className="pointer-events-none absolute bottom-0 right-0 z-10 flex items-center text-muted-foreground/70">
+                <span className="pointer-events-none relative inline-flex flex-col items-center rounded-md bg-background/80 opacity-0 shadow-sm backdrop-blur-[2px] transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-hover/agent-message:pointer-events-auto group-hover/agent-message:opacity-100">
                   <button
                     type="button"
                     aria-label={t("conversation.message.copyAria")}

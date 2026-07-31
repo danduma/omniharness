@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { GET } from "../../src/app/api/codex-auth/status/route";
+import { codexAuthStatusRoute as GET } from "../helpers/runtime-routes";
 import * as codexAuth from "../../src/server/supervisor/codex-auth";
 
 vi.mock("../../src/server/supervisor/codex-auth");

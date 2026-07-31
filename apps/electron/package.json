@@ -1,5 +1,7 @@
 {
   "name": "@omniharness/electron",
+  "productName": "OmniHarness",
+  "description": "Secure remote client for OmniHarness runners.",
   "version": "0.1.0",
   "private": true,
   "main": "dist/main.js"

@@ -11,8 +11,8 @@ import {
 import { __resetNamedEventsForTests } from "@/server/events/named-events";
 import { syncConversationSessions } from "@/server/conversations/sync";
 
-import * as eventsRoute from "@/app/api/events/route";
-import * as runRoute from "@/app/api/runs/[id]/route";
+import { eventsRouteModule as eventsRoute } from "@/../tests/helpers/runtime-routes";
+import { runRouteModule as runRoute } from "@/../tests/helpers/runtime-routes";
 
 import { startLifecycleHarness, type LifecycleServer } from "../harness/server";
 import { LifecycleClient } from "../harness/client";

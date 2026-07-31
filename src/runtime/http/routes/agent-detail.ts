@@ -10,7 +10,6 @@ import { closeStaleHumanInputEntries } from "@/server/workers/human-input-entrie
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
 import { formatErrorMessage } from "@/server/runs/failures";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 const FULL_HISTORY_ENTRY_LIMIT = 20_000;
 const HISTORY_ENTRY_TEXT_LIMIT = 20_000;
@@ -138,7 +137,7 @@ async function loadAgentWithOptionalHistory(name: string, includeFullHistory: bo
 }
 
 export const handleAgentDetailRequest: OmniHttpHandler = async (request, context) => {
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Agent runtime",
     action: "Load worker details",
   });
@@ -209,7 +208,7 @@ export const handleAgentElicitationRequest: OmniHttpHandler = async (request, co
     });
   }
 
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Agent runtime",
     action: "Respond to worker question",
     enforceSameOrigin: true,
@@ -271,7 +270,7 @@ export const handleAgentPermissionRequest: OmniHttpHandler = async (request, con
     });
   }
 
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Agent runtime",
     action: "Respond to permission request",
     enforceSameOrigin: true,
@@ -330,7 +329,7 @@ export const handleAgentAcpRequest: OmniHttpHandler = async (request, context) =
   if (request.method !== "POST") {
     return Response.json({ error: { code: "method_not_allowed", message: "Method not allowed." } }, { status: 405, headers: { allow: "POST" } });
   }
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Agent runtime",
     action: "Invoke ACP method",
     enforceSameOrigin: true,

@@ -7,7 +7,7 @@ export function useManagerSnapshot<TState>(manager: StateManager<TState>) {
   return useSyncExternalStore(
     useCallback((listener) => manager.subscribe(listener), [manager]),
     useCallback(() => manager.getSnapshot(), [manager]),
-    () => manager.getSnapshot(),
+    useCallback(() => manager.getInitialSnapshot(), [manager]),
   );
 }
 
@@ -38,6 +38,11 @@ export function useManagerSelector<TState, TSelected>(
     state: TState;
     selection: TSelected;
   } | null>(null);
+  const serverSelectionRef = useRef<{
+    state: TState;
+    selector: (state: TState) => TSelected;
+    selection: TSelected;
+  } | null>(null);
 
   const getSelectedSnapshot = useCallback(() => {
     const state = manager.getSnapshot();
@@ -61,10 +66,20 @@ export function useManagerSelector<TState, TSelected>(
     };
     return nextSelection;
   }, [isEqual, manager, selector]);
+  const getServerSelectedSnapshot = useCallback(() => {
+    const state = manager.getInitialSnapshot();
+    const previous = serverSelectionRef.current;
+    if (previous?.state === state && previous.selector === selector) {
+      return previous.selection;
+    }
+    const selection = selector(state);
+    serverSelectionRef.current = { state, selector, selection };
+    return selection;
+  }, [manager, selector]);
 
   return useSyncExternalStore(
     useCallback((listener) => manager.subscribe(listener), [manager]),
     getSelectedSnapshot,
-    getSelectedSnapshot,
+    getServerSelectedSnapshot,
   );
 }

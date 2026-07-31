@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { resolveRunComposerSelection } from "@/app/home/useRunSelectionEffects";
-import type { RunRecord } from "@/app/home/types";
+import { resolveRunComposerSelection } from "@/interface/home/useRunSelectionEffects";
+import type { RunRecord } from "@/interface/home/types";
 
 function createRun(overrides: Partial<RunRecord> = {}): RunRecord {
   return {

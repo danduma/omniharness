@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { derivePendingElicitationsFromWorkerEntries } from "@/app/home/worker-elicitations";
+import { derivePendingElicitationsFromWorkerEntries } from "@/interface/home/worker-elicitations";
 import type { WorkerEntry } from "@/server/workers/entries-types";
 
 function entry(overrides: Partial<WorkerEntry>): WorkerEntry {

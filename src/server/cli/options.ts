@@ -14,6 +14,10 @@ export interface OmniCliOptions {
   allowedWorkerTypes: string[];
   watch: boolean;
   json: boolean;
+  runnerUrl: string | null;
+  tokenFile: string | null;
+  tokenStdin: boolean;
+  legacyToken: string | null;
 }
 
 export class OmniCliUsageError extends Error {
@@ -49,6 +53,10 @@ export function parseOmniCliArgs(argv: string[]): OmniCliOptions {
   let commandFromFlag: string | null = null;
   let watch = true;
   let json = false;
+  let runnerUrl: string | null = null;
+  let tokenFile: string | null = null;
+  let tokenStdin = false;
+  let legacyToken: string | null = null;
   const positional: string[] = [];
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -119,6 +127,25 @@ export function parseOmniCliArgs(argv: string[]): OmniCliOptions {
       json = true;
       continue;
     }
+    if (arg === "--runner") {
+      runnerUrl = readOptionValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--token-file") {
+      tokenFile = readOptionValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--token-stdin") {
+      tokenStdin = true;
+      continue;
+    }
+    if (arg === "--token") {
+      legacyToken = readOptionValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
     if (arg.startsWith("--")) {
       throw new OmniCliUsageError(`Unknown option: ${arg}`);
     }
@@ -128,6 +155,9 @@ export function parseOmniCliArgs(argv: string[]): OmniCliOptions {
   const rawCommand = commandFromFlag ?? positional.join(" ").trim();
   if (!rawCommand) {
     throw new OmniCliUsageError("Command cannot be empty.");
+  }
+  if ([Boolean(tokenFile), tokenStdin, Boolean(legacyToken)].filter(Boolean).length > 1) {
+    throw new OmniCliUsageError("Choose exactly one of --token-file, --token-stdin, or legacy --token.");
   }
 
   const shouldExpandPlanPath =
@@ -151,6 +181,10 @@ export function parseOmniCliArgs(argv: string[]): OmniCliOptions {
     allowedWorkerTypes,
     watch,
     json,
+    runnerUrl,
+    tokenFile,
+    tokenStdin,
+    legacyToken,
   };
 }
 
@@ -158,6 +192,8 @@ export function omniCliUsage() {
   return [
     "Usage: omni [options] <command>",
     "       omni acp",
+    "       omni auth init [--password-file <0600-file>]",
+    "       omni runner rekey --runner <url> [token source] --confirm-identity <id>",
     "",
     "Options:",
     "  -o, --omni                    Omni: plan interactively when needed, then supervise implementation",
@@ -171,6 +207,10 @@ export function omniCliUsage() {
     "      --command <text>          Command text; useful when text starts with a dash",
     "      --json                    Print the created conversation as JSON",
     "      --watch / --no-watch      Stream conversation updates after creation",
+    "      --runner <url>             Use a running OmniHarness server",
+    "      --token-file <path>        Read the remote token from a protected file",
+    "      --token-stdin              Read the remote token from stdin",
+    "                                  OMNI_TOKEN is used when no token flag is supplied",
     "",
     "Direct mode is the default when no mode flag is supplied.",
     "",

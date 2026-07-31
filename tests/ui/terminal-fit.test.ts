@@ -13,16 +13,20 @@ const terminalSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/Terminal.tsx"),
   "utf8"
 );
+const terminalScrollSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/components/terminal/scroll-state.ts"),
+  "utf8"
+);
 const terminalPreferenceSource = fs.readFileSync(
-  path.resolve(process.cwd(), "src/app/home/AppearancePreferencesManager.ts"),
+  path.resolve(process.cwd(), "src/interface/home/AppearancePreferencesManager.ts"),
   "utf8"
 );
 const globalCssSource = fs.readFileSync(
-  path.resolve(process.cwd(), "src/app/globals.css"),
+  path.resolve(process.cwd(), "src/interface/styles/globals.css"),
   "utf8"
 );
 const homeAppSource = fs.readFileSync(
-  path.resolve(process.cwd(), "src/app/home/HomeApp.tsx"),
+  path.resolve(process.cwd(), "src/interface/home/HomeApp.tsx"),
   "utf8"
 );
 
@@ -252,7 +256,7 @@ test("terminal surfaces fetch failures in the frontend instead of silently dropp
 });
 
 test("terminal only follows live output while the viewport is already near the bottom", () => {
-  expect(terminalSource).toContain("const TERMINAL_BOTTOM_THRESHOLD_PX = 1");
+  expect(terminalScrollSource).toContain("const TERMINAL_BOTTOM_THRESHOLD_PX = 1");
   expect(terminalSource).not.toContain("shouldForceFollowPendingAssistant");
   expect(terminalSource).toContain("const activityChanged = previousActivityVersionRef.current !== activityVersion;");
   expect(terminalSource).toContain("const isFirstRenderedActivity = filteredActivity.length > 0 && !hasPositionedFirstActivityRef.current;");

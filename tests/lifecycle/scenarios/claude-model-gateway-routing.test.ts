@@ -9,9 +9,10 @@ import { startClaudeGatewayFixture, type ClaudeGatewayFixture } from "../../fixt
 import { startLifecycleHarness, type LifecycleServer } from "../harness/server";
 import { LifecycleClient } from "../harness/client";
 import { Chaos, NO_CHAOS } from "../harness/chaos";
-import * as eventsRoute from "@/app/api/events/route";
-import * as gatewayRoute from "@/app/api/integrations/claude-model-gateway/route";
-import * as conversationsRoute from "@/app/api/conversations/route";
+import { eventsRouteModule as eventsRoute } from "@/../tests/helpers/runtime-routes";
+import { claudeModelGatewayRouteModule as gatewayRoute } from "@/../tests/helpers/runtime-routes";
+import { conversationsRouteModule as conversationsRoute } from "@/../tests/helpers/runtime-routes";
+import { compareEventStreamIds } from "@/shared/runtime";
 
 vi.mock("@/server/bridge-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/server/bridge-client")>();
@@ -81,8 +82,8 @@ describe("lifecycle harness — Claude model gateway", () => {
     const completed = await client.waitFor("claude_gateway.oauth_completed", { timeoutMs: 10_000 });
     const started = client.events.filterByEvent("claude_gateway.service_started")[0]!;
     const refreshed = client.events.filterByEvent("claude_gateway.models_refreshed")[0]!;
-    expect(Number(started.id)).toBeLessThan(Number(refreshed.id));
-    expect(Number(refreshed.id)).toBeLessThan(Number(completed.id));
+    expect(compareEventStreamIds(started.id!, refreshed.id!)).toBe(-1);
+    expect(compareEventStreamIds(refreshed.id!, completed.id!)).toBe(-1);
     const snapshotResponse = await client.fetch("/api/events?snapshot=1&persisted=1");
     const snapshot = await snapshotResponse.json() as Record<string, unknown>;
     expect(snapshot.claudeModelGateway).toMatchObject({ service: "running", oauth: "connected" });

@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/server/db";
 import { executionEvents, recoveryIncidents } from "@/server/db/schema";
 
-import * as eventsRoute from "@/app/api/events/route";
+import { eventsRouteModule as eventsRoute } from "@/../tests/helpers/runtime-routes";
 
 import { startLifecycleHarness, type LifecycleServer } from "../harness/server";
 import { LifecycleClient } from "../harness/client";
@@ -66,6 +66,6 @@ describe("lifecycle harness — restart resync", () => {
     // ring, the route must emit stream.resync_required.
     await client.subscribe({ runId, resumeFrom: "9999" });
     const resync = await client.waitFor("stream.resync_required", { timeoutMs: 10_000 });
-    expect(resync.payload).toMatchObject({ reason: "id_out_of_buffer" });
+    expect(resync.payload).toMatchObject({ reason: "cursor_evicted" });
   });
 });

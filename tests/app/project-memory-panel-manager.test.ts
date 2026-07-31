@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ProjectMemoryPanelManager } from "@/app/home/ProjectMemoryPanelManager";
+import { ProjectMemoryPanelManager } from "@/interface/home/ProjectMemoryPanelManager";
 
 function deferredResponse(payload: unknown) {
   let resolve!: () => void;
@@ -8,13 +8,7 @@ function deferredResponse(payload: unknown) {
   });
   return {
     resolve,
-    response: Promise.resolve({
-      ok: true,
-      json: async () => {
-        await gate;
-        return payload;
-      },
-    } as Response),
+    response: gate.then(() => payload),
   };
 }
 
@@ -24,12 +18,14 @@ describe("ProjectMemoryPanelManager", () => {
   });
 
   it("ignores a stale list response after the project changes", async () => {
-    const manager = new ProjectMemoryPanelManager();
     const first = deferredResponse({
       enabled: true,
       files: [{ path: "a.md", size: 1, updatedAt: "2026-05-20T00:00:00.000Z" }],
     });
-    vi.stubGlobal("fetch", vi.fn().mockReturnValue(first.response));
+    const manager = new ProjectMemoryPanelManager({
+      load: vi.fn().mockReturnValue(first.response),
+      save: vi.fn(),
+    });
 
     manager.setProjectPath("/project-a");
     const load = manager.reloadList();
@@ -46,7 +42,6 @@ describe("ProjectMemoryPanelManager", () => {
   });
 
   it("ignores a stale file response after the selected path changes", async () => {
-    const manager = new ProjectMemoryPanelManager();
     const first = deferredResponse({
       enabled: true,
       file: {
@@ -57,7 +52,10 @@ describe("ProjectMemoryPanelManager", () => {
         updatedAt: "2026-05-20T00:00:00.000Z",
       },
     });
-    vi.stubGlobal("fetch", vi.fn().mockReturnValue(first.response));
+    const manager = new ProjectMemoryPanelManager({
+      load: vi.fn().mockReturnValue(first.response),
+      save: vi.fn(),
+    });
 
     manager.patch({
       projectPath: "/project",
@@ -82,9 +80,11 @@ describe("ProjectMemoryPanelManager", () => {
   });
 
   it("does not mark a newer draft as saved when an older save finishes", async () => {
-    const manager = new ProjectMemoryPanelManager();
     const saveResponse = deferredResponse({ ok: true });
-    vi.stubGlobal("fetch", vi.fn().mockReturnValue(saveResponse.response));
+    const manager = new ProjectMemoryPanelManager({
+      load: vi.fn(),
+      save: vi.fn().mockReturnValue(saveResponse.response),
+    });
 
     manager.patch({
       projectPath: "/project",
@@ -107,9 +107,11 @@ describe("ProjectMemoryPanelManager", () => {
   });
 
   it("ignores a stale toggle response after the project changes", async () => {
-    const manager = new ProjectMemoryPanelManager();
     const first = deferredResponse({ ok: true });
-    vi.stubGlobal("fetch", vi.fn().mockReturnValue(first.response));
+    const manager = new ProjectMemoryPanelManager({
+      load: vi.fn(),
+      save: vi.fn().mockReturnValue(first.response),
+    });
 
     manager.patch({
       projectPath: "/project-a",
@@ -128,12 +130,14 @@ describe("ProjectMemoryPanelManager", () => {
   });
 
   it("lets the latest same-project toggle own the enabled state", async () => {
-    const manager = new ProjectMemoryPanelManager();
     const first = deferredResponse({ ok: true });
     const second = deferredResponse({ ok: true });
-    vi.stubGlobal("fetch", vi.fn()
+    const manager = new ProjectMemoryPanelManager({
+      load: vi.fn(),
+      save: vi.fn()
       .mockReturnValueOnce(first.response)
-      .mockReturnValueOnce(second.response));
+      .mockReturnValueOnce(second.response),
+    });
 
     manager.patch({
       projectPath: "/project",

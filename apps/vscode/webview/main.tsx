@@ -9,6 +9,16 @@ declare const acquireVsCodeApi: () => { postMessage(message: unknown): void };
 type VSCodeBootstrap = {
   serverUrl: string;
   workspacePath: string | null;
+  profiles?: {
+    activeProfileId: string;
+    profiles: Array<{
+      id: string;
+      label: string;
+      baseUrl: string;
+      requiresReauth: boolean;
+      runnerInstanceId?: string | null;
+    }>;
+  };
 };
 
 declare global {
@@ -24,6 +34,21 @@ type RunSummary = {
   projectPath?: string | null;
 };
 
+type VSCodeProfileSummary = {
+  id: string;
+  label: string;
+  baseUrl: string;
+  requiresReauth: boolean;
+  runnerInstanceId?: string | null;
+};
+
+type SessionSummary = {
+  id: string;
+  label?: string | null;
+  clientKind?: string | null;
+  expiresAt?: string | null;
+};
+
 type PanelStatusKey =
   | "vscode.panel.status.loading"
   | "vscode.panel.status.loadingConversations"
@@ -36,10 +61,20 @@ type PanelSnapshot = {
   error: string;
   prompt: string;
   runs: RunSummary[];
+  activeProfileId: string;
+  connectionLabel: string;
+  connectionUrl: string;
+  connectionPassword: string;
+  sessions: SessionSummary[];
+  currentSessionId: string | null;
+  identityExpected: string | null;
+  identityObserved: string | null;
+  profileStatuses: Record<string, PanelStatusKey>;
+  profileErrors: Record<string, string>;
 };
 
 const bootstrap = window.__OMNI_VSCODE_BOOTSTRAP__ ?? {
-  serverUrl: "http://localhost:3035",
+  serverUrl: "http://localhost:3050",
   workspacePath: null,
 };
 
@@ -100,11 +135,40 @@ class VSCodePanelManager {
     error: "",
     prompt: "",
     runs: [],
+    activeProfileId: bootstrap.profiles?.activeProfileId ?? "default",
+    connectionLabel: "",
+    connectionUrl: "",
+    connectionPassword: "",
+    sessions: [],
+    currentSessionId: null,
+    identityExpected: null,
+    identityObserved: null,
+    profileStatuses: {},
+    profileErrors: {},
   };
   private readonly listeners = new Set<() => void>();
-  private eventSubscription: RuntimeSubscription | null = null;
+  private readonly eventSubscriptions = new Map<string, RuntimeSubscription>();
+  private readonly apis = new Map<string, RuntimeAPIs>();
+  private readonly runsByProfile = new Map<string, RunSummary[]>();
+  readonly profiles: VSCodeProfileSummary[];
 
-  constructor(private readonly apis: RuntimeAPIs) {}
+  constructor(
+    private readonly transport: VSCodeRuntimeApiTransport,
+    profiles = bootstrap.profiles?.profiles ?? [{
+      id: "default",
+      label: "Local runner",
+      baseUrl: bootstrap.serverUrl,
+      requiresReauth: true,
+    }],
+  ) {
+    this.profiles = [...profiles];
+    for (const profile of profiles) {
+      this.apis.set(
+        profile.id,
+        createVSCodeRuntimeAPIs({ transport, profileId: profile.id }),
+      );
+    }
+  }
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -117,23 +181,175 @@ class VSCodePanelManager {
     this.commit({ prompt });
   }
 
-  async refresh() {
-    this.commit({ statusKey: "vscode.panel.status.loadingConversations", error: "" });
+  setConnectionDraft(patch: Partial<Pick<
+    PanelSnapshot,
+    "connectionLabel" | "connectionUrl" | "connectionPassword"
+  >>) {
+    this.commit(patch);
+  }
+
+  async connectRunner() {
+    this.commit({ error: "", statusKey: "vscode.panel.status.loading" });
     try {
-      const payload = await this.apis.bootstrap.load({
-        draftProjectPath: bootstrap.workspacePath,
+      const response = await this.requestHost<{
+        success?: boolean;
+        data?: {
+          profile?: { id?: unknown };
+          profiles?: {
+            profiles?: VSCodeProfileSummary[];
+          };
+        };
+        error?: { message?: unknown };
+      }>({
+        type: "vscode:login",
+        payload: {
+          label: this.snapshot.connectionLabel,
+          baseUrl: this.snapshot.connectionUrl,
+          password: this.snapshot.connectionPassword,
+        },
       });
+      if (!response.success) {
+        throw new Error(
+          typeof response.error?.message === "string"
+            ? response.error.message
+            : "Runner login failed.",
+        );
+      }
+      const nextProfiles = response.data?.profiles?.profiles ?? [];
+      this.profiles.splice(0, this.profiles.length, ...nextProfiles);
+      const profileId = response.data?.profile?.id;
+      if (typeof profileId !== "string") throw new Error("Runner profile was not returned.");
+      this.apis.set(
+        profileId,
+        createVSCodeRuntimeAPIs({ transport: this.transport, profileId }),
+      );
       this.commit({
+        activeProfileId: profileId,
+        connectionPassword: "",
         statusKey: "vscode.panel.status.connected",
-        runs: runsFromBootstrap(payload),
       });
-      this.ensureEventsOpen();
+      await this.refresh();
     } catch (error) {
       this.commit({
         statusKey: "vscode.panel.status.disconnected",
         error: error instanceof Error ? error.message : String(error),
+        connectionPassword: "",
       });
     }
+  }
+
+  setActiveProfile(activeProfileId: string) {
+    if (!this.apis.has(activeProfileId)) return;
+    this.commit({
+      activeProfileId,
+      runs: this.runsByProfile.get(activeProfileId) ?? [],
+      error: this.snapshot.profileErrors[activeProfileId] ?? "",
+      statusKey: this.snapshot.profileStatuses[activeProfileId]
+        ?? "vscode.panel.status.loading",
+      sessions: [],
+      currentSessionId: null,
+      identityExpected: null,
+      identityObserved: null,
+    });
+    void this.loadSessions(activeProfileId);
+  }
+
+  async refresh() {
+    this.commit({ statusKey: "vscode.panel.status.loadingConversations", error: "" });
+    const profileStatuses = { ...this.snapshot.profileStatuses };
+    const profileErrors = { ...this.snapshot.profileErrors };
+    await Promise.all([...this.apis].map(async ([profileId, apis]) => {
+      try {
+        const payload = await apis.bootstrap.load({
+          draftProjectPath: bootstrap.workspacePath,
+        });
+        const identityMismatch = await this.applyRunnerIdentity(profileId, payload);
+        if (identityMismatch) {
+          profileStatuses[profileId] = "vscode.panel.status.disconnected";
+          profileErrors[profileId] = t("runner.identity.description");
+          return;
+        }
+        this.runsByProfile.set(profileId, runsFromBootstrap(payload));
+        this.ensureEventsOpen(profileId, apis);
+        profileStatuses[profileId] = "vscode.panel.status.connected";
+        delete profileErrors[profileId];
+      } catch (error) {
+        profileStatuses[profileId] = "vscode.panel.status.disconnected";
+        profileErrors[profileId] = error instanceof Error
+          ? error.message
+          : String(error);
+      }
+    }));
+    const activeProfileId = this.snapshot.activeProfileId;
+    this.commit({
+      profileStatuses,
+      profileErrors,
+      statusKey: profileStatuses[activeProfileId]
+        ?? "vscode.panel.status.disconnected",
+      error: profileErrors[activeProfileId] ?? "",
+      runs: this.runsByProfile.get(activeProfileId) ?? [],
+    });
+    await this.loadSessions(activeProfileId);
+  }
+
+  async loadSessions(profileId = this.snapshot.activeProfileId) {
+    try {
+      const response = await this.apis.get(profileId)?.auth.session() as {
+        sessions?: SessionSummary[];
+        currentSession?: { id?: string } | null;
+      } | undefined;
+      if (profileId !== this.snapshot.activeProfileId) return;
+      this.commit({
+        sessions: response?.sessions ?? [],
+        currentSessionId: response?.currentSession?.id ?? null,
+      });
+    } catch {
+      if (profileId === this.snapshot.activeProfileId) {
+        this.commit({ sessions: [], currentSessionId: null });
+      }
+    }
+  }
+
+  async revokeSession(sessionId: string) {
+    try {
+      await this.apis.get(this.snapshot.activeProfileId)?.auth.revokeSession({
+        sessionId,
+      });
+      await this.loadSessions();
+    } catch (error) {
+      this.commit({
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async acceptIdentity() {
+    const profileId = this.snapshot.activeProfileId;
+    const observed = this.snapshot.identityObserved;
+    if (!observed) return;
+    const response = await this.requestHost<{
+      success?: boolean;
+      error?: { message?: unknown };
+    }>({
+      type: "vscode:identity",
+      payload: {
+        profileId,
+        runnerInstanceId: observed,
+        confirmChange: true,
+      },
+    });
+    if (!response.success) {
+      this.commit({
+        error: typeof response.error?.message === "string"
+          ? response.error.message
+          : t("runner.error.generic"),
+      });
+      return;
+    }
+    const profile = this.profiles.find((item) => item.id === profileId);
+    if (profile) profile.runnerInstanceId = observed;
+    this.commit({ identityExpected: null, identityObserved: null, error: "" });
+    await this.refresh();
   }
 
   async startConversation() {
@@ -143,7 +359,7 @@ class VSCodePanelManager {
     }
     this.commit({ statusKey: "vscode.panel.status.starting", error: "" });
     try {
-      await this.apis.conversations.create({
+      await this.apis.get(this.snapshot.activeProfileId)?.conversations.create({
         mode: "implementation",
         command,
         projectPath: bootstrap.workspacePath,
@@ -159,27 +375,83 @@ class VSCodePanelManager {
   }
 
   openExternal() {
-    void this.apis.native?.openExternal({ url: bootstrap.serverUrl });
+    const profile = this.profiles.find(
+      (item) => item.id === this.snapshot.activeProfileId,
+    );
+    const apis = this.apis.get(this.snapshot.activeProfileId);
+    if (profile) void apis?.native?.openExternal({ url: profile.baseUrl });
   }
 
   dispose() {
-    this.eventSubscription?.close();
-    this.eventSubscription = null;
+    for (const subscription of this.eventSubscriptions.values()) {
+      subscription.close();
+    }
+    this.eventSubscriptions.clear();
   }
 
-  private ensureEventsOpen() {
-    if (this.eventSubscription) {
+  private ensureEventsOpen(profileId: string, apis: RuntimeAPIs) {
+    if (this.eventSubscriptions.has(profileId)) {
       return;
     }
-    this.eventSubscription = this.apis.events.open({ snapshot: false }, {
-      onEvent: (event) => this.applyEvent(event),
+    this.eventSubscriptions.set(profileId, apis.events.open({ snapshot: false }, {
+      onEvent: (event) => this.applyEvent(profileId, event),
       onError: (error) => {
-        this.commit({ error: error.message });
+        if (profileId === this.snapshot.activeProfileId) {
+          this.commit({ error: error.message });
+        }
       },
+    }));
+  }
+
+  private async applyRunnerIdentity(profileId: string, payload: unknown) {
+    const observed = payload && typeof payload === "object"
+      ? (payload as {
+          runner?: { runnerInstanceId?: unknown };
+        }).runner?.runnerInstanceId
+      : null;
+    if (typeof observed !== "string" || !observed) return false;
+    const profile = this.profiles.find((item) => item.id === profileId);
+    if (!profile) return false;
+    if (profile.runnerInstanceId && profile.runnerInstanceId !== observed) {
+      if (profileId === this.snapshot.activeProfileId) {
+        this.commit({
+          identityExpected: profile.runnerInstanceId,
+          identityObserved: observed,
+        });
+      }
+      return true;
+    }
+    if (!profile.runnerInstanceId) {
+      const response = await this.requestHost<{ success?: boolean }>({
+        type: "vscode:identity",
+        payload: {
+          profileId,
+          runnerInstanceId: observed,
+          confirmChange: false,
+        },
+      });
+      if (response.success) profile.runnerInstanceId = observed;
+    }
+    return false;
+  }
+
+  private requestHost<T>(message: {
+    type: "vscode:login" | "vscode:identity";
+    payload: unknown;
+  }) {
+    const id = `host-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    return new Promise<T>((resolve) => {
+      const unsubscribe = this.transport.addMessageListener((response) => {
+        if ((response as { id?: unknown }).id === id) {
+          unsubscribe();
+          resolve(response as T);
+        }
+      });
+      this.transport.postMessage({ id, ...message });
     });
   }
 
-  private applyEvent(event: unknown) {
+  private applyEvent(profileId: string, event: unknown) {
     if (!event || typeof event !== "object") {
       return;
     }
@@ -189,7 +461,10 @@ class VSCodePanelManager {
     }
     const runs = normalizeRuns((payload as { runs?: unknown }).runs);
     if (runs.length > 0 || Array.isArray((payload as { runs?: unknown }).runs)) {
-      this.commit({ runs, statusKey: "vscode.panel.status.connected" });
+      this.runsByProfile.set(profileId, runs);
+      if (profileId === this.snapshot.activeProfileId) {
+        this.commit({ runs, statusKey: "vscode.panel.status.connected" });
+      }
     }
   }
 
@@ -242,8 +517,29 @@ function Panel({ manager }: { manager: VSCodePanelManager }) {
   return (
     <main className="omni-panel">
       <section>
+        <label className="omni-muted" htmlFor="runner-profile">
+          {t("runner.switcher.label")}
+        </label>
+        <select
+          id="runner-profile"
+          value={snapshot.activeProfileId}
+          onChange={(event) => manager.setActiveProfile(event.currentTarget.value)}
+        >
+          {manager.profiles.map((profile) => (
+            <option key={profile.id} value={profile.id}>
+              {profile.label} — {t(
+                snapshot.profileStatuses[profile.id]
+                  ?? "vscode.panel.status.loading",
+              )}
+            </option>
+          ))}
+        </select>
         <div className="omni-muted">{t("vscode.panel.server")}</div>
-        <div>{bootstrap.serverUrl}</div>
+        <div>
+          {manager.profiles.find(
+            (profile) => profile.id === snapshot.activeProfileId,
+          )?.baseUrl ?? bootstrap.serverUrl}
+        </div>
         <div className="omni-muted">
           {t("vscode.panel.workspace", { path: bootstrap.workspacePath || t("vscode.panel.noWorkspace") })}
         </div>
@@ -254,8 +550,86 @@ function Panel({ manager }: { manager: VSCodePanelManager }) {
           {t("vscode.panel.openInBrowser")}
         </button>
       </section>
+      <section className="omni-panel" style={{ padding: 0 }}>
+        <input
+          value={snapshot.connectionLabel}
+          placeholder={t("runner.field.namePlaceholder")}
+          aria-label={t("runner.field.name")}
+          onChange={(event) => manager.setConnectionDraft({
+            connectionLabel: event.currentTarget.value,
+          })}
+        />
+        <input
+          type="url"
+          value={snapshot.connectionUrl}
+          placeholder={t("runner.field.urlPlaceholder")}
+          aria-label={t("runner.field.url")}
+          onChange={(event) => manager.setConnectionDraft({
+            connectionUrl: event.currentTarget.value,
+          })}
+        />
+        <input
+          type="password"
+          value={snapshot.connectionPassword}
+          placeholder={t("runner.field.passwordPlaceholder")}
+          aria-label={t("runner.field.password")}
+          onChange={(event) => manager.setConnectionDraft({
+            connectionPassword: event.currentTarget.value,
+          })}
+        />
+        <button
+          type="button"
+          disabled={!snapshot.connectionUrl || !snapshot.connectionPassword}
+          onClick={() => void manager.connectRunner()}
+        >
+          {t("runner.action.connect")}
+        </button>
+      </section>
       <div className="omni-muted">{t(snapshot.statusKey)}</div>
       {snapshot.error ? <div className="omni-error">{snapshot.error}</div> : null}
+      {snapshot.identityObserved ? (
+        <section className="omni-panel" style={{ padding: 0 }}>
+          <strong>{t("runner.identity.title")}</strong>
+          <div className="omni-muted">{t("runner.identity.description")}</div>
+          <div>{t("runner.identity.expected", {
+            id: snapshot.identityExpected ?? t("common.unknown"),
+          })}</div>
+          <div>{t("runner.identity.observed", {
+            id: snapshot.identityObserved,
+          })}</div>
+          <button type="button" onClick={() => void manager.acceptIdentity()}>
+            {t("runner.identity.confirm")}
+          </button>
+        </section>
+      ) : null}
+      <section className="omni-panel" style={{ padding: 0 }}>
+        <strong>{t("runner.sessions.title")}</strong>
+        <div className="omni-muted">{t("runner.sessions.description")}</div>
+        {snapshot.sessions.length === 0 ? (
+          <div className="omni-muted">{t("runner.sessions.empty")}</div>
+        ) : snapshot.sessions.map((session) => (
+          <div className="omni-run" key={session.id}>
+            <div className="omni-run-title">
+              {session.label || session.clientKind || t("runner.sessions.unnamed")}
+            </div>
+            {session.id === snapshot.currentSessionId ? (
+              <div className="omni-muted">{t("runner.sessions.current")}</div>
+            ) : null}
+            {session.expiresAt ? (
+              <div className="omni-muted">{t("runner.sessions.expires", {
+                date: new Date(session.expiresAt).toLocaleString(),
+              })}</div>
+            ) : null}
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => void manager.revokeSession(session.id)}
+            >
+              {t("runner.sessions.revoke")}
+            </button>
+          </div>
+        ))}
+      </section>
       <textarea
         value={snapshot.prompt}
         placeholder={t("vscode.panel.promptPlaceholder")}
@@ -271,8 +645,8 @@ function Panel({ manager }: { manager: VSCodePanelManager }) {
   );
 }
 
-const apis = createVSCodeRuntimeAPIs({ transport: makeTransport() });
-const manager = new VSCodePanelManager(apis);
+const transport = makeTransport();
+const manager = new VSCodePanelManager(transport);
 const root = document.getElementById("root");
 
 if (root) {

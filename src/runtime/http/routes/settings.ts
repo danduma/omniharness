@@ -16,7 +16,6 @@ import {
 } from "@/lib/claude-model-gateway";
 import { readClaudeModelGatewaySettings } from "@/server/integrations/claude-model-gateway/settings";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 function isInternalSettingKey(key: string) {
   return key.startsWith("__");
@@ -57,7 +56,7 @@ async function validateClaudeGatewayDraft(body: Record<string, unknown>) {
 }
 
 async function getSettings(request: Request) {
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Settings",
     action: "Load saved settings",
   });
@@ -105,7 +104,7 @@ async function getSettings(request: Request) {
 }
 
 async function postSettings(request: Request) {
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Settings",
     action: "Save settings",
     enforceSameOrigin: true,

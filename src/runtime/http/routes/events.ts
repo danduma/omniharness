@@ -12,10 +12,14 @@ import { buildLiveWorkerSnapshots } from "@/server/workers/live-snapshots";
 import { readWorkerLatestSeq } from "@/server/workers/output-store";
 import { getEventStreamNotificationVersion, waitForEventStreamNotification } from "@/server/events/live-updates";
 import {
+  emitStreamHeartbeatIfDue,
+  emitNamedEvent,
   getEventCursor,
+  getEventStreamCursor,
   getNamedEventsSince,
   recordSnapshotMarker,
 } from "@/server/events/named-events";
+import { parseEventStreamId } from "@/shared/runtime";
 import { withEventPayloadChecksum } from "@/server/events/payload-checksum";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { serializeMessageRecord } from "@/server/conversations/message-records";
@@ -26,9 +30,14 @@ import { reconcileOrphanedProcessSessions } from "@/server/session-providers/pro
 import { reconcilePersistedReloadZombies } from "@/server/runs/persisted-zombie-reconciler";
 import { toAccountDto } from "@/server/accounts/dto";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
+import { createBoundedByteStream } from "@/runtime/http/bounded-byte-stream";
 import { startSlowProbe } from "@/server/slow-probe";
 import { getClaudeModelGatewayService } from "@/server/integrations/claude-model-gateway";
-import { toNextRequest } from "./next-request";
+import {
+  attachStreamTicketCors,
+  redeemStreamTicketRequest,
+} from "@/server/auth/stream-tickets";
+import { subscribeAuthSessionRevocations } from "@/server/auth/session-revocation";
 
 const STREAM_REFRESH_INTERVAL_MS = 15_000;
 const RUNTIME_AGENT_GRACE_MS = 150;
@@ -728,7 +737,7 @@ function delay(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
-function parseLastEventId(raw: string | null | undefined): number | null {
+function parseLastEventId(raw: string | null | undefined): number | string | null {
   if (!raw) {
     return null;
   }
@@ -736,24 +745,36 @@ function parseLastEventId(raw: string | null | undefined): number | null {
   if (!trimmed) {
     return null;
   }
-  const parsed = Number.parseInt(trimmed, 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return null;
+  if (parseEventStreamId(trimmed)) {
+    return trimmed;
   }
-  return parsed;
+  if (/^\d+$/.test(trimmed)) {
+    const parsed = Number(trimmed);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  }
+  return null;
 }
 
-export const handleEventsRequest: OmniHttpHandler = async (request) => {
+export const handleEventsRequest: OmniHttpHandler = async (request, context) => {
   const url = new URL(request.url);
   const isSnapshot = url.searchParams.get("snapshot") === "1";
   const persistedOnly = url.searchParams.get("persisted") === "1";
   const probe = isSnapshot
     ? startSlowProbe(`GET /api/events?snapshot=1${persistedOnly ? "&persisted=1" : ""}${url.searchParams.get("runId") ? `&runId=${url.searchParams.get("runId")}` : ""}`)
     : null;
-  const auth = await requireApiSession(toNextRequest(request), {
-    source: "Events",
-    action: "Stream live updates",
-  });
+  const ticketAuth = isSnapshot
+    ? null
+    : await redeemStreamTicketRequest(request, "/api/events");
+  if (ticketAuth?.response) {
+    probe?.end();
+    return ticketAuth.response;
+  }
+  const auth = ticketAuth
+    ? { session: null, response: null }
+    : await requireApiSession(request, {
+      source: "Events",
+      action: "Stream live updates",
+    });
   probe?.mark("auth");
   if (auth.response) {
     probe?.end();
@@ -793,7 +814,7 @@ export const handleEventsRequest: OmniHttpHandler = async (request) => {
         }
         : payload,
     );
-    response.headers.set("x-omni-last-event-id", String(getEventCursor()));
+    response.headers.set("x-omni-last-event-id", getEventStreamCursor());
     if (payload.snapshotChecksum) {
       response.headers.set("x-omni-snapshot-checksum", payload.snapshotChecksum);
     }
@@ -806,64 +827,89 @@ export const handleEventsRequest: OmniHttpHandler = async (request) => {
 
   const lastEventIdHeader = request.headers.get("last-event-id");
   const resumeFromHeader = parseLastEventId(lastEventIdHeader);
-  const resumeFromQuery = parseLastEventId(url.searchParams.get("lastEventId"));
-  const resumeFromId = resumeFromHeader ?? resumeFromQuery;
+  const hasCursorQuery = url.searchParams.has("cursor");
+  const resumeFromCursorQuery = parseLastEventId(url.searchParams.get("cursor"));
+  const resumeFromLegacyQuery = parseLastEventId(url.searchParams.get("lastEventId"));
+  const resumeFromId = hasCursorQuery
+    ? resumeFromCursorQuery
+    : resumeFromHeader ?? resumeFromLegacyQuery;
   const runIdScope = eventPayloadOptions.selectedRunId ?? null;
+  const authenticatedSessionId = ticketAuth?.session?.id ?? auth.session?.id ?? null;
 
   let streamClosed = false;
-  const stream = new ReadableStream({
+  let unsubscribeRevocation: (() => void) | null = null;
+  const stream = createBoundedByteStream({
     async start(controller) {
       const encoder = new TextEncoder();
       let lastUpdatePayload = "";
+      let lastDeliveredId = resumeFromId ?? getEventCursor();
       // Cursor tracking the highest id we've already streamed to this
       // client; used to drain only newly-buffered named events on each
       // poll iteration without re-emitting events we already replayed.
-      let lastDeliveredId = resumeFromId ?? getEventCursor();
 
-      const writeFrame = (id: number | null, event: string, serializedData: string) => {
-        try {
-          const idLine = id === null ? "" : `id: ${id}\n`;
-          controller.enqueue(encoder.encode(`${idLine}event: ${event}\ndata: ${serializedData}\n\n`));
-        } catch {
-          // Stream might be closed
+      const writeFrame = (id: string, event: string, serializedData: string) => {
+        if (!controller.enqueue(encoder.encode(
+          `id: ${id}\nevent: ${event}\ndata: ${serializedData}\n\n`,
+        ))) {
+          streamClosed = true;
         }
       };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const sendEvent = (event: string, data: any, id: number | null = null) => {
+      const sendEvent = (event: string, data: any, id: string) => {
         writeFrame(id, event, JSON.stringify(data));
       };
-      const sendHeartbeat = () => {
-        try {
-          controller.enqueue(encoder.encode(": heartbeat\n\n"));
-        } catch {
-          // Stream might be closed
-        }
-      };
+      if (authenticatedSessionId) {
+        unsubscribeRevocation = subscribeAuthSessionRevocations((revocation) => {
+          if (
+            revocation.sessionIds === null
+            || revocation.sessionIds.has(authenticatedSessionId)
+          ) {
+            const marker = recordSnapshotMarker(
+              getEventStreamNotificationVersion(),
+              runIdScope,
+            );
+            sendEvent("auth.session_revoked", {
+              kind: "auth.session_revoked",
+              reason: revocation.reason,
+            }, marker.streamId);
+            lastDeliveredId = marker.id;
+            streamClosed = true;
+            controller.close();
+          }
+        });
+      }
       const drainBufferedEvents = (options: { throughId?: number | null } = {}) => {
         const replay = getNamedEventsSince(lastDeliveredId, {
           runId: runIdScope,
           throughId: options.throughId,
         });
         if (replay.resyncRequired) {
-          // Anchor the resync frame to the current cursor so the
-          // client's resume position advances; without an id, the
-          // next reconnect would replay this same control message.
-          sendEvent("stream.resync_required", { reason: "id_out_of_buffer" }, replay.lastEventId);
-          lastDeliveredId = replay.lastEventId;
+          const marker = recordSnapshotMarker(
+            getEventStreamNotificationVersion(),
+            runIdScope,
+          );
+          sendEvent(
+            "stream.resync_required",
+            { reason: replay.resyncReason ?? "cursor_evicted" },
+            marker.streamId,
+          );
+          lastDeliveredId = marker.id;
           return;
         }
         for (const entry of replay.events) {
           if (entry.event.kind === "snapshot.marker") {
             continue;
           }
-          writeFrame(entry.id, entry.event.kind, JSON.stringify(entry.event));
+          writeFrame(entry.streamId, entry.event.kind, JSON.stringify(entry.event));
           lastDeliveredId = entry.id;
         }
       };
       const sendUpdateIfChanged = (payload: Awaited<ReturnType<typeof buildPersistedEventPayload>>) => {
         const serializedPayload = JSON.stringify(payload);
         if (serializedPayload === lastUpdatePayload) {
-          sendHeartbeat();
+          emitStreamHeartbeatIfDue();
+          drainBufferedEvents();
+          notificationVersionAtStart = getEventStreamNotificationVersion();
           return;
         }
 
@@ -885,7 +931,7 @@ export const handleEventsRequest: OmniHttpHandler = async (request) => {
         // drain below, preserving monotonic SSE ids.
         drainBufferedEvents({ throughId: marker.id - 1 });
         lastDeliveredId = marker.id;
-        writeFrame(marker.id, "update", serializedPayload);
+        writeFrame(marker.streamId, "update", serializedPayload);
       };
 
       request.signal.addEventListener("abort", () => {
@@ -926,10 +972,15 @@ export const handleEventsRequest: OmniHttpHandler = async (request) => {
           drainBufferedEvents();
         } catch (e) {
           console.error("SSE Poll Error", e);
+          const marker = recordSnapshotMarker(
+            getEventStreamNotificationVersion(),
+            runIdScope,
+          );
           sendEvent("update_error", buildAppError(e, {
             source: "Events",
             action: "Stream live updates",
-          }));
+          }), marker.streamId);
+          lastDeliveredId = marker.id;
         }
 
         if (!streamClosed) {
@@ -938,21 +989,44 @@ export const handleEventsRequest: OmniHttpHandler = async (request) => {
             if (waitResult.notified) {
               break;
             }
-            sendHeartbeat();
+            emitStreamHeartbeatIfDue();
+            drainBufferedEvents();
+            notificationVersionAtStart = getEventStreamNotificationVersion();
           }
         }
       }
+      unsubscribeRevocation?.();
+      unsubscribeRevocation = null;
     },
     cancel() {
       streamClosed = true;
+      unsubscribeRevocation?.();
+      unsubscribeRevocation = null;
+    },
+    onOverflow(overflow) {
+      streamClosed = true;
+      emitNamedEvent({
+        kind: "stream.subscriber_overflow",
+        stream: "events",
+        surface: context.surface,
+        ...overflow,
+        ...(runIdScope ? { runId: runIdScope } : {}),
+      });
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "stream.subscriber_overflow",
+        message: "A slow event-stream subscriber exceeded its bounded queue and was disconnected.",
+        surface: "log",
+        ...(runIdScope ? { runId: runIdScope } : {}),
+      });
     },
   });
 
-  return new Response(stream, {
+  return attachStreamTicketCors(new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       "Connection": "keep-alive",
     },
-  });
+  }), ticketAuth?.origin ?? null);
 };

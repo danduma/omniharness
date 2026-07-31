@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { hash, verify } from "@node-rs/argon2";
+import { createClient } from "@libsql/client";
 import { escapeEnvValueForDotenv } from "./setup-auth.mjs";
 
 const AUTH_HASH_KEY = "OMNIHARNESS_AUTH_PASSWORD_HASH";
@@ -154,18 +155,69 @@ function usage() {
     "Usage:",
     "  pnpm auth:password status [--env-file .env]",
     "  pnpm auth:password verify [password] [--env-file .env]",
-    "  pnpm auth:password set [password] [--env-file .env]",
+    "  pnpm auth:password set [password] [--password-file path] [--env-file .env] [--keep-sessions]",
     "",
     "If password is omitted for `set` or `verify`, the command prompts in a TTY.",
     "",
   ].join("\n");
 }
 
-function parseArgs(argv) {
+export async function recordPasswordRotation(options = {}) {
+  const rootDir = path.resolve(options.rootDir ?? process.env.OMNIHARNESS_ROOT ?? process.cwd());
+  const databasePath = path.join(rootDir, "sqlite.db");
+  if (!fs.existsSync(databasePath)) {
+    return { sessionCount: 0, databaseFound: false };
+  }
+
+  const client = createClient({ url: `file:${databasePath}` });
+  try {
+    const tables = await client.execute(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('auth_sessions', 'auth_events')",
+    );
+    const names = new Set(tables.rows.map((row) => String(row.name)));
+    if (!names.has("auth_sessions")) {
+      return { sessionCount: 0, databaseFound: true };
+    }
+    const active = await client.execute(
+      "SELECT COUNT(*) AS count FROM auth_sessions WHERE revoked_at IS NULL",
+    );
+    const sessionCount = Number(active.rows[0]?.count ?? 0);
+    const now = Date.now();
+    if (!options.keepSessions) {
+      await client.execute({
+        sql: "UPDATE auth_sessions SET revoked_at = ?, updated_at = ? WHERE revoked_at IS NULL",
+        args: [now, now],
+      });
+    }
+    if (names.has("auth_events")) {
+      await client.execute({
+        sql: `INSERT INTO auth_events
+          (id, session_id, pair_token_id, event_type, details, created_at)
+          VALUES (?, NULL, NULL, ?, ?, ?)`,
+        args: [
+          crypto.randomUUID(),
+          "auth.password_rotated",
+          JSON.stringify({
+            keepSessions: Boolean(options.keepSessions),
+            revokedSessionCount: options.keepSessions ? 0 : sessionCount,
+          }),
+          now,
+        ],
+      });
+    }
+    return { sessionCount, databaseFound: true };
+  } finally {
+    client.close();
+  }
+}
+
+export function parseAuthPasswordArgs(argv) {
   const options = {
     command: "status",
     envFile: path.resolve(".env"),
     password: null,
+    passwordFile: null,
+    keepSessions: false,
   };
   const positional = [];
 
@@ -178,6 +230,19 @@ function parseArgs(argv) {
       }
       options.envFile = path.resolve(next);
       index += 1;
+      continue;
+    }
+    if (arg === "--password-file") {
+      const next = argv[index + 1];
+      if (!next) {
+        throw new Error("--password-file requires a path.");
+      }
+      options.passwordFile = path.resolve(next);
+      index += 1;
+      continue;
+    }
+    if (arg === "--keep-sessions") {
+      options.keepSessions = true;
       continue;
     }
     if (arg === "-h" || arg === "--help") {
@@ -202,6 +267,18 @@ function parseArgs(argv) {
   }
 
   return options;
+}
+
+export function readProtectedPasswordFile(passwordFile) {
+  const stat = fs.statSync(passwordFile);
+  if ((stat.mode & 0o777) !== 0o600) {
+    throw new Error("Password files must have mode 0600.");
+  }
+  const password = fs.readFileSync(passwordFile, "utf8").replace(/\r?\n$/, "");
+  if (!password) {
+    throw new Error("Password file must not be empty.");
+  }
+  return password;
 }
 
 async function promptHidden(message) {
@@ -263,7 +340,7 @@ function readEnvFile(envFile) {
 }
 
 async function main() {
-  const options = parseArgs(process.argv.slice(2));
+  const options = parseAuthPasswordArgs(process.argv.slice(2));
   if (options.command === "help") {
     process.stdout.write(usage());
     return;
@@ -276,7 +353,9 @@ async function main() {
   }
 
   if (options.command === "verify") {
-    const password = options.password ?? await promptHidden("OmniHarness password to verify: ");
+    const password = options.password
+      ?? (options.passwordFile ? readProtectedPasswordFile(options.passwordFile) : null)
+      ?? await promptHidden("OmniHarness password to verify: ");
     const valid = await verifyPasswordAgainstEnvText(envText, password, process.env);
     process.stdout.write(valid ? "Password matches OmniHarness auth configuration.\n" : "Password does not match OmniHarness auth configuration.\n");
     process.exitCode = valid ? 0 : 1;
@@ -284,12 +363,23 @@ async function main() {
   }
 
   if (options.command === "set") {
-    const password = options.password ?? await promptHidden("New OmniHarness password: ");
+    const password = options.password
+      ?? (options.passwordFile ? readProtectedPasswordFile(options.passwordFile) : null)
+      ?? await promptHidden("New OmniHarness password: ");
     const result = await updateEnvTextWithPassword(envText, password);
     fs.mkdirSync(path.dirname(options.envFile), { recursive: true });
     fs.writeFileSync(options.envFile, result.envText, { mode: 0o600 });
     fs.chmodSync(options.envFile, 0o600);
+    const rotation = await recordPasswordRotation({
+      rootDir: path.dirname(options.envFile),
+      keepSessions: options.keepSessions,
+    });
     process.stdout.write(`Updated ${options.envFile} with ${AUTH_HASH_KEY}.\n`);
+    if (options.keepSessions) {
+      process.stdout.write("Kept existing sessions by explicit request; this override is recorded in the auth audit log.\n");
+    } else if (rotation.databaseFound) {
+      process.stdout.write(`Revoked ${rotation.sessionCount} existing session${rotation.sessionCount === 1 ? "" : "s"}.\n`);
+    }
     process.stdout.write("Restart OmniHarness for the new password to take effect.\n");
     return;
   }

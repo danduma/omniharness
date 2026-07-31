@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { AppRequestError, normalizeAppError, parseErrorResponse, requestJson } from "@/lib/app-errors";
+import { describe, expect, it } from "vitest";
+import { AppRequestError, normalizeAppError, parseErrorResponse } from "@/lib/app-errors";
 
 describe("app error helpers", () => {
   it("normalizes structured error payloads from API responses", async () => {
@@ -24,8 +24,8 @@ describe("app error helpers", () => {
     });
   });
 
-  it("throws AppRequestError with structured metadata for failed fetches", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+  it("preserves structured metadata in AppRequestError", async () => {
+    const response = new Response(JSON.stringify({
       error: {
         message: "Unable to decrypt setting \"SUPERVISOR_LLM_API_KEY\".",
         source: "Settings",
@@ -34,23 +34,15 @@ describe("app error helpers", () => {
     }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
-    })));
-
-    try {
-      await requestJson("/api/settings");
-      throw new Error("expected requestJson to throw");
-    } catch (error) {
-      expect(error).toBeInstanceOf(AppRequestError);
-      expect(normalizeAppError(error)).toEqual({
-        message: 'Unable to decrypt setting "SUPERVISOR_LLM_API_KEY".',
-        source: "Settings",
-        action: "Load saved settings",
-        suggestion: undefined,
-        details: undefined,
-        status: 500,
-      });
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    });
+    const error = new AppRequestError(await parseErrorResponse(response));
+    expect(normalizeAppError(error)).toEqual({
+      message: 'Unable to decrypt setting "SUPERVISOR_LLM_API_KEY".',
+      source: "Settings",
+      action: "Load saved settings",
+      suggestion: undefined,
+      details: undefined,
+      status: 500,
+    });
   });
 });

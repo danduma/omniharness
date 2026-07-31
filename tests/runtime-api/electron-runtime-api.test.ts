@@ -2,11 +2,24 @@ import { describe, expect, it, vi } from "vitest";
 import { createElectronRuntimeAPIs } from "@/runtime-api/electron";
 
 describe("createElectronRuntimeAPIs", () => {
-  it("wraps the web adapter with Electron runtime metadata and native commands", async () => {
+  it("uses a validated host bridge with Electron runtime metadata and native commands", async () => {
     const openExternal = vi.fn(async () => ({ ok: true as const }));
     const notify = vi.fn(async () => ({ ok: true }));
     const apis = createElectronRuntimeAPIs({
-      nativeBridge: {
+      target: {
+        profileId: "profile-1",
+        baseUrl: "https://runner.example",
+        credentialRef: "credential-1",
+        runnerInstanceId: "runner-1",
+      },
+      bridge: {
+        invokeRuntime: vi.fn(),
+        addRuntimeListener: () => () => {},
+        profileGet: () => null,
+        profileSet: () => {},
+        profileRemove: () => {},
+        credential: vi.fn(),
+        tls: vi.fn(),
         openExternal,
         notify,
       },

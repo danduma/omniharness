@@ -67,7 +67,11 @@ process.stdin.on('data', (chunk) => {
     if (message.method === 'session/set_config_option') {
       append({ method: message.method, params: message.params });
       if (message.params.configId === 'model') currentModel = message.params.value;
-      write({ jsonrpc: '2.0', id: message.id, result: { configOptions: configOptions() } });
+      // The refreshed config is optional in the protocol; adapters that
+      // acknowledge the set without echoing it back exercise a different
+      // read-back path in the manager.
+      const echoConfig = process.env.FAKE_ACP_OMIT_SET_CONFIG_RESULT !== '1';
+      write({ jsonrpc: '2.0', id: message.id, result: echoConfig ? { configOptions: configOptions() } : {} });
     }
   }
 });
@@ -84,7 +88,7 @@ function readRequests(requestLog: string) {
   return raw ? raw.split(/\r?\n/g).map((line) => JSON.parse(line)) : [];
 }
 
-async function startClaudeWorker(options: { model?: string; currentModel?: string }) {
+async function startClaudeWorker(options: { model?: string; currentModel?: string; omitSetConfigResult?: boolean }) {
   const projectDir = createTempDir("omni-runtime-claude-model-project-");
   const binDir = createTempDir("omni-runtime-claude-model-bin-");
   const requestLog = join(projectDir, "requests.jsonl");
@@ -93,6 +97,7 @@ async function startClaudeWorker(options: { model?: string; currentModel?: strin
     env: {
       ...process.env,
       OMNIHARNESS_MEMORY_TRACE: "0",
+      OMNIHARNESS_RESOURCE_GUARD: "0",
       OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
       PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
     },
@@ -107,6 +112,7 @@ async function startClaudeWorker(options: { model?: string; currentModel?: strin
       env: {
         FAKE_ACP_REQUEST_LOG: requestLog,
         ...(options.currentModel ? { FAKE_ACP_CURRENT_MODEL: options.currentModel } : {}),
+        ...(options.omitSetConfigResult ? { FAKE_ACP_OMIT_SET_CONFIG_RESULT: "1" } : {}),
       },
     });
     return { status, requests: readRequests(requestLog) };
@@ -133,21 +139,61 @@ describe("Claude worker model pinning", () => {
     expect(status.effectiveModel).toBe("opus");
   }, 15_000);
 
-  it("refuses to launch when the requested version is not the one the alias runs", async () => {
-    // This CLI's `opus` alias is Opus 4.8. Launching an Opus 5 worker on it
-    // would attribute every answer to a model that never ran, so the spawn
-    // must fail loudly instead.
-    await expect(startClaudeWorker({ model: "claude-opus-5", currentModel: "default" }))
-      .rejects.toThrow(/claude-opus-5.*not offered.*4\.8/s);
-  }, 15_000);
-
-  it("replaces an inherited 1M-context model that the subscription cannot run", async () => {
-    const { status, requests } = await startClaudeWorker({ currentModel: "claude-fable-5[1m]" });
+  it("drops to the lower version the family actually offers", async () => {
+    // This CLI's `opus` alias is Opus 4.8. An Opus 5 request settles for it —
+    // a lower version of the right family is a substitution the caller can
+    // live with — and `effectiveModel` records what will really run.
+    const { status, requests } = await startClaudeWorker({ model: "claude-opus-5", currentModel: "default" });
 
     expect(requests.filter((event) => event.method === "session/set_config_option")).toEqual([
-      expect.objectContaining({ params: expect.objectContaining({ configId: "model", value: "default" }) }),
+      expect.objectContaining({ params: expect.objectContaining({ configId: "model", value: "opus" }) }),
     ]);
-    expect(status.effectiveModel).toBe("default");
+    expect(status.effectiveModel).toBe("opus");
+    expect(status.effectiveModel).not.toBe("claude-opus-5");
+  }, 15_000);
+
+  it("runs the 1M-only Fable rather than crossing into another family", async () => {
+    // Regression for run 594224099b56. This CLI lists Fable only as
+    // `claude-fable-5[1m]`; the old resolver answered the request with
+    // `default` (Sonnet 4.6 here, Opus 4.8 in the real incident).
+    const { status, requests } = await startClaudeWorker({ model: "claude-fable-5", currentModel: "default" });
+
+    expect(requests.filter((event) => event.method === "session/set_config_option")).toEqual([
+      expect.objectContaining({ params: expect.objectContaining({ configId: "model", value: "claude-fable-5[1m]" }) }),
+    ]);
+    expect(status.effectiveModel).toBe("claude-fable-5[1m]");
+  }, 15_000);
+
+  it("records the model it pinned when the adapter acknowledges without echoing the config", async () => {
+    // Reading `effectiveModel` back from the session config is only safe when
+    // the adapter handed that config back. Here it does not, so the pre-pin
+    // snapshot still says `default` — recording that would report the model the
+    // worker was moved *off*, the same mislabelling in the other direction.
+    const { status, requests } = await startClaudeWorker({
+      model: "claude-fable-5",
+      currentModel: "default",
+      omitSetConfigResult: true,
+    });
+
+    expect(requests.filter((event) => event.method === "session/set_config_option")).toEqual([
+      expect.objectContaining({ params: expect.objectContaining({ configId: "model", value: "claude-fable-5[1m]" }) }),
+    ]);
+    expect(status.effectiveModel).toBe("claude-fable-5[1m]");
+  }, 15_000);
+
+  it("refuses to launch when the requested family is not offered at all", async () => {
+    await expect(startClaudeWorker({ model: "claude-gemini-3", currentModel: "default" }))
+      .rejects.toThrow(/claude-gemini-3.*not offered/s);
+  }, 15_000);
+
+  it("keeps an inherited 1M model when no same-model standard listing exists", async () => {
+    // This CLI has no standard-context Fable, so the only way off `[1m]` is a
+    // different model. Nothing was requested, so nothing justifies that: the
+    // session stays on the Fable the user's own `/model` selected.
+    const { status, requests } = await startClaudeWorker({ currentModel: "claude-fable-5[1m]" });
+
+    expect(requests.filter((event) => event.method === "session/set_config_option")).toEqual([]);
+    expect(status.effectiveModel).toBe("claude-fable-5[1m]");
   }, 15_000);
 
   it("leaves the session alone when it already runs the requested model", async () => {

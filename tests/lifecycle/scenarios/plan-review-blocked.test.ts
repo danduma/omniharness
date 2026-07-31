@@ -13,8 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/server/db";
 import { executionEvents, planningReviewRuns } from "@/server/db/schema";
 
-import * as eventsRoute from "@/app/api/events/route";
-import * as planningReviewRoute from "@/app/api/planning/[id]/review/route";
+import { eventsRouteModule as eventsRoute } from "@/../tests/helpers/runtime-routes";
+import { planningReviewRouteModule as planningReviewRoute } from "@/../tests/helpers/runtime-routes";
 
 import { startLifecycleHarness, type LifecycleServer } from "../harness/server";
 import { LifecycleClient } from "../harness/client";

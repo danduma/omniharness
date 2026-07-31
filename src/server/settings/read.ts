@@ -4,7 +4,7 @@ import { buildAppError } from "@/server/api-errors";
 import { decryptSettingValue, shouldEncryptSetting } from "@/server/settings/crypto";
 import { canonicalizePersistedProjectRoots } from "@/server/projects/canonicalize";
 import { readSystemResourceSnapshot } from "@/server/agent-runtime/resource-admission";
-import type { SettingsResponse } from "@/app/home/types";
+import type { SettingsResponse } from "@/shared/home-types";
 
 function isInternalSettingKey(key: string) {
   return key.startsWith("__");

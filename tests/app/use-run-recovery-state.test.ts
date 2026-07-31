@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { resolveSelectedRecoveryState } from "@/app/home/useRunRecoveryState";
-import type { EventStreamState } from "@/app/home/types";
+import { resolveSelectedRecoveryState } from "@/interface/home/useRunRecoveryState";
+import type { EventStreamState } from "@/interface/home/types";
 
 function baseState(overrides: Partial<EventStreamState> = {}): EventStreamState {
   return {

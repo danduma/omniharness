@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
 import os from "os";
 import path from "path";
 import { mkdir, mkdtemp, rm } from "fs/promises";
@@ -21,7 +20,10 @@ vi.mock("@/server/settings/crypto", () => ({
   },
 }));
 
-import { GET, POST } from "@/app/api/settings/route";
+import {
+  settingsGetRoute as GET,
+  settingsPostRoute as POST,
+} from "@/../tests/helpers/runtime-routes";
 
 describe("/api/settings", () => {
   let tempDirs: string[] = [];
@@ -59,11 +61,11 @@ describe("/api/settings", () => {
       headers.set("origin", "http://localhost");
     }
     const { signal, ...requestInit } = init;
-    const nextRequestInit: ConstructorParameters<typeof NextRequest>[1] = { ...requestInit, headers };
+    const nextRequestInit: ConstructorParameters<typeof Request>[1] = { ...requestInit, headers };
     if (signal) {
       nextRequestInit.signal = signal;
     }
-    return new NextRequest(url, nextRequestInit);
+    return new Request(url, nextRequestInit);
   }
 
   it("stores encrypted values and returns only secret presence metadata to the client", async () => {

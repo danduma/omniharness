@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
@@ -59,10 +58,12 @@ vi.mock("@/server/supervisor/start", () => ({
   startSupervisorRun: mockStartSupervisorRun,
 }));
 
-import { POST } from "@/app/api/conversations/[id]/messages/route";
-import { PATCH as SEND_QUEUED_NOW } from "@/app/api/conversations/[id]/queued-messages/[messageId]/route";
-import { POST as INTERRUPT_QUEUED } from "@/app/api/conversations/[id]/queued-messages/[messageId]/interrupt/route";
-import { POST as INTERRUPT_NEXT } from "@/app/api/conversations/[id]/queued-messages/interrupt-next/route";
+import {
+  conversationMessagesRoute as POST,
+  queuedMessageInterruptNextRoute as INTERRUPT_NEXT,
+  queuedMessageInterruptRoute as INTERRUPT_QUEUED,
+  queuedMessageSendNowRoute as SEND_QUEUED_NOW,
+} from "@/../tests/helpers/runtime-routes";
 import { createQueuedConversationMessage } from "@/server/conversations/queued-messages";
 import {
   __resetWorkerTurnChainsForTests,
@@ -170,7 +171,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       updatedAt: new Date(),
     });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "Can you revise the plan for direct mode?" }),
     });
@@ -220,7 +221,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       updatedAt: now,
     });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: " stop " }),
     });
@@ -281,7 +282,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       updatedAt: now,
     });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({
         content: "stop",
@@ -339,7 +340,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       updatedAt: now,
     });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "stop" }),
     });
@@ -401,7 +402,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       updatedAt: now,
     });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "/stop" }),
     });
@@ -444,7 +445,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       updatedAt: new Date(),
     });
 
-    const req = new NextRequest("http://localhost/api/conversations/run-1/messages", {
+    const req = new Request("http://localhost/api/conversations/run-1/messages", {
       method: "POST",
       body: JSON.stringify({ content: "Wait, I want to change something." }),
     });
@@ -504,7 +505,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       updatedAt: new Date(),
     });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "", attachments: [attachment] }),
     });
@@ -541,7 +542,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       updatedAt: new Date(),
     });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "Continue" }),
     });
@@ -591,7 +592,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       updatedAt: new Date(),
     });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({
         content: "stop the current server on 3002",
@@ -653,7 +654,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       deliveredAt: null,
     });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/queued-messages/${queuedMessageId}`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/queued-messages/${queuedMessageId}`, {
       method: "PATCH",
     });
 
@@ -727,7 +728,7 @@ describe("POST /api/conversations/[id]/messages", () => {
     });
     mockAskAgent.mockImplementationOnce(() => new Promise(() => {}));
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/queued-messages/${queuedMessageId}`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/queued-messages/${queuedMessageId}`, {
       method: "PATCH",
     });
     const response = await Promise.race([
@@ -797,7 +798,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       updatedAt: new Date(),
     });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "Use the existing conversations API." }),
     });
@@ -859,7 +860,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       updatedAt: new Date(),
     });
 
-    const response = await POST(new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const response = await POST(new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({
         content: "Continue now.",
@@ -917,7 +918,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       updatedAt: new Date(),
     });
 
-    const response = await POST(new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const response = await POST(new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "switch workers to gemini" }),
     }), { params: Promise.resolve({ id: runId }) });
@@ -974,7 +975,7 @@ describe("POST /api/conversations/[id]/messages", () => {
 
     mockAskAgent.mockRejectedValueOnce(new Error(`Ask failed: Agent is busy: ${workerId}`));
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "One more thing while you are running" }),
     });
@@ -1069,7 +1070,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       stopReason: null,
     });
 
-    const response = await POST(new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const response = await POST(new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({
         content: "just group files and commit them",
@@ -1139,7 +1140,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       updatedAt: now,
     });
 
-    const response = await POST(new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const response = await POST(new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({
         content: "Stop doing that and check the repo segment.",
@@ -1217,7 +1218,7 @@ describe("POST /api/conversations/[id]/messages", () => {
 
     mockAskAgent.mockImplementationOnce(() => new Promise(() => {}));
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content }),
     });
@@ -1298,7 +1299,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       lastText: "Finished the follow-up.",
     });
 
-    const response = await POST(new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const response = await POST(new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "One more normal follow-up." }),
     }), { params: Promise.resolve({ id: runId }) });
@@ -1360,11 +1361,11 @@ describe("POST /api/conversations/[id]/messages", () => {
       return { response: "Done.", state: "idle" };
     });
 
-    const first = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const first = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "First rapid note" }),
     });
-    const second = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const second = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "Second rapid note" }),
     });
@@ -1452,7 +1453,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       createdAt: now,
     });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "Do not accept this yet." }),
     });
@@ -1530,7 +1531,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       lastText: "Restored session.",
     });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "Please continue the demo work." }),
     });
@@ -1646,7 +1647,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       lastText: "Continuing after stop.",
     });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "continue" }),
     });
@@ -1756,7 +1757,7 @@ describe("POST /api/conversations/[id]/messages", () => {
         lastText: "",
       });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "continue" }),
     });
@@ -1878,7 +1879,7 @@ describe("POST /api/conversations/[id]/messages", () => {
         lastText: "",
       });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "continue" }),
     });
@@ -1963,7 +1964,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       },
     ]);
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "you did it?" }),
     });
@@ -2023,7 +2024,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       resolveAsk = resolve;
     }));
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/messages`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "Keep working until I stop you" }),
     });
@@ -2110,7 +2111,7 @@ describe("POST /api/conversations/[id]/queued-messages interrupt routes", () => 
     const { runId, workerId } = await seedBusyDirectRun();
     const queued = await createQueuedConversationMessage({ runId, targetWorkerId: workerId, action: "queue", content: "Focus on the failing test.", attachments: [] });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/queued-messages/${queued.id}/interrupt`, { method: "POST" });
+    const request = new Request(`http://localhost/api/conversations/${runId}/queued-messages/${queued.id}/interrupt`, { method: "POST" });
     const response = await INTERRUPT_QUEUED(request, { params: Promise.resolve({ id: runId, messageId: queued.id }) });
     expect(response.status).toBe(200);
     const payload = await response.json();
@@ -2133,7 +2134,7 @@ describe("POST /api/conversations/[id]/queued-messages interrupt routes", () => 
     const first = await createQueuedConversationMessage({ runId, targetWorkerId: workerId, action: "queue", content: "First note", attachments: [] });
     await createQueuedConversationMessage({ runId, targetWorkerId: workerId, action: "queue", content: "Second note", attachments: [] });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/queued-messages/interrupt-next`, { method: "POST", body: JSON.stringify({}) });
+    const request = new Request(`http://localhost/api/conversations/${runId}/queued-messages/interrupt-next`, { method: "POST", body: JSON.stringify({}) });
     const response = await INTERRUPT_NEXT(request, { params: Promise.resolve({ id: runId }) });
     expect(response.status).toBe(200);
 
@@ -2147,7 +2148,7 @@ describe("POST /api/conversations/[id]/queued-messages interrupt routes", () => 
   it("interrupt-next with a draft body creates and delivers exactly one queued row", async () => {
     const { runId, workerId } = await seedBusyDirectRun();
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/queued-messages/interrupt-next`, {
+    const request = new Request(`http://localhost/api/conversations/${runId}/queued-messages/interrupt-next`, {
       method: "POST",
       body: JSON.stringify({ content: "Stop and run the linter." }),
     });
@@ -2176,7 +2177,7 @@ describe("POST /api/conversations/[id]/queued-messages interrupt routes", () => 
       throw new Error(`Ask failed: Agent is busy: ${workerId}`);
     });
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/queued-messages/${queued.id}/interrupt`, { method: "POST" });
+    const request = new Request(`http://localhost/api/conversations/${runId}/queued-messages/${queued.id}/interrupt`, { method: "POST" });
     const response = await INTERRUPT_QUEUED(request, { params: Promise.resolve({ id: runId, messageId: queued.id }) });
     expect(response.status).toBe(200);
 
@@ -2190,7 +2191,7 @@ describe("POST /api/conversations/[id]/queued-messages interrupt routes", () => 
   it("refuses interrupt-next when there is no queued message and no draft", async () => {
     const { runId } = await seedBusyDirectRun();
 
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/queued-messages/interrupt-next`, { method: "POST", body: JSON.stringify({}) });
+    const request = new Request(`http://localhost/api/conversations/${runId}/queued-messages/interrupt-next`, { method: "POST", body: JSON.stringify({}) });
     const response = await INTERRUPT_NEXT(request, { params: Promise.resolve({ id: runId }) });
     expect(response.status).toBe(409);
     expect(mockCancelAgentTurn).not.toHaveBeenCalled();
@@ -2199,7 +2200,7 @@ describe("POST /api/conversations/[id]/queued-messages interrupt routes", () => 
   it("rejects non-POST methods on the interrupt route", async () => {
     const { runId, workerId } = await seedBusyDirectRun();
     const queued = await createQueuedConversationMessage({ runId, targetWorkerId: workerId, action: "queue", content: "x", attachments: [] });
-    const request = new NextRequest(`http://localhost/api/conversations/${runId}/queued-messages/${queued.id}/interrupt`, { method: "GET" });
+    const request = new Request(`http://localhost/api/conversations/${runId}/queued-messages/${queued.id}/interrupt`, { method: "GET" });
     const response = await INTERRUPT_QUEUED(request, { params: Promise.resolve({ id: runId, messageId: queued.id }) });
     expect(response.status).toBe(405);
   });

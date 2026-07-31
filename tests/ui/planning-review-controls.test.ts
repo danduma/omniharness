@@ -13,7 +13,7 @@ describe("planning review UI implementation", () => {
   });
 
   it("implements PlanningReviewPreferencesManager.ts correctly", () => {
-    const src = fs.readFileSync(path.join(process.cwd(), "src/app/home/PlanningReviewPreferencesManager.ts"), "utf8");
+    const src = fs.readFileSync(path.join(process.cwd(), "src/interface/home/PlanningReviewPreferencesManager.ts"), "utf8");
     expect(src).toContain("PLANNING_REVIEW_AGENT_SELECTION");
     expect(src).toContain("PLANNING_REVIEW_ROUNDS");
     expect(src).toContain("setAgentSelection");

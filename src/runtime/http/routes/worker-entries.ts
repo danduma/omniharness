@@ -12,7 +12,6 @@ import { requireApiSession } from "@/server/auth/guards";
 import { readWorkerEntriesBefore, readWorkerEntriesSince, readWorkerEntriesTail } from "@/server/workers/output-store";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { startSlowProbe } from "@/server/slow-probe";
-import { toNextRequest } from "./next-request";
 
 const DEFAULT_TAIL_LIMIT = 100;
 const MAX_TAIL_LIMIT = 1000;
@@ -72,7 +71,7 @@ export const handleWorkerEntriesRequest: OmniHttpHandler = async (request, conte
   const workerId = context.params?.workerId?.trim() ?? "?";
   const probe = startSlowProbe(`GET /api/workers/${workerId}/entries`);
 
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Worker entries",
     action: "Load worker stream",
   });

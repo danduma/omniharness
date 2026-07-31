@@ -4,7 +4,7 @@ import {
   isPermanentAutoResumeFailure,
   shouldFireAutoResumeTimer,
   shouldSelectRecoveredRunAfterSuccess,
-} from "@/app/home/auto-resume-selection";
+} from "@/interface/home/auto-resume-selection";
 
 describe("auto-resume selection guards", () => {
   it("does not select a recovered retry when the user has moved to another run", () => {

@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { NextRequest } from "next/server";
 import { db } from "@/server/db";
 import { authEvents, authPairTokens, authSessions } from "@/server/db/schema";
 import { createAuthSession } from "@/server/auth/session";
-import { GET as pairStatusRoute, POST as pairCreateRoute } from "@/app/api/auth/pair/route";
-import { POST as pairRedeemRoute } from "@/app/api/auth/pair/redeem/route";
+import {
+  authPairCreateRoute as pairCreateRoute,
+  authPairRedeemRoute as pairRedeemRoute,
+  authPairStatusRoute as pairStatusRoute,
+} from "@/../tests/helpers/runtime-routes";
 
 function makeCookie(tokenValue: string) {
   return `omni_session=${tokenValue}`;
@@ -15,6 +17,7 @@ describe("pairing routes", () => {
     process.env.OMNIHARNESS_AUTH_PASSWORD = "swordfish";
     delete process.env.OMNIHARNESS_AUTH_PASSWORD_HASH;
     delete process.env.OMNIHARNESS_PUBLIC_ORIGIN;
+    delete process.env.OMNIHARNESS_TRUSTED_PROXIES;
     await db.delete(authEvents);
     await db.delete(authPairTokens);
     await db.delete(authSessions);
@@ -27,7 +30,7 @@ describe("pairing routes", () => {
       authMethod: "password_login",
     });
 
-    const createResponse = await pairCreateRoute(new NextRequest("http://localhost/api/auth/pair", {
+    const createResponse = await pairCreateRoute(new Request("http://localhost/api/auth/pair", {
       method: "POST",
       headers: {
         cookie: makeCookie(desktop.tokenValue),
@@ -46,7 +49,7 @@ describe("pairing routes", () => {
     const pairToken = pairUrl.searchParams.get("pair");
     expect(pairToken).toBeTruthy();
 
-    const redeemResponse = await pairRedeemRoute(new NextRequest("http://localhost/api/auth/pair/redeem", {
+    const redeemResponse = await pairRedeemRoute(new Request("http://localhost/api/auth/pair/redeem", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -63,7 +66,7 @@ describe("pairing routes", () => {
       targetPath: "/session/run-xyz",
     }));
 
-    const statusResponse = await pairStatusRoute(new NextRequest(`http://localhost/api/auth/pair?id=${encodeURIComponent(createdPayload.pairingId)}`, {
+    const statusResponse = await pairStatusRoute(new Request(`http://localhost/api/auth/pair?id=${encodeURIComponent(createdPayload.pairingId)}`, {
       headers: {
         cookie: makeCookie(desktop.tokenValue),
       },
@@ -78,13 +81,14 @@ describe("pairing routes", () => {
   });
 
   it("uses the forwarded public origin for pairing links behind ngrok", async () => {
+    process.env.OMNIHARNESS_TRUSTED_PROXIES = "0.0.0.0";
     const desktop = await createAuthSession({
       label: "Desktop",
       userAgent: "Desktop browser",
       authMethod: "password_login",
     });
 
-    const createResponse = await pairCreateRoute(new NextRequest("http://0.0.0.0:3050/api/auth/pair", {
+    const createResponse = await pairCreateRoute(new Request("http://0.0.0.0:3050/api/auth/pair", {
       method: "POST",
       headers: {
         cookie: makeCookie(desktop.tokenValue),
@@ -110,7 +114,7 @@ describe("pairing routes", () => {
     });
     const browserPairToken = "11111111-1111-4111-8111-111111111111.browser-generated-secret";
 
-    const createResponse = await pairCreateRoute(new NextRequest("http://localhost/api/auth/pair", {
+    const createResponse = await pairCreateRoute(new Request("http://localhost/api/auth/pair", {
       method: "POST",
       headers: {
         cookie: makeCookie(desktop.tokenValue),
@@ -127,7 +131,7 @@ describe("pairing routes", () => {
     const createdPayload = await createResponse.json();
     expect(new URL(createdPayload.pairUrl).searchParams.get("pair")).toBe(browserPairToken);
 
-    const redeemResponse = await pairRedeemRoute(new NextRequest("http://localhost/api/auth/pair/redeem", {
+    const redeemResponse = await pairRedeemRoute(new Request("http://localhost/api/auth/pair/redeem", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -152,7 +156,7 @@ describe("pairing routes", () => {
       authMethod: "password_login",
     });
 
-    const createResponse = await pairCreateRoute(new NextRequest("http://localhost/api/auth/pair", {
+    const createResponse = await pairCreateRoute(new Request("http://localhost/api/auth/pair", {
       method: "POST",
       headers: {
         cookie: makeCookie(desktop.tokenValue),
@@ -164,7 +168,7 @@ describe("pairing routes", () => {
     const createdPayload = await createResponse.json();
     const pairToken = new URL(createdPayload.pairUrl).searchParams.get("pair");
 
-    await pairRedeemRoute(new NextRequest("http://localhost/api/auth/pair/redeem", {
+    await pairRedeemRoute(new Request("http://localhost/api/auth/pair/redeem", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -172,7 +176,7 @@ describe("pairing routes", () => {
       body: JSON.stringify({ pairToken }),
     }));
 
-    const secondRedeem = await pairRedeemRoute(new NextRequest("http://localhost/api/auth/pair/redeem", {
+    const secondRedeem = await pairRedeemRoute(new Request("http://localhost/api/auth/pair/redeem", {
       method: "POST",
       headers: {
         "content-type": "application/json",

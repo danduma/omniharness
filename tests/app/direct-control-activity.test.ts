@@ -6,7 +6,7 @@ import {
   resolveDirectControlPendingAssistantStatus,
   resolvePendingConversationWorkerId,
   shouldShowDirectControlPendingAssistant,
-} from "@/app/home/direct-control-activity";
+} from "@/interface/home/direct-control-activity";
 
 describe("shouldShowDirectControlPendingAssistant", () => {
   it("does not show Thinking from a stale running run when the worker is idle with durable output", () => {

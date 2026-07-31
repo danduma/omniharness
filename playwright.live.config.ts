@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 import { assertLoopbackUrl } from "./tests/e2e/live/safety";
 
 const baseURL = assertLoopbackUrl(
-  process.env.OMNIHARNESS_LIVE_E2E_BASE_URL?.trim() || "http://127.0.0.1:3035",
+  process.env.OMNIHARNESS_LIVE_E2E_BASE_URL?.trim() || "http://127.0.0.1:3050",
 ).origin;
 
 export default defineConfig({

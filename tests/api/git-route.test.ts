@@ -3,7 +3,6 @@ import fs from "fs";
 import { mkdtemp, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
@@ -72,7 +71,7 @@ vi.mock("@/server/supervisor/start", () => ({
   startSupervisorRun: mockStartSupervisorRun,
 }));
 
-import { POST } from "@/app/api/git/route";
+import { gitRoute as POST } from "@/../tests/helpers/runtime-routes";
 
 function git(cwd: string, args: string[]) {
   return execFileSync("git", args, {
@@ -95,7 +94,7 @@ async function createRepo(name: string) {
 }
 
 function request(body: unknown) {
-  return new NextRequest("http://localhost/api/git", {
+  return new Request("http://localhost/api/git", {
     method: "POST",
     headers: {
       origin: "http://localhost",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildSupervisorActivityCard } from "@/app/home/supervisor-activity";
-import type { AgentSnapshot, ExecutionEventRecord, RunRecord } from "@/app/home/types";
+import { buildSupervisorActivityCard } from "@/interface/home/supervisor-activity";
+import type { AgentSnapshot, ExecutionEventRecord, RunRecord } from "@/interface/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 
 const run: RunRecord = {

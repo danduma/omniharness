@@ -1,0 +1,29 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "noEmit": true,
+    "plugins": []
+  },
+  "include": [
+    "src/app/home/**/*.ts",
+    "src/app/home/**/*.tsx",
+    "src/components/**/*.ts",
+    "src/components/**/*.tsx",
+    "src/hooks/**/*.ts",
+    "src/hooks/**/*.tsx",
+    "src/lib/**/*.ts",
+    "src/lib/**/*.tsx",
+    "src/runtime-api/**/*.ts",
+    "src/runtime-api/**/*.tsx",
+    "src/shared/**/*.ts",
+    "src/shared/**/*.tsx",
+    "src/ui/**/*.ts",
+    "src/ui/**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "src/app/home/**/*.server.ts",
+    "src/app/home/**/*.server.tsx"
+  ]
+}

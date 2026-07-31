@@ -4,10 +4,12 @@ import { test, expect } from "vitest";
 
 const readSource = (relativePath: string) => fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 const source = [
-  "src/app/page.tsx",
-  "src/app/layout.tsx",
-  "src/app/home/HomeApp.tsx",
-  "src/app/home/types.ts",
+  "apps/interface/index.html",
+  "apps/interface/src/main.tsx",
+  "src/ui/render-web.tsx",
+  "src/interface/home/HomeApp.tsx",
+  "src/interface/home/types.ts",
+  "src/shared/home-types.ts",
   "src/components/BugDropBootstrap.tsx",
   "src/components/home/ConversationSidebar.tsx",
   "src/components/home/ConversationMain.tsx",
@@ -28,12 +30,10 @@ test("page shell keeps connect-phone as a desktop-only menu action and trims rou
 
 test("bugdrop uses the sidebar menu trigger instead of a floating button", () => {
   expect(source).toContain("<BugDropBootstrap />");
-  expect(source).toContain('script.dataset.button = "false"');
-  expect(source).toContain('window.BugDrop?.open()');
-  expect(source).toContain('window.localStorage.getItem(OMNI_THEME_MODE_STORAGE_KEY) === "night"');
-  expect(source).toContain('style.id = BUGDROP_THEME_PATCH_ID');
+  expect(source).toContain('window.open(BUG_REPORT_URL, "_blank", "noopener,noreferrer")');
   expect(source).toContain('document.addEventListener(BUGDROP_OPEN_EVENT, handleOpenRequest)');
-  expect(source).toContain('observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] })');
+  expect(source).not.toContain('document.createElement("script")');
+  expect(source).not.toContain("bugdrop.neonwatty.workers.dev");
   expect(source).not.toContain('data-repo="danduma/omniharness"');
 });
 

@@ -1,26 +1,11 @@
 import { buildAuthSessionState } from "@/server/auth/session-state";
 import { buildPersistedEventPayload } from "@/server/events/persisted-snapshot";
-import { getEventCursor } from "@/server/events/named-events";
+import { getEventStreamCursor } from "@/server/events/named-events";
 import { readSettingsState } from "@/server/settings/read";
-import type { EventStreamState, SettingsResponse, AuthSessionResponse } from "@/app/home/types";
+import { buildRunnerBootstrapIdentity } from "@/server/runner/identity";
+import type { HomeBootstrapPayload } from "@/shared/bootstrap";
 
-export type HomeBootstrapPayload = {
-  id: string;
-  route: {
-    selectedRunId: string | null;
-    draftProjectPath: string | null;
-    pairTokenFromUrl: string | null;
-  };
-  initialEventState: EventStreamState | null;
-  initialLastEventId: string;
-  initialQueries: {
-    session: AuthSessionResponse | null;
-    settings: SettingsResponse | null;
-  };
-  features: {
-    unifiedWorkerStream: boolean;
-  };
-};
+export type { HomeBootstrapPayload } from "@/shared/bootstrap";
 
 type PageSearchParams = Record<string, string | string[] | undefined>;
 
@@ -73,12 +58,15 @@ export async function buildRuntimeBootstrap({
   });
   const appUnlocked = Boolean(session && (!session.enabled || session.authenticated));
 
-  const [settings, initialEventState] = appUnlocked && includeInitialData
-    ? await Promise.all([
+  const [runner, [settings, initialEventState]] = await Promise.all([
+    buildRunnerBootstrapIdentity(),
+    appUnlocked && includeInitialData
+      ? Promise.all([
         readSettingsState(),
         buildPersistedEventPayload({ selectedRunId }),
       ])
-    : [null, null];
+      : Promise.resolve([null, null] as const),
+  ]);
 
   return {
     id: JSON.stringify({
@@ -95,7 +83,7 @@ export async function buildRuntimeBootstrap({
       pairTokenFromUrl,
     },
     initialEventState,
-    initialLastEventId: String(getEventCursor()),
+    initialLastEventId: getEventStreamCursor(),
     initialQueries: {
       session,
       settings,
@@ -107,5 +95,6 @@ export async function buildRuntimeBootstrap({
       // window; future cleanup may drop it entirely.
       unifiedWorkerStream: true,
     },
+    runner,
   };
 }

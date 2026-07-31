@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/server/db";
 import { messages, plans, processSessions, runs, workerCounters, workers } from "@/server/db/schema";
-import * as eventsRoute from "@/app/api/events/route";
-import * as conversationsRoute from "@/app/api/conversations/route";
-import * as runsRoute from "@/app/api/runs/[id]/route";
+import { eventsRouteModule as eventsRoute } from "@/../tests/helpers/runtime-routes";
+import { conversationsRouteModule as conversationsRoute } from "@/../tests/helpers/runtime-routes";
+import { runRouteModule as runsRoute } from "@/../tests/helpers/runtime-routes";
 import { __resetNamedEventsForTests } from "@/server/events/named-events";
 import { startLifecycleHarness, type LifecycleServer } from "../harness/server";
 import { LifecycleClient } from "../harness/client";

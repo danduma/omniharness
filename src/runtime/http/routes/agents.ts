@@ -2,11 +2,10 @@ import { BRIDGE_URL, normalizeAgentRecord } from "@/server/bridge-client";
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 export const handleAgentsRequest: OmniHttpHandler = async (request) => {
   try {
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Agent runtime",
       action: "Load agents",
     });

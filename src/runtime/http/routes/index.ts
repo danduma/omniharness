@@ -4,6 +4,11 @@ import { handleAuthLoginRequest } from "./auth-login";
 import { handleAuthLogoutRequest } from "./auth-logout";
 import { handleAuthPairRequest } from "./auth-pair";
 import { handleAuthPairRedeemRequest } from "./auth-pair-redeem";
+import {
+  handleBrowserAuthorizationApproveRequest,
+  handleBrowserAuthorizationExchangeRequest,
+} from "./auth-browser-authorization";
+import { handleAuthStreamTicketRequest } from "./auth-stream-ticket";
 import { handleSettingsRequest } from "./settings";
 import { handleClaudeModelGatewayRequest } from "./claude-model-gateway";
 import { handleAccountDetailRequest, handleAccountStatusRequest, handleAccountsRequest } from "./accounts";
@@ -14,6 +19,11 @@ import { handlePrewarmWorkerRequest } from "./prewarm-worker";
 import { handleLlmModelsRequest } from "./llm-models";
 import { handleCodexAuthStatusRequest } from "./codex-auth-status";
 import { handleRuntimeBootstrapRequest } from "./runtime-bootstrap";
+import { handleHealthRequest } from "./health";
+import {
+  handleRunnerRekeyRequest,
+  handleRunnerSettingsRequest,
+} from "./runner-settings";
 import { handleNotificationsRequest } from "./notifications";
 import { handlePlansRequest } from "./plans";
 import { handleProjectMemoryRequest } from "./project-memory";
@@ -48,10 +58,38 @@ import {
 
 export function createOmniRuntimeHttpRegistry() {
   return createOmniHttpRegistry()
+    .route("GET", "/api/healthz", handleHealthRequest, {
+      auth: "public",
+      responseKind: "json",
+    })
     .route("GET", "/api/runtime/bootstrap", handleRuntimeBootstrapRequest)
+    .route("PATCH", "/api/runner", handleRunnerSettingsRequest)
+    .route("POST", "/api/runner/rekey", handleRunnerRekeyRequest)
     .route("GET", "/api/auth/session", handleAuthSessionRequest)
     .route("DELETE", "/api/auth/session", handleAuthSessionRequest)
     .route("POST", "/api/auth/login", handleAuthLoginRequest)
+    .route(
+      "POST",
+      "/api/auth/browser-authorization/approve",
+      handleBrowserAuthorizationApproveRequest,
+      { auth: "same-origin-session", responseKind: "json" },
+    )
+    .route(
+      "POST",
+      "/api/auth/browser-authorization/exchange",
+      handleBrowserAuthorizationExchangeRequest,
+      { auth: "public", responseKind: "json" },
+    )
+    .route(
+      "OPTIONS",
+      "/api/auth/browser-authorization/exchange",
+      handleBrowserAuthorizationExchangeRequest,
+      { auth: "public", responseKind: "empty" },
+    )
+    .route("POST", "/api/auth/stream-ticket", handleAuthStreamTicketRequest, {
+      auth: "session",
+      responseKind: "json",
+    })
     .route("POST", "/api/auth/logout", handleAuthLogoutRequest)
     .route("GET", "/api/auth/pair", handleAuthPairRequest)
     .route("POST", "/api/auth/pair", handleAuthPairRequest)
@@ -118,6 +156,11 @@ export { handleAuthLoginRequest } from "./auth-login";
 export { handleAuthLogoutRequest } from "./auth-logout";
 export { handleAuthPairRequest } from "./auth-pair";
 export { handleAuthPairRedeemRequest } from "./auth-pair-redeem";
+export {
+  handleBrowserAuthorizationApproveRequest,
+  handleBrowserAuthorizationExchangeRequest,
+} from "./auth-browser-authorization";
+export { handleAuthStreamTicketRequest } from "./auth-stream-ticket";
 export { handleSettingsRequest } from "./settings";
 export { handleClaudeModelGatewayRequest } from "./claude-model-gateway";
 export { handleAccountDetailRequest, handleAccountStatusRequest, handleAccountsRequest } from "./accounts";
@@ -128,6 +171,11 @@ export { handlePrewarmWorkerRequest } from "./prewarm-worker";
 export { handleLlmModelsRequest } from "./llm-models";
 export { handleCodexAuthStatusRequest } from "./codex-auth-status";
 export { handleRuntimeBootstrapRequest } from "./runtime-bootstrap";
+export {
+  handleRunnerRekeyRequest,
+  handleRunnerSettingsRequest,
+} from "./runner-settings";
+export { handleHealthRequest } from "./health";
 export { handleNotificationsRequest } from "./notifications";
 export { handlePlansRequest } from "./plans";
 export { handleProjectMemoryRequest } from "./project-memory";
@@ -144,6 +192,7 @@ export {
   handleQueuedConversationMessageInterruptNextRequest,
 } from "./conversation-messages";
 export { handleWorkerEntriesRequest } from "./worker-entries";
+export { handleConversationTranscriptRequest } from "./conversation-transcript";
 export { handleEventsLogRequest } from "./events-log";
 export { handleEventsRequest } from "./events";
 export { handleSupervisorRequest } from "./supervisor";

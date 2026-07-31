@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import { formatErrorMessage } from "@/server/error-format";
 
 export interface AppErrorPayload {
@@ -64,5 +63,5 @@ export function errorResponse(
   const tag = [payload.source, payload.action].filter(Boolean).join(" / ") || "api";
   const stack = error instanceof Error ? error.stack : undefined;
   console.error(`[api-error ${status}] ${tag}: ${payload.message}${stack ? `\n${stack}` : ""}`);
-  return NextResponse.json({ error: payload }, { status });
+  return Response.json({ error: payload }, { status });
 }

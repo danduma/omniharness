@@ -3,7 +3,7 @@ import {
   isManualStopCommand,
   resolveBusyComposerBehavior,
   resolveBusyMessageActionForSubmitAction,
-} from "@/app/home/busy-message-behavior";
+} from "@/interface/home/busy-message-behavior";
 
 describe("busy message behavior", () => {
   it("keeps stop available for empty input while a conversation is stoppable", () => {

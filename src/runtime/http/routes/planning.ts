@@ -9,7 +9,6 @@ import { startImplementationPhase } from "@/server/planning/transition";
 import { startPlanningReview } from "@/server/planning/review";
 import { parsePlanningReviewPreferences } from "@/server/planning/review-preferences";
 import type { OmniHttpHandler, OmniRequestContext } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 function requirePlanningRunId(context: OmniRequestContext) {
   const runId = context.params?.id?.trim();
@@ -28,7 +27,7 @@ export const handlePlanningReviewRequest: OmniHttpHandler = async (request, cont
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Planning",
       action: "Review planning conversation",
       enforceSameOrigin: true,
@@ -76,7 +75,7 @@ export const handlePlanningPromoteRequest: OmniHttpHandler = async (request, con
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Planning",
       action: "Promote planning conversation",
       enforceSameOrigin: true,

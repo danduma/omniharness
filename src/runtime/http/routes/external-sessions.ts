@@ -2,7 +2,6 @@ import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { discoverExternalClaudeSessions, discoverExternalGeminiSessions } from "@/server/external-sessions/discovery";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 export const handleExternalSessionsRequest: OmniHttpHandler = async (request) => {
   try {
@@ -13,7 +12,7 @@ export const handleExternalSessionsRequest: OmniHttpHandler = async (request) =>
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "External sessions",
       action: "List external sessions",
     });

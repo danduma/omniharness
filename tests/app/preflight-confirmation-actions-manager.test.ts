@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   PREFLIGHT_CONFIRMATION_ACTIONS_STORAGE_KEY,
   PreflightConfirmationActionsManager,
-} from "@/app/home/PreflightConfirmationActionsManager";
+} from "@/interface/home/PreflightConfirmationActionsManager";
 
 function installLocalStorage(initialValue?: string) {
   const values = new Map<string, string>();

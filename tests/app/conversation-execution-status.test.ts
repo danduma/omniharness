@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ExecutionEventRecord, RunRecord } from "@/app/home/types";
+import type { ExecutionEventRecord, RunRecord } from "@/interface/home/types";
 
 vi.mock("react", () => ({
   useMemo: (factory: () => unknown) => factory(),
 }));
 
-import { useConversationExecutionStatus } from "@/app/home/useConversationExecutionStatus";
+import { useConversationExecutionStatus } from "@/interface/home/useConversationExecutionStatus";
 
 function buildRun(overrides: Partial<RunRecord>): RunRecord {
   return {

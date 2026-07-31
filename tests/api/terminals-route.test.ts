@@ -15,6 +15,7 @@ import {
   handleTerminalDeleteRequest,
   handleTerminalInputRequest,
   handleTerminalResizeRequest,
+  handleTerminalStreamRequest,
 } from "@/runtime/http/routes/terminals";
 
 const ctx = { surface: "web" as const };
@@ -84,5 +85,78 @@ describe("terminal HTTP routes", () => {
       { ...ctx, params: { id: "missing" } },
     );
     expect(res.status).toBe(400);
+  });
+
+  it("gives every terminal stream frame an event id", async () => {
+    const created = await handleTerminalCreateRequest(
+      jsonRequest("http://localhost/api/terminals", "POST", {}),
+      ctx,
+    );
+    const { terminalId } = await created.json();
+    const abortController = new AbortController();
+
+    const streamResponse = await handleTerminalStreamRequest(
+      new Request(
+        `http://localhost/api/terminals/${terminalId}/stream`,
+        { signal: abortController.signal },
+      ),
+      { ...ctx, params: { id: terminalId } },
+    );
+    const reader = streamResponse.body!.getReader();
+    const firstFrame = new TextDecoder().decode((await reader.read()).value);
+
+    expect(firstFrame).toMatch(/^id: 0\nevent: connected\ndata: \{\}\n\n$/);
+
+    abortController.abort();
+    await reader.cancel();
+    await handleTerminalDeleteRequest(
+      jsonRequest(`http://localhost/api/terminals/${terminalId}`, "DELETE"),
+      { ...ctx, params: { id: terminalId } },
+    );
+  });
+
+  it("replays bounded terminal scrollback before waiting for live output", async () => {
+    const created = await handleTerminalCreateRequest(
+      jsonRequest("http://localhost/api/terminals", "POST", {}),
+      ctx,
+    );
+    const { terminalId } = await created.json();
+    await handleTerminalInputRequest(
+      jsonRequest(
+        `http://localhost/api/terminals/${terminalId}/input`,
+        "POST",
+        { data: "printf 'scrollback-marker\\n'\n" },
+      ),
+      { ...ctx, params: { id: terminalId } },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const abortController = new AbortController();
+    const streamResponse = await handleTerminalStreamRequest(
+      new Request(
+        `http://localhost/api/terminals/${terminalId}/stream`,
+        { signal: abortController.signal },
+      ),
+      { ...ctx, params: { id: terminalId } },
+    );
+    const reader = streamResponse.body!.getReader();
+    const decoder = new TextDecoder();
+    let replayed = "";
+    for (let index = 0; index < 20 && !replayed.includes("scrollback-marker"); index += 1) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        break;
+      }
+      replayed += decoder.decode(chunk.value);
+    }
+
+    expect(replayed).toContain("event: connected");
+    expect(replayed).toContain("scrollback-marker");
+    abortController.abort();
+    await reader.cancel();
+    await handleTerminalDeleteRequest(
+      jsonRequest(`http://localhost/api/terminals/${terminalId}`, "DELETE"),
+      { ...ctx, params: { id: terminalId } },
+    );
   });
 });

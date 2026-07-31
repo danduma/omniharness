@@ -20,7 +20,6 @@ import {
 import { emitNamedEvent } from "@/server/events/named-events";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { startSlowProbe } from "@/server/slow-probe";
-import { toNextRequest } from "./next-request";
 
 function statusFromError(error: unknown) {
   return typeof (error as { status?: unknown }).status === "number"
@@ -47,7 +46,7 @@ export const handleConversationMessagesRequest: OmniHttpHandler = async (request
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Conversations",
       action: "Send a conversation message",
       enforceSameOrigin: true,
@@ -134,7 +133,7 @@ export const handleQueuedConversationMessageRequest: OmniHttpHandler = async (re
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Conversations",
       action,
       enforceSameOrigin: true,
@@ -189,7 +188,7 @@ export const handleQueuedConversationMessageInterruptRequest: OmniHttpHandler = 
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Conversations",
       action,
       enforceSameOrigin: true,
@@ -221,7 +220,7 @@ export const handleQueuedConversationMessageInterruptNextRequest: OmniHttpHandle
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Conversations",
       action,
       enforceSameOrigin: true,

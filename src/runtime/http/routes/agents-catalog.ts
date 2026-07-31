@@ -12,7 +12,6 @@ import { requireApiSession } from "@/server/auth/guards";
 import { mergeClaudeGatewayModelsIntoCatalog, WorkerModelCatalogManager, type WorkerModelCatalog } from "@/server/worker-models";
 import { readClaudeGatewayModelsFromSettingRows } from "@/server/integrations/claude-model-gateway/settings";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 interface RuntimeDoctorResult {
   type: string;
@@ -130,7 +129,7 @@ async function readRuntimeDoctorSnapshot(options: { refresh?: boolean } = {}): P
 
 export const handleAgentsCatalogRequest: OmniHttpHandler = async (request) => {
   try {
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Agent runtime",
       action: "Load worker availability",
     });

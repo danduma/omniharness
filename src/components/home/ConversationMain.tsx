@@ -1,6 +1,5 @@
 import type React from "react";
-import dynamic from "next/dynamic";
-import { useEffect, useMemo } from "react";
+import { lazy, useEffect, useMemo } from "react";
 import { ArrowDown, ArrowLeftRight, Blocks, Check, ChevronDown, CirclePlay, CircleStop, Copy, FolderGit2, GitBranch, Pencil, RotateCcw, Route } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -21,26 +20,26 @@ import { conversationCopyNoticeManager, conversationMainManager } from "@/compon
 import { type AppErrorDescriptor, appErrorKey } from "@/lib/app-errors";
 import { extractLatestPlainTextTurn } from "@/lib/agent-output";
 import { shouldShowPlanningTerminalActivity } from "@/lib/planning-output";
-import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, NoticeDescriptor, RunRecord, PlanningReviewRunRecord, PlanningReviewRoundRecord, PlanningReviewFindingRecord } from "@/app/home/types";
-import type { RecoveryIncidentRecord, RunRecoveryState } from "@/app/home/types";
-import { formatExecutionTimestamp, formatExecutionEventType, getExecutionEventDetailRows, shouldShowLatestRecoveryAction, summarizeExecutionEvent, type ConversationTimelineItem } from "@/app/home/utils";
-import { buildSupervisorActivityCard, type SupervisorActivityWorker } from "@/app/home/supervisor-activity";
+import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, NoticeDescriptor, RunRecord, PlanningReviewRunRecord, PlanningReviewRoundRecord, PlanningReviewFindingRecord } from "@/interface/home/types";
+import type { RecoveryIncidentRecord, RunRecoveryState } from "@/interface/home/types";
+import { formatExecutionTimestamp, formatExecutionEventType, getExecutionEventDetailRows, shouldShowLatestRecoveryAction, summarizeExecutionEvent, type ConversationTimelineItem } from "@/interface/home/utils";
+import { buildSupervisorActivityCard, type SupervisorActivityWorker } from "@/interface/home/supervisor-activity";
 import { cn } from "@/lib/utils";
 import { shallowEqualRecord, useManagerSelector, useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { ProjectFileReference } from "@/lib/project-file-links";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
-import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "@/app/home/GitWorkspaceManager";
-import { preflightConfirmationActionsManager } from "@/app/home/PreflightConfirmationActionsManager";
-import { useWorkerStream } from "@/app/home/WorkerEntriesManager";
-import { derivePendingElicitationsFromWorkerEntries } from "@/app/home/worker-elicitations";
+import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "@/interface/home/GitWorkspaceManager";
+import { preflightConfirmationActionsManager } from "@/interface/home/PreflightConfirmationActionsManager";
+import { useWorkerStream } from "@/interface/home/WorkerEntriesManager";
+import { derivePendingElicitationsFromWorkerEntries } from "@/interface/home/worker-elicitations";
 import { InlineElicitation, type ElicitationResponseInput } from "@/components/agent-interactions/InlineElicitation";
 import { InlinePermission, type PermissionResponseInput } from "@/components/agent-interactions/InlinePermission";
-import { useConversationTranscript } from "@/app/home/ConversationTranscriptManager";
+import { useConversationTranscript } from "@/interface/home/ConversationTranscriptManager";
 import { isTerminalRunStatus } from "@/lib/run-status";
-import { deriveConversationLoadState, resolveDirectWorkerStreamRefreshInterval, selectDirectConversationEntries, shouldShowDirectConversationLoading } from "@/app/home/direct-worker-stream-loading";
-import { type PlanningReviewAgentSelection } from "@/server/planning/review-preferences";
-import { WORKER_TYPE_LABELS, type SupportedWorkerType } from "@/server/supervisor/worker-types";
-import type { WorkerEntry } from "@/server/workers/entries-types";
+import { deriveConversationLoadState, resolveDirectWorkerStreamRefreshInterval, selectDirectConversationEntries, shouldShowDirectConversationLoading } from "@/interface/home/direct-worker-stream-loading";
+import { type PlanningReviewAgentSelection } from "@/shared/planning-review";
+import { WORKER_TYPE_LABELS, type SupportedWorkerType } from "@/shared/worker-types";
+import type { WorkerEntry } from "@/shared/worker-entries";
 import { CliBrandIcon } from "@/components/cli-brand-icons";
 import { ErrorNotice } from "./ErrorNotice";
 import { RecoveryIncidentInspector } from "./RecoveryIncidentInspector";
@@ -48,9 +47,8 @@ import { RunRecoveryNotice } from "./RunRecoveryNotice";
 import { UserInputMessage, type UserInputMessageAction } from "./UserInputMessage";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 
-const Terminal = dynamic(
-  () => import("@/components/Terminal").then((m) => m.Terminal),
-  { ssr: false },
+const Terminal = lazy(
+  () => import("@/components/Terminal").then((m) => ({ default: m.Terminal })),
 );
 
 const DIRECT_WORKER_STREAM_REFRESH_INTERVAL_MS = 2_000;

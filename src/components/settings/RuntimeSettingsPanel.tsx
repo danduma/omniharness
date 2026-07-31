@@ -1,6 +1,6 @@
 import { Switch } from "@/components/ui/switch";
 import { t, useI18nSnapshot } from "@/lib/i18n";
-import type { SettingsResponse } from "@/app/home/types";
+import type { SettingsResponse } from "@/interface/home/types";
 import {
   resolveRuntimeResourceSettings,
   RUNTIME_RESOURCE_SETTING_KEYS,

@@ -9,7 +9,7 @@ CRITICAL!!:
 
 Testing:
 - When testing the app, use the already-running process if one exists instead of starting another server.
-- The normal local app URL is `http://localhost:3035`; the compressed Next dev server is usually at `http://localhost:3050`.
+- The normal runner URL is `http://localhost:3050`; the Vite development interface is usually at `http://localhost:5173`.
 - Clean up any test sessions/conversations and their associated persisted artifacts before finishing.
 - For lifecycle / chaos-style regressions (reconnect, restart, FK-on-delete, plan-review leftover state), use `pnpm test:lifecycle`. Scenarios live under `tests/lifecycle/scenarios/` and drive the control plane via HTTP/SSE — no Chromium. To debug a specific reported bug, mirror it as a new scenario file.
 - Read `docs/architecture/lifecycle-observability-and-testing.md` before adding new server-side state transitions. It is the spec all new code is held to.

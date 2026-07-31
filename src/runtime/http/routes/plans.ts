@@ -3,7 +3,6 @@ import { db } from "@/server/db";
 import { plans } from "@/server/db/schema";
 import { requireApiSession } from "@/server/auth/guards";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 export const handlePlansRequest: OmniHttpHandler = async (request) => {
   if (request.method !== "GET") {
@@ -13,7 +12,7 @@ export const handlePlansRequest: OmniHttpHandler = async (request) => {
     });
   }
 
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Plans",
     action: "Load plans",
   });

@@ -54,4 +54,38 @@ describe("createOmniHttpRegistry", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ name: "worker 1" });
   });
+
+  it("lists route metadata and derives OPTIONS from the matching registry entries", async () => {
+    const registry = createOmniHttpRegistry()
+      .route("GET", "/api/items/:id", () => Response.json({ ok: true }), {
+        auth: "session",
+        responseKind: "json",
+      })
+      .route("PATCH", "/api/items/:id", () => Response.json({ ok: true }), {
+        auth: "session",
+        responseKind: "json",
+      });
+
+    expect(registry.listRoutes()).toEqual([
+      {
+        method: "GET",
+        pathname: "/api/items/:id",
+        auth: "session",
+        responseKind: "json",
+      },
+      {
+        method: "PATCH",
+        pathname: "/api/items/:id",
+        auth: "session",
+        responseKind: "json",
+      },
+    ]);
+
+    const options = await registry.handle(
+      new Request("http://localhost/api/items/one", { method: "OPTIONS" }),
+      { surface: "web" },
+    );
+    expect(options.status).toBe(204);
+    expect(options.headers.get("allow")).toBe("GET, OPTIONS, PATCH");
+  });
 });

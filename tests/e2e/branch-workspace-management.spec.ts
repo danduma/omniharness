@@ -213,7 +213,9 @@ test.describe("approval-gated branch workspace journeys", () => {
     await openWorkspaceMenu(page);
     const startWorktreeItem = page.getByRole("menuitem", { name: /Start in new worktree/ });
     await expect(startWorktreeItem).not.toHaveAttribute("aria-disabled", "true", { timeout: 60000 });
-    await startWorktreeItem.click();
+    await startWorktreeItem.evaluate((element) => {
+      (element as HTMLElement).click();
+    });
     await expect(page.getByRole("dialog", { name: "Start in new worktree" })).toBeVisible();
     await page.getByLabel("Branch name").fill(branchName);
     await page.getByLabel("Checkout path").fill(checkoutPath);
@@ -245,10 +247,13 @@ test.describe("approval-gated branch workspace journeys", () => {
     fs.writeFileSync(path.join(worktreePath, "dirty.txt"), "dirty worktree\n", "utf8");
 
     await openProject(page, repo, { mode: "direct" });
-    await expect.poll(() => workspaceMenuText(page), { timeout: 60000 }).toContain("1 dirty");
+    await expect.poll(() => workspaceMenuText(page), { timeout: 60000 }).toContain("2 dirty");
     await openWorkspaceMenu(page);
-    await expect(page.getByRole("button", { name: "Checkout" }).first()).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Remove worktree" }).nth(1)).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Checkout" })).toHaveCount(0);
+    const removeButtons = page.getByRole("button", { name: "Remove worktree" });
+    await expect(removeButtons).toHaveCount(2);
+    await expect(removeButtons.first()).toBeDisabled();
+    await expect(removeButtons.last()).toBeDisabled();
     await expect(page.getByText("Checkout branch")).toBeHidden();
 
     expect(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe(beforeBranch);
@@ -265,8 +270,9 @@ test.describe("approval-gated branch workspace journeys", () => {
     }).toContain("conflicted");
     await openWorkspaceMenu(page);
     await expect(page.getByRole("menuitem", { name: /Start in new worktree/ })).toHaveAttribute("aria-disabled", "true");
-    await expect(page.getByRole("button", { name: "Checkout" }).first()).toBeDisabled();
-    await expect(page.getByRole("button", { name: "New worktree" }).first()).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Checkout" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "New worktree" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Remove worktree" })).toBeDisabled();
     await expect(page.getByText("Start in new worktree").first()).toBeVisible();
 
     expect(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe(beforeBranch);

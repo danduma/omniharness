@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ConversationNotificationManager } from "@/app/home/ConversationNotificationManager";
-import type { EventStreamState } from "@/app/home/types";
+import { ConversationNotificationManager } from "@/interface/home/ConversationNotificationManager";
+import type { EventStreamState } from "@/interface/home/types";
 
 class MemoryStorage implements Pick<Storage, "getItem" | "setItem" | "removeItem"> {
   private readonly values = new Map<string, string>();
@@ -203,6 +203,38 @@ describe("ConversationNotificationManager", () => {
       body: "Implement notifications is complete.",
       url: "/session/run-1",
       tag: "omniharness-run-1-complete",
+    }));
+  });
+
+  it("keeps notification history separate per runner and names inactive runner alerts", async () => {
+    await manager.requestEnable();
+
+    manager.handleRunnerEventStreamState({
+      profileId: "studio",
+      runnerInstanceId: "runner-studio",
+      runnerName: "Studio",
+    }, createState({
+      runs: [buildRun("shared-run", "running")],
+    }));
+    manager.handleRunnerEventStreamState({
+      profileId: "laptop",
+      runnerInstanceId: "runner-laptop",
+      runnerName: "Laptop",
+    }, createState({
+      runs: [buildRun("shared-run", "running")],
+    }));
+    manager.handleRunnerEventStreamState({
+      profileId: "laptop",
+      runnerInstanceId: "runner-laptop",
+      runnerName: "Laptop",
+    }, createState({
+      runs: [buildRun("shared-run", "awaiting_user")],
+    }));
+
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Laptop needs input",
+      url: "/session/shared-run?runner=laptop",
+      tag: "omniharness-runner-laptop-shared-run-input",
     }));
   });
 

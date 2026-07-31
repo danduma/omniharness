@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { EventStreamSnapshotCacheManager } from "@/app/home/EventStreamSnapshotCacheManager";
-import { EventStreamStateManager } from "@/app/home/EventStreamStateManager";
-import type { EventStreamState } from "@/app/home/types";
+import { EventStreamSnapshotCacheManager } from "@/interface/home/EventStreamSnapshotCacheManager";
+import { EventStreamStateManager } from "@/interface/home/EventStreamStateManager";
+import type { EventStreamState } from "@/interface/home/types";
 
 function state(runId: string, message: string, checksum: string): EventStreamState {
   return {

@@ -14,14 +14,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { fileViewerPanelManager } from "@/components/component-state-managers";
-import { requestJson } from "@/lib/app-errors";
 import { formatBytes } from "@/lib/chat-attachments";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { buildProjectFileFullPath } from "@/lib/project-file-links";
 import { detectSyntaxLanguage, highlightCodeLine } from "@/lib/syntax-highlighting";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
-import type { ProjectFileContentResponse } from "@/app/home/types";
+import type { ProjectFileContentResponse } from "@/interface/home/types";
+import { useRuntimeAPIs } from "@/runtime-api/provider";
 
 export function FileViewerPanel({
   root,
@@ -39,16 +39,13 @@ export function FileViewerPanel({
   const isMarkdown = /\.(md|mdx|markdown)$/i.test(relativePath);
   const renderAsMarkdown = isMarkdown && renderMarkdown;
   useI18nSnapshot();
+  const runtimeApis = useRuntimeAPIs();
   const fileQuery = useQuery<ProjectFileContentResponse>({
     queryKey: ["project-file", root, relativePath],
-    queryFn: async () => requestJson<ProjectFileContentResponse>(
-      `/api/fs/files?root=${encodeURIComponent(root)}&file=${encodeURIComponent(relativePath)}`,
-      undefined,
-      {
-        source: t("fileViewer.errorSource"),
-        action: t("fileViewer.readProjectFile"),
-      },
-    ),
+    queryFn: () => runtimeApis.files.list({
+      root,
+      file: relativePath,
+    }) as Promise<ProjectFileContentResponse>,
     enabled: Boolean(root && relativePath),
     staleTime: 30_000,
   });

@@ -23,7 +23,6 @@ import { readWorkerEntriesBefore, readWorkerEntriesSince, readWorkerEntriesTail 
 import type { WorkerEntry } from "@/server/workers/entries-types";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { startSlowProbe } from "@/server/slow-probe";
-import { toNextRequest } from "./next-request";
 
 interface ConversationTranscriptEntry extends WorkerEntry {
   workerId: string;
@@ -147,7 +146,7 @@ export const handleConversationTranscriptRequest: OmniHttpHandler = async (reque
   }
   const probe = startSlowProbe(`GET /api/conversations/${runId}/transcript`);
 
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Conversation transcript",
     action: "Load conversation transcript",
   });

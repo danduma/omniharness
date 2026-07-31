@@ -8,7 +8,6 @@ import { isProjectMemoryEnabled, setProjectSetting } from "@/server/projects/con
 import { SupervisorProtocolError } from "@/server/supervisor/protocol";
 import { listMemory, readMemory, writeMemory } from "@/server/supervisor/memory-tools";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 const PROJECT_MEMORY_UI_FILE_LIMIT_BYTES = 200_000;
 
@@ -32,7 +31,7 @@ async function bumpMetadataRevisionForActiveProjectRuns(projectPath: string) {
 }
 
 async function getProjectMemory(request: Request) {
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Project memory",
     action: "List project memory files",
   });
@@ -66,7 +65,7 @@ async function getProjectMemory(request: Request) {
 }
 
 async function postProjectMemory(request: Request) {
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Project memory",
     action: "Update project memory",
     enforceSameOrigin: true,

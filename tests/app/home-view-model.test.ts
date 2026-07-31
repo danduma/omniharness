@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { EventStreamState, ExecutionEventRecord, RunRecord } from "@/app/home/types";
+import type { EventStreamState, ExecutionEventRecord, RunRecord } from "@/interface/home/types";
 
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
@@ -7,8 +7,8 @@ vi.mock("react", () => ({
   useSyncExternalStore: (_subscribe: unknown, getSnapshot: () => unknown) => getSnapshot(),
 }));
 
-import { useHomeViewModel } from "@/app/home/useHomeViewModel";
-import { getWorkerModelOptions } from "@/app/home/utils";
+import { useHomeViewModel } from "@/interface/home/useHomeViewModel";
+import { getWorkerModelOptions } from "@/interface/home/utils";
 
 function createState(overrides: Partial<EventStreamState> = {}): EventStreamState {
   return {

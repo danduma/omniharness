@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   shouldInterruptQueuedMessageKeyDown,
   shouldSubmitComposerKeyDown,
-} from "@/app/home/composer-keyboard";
+} from "@/interface/home/composer-keyboard";
 
 function intent(overrides: Partial<Parameters<typeof shouldInterruptQueuedMessageKeyDown>[0]> = {}) {
   return {

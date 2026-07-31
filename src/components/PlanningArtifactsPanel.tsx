@@ -9,9 +9,9 @@ import { t, useI18nSnapshot } from "@/lib/i18n";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { ProjectFileReference } from "@/lib/project-file-links";
 import { PlanningReviewControls } from "./PlanningReviewControls";
-import { planningReviewPreferencesManager } from "@/app/home/PlanningReviewPreferencesManager";
-import { type PlanningReviewRunRecord, type PlanningReviewRoundRecord, type PlanningReviewFindingRecord } from "@/app/home/types";
-import { type PlanningReviewAgentSelection } from "@/server/planning/review-preferences";
+import { planningReviewPreferencesManager } from "@/interface/home/PlanningReviewPreferencesManager";
+import { type PlanningReviewRunRecord, type PlanningReviewRoundRecord, type PlanningReviewFindingRecord } from "@/interface/home/types";
+import { type PlanningReviewAgentSelection } from "@/shared/planning-review";
 
 type ReadinessConcern = {
   kind?: string;

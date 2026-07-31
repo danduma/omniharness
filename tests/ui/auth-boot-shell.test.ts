@@ -3,7 +3,7 @@ import path from "path";
 import { test, expect } from "vitest";
 
 const pageSource = fs.readFileSync(
-  path.resolve(process.cwd(), "src/app/home/HomeApp.tsx"),
+  path.resolve(process.cwd(), "src/interface/home/HomeApp.tsx"),
   "utf8",
 );
 const bootShellSource = fs.readFileSync(
@@ -15,7 +15,7 @@ const loginShellSource = fs.readFileSync(
   "utf8",
 );
 const globalsSource = fs.readFileSync(
-  path.resolve(process.cwd(), "src/app/globals.css"),
+  path.resolve(process.cwd(), "src/interface/styles/globals.css"),
   "utf8",
 );
 

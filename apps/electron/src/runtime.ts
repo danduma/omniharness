@@ -1,43 +1,57 @@
-import { createOmniRuntime, type OmniRuntime } from "../../../src/runtime";
-import { createOmniRuntimeHttpRegistry } from "../../../src/runtime/http/routes";
-import { startOmniServer, type OmniServerHandle, type StartOmniServerOptions } from "../../../src/runtime/http/server";
-import type { OmniHttpRegistry } from "../../../src/runtime/http/registry";
+import fs from "node:fs";
+import path from "node:path";
 
-export interface ElectronRuntimeOptions {
-  host?: string;
-  port?: number;
-  label?: string;
-  staticDir?: string | null;
-  createRuntime?: () => OmniRuntime;
-  createRegistry?: () => OmniHttpRegistry;
-  startServer?: (options: StartOmniServerOptions) => Promise<OmniServerHandle>;
-}
+export const ELECTRON_APP_ORIGIN = "app://omniharness";
 
-export async function startElectronOmniRuntime(options: ElectronRuntimeOptions = {}) {
-  const runtime = options.createRuntime?.() ?? createOmniRuntime({
-    surface: "electron",
-    label: options.label ?? "OmniHarness Desktop",
-  });
-  const registry = options.createRegistry?.() ?? createOmniRuntimeHttpRegistry();
-  const startServerImpl = options.startServer ?? startOmniServer;
-
-  return startServerImpl({
-    host: options.host ?? "127.0.0.1",
-    port: options.port ?? 0,
-    surface: "electron",
-    runtime,
-    registry,
-    staticDir: options.staticDir ?? null,
-  });
+export function resolveElectronInterfaceDir(
+  mainDir: string,
+  packagedResourcesPath?: string,
+) {
+  if (packagedResourcesPath) {
+    return path.join(packagedResourcesPath, "interface-packaged");
+  }
+  return path.resolve(mainDir, "../../../dist/interface-packaged");
 }
 
 export function resolveElectronRendererUrl(input: {
-  runtimeOrigin: string;
   env?: Record<string, string | undefined>;
-}) {
-  const env = input.env ?? process.env;
-  const configured = env.OMNI_ELECTRON_RENDERER_URL?.trim()
-    || env.OMNI_SERVER_URL?.trim()
-    || "";
-  return configured || input.runtimeOrigin;
+} = {}) {
+  const configured = (input.env ?? process.env).OMNI_ELECTRON_RENDERER_URL?.trim();
+  return configured || `${ELECTRON_APP_ORIGIN}/index.html`;
+}
+
+export function electronPackagedCsp(interfaceDir: string) {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(interfaceDir, "csp-manifest.json"), "utf8"),
+  ) as { themeScriptSha256?: unknown };
+  if (typeof manifest.themeScriptSha256 !== "string") {
+    throw new Error("Packaged interface CSP manifest is invalid.");
+  }
+  return [
+    "default-src 'none'",
+    `script-src 'self' 'sha256-${manifest.themeScriptSha256}'`,
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self'",
+    "img-src 'self' data: blob:",
+    "connect-src 'self'",
+    "worker-src 'self'",
+    "manifest-src 'self'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join("; ");
+}
+
+export function resolveElectronAssetPath(interfaceDir: string, requestUrl: string) {
+  const url = new URL(requestUrl);
+  if (url.protocol !== "app:" || url.hostname !== "omniharness") {
+    throw new Error("Electron asset request has an untrusted origin.");
+  }
+  const relative = decodeURIComponent(url.pathname).replace(/^\/+/, "") || "index.html";
+  const resolved = path.resolve(interfaceDir, relative);
+  const root = `${path.resolve(interfaceDir)}${path.sep}`;
+  if (resolved !== path.resolve(interfaceDir, "index.html") && !resolved.startsWith(root)) {
+    throw new Error("Electron asset path escaped the packaged interface.");
+  }
+  return resolved;
 }

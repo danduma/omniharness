@@ -11,7 +11,6 @@ import {
   type ChatAttachment,
 } from "@/lib/chat-attachments";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 const ATTACHMENTS_ROOT = "attachments";
 
@@ -42,7 +41,7 @@ function resolveAttachmentPath(storagePath: string) {
 }
 
 async function getAttachment(request: Request) {
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Attachments",
     action: "Read attachment",
     enforceSameOrigin: true,
@@ -72,7 +71,7 @@ async function getAttachment(request: Request) {
 }
 
 async function postAttachments(request: Request) {
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Attachments",
     action: "Upload attachments",
     enforceSameOrigin: true,

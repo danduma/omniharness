@@ -1,7 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { POST } from "@/app/api/planning/[id]/review/route";
+import { planningReviewRoute as POST } from "@/../tests/helpers/runtime-routes";
 import * as reviewOrchestration from "@/server/planning/review";
-import { NextRequest } from "next/server";
 
 vi.mock("@/server/auth/guards", () => ({
   requireApiSession: vi.fn(() => Promise.resolve({ user: { id: "user-1" } })),
@@ -21,7 +20,7 @@ describe("planning review API route", () => {
   });
 
   it("authenticates and starts review", async () => {
-    const req = new NextRequest("http://localhost/api/planning/run-1/review", {
+    const req = new Request("http://localhost/api/planning/run-1/review", {
       method: "POST",
       body: JSON.stringify({ agentSelection: "claude", rounds: 2 }),
     });
@@ -42,7 +41,7 @@ describe("planning review API route", () => {
   it("returns 400 for unready plan", async () => {
     vi.mocked(reviewOrchestration.startPlanningReview).mockRejectedValueOnce(new Error("No ready plan artifacts found"));
 
-    const req = new NextRequest("http://localhost/api/planning/run-1/review", {
+    const req = new Request("http://localhost/api/planning/run-1/review", {
       method: "POST",
     });
 

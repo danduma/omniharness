@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import fs from "fs";
 import os from "os";
@@ -24,7 +23,7 @@ vi.mock("@/server/supervisor/start", () => ({
   startSupervisorRun: mockStartSupervisorRun,
 }));
 
-import { GET } from "@/app/api/events/route";
+import { eventsRoute as GET } from "@/../tests/helpers/runtime-routes";
 import { __clearEventPayloadCachesForTests } from "@/runtime/http/routes/events";
 
 function decodeFirstEvent(chunk: Uint8Array) {
@@ -158,7 +157,7 @@ describe("GET /api/events", () => {
       createdAt: new Date("2026-06-29T10:00:00.000Z"),
     });
 
-    const response = await GET(new NextRequest("http://localhost/api/events?snapshot=1&persisted=1"));
+    const response = await GET(new Request("http://localhost/api/events?snapshot=1&persisted=1"));
     const payload = await response.json();
 
     expect(response.status).toBe(200);
@@ -239,7 +238,7 @@ describe("GET /api/events", () => {
       updatedAt: now,
     });
 
-    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${archivedRunId}`));
+    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&persisted=1&runId=${archivedRunId}`));
     const payload = await response.json();
 
     expect(response.status).toBe(200);
@@ -306,7 +305,7 @@ describe("GET /api/events", () => {
 
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
 
-    const response = await GET(new NextRequest("http://localhost/api/events?snapshot=1"));
+    const response = await GET(new Request("http://localhost/api/events?snapshot=1"));
     const payload = await response.json();
 
     expect(payload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Mobile payload budget");
@@ -348,7 +347,7 @@ describe("GET /api/events", () => {
 
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
 
-    const response = await GET(new NextRequest("http://localhost/api/events?snapshot=1"));
+    const response = await GET(new Request("http://localhost/api/events?snapshot=1"));
     const payload = await response.json();
 
     expect(payload.readMarkers).toEqual({
@@ -431,7 +430,7 @@ describe("GET /api/events", () => {
 
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
 
-    const response = await GET(new NextRequest("http://localhost/api/events?snapshot=1"));
+    const response = await GET(new Request("http://localhost/api/events?snapshot=1"));
     const payload = await response.json();
 
     expect(payload.runs.map((run: { id: string }) => run.id)).toContain(visibleRunId);
@@ -499,7 +498,7 @@ describe("GET /api/events", () => {
 
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
 
-    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&runId=${runId}`));
     const text = await response.text();
     const payload = JSON.parse(text);
 
@@ -587,7 +586,7 @@ describe("GET /api/events", () => {
     global.fetch = vi.fn().mockRejectedValue(new Error("bridge should not be called"));
     const ensureCallsBefore = mockEnsureSupervisorRuntimeStarted.mock.calls.length;
 
-    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
     const payload = await response.json();
 
     expect(mockEnsureSupervisorRuntimeStarted).toHaveBeenCalledTimes(ensureCallsBefore);
@@ -676,7 +675,7 @@ describe("GET /api/events", () => {
 
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
 
-    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${implementationRunId}`));
+    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&persisted=1&runId=${implementationRunId}`));
     const payload = await response.json();
 
     expect(payload.messages.map((message: { id: string }) => message.id)).toEqual([
@@ -726,7 +725,7 @@ describe("GET /api/events", () => {
     global.fetch = vi.fn(() => new Promise<Response>(() => {}));
 
     const controller = new AbortController();
-    const response = await GET(new NextRequest(`http://localhost/api/events?runId=${runId}`, {
+    const response = await GET(new Request(`http://localhost/api/events?runId=${runId}`, {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
@@ -824,7 +823,7 @@ describe("GET /api/events", () => {
 
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
 
-    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&runId=${runId}`));
     const payload = await response.json();
     const outputEntryIds = payload.agents[0].outputEntries.map((entry: { id: string }) => entry.id);
 
@@ -907,7 +906,7 @@ describe("GET /api/events", () => {
 
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
 
-    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&runId=${runId}`));
     const payload = await response.json();
     const activities = buildAgentOutputActivity({
       outputEntries: payload.agents[0].outputEntries,
@@ -1011,7 +1010,7 @@ describe("GET /api/events", () => {
 
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
 
-    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&runId=${runId}`));
     const payload = await response.json();
     const editUpdate = payload.agents[0].outputEntries.find((entry: { id: string }) => entry.id === "edit-done");
 
@@ -1073,7 +1072,7 @@ describe("GET /api/events", () => {
     global.fetch = vi.fn(() => new Promise<Response>(() => {}));
 
     const controller = new AbortController();
-    const response = await GET(new NextRequest(`http://localhost/api/events?runId=${runId}`, {
+    const response = await GET(new Request(`http://localhost/api/events?runId=${runId}`, {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
@@ -1112,7 +1111,7 @@ describe("GET /api/events", () => {
     global.fetch = vi.fn(() => new Promise<Response>(() => {}));
 
     const controller = new AbortController();
-    const response = await GET(new NextRequest(`http://localhost/api/events?runId=${runId}`, {
+    const response = await GET(new Request(`http://localhost/api/events?runId=${runId}`, {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
@@ -1130,7 +1129,9 @@ describe("GET /api/events", () => {
     await reader.cancel();
     vi.useRealTimers();
 
-    expect(new TextDecoder().decode(heartbeatResult.value!)).toBe(": heartbeat\n\n");
+    expect(new TextDecoder().decode(heartbeatResult.value!)).toMatch(
+      /^id: [A-Za-z0-9_-]+:\d+\nevent: stream\.heartbeat\ndata: \{"kind":"stream\.heartbeat","emittedAt":"[^"]+"\}\n\n$/,
+    );
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -1166,7 +1167,7 @@ describe("GET /api/events", () => {
 
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
 
-    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&runId=${runId}`));
     expect(response.headers.get("content-type")).toContain("application/json");
 
     const payload = await response.json();
@@ -1223,7 +1224,7 @@ describe("GET /api/events", () => {
 
     global.fetch = vi.fn().mockResolvedValue(new Response("runtime should not be called", { status: 530 }));
 
-    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
     const payload = await response.json();
 
     expect(global.fetch).not.toHaveBeenCalled();
@@ -1235,7 +1236,7 @@ describe("GET /api/events", () => {
     expect(payload.workerEntries).toBeUndefined();
     expect(payload.agents.find((agent: { name: string; outputEntries: unknown[] }) => agent.name === workerId)?.outputEntries).toEqual([]);
 
-    const notModifiedResponse = await GET(new NextRequest(
+    const notModifiedResponse = await GET(new Request(
       `http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}&checksum=${encodeURIComponent(payload.snapshotChecksum)}`,
     ));
     const notModifiedPayload = await notModifiedResponse.json();
@@ -1295,7 +1296,7 @@ describe("GET /api/events", () => {
 
     global.fetch = vi.fn();
 
-    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
     const payload = await response.json();
 
     const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
@@ -1340,7 +1341,7 @@ describe("GET /api/events", () => {
       updatedAt: now,
     });
 
-    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
     const payload = await response.json();
 
     expect(payload.frontendErrors).toEqual([
@@ -1383,7 +1384,7 @@ describe("GET /api/events", () => {
       updatedAt: now,
     });
 
-    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
     const payload = await response.json();
 
     expect(payload.frontendErrors).toEqual([]);
@@ -1443,7 +1444,7 @@ describe("GET /api/events", () => {
       createdAt: now,
     });
 
-    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
     const payload = await response.json();
 
     expect(payload.frontendErrors).toEqual([]);
@@ -1471,7 +1472,7 @@ describe("GET /api/events", () => {
       updatedAt: now,
     });
 
-    const firstResponse = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const firstResponse = await GET(new Request(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
     const firstPayload = await firstResponse.json();
 
     await db.update(runs).set({
@@ -1479,12 +1480,12 @@ describe("GET /api/events", () => {
       updatedAt: new Date(now.getTime() + 1000),
     }).where(eq(runs.id, runId));
 
-    const freshResponse = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const freshResponse = await GET(new Request(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
     const freshPayload = await freshResponse.json();
 
     notifyEventStreamSubscribers();
 
-    const invalidatedResponse = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
+    const invalidatedResponse = await GET(new Request(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
     const invalidatedPayload = await invalidatedResponse.json();
 
     expect(firstPayload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Cached title before notification");
@@ -1516,12 +1517,12 @@ describe("GET /api/events", () => {
 
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
 
-    await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
-    await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    await GET(new Request(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    await GET(new Request(`http://localhost/api/events?snapshot=1&runId=${runId}`));
     expect(global.fetch).toHaveBeenCalledTimes(1);
 
     notifyEventStreamSubscribers();
-    await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    await GET(new Request(`http://localhost/api/events?snapshot=1&runId=${runId}`));
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -1550,7 +1551,7 @@ describe("GET /api/events", () => {
     const networkError = Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
     global.fetch = vi.fn().mockRejectedValue(new TypeError("fetch failed", { cause: networkError }));
 
-    const response = await GET(new NextRequest("http://localhost/api/events?snapshot=1"));
+    const response = await GET(new Request("http://localhost/api/events?snapshot=1"));
     const payload = await response.json();
 
     expect(payload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Transient bridge list failure");
@@ -1581,7 +1582,7 @@ describe("GET /api/events", () => {
 
     global.fetch = vi.fn().mockRejectedValue(new Error("Agent runtime list request timed out after 5000ms."));
 
-    const response = await GET(new NextRequest("http://localhost/api/events?snapshot=1"));
+    const response = await GET(new Request("http://localhost/api/events?snapshot=1"));
     const payload = await response.json();
 
     expect(payload.runs.find((run: { id: string }) => run.id === runId)?.title).toBe("Bridge list timeout");
@@ -1638,7 +1639,7 @@ describe("GET /api/events", () => {
     ], { status: 200 });
 
     const controller = new AbortController();
-    const response = await GET(new NextRequest(`http://localhost/api/events?runId=${runId}`, {
+    const response = await GET(new Request(`http://localhost/api/events?runId=${runId}`, {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
@@ -1707,7 +1708,7 @@ describe("GET /api/events", () => {
       },
     ], { status: 200 });
 
-    const response = await GET(new NextRequest(`http://localhost/api/events?runId=${runId}&snapshot=1`));
+    const response = await GET(new Request(`http://localhost/api/events?runId=${runId}&snapshot=1`));
     const payload = await response.json();
 
     expect(payload.workers.find((worker: { id: string }) => worker.id === workerId)?.status).toBe("working");
@@ -1817,7 +1818,7 @@ describe("GET /api/events", () => {
       },
     ]), { status: 200 }));
 
-    await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${selectedRunId}`));
+    await GET(new Request(`http://localhost/api/events?snapshot=1&runId=${selectedRunId}`));
 
     const selectedWorker = await db.select().from(workers).where(eq(workers.id, selectedWorkerId)).get();
     const unrelatedWorker = await db.select().from(workers).where(eq(workers.id, unrelatedWorkerId)).get();
@@ -1875,7 +1876,7 @@ describe("GET /api/events", () => {
     mockAgentRuntimeJson([], { status: 200 });
 
     const controller = new AbortController();
-    const response = await GET(new NextRequest(`http://localhost/api/events?runId=${runId}`, {
+    const response = await GET(new Request(`http://localhost/api/events?runId=${runId}`, {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
@@ -1943,7 +1944,7 @@ describe("GET /api/events", () => {
     ]), { status: 200 }));
 
     const controller = new AbortController();
-    const response = await GET(new NextRequest("http://localhost/api/events", {
+    const response = await GET(new Request("http://localhost/api/events", {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
@@ -2017,7 +2018,7 @@ describe("GET /api/events", () => {
     ]), { status: 200 }));
 
     const controller = new AbortController();
-    const response = await GET(new NextRequest("http://localhost/api/events", {
+    const response = await GET(new Request("http://localhost/api/events", {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
@@ -2098,7 +2099,7 @@ describe("GET /api/events", () => {
     ]), { status: 200 }));
 
     const controller = new AbortController();
-    const response = await GET(new NextRequest("http://localhost/api/events", {
+    const response = await GET(new Request("http://localhost/api/events", {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
@@ -2201,7 +2202,7 @@ summary: Plan is ready.
     ]), { status: 200 }));
 
     const controller = new AbortController();
-    const response = await GET(new NextRequest("http://localhost/api/events", {
+    const response = await GET(new Request("http://localhost/api/events", {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
@@ -2297,7 +2298,7 @@ summary: Plan is ready.
     ]), { status: 200 }));
 
     const controller = new AbortController();
-    const response = await GET(new NextRequest("http://localhost/api/events", {
+    const response = await GET(new Request("http://localhost/api/events", {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
@@ -2368,7 +2369,7 @@ summary: Plan is ready.
 
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
 
-    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&runId=${runId}`));
     const payload = await response.json();
 
     const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
@@ -2430,7 +2431,7 @@ summary: Plan is ready.
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
 
     const controller = new AbortController();
-    const response = await GET(new NextRequest("http://localhost/api/events", {
+    const response = await GET(new Request("http://localhost/api/events", {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
@@ -2484,7 +2485,7 @@ summary: Plan is ready.
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
 
     const controller = new AbortController();
-    const response = await GET(new NextRequest("http://localhost/api/events", {
+    const response = await GET(new Request("http://localhost/api/events", {
       signal: controller.signal,
     }));
     const reader = response.body!.getReader();
@@ -2568,7 +2569,7 @@ summary: Plan is ready.
       createdAt: now,
     });
 
-    const response = await GET(new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`));
+    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&runId=${runId}`));
     const payload = await response.json();
 
     expect(payload.reviewRuns).toHaveLength(1);

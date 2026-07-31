@@ -19,8 +19,9 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Terminal } from "@/components/Terminal";
-import { coalesceWorkerEntriesById } from "@/app/home/WorkerEntriesManager";
+import { coalesceWorkerEntriesById } from "@/interface/home/WorkerEntriesManager";
 import type { WorkerEntry } from "@/server/workers/entries-types";
+import { RuntimeApiProvider, createDefaultWebRuntimeAPIs } from "@/runtime-api/provider";
 
 interface TranscriptEntry extends WorkerEntry {
   workerId: string;
@@ -67,11 +68,15 @@ describe("2182b07381c8 — actual Terminal HTML rendering", () => {
     const displayed = coalesceWorkerEntriesById(merged) as TranscriptEntry[];
 
     const html = renderToStaticMarkup(
-      React.createElement(Terminal, {
-        entries: displayed,
-        showTextSizeControl: false,
-        allowUserMessageFallback: false,
-      }),
+      React.createElement(
+        RuntimeApiProvider,
+        { apis: createDefaultWebRuntimeAPIs() },
+        React.createElement(Terminal, {
+          entries: displayed,
+          showTextSizeControl: false,
+          allowUserMessageFallback: false,
+        }),
+      ),
     );
     const text = html.replace(/<[^>]+>/g, "");
 

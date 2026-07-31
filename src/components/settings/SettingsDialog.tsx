@@ -1,16 +1,16 @@
 import type React from "react";
 import { Bug } from "lucide-react";
-import { appearancePreferencesManager } from "@/app/home/AppearancePreferencesManager";
+import { appearancePreferencesManager } from "@/interface/home/AppearancePreferencesManager";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { requestBugDropOpen } from "@/components/BugDropBootstrap";
-import type { SettingsDraftState } from "@/app/home/SettingsDraftManager";
+import type { SettingsDraftState } from "@/interface/home/SettingsDraftManager";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { appErrorKey } from "@/lib/app-errors";
-import type { AccountRecord, LlmProfileTab, SettingsResponse, SettingsTab, WorkerAvailability, WorkerCatalogResponse } from "@/app/home/types";
+import type { AccountRecord, LlmProfileTab, SettingsResponse, SettingsTab, WorkerAvailability, WorkerCatalogResponse } from "@/interface/home/types";
 import { cn } from "@/lib/utils";
 import { ErrorNotice } from "@/components/home/ErrorNotice";
-import { buildInlineError } from "@/app/home/utils";
+import { buildInlineError } from "@/interface/home/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
@@ -19,7 +19,7 @@ import { CredentialsSettingsPanel } from "./CredentialsSettingsPanel";
 import { AgentsSettingsPanel } from "./AgentsSettingsPanel";
 import { RuntimeSettingsPanel } from "./RuntimeSettingsPanel";
 import { ProjectMemorySettingsPanel } from "./ProjectMemorySettingsPanel";
-import { parseBooleanSetting } from "@/app/home/utils";
+import { parseBooleanSetting } from "@/interface/home/utils";
 
 const SETTINGS_TABS: Array<{ value: SettingsTab; labelKey: string }> = [
   { value: "general", labelKey: "settings.tabs.general" },

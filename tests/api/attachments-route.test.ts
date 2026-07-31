@@ -2,9 +2,11 @@ import { mkdtemp, rm } from "fs/promises";
 import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
-import { NextRequest } from "next/server";
 import { CHAT_ATTACHMENT_MAX_FILE_SIZE_BYTES } from "@/lib/chat-attachments";
-import { GET, POST } from "@/app/api/attachments/route";
+import {
+  attachmentsGetRoute as GET,
+  attachmentsPostRoute as POST,
+} from "@/../tests/helpers/runtime-routes";
 
 let tempRoot: string | null = null;
 
@@ -28,7 +30,7 @@ describe("POST /api/attachments", () => {
     formData.append("files", new File(["hello"], "hello.txt", { type: "text/plain" }));
     formData.append("files", new File([new Uint8Array([1, 2, 3])], "screen.png", { type: "image/png" }));
 
-    const response = await POST(new NextRequest("http://localhost/api/attachments", {
+    const response = await POST(new Request("http://localhost/api/attachments", {
       method: "POST",
       body: formData,
     }));
@@ -50,7 +52,7 @@ describe("POST /api/attachments", () => {
     });
     expect(payload.attachments[0].storagePath).toMatch(/^attachments\//);
 
-    const readResponse = await GET(new NextRequest(
+    const readResponse = await GET(new Request(
       `http://localhost/api/attachments?path=${encodeURIComponent(payload.attachments[0].storagePath)}&mimeType=${encodeURIComponent("text/plain")}`,
     ));
 
@@ -61,7 +63,7 @@ describe("POST /api/attachments", () => {
 
   it("rejects empty uploads", async () => {
     await useTempRoot();
-    const response = await POST(new NextRequest("http://localhost/api/attachments", {
+    const response = await POST(new Request("http://localhost/api/attachments", {
       method: "POST",
       body: new FormData(),
     }));
@@ -78,7 +80,7 @@ describe("POST /api/attachments", () => {
       new Uint8Array(CHAT_ATTACHMENT_MAX_FILE_SIZE_BYTES + 1),
     ], "large.bin", { type: "application/octet-stream" }));
 
-    const response = await POST(new NextRequest("http://localhost/api/attachments", {
+    const response = await POST(new Request("http://localhost/api/attachments", {
       method: "POST",
       body: formData,
     }));

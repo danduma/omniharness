@@ -10,7 +10,6 @@
  * here is the SSE envelope behaviour, which is independent of payload
  * content.
  */
-import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/server/auth/guards", () => ({
@@ -19,15 +18,19 @@ vi.mock("@/server/auth/guards", () => ({
 vi.mock("@/server/supervisor/runtime-watchdog", () => ({
   ensureSupervisorRuntimeStarted: vi.fn().mockResolvedValue(undefined),
 }));
-import { GET } from "@/app/api/events/route";
+import { eventsRoute as GET } from "@/../tests/helpers/runtime-routes";
 import {
   __resetNamedEventsForTests,
+  __setStreamEpochForTests,
   emitNamedEvent,
 } from "@/server/events/named-events";
 
-function makeStreamRequest(headers: Record<string, string> = {}) {
+function makeStreamRequest(
+  headers: Record<string, string> = {},
+  path = "/api/events",
+) {
   const controller = new AbortController();
-  const req = new NextRequest(new URL("/api/events", "http://localhost").toString(), {
+  const req = new Request(new URL(path, "http://localhost").toString(), {
     headers,
     signal: controller.signal,
   });
@@ -66,6 +69,7 @@ async function readUntil(
 describe("/api/events SSE resume", () => {
   beforeEach(() => {
     __resetNamedEventsForTests();
+    __setStreamEpochForTests("test-epoch");
   });
 
   it("replays missed named events when Last-Event-ID is within the ring buffer", async () => {
@@ -90,7 +94,7 @@ describe("/api/events SSE resume", () => {
     });
 
     const { req, controller } = makeStreamRequest({
-      "Last-Event-ID": String(first.id),
+      "Last-Event-ID": first.streamId,
     });
     const res = await GET(req);
     expect(res.headers.get("content-type")).toContain("text/event-stream");
@@ -102,16 +106,16 @@ describe("/api/events SSE resume", () => {
     expect(buffered).toContain("event: worker.terminal");
     expect(buffered).not.toContain("event: worker.spawned");
     // Every named-event frame must carry an id: line.
-    const statusIdMatch = buffered.match(/id: (\d+)\nevent: worker\.status/);
-    const terminalIdMatch = buffered.match(/id: (\d+)\nevent: worker\.terminal/);
+    const statusIdMatch = buffered.match(/id: test-epoch:(\d+)\nevent: worker\.status/);
+    const terminalIdMatch = buffered.match(/id: test-epoch:(\d+)\nevent: worker\.terminal/);
     expect(statusIdMatch?.[1]).toBeDefined();
     expect(terminalIdMatch?.[1]).toBeDefined();
     expect(Number(terminalIdMatch![1])).toBeGreaterThan(Number(statusIdMatch![1]));
   });
 
   it("emits stream.resync_required when Last-Event-ID predates the ring", async () => {
-    // Push enough events to roll the ring (capacity 500).
-    for (let i = 0; i < 520; i++) {
+    // Push enough events to roll the replay ring.
+    for (let i = 0; i < 4_120; i++) {
       emitNamedEvent({
         kind: "worker.status",
         runId: "r-test",
@@ -121,13 +125,59 @@ describe("/api/events SSE resume", () => {
       });
     }
     const { req, controller } = makeStreamRequest({
-      "Last-Event-ID": "1",
+      "Last-Event-ID": "test-epoch:1",
     });
     const res = await GET(req);
     const buffered = await readUntil(res.body!, (text) => text.includes("event: stream.resync_required"));
     controller.abort();
 
     expect(buffered).toContain("event: stream.resync_required");
-    expect(buffered).toMatch(/id: \d+\nevent: stream\.resync_required/);
+    expect(buffered).toContain("\"reason\":\"cursor_evicted\"");
+    expect(buffered).toMatch(/id: test-epoch:\d+\nevent: stream\.resync_required/);
+  });
+
+  it("requires an epoch resync after a process restart", async () => {
+    emitNamedEvent({
+      kind: "worker.status",
+      runId: "r-test",
+      workerId: "w1",
+      prev: "starting",
+      next: "running",
+    });
+    const { req, controller } = makeStreamRequest({
+      "Last-Event-ID": "previous-epoch:99",
+    });
+    const res = await GET(req);
+    const buffered = await readUntil(res.body!, (text) => text.includes("event: stream.resync_required"));
+    controller.abort();
+
+    expect(buffered).toContain("\"reason\":\"epoch_mismatch\"");
+    expect(buffered).toMatch(/id: test-epoch:\d+\nevent: stream\.resync_required/);
+  });
+
+  it("lets the explicit cursor query override Last-Event-ID", async () => {
+    const first = emitNamedEvent({
+      kind: "worker.spawned",
+      runId: "r-test",
+      workerId: "w1",
+      workerType: "agent",
+    });
+    emitNamedEvent({
+      kind: "worker.status",
+      runId: "r-test",
+      workerId: "w1",
+      prev: "starting",
+      next: "running",
+    });
+    const { req, controller } = makeStreamRequest(
+      { "Last-Event-ID": "previous-epoch:99" },
+      `/api/events?cursor=${encodeURIComponent(first.streamId)}`,
+    );
+    const res = await GET(req);
+    const buffered = await readUntil(res.body!, (text) => text.includes("event: worker.status"));
+    controller.abort();
+
+    expect(buffered).toContain("event: worker.status");
+    expect(buffered).not.toContain("event: stream.resync_required");
   });
 });

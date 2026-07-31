@@ -60,7 +60,7 @@ function parsePort(value: string | undefined, fallback: number) {
 }
 
 function parseManagedPorts(value: string | undefined) {
-  const ports = (value || "3035,3050,7800")
+  const ports = (value || "3050,5173,7800")
     .split(",")
     .map((part) => Number.parseInt(part.trim(), 10))
     .filter((port) => Number.isFinite(port) && port > 0);
@@ -82,7 +82,7 @@ export function resolveRestartControlConfig(repoRoot: string, env: Record<string
       { command: "pnpm", args: ["run", "dev"] },
     ),
     // A restart is not first-time setup: run the lean production entry
-    // (build-if-needed + bridge + `next start`) rather than ./omniharness, which
+    // (built interface + managed runner) rather than ./omniharness, which
     // is the first-run launcher (auth setup, agent ACP install, browser open,
     // tunnel guidance). Re-running that on every prod restart re-downloads
     // codex-acp and clobbers a source-built install.

@@ -68,7 +68,7 @@ describe("lifecycle harness — real subprocess restart", () => {
     // resuming from any pre-restart id must see stream.resync_required.
     await client.subscribe({ resumeFrom: beforeRestartId ?? "9999" });
     const resync = await client.waitFor("stream.resync_required", { timeoutMs: 10_000 });
-    expect(resync.payload).toMatchObject({ reason: "id_out_of_buffer" });
+    expect(resync.payload).toMatchObject({ reason: "epoch_mismatch" });
 
     // Sqlite survived: the same run is still in the snapshot from the
     // new process.

@@ -104,7 +104,7 @@ describe("createVSCodeRuntimeAPIs", () => {
 
     expect(sent[0]).toEqual(expect.objectContaining({
       type: "sse:open",
-      payload: { runId: "run-1", lastEventId: "8" },
+      payload: { path: "/api/events?runId=run-1", lastEventId: "8" },
     }));
 
     const streamId = (sent[0] as { id: string }).id;
@@ -116,7 +116,11 @@ describe("createVSCodeRuntimeAPIs", () => {
     }));
     subscription.close();
 
-    expect(seen).toEqual([{ event: "update", payload: { runs: [] } }]);
+    expect(seen).toEqual([{
+      kind: "update",
+      payload: { runs: [] },
+      lastEventId: null,
+    }]);
     expect(sent[1]).toEqual({
       id: `${streamId}:close`,
       type: "sse:close",

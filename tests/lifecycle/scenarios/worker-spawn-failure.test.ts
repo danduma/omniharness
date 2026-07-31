@@ -19,8 +19,8 @@ import {
   workers,
 } from "@/server/db/schema";
 
-import * as eventsRoute from "@/app/api/events/route";
-import * as conversationsRoute from "@/app/api/conversations/route";
+import { eventsRouteModule as eventsRoute } from "@/../tests/helpers/runtime-routes";
+import { conversationsRouteModule as conversationsRoute } from "@/../tests/helpers/runtime-routes";
 
 import { startLifecycleHarness, type LifecycleServer } from "../harness/server";
 import { LifecycleClient } from "../harness/client";

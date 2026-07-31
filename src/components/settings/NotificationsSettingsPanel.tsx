@@ -1,11 +1,14 @@
 "use client";
 
-import { conversationNotificationManager } from "@/app/home/ConversationNotificationManager";
+import { conversationNotificationManager } from "@/interface/home/ConversationNotificationManager";
 import { Button } from "@/components/ui/button";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import { useRuntimeAPIs } from "@/runtime-api/provider";
 
 export function NotificationsSettingsPanel() {
+  const runtimeApis = useRuntimeAPIs();
+  conversationNotificationManager.configure(runtimeApis.notifications);
   const state = useManagerSnapshot(conversationNotificationManager);
   useI18nSnapshot();
 

@@ -1,0 +1,1610 @@
+"use client";
+
+import type React from "react";
+import { lazy, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { BootShell } from "@/components/BootShell";
+import { LoginShell } from "@/components/LoginShell";
+import { AttachmentImagePreviewDialog } from "@/components/AttachmentImagePreviewDialog";
+import { ConversationMain } from "@/components/home/ConversationMain";
+import { ConversationSidebar } from "@/components/home/ConversationSidebar";
+import { HomeHeader } from "@/components/home/HomeHeader";
+import { resolveProjectScope } from "@/lib/project-scope";
+import { WORKER_OPTIONS } from "./constants";
+import { busyMessageQueueManager } from "./BusyMessageQueueManager";
+import { conversationNotificationManager } from "./ConversationNotificationManager";
+import { sideWindowManager } from "./SideWindowManager";
+import { parseBusyMessageAction, type BusyMessageAction } from "./busy-message-behavior";
+import type { PendingChatAttachment } from "@/lib/chat-attachments";
+import {
+  hasPendingHumanInputSignal,
+  isMutationPendingForSelectedRun,
+  resolveDirectControlPendingAssistantStatus,
+  resolvePendingConversationWorkerId,
+} from "./direct-control-activity";
+import { cancelInactiveAutoResumeTimers, isPermanentAutoResumeFailure, shouldFireAutoResumeTimer } from "./auto-resume-selection";
+import { EventStreamStateManager } from "./EventStreamStateManager";
+import {
+  homeUiSetters,
+  homeUiStateManager,
+  INITIAL_EVENT_STREAM_STATE,
+} from "./HomeUiStateManager";
+import { appearancePreferencesManager, getAppearanceTextSizeStyle } from "./AppearancePreferencesManager";
+import { settingsDraftManager } from "./SettingsDraftManager";
+import { preflightConfirmationActionsManager } from "./PreflightConfirmationActionsManager";
+import {
+  filterOptimisticallyDeletedRuns,
+  createClientRunId,
+  mergePendingCreatedConversationSnapshots,
+  mergePendingSentConversationMessages,
+  parseBrowserConversationRoute,
+  parseProjectList,
+  resolveRepoName,
+  resolveSelectedWorkerModel,
+  shouldClearMissingSelectedRunFromAuthoritativeSnapshot,
+  stripRunFailurePrefix,
+  type CreatedConversationSnapshot,
+} from "./utils";
+import { useAppErrors } from "./useAppErrors";
+import { useConversationExecutionStatus } from "./useConversationExecutionStatus";
+import { useHomeLifecycle } from "./useHomeLifecycle";
+import { shallowEqualRecord, useManagerSelector, useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import { useRunRecoveryState } from "./useRunRecoveryState";
+import { useRunSelectionEffects } from "./useRunSelectionEffects";
+import type { ConversationSidebarTab, EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord, SidebarGroup } from "./types";
+import type { HomeBootstrapPayload } from "@/shared/bootstrap";
+import { useHomeQueries } from "./useHomeQueries";
+import { useHomeViewModel } from "./useHomeViewModel";
+import { useFrozenRecentOrder } from "./useFrozenRecentOrder";
+import { useHomeMutations } from "./useHomeMutations";
+import { useConversationActions } from "./useConversationActions";
+import { useHomeLayoutController } from "./useHomeLayoutController";
+import { useTerminalPanelResize } from "./useTerminalPanelResize";
+import { ComposerContainer } from "./ComposerContainer";
+import { formatAccountOptionLabel, resolveCompatibleComposerAccountId } from "./account-labels";
+import { sessionStateManager } from "./SessionStateManager";
+import { t } from "@/lib/i18n";
+import { workersSidebarManager } from "@/components/component-state-managers";
+import type { AccountRecord } from "./types";
+import { decodeClaudeGatewayModel } from "@/lib/claude-model-gateway";
+import { useRuntimeAPIs } from "@/runtime-api/provider";
+import { gitWorkspaceManager } from "./GitWorkspaceManager";
+import {
+  autoResumeExhaustionManager,
+  mergeReadMarkers,
+  selectHomeAppState,
+} from "./HomeAppStateManager";
+import { applyHomeBootstrap } from "./home-bootstrap";
+import type { RunnerConnection } from "@/interface/runners/RunnerConnection";
+import { RunnerControls } from "@/interface/runners/RunnerControls";
+
+const FolderPickerDialog = lazy(
+  () => import("@/components/FolderPickerDialog").then((m) => ({ default: m.FolderPickerDialog })),
+);
+const PairDeviceDialog = lazy(
+  () => import("@/components/PairDeviceDialog").then((m) => ({ default: m.PairDeviceDialog })),
+);
+const SettingsDialog = lazy(
+  () => import("@/components/home/SettingsDialog").then((m) => ({ default: m.SettingsDialog })),
+);
+const OnboardingSetupDialog = lazy(
+  () => import("@/components/home/OnboardingSetupDialog").then((m) => ({ default: m.OnboardingSetupDialog })),
+);
+const SideWindow = lazy(
+  () => import("@/components/home/SideWindow").then((m) => ({ default: m.SideWindow })),
+);
+const ExternalSessionsPicker = lazy(
+  () => import("@/interface/home/ExternalSessionsPicker").then((m) => ({ default: m.ExternalSessionsPicker })),
+);
+const InteractiveTerminal = lazy(
+  () => import("@/components/InteractiveTerminal").then((m) => ({ default: m.InteractiveTerminal })),
+);
+
+const ONBOARDING_SEEN_STORAGE_KEY = "omni.onboarding.seen";
+const EMPTY_PROJECT_FILES: string[] = [];
+const RECOVER_ERROR_CLEARING_EVENT_TYPES = new Set([
+  "direct_retry_worker_already_active",
+  "worker_session_resumed",
+  "worker_session_recreated",
+  "worker_session_recreated_from_transcript",
+  "worker_prompted",
+  "recovery_resolved",
+  "run_completed",
+  "auto_commit_created",
+  "auto_commit_push_created",
+]);
+
+function eventCreatedAtMs(event: Pick<ExecutionEventRecord, "createdAt">) {
+  const time = new Date(event.createdAt).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function hasRecoverErrorClearingEvent(events: ExecutionEventRecord[], submittedAt: number | undefined) {
+  const submittedAtMs = typeof submittedAt === "number" && Number.isFinite(submittedAt) && submittedAt > 0
+    ? submittedAt
+    : null;
+  return events.some((event) => {
+    if (!RECOVER_ERROR_CLEARING_EVENT_TYPES.has(event.eventType)) {
+      return false;
+    }
+    if (submittedAtMs === null) {
+      return true;
+    }
+    const eventTime = eventCreatedAtMs(event);
+    return eventTime !== null && eventTime >= submittedAtMs;
+  });
+}
+
+function shouldShowRecoverRunError(args: {
+  error: unknown;
+  variablesRunId: string | null | undefined;
+  selectedRunId: string | null;
+  selectedRun: RunRecord | null;
+  selectedRunExecutionEvents: ExecutionEventRecord[];
+  submittedAt: number | undefined;
+}) {
+  if (!args.error || !args.variablesRunId || args.variablesRunId !== args.selectedRunId) {
+    return false;
+  }
+  if (args.selectedRun && args.selectedRun.status !== "failed" && args.selectedRun.status !== "needs_recovery") {
+    return false;
+  }
+  if (hasRecoverErrorClearingEvent(args.selectedRunExecutionEvents, args.submittedAt)) {
+    return false;
+  }
+  return true;
+}
+
+export function HomeApp({
+  bootstrap,
+  runnerConnection,
+}: {
+  bootstrap?: HomeBootstrapPayload | null;
+  runnerConnection?: RunnerConnection;
+}) {
+  const runtimeApis = useRuntimeAPIs();
+  gitWorkspaceManager.configure(runtimeApis.git.execute);
+  conversationNotificationManager.configure(runtimeApis.notifications);
+  applyHomeBootstrap(bootstrap, false);
+  const initialEventState = bootstrap?.initialEventState ?? INITIAL_EVENT_STREAM_STATE;
+  const initialRoute = typeof window === "undefined"
+    ? bootstrap?.route
+    : parseBrowserConversationRoute(window.location);
+  const initialSnapshotScope = initialRoute?.selectedRunId ?? null;
+
+  const {
+    themeMode,
+    showSettings,
+    showOnboarding,
+    showPairDeviceDialog,
+    activeSettingsTab,
+    activeLlmProfileTab,
+    apiKeys,
+    showFolderPicker,
+    selectedRunId,
+    leftSidebarOpen,
+    leftSidebarWidth,
+    rightSidebarOpen,
+    rightSidebarWidth,
+    isResizingLeftSidebar,
+    isResizingRightSidebar,
+    terminalPanelOpen,
+    terminalPanelWidth,
+    isResizingTerminalPanel,
+    mobileNavOpen,
+    mobileWorkersOpen,
+    mobileTerminalOpen,
+    searchQuery,
+    draftProjectPath,
+    readMarkers,
+    collapsedProjectPaths,
+    visibleProjectSessionCounts,
+    renamingRunId,
+    renameValue,
+    renameSource,
+    movingRunId,
+    moveRunProjectPath,
+    editingMessageId,
+    editingMessageValue,
+    expandedDirectMessageIds,
+    routeReady,
+    hasReceivedInitialEventStreamPayload,
+    selectedConversationMode,
+    selectedCliAgent,
+    selectedWorkerAccountId,
+    selectedModel,
+    selectedEffort,
+    hydratedRunSelectionId,
+    pairTokenFromUrl,
+    authError,
+    pairRedeemError,
+    pairRedeemAttempted,
+    runtimeErrors,
+    settingsDiagnostics,
+    conversationSidebarTab,
+    showExternalSessionsPicker,
+    deletingRun,
+  } = useManagerSelector(homeUiStateManager, selectHomeAppState, shallowEqualRecord);
+
+  const {
+    setThemeMode,
+    setShowSettings,
+    setShowOnboarding,
+    setShowPairDeviceDialog,
+    setShowExternalSessionsPicker,
+    setActiveSettingsTab,
+    setActiveLlmProfileTab,
+    setApiKeys,
+    setShowFolderPicker,
+    setSelectedRunId,
+    setLeftSidebarOpen,
+    setLeftSidebarWidth,
+    setRightSidebarOpen,
+    setRightSidebarWidth,
+    setIsResizingLeftSidebar,
+    setIsResizingRightSidebar,
+    setTerminalPanelOpen,
+    setMobileNavOpen,
+    setMobileWorkersOpen,
+    setMobileTerminalOpen,
+    setSearchQuery,
+    setDraftProjectPath,
+    setReadMarkers,
+    setCollapsedProjectPaths,
+    setProjectExpanded,
+    collapseProjects,
+    setRenameValue,
+    setMoveRunProjectPath,
+    setEditingMessageValue,
+    setExpandedDirectMessageIds,
+    setRouteReady,
+    setHasReceivedInitialEventStreamPayload,
+    setSelectedConversationMode,
+    setSelectedCliAgent,
+    setSelectedWorkerAccountId,
+    setSelectedModel,
+    setSelectedEffort,
+    setHydratedRunSelectionId,
+    setPairTokenFromUrl,
+    setAuthError,
+    setPairRedeemAttempted,
+    setRuntimeErrors,
+    setConversationSidebarTab,
+  } = homeUiSetters;
+
+  // Event stream state. The manager must be created exactly once per mount:
+  // it is the accumulated client view of runs/messages/workers. It used to be
+  // keyed on the run id parsed from window.location, which meant every
+  // history.replaceState on session switch or session create rebuilt it from
+  // the page-load bootstrap payload — wiping minutes of live state, flashing
+  // stale sidebar entries, clearing the selected run ("new session form"
+  // flash), and forcing an SSE reconnect storm. Scope changes are handled by
+  // the hydrateFromCacheScope effect below, never by rebuilding the manager.
+  const stateManagerRef = useRef<EventStreamStateManager | null>(null);
+  if (stateManagerRef.current === null) {
+    stateManagerRef.current = new EventStreamStateManager(initialEventState, {
+      snapshotCacheScope: initialSnapshotScope,
+      deferCacheHydration: true,
+      initialSnapshotSource: bootstrap?.initialEventState ? "server" : undefined,
+    });
+  }
+  const stateManager = stateManagerRef.current;
+  useEffect(() => {
+    stateManager.hydrateFromCaches();
+  }, [stateManager]);
+  useEffect(() => {
+    if (selectedRunId) {
+      stateManager.hydrateFromCacheScope(selectedRunId);
+    } else {
+      stateManager.setSnapshotCacheScope(null);
+    }
+  }, [selectedRunId, stateManager]);
+  const state = useSyncExternalStore(
+    useCallback((listener) => stateManager.subscribe(listener), [stateManager]),
+    useCallback(() => stateManager.getSnapshot(), [stateManager]),
+    () => initialEventState,
+  );
+  const setState = useCallback<React.Dispatch<React.SetStateAction<EventStreamState>>>(
+    (action) => {
+      stateManager.setSnapshotCacheScope(selectedRunId);
+      stateManager.updateLocal(action);
+    },
+    [selectedRunId, stateManager],
+  );
+  const applyServerEventStreamState = useCallback<React.Dispatch<React.SetStateAction<EventStreamState>>>(
+    (action) => {
+      stateManager.setSnapshotCacheScope(selectedRunId);
+      stateManager.updateFromServer(action);
+    },
+    [selectedRunId, stateManager],
+  );
+  const getSnapshotChecksum = useCallback(
+    () => stateManager.getSnapshot().snapshotChecksum ?? null,
+    [stateManager],
+  );
+  useEffect(() => {
+    sessionStateManager.ingestSnapshot(state, selectedRunId);
+  }, [selectedRunId, state]);
+  const effectiveReadMarkers = useMemo(
+    () => mergeReadMarkers(state.readMarkers, readMarkers),
+    [state.readMarkers, readMarkers],
+  );
+
+  // Refs
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const commandInputRef = useRef<HTMLTextAreaElement>(null);
+  const pendingDeletedRunIdsRef = useRef<Set<string>>(new Set());
+  const pendingCreatedConversationSnapshotsRef = useRef<Map<string, CreatedConversationSnapshot>>(new Map());
+  const pendingSentConversationMessagesRef = useRef<Map<string, MessageRecord>>(new Map());
+  const loadingWorkerHistoryIdsRef = useRef<Set<string>>(new Set());
+  const autoResumeStateRef = useRef<Map<string, { failureKey: string; targetMessageId: string; attempts: number; timerId: ReturnType<typeof setTimeout> | null }>>(new Map());
+  const autoResumeRuntimeFactsRef = useRef({
+    activeRunId: null as string | null,
+    isAutoResumableConversation: false,
+    selectedRunStatus: null as string | null,
+    failureKey: null as string | null,
+    targetMessageId: null as string | null,
+    failedWorkerAvailabilityStatus: null as string | null,
+    hasWorkerFailureDetail: false,
+    recoverRunIsPending: false,
+  });
+  const autoResumeExhaustedRunIds = useSyncExternalStore(
+    useCallback((listener) => autoResumeExhaustionManager.subscribe(listener), []),
+    useCallback(() => autoResumeExhaustionManager.getSnapshot(), []),
+    () => autoResumeExhaustionManager.getSnapshot(),
+  );
+
+  // Appearance
+  const appearancePreferences = useManagerSnapshot(appearancePreferencesManager);
+  const appearanceTextSizeStyle = useMemo(
+    () => getAppearanceTextSizeStyle(appearancePreferences.uiTextSize, appearancePreferences.conversationTextSize),
+    [appearancePreferences.conversationTextSize, appearancePreferences.uiTextSize],
+  );
+  useEffect(() => {
+    const body = document.body;
+    const textSizeStyles = appearanceTextSizeStyle as Record<string, string | number | undefined>;
+    body.classList.add("omni-app-text-scale");
+    for (const [property, value] of Object.entries(textSizeStyles)) {
+      if (typeof value === "string" || typeof value === "number") body.style.setProperty(property, String(value));
+    }
+    return () => {
+      for (const property of Object.keys(textSizeStyles)) body.style.removeProperty(property);
+      body.classList.remove("omni-app-text-scale");
+    };
+  }, [appearanceTextSizeStyle]);
+
+  const busyMessageQueueState = useManagerSnapshot(busyMessageQueueManager);
+  const selectedQueuedMessages = useMemo(
+    () => busyMessageQueueState.queuedMessages.filter((message) => message.runId === selectedRunId),
+    [busyMessageQueueState.queuedMessages, selectedRunId],
+  );
+  const settingsDraft = useManagerSnapshot(settingsDraftManager);
+
+  const scrollConversationToBottom = useCallback(() => {
+    requestAnimationFrame(() => {
+      const vp = scrollRef.current?.querySelector(
+        '[data-slot="scroll-area-viewport"], [data-radix-scroll-area-viewport]',
+      ) as HTMLDivElement | null;
+      vp?.scrollTo({ top: vp.scrollHeight, behavior: "smooth" });
+    });
+  }, []);
+
+  useEffect(() => {
+    conversationNotificationManager.hydrateFromBrowser();
+    preflightConfirmationActionsManager.hydrateFromBrowser();
+  }, []);
+
+  // Filter event stream state
+  const filterEventStreamState = useCallback((incoming: EventStreamState) => {
+    let next = mergePendingCreatedConversationSnapshots(incoming, pendingCreatedConversationSnapshotsRef.current);
+    next = mergePendingSentConversationMessages(next, pendingSentConversationMessagesRef.current);
+    const pendingDeleted = pendingDeletedRunIdsRef.current;
+    const reconcile = (s: EventStreamState) => { busyMessageQueueManager.setQueuedMessages(s.queuedMessages || []); return s; };
+    if (pendingDeleted.size === 0) return reconcile(next);
+    next = filterOptimisticallyDeletedRuns(next, pendingDeleted);
+    const serverRunIds = new Set((incoming.runs || []).map((r) => r.id));
+    for (const id of Array.from(pendingDeleted)) { if (!serverRunIds.has(id)) pendingDeleted.delete(id); }
+    return reconcile(next);
+  }, []);
+
+  // Compute currentProjectScope early so queries can use it
+  const explicitProjects = useMemo(() => parseProjectList(apiKeys.PROJECTS), [apiKeys.PROJECTS]);
+  const currentProjectScope = resolveProjectScope({
+    draftProjectPath,
+    selectedRunId,
+    plans: (state.plans || []) as import("./types").PlanRecord[],
+    runs: (state.runs || []) as import("./types").RunRecord[],
+    explicitProjects,
+  });
+  // The composer's worker dropdown filters by catalog availability, so the
+  // catalog must load on initial mount — not just when the user opens
+  // onboarding or the Settings → Agents tab. Without this, the composer
+  // shows every supported agent regardless of install state until the user
+  // happens to open Settings.
+  const shouldLoadWorkerCatalog = true;
+
+  // Queries
+  const {
+    sessionQuery,
+    settingsQuery,
+    workerCatalogQuery,
+    refreshWorkerCatalog,
+    projectFilesQuery,
+    authEnabled,
+    authConfigurationError,
+    appUnlocked,
+  } = useHomeQueries({
+    currentProjectScope,
+    bootstrapId: bootstrap?.id,
+    loadWorkerCatalog: shouldLoadWorkerCatalog,
+    initialQueries: bootstrap?.initialQueries,
+  });
+
+  const refreshAccounts = useCallback(async () => {
+    const nextAccounts = await runtimeApis.accounts.list() as AccountRecord[];
+    stateManager.update((current) => ({ ...current, accounts: nextAccounts }));
+  }, [runtimeApis.accounts, stateManager]);
+
+  // View model
+  const vm = useHomeViewModel({
+    state,
+    selectedRunId,
+    selectedConversationMode,
+    selectedCliAgent,
+    selectedModel,
+    selectedEffort,
+    draftProjectPath,
+    searchQuery,
+    apiKeys,
+    workerCatalogData: workerCatalogQuery.data,
+    readMarkers: effectiveReadMarkers,
+  });
+
+  // Auto-expand project when a session or draft project is selected
+  useEffect(() => {
+    if (selectedRunId && vm.selectedRun?.projectPath) {
+      setProjectExpanded(vm.selectedRun.projectPath, true);
+    } else if (!selectedRunId && draftProjectPath) {
+      setProjectExpanded(draftProjectPath, true);
+    }
+  }, [selectedRunId, vm.selectedRun?.projectPath, draftProjectPath, setProjectExpanded]);
+
+  const {
+    runs,
+    selectedRun,
+    isImplementationConversation,
+    isPlanningConversation,
+    isDirectConversation,
+    isSupervisorRunning,
+    activeComposerMode,
+    catalogWorkers,
+    availableWorkerTypes,
+    configuredAllowedWorkerTypes,
+    activeAllowedWorkerTypes,
+    autoSelectedWorkerType,
+    composerWorkerOptions,
+    activeWorkerModelOptions,
+    settingsWorkers,
+    filteredProjects,
+    activeProjects,
+    selectedRunWorkers: selectedRunWorkersForDisplay,
+    conversationAgents,
+    activeConversationAgents,
+    busyConversationWorkerId,
+    latestUserCheckpoint,
+    liveThoughts,
+    selectedRunExecutionEvents,
+    selectedRunSupervisorInterventions,
+    latestExecutionEvent,
+    completionEvent,
+    failedWorkerAvailability,
+    workerFailureDetail,
+    conversationFailure: rawConversationFailure,
+    directConversationMessages,
+    pendingPermissionAgent,
+    pendingElicitationAgent,
+    erroredAgent,
+    latestWaitEvent,
+    latestPromptDeferredEvent,
+    awaitingUserQuestionMessage,
+    isSelectedConversationPreviewAvailable: isSnapshotScopedToSelectedConversation,
+    isSelectedConversationLoaded,
+    latestStuckEvent,
+    hasStuckWorker,
+    showRecoverableRunningState,
+    showConversationExecution,
+    activeConversationCwd,
+    workspaceSideWindowAvailable,
+    conversationTimelineItems,
+    conversationWorkerGroups,
+  } = vm;
+
+  // Freeze the Recent ("Active") tab's order while it's open so rows don't
+  // reshuffle on every turn; it re-sorts by latest activity only on (re)open.
+  const stableActiveProjects = useFrozenRecentOrder(
+    activeProjects as SidebarGroup[],
+    conversationSidebarTab === "recent",
+    filteredProjects as SidebarGroup[],
+  );
+
+  // A conversation created optimistically in this session is fully known to
+  // the client (the run plus the message the user just typed), so it must
+  // never hide behind "Loading conversation" while the run-scoped server
+  // snapshot catches up — on mobile that round trip can lose to the
+  // POST /api/conversations race and leave the spinner up for seconds.
+  const isSelectedConversationPreviewAvailable = isSnapshotScopedToSelectedConversation
+    || (selectedRunId !== null && pendingCreatedConversationSnapshotsRef.current.has(selectedRunId));
+
+  useEffect(() => {
+    if (shouldClearMissingSelectedRunFromAuthoritativeSnapshot({
+      selectedRunId,
+      selectedRunExists: Boolean(selectedRun),
+      snapshotSource: state.snapshotSource,
+      catalogComplete: state.snapshotScope?.catalog?.complete,
+      snapshotRunId: state.snapshotRunId,
+    })) {
+      setSelectedRunId(null);
+    }
+  }, [
+    selectedRunId,
+    selectedRun,
+    setSelectedRunId,
+    state.snapshotRunId,
+    state.snapshotScope?.catalog?.complete,
+    state.snapshotSource,
+  ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (catalogWorkers.length === 0) return;
+    try {
+      if (window.localStorage.getItem(ONBOARDING_SEEN_STORAGE_KEY) === "1") return;
+    } catch {
+      return;
+    }
+    const needsSetup = catalogWorkers.some((worker) => (
+      worker.availability.status !== "ok"
+      || worker.authentication?.status === "not_authenticated"
+      || worker.authentication?.status === "unknown"
+    ));
+    if (needsSetup) {
+      setShowOnboarding(true);
+    }
+    try {
+      window.localStorage.setItem(ONBOARDING_SEEN_STORAGE_KEY, "1");
+    } catch {
+      // ignore
+    }
+  }, [catalogWorkers, setShowOnboarding]);
+
+  const effectiveComposerWorkerType = selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent;
+  const gatewayModelSelected = effectiveComposerWorkerType === "claude" && decodeClaudeGatewayModel(selectedModel) !== null;
+  const effectiveSelectedWorkerAccountId = gatewayModelSelected ? "auto" : resolveCompatibleComposerAccountId({
+    accounts: state.accounts ?? [],
+    workerType: effectiveComposerWorkerType,
+    selectedAccountId: selectedWorkerAccountId,
+  });
+
+  // Mutations
+  const mutations = useHomeMutations({
+    state,
+    setState,
+    selectedRunId,
+    selectedCliAgent,
+    selectedWorkerAccountId: effectiveSelectedWorkerAccountId,
+    selectedConversationMode,
+    selectedModel,
+    selectedEffort,
+    autoSelectedWorkerType,
+    activeAllowedWorkerTypes,
+    renamingRunId,
+    pendingDeletedRunIdsRef,
+    pendingCreatedConversationSnapshotsRef,
+    pendingSentConversationMessagesRef,
+    loadingWorkerHistoryIdsRef,
+    scrollConversationToBottom,
+    sessionQueryRefetch: sessionQuery.refetch,
+  });
+
+  const {
+    loginMutation,
+    logoutMutation,
+    redeemPairMutation,
+    saveSettings,
+    commitWorkflowSettings,
+    renameRun,
+    moveRunToProject,
+    deleteRun,
+    archiveRun,
+    recoverRun,
+    resumeRunRecovery,
+    runCommand,
+    sendConversationMessage,
+    cancelQueuedMessage,
+    sendQueuedMessageNow,
+    interruptQueuedMessage,
+    autoCommitChat,
+    autoCommitProject,
+    stopSupervisor,
+    stopWorker,
+    stopWorkerTerminalProcess,
+    respondElicitation,
+    respondPermission,
+    promotePlanningConversation,
+    startPlanningReview,
+    handleLoadWorkerHistory,
+  } = mutations;
+
+  // Conversation actions
+  const actions = useConversationActions({
+    mutations: {
+      renameRun,
+      moveRunToProject,
+      deleteRun,
+      archiveRun,
+      recoverRun,
+      resumeRunRecovery,
+      autoCommitChat,
+      autoCommitProject,
+      commitWorkflowSettings,
+      cancelQueuedMessage,
+    },
+    selectedRunId,
+    currentProjectScope,
+    explicitProjects,
+    runs,
+    latestUserCheckpoint,
+    renamingRunId,
+    apiKeys,
+    commandInputRef,
+  });
+
+  // Layout controller
+  const layout = useHomeLayoutController();
+  const terminalPaneRef = useRef<HTMLDivElement | null>(null);
+  useTerminalPanelResize(isResizingTerminalPanel, terminalPaneRef);
+
+  // Lifecycle
+  useHomeLifecycle({
+    appUnlocked,
+    initialLastEventId: bootstrap?.initialLastEventId ?? null,
+    setHasReceivedInitialEventStreamPayload,
+    setState,
+    applyServerEventStreamState,
+    setRuntimeErrors,
+    routeReady,
+    setRouteReady,
+    authEnabled,
+    authConfigurationError,
+    pairTokenFromUrl,
+    setPairTokenFromUrl,
+    redeemPairMutation,
+    pairRedeemAttempted,
+    setPairRedeemAttempted,
+    selectedRunId,
+    setSelectedRunId,
+    draftProjectPath,
+    setDraftProjectPath,
+    setSelectedConversationMode,
+    setSelectedCliAgent,
+    setSelectedModel,
+    setSelectedEffort,
+    collapsedProjectPaths,
+    setCollapsedProjectPaths,
+    leftSidebarWidth,
+    setLeftSidebarWidth,
+    rightSidebarWidth,
+    setRightSidebarWidth,
+    isResizingLeftSidebar,
+    setIsResizingLeftSidebar,
+    isResizingRightSidebar,
+    setIsResizingRightSidebar,
+    selectedConversationMode,
+    selectedCliAgent,
+    selectedModel,
+    selectedEffort,
+    themeMode,
+    setThemeMode,
+    filterEventStreamState,
+    getSnapshotChecksum,
+    runnerConnection,
+  });
+
+  const isHydratingConversations = appUnlocked && !hasReceivedInitialEventStreamPayload;
+
+  useEffect(() => {
+    sideWindowManager.resetFileTabs();
+    if (!selectedRunId) {
+      setRightSidebarOpen(false);
+      setMobileWorkersOpen(false);
+    }
+    setExpandedDirectMessageIds(new Set());
+  }, [selectedRunId, setExpandedDirectMessageIds, setMobileWorkersOpen, setRightSidebarOpen]);
+
+  useRunSelectionEffects({
+    scrollRef,
+    state,
+    selectedRunId,
+    selectedRun,
+    activeComposerMode,
+    selectedCliAgent,
+    setSelectedCliAgent,
+    autoSelectedWorkerType,
+    activeAllowedWorkerTypes,
+    hydratedRunSelectionId,
+    setHydratedRunSelectionId,
+    selectedModel,
+    setSelectedModel,
+    selectedEffort,
+    setSelectedEffort,
+    selectedWorkerAccountId,
+    setSelectedWorkerAccountId,
+    availableWorkerTypes,
+    configuredAllowedWorkerTypes,
+    apiKeys,
+    setApiKeys,
+    readMarkers: effectiveReadMarkers,
+    setReadMarkers,
+  });
+
+  // Normalize selected model when catalog changes
+  useEffect(() => {
+    if (activeWorkerModelOptions.length === 0) return;
+    const resolved = resolveSelectedWorkerModel(vm.activeWorkerModelType, selectedModel);
+    if (activeWorkerModelOptions.some((o) => o.value === resolved)) {
+      if (resolved !== selectedModel) setSelectedModel(resolved);
+      return;
+    }
+    setSelectedModel(activeWorkerModelOptions[0].value);
+  }, [activeWorkerModelOptions, vm.activeWorkerModelType, selectedModel, setSelectedModel]);
+
+  const composerAccountOptions = useMemo(() => {
+    const options = [{
+      value: "auto",
+      label: gatewayModelSelected
+        ? t("conversation.composer.account.gatewayProvider")
+        : t("conversation.composer.account.auto"),
+    }];
+    if (gatewayModelSelected) return options;
+    if (!effectiveComposerWorkerType) return options;
+    for (const account of state.accounts ?? []) {
+      if (!account.enabled) continue;
+      if (account.cliType && account.cliType !== effectiveComposerWorkerType) continue;
+      options.push({
+        value: account.id,
+        label: formatAccountOptionLabel(account),
+      });
+    }
+    return options;
+  }, [effectiveComposerWorkerType, gatewayModelSelected, state.accounts]);
+
+  // Pre-warm the worker the user is about to use. Overlapping ACP startup
+  // (~3–30 s depending on CLI) with composer typing keeps "press Send → first
+  // token" close to model latency instead of model + worker boot. Bridge dedups
+  // per pool key; we still gate per (cwd,type,model) here to avoid refire on
+  // re-render or window focus.
+  const prewarmedWorkerSlotsRef = useRef<Set<string>>(new Set());
+  const effectivePrewarmType =
+    selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent;
+  useEffect(() => {
+    if (!appUnlocked) return;
+    if (!currentProjectScope) return;
+    if (!effectivePrewarmType) return;
+    const modelKey = selectedModel ?? "";
+    const slot = `${currentProjectScope}::${effectivePrewarmType}::${modelKey}::${effectiveSelectedWorkerAccountId}`;
+    if (prewarmedWorkerSlotsRef.current.has(slot)) return;
+    prewarmedWorkerSlotsRef.current.add(slot);
+    void runtimeApis.workers.prewarm({
+        type: effectivePrewarmType,
+        cwd: currentProjectScope,
+        model: selectedModel ?? null,
+        accountId: effectiveSelectedWorkerAccountId === "auto" ? null : effectiveSelectedWorkerAccountId,
+    }).catch(() => {
+      prewarmedWorkerSlotsRef.current.delete(slot);
+    });
+  }, [appUnlocked, currentProjectScope, effectivePrewarmType, effectiveSelectedWorkerAccountId, runtimeApis.workers, selectedModel]);
+
+  // Keep non-worker conversations from leaving the workspace side window open.
+  useEffect(() => {
+    if (selectedRunId && !isImplementationConversation) {
+      setRightSidebarOpen(false);
+      setMobileWorkersOpen(false);
+    }
+  }, [isImplementationConversation, selectedRunId, setMobileWorkersOpen, setRightSidebarOpen]);
+
+  const handleOpenWorkerActivity = useCallback((workerId: string) => {
+    // Hard invariant: never open the workers sidebar unless the worker we're
+    // trying to open is actually visible in the current snapshot. Otherwise
+    // the user gets an empty side window with no obvious way to close it.
+    const matchingWorker = selectedRunWorkersForDisplay.find((worker) => worker.id === workerId);
+    if (!matchingWorker) {
+      return;
+    }
+    const targetTab = matchingWorker.status === "cancelled" || matchingWorker.status === "stopped" || matchingWorker.status === "done" || matchingWorker.status === "completed" || matchingWorker.status === "error" || matchingWorker.status === "failed"
+      ? "finished"
+      : "active";
+    workersSidebarManager.setActiveTab(targetTab);
+    workersSidebarManager.setFocusedWorker(workerId);
+    if (typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches) {
+      setRightSidebarOpen(true);
+    } else {
+      setMobileWorkersOpen(true);
+    }
+    void handleLoadWorkerHistory(workerId);
+  }, [handleLoadWorkerHistory, selectedRunWorkersForDisplay, setMobileWorkersOpen, setRightSidebarOpen]);
+
+  // Auto-resume failed runs with backoff. Up to MAX_AUTO_RESUME_ATTEMPTS per
+  // distinct failure; after that, surface the real error so the user is not
+  // stuck staring at "Reconnecting..." forever.
+  const MAX_AUTO_RESUME_ATTEMPTS = 3;
+  useEffect(() => {
+    cancelInactiveAutoResumeTimers(autoResumeStateRef.current, selectedRunId);
+  }, [selectedRunId]);
+
+  // Clear any lingering recover-run mutation error when the user
+  // navigates away from the run it was triggered for. Without this the
+  // mutation's `.error` stays in React Query state forever, ready to
+  // re-surface in the inline error rail whenever that run is selected
+  // again — long after the underlying problem has been worked around.
+  useEffect(() => {
+    const mutationRunId = recoverRun.variables?.runId;
+    if (recoverRun.error && mutationRunId && mutationRunId !== selectedRunId) {
+      recoverRun.reset();
+    }
+  }, [recoverRun, selectedRunId]);
+
+  const selectedAutoResumeFailureKey = selectedRun?.status === "failed"
+    ? `${selectedRun.failedAt ?? ""}:${selectedRun.lastError ?? ""}`
+    : null;
+  const isRecoverRunPendingForSelectedRun = isMutationPendingForSelectedRun({
+    isPending: recoverRun.isPending,
+    mutationRunId: recoverRun.variables?.runId,
+    selectedRunId,
+  });
+  autoResumeRuntimeFactsRef.current = {
+    activeRunId: selectedRunId,
+    isAutoResumableConversation: Boolean(selectedRun && (isImplementationConversation || isDirectConversation)),
+    selectedRunStatus: selectedRun?.status ?? null,
+    failureKey: selectedAutoResumeFailureKey,
+    targetMessageId: latestUserCheckpoint?.id ?? null,
+    failedWorkerAvailabilityStatus: failedWorkerAvailability?.availability.status ?? null,
+    hasWorkerFailureDetail: Boolean(workerFailureDetail),
+    recoverRunIsPending: isRecoverRunPendingForSelectedRun,
+  };
+
+  useEffect(() => {
+    if (
+      !selectedRunId || !selectedRun
+      || (!isImplementationConversation && !isDirectConversation)
+      || selectedRun.status !== "failed"
+      || failedWorkerAvailability?.availability.status !== "ok"
+      || isPermanentAutoResumeFailure(selectedAutoResumeFailureKey)
+      || workerFailureDetail || !latestUserCheckpoint || isRecoverRunPendingForSelectedRun
+    ) return;
+
+    const runId = selectedRunId;
+    const failureKey = selectedAutoResumeFailureKey ?? "";
+    const targetMessageId = latestUserCheckpoint.id;
+    const existing = autoResumeStateRef.current.get(runId);
+
+    // New failure for this run — reset attempt counter and clear exhausted flag.
+    if (!existing || existing.failureKey !== failureKey || existing.targetMessageId !== targetMessageId) {
+      if (existing?.timerId) clearTimeout(existing.timerId);
+      autoResumeStateRef.current.set(runId, { failureKey, targetMessageId, attempts: 0, timerId: null });
+      autoResumeExhaustionManager.clear(runId);
+    }
+
+    const state = autoResumeStateRef.current.get(runId)!;
+    if (state.timerId) return; // retry already scheduled
+    if (state.attempts >= MAX_AUTO_RESUME_ATTEMPTS) {
+      autoResumeExhaustionManager.mark(runId);
+      return;
+    }
+
+    // Backoff: 1s, 4s, 10s.
+    const delay = [1000, 4000, 10000][state.attempts] ?? 10000;
+    const timerId = setTimeout(() => {
+      const facts = autoResumeRuntimeFactsRef.current;
+      if (!shouldFireAutoResumeTimer({
+        entries: autoResumeStateRef.current,
+        runId,
+        failureKey,
+        targetMessageId,
+        activeRunId: facts.activeRunId,
+        isAutoResumableConversation: facts.isAutoResumableConversation,
+        selectedRunStatus: facts.selectedRunStatus,
+        failedWorkerAvailabilityStatus: facts.failedWorkerAvailabilityStatus,
+        hasWorkerFailureDetail: facts.hasWorkerFailureDetail,
+        recoverRunIsPending: facts.recoverRunIsPending,
+      })) {
+        return;
+      }
+      const current = autoResumeStateRef.current.get(runId);
+      if (!current) return;
+      autoResumeStateRef.current.set(runId, { ...current, attempts: current.attempts + 1, timerId: null });
+      recoverRun.mutate({ runId, action: "retry", targetMessageId });
+    }, delay);
+    autoResumeStateRef.current.set(runId, { ...state, timerId });
+  }, [
+    autoResumeExhaustedRunIds,
+    failedWorkerAvailability?.availability.status,
+    isDirectConversation,
+    isImplementationConversation,
+    isRecoverRunPendingForSelectedRun,
+    latestUserCheckpoint,
+    recoverRun,
+    selectedRun,
+    selectedAutoResumeFailureKey,
+    selectedRunId,
+    workerFailureDetail,
+  ]);
+
+  useEffect(() => () => {
+    autoResumeStateRef.current.forEach((entry) => {
+      if (entry.timerId) clearTimeout(entry.timerId);
+    });
+    autoResumeStateRef.current.clear();
+  }, []);
+
+  const conversationFailure = useMemo(() => {
+    if (!rawConversationFailure || rawConversationFailure.tone !== "progress") return rawConversationFailure;
+    if (!selectedRunId || !autoResumeExhaustedRunIds.has(selectedRunId)) return rawConversationFailure;
+    return {
+      tone: "error" as const,
+      action: "Run failed",
+      message: stripRunFailurePrefix(selectedRun?.lastError) || "Auto-reconnect attempts exhausted.",
+      suggestion: "Click reconnect to try again, or fix the worker runtime first.",
+      details: [],
+    };
+  }, [autoResumeExhaustedRunIds, rawConversationFailure, selectedRun?.lastError, selectedRunId]);
+
+  const { selectedRecoveryState, selectedRecoveryIncidents } = useRunRecoveryState({ state, selectedRunId });
+  const { liveExecutionStatus } = useConversationExecutionStatus({
+    selectedRun,
+    latestExecutionEvent,
+    erroredAgent,
+    pendingPermissionAgent,
+    pendingElicitationAgent,
+    hasStuckWorker,
+    latestStuckEvent,
+    showRecoverableRunningState,
+    latestWaitEvent,
+    latestPromptDeferredEvent,
+    completionEvent,
+    queuedMessageCount: selectedQueuedMessages.filter(
+      (m) => m.status === "pending" || m.status === "delivering",
+    ).length,
+    activeConversationAgents,
+    liveThoughts,
+    awaitingUserQuestionMessage,
+    isSelectedConversationLoaded,
+  });
+
+  const appErrors = useAppErrors({
+    state,
+    runtimeErrors,
+    projectFilesError: projectFilesQuery.error,
+    settingsError: settingsQuery.error,
+    commitWorkflowSettingsError: commitWorkflowSettings.error,
+    runCommandError: runCommand.error,
+    sendConversationMessageError: sendConversationMessage.error,
+    cancelQueuedMessageError: cancelQueuedMessage.error,
+    autoCommitChatError: autoCommitChat.error,
+    autoCommitProjectError: autoCommitProject.error,
+    // Scope `recoverRun` error display to the run it was triggered for.
+    // React Query keeps the last mutation error around until reset, so
+    // without this an "Agent not found …" error from a failed recover
+    // attempt on run A keeps showing while the user is now viewing run
+    // B. Mismatch → suppress. We also reset the mutation on session
+    // switch (effect below) so the error doesn't reappear if the user
+    // navigates back to the original run.
+    recoverRunError: shouldShowRecoverRunError({
+      error: recoverRun.error,
+      variablesRunId: recoverRun.variables?.runId,
+      selectedRunId,
+      selectedRun,
+      selectedRunExecutionEvents,
+      submittedAt: recoverRun.submittedAt,
+    })
+      ? recoverRun.error
+      : null,
+    renameRunError: renameRun.error,
+    archiveRunError: archiveRun.error,
+    deleteRunError: deleteRun.error,
+    stopSupervisorError: stopSupervisor.error,
+    stopWorkerError: stopWorker.error ?? stopWorkerTerminalProcess.error,
+  });
+
+  // Composer state
+  const isSendingSelectedConversationMessage = isMutationPendingForSelectedRun({
+    isPending: sendConversationMessage.isPending,
+    mutationRunId: sendConversationMessage.variables?.runId,
+    selectedRunId,
+  });
+  const isSendingSelectedQueuedMessage = isMutationPendingForSelectedRun({
+    isPending: sendQueuedMessageNow.isPending,
+    mutationRunId: sendQueuedMessageNow.variables?.runId,
+    selectedRunId,
+  }) || isMutationPendingForSelectedRun({
+    isPending: interruptQueuedMessage.isPending,
+    mutationRunId: interruptQueuedMessage.variables?.runId,
+    selectedRunId,
+  });
+  const isStoppingSelectedSupervisor = isMutationPendingForSelectedRun({
+    isPending: stopSupervisor.isPending,
+    mutationRunId: stopSupervisor.variables?.runId,
+    selectedRunId,
+  });
+  const isStoppingSelectedWorker = isMutationPendingForSelectedRun({
+    isPending: stopWorker.isPending,
+    mutationRunId: stopWorker.variables?.runId,
+    selectedRunId,
+  });
+  const pendingConversationWorkerId = resolvePendingConversationWorkerId({
+    isPending: sendConversationMessage.isPending,
+    mutationRunId: sendConversationMessage.variables?.runId,
+    selectedRunId,
+    isImplementationConversation,
+    selectedWorkerIds: selectedRunWorkersForDisplay.map((worker) => worker.id),
+  });
+  const directRunningConversationWorkerId = isDirectConversation
+    && (selectedRun?.mode === "direct" || selectedRun?.mode === "commit")
+    && selectedRun.status === "running"
+    ? selectedRunWorkersForDisplay[0]?.id ?? null
+    : null;
+  const stoppableConversationWorkerId = busyConversationWorkerId ?? pendingConversationWorkerId ?? directRunningConversationWorkerId;
+  const isConversationStoppable = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
+  const isStopConversationPending = isStoppingSelectedSupervisor || isStoppingSelectedWorker;
+  const isStartingCurrentProjectConversation = runCommand.isPending
+    && (!selectedRunId || selectedRunId === runCommand.variables?.requestedRunId)
+    && (runCommand.variables?.projectPath ?? null) === (currentProjectScope ?? null);
+  const isPromotePlanningPendingForSelectedRun = isMutationPendingForSelectedRun({
+    isPending: promotePlanningConversation.isPending,
+    mutationRunId: promotePlanningConversation.variables?.runId,
+    selectedRunId,
+  });
+  const isResumeRunRecoveryPendingForSelectedRun = isMutationPendingForSelectedRun({
+    isPending: resumeRunRecovery.isPending,
+    mutationRunId: resumeRunRecovery.variables?.runId,
+    selectedRunId,
+  });
+  const isComposerSubmitting = isStartingCurrentProjectConversation || isSendingSelectedConversationMessage || isSendingSelectedQueuedMessage || isPromotePlanningPendingForSelectedRun || isStopConversationPending;
+  const busyMessageAction = parseBusyMessageAction(apiKeys.BUSY_MESSAGE_ACTION);
+  const hasBusyConversation = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
+  const lockedDirectWorkerLabel = WORKER_OPTIONS.find((o) => o.value === (selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent))?.label
+    || WORKER_OPTIONS.find((o) => o.value === autoSelectedWorkerType)?.label
+    || "Direct worker";
+  const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct";
+  const selectedRunStatus = selectedRun?.status ?? null;
+  const directControlPendingAssistantStatus = resolveDirectControlPendingAssistantStatus({
+    isDirectConversation,
+    pendingConversationWorkerId,
+    busyConversationWorkerId,
+    selectedRunStatus,
+    workerStatuses: selectedRunWorkersForDisplay.map((worker) => worker.status),
+    agentStates: conversationAgents.map((agent) => agent.state),
+    hasAgentCurrentText: conversationAgents.some((agent) => Boolean(agent.currentText?.trim())),
+    hasPendingHumanInput: conversationAgents.some(hasPendingHumanInputSignal),
+  });
+  const isSelectedRunQuotaWaiting = selectedRunStatus === "quota_waiting";
+  const showDirectControlWorkingIndicator = directControlPendingAssistantStatus !== null && !isSelectedRunQuotaWaiting;
+  const welcomeRepoName = resolveRepoName(currentProjectScope);
+  const pairDeviceAvailabilityError = !authEnabled
+    ? "Phone pairing requires OmniHarness auth. Set OMNIHARNESS_AUTH_PASSWORD or OMNIHARNESS_AUTH_PASSWORD_HASH and restart, then open Connect Phone again."
+    : authConfigurationError;
+  const stopSupervisorMutate = stopSupervisor.mutate;
+  const stopWorkerMutate = stopWorker.mutate;
+  const interruptQueuedMessageMutate = interruptQueuedMessage.mutate;
+  const cancelQueuedMessageMutate = cancelQueuedMessage.mutate;
+  const sendConversationMessageMutate = sendConversationMessage.mutate;
+  const runCommandMutate = runCommand.mutate;
+
+  const handleStopConversation = useCallback(() => {
+    if (!selectedRunId || isStopConversationPending) return;
+    if (isSupervisorRunning) { stopSupervisorMutate({ runId: selectedRunId }); return; }
+    if (stoppableConversationWorkerId) stopWorkerMutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId });
+  }, [
+    isStopConversationPending,
+    isSupervisorRunning,
+    selectedRunId,
+    stopSupervisorMutate,
+    stopWorkerMutate,
+    stoppableConversationWorkerId,
+  ]);
+
+  const handleStopRecoveryWait = useCallback(() => {
+    if (!selectedRunId || isStopConversationPending) return;
+    stopSupervisorMutate({ runId: selectedRunId });
+  }, [isStopConversationPending, selectedRunId, stopSupervisorMutate]);
+
+  const handleComposerEditQueuedMessage = useCallback((message: { id: string; runId: string; content: string }) => {
+    const nextCommand = message.content;
+    homeUiSetters.setCommand(nextCommand);
+    homeUiSetters.setCommandCursor(nextCommand.length);
+    homeUiSetters.clearAttachments();
+    cancelQueuedMessageMutate({ runId: message.runId, messageId: message.id });
+    requestAnimationFrame(() => {
+      commandInputRef.current?.focus();
+      commandInputRef.current?.setSelectionRange(nextCommand.length, nextCommand.length);
+    });
+  }, [cancelQueuedMessageMutate]);
+
+  const handleComposerInterruptQueuedMessage = useCallback((messageId: string) => {
+    if (selectedRunId) interruptQueuedMessageMutate({ runId: selectedRunId, messageId });
+  }, [interruptQueuedMessageMutate, selectedRunId]);
+
+  const handleComposerCancelQueuedMessage = useCallback((messageId: string) => {
+    if (selectedRunId) cancelQueuedMessageMutate({ runId: selectedRunId, messageId });
+  }, [cancelQueuedMessageMutate, selectedRunId]);
+
+  const handleComposerInterruptConversation = useCallback((draft: { content: string; attachments: PendingChatAttachment[] } | null) => {
+    if (selectedRunId) interruptQueuedMessageMutate({ runId: selectedRunId, draft: draft ?? undefined });
+  }, [interruptQueuedMessageMutate, selectedRunId]);
+
+  const handleComposerSendConversationMessage = useCallback((content: string, attachments: PendingChatAttachment[], busyAction?: BusyMessageAction) => {
+    if (selectedRunId) sendConversationMessageMutate({ runId: selectedRunId, content, attachments, busyAction });
+  }, [selectedRunId, sendConversationMessageMutate]);
+
+  const handleComposerRunCommand = useCallback((content: string, attachments: PendingChatAttachment[]) => {
+    runCommandMutate({ content, attachments, projectPath: currentProjectScope, requestedRunId: createClientRunId() });
+  }, [currentProjectScope, runCommandMutate]);
+
+  const composerProjectFiles = projectFilesQuery.data?.files ?? EMPTY_PROJECT_FILES;
+
+  const handleReload = useCallback(() => {
+    try {
+      window.localStorage.removeItem("omni-event-stream-snapshot-cache:v1");
+      window.localStorage.removeItem("omni-worker-entries-cache:v1");
+    } catch {
+      // ignore
+    }
+    window.location.reload();
+  }, []);
+
+  const renderComposer = (className: string) => (
+    <ComposerContainer
+      className={className}
+      commandInputRef={commandInputRef}
+      selectedRunId={selectedRunId}
+      selectedConversationMode={activeComposerMode}
+      setSelectedConversationMode={setSelectedConversationMode}
+      currentProjectScope={currentProjectScope}
+      projectFiles={composerProjectFiles}
+      projectFilesIsFetched={projectFilesQuery.isFetched}
+      onOpenProjectFile={actions.handleOpenProjectFile}
+      themeMode={themeMode}
+      shouldLockDirectWorker={shouldLockDirectWorker}
+      lockedDirectWorkerLabel={lockedDirectWorkerLabel}
+      selectedCliAgent={selectedCliAgent}
+      setSelectedCliAgent={setSelectedCliAgent}
+      composerWorkerOptions={composerWorkerOptions}
+      selectedWorkerAccountId={effectiveSelectedWorkerAccountId}
+      setSelectedWorkerAccountId={setSelectedWorkerAccountId}
+      composerAccountOptions={composerAccountOptions}
+      selectedModel={selectedModel}
+      setSelectedModel={setSelectedModel}
+      activeWorkerModelOptions={activeWorkerModelOptions}
+      selectedEffort={selectedEffort}
+      setSelectedEffort={setSelectedEffort}
+      isComposerSubmitting={isComposerSubmitting}
+      isStopConversationPending={isStopConversationPending}
+      isConversationStoppable={isConversationStoppable}
+      hasBusyConversation={hasBusyConversation}
+      busyMessageAction={busyMessageAction}
+      queuedMessages={selectedQueuedMessages}
+      cancellingQueuedMessageIds={busyMessageQueueState.cancellingMessageIds}
+      interruptingQueuedMessageIds={busyMessageQueueState.interruptingMessageIds}
+      onEditQueuedMessage={handleComposerEditQueuedMessage}
+      onInterruptQueuedMessage={handleComposerInterruptQueuedMessage}
+      onCancelQueuedMessage={handleComposerCancelQueuedMessage}
+      onInterruptConversation={handleComposerInterruptConversation}
+      onSendConversationMessage={handleComposerSendConversationMessage}
+      onRunCommand={handleComposerRunCommand}
+      onStopConversation={handleStopConversation}
+    />
+  );
+
+  // Auth gates
+  if (!routeReady || sessionQuery.isLoading || (authEnabled && !appUnlocked && Boolean(pairTokenFromUrl) && redeemPairMutation.isPending)) {
+    return <BootShell />;
+  }
+
+  if (authEnabled && !appUnlocked) {
+    return (
+      <LoginShell
+        configurationError={authConfigurationError}
+        error={authError}
+        isSubmitting={loginMutation.isPending}
+        isRedeemingPair={Boolean(pairTokenFromUrl) && !authConfigurationError && !pairRedeemError}
+        pairError={pairRedeemError}
+        onSubmit={async (password) => {
+          setAuthError(null);
+          await loginMutation.mutateAsync(password);
+          await runnerConnection?.retry();
+        }}
+        accessory={<RunnerControls />}
+      />
+    );
+  }
+
+  const sharedSidebarProps = {
+    filteredProjects: filteredProjects as SidebarGroup[],
+    activeProjects: stableActiveProjects,
+    conversationSidebarTab: conversationSidebarTab as ConversationSidebarTab,
+    setConversationSidebarTab,
+    isHydratingConversations,
+    searchQuery,
+    setSearchQuery,
+    selectedRunId,
+    messages: state.messages,
+    readMarkers: effectiveReadMarkers,
+    collapsedProjectPaths,
+    visibleProjectSessionCounts,
+    onProjectOpenChange: actions.handleProjectOpenChange,
+    onReorderProjects: actions.handleReorderProjects,
+    onCollapseAllProjects: collapseProjects,
+    onShowMoreProjectSessions: actions.handleShowMoreProjectSessions,
+    setShowSettings,
+    openOnboarding: () => setShowOnboarding(true),
+    openFolderPicker: () => setShowFolderPicker(true),
+    startNewPlan: actions.handleStartNewPlan,
+    beginConversationInProject: actions.beginConversationInProject,
+    autoCommitProject: actions.handleManualCommitProject,
+    isAutoCommitProjectPending: autoCommitProject.isPending,
+    handleRemoveProject: actions.handleRemoveProject,
+    selectRun: actions.handleSelectRun,
+    renamingRunId,
+    renameValue,
+    renameSource,
+    setRenameValue,
+    movingRunId,
+    moveRunProjectPath,
+    setMoveRunProjectPath,
+    moveRunToProjectOptions: explicitProjects,
+    startMovingRun: actions.handleStartMovingRun,
+    confirmMoveRunToProject: actions.handleConfirmMoveRunToProject,
+    cancelMovingRun: actions.handleCancelMovingRun,
+    isMoveRunToProjectPending: moveRunToProject.isPending,
+    startRenamingRun: actions.handleStartRenamingRun,
+    commitRenamingRun: (runId: string) => actions.handleCommitRenamingRun(runId, renameValue, state),
+    cancelRenamingRun: actions.handleCancelRenamingRun,
+    archiveRun: actions.handleArchiveRun,
+    deleteRun: actions.handleDeleteRun,
+    authEnabled,
+    openPairDeviceDialog: () => setShowPairDeviceDialog(true),
+    logout: () => logoutMutation.mutate(),
+    themeMode,
+    setThemeMode,
+    onOpenExternalSessions: () => setShowExternalSessionsPicker(true),
+  };
+
+  return (
+    <div
+      className="omni-app-text-scale flex h-dvh w-full overflow-hidden bg-background text-foreground lg:h-screen"
+      style={appearanceTextSizeStyle}
+    >
+      <div
+        className={`relative z-30 hidden h-full shrink-0 overflow-hidden border-r bg-background transition-[width,opacity] duration-150 ease-out lg:flex motion-reduce:transition-none ${leftSidebarOpen ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}
+        style={{ width: leftSidebarOpen ? leftSidebarWidth : 0 }}
+        aria-hidden={!leftSidebarOpen}
+        inert={!leftSidebarOpen ? true : undefined}
+      >
+        <button
+          type="button"
+          className="absolute inset-y-0 right-0 z-10 w-3 translate-x-1/2 cursor-col-resize bg-transparent"
+          aria-label={t("sidebar.resize.conversations")}
+          onPointerDown={layout.handleLeftSidebarResizeStart}
+        />
+        <div className={`flex h-full min-w-0 flex-1 transition-transform duration-150 ease-out motion-reduce:transition-none ${leftSidebarOpen ? "translate-x-0" : "-translate-x-3"}`}>
+          <ConversationSidebar {...sharedSidebarProps} onCollapse={() => setLeftSidebarOpen(false)} />
+        </div>
+      </div>
+
+      <div className="relative flex min-w-0 flex-1 flex-col bg-background">
+        <HomeHeader
+          {...sharedSidebarProps}
+          startRenamingRun={actions.handleStartTopBarRenamingRun}
+          mobileNavOpen={mobileNavOpen}
+          setMobileNavOpen={setMobileNavOpen}
+          leftSidebarOpen={leftSidebarOpen}
+          setLeftSidebarOpen={setLeftSidebarOpen}
+          activeConversationCwd={activeConversationCwd}
+          selectedRun={selectedRun}
+          isImplementationConversation={isImplementationConversation}
+          workspaceSideWindowAvailable={workspaceSideWindowAvailable}
+          projectRoot={currentProjectScope}
+          themeMode={themeMode}
+          setThemeMode={setThemeMode}
+          rightSidebarOpen={rightSidebarOpen}
+          setRightSidebarOpen={setRightSidebarOpen}
+          terminalPanelOpen={terminalPanelOpen}
+          setTerminalPanelOpen={setTerminalPanelOpen}
+          mobileWorkersOpen={mobileWorkersOpen}
+          setMobileWorkersOpen={setMobileWorkersOpen}
+          mobileTerminalOpen={mobileTerminalOpen}
+          setMobileTerminalOpen={setMobileTerminalOpen}
+          selectedRunWorkers={vm.sideWindowWorkers}
+          conversationAgents={vm.sideWindowAgents}
+          supervisorInterventions={selectedRunSupervisorInterventions}
+          onCommitNow={() => actions.handleManualCommitChat("commit")}
+          onCommitAndPushNow={() => actions.handleManualCommitChat("commit-push")}
+          onPrimaryCommit={() => actions.handleManualCommitChat()}
+          autoCommitMilestonesEnabled={actions.autoCommitMilestonesEnabled}
+          pushOnCommitEnabled={actions.pushOnCommitEnabled}
+          onAutoCommitMilestonesChange={(checked) => actions.updateCommitWorkflowSetting("GIT_AUTO_COMMIT_MILESTONES", checked)}
+          onPushOnCommitChange={(checked) => actions.updateCommitWorkflowSetting("GIT_PUSH_ON_COMMIT", checked)}
+          isAutoCommitChatPending={autoCommitChat.isPending}
+          onStopWorker={(workerId) => {
+            if (selectedRunId) stopWorker.mutate({ runId: selectedRunId, workerId });
+          }}
+          onStopTerminalProcess={(workerId, terminalProcess) => {
+            if (selectedRunId && terminalProcess.processId) {
+              stopWorkerTerminalProcess.mutate({ runId: selectedRunId, workerId, terminalProcess });
+            }
+          }}
+          onRespondElicitation={(input) => respondElicitation.mutateAsync(input)}
+          onRespondPermission={(input) => respondPermission.mutate(input)}
+          onLoadWorkerHistory={handleLoadWorkerHistory}
+          stoppingWorkerId={stopWorker.variables?.workerId ?? null}
+          stoppingTerminalProcess={stopWorkerTerminalProcess.variables ? {
+            workerId: stopWorkerTerminalProcess.variables.workerId,
+            terminalProcessId: stopWorkerTerminalProcess.variables.terminalProcess.id,
+          } : null}
+          onForkSession={actions.handleForkSession}
+          onForkSessionIntoWorktree={actions.handleForkSessionIntoWorktree}
+          canForkSession={Boolean(selectedRunId && latestUserCheckpoint)}
+          onReload={handleReload}
+        />
+
+        <ConversationMain
+          scrollRef={scrollRef}
+          selectedRunId={selectedRunId}
+          selectedRun={selectedRun}
+          welcomeRepoName={welcomeRepoName}
+          isDirectConversation={isDirectConversation}
+          isPlanningConversation={isPlanningConversation}
+          isImplementationConversation={isImplementationConversation}
+          appErrors={appErrors}
+          conversationFailure={conversationFailure}
+          directConversationMessages={directConversationMessages}
+          expandedDirectMessageIds={expandedDirectMessageIds}
+          toggleDirectMessageExpansion={actions.toggleDirectMessageExpansion}
+          primaryConversationAgent={vm.primaryConversationAgent}
+          primaryConversationWorkerId={vm.primaryConversationAgent?.name ?? null}
+          initialWorkerEntries={state.workerEntries}
+          unifiedWorkerStreamEnabled={bootstrap?.features?.unifiedWorkerStream ?? false}
+          isHydratingConversations={isHydratingConversations}
+          isSelectedConversationPreviewAvailable={isSelectedConversationPreviewAvailable}
+          isSelectedConversationLoaded={isSelectedConversationLoaded}
+          promotePlanningConversation={promotePlanningConversation}
+          onStartReview={(prefs) => {
+            if (selectedRunId) {
+              startPlanningReview.mutate({ runId: selectedRunId, ...prefs });
+            }
+          }}
+          reviewRuns={state.reviewRuns}
+          reviewRounds={state.reviewRounds}
+          reviewFindings={state.reviewFindings}
+          conversationTimelineItems={conversationTimelineItems}
+          recoverRun={recoverRun}
+          recoveryState={selectedRecoveryState}
+          recoveryIncidents={selectedRecoveryIncidents}
+          resumeRunRecovery={{ isPending: isResumeRunRecoveryPendingForSelectedRun }}
+          stopRunRecovery={{ isPending: isStopConversationPending }}
+          showRecoverableRunningState={showRecoverableRunningState}
+          hasStuckWorker={hasStuckWorker}
+          latestUserCheckpoint={latestUserCheckpoint}
+          handleRetryMessage={actions.handleRetryMessage}
+          handleResumeRunRecovery={actions.handleResumeRunRecovery}
+          handleStopRecoveryWait={handleStopRecoveryWait}
+          handleStartEditingMessage={actions.handleStartEditingMessage}
+          handleForkMessage={actions.handleForkMessage}
+          handleForkMessageIntoWorktree={actions.handleForkMessageIntoWorktree}
+          handleConfirmForkMessageIntoWorktree={actions.handleConfirmForkMessageIntoWorktree}
+          editingMessageId={editingMessageId}
+          editingMessageValue={editingMessageValue}
+          setEditingMessageValue={setEditingMessageValue}
+          handleCancelEditingMessage={actions.handleCancelEditingMessage}
+          handleSaveEditedMessage={(messageId) => actions.handleSaveEditedMessage(messageId, editingMessageValue)}
+          handlePreflightConfirmationAnswer={(content) => {
+            if (selectedRunId) {
+              sendConversationMessage.mutate({ runId: selectedRunId, content, attachments: [] });
+            }
+          }}
+          isPreflightConfirmationAnswering={isSendingSelectedConversationMessage}
+          conversationAgents={conversationAgents}
+          showDirectControlWorkingIndicator={showDirectControlWorkingIndicator}
+          directControlPendingAssistantStatus={directControlPendingAssistantStatus}
+          showConversationExecution={showConversationExecution}
+          liveExecutionStatus={liveExecutionStatus}
+          liveThoughts={liveThoughts}
+          executionEvents={selectedRunExecutionEvents}
+          activeWorkers={conversationWorkerGroups.active}
+          emptyComposer={renderComposer("mt-2 w-full pt-0 sm:pt-0")}
+          projectRoot={currentProjectScope}
+          onOpenProjectFile={actions.handleOpenProjectFile}
+          onOpenWorkerActivity={handleOpenWorkerActivity}
+          onRespondElicitation={(input) => respondElicitation.mutateAsync(input)}
+          onRespondPermission={(input) => respondPermission.mutate(input)}
+          respondingElicitationRequestId={respondElicitation.isPending && respondElicitation.variables?.workerId === vm.primaryConversationAgent?.name ? respondElicitation.variables.requestId : null}
+          respondingPermissionRequestId={respondPermission.isPending && respondPermission.variables?.workerId === vm.primaryConversationAgent?.name ? respondPermission.variables.requestId : null}
+        />
+
+        {selectedRunId ? renderComposer("w-full") : null}
+      </div>
+
+      <div
+        ref={terminalPaneRef}
+        className={`relative hidden h-full shrink-0 overflow-hidden border-l bg-background transition-[width,opacity] duration-150 ease-out lg:flex motion-reduce:transition-none ${terminalPanelOpen ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}
+        style={{ width: terminalPanelOpen ? terminalPanelWidth : 0 }}
+        aria-hidden={!terminalPanelOpen}
+        inert={!terminalPanelOpen ? true : undefined}
+      >
+        <button
+          type="button"
+          className="absolute inset-y-0 left-0 z-10 w-3 -translate-x-1/2 cursor-col-resize bg-transparent"
+          aria-label={t("terminal.resize")}
+          onPointerDown={layout.handleTerminalPanelResizeStart}
+        />
+        <div className="flex h-full min-w-0 flex-1 flex-col pl-2">
+          <div className="flex items-center justify-between border-b px-3 py-1.5">
+            <span className="text-xs font-medium text-muted-foreground">{t("terminal.title")}</span>
+            <button
+              type="button"
+              className="rounded p-1 text-muted-foreground hover:text-foreground"
+              aria-label={t("terminal.close")}
+              title={t("terminal.close")}
+              onClick={() => setTerminalPanelOpen(false)}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 bg-black p-1">
+            {terminalPanelOpen ? <InteractiveTerminal conversationId={selectedRunId} /> : null}
+          </div>
+        </div>
+      </div>
+
+      {workspaceSideWindowAvailable ? (
+        <div
+          className={`relative hidden h-full shrink-0 overflow-hidden border-l bg-background transition-[width,opacity] duration-150 ease-out lg:flex motion-reduce:transition-none ${rightSidebarOpen ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}
+          style={{ width: rightSidebarOpen ? rightSidebarWidth : 0 }}
+          aria-hidden={!rightSidebarOpen}
+          inert={!rightSidebarOpen ? true : undefined}
+        >
+          <button
+            type="button"
+            className="absolute inset-y-0 left-0 z-10 w-3 -translate-x-1/2 cursor-col-resize bg-transparent"
+            aria-label={t("sidebar.resize.workspace")}
+            onPointerDown={layout.handleRightSidebarResizeStart}
+          />
+          <div className={`flex h-full min-w-0 flex-1 pl-2 transition-transform duration-150 ease-out motion-reduce:transition-none ${rightSidebarOpen ? "translate-x-0" : "translate-x-3"}`}>
+            <SideWindow
+              projectRoot={currentProjectScope}
+              workers={selectedRunId ? vm.sideWindowWorkers : []}
+              agents={selectedRunId ? vm.sideWindowAgents : []}
+              supervisorInterventions={selectedRunId ? selectedRunSupervisorInterventions : []}
+              preferredModel={selectedRun?.preferredWorkerModel ?? null}
+              preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
+              onStopWorker={(workerId) => { if (selectedRunId) stopWorker.mutate({ runId: selectedRunId, workerId }); }}
+              onStopTerminalProcess={(workerId, terminalProcess) => {
+                if (selectedRunId && terminalProcess.processId) {
+                  stopWorkerTerminalProcess.mutate({ runId: selectedRunId, workerId, terminalProcess });
+                }
+              }}
+              onRespondElicitation={(input) => respondElicitation.mutateAsync(input)}
+              onRespondPermission={(input) => respondPermission.mutate(input)}
+              onLoadWorkerHistory={handleLoadWorkerHistory}
+              stoppingWorkerId={stopWorker.variables?.workerId ?? null}
+              stoppingTerminalProcess={stopWorkerTerminalProcess.variables ? {
+                workerId: stopWorkerTerminalProcess.variables.workerId,
+                terminalProcessId: stopWorkerTerminalProcess.variables.terminalProcess.id,
+              } : null}
+              onCloseWindow={() => setRightSidebarOpen(false)}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      <OnboardingSetupDialog
+        open={showOnboarding}
+        onOpenChange={setShowOnboarding}
+        workers={catalogWorkers}
+        onRefreshWorkerCatalog={() => refreshWorkerCatalog.mutate()}
+        workerCatalogRefreshing={refreshWorkerCatalog.isPending || workerCatalogQuery.isFetching}
+        onOpenAgentSettings={() => { setActiveSettingsTab("agents"); setShowSettings(true); }}
+      />
+
+      <SettingsDialog
+        open={showSettings}
+        onOpenChange={setShowSettings}
+        activeSettingsTab={activeSettingsTab}
+        setActiveSettingsTab={setActiveSettingsTab}
+        activeLlmProfileTab={activeLlmProfileTab}
+        setActiveLlmProfileTab={setActiveLlmProfileTab}
+        settingsDraft={settingsDraft}
+        setSetting={(key, value) => settingsDraftManager.setField(key, value)}
+        discardSettingsDraft={() => settingsDraftManager.discardDraft()}
+        secretStates={settingsQuery.data?.secrets}
+        settingsWorkers={settingsWorkers}
+        accounts={state.accounts}
+        onAccountsChanged={(nextAccounts) => stateManager.update((current) => ({ ...current, accounts: nextAccounts }))}
+        onRefreshAccounts={refreshAccounts}
+        workerCatalogQuery={workerCatalogQuery}
+        onRefreshWorkerCatalog={() => refreshWorkerCatalog.mutate()}
+        workerCatalogRefreshing={refreshWorkerCatalog.isPending || workerCatalogQuery.isFetching}
+        settingsDiagnostics={settingsDiagnostics}
+        resourceSnapshot={settingsQuery.data?.resourceSnapshot}
+        saveSettings={saveSettings}
+        activeProjectPath={activeConversationCwd ?? null}
+      />
+
+      <PairDeviceDialog
+        open={showPairDeviceDialog}
+        onOpenChange={setShowPairDeviceDialog}
+        selectedRunId={selectedRunId}
+        publicOrigin={sessionQuery.data?.publicOrigin ?? null}
+        availabilityError={pairDeviceAvailabilityError}
+      />
+
+      <FolderPickerDialog
+        open={showFolderPicker}
+        onOpenChange={setShowFolderPicker}
+        onSelect={actions.handleAddProject}
+      />
+
+      <AttachmentImagePreviewDialog />
+
+      <ExternalSessionsPicker
+        open={showExternalSessionsPicker}
+        onClose={() => setShowExternalSessionsPicker(false)}
+        onResumed={(runId) => actions.handleSelectRun(runId)}
+      />
+
+      <Dialog
+        open={deletingRun !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            actions.handleCancelDeleteRun();
+          }
+        }}
+      >
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>{t("conversation.delete.title")}</DialogTitle>
+            <DialogDescription>
+              {t("conversation.delete.description", { title: deletingRun?.title || "" })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={actions.handleCancelDeleteRun}
+              disabled={deleteRun.isPending}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={actions.handleConfirmDeleteRun}
+              disabled={deleteRun.isPending}
+            >
+              {t("conversation.sidebar.delete")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

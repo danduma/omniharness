@@ -1,22 +1,34 @@
 # OmniHarness VS Code Extension
 
-This proof extension connects to a running OmniHarness runtime and opens an
-activity-bar webview for conversation control.
+The extension is a remote client for one or more running OmniHarness runners.
+The extension host owns HTTP/SSE connections and injects bearer sessions from
+VS Code `SecretStorage`; the webview receives profile metadata and normalized
+events, never tokens.
 
-## Build
+## Build and package
 
 ```sh
-pnpm run vscode:build
+pnpm vscode:build
+pnpm vscode:package
 ```
 
-## Run Locally
+The `.vsix` is written under the operating system temporary directory unless
+`OMNIHARNESS_PACKAGE_OUT` is set.
 
-1. Start OmniHarness normally, usually at `http://localhost:3035`.
+## Run locally
+
+1. Start at least one runner, usually at `http://localhost:3050`.
 2. Build the extension.
 3. Open `apps/vscode` in VS Code.
 4. Run the extension host from VS Code's extension development workflow.
-5. Configure `omniHarness.serverUrl` if the runtime is not on the default URL.
+5. Add runner URLs and use the shared runner password from the activity-bar
+   view.
 
-The extension can list current conversations, start a new implementation
-conversation for the active workspace folder, proxy runtime HTTP requests, proxy
-SSE frames for shared renderer adapters, and open files/diffs through VS Code.
+Profiles persist in extension `globalState`; sessions persist only in
+`SecretStorage`. Upgrading migrates the old plain `omniHarness.sessionCookie`
+setting into the secret store, clears the setting, and requires a fresh login
+because a cookie is not accepted as a bearer token.
+
+The extension keeps one event stream per authenticated profile while its host
+is active. Reloading VS Code restores profiles/cursors and reconnects. OS and
+editor notifications are best effort while the extension host is alive.

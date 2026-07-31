@@ -7,10 +7,9 @@ import {
 } from "@/server/notifications/preferences";
 import { getVapidPublicKey } from "@/server/notifications/web-push";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 async function getNotifications(request: Request) {
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Notifications",
     action: "Load notification configuration",
   });
@@ -25,7 +24,7 @@ async function getNotifications(request: Request) {
 }
 
 async function postNotifications(request: Request) {
-  const nextRequest = toNextRequest(request);
+  const nextRequest = request;
   const auth = await requireApiSession(nextRequest, {
     source: "Notifications",
     action: "Save notification subscription",
@@ -51,7 +50,7 @@ async function postNotifications(request: Request) {
 }
 
 async function deleteNotifications(request: Request) {
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Notifications",
     action: "Remove notification subscription",
     enforceSameOrigin: true,

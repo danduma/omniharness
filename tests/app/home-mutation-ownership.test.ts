@@ -8,7 +8,7 @@ import {
   shouldSelectSourceRunMutationResult,
   shouldRestoreSelectionAfterOptimisticRemovalError,
   shouldClearSubmittedComposer,
-} from "@/app/home/useHomeMutations";
+} from "@/interface/home/useHomeMutations";
 
 describe("home mutation ownership guards", () => {
   test("keeps create-run success handlers scoped to their optimistic run", () => {

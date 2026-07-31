@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RUN_PATH_PATTERN } from "@/app/home/constants";
+import { RUN_PATH_PATTERN } from "@/interface/home/constants";
 
 describe("RUN_PATH_PATTERN", () => {
   it("matches short session ids in direct session routes", () => {

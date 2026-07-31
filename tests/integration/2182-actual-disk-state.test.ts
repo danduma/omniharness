@@ -9,7 +9,7 @@
 import { existsSync, readFileSync, readdirSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
-import { coalesceWorkerEntriesById } from "@/app/home/WorkerEntriesManager";
+import { coalesceWorkerEntriesById } from "@/interface/home/WorkerEntriesManager";
 import type { WorkerEntry } from "@/server/workers/entries-types";
 
 interface TranscriptEntry extends WorkerEntry {

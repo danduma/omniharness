@@ -3,7 +3,7 @@
 import { ChevronDownIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
-import type { WorkerModelOption } from "@/app/home/types";
+import type { WorkerModelOption } from "@/interface/home/types";
 
 type ComposerModelPickerProps = {
   value: string;
