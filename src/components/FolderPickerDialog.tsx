@@ -7,10 +7,11 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Folder, ArrowUpCircle } from "lucide-react";
-import { normalizeAppError, requestJson } from "@/lib/app-errors";
+import { normalizeAppError } from "@/lib/app-errors";
 import { folderPickerManager } from "@/components/component-state-managers";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { t, useI18nSnapshot } from "@/lib/i18n";
+import { useRuntimeAPIs } from "@/runtime-api/provider";
 
 export function FolderPickerDialog({ 
   open, 
@@ -22,21 +23,18 @@ export function FolderPickerDialog({
   onSelect: (path: string) => void; 
 }) {
   useI18nSnapshot();
+  const runtimeApis = useRuntimeAPIs();
   const { currentPath, search } = useManagerSnapshot(folderPickerManager);
 
   const { data, error } = useQuery({
     queryKey: ["fs", currentPath],
-    queryFn: async ({ signal }) => {
-      const url = currentPath ? `/api/fs?path=${encodeURIComponent(currentPath)}` : "/api/fs";
-      return requestJson<{
+    queryFn: ({ signal }) => (
+      runtimeApis.files.browse({ path: currentPath }, { signal }) as Promise<{
         current: string;
         parent: string;
         directories: Array<{ name: string; path: string }>;
-      }>(url, { signal }, {
-        source: "Filesystem",
-        action: "Browse directories",
-      });
-    },
+      }>
+    ),
     enabled: open,
     staleTime: 30_000,
   });

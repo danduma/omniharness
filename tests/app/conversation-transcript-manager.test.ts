@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { WorkerEntry } from "@/server/workers/entries-types";
-import { ConversationTranscriptManager } from "@/app/home/ConversationTranscriptManager";
+import { ConversationTranscriptManager } from "@/interface/home/ConversationTranscriptManager";
 
 function token(label: string) {
   return Buffer.from(JSON.stringify({ label }), "utf8").toString("base64url");
@@ -22,7 +22,7 @@ describe("ConversationTranscriptManager", () => {
     const tailToken = token("tail");
     const oldestToken = token("oldest");
     const olderOldestToken = token("older-oldest");
-    const requestJson = vi
+    const transcript = vi
       .fn()
       .mockResolvedValueOnce({
         entries: [entry(152), entry(153)],
@@ -39,16 +39,12 @@ describe("ConversationTranscriptManager", () => {
         workerIds: ["w1"],
       });
     const manager = new ConversationTranscriptManager({
-      requestJson: requestJson as unknown as never,
+      transcript,
     });
 
     await manager.ensureLoaded("run-1");
 
-    expect(requestJson).toHaveBeenCalledWith(
-      "/api/conversations/run-1/transcript?limit=100",
-      undefined,
-      expect.objectContaining({ action: "Load conversation transcript" }),
-    );
+    expect(transcript).toHaveBeenCalledWith({ runId: "run-1", limit: 100 });
     expect(manager.getState("run-1")).toMatchObject({
       entries: [{ seq: 152 }, { seq: 153 }],
       latestToken: tailToken,
@@ -59,11 +55,11 @@ describe("ConversationTranscriptManager", () => {
 
     await manager.loadOlder("run-1");
 
-    expect(requestJson).toHaveBeenLastCalledWith(
-      `/api/conversations/run-1/transcript?beforeToken=${encodeURIComponent(oldestToken)}&limit=100`,
-      undefined,
-      expect.objectContaining({ action: "Load older conversation transcript" }),
-    );
+    expect(transcript).toHaveBeenLastCalledWith({
+      runId: "run-1",
+      beforeToken: oldestToken,
+      limit: 100,
+    });
     expect(manager.getState("run-1")).toMatchObject({
       entries: [{ seq: 150 }, { seq: 151 }, { seq: 152 }, { seq: 153 }],
       latestToken: tailToken,

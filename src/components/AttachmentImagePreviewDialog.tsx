@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { Download, X } from "lucide-react";
 import { attachmentImagePreviewManager } from "@/components/component-state-managers";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -48,14 +47,10 @@ export function AttachmentImagePreviewDialog() {
               </button>
             </div>
             <div className="relative h-full w-full p-4 pt-20 sm:p-8 sm:pt-24">
-              <Image
+              <img
                 src={preview.url}
                 alt={preview.name}
-                fill
-                sizes="100vw"
-                unoptimized
-                className="object-contain p-4 pt-20 sm:p-8 sm:pt-24"
-                priority
+                className="absolute inset-0 h-full w-full object-contain p-4 pt-20 sm:p-8 sm:pt-24"
               />
             </div>
             <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-5 pb-5 pt-16 text-sm text-white/90 sm:px-8 sm:pb-7">

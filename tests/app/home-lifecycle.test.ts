@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldStartLiveEventConnection } from "@/app/home/useHomeLifecycle";
+import { shouldStartLiveEventConnection } from "@/interface/home/useHomeLifecycle";
 
 describe("home lifecycle", () => {
   it("does not start live events before the route has hydrated", () => {

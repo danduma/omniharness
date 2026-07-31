@@ -2,8 +2,8 @@ import { CircleStop, RotateCcw, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import type { RunRecoveryState } from "@/app/home/types";
-import { recoveryDescriptionKey, recoveryTitleKey, recoveryTone } from "@/app/home/recovery-utils";
+import type { RunRecoveryState } from "@/interface/home/types";
+import { recoveryDescriptionKey, recoveryTitleKey, recoveryTone } from "@/interface/home/recovery-utils";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 
 function formatRecoveryTime(value: string | null | undefined) {

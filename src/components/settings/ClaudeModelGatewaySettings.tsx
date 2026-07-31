@@ -2,7 +2,7 @@
 
 import React, { useEffect } from "react";
 import { ExternalLink, RefreshCw } from "lucide-react";
-import { claudeModelGatewayManager } from "@/app/home/ClaudeModelGatewayManager";
+import { claudeModelGatewayManager } from "@/interface/home/ClaudeModelGatewayManager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { useRuntimeAPIs } from "@/runtime-api/provider";
 
 type Props = {
   settings: Record<string, string>;
@@ -30,8 +31,10 @@ function customModelLines(value: string | undefined) {
 
 export function ClaudeModelGatewaySettings({ settings, setSetting, dirtyKeys, secretStates }: Props) {
   useI18nSnapshot();
+  const runtimeApis = useRuntimeAPIs();
+  claudeModelGatewayManager.configure(runtimeApis.settings.claudeGateway);
   const state = useManagerSnapshot(claudeModelGatewayManager);
-  useEffect(() => { void claudeModelGatewayManager.refresh(); }, []);
+  useEffect(() => { void claudeModelGatewayManager.refresh(); }, [runtimeApis.settings.claudeGateway]);
   const status = state.status;
   const mode = settings.CLAUDE_MODEL_GATEWAY_MODE === "external" ? "external" : "managed";
   const serverMode = status?.mode ?? mode;

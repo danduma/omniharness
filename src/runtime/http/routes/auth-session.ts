@@ -1,10 +1,9 @@
 import { getAuthConfigurationError, getPublicOriginFromRequest, isAuthEnabled } from "@/server/auth/config";
 import { insertAuthEvent } from "@/server/auth/audit";
-import { getSessionFromRequest, listActiveSessions, revokeAllSessions, revokeSession } from "@/server/auth/session";
+import { listActiveSessions, revokeAllSessions, revokeSession } from "@/server/auth/session";
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 import { clearSessionCookie } from "./cookies";
 
 function json(data: unknown, init?: ResponseInit) {
@@ -12,7 +11,7 @@ function json(data: unknown, init?: ResponseInit) {
 }
 
 async function getAuthSession(request: Request) {
-  const nextRequest = toNextRequest(request);
+  const nextRequest = request;
   const publicOrigin = getPublicOriginFromRequest(nextRequest.url, nextRequest.headers);
 
   if (!isAuthEnabled()) {
@@ -38,7 +37,38 @@ async function getAuthSession(request: Request) {
     });
   }
 
-  const session = await getSessionFromRequest(nextRequest);
+  const hasCredential = Boolean(
+    nextRequest.headers.get("authorization")?.trim()
+    || nextRequest.headers.get("cookie")?.includes("omni_session="),
+  );
+  if (!hasCredential) {
+    return json({
+      enabled: true,
+      authenticated: false,
+      currentSession: null,
+      sessions: [],
+      configurationError: null,
+      publicOrigin,
+    });
+  }
+  const auth = await requireApiSession(nextRequest, {
+    source: "Auth",
+    action: "Load session state",
+  });
+  if (auth.response) {
+    if (nextRequest.headers.get("authorization")?.trim()) {
+      return auth.response;
+    }
+    return json({
+      enabled: true,
+      authenticated: false,
+      currentSession: null,
+      sessions: [],
+      configurationError: null,
+      publicOrigin,
+    });
+  }
+  const session = auth.session;
   if (!session) {
     return json({
       enabled: true,
@@ -61,7 +91,7 @@ async function getAuthSession(request: Request) {
 }
 
 async function deleteAuthSession(request: Request) {
-  const nextRequest = toNextRequest(request);
+  const nextRequest = request;
   const auth = await requireApiSession(nextRequest, {
     source: "Auth",
     action: "Revoke session",

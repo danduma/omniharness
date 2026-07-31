@@ -1,18 +1,18 @@
-import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AUTH_SESSION_COOKIE } from "@/server/auth/config";
 import { __resetApiSessionCacheForTests, requireApiSession } from "@/server/auth/guards";
+import { announceAuthSessionRevocation } from "@/server/auth/session-revocation";
 
-const { getSessionFromRequestMock } = vi.hoisted(() => ({
-  getSessionFromRequestMock: vi.fn(),
+const { getSessionFromTokenValueMock } = vi.hoisted(() => ({
+  getSessionFromTokenValueMock: vi.fn(),
 }));
 
 vi.mock("@/server/auth/session", () => ({
-  getSessionFromRequest: getSessionFromRequestMock,
+  getSessionFromTokenValue: getSessionFromTokenValueMock,
 }));
 
 function requestWithCookie(value: string) {
-  return new NextRequest("http://localhost/api/workers/run-worker-1/entries", {
+  return new Request("http://localhost/api/workers/run-worker-1/entries", {
     headers: {
       cookie: `${AUTH_SESSION_COOKIE}=${value}`,
     },
@@ -24,12 +24,15 @@ describe("requireApiSession cache", () => {
     process.env.OMNIHARNESS_TEST_BYPASS_AUTH = "false";
     process.env.OMNIHARNESS_AUTH_PASSWORD = "test-password";
     __resetApiSessionCacheForTests();
-    getSessionFromRequestMock.mockReset();
-    getSessionFromRequestMock.mockResolvedValue({
+    getSessionFromTokenValueMock.mockReset();
+    getSessionFromTokenValueMock.mockResolvedValue({
       id: "session-1",
       label: null,
       userAgent: null,
       authMethod: "password_login",
+      transport: "cookie",
+      boundOrigin: null,
+      clientKind: "browser",
       createdBySessionId: null,
       lastSeenAt: new Date(),
       expiresAt: new Date(Date.now() + 60_000),
@@ -53,7 +56,7 @@ describe("requireApiSession cache", () => {
     expect(second.response).toBeNull();
     expect(first.session?.id).toBe("session-1");
     expect(second.session?.id).toBe("session-1");
-    expect(getSessionFromRequestMock).toHaveBeenCalledTimes(1);
+    expect(getSessionFromTokenValueMock).toHaveBeenCalledTimes(1);
   });
 
   it("bounds the API session cache so changing cookies cannot grow it forever", async () => {
@@ -67,13 +70,31 @@ describe("requireApiSession cache", () => {
       expect(result.response).toBeNull();
     }
 
-    expect(getSessionFromRequestMock).toHaveBeenCalledTimes(130);
+    expect(getSessionFromTokenValueMock).toHaveBeenCalledTimes(130);
 
     const evicted = await requireApiSession(requestWithCookie("token-0.secret"), options);
     const retained = await requireApiSession(requestWithCookie("token-129.secret"), options);
 
     expect(evicted.response).toBeNull();
     expect(retained.response).toBeNull();
-    expect(getSessionFromRequestMock).toHaveBeenCalledTimes(131);
+    expect(getSessionFromTokenValueMock).toHaveBeenCalledTimes(131);
+  });
+
+  it("invalidates a cached session immediately when it is revoked", async () => {
+    const options = {
+      source: "Worker entries",
+      action: "Load worker stream",
+    };
+    await requireApiSession(requestWithCookie("token-1.secret"), options);
+    getSessionFromTokenValueMock.mockResolvedValueOnce(null);
+
+    announceAuthSessionRevocation({
+      sessionIds: ["session-1"],
+      reason: "revoked",
+    });
+    const result = await requireApiSession(requestWithCookie("token-1.secret"), options);
+
+    expect(result.response?.status).toBe(401);
+    expect(getSessionFromTokenValueMock).toHaveBeenCalledTimes(2);
   });
 });

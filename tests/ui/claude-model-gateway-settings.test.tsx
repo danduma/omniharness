@@ -19,7 +19,7 @@ describe("Claude model gateway settings", () => {
   });
 
   test("feeds canonical live event status into the gateway manager", () => {
-    const source = fs.readFileSync(path.resolve("src/app/home/useHomeLifecycle.ts"), "utf8");
+    const source = fs.readFileSync(path.resolve("src/interface/home/useHomeLifecycle.ts"), "utf8");
     expect(source).toContain("claudeModelGatewayManager.applyLiveStatus(nextState.claudeModelGateway)");
     expect(source).toContain("claudeModelGatewayManager.resetRevisionAuthority()");
   });

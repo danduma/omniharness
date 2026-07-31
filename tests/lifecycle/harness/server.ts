@@ -2,8 +2,8 @@
  * In-process control-plane host for lifecycle scenarios.
  *
  * Boots a tiny Node HTTP server that forwards GET/POST/DELETE to the
- * real Next route handlers (NextRequest in, Response out). No `next
- * build`, no Chromium, no subprocess; just the route modules under
+ * real portable route handlers (Request in, Response out). No
+ * production build, no Chromium, no subprocess; just the route modules under
  * test plus the named-event ring buffer they emit into.
  *
  * Trade-off vs the plan's `pnpm start` subprocess: this cannot exercise
@@ -21,17 +21,16 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { NextRequest } from "next/server";
 
 import { __resetNamedEventsForTests } from "@/server/events/named-events";
 import { waitForConversationBackgroundTasksForTests } from "@/server/conversations/worker-turn-gate";
 
 type RouteHandler = (
-  req: NextRequest,
+  req: Request,
   ctx: { params: Promise<Record<string, string>> },
 ) => Promise<Response> | Response;
 
-type RouteModule = Partial<Record<"GET" | "POST" | "DELETE", RouteHandler>>;
+type RouteModule = Partial<Record<"GET" | "POST" | "PATCH" | "DELETE" | "OPTIONS", RouteHandler>>;
 
 export interface LifecycleHarnessOptions {
   routes: Array<{
@@ -138,15 +137,15 @@ export async function startLifecycleHarness(options: LifecycleHarnessOptions): P
         params[key] = decodeURIComponent(match.m![idx + 1]!);
       });
       const webReq = await nodeReqToWebRequest(req, url.toString());
-      const nextReq = new NextRequest(webReq);
-      const method = (req.method ?? "GET").toUpperCase() as "GET" | "POST" | "DELETE";
+      const routeRequest = new Request(webReq);
+      const method = (req.method ?? "GET").toUpperCase() as keyof RouteModule;
       const handler = (match.route.module as RouteModule)[method];
       if (!handler) {
         res.statusCode = 405;
         res.end("Method not allowed");
         return;
       }
-      const response = await handler(nextReq, { params: Promise.resolve(params) });
+      const response = await handler(routeRequest, { params: Promise.resolve(params) });
       await webResponseToNodeRes(response, res);
     } catch (error) {
       console.error("[lifecycle-harness] route error", error);

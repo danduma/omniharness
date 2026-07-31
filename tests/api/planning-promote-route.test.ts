@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import fs from "fs";
 import os from "os";
@@ -16,7 +15,7 @@ vi.mock("@/server/supervisor/start", () => ({
   startSupervisorRun: mockStartSupervisorRun,
 }));
 
-import { POST } from "@/app/api/planning/[id]/promote/route";
+import { planningPromoteRoute as POST } from "@/../tests/helpers/runtime-routes";
 
 describe("POST /api/planning/[id]/promote", () => {
   beforeEach(async () => {
@@ -86,7 +85,7 @@ describe("POST /api/planning/[id]/promote", () => {
       },
     ]);
 
-    const request = new NextRequest(`http://localhost/api/planning/${planningRunId}/promote`, {
+    const request = new Request(`http://localhost/api/planning/${planningRunId}/promote`, {
       method: "POST",
       body: JSON.stringify({}),
     });
@@ -148,7 +147,7 @@ describe("POST /api/planning/[id]/promote", () => {
       updatedAt: new Date(),
     });
 
-    const request = new NextRequest(`http://localhost/api/planning/${planningRunId}/promote`, {
+    const request = new Request(`http://localhost/api/planning/${planningRunId}/promote`, {
       method: "POST",
       body: JSON.stringify({ planPath: "/workspace/app/docs/superpowers/plans/draft.md" }),
     });

@@ -7,8 +7,8 @@ import {
   filterActiveConversationGroups,
   getSidebarRunLastActivityAt,
   isSidebarRunCurrentlyWorking,
-} from "@/app/home/sidebar-activity";
-import type { SidebarGroup } from "@/app/home/types";
+} from "@/interface/home/sidebar-activity";
+import type { SidebarGroup } from "@/interface/home/types";
 
 const NOW = new Date("2026-05-26T12:00:00.000Z").getTime();
 const RECENT = new Date(NOW - 5 * 60 * 1000).toISOString(); // 5 min ago

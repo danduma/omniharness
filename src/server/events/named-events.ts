@@ -18,6 +18,16 @@
  */
 import { notifyEventStreamSubscribers } from "./live-updates";
 import type { ClaudeSessionModelReason } from "@/lib/claude-session-model";
+import { randomBytes } from "node:crypto";
+import {
+  formatEventStreamId,
+  parseEventStreamId,
+  type EventStreamId,
+  type RuntimeStopReason,
+  type RuntimeSurface,
+} from "@/shared/runtime";
+
+export type { RuntimeStopReason, RuntimeSurface } from "@/shared/runtime";
 
 // ---------------------------------------------------------------------------
 // Event union
@@ -30,6 +40,7 @@ export type SurfacedErrorCode =
   | "conversation.delete.failed"
   | "conversation.delete.worker_cancel_failed"
   | "conversation.continue.failed"
+  | "external_session.import_failed"
   | "process.spawn.failed"
   | "process.cwd.invalid"
   | "process.stdin.closed"
@@ -41,6 +52,9 @@ export type SurfacedErrorCode =
   | "runtime.resource_pressure"
   | "runtime.settings_apply_failed"
   | "runtime.start_failed"
+  | "runner.bridge_start_failed"
+  | "runner.start_failed"
+  | "stream.subscriber_overflow"
   | "acp.method.failed"
   | "acp.compatibility.unsupported"
   | "account.invalid_explicit"
@@ -73,6 +87,9 @@ export type SurfacedErrorCode =
   | "worker.snapshot.invalid"
   | "worker.prompt.image_attachment_unreadable"
   | "worker.model.version_unavailable"
+  // The requested model's *family* is not offered at all. Substituting another
+  // family is never correct, so the launch is refused instead.
+  | "worker.model.family_unavailable"
   | "worker.model.pin_unsupported"
   | "codex_auth_missing"
   | "codex_auth_refresh_failed"
@@ -92,16 +109,33 @@ export type ErrorSurface = "toast" | "banner" | "log";
 
 export type ClaudeModelPinReason = ClaudeSessionModelReason;
 
-export type RuntimeSurface = "web" | "electron" | "vscode" | "cli" | "test";
-
-export type RuntimeStopReason =
-  | "shutdown"
-  | "test_complete"
-  | "restart"
-  | "surface_closed"
-  | "error";
-
 export type RuntimeEvent =
+  | {
+      kind: "runner.stopping";
+      surface: RuntimeSurface;
+      reason: RuntimeStopReason;
+      flushWindowMs: number;
+    }
+  | {
+      kind: "runner.started";
+      origin: string;
+      bridgeUrl: string;
+    }
+  | {
+      kind: "runner.start_failed";
+      reason: string;
+      host: string;
+      port: number;
+    }
+  | {
+      kind: "runner.static_ui_enabled";
+      staticDir: string;
+    }
+  | {
+      kind: "runner.static_ui_missing";
+      staticDir: string | null;
+      reason: "disabled" | "not_found";
+    }
   | {
       kind: "runtime.started";
       surface: RuntimeSurface;
@@ -158,6 +192,60 @@ export type RuntimeEvent =
       kind: "surface.bridge_failed";
       surface: RuntimeSurface;
       reason: string;
+    }
+  | {
+      kind: "runner.bridge_starting";
+      bridgeUrl: string;
+      attempt: number;
+    }
+  | {
+      kind: "runner.bridge_ready";
+      bridgeUrl: string;
+      ownership: "adopted" | "owned";
+    }
+  | {
+      kind: "runner.bridge_unavailable";
+      bridgeUrl: string;
+      reason: string;
+      retryInMs: number | null;
+    }
+  | {
+      kind: "runner.bridge_lock_contended";
+      bridgeUrl: string;
+      ownerPid: number | null;
+    }
+  | {
+      kind: "runner.bridge_child_exited";
+      bridgeUrl: string;
+      code: number | null;
+      signal: string | null;
+    }
+  | {
+      kind: "runner.renamed";
+      runnerInstanceId: string;
+      previousName: string;
+      name: string;
+    }
+  | {
+      kind: "runner.rekeyed";
+      previousRunnerInstanceId: string;
+      runnerInstanceId: string;
+    };
+
+export type AuthEvent =
+  | {
+      kind: "auth.session_revoked";
+      sessionId: string;
+      reason: "revoked" | "lru_evicted" | "password_rotated";
+    }
+  | {
+      kind: "auth.sessions_revoked";
+      reason: "revoked_all" | "password_rotated";
+      count: number;
+    }
+  | {
+      kind: "auth.password_rotated";
+      sessionsKept: boolean;
     };
 
 export type WorkerEvent =
@@ -193,6 +281,17 @@ export type WorkerEvent =
       requestedModel: string | null;
       selectedModel: string;
       reason: string;
+    }
+  // The session was already on the resolved model, so nothing was set — but the
+  // resolution may still be a substitution (lower version, `[1m]`-only family)
+  // that the launch has to record. A silent `keep` is how a worker row ended up
+  // claiming a model the session never ran.
+  | {
+      kind: "worker.model_kept";
+      workerId: string;
+      requestedModel: string | null;
+      selectedModel: string;
+      reason: ClaudeModelPinReason;
     }
   // Wake-up frame for the unified worker conversation stream. Carries
   // only (workerId, seq); clients fetch the entry via
@@ -320,6 +419,22 @@ export type ConversationEvent =
   | { kind: "conversation.deleted"; runId: string }
   | { kind: "conversation.delete_failed"; runId: string; blockingTable: string | null }
   | {
+      kind: "external_session.imported";
+      runId: string;
+      workerId: string;
+      provider: "claude";
+      sessionId: string;
+      entryCount: number;
+    }
+  | {
+      kind: "external_session.import_failed";
+      runId: string;
+      workerId: string;
+      provider: "claude";
+      sessionId: string;
+      reason: string;
+    }
+  | {
       kind: "queue.drain_decision";
       runId: string;
       workerId: string;
@@ -415,7 +530,28 @@ export type ErrorSurfacedEvent = {
 
 export type StreamControlEvent = {
   kind: "stream.resync_required";
-  reason: "id_out_of_buffer" | "buffer_reset";
+  reason: StreamResyncReason;
+};
+
+export type StreamResyncReason =
+  | "epoch_mismatch"
+  | "cursor_evicted"
+  | "subscriber_overflow";
+
+export type StreamHeartbeatEvent = {
+  kind: "stream.heartbeat";
+  emittedAt: string;
+};
+
+export type StreamDiagnosticEvent = {
+  kind: "stream.subscriber_overflow";
+  stream: "events" | "terminal";
+  surface: string;
+  queuedFrames: number;
+  queuedBytes: number;
+  rejectedBytes: number;
+  runId?: string;
+  terminalId?: string;
 };
 
 export type ArtifactStreamKindLabel =
@@ -500,6 +636,7 @@ export type ClaudeModelGatewayEvent =
 
 export type NamedEvent =
   | RuntimeEvent
+  | AuthEvent
   | WorkerEvent
   | SupervisorEvent
   | PlanEvent
@@ -509,6 +646,8 @@ export type NamedEvent =
   | SessionEvent
   | ErrorSurfacedEvent
   | StreamControlEvent
+  | StreamHeartbeatEvent
+  | StreamDiagnosticEvent
   | ArtifactEvent
   | AcpEvent
   | ClaudeModelGatewayEvent;
@@ -523,15 +662,17 @@ export type SnapshotMarker = {
 };
 
 export type BufferedEntry =
-  | { id: number; emittedAt: number; runId: string | null; event: NamedEvent }
-  | { id: number; emittedAt: number; runId: string | null; event: SnapshotMarker };
+  | { id: number; streamId: EventStreamId; emittedAt: number; runId: string | null; event: NamedEvent }
+  | { id: number; streamId: EventStreamId; emittedAt: number; runId: string | null; event: SnapshotMarker };
 
 // ---------------------------------------------------------------------------
 // Ring buffer
 // ---------------------------------------------------------------------------
 
-const RING_CAPACITY = 500;
+const RING_CAPACITY = 4096;
 let cursor = 0;
+let streamEpoch = randomBytes(18).toString("base64url");
+let lastHeartbeatAt = 0;
 const ring: BufferedEntry[] = [];
 
 function pickRunId(event: NamedEvent | SnapshotMarker): string | null {
@@ -545,6 +686,7 @@ function append(event: NamedEvent | SnapshotMarker, runIdOverride?: string | nul
   cursor += 1;
   const entry = {
     id: cursor,
+    streamId: formatEventStreamId(streamEpoch, cursor),
     emittedAt: Date.now(),
     runId: runIdOverride ?? pickRunId(event),
     event,
@@ -571,6 +713,20 @@ export function emitNamedEvent(event: NamedEvent): BufferedEntry {
   return entry;
 }
 
+export function emitStreamHeartbeatIfDue(
+  now = Date.now(),
+  minimumIntervalMs = 10_000,
+): BufferedEntry | null {
+  if (lastHeartbeatAt > 0 && now - lastHeartbeatAt < minimumIntervalMs) {
+    return null;
+  }
+  lastHeartbeatAt = now;
+  return emitNamedEvent({
+    kind: "stream.heartbeat",
+    emittedAt: new Date(now).toISOString(),
+  });
+}
+
 /**
  * Reserve a ring-buffer id for an upcoming `update` snapshot frame.
  * The marker itself carries no data the client renders — its only
@@ -595,6 +751,8 @@ export type ReplayResult = {
   /** True iff the requested `lastEventId` has fallen out of the ring
    * buffer; the client should re-bootstrap via /api/events?snapshot=1. */
   resyncRequired: boolean;
+  /** Stable reason supplied when replay is impossible. */
+  resyncReason: StreamResyncReason | null;
   /** Events strictly newer than `lastEventId`, in id order, filtered to
    * the given runId scope when provided. Snapshot markers are excluded
    * from the returned list — the SSE route renders them as fresh
@@ -603,6 +761,8 @@ export type ReplayResult = {
   /** Current cursor at the time of the call. Clients should resume
    * from this id on the next call after consuming the events. */
   lastEventId: number;
+  /** Epoch-aware cursor exposed to SSE clients. */
+  lastStreamId: EventStreamId;
 };
 
 export type ReplayOptions = {
@@ -622,8 +782,16 @@ export function getEventCursor(): number {
   return cursor;
 }
 
+export function getEventStreamCursor(): EventStreamId {
+  return formatEventStreamId(streamEpoch, cursor);
+}
+
+export function getEventStreamEpoch(): string {
+  return streamEpoch;
+}
+
 export function getNamedEventsSince(
-  lastEventId: number | null,
+  lastEventId: number | string | null,
   options: ReplayOptions = {},
 ): ReplayResult {
   const includeMarkers = options.includeSnapshotMarkers === true;
@@ -632,17 +800,53 @@ export function getNamedEventsSince(
     ? Math.floor(options.throughId)
     : null;
 
+  let lastSequence: number | null = null;
+  if (typeof lastEventId === "number") {
+    lastSequence = Number.isSafeInteger(lastEventId) && lastEventId >= 0
+      ? lastEventId
+      : null;
+  } else if (typeof lastEventId === "string") {
+    const parsed = parseEventStreamId(lastEventId);
+    if (parsed) {
+      if (parsed.epoch !== streamEpoch) {
+        return {
+          resyncRequired: true,
+          resyncReason: "epoch_mismatch",
+          events: [],
+          lastEventId: cursor,
+          lastStreamId: getEventStreamCursor(),
+        };
+      }
+      lastSequence = parsed.sequence;
+    } else if (/^\d+$/.test(lastEventId.trim())) {
+      const legacySequence = Number(lastEventId);
+      lastSequence = Number.isSafeInteger(legacySequence) ? legacySequence : null;
+    }
+  }
+
   // A client carrying a `lastEventId` greater than our current cursor
   // means the server cursor was reset under their feet (process
   // restart, ring purge, or simply a client that lied). Either way, we
   // cannot replay backwards from a position we never reached — tell
   // them to resync from /api/events?snapshot=1.
-  if (lastEventId !== null && lastEventId > cursor) {
-    return { resyncRequired: true, events: [], lastEventId: cursor };
+  if (lastSequence !== null && lastSequence > cursor) {
+    return {
+      resyncRequired: true,
+      resyncReason: "cursor_evicted",
+      events: [],
+      lastEventId: cursor,
+      lastStreamId: getEventStreamCursor(),
+    };
   }
 
   if (ring.length === 0) {
-    return { resyncRequired: false, events: [], lastEventId: cursor };
+    return {
+      resyncRequired: false,
+      resyncReason: null,
+      events: [],
+      lastEventId: cursor,
+      lastStreamId: getEventStreamCursor(),
+    };
   }
 
   const oldest = ring[0]!.id;
@@ -651,12 +855,18 @@ export function getNamedEventsSince(
   // The off-by-one (oldest - 1) is intentional: if the client's last id
   // equals (oldest - 1), the very next event in the buffer is the one
   // they need, which is fine.
-  if (lastEventId !== null && lastEventId < oldest - 1) {
-    return { resyncRequired: true, events: [], lastEventId: cursor };
+  if (lastSequence !== null && lastSequence < oldest - 1) {
+    return {
+      resyncRequired: true,
+      resyncReason: "cursor_evicted",
+      events: [],
+      lastEventId: cursor,
+      lastStreamId: getEventStreamCursor(),
+    };
   }
 
   const events = ring.filter((entry) => {
-    if (lastEventId !== null && entry.id <= lastEventId) {
+    if (lastSequence !== null && entry.id <= lastSequence) {
       return false;
     }
     if (throughId !== null && entry.id > throughId) {
@@ -671,7 +881,13 @@ export function getNamedEventsSince(
     return true;
   });
 
-  return { resyncRequired: false, events, lastEventId: cursor };
+  return {
+    resyncRequired: false,
+    resyncReason: null,
+    events,
+    lastEventId: cursor,
+    lastStreamId: getEventStreamCursor(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -681,7 +897,14 @@ export function getNamedEventsSince(
 /** @internal — vitest only */
 export function __resetNamedEventsForTests() {
   cursor = 0;
+  lastHeartbeatAt = 0;
   ring.length = 0;
+}
+
+/** @internal — vitest only */
+export function __setStreamEpochForTests(epoch: string) {
+  formatEventStreamId(epoch, 0);
+  streamEpoch = epoch;
 }
 
 /** @internal — vitest only */

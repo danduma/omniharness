@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="OmniHarness" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="description" content="Supervised Multi-Agent CLI Coding Orchestrator" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" sizes="64x64" type="image/png" href="/icons/favicon-v2.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-v2.png" />
+    <title>OmniHarness</title>
+    <script id="omni-theme-bootstrap">
+      (function () {
+        var lightThemeColor = "#ffffff";
+        var darkThemeColor = "#0b0d10";
+        function applyThemeColor(themeMode) {
+          var themeColorMeta = document.querySelector('meta[name="theme-color"]');
+          if (themeColorMeta) {
+            themeColorMeta.setAttribute("content", themeMode === "night" ? darkThemeColor : lightThemeColor);
+          }
+        }
+        try {
+          var themeMode = window.localStorage.getItem("omni-theme-mode");
+          document.documentElement.classList.toggle("dark", themeMode === "night");
+          document.documentElement.style.colorScheme = themeMode === "night" ? "dark" : "light";
+          applyThemeColor(themeMode);
+        } catch (error) {
+          document.documentElement.style.colorScheme = "light";
+          applyThemeColor("day");
+        }
+      })();
+    </script>
+  </head>
+  <body class="font-sans antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SideWindowManager } from "@/app/home/SideWindowManager";
+import { SideWindowManager } from "@/interface/home/SideWindowManager";
 
 describe("SideWindowManager", () => {
   it("starts with a pinned workers tab", () => {

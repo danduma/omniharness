@@ -3,17 +3,18 @@ import path from "path";
 import { test, expect } from "vitest";
 
 const pageSource = [
-  "src/app/page.tsx",
-  "src/app/home/HomeApp.tsx",
-  "src/app/home/ComposerContainer.tsx",
-  "src/app/home/HomeUiStateManager.ts",
-  "src/app/home/constants.ts",
-  "src/app/home/types.ts",
-  "src/app/home/useHomeLifecycle.ts",
-  "src/app/home/useRunSelectionEffects.ts",
-  "src/app/home/useHomeMutations.ts",
-  "src/app/home/useHomeViewModel.ts",
-  "src/app/home/useConversationActions.ts",
+  "src/interface/home/HomeApp.tsx",
+  "src/interface/home/ComposerContainer.tsx",
+  "src/interface/home/HomeUiStateManager.ts",
+  "src/interface/home/HomeAppStateManager.ts",
+  "src/interface/home/constants.ts",
+  "src/interface/home/types.ts",
+  "src/shared/home-types.ts",
+  "src/interface/home/useHomeLifecycle.ts",
+  "src/interface/home/useRunSelectionEffects.ts",
+  "src/interface/home/useHomeMutations.ts",
+  "src/interface/home/useHomeViewModel.ts",
+  "src/interface/home/useConversationActions.ts",
   "src/components/home/ConversationComposer.tsx",
   "src/components/home/QueuedMessageDrawer.tsx",
   "src/components/home/WorkersSidebar.tsx",
@@ -27,7 +28,7 @@ const composerModelPickerSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/composer/ComposerModelPicker.tsx"),
   "utf8"
 );
-const globalsSource = fs.readFileSync(path.resolve(process.cwd(), "src/app/globals.css"), "utf8");
+const globalsSource = fs.readFileSync(path.resolve(process.cwd(), "src/interface/styles/globals.css"), "utf8");
 
 test("composer uses a filled textarea shell with inline cli agent, model, and effort controls", () => {
   expect(pageSource).toContain('selectedCliAgent: "auto"');
@@ -166,7 +167,8 @@ test("composer draft state is isolated from the root home app subscription", () 
   expect(pageSource).toContain("function ConversationComposerInner");
   expect(pageSource).toContain("export const ConversationComposer = memo(ConversationComposerInner)");
   expect(pageSource).toContain("const { command, commandCursor, mentionIndex, attachments } = useManagerSelector(");
-  expect(pageSource).toContain('type HomeAppState = Omit<HomeUiState, "command" | "commandCursor" | "mentionIndex" | "attachments">;');
+  expect(pageSource).toContain("export type HomeAppState = Omit<");
+  expect(pageSource).toContain('"command" | "commandCursor" | "mentionIndex" | "attachments"');
   expect(pageSource).toContain("const handleComposerInterruptQueuedMessage = useCallback(");
   expect(pageSource).toContain("const handleComposerCancelQueuedMessage = useCallback(");
   expect(pageSource).toContain("const handleComposerSendConversationMessage = useCallback(");
@@ -175,7 +177,7 @@ test("composer draft state is isolated from the root home app subscription", () 
 
 test("selecting a session preserves its restored composer draft", () => {
   const actionsSource = fs.readFileSync(
-    path.resolve(process.cwd(), "src/app/home/useConversationActions.ts"),
+    path.resolve(process.cwd(), "src/interface/home/useConversationActions.ts"),
     "utf8"
   );
   const start = actionsSource.indexOf("const handleSelectRun = (runId: string) => {");

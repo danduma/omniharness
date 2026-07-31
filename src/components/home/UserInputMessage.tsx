@@ -1,4 +1,3 @@
-import Image from "next/image";
 import type React from "react";
 import { Copy } from "lucide-react";
 import { attachmentImagePreviewManager, conversationCopyNoticeManager } from "@/components/component-state-managers";
@@ -7,6 +6,7 @@ import { formatBytes, type ChatAttachment } from "@/lib/chat-attachments";
 import { cn } from "@/lib/utils";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import { useAttachmentUrls } from "@/interface/attachments/AttachmentUrlManager";
 
 export type UserInputMessageActionItem = {
   label: string;
@@ -61,14 +61,10 @@ export function UserInputMessage({
   actions = [],
 }: UserInputMessageProps) {
   useI18nSnapshot();
+  const attachmentUrl = useAttachmentUrls(attachments);
   const { copiedMessageId } = useManagerSnapshot(conversationCopyNoticeManager);
   const isLongMessage = content.length > 420 || content.split(/\r\n|\r|\n/).length > 6;
   const timestampLabel = createdAt ? formatUserMessageTimestamp(createdAt) : "";
-  const attachmentUrl = (attachment: ChatAttachment) => attachment.previewUrl
-    || (attachment.storagePath
-      ? `/api/attachments?path=${encodeURIComponent(attachment.storagePath)}&mimeType=${encodeURIComponent(attachment.mimeType)}`
-      : "");
-
   return (
     <div className="flex justify-end">
       <div className="flex w-full max-w-[min(68ch,calc(100%-1rem))] flex-col items-end sm:max-w-[min(74ch,calc(100%-1.5rem))]">
@@ -94,12 +90,11 @@ export function UserInputMessage({
                     title={`Preview ${attachment.name}`}
                     aria-label={`Preview ${attachment.name}`}
                   >
-                    <Image
+                    <img
                       src={url}
                       alt={attachment.name}
                       width={72}
                       height={72}
-                      unoptimized
                       className="h-[72px] w-[72px] rounded-lg object-cover transition-transform group-hover/attachment:scale-105"
                     />
                     <span className="flex min-w-0 flex-col">

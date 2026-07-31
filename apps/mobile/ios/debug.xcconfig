@@ -1,0 +1,3 @@
+CAPACITOR_DEBUG = true
+// The native bridge still limits cleartext requests to 127.0.0.1/localhost.
+OMNI_LOOPBACK_HTTP_ALLOWED = YES

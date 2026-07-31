@@ -4,10 +4,9 @@ import { insertAuthEvent } from "@/server/auth/audit";
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 async function postAuthPair(request: Request) {
-  const nextRequest = toNextRequest(request);
+  const nextRequest = request;
   if (!isAuthEnabled()) {
     return errorResponse("Authentication must be enabled before pairing devices.", {
       status: 400,
@@ -71,7 +70,7 @@ async function postAuthPair(request: Request) {
 }
 
 async function getAuthPair(request: Request) {
-  const nextRequest = toNextRequest(request);
+  const nextRequest = request;
   const auth = await requireApiSession(nextRequest, {
     source: "Auth",
     action: "Load pairing status",

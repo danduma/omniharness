@@ -3,7 +3,6 @@ import { requireApiSession } from "@/server/auth/guards";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { resumeSupervisorRun } from "@/server/supervisor/resume";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 export const handleRunResumeRequest: OmniHttpHandler = async (request, context) => {
   try {
@@ -14,7 +13,7 @@ export const handleRunResumeRequest: OmniHttpHandler = async (request, context) 
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Runs",
       action: "Resume run",
       enforceSameOrigin: true,

@@ -388,7 +388,7 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
   const command = runtime.command.length > 0 ? runtime.command.join(" ") : "Not started by restart control";
   const mode = runtime.mode ?? "unknown";
   const startedAt = runtime.startedAt ? new Date(runtime.startedAt).toLocaleString() : "unknown";
-  const appLink = "http://localhost:3035";
+  const appLink = "http://localhost:3050";
   const canRestartCurrent = runtime.running && runtime.mode !== null;
   const devActive = runtime.running && runtime.mode === "dev";
   const prodActive = runtime.running && runtime.mode === "prod";

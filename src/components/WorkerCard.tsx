@@ -5,15 +5,15 @@ import { AlertTriangle, Bot, Check, ChevronDown, Clock, Cpu, Hash, HelpCircle, M
 import { Terminal, TerminalTextSizeControl, type AgentTerminalPayload, type TerminalUserMessage } from "@/components/Terminal";
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useWorkerStream } from "@/app/home/WorkerEntriesManager";
-import { derivePendingElicitationsFromWorkerEntries } from "@/app/home/worker-elicitations";
+import { useWorkerStream } from "@/interface/home/WorkerEntriesManager";
+import { derivePendingElicitationsFromWorkerEntries } from "@/interface/home/worker-elicitations";
 import { workerCardManager } from "@/components/component-state-managers";
-import { sideWindowManager } from "@/app/home/SideWindowManager";
+import { sideWindowManager } from "@/interface/home/SideWindowManager";
 import type { AgentOutputEntry } from "@/lib/agent-output";
 import { isWorkerActiveStatus } from "@/lib/conversation-workers";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
-import type { BridgeWorkerEntryType, WorkerEntry } from "@/server/workers/entries-types";
+import type { BridgeWorkerEntryType, WorkerEntry } from "@/shared/worker-entries";
 import {
   deriveVisibleWorkerTerminalProcesses,
   type WorkerTerminalProcess,

@@ -1,4 +1,4 @@
-import type { AgentSnapshot, MessageRecord, SupervisorInterventionRecord } from "@/app/home/types";
+import type { AgentSnapshot, MessageRecord, SupervisorInterventionRecord } from "@/interface/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 
 export type WorkerTerminalUserMessage = {

@@ -1,6 +1,6 @@
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { NoticeDescriptor } from "@/app/home/types";
+import type { NoticeDescriptor } from "@/interface/home/types";
 
 function ProgressDots() {
   return (

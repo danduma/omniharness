@@ -4,7 +4,6 @@ import { redeemPairingToken } from "@/server/auth/pairing";
 import { errorResponse } from "@/server/api-errors";
 import { parseOpaqueTokenValue } from "@/server/auth/session";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 import { setSessionCookie } from "./cookies";
 
 export const handleAuthPairRedeemRequest: OmniHttpHandler = async (request) => {
@@ -46,7 +45,7 @@ export const handleAuthPairRedeemRequest: OmniHttpHandler = async (request) => {
 
     const pairing = await redeemPairingToken({
       pairToken,
-      userAgent: toNextRequest(request).headers.get("user-agent"),
+      userAgent: request.headers.get("user-agent"),
     });
 
     await insertAuthEvent({

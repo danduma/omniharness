@@ -124,18 +124,6 @@ export async function parseErrorResponse(
   });
 }
 
-export async function requestJson<T>(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-  fallback: Partial<AppErrorDescriptor> = {},
-): Promise<T> {
-  const response = await fetch(input, init);
-  if (!response.ok) {
-    throw new AppRequestError(await parseErrorResponse(response, fallback));
-  }
-  return response.json() as Promise<T>;
-}
-
 export function appErrorKey(error: AppErrorDescriptor) {
   return [
     error.source || "",

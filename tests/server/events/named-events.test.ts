@@ -3,8 +3,11 @@ import {
   __getRingCapacity,
   __getRingForTests,
   __resetNamedEventsForTests,
+  __setStreamEpochForTests,
   emitNamedEvent,
+  emitStreamHeartbeatIfDue,
   getEventCursor,
+  getEventStreamCursor,
   getNamedEventsSince,
   recordSnapshotMarker,
 } from "@/server/events/named-events";
@@ -12,6 +15,77 @@ import {
 describe("named-events ring buffer", () => {
   beforeEach(() => {
     __resetNamedEventsForTests();
+    __setStreamEpochForTests("test-epoch");
+  });
+
+  it("exposes epoch-aware ids while retaining internal numeric ordering", () => {
+    const entry = emitNamedEvent({
+      kind: "worker.spawned",
+      runId: "r1",
+      workerId: "w1",
+      workerType: "agent",
+    });
+
+    expect(entry.id).toBe(1);
+    expect(entry.streamId).toBe("test-epoch:1");
+    expect(getEventCursor()).toBe(1);
+    expect(getEventStreamCursor()).toBe("test-epoch:1");
+  });
+
+  it("requires resync when the cursor belongs to another process epoch", () => {
+    emitNamedEvent({
+      kind: "worker.spawned",
+      runId: "r1",
+      workerId: "w1",
+      workerType: "agent",
+    });
+
+    expect(getNamedEventsSince("previous-epoch:12")).toMatchObject({
+      resyncRequired: true,
+      resyncReason: "epoch_mismatch",
+      events: [],
+      lastStreamId: "test-epoch:1",
+    });
+  });
+
+  it("reports cursor eviction with the stable resync reason", () => {
+    const capacity = __getRingCapacity();
+    for (let index = 0; index < capacity + 2; index += 1) {
+      emitNamedEvent({
+        kind: "worker.status",
+        runId: "r1",
+        workerId: "w1",
+        prev: "running",
+        next: String(index),
+      });
+    }
+
+    expect(getNamedEventsSince("test-epoch:1")).toMatchObject({
+      resyncRequired: true,
+      resyncReason: "cursor_evicted",
+      events: [],
+    });
+  });
+
+  it("keeps at least 4096 replayable entries", () => {
+    expect(__getRingCapacity()).toBeGreaterThanOrEqual(4096);
+  });
+
+  it("records one process-global id-bearing heartbeat per interval", () => {
+    const first = emitStreamHeartbeatIfDue(10_000, 5_000);
+    const duplicate = emitStreamHeartbeatIfDue(12_000, 5_000);
+    const second = emitStreamHeartbeatIfDue(15_000, 5_000);
+
+    expect(first).toMatchObject({
+      streamId: "test-epoch:1",
+      event: {
+        kind: "stream.heartbeat",
+        emittedAt: new Date(10_000).toISOString(),
+      },
+    });
+    expect(duplicate).toBeNull();
+    expect(second?.streamId).toBe("test-epoch:2");
+    expect(__getRingForTests()).toHaveLength(2);
   });
 
   it("assigns monotonically increasing ids across emits and snapshot markers", () => {
@@ -109,7 +183,13 @@ describe("named-events ring buffer", () => {
 
   it("returns an empty list when no events have been emitted", () => {
     const result = getNamedEventsSince(null);
-    expect(result).toEqual({ resyncRequired: false, events: [], lastEventId: 0 });
+    expect(result).toEqual({
+      resyncRequired: false,
+      resyncReason: null,
+      events: [],
+      lastEventId: 0,
+      lastStreamId: "test-epoch:0",
+    });
   });
 
   it("enforces the ring buffer capacity", () => {

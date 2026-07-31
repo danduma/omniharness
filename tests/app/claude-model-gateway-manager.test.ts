@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { ClaudeModelGatewayManager } from "@/app/home/ClaudeModelGatewayManager";
+import { ClaudeModelGatewayManager } from "@/interface/home/ClaudeModelGatewayManager";
 
 const status = (revision: number) => ({
   revision,
@@ -16,30 +16,28 @@ const status = (revision: number) => ({
 });
 
 describe("ClaudeModelGatewayManager", () => {
-  test("invokes browser fetch with the browser global as its receiver", async () => {
-    const fetchImpl = vi.fn(function browserFetch(this: unknown) {
-      if (this !== globalThis) {
-        throw new TypeError("Illegal invocation");
-      }
-      return Promise.resolve(Response.json({ status: status(1) }));
-    }) as unknown as typeof fetch;
-    const manager = new ClaudeModelGatewayManager(fetchImpl);
+  test("routes actions through the runtime gateway API", async () => {
+    const execute = vi.fn().mockResolvedValue({ status: status(1) });
+    const manager = new ClaudeModelGatewayManager({
+      load: vi.fn(),
+      execute,
+    });
 
     await manager.runAction("install");
 
-    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledWith({ action: "install" });
     expect(manager.getSnapshot()).toMatchObject({ error: null, status: { revision: 1 } });
   });
 
   test("rejects slow responses and older server revisions", async () => {
-    let resolveFirst!: (value: Response) => void;
-    const fetchImpl = vi.fn()
-      .mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveFirst = resolve; }))
-      .mockResolvedValueOnce(Response.json({ status: status(3) }));
-    const manager = new ClaudeModelGatewayManager(fetchImpl);
+    let resolveFirst!: (value: unknown) => void;
+    const load = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockResolvedValueOnce({ status: status(3) });
+    const manager = new ClaudeModelGatewayManager({ load, execute: vi.fn() });
     const first = manager.refresh();
     await manager.refresh();
-    resolveFirst(Response.json({ status: status(2) }));
+    resolveFirst({ status: status(2) });
     await first;
     expect(manager.getSnapshot().status?.revision).toBe(3);
     manager.applyLiveStatus(status(1));
@@ -47,7 +45,7 @@ describe("ClaudeModelGatewayManager", () => {
   });
 
   test("accepts a lower revision after the live stream reports a backend resync", () => {
-    const manager = new ClaudeModelGatewayManager(vi.fn());
+    const manager = new ClaudeModelGatewayManager({ load: vi.fn(), execute: vi.fn() });
     expect(manager.applyLiveStatus(status(50))).toBe(true);
     expect(manager.applyLiveStatus(status(1))).toBe(false);
     manager.resetRevisionAuthority();
@@ -56,18 +54,15 @@ describe("ClaudeModelGatewayManager", () => {
   });
 
   test("runs immediate actions and retains OAuth fallback details", async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(Response.json({
+    const execute = vi.fn().mockResolvedValue({
       operationId: "connect-1",
       url: "https://auth.example/connect",
       state: "oauth-state",
       status: status(4),
-    }));
-    const manager = new ClaudeModelGatewayManager(fetchImpl);
+    });
+    const manager = new ClaudeModelGatewayManager({ load: vi.fn(), execute });
     await manager.runAction("connect");
-    expect(fetchImpl).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      method: "POST",
-      body: JSON.stringify({ action: "connect" }),
-    }));
+    expect(execute).toHaveBeenCalledWith({ action: "connect" });
     expect(manager.getSnapshot()).toMatchObject({
       pendingAction: null,
       oauthUrl: "https://auth.example/connect",
@@ -77,10 +72,10 @@ describe("ClaudeModelGatewayManager", () => {
   });
 
   test("preserves actionable network errors and supports retry", async () => {
-    const fetchImpl = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Gateway is unavailable" } }), { status: 502 }))
-      .mockResolvedValueOnce(Response.json({ status: status(5) }));
-    const manager = new ClaudeModelGatewayManager(fetchImpl);
+    const load = vi.fn()
+      .mockRejectedValueOnce(new Error("Gateway is unavailable"))
+      .mockResolvedValueOnce({ status: status(5) });
+    const manager = new ClaudeModelGatewayManager({ load, execute: vi.fn() });
     await manager.refresh();
     expect(manager.getSnapshot().error).toBe("Gateway is unavailable");
     await manager.refresh();

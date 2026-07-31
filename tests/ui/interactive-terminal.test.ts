@@ -4,11 +4,11 @@ import { test, expect } from "vitest";
 
 const read = (relativePath: string) => fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 
-const homeAppSource = read("src/app/home/HomeApp.tsx");
+const homeAppSource = read("src/interface/home/HomeApp.tsx");
 const homeHeaderSource = read("src/components/home/HomeHeader.tsx");
-const stateManagerSource = read("src/app/home/HomeUiStateManager.ts");
-const constantsSource = read("src/app/home/constants.ts");
-const layoutControllerSource = read("src/app/home/useHomeLayoutController.ts");
+const stateManagerSource = read("src/interface/home/HomeUiStateManager.ts");
+const constantsSource = read("src/interface/home/constants.ts");
+const layoutControllerSource = read("src/interface/home/useHomeLayoutController.ts");
 const terminalComponentSource = read("src/components/InteractiveTerminal.tsx");
 const routesIndexSource = read("src/runtime/http/routes/index.ts");
 const enLocaleSource = read("shared/locales/en.json");
@@ -28,7 +28,7 @@ test("terminal panel state is wired through the home UI state manager", () => {
 });
 
 test("desktop renders a resizable terminal pane split from the conversation", () => {
-  expect(homeAppSource).toContain("const InteractiveTerminal = dynamic(");
+  expect(homeAppSource).toContain("const InteractiveTerminal = lazy(");
   expect(homeAppSource).toContain('import("@/components/InteractiveTerminal")');
   expect(homeAppSource).toContain("useTerminalPanelResize(isResizingTerminalPanel, terminalPaneRef)");
   expect(homeAppSource).toContain("style={{ width: terminalPanelOpen ? terminalPanelWidth : 0 }}");
@@ -54,16 +54,16 @@ test("header exposes a terminal toggle and a full-screen mobile terminal sheet",
   expect(enLocaleSource).toContain('"terminal.open"');
 });
 
-test("interactive terminal component streams over SSE and posts input back", () => {
+test("interactive terminal component streams through RuntimeAPIs", () => {
   expect(terminalComponentSource).toContain('"use client"');
   expect(terminalComponentSource).toContain('import("@xterm/xterm")');
   expect(terminalComponentSource).toContain('import("@xterm/addon-fit")');
-  expect(terminalComponentSource).toContain('fetch("/api/terminals"');
-  expect(terminalComponentSource).toContain("new EventSource(`/api/terminals/${terminalId}/stream`)");
-  expect(terminalComponentSource).toContain('eventSource.addEventListener("data"');
-  expect(terminalComponentSource).toContain('post("/input"');
-  expect(terminalComponentSource).toContain('post("/resize"');
-  expect(terminalComponentSource).toContain('method: "DELETE"');
+  expect(terminalComponentSource).toContain("useRuntimeAPIs()");
+  expect(terminalComponentSource).toContain("runtimeApis.terminals.create");
+  expect(terminalComponentSource).toContain("runtimeApis.terminals.openStream");
+  expect(terminalComponentSource).toContain('post("input"');
+  expect(terminalComponentSource).toContain('post("resize"');
+  expect(terminalComponentSource).toContain("runtimeApis.terminals.close");
   expect(terminalComponentSource).toContain("new ResizeObserver");
 });
 

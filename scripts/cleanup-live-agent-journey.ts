@@ -139,7 +139,7 @@ async function main(): Promise<void> {
   const password = process.env.OMNIHARNESS_LIVE_E2E_PASSWORD?.trim();
   if (!password) throw new Error("Set OMNIHARNESS_LIVE_E2E_PASSWORD for targeted live cleanup.");
   const baseURL = assertLoopbackUrl(
-    process.env.OMNIHARNESS_LIVE_E2E_BASE_URL?.trim() || "http://127.0.0.1:3035",
+    process.env.OMNIHARNESS_LIVE_E2E_BASE_URL?.trim() || "http://127.0.0.1:3050",
   ).origin;
   const transport = await createAuthenticatedTransport({ baseURL, password });
   const result = await cleanupLiveAgentJourney({

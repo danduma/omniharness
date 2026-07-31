@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { derivePendingElicitationsFromWorkerEntries } from "@/app/home/worker-elicitations";
+import { derivePendingElicitationsFromWorkerEntries } from "@/interface/home/worker-elicitations";
 import { getAppDataPath } from "@/server/app-root";
 import { db } from "@/server/db";
 import { plans, runs, workers } from "@/server/db/schema";

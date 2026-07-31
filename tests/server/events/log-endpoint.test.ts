@@ -1,13 +1,13 @@
-import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { GET } from "@/app/api/events/log/route";
+import { eventsLogRoute as GET } from "@/../tests/helpers/runtime-routes";
 import {
   __resetNamedEventsForTests,
+  __setStreamEpochForTests,
   emitNamedEvent,
 } from "@/server/events/named-events";
 
 function makeReq(url: string) {
-  return new NextRequest(new URL(url, "http://localhost").toString());
+  return new Request(new URL(url, "http://localhost").toString());
 }
 
 describe("/api/events/log", () => {
@@ -15,6 +15,7 @@ describe("/api/events/log", () => {
 
   beforeEach(() => {
     __resetNamedEventsForTests();
+    __setStreamEpochForTests("test-epoch");
   });
 
   afterEach(() => {
@@ -43,14 +44,18 @@ describe("/api/events/log", () => {
       "worker.spawned",
       "worker.status",
     ]);
-    expect(body.lastEventId).toBe(2);
+    expect(body.lastEventId).toBe("test-epoch:2");
+    expect(body.events.map((entry: { id: string }) => entry.id)).toEqual([
+      "test-epoch:1",
+      "test-epoch:2",
+    ]);
   });
 
   it("returns only events after `since`", async () => {
     emitNamedEvent({ kind: "worker.spawned", runId: "r1", workerId: "w1", workerType: "agent" });
     emitNamedEvent({ kind: "worker.status", runId: "r1", workerId: "w1", prev: "starting", next: "running" });
 
-    const res = await GET(makeReq("/api/events/log?since=1"));
+    const res = await GET(makeReq("/api/events/log?since=test-epoch%3A1"));
     const body = await res.json();
     expect(body.events.map((entry: { event: { kind: string } }) => entry.event.kind)).toEqual(["worker.status"]);
   });

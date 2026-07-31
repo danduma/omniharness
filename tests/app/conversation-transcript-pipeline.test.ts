@@ -13,7 +13,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { WorkerEntry } from "@/server/workers/entries-types";
-import { coalesceWorkerEntriesById } from "@/app/home/WorkerEntriesManager";
+import { coalesceWorkerEntriesById } from "@/interface/home/WorkerEntriesManager";
 
 interface TranscriptEntry extends WorkerEntry {
   workerId: string;

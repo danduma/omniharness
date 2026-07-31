@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { AppRequestError } from "@/lib/app-errors";
-import { buildEventStreamUrl, LiveEventConnectionManager, LiveEventCursorManager } from "@/app/home/LiveEventConnectionManager";
-import type { EventStreamState } from "@/app/home/types";
+import { buildEventStreamUrl, LiveEventConnectionManager, LiveEventCursorManager } from "@/interface/home/LiveEventConnectionManager";
+import type { EventStreamState } from "@/interface/home/types";
 
 function createState(id: string): EventStreamState {
   return {
@@ -71,8 +71,51 @@ async function flushAsyncWork() {
 }
 
 describe("LiveEventConnectionManager", () => {
+  it("persists cursors behind an injected runner scope key", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        values.set(key, value);
+      },
+      removeItem: (key: string) => {
+        values.delete(key);
+      },
+    };
+    const first = new LiveEventCursorManager(null, {
+      scopeKey: "runner-a",
+      storage,
+    });
+
+    expect(first.advance("epoch-a:7")).toBe(true);
+    expect(values.get("omniharness:event-cursor:runner-a")).toBe("epoch-a:7");
+
+    const restored = new LiveEventCursorManager(null, {
+      scopeKey: "runner-a",
+      storage,
+    });
+    expect(restored.getCurrent()).toBe("epoch-a:7");
+
+    restored.clear();
+    expect(values.has("omniharness:event-cursor:runner-a")).toBe(false);
+  });
+
+  it("orders epoch-aware cursor ids and accepts a new epoch", () => {
+    const cursor = new LiveEventCursorManager("epoch-a:2");
+
+    expect(cursor.advance("epoch-a:1")).toBe(false);
+    expect(cursor.advance("epoch-a:3")).toBe(true);
+    expect(cursor.advance("epoch-b:1")).toBe(true);
+    expect(cursor.getCurrent()).toBe("epoch-b:1");
+  });
+
+  it("uses the explicit cursor query parameter", () => {
+    expect(buildEventStreamUrl("run-1", "epoch-a:42"))
+      .toBe("/api/events?runId=run-1&cursor=epoch-a%3A42");
+  });
+
   it("includes the snapshot anchor when opening the event stream", () => {
-    expect(buildEventStreamUrl("run-1", "42")).toBe("/api/events?runId=run-1&lastEventId=42");
+    expect(buildEventStreamUrl("run-1", "42")).toBe("/api/events?runId=run-1&cursor=42");
 
     MockEventSource.instances = [];
     const manager = new LiveEventConnectionManager({
@@ -86,7 +129,7 @@ describe("LiveEventConnectionManager", () => {
 
     manager.start();
 
-    expect(MockEventSource.instances[0]?.url).toBe("/api/events?runId=run-1&lastEventId=42");
+    expect(MockEventSource.instances[0]?.url).toBe("/api/events?runId=run-1&cursor=42");
 
     manager.stop();
   });
@@ -273,17 +316,45 @@ describe("LiveEventConnectionManager", () => {
     manager.start();
     await flushAsyncWork();
 
-    expect(MockEventSource.instances[0]?.url).toBe("/api/events?runId=run-1&lastEventId=10");
+    expect(MockEventSource.instances[0]?.url).toBe("/api/events?runId=run-1&cursor=10");
     MockEventSource.instances[0]?.emit("stream.resync_required", { reason: "event buffer gap" });
     await flushAsyncWork();
 
     expect(workerEntries.onStreamResync).toHaveBeenCalledTimes(1);
     expect(MockEventSource.instances[0]?.closed).toBe(true);
-    expect(MockEventSource.instances[1]?.url).toBe("/api/events?runId=run-1&lastEventId=100");
+    expect(MockEventSource.instances[1]?.url).toBe("/api/events?runId=run-1&cursor=100");
     expect(applyUpdate).toHaveBeenCalledWith(expect.objectContaining({
       runs: [expect.objectContaining({ id: "persisted-after-gap" })],
     }));
     expect(workerEntries.onKnownSeqs).toHaveBeenCalledWith({ "worker-1": 8 });
+
+    manager.stop();
+    vi.useRealTimers();
+  });
+
+  it("clears a stale cursor before accepting an older resync snapshot anchor", async () => {
+    vi.useFakeTimers();
+    MockEventSource.instances = [];
+    const cursor = new LiveEventCursorManager("epoch-a:100");
+    const requestSnapshot = vi.fn().mockResolvedValue({
+      data: createState("persisted-after-gap"),
+      lastEventId: "epoch-a:5",
+    });
+    const manager = new LiveEventConnectionManager({
+      selectedRunId: "run-1",
+      cursor,
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestSnapshot,
+      applyUpdate: vi.fn(),
+      reportError: vi.fn(),
+    });
+
+    manager.start();
+    MockEventSource.instances[0]?.emit("stream.resync_required", { reason: "cursor_evicted" });
+    await flushAsyncWork();
+
+    expect(cursor.getCurrent()).toBe("epoch-a:5");
+    expect(MockEventSource.instances[1]?.url).toBe("/api/events?runId=run-1&cursor=epoch-a%3A5");
 
     manager.stop();
     vi.useRealTimers();
@@ -330,7 +401,7 @@ describe("LiveEventConnectionManager", () => {
         undefined,
       );
       expect(MockEventSource.instances[0]?.closed).toBe(true);
-      expect(MockEventSource.instances[1]?.url).toBe("/api/events?runId=run-1&lastEventId=99");
+      expect(MockEventSource.instances[1]?.url).toBe("/api/events?runId=run-1&cursor=99");
     } finally {
       manager.stop();
       globalThis.fetch = originalFetch;
@@ -395,7 +466,7 @@ describe("LiveEventConnectionManager", () => {
     });
     second.start();
 
-    expect(MockEventSource.instances[1]?.url).toBe("/api/events?runId=run-b&lastEventId=100");
+    expect(MockEventSource.instances[1]?.url).toBe("/api/events?runId=run-b&cursor=100");
 
     second.stop();
     vi.useRealTimers();

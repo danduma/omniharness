@@ -1,106 +1,130 @@
-import type { RuntimeAPIs, RuntimeApiError, RuntimeSubscription } from "./types";
+import type { RuntimeAPIs, RuntimeSubscription } from "./types";
+import { createFetchRuntimeRequest } from "./request";
+import {
+  normalizeRuntimeStreamEvent,
+  type RuntimeStreamEvent,
+} from "./stream";
+import { createRuntimeDomains } from "./domains";
 
 export interface WebRuntimeApiOptions {
   baseUrl?: string;
   fetchImpl?: typeof fetch;
   EventSourceImpl?: EventSourceConstructor;
+  bearerToken?: string | (() => string | null);
 }
-
-type RuntimeEventSourceEvent = {
-  type: string;
-  data: string;
-};
 
 type RuntimeEventSource = {
   close(): void;
-  addEventListener(type: string, listener: (event: RuntimeEventSourceEvent) => void): void;
+  onopen?: (() => void) | null;
+  addEventListener(type: string, listener: (event: RuntimeStreamEvent) => void): void;
 };
 
 type EventSourceConstructor = new (url: string) => RuntimeEventSource;
-
-function buildQuery(params: Record<string, string | null | undefined>) {
-  const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value != null && value !== "") {
-      search.set(key, value);
-    }
-  }
-  const value = search.toString();
-  return value ? `?${value}` : "";
-}
 
 function joinUrl(baseUrl: string, path: string) {
   if (!baseUrl) return path;
   return `${baseUrl.replace(/\/$/, "")}${path}`;
 }
 
-function parseEventData(event: RuntimeEventSourceEvent) {
-  if (!event.data) {
-    return null;
-  }
-  try {
-    return JSON.parse(event.data) as unknown;
-  } catch {
-    return event.data;
-  }
-}
-
-function normalizeStreamEvent(event: RuntimeEventSourceEvent) {
-  const data = parseEventData(event);
-  if (event.type === "update") {
-    return { kind: "update", payload: data };
-  }
-  if (event.type === "stream.resync_required") {
-    return {
-      kind: "stream.resync_required",
-      ...(data && typeof data === "object" ? data : { payload: data }),
-    };
-  }
-  return data;
-}
-
-async function parseJson(response: Response) {
-  const text = await response.text();
-  if (!text) return null;
-  return JSON.parse(text) as unknown;
-}
-
-function normalizeError(response: Response, body: unknown): RuntimeApiError {
-  const payload = body && typeof body === "object" && "error" in body
-    ? (body as { error?: { code?: unknown; message?: unknown; details?: unknown; surface?: unknown } }).error
-    : null;
-  const message = typeof payload?.message === "string" ? payload.message : `Runtime request failed with HTTP ${response.status}.`;
-  return {
-    code: typeof payload?.code === "string" ? payload.code : `runtime.http_${response.status}`,
-    message,
-    details: payload?.details,
-    surface: typeof payload?.surface === "string" ? payload.surface : "web",
-  };
-}
-
 export function createWebRuntimeAPIs(options: WebRuntimeApiOptions = {}): RuntimeAPIs {
-  const fetchImpl = options.fetchImpl ?? fetch;
+  const fetchImpl = options.fetchImpl
+    ?? (typeof fetch !== "undefined" ? fetch : null);
+  if (!fetchImpl) {
+    throw new TypeError("A fetch implementation is required.");
+  }
   const baseUrl = options.baseUrl ?? "";
-  const EventSourceCtor = options.EventSourceImpl
-    ?? (typeof EventSource !== "undefined" ? EventSource : null);
+  const EventSourceCtor: EventSourceConstructor | null = options.EventSourceImpl
+    ?? (typeof EventSource !== "undefined"
+      ? EventSource as unknown as EventSourceConstructor
+      : null);
 
-  async function request(path: string, init: RequestInit = {}) {
-    const response = await fetchImpl(joinUrl(baseUrl, path), init);
-    const body = await parseJson(response);
-    if (!response.ok) {
-      throw normalizeError(response, body);
-    }
-    return body;
-  }
+  const request = createFetchRuntimeRequest({
+    baseUrl,
+    fetchImpl,
+    surface: "web",
+    bearerToken: options.bearerToken,
+  });
 
-  function post(path: string, body: unknown) {
-    return request(path, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  }
+  const domains = createRuntimeDomains({
+    request,
+    openEvents(path, input, handlers): RuntimeSubscription {
+      if (!EventSourceCtor) {
+        handlers.onError?.({
+          code: "runtime.events_unavailable",
+          message: "Runtime event streaming requires EventSource support.",
+          surface: "web",
+        });
+        return { close() {} };
+      }
 
+      let source: RuntimeEventSource | null = null;
+      let closed = false;
+      const emit = (event: RuntimeStreamEvent) => {
+        handlers.onEvent(normalizeRuntimeStreamEvent(event));
+      };
+      const connect = async () => {
+        let ticket: string | null = null;
+        if (options.bearerToken) {
+          const issued = await request("POST", "/api/auth/stream-ticket", {
+            body: { path: new URL(path, "http://runtime.local").pathname },
+          }) as { ticket: string };
+          ticket = issued.ticket;
+        }
+        if (closed) {
+          return;
+        }
+        const query = new URLSearchParams();
+        if (ticket) {
+          query.set("ticket", ticket);
+        }
+        if (input.lastEventId) {
+          query.set("cursor", input.lastEventId);
+        }
+        const separator = path.includes("?") ? "&" : "?";
+        const suffix = query.size > 0 ? `${separator}${query.toString()}` : "";
+        const nextSource = new EventSourceCtor(
+          joinUrl(baseUrl, `${path}${suffix}`),
+        );
+        source = nextSource;
+        nextSource.onopen = () => handlers.onOpen?.();
+        nextSource.addEventListener("message", emit);
+        nextSource.addEventListener("update", emit);
+        nextSource.addEventListener("data", emit);
+        nextSource.addEventListener("exit", emit);
+        nextSource.addEventListener("update_error", emit);
+        nextSource.addEventListener("worker.entry_appended", emit);
+        nextSource.addEventListener("stream.resync_required", emit);
+        nextSource.addEventListener("auth.session_revoked", emit);
+        nextSource.addEventListener("runner.stopping", emit);
+        nextSource.addEventListener("runner.renamed", emit);
+        nextSource.addEventListener("runner.rekeyed", emit);
+        nextSource.addEventListener("error", () => {
+          nextSource.close();
+          handlers.onError?.({
+            code: "runtime.events_failed",
+            message: "Event stream failed.",
+            surface: "web",
+          });
+        });
+      };
+      void connect().catch((error: unknown) => {
+        if (closed) {
+          return;
+        }
+        handlers.onError?.({
+          code: "runtime.stream_ticket_failed",
+          message: error instanceof Error ? error.message : String(error),
+          surface: "web",
+        });
+      });
+      return {
+        close: () => {
+          closed = true;
+          source?.close();
+        },
+      };
+    },
+  });
   return {
     runtime: {
       surface: "web",
@@ -108,77 +132,6 @@ export function createWebRuntimeAPIs(options: WebRuntimeApiOptions = {}): Runtim
       supportsNativeNotifications: false,
       supportsEditorActions: false,
     },
-    bootstrap: {
-      load(input) {
-        return request(`/api/runtime/bootstrap${buildQuery({
-          run: input.selectedRunId ?? null,
-          project: input.draftProjectPath ?? null,
-          pair: input.pairToken ?? null,
-        })}`, { method: "GET" });
-      },
-    },
-    events: {
-      open(input, handlers): RuntimeSubscription {
-        if (!EventSourceCtor) {
-          handlers.onError?.({
-            code: "runtime.events_unavailable",
-            message: "Runtime event streaming requires EventSource support.",
-            surface: "web",
-          });
-          return { close() {} };
-        }
-
-        const source = new EventSourceCtor(joinUrl(baseUrl, `/api/events${buildQuery({
-          runId: input.runId ?? null,
-          lastEventId: input.lastEventId ?? null,
-        })}`));
-        const emit = (event: RuntimeEventSourceEvent) => {
-          handlers.onEvent(normalizeStreamEvent(event));
-        };
-        source.addEventListener("message", emit);
-        source.addEventListener("update", emit);
-        source.addEventListener("stream.resync_required", emit);
-        source.addEventListener("error", () => {
-          handlers.onError?.({
-            code: "runtime.events_failed",
-            message: "Event stream failed.",
-            surface: "web",
-          });
-        });
-
-        return {
-          close() {
-            source.close();
-          },
-        };
-      },
-      fetchLog(input) {
-        return request(`/api/events/log${buildQuery({ since: input.since, runId: input.runId })}`, { method: "GET" });
-      },
-    },
-    conversations: {
-      create(input) {
-        return post("/api/conversations", input);
-      },
-      sendMessage(input) {
-        return post("/api/messages", input);
-      },
-    },
-    workers: {
-      listEntries(input) {
-        return request(`/api/workers/${encodeURIComponent(input.workerId)}/entries${buildQuery({
-          runId: input.runId,
-          afterSeq: input.afterSeq == null ? null : String(input.afterSeq),
-        })}`, { method: "GET" });
-      },
-    },
-    settings: {
-      load() {
-        return request("/api/settings", { method: "GET" });
-      },
-      save(input) {
-        return post("/api/settings", input);
-      },
-    },
+    ...domains,
   };
 }

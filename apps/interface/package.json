@@ -1,0 +1,5 @@
+{
+  "name": "@omniharness/interface",
+  "private": true,
+  "type": "module"
+}

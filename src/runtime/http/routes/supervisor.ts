@@ -5,7 +5,6 @@ import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { normalizeChatAttachments } from "@/lib/chat-attachments";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 export const handleSupervisorRequest: OmniHttpHandler = async (request) => {
   try {
@@ -16,7 +15,7 @@ export const handleSupervisorRequest: OmniHttpHandler = async (request) => {
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Supervisor",
       action: "Start a run",
       enforceSameOrigin: true,

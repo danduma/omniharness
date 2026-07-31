@@ -1,14 +1,13 @@
 import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
-import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { getAppDataPath } from "@/server/app-root";
 import { db } from "@/server/db";
 import { plans, runs, workers } from "@/server/db/schema";
 import { appendWorkerEntry } from "@/server/workers/output-store";
-import { GET } from "@/app/api/conversations/[id]/transcript/route";
+import { conversationTranscriptRoute as GET } from "@/../tests/helpers/runtime-routes";
 
 function encodeAfterToken(cursors: Record<string, number>) {
   return Buffer.from(JSON.stringify({ cursors }), "utf8").toString("base64url");
@@ -86,7 +85,7 @@ describe("GET /api/conversations/[id]/transcript", () => {
 
       const afterToken = encodeAfterToken({ [workerId]: 1 });
       const response = await GET(
-        new NextRequest(`http://localhost/api/conversations/${runId}/transcript?afterToken=${afterToken}`),
+        new Request(`http://localhost/api/conversations/${runId}/transcript?afterToken=${afterToken}`),
         { params: Promise.resolve({ id: runId }) },
       );
       const payload = await response.json() as {
@@ -151,7 +150,7 @@ describe("GET /api/conversations/[id]/transcript", () => {
       }
 
       const response = await GET(
-        new NextRequest(`http://localhost/api/conversations/${runId}/transcript?limit=100`),
+        new Request(`http://localhost/api/conversations/${runId}/transcript?limit=100`),
         { params: Promise.resolve({ id: runId }) },
       );
       const payload = await response.json() as {
@@ -221,7 +220,7 @@ describe("GET /api/conversations/[id]/transcript", () => {
 
       const beforeToken = encodeAfterToken({ [workerId]: 152 });
       const response = await GET(
-        new NextRequest(`http://localhost/api/conversations/${runId}/transcript?beforeToken=${beforeToken}&limit=100`),
+        new Request(`http://localhost/api/conversations/${runId}/transcript?beforeToken=${beforeToken}&limit=100`),
         { params: Promise.resolve({ id: runId }) },
       );
       const payload = await response.json() as {
@@ -310,7 +309,7 @@ describe("GET /api/conversations/[id]/transcript", () => {
       });
 
       const tailResponse = await GET(
-        new NextRequest(`http://localhost/api/conversations/${runId}/transcript?limit=50`),
+        new Request(`http://localhost/api/conversations/${runId}/transcript?limit=50`),
         { params: Promise.resolve({ id: runId }) },
       );
       const tail = await tailResponse.json() as { entries: Array<{ id: string; text: string }> };
@@ -320,7 +319,7 @@ describe("GET /api/conversations/[id]/transcript", () => {
 
       // Incremental polling must not re-add them either.
       const afterResponse = await GET(
-        new NextRequest(`http://localhost/api/conversations/${runId}/transcript?afterToken=${encodeAfterToken({ [oldWorkerId]: 0, [newWorkerId]: 0 })}`),
+        new Request(`http://localhost/api/conversations/${runId}/transcript?afterToken=${encodeAfterToken({ [oldWorkerId]: 0, [newWorkerId]: 0 })}`),
         { params: Promise.resolve({ id: runId }) },
       );
       const after = await afterResponse.json() as { entries: Array<{ id: string; text: string }> };

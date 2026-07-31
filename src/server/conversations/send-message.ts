@@ -27,7 +27,7 @@ import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import { isWorkerTurnSupersededError, runConversationMutation, runWorkerTurn, trackConversationBackgroundTask } from "./worker-turn-gate";
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
-import { isManualStopCommand } from "@/app/home/busy-message-behavior";
+import { isManualStopCommand } from "@/interface/home/busy-message-behavior";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { cancelSupervisorWake } from "@/server/supervisor/wake";
 import { clearSupervisorWakeLease } from "@/server/supervisor/lease";

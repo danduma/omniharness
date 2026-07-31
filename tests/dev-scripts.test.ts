@@ -1,66 +1,40 @@
-import fs from "fs";
+import fs from "node:fs";
 import { Socket } from "node:net";
-import path from "path";
+import path from "node:path";
 import { expect, test } from "vitest";
-import nextConfig from "@/../next.config";
-import { attachUpgradeSocketErrorHandlers, isExpectedProxySocketError } from "@/../scripts/dev-compression-proxy";
-import { isNextDevReadyLine, prewarmDevPaths, resolveDevPrewarmBaseUrl, resolveDevPrewarmPaths } from "@/../scripts/dev-prewarm";
-import { detectNextDevRouteEnoent } from "@/../scripts/dev-web-recovery";
+import {
+  attachUpgradeSocketErrorHandlers,
+  isExpectedProxySocketError,
+} from "@/../scripts/dev-compression-proxy";
+import {
+  isDevServerReadyLine,
+  prewarmDevPaths,
+  resolveDevPrewarmBaseUrl,
+  resolveDevPrewarmPaths,
+} from "@/../scripts/dev-prewarm";
+import { describeUnexpectedDevExit } from "@/../scripts/dev-web-recovery";
 
 const packageJson = JSON.parse(
   fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"),
 ) as { scripts?: Record<string, string> };
 
-test("dev:web uses the current Next dev command", () => {
-  expect(packageJson.scripts?.["dev:web"]).toBe("next dev --turbo");
+test("development starts the runner and Vite interface", () => {
+  const devSource = fs.readFileSync(path.resolve(process.cwd(), "scripts/dev.ts"), "utf8");
+  expect(packageJson.scripts?.dev).toBe("pnpm exec tsx scripts/dev.ts");
+  expect(packageJson.scripts?.runner).toContain("scripts/runner.ts");
+  expect(packageJson.scripts?.["dev:interface"]).toContain("vite");
+  expect(packageJson.scripts).not.toHaveProperty("dev:web");
+  expect(packageJson.scripts).not.toHaveProperty("dev:proxy");
+  expect(devSource).toContain('["run", "runner", "--no-static"]');
+  expect(devSource).not.toContain('["run", "runner", "--", "--no-static"]');
 });
 
-test("webpack config aliases optional encoding package away for local dev", () => {
-  expect(typeof nextConfig.webpack).toBe("function");
-
-  const config = { resolve: { alias: {} as Record<string, false | string> } };
-  const result = nextConfig.webpack?.(config, { isServer: true, dev: true } as never);
-  const resolved = (result ?? config).resolve?.alias as Record<string, false | string> | undefined;
-
-  expect(resolved?.encoding).toBe(path.resolve(process.cwd(), "src/shims/empty-encoding.ts"));
-});
-
-test("dev web recovery detects missing Next app route artifacts under this repo", () => {
-  const repoRoot = process.cwd();
-  const line = `[Error: ENOENT: no such file or directory, open '${path.join(repoRoot, ".next/server/app/api/settings/route.js")}']`;
-
-  expect(detectNextDevRouteEnoent(line, repoRoot)).toEqual({
-    artifactDir: path.join(repoRoot, ".next/server/app/api/settings"),
-    routeFile: path.join(repoRoot, ".next/server/app/api/settings/route.js"),
-  });
-});
-
-test("dev web recovery detects missing Next app path manifests under this repo", () => {
-  const repoRoot = process.cwd();
-  const missingFile = path.join(repoRoot, ".next/server/app/api/events/[__metadata_id__]/route/app-paths-manifest.json");
-  const line = `[Error: ENOENT: no such file or directory, open '${missingFile}']`;
-
-  expect(detectNextDevRouteEnoent(line, repoRoot)).toEqual({
-    artifactDir: path.dirname(missingFile),
-    routeFile: missingFile,
-  });
-});
-
-test("dev web recovery detects missing Next pages build manifests under this repo", () => {
-  const repoRoot = process.cwd();
-  const missingFile = path.join(repoRoot, ".next/server/pages/_app/build-manifest.json");
-  const line = ` ⨯ [Error: ENOENT: no such file or directory, open '${missingFile}']`;
-
-  expect(detectNextDevRouteEnoent(line, repoRoot)).toEqual({
-    artifactDir: path.dirname(missingFile),
-    routeFile: missingFile,
-  });
-});
-
-test("dev web recovery ignores missing route artifacts outside this repo", () => {
-  const line = "[Error: ENOENT: no such file or directory, open '/tmp/other/.next/server/app/api/settings/route.js']";
-
-  expect(detectNextDevRouteEnoent(line, process.cwd())).toBeNull();
+test("development child exits have a stable diagnostic", () => {
+  expect(describeUnexpectedDevExit({
+    label: "runner",
+    code: 1,
+    signal: null,
+  })).toBe("runner exited with code 1.");
 });
 
 test("dev prewarm defaults include the live events snapshot route", () => {
@@ -79,9 +53,10 @@ test("dev prewarm can be disabled or extended from env", () => {
   ]);
 });
 
-test("dev prewarm detects the Next ready log line", () => {
-  expect(isNextDevReadyLine(" ✓ Ready in 1218ms")).toBe(true);
-  expect(isNextDevReadyLine(" ○ Compiling /api/events ...")).toBe(false);
+test("dev prewarm detects both Vite and runner ready lines", () => {
+  expect(isDevServerReadyLine("  VITE v7 ready in 218 ms")).toBe(true);
+  expect(isDevServerReadyLine('{"event":"runner.ready"}')).toBe(true);
+  expect(isDevServerReadyLine("transforming modules")).toBe(false);
 });
 
 test("dev prewarm resolves wildcard hosts to localhost", () => {
@@ -92,16 +67,15 @@ test("dev prewarm resolves wildcard hosts to localhost", () => {
 test("dev prewarm requests routes sequentially", async () => {
   const activeRequests: string[] = [];
   const seen: string[] = [];
-
   const results = await prewarmDevPaths({
     baseUrl: "http://127.0.0.1:3050",
     paths: ["/one", "/two"],
     timeoutMs: 1000,
     fetchImpl: async (input) => {
-      const path = new URL(String(input)).pathname;
+      const requestPath = new URL(String(input)).pathname;
       expect(activeRequests).toEqual([]);
-      activeRequests.push(path);
-      seen.push(path);
+      activeRequests.push(requestPath);
+      seen.push(requestPath);
       await new Promise((resolve) => setTimeout(resolve, 1));
       activeRequests.pop();
       return new Response("ok", { status: 200 });
@@ -112,13 +86,13 @@ test("dev prewarm requests routes sequentially", async () => {
   expect(results.map((result) => result.status)).toEqual([200, 200]);
 });
 
-test("dev compression proxy treats common disconnect socket errors as expected", () => {
+test("the retained compression harness treats disconnects as expected", () => {
   expect(isExpectedProxySocketError(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }))).toBe(true);
   expect(isExpectedProxySocketError(Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }))).toBe(true);
   expect(isExpectedProxySocketError(Object.assign(new Error("boom"), { code: "EINVAL" }))).toBe(false);
 });
 
-test("dev compression proxy upgrade sockets handle EPIPE without unhandled errors", () => {
+test("the retained compression harness handles EPIPE without an unhandled error", () => {
   const clientSocket = new Socket();
   const proxySocket = new Socket();
   const unhandled: unknown[] = [];
@@ -128,10 +102,9 @@ test("dev compression proxy upgrade sockets handle EPIPE without unhandled error
 
   process.once("uncaughtException", onUncaught);
   attachUpgradeSocketErrorHandlers(clientSocket, proxySocket);
-
   proxySocket.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
-
   process.removeListener("uncaughtException", onUncaught);
+
   expect(unhandled).toEqual([]);
   expect(clientSocket.destroyed).toBe(true);
   expect(proxySocket.destroyed).toBe(true);

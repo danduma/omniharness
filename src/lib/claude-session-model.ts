@@ -5,14 +5,34 @@
  * `ANTHROPIC_MODEL` first, then `settings.model` from the CLI config dir, then
  * the first entry of the account's model list. OmniHarness worker launches used
  * to fall through all three, so a worker launched as "Claude Opus 5" actually
- * ran on whatever the user's global `/model` last selected — including the
- * 1M-context variants (`opus[1m]`, `claude-fable-5[1m]`). Those variants bill
- * against usage credits, so a subscription-only account fails every turn with
- * "API Error: Usage credits required for 1M context".
+ * ran on whatever the user's global `/model` last selected.
  *
  * This resolver maps the model OmniHarness asked for onto one of the values the
- * adapter actually offers, and never lands on a 1M-context variant unless the
- * caller spelled out the `[1m]` suffix.
+ * adapter actually offers. One rule dominates every other:
+ *
+ *   **Never leave the requested family.**
+ *
+ * Opus, Sonnet, Haiku and Fable are different products, not fallbacks for one
+ * another. A run launched as Fable that executes on Opus is mislabelled at
+ * every layer — the transcript, the cost, the answers themselves. Refuse
+ * instead: a failed launch is recoverable, a silent family swap is not.
+ *
+ * Inside the family, take the closest thing on offer rather than refusing:
+ *
+ *  1. the requested **version**, in whichever context size the adapter has it.
+ *     If the only Opus 5 is `claude-opus-5[1m]`, that is Opus 5 — run it;
+ *  2. only when that version is not offered at all, a lower version of the
+ *     same family, which is a substitution the caller can live with.
+ *
+ * Context size is an implementation detail the caller should never have to
+ * think about. When one model is listed both ways, prefer the standard-context
+ * entry — `[1m]` variants can bill against usage credits the subscription may
+ * not include — but that preference must never change *which model runs*.
+ * Answering an Opus 5 request with Opus 4.8 because 4.8 was the non-`[1m]`
+ * entry is the same mislabelling bug wearing a different hat.
+ *
+ * Every substitution is reported through the outcome's `reason` so the launch
+ * records what actually ran.
  */
 
 export type ClaudeSessionModelOption = {
@@ -24,8 +44,12 @@ export type ClaudeSessionModelOption = {
 export type ClaudeSessionModelReason =
   /** The requested model matched an option we can run as-is. */
   | "requested"
-  /** The requested model only exists as a 1M variant; picked a runnable one instead. */
+  /** Same family, but the exact request was 1M-only; took the standard-context sibling. */
   | "standard_context_fallback"
+  /** Same family, but the adapter offers it only as a `[1m]` variant. */
+  | "one_million_only"
+  /** Same family, different version — the closest the adapter actually offers. */
+  | "version_substituted"
   /** Nothing was requested and the adapter's own default was a 1M variant. */
   | "avoid_1m_default"
   /**
@@ -44,25 +68,40 @@ export type ClaudeSessionModelOutcome =
   /** Pin this value on the session. */
   | { status: "pin"; value: string; reason: ClaudeSessionModelReason }
   /** The session is already on an acceptable model; change nothing. */
-  | { status: "keep" }
+  | { status: "keep"; value: string | null; reason: ClaudeSessionModelReason }
   /**
-   * The requested version is not on offer. Never substitute a different version
-   * of the same family here — silently answering an Opus 5 request with the
-   * `opus` alias is how a run recorded as Opus 5 actually executed on Opus 4.8.
+   * The requested *family* is not on offer at all. This is the only refusal:
+   * every other gap is closed inside the family. Substituting a different
+   * family is never correct — a run launched as Fable that quietly executes on
+   * Opus is mislabelled everywhere it is later read.
    */
   | {
     status: "unavailable";
     requested: string;
-    requestedVersion: string;
-    offeredVersion: string;
+    requestedFamily: string | null;
     available: string[];
   };
 
 const ONE_MILLION_CONTEXT_PATTERN = /\[1m\]/i;
+/**
+ * Prose form, for the option's human-facing text. The adapter's own
+ * recommendation ships as `{ value: "default", description: "Opus 4.8 with 1M
+ * context …" }` — the value alone says nothing about its context size, so a
+ * value-only test reports the biggest 1M option in the list as standard.
+ */
+const ONE_MILLION_CONTEXT_TEXT_PATTERN = /\b(?:1m|1\s*million)\b/i;
 const MODEL_FAMILIES = ["opus", "sonnet", "haiku", "fable"] as const;
 
+/** Does this *value* spell out the 1M variant? Used to read the caller's request. */
 export function isOneMillionContextModel(value: string) {
   return ONE_MILLION_CONTEXT_PATTERN.test(value);
+}
+
+/** Does this option run at 1M context, however the adapter chose to say so? */
+export function isOneMillionContextOption(option: ClaudeSessionModelOption) {
+  return isOneMillionContextModel(option.value)
+    || ONE_MILLION_CONTEXT_TEXT_PATTERN.test(option.name ?? "")
+    || ONE_MILLION_CONTEXT_TEXT_PATTERN.test(option.description ?? "");
 }
 
 function modelFamily(value: string): string | null {
@@ -108,13 +147,26 @@ function findByValue(options: ClaudeSessionModelOption[], value: string) {
 }
 
 /**
- * Best option we can run without usage credits: the adapter's own "default"
- * (the plan's recommended model) when it is offered, otherwise the first
- * standard-context entry.
+ * The same model, listed at standard context. Deliberately narrow: it will not
+ * reach across families or versions, so swapping onto it changes nothing the
+ * caller can observe except the context size — and the usage-credit failures
+ * that come with it.
  */
-function bestStandardContextOption(options: ClaudeSessionModelOption[]) {
-  const standard = options.filter((option) => !isOneMillionContextModel(option.value));
-  return standard.find((option) => option.value.trim().toLowerCase() === "default") ?? standard[0] ?? null;
+function standardContextSibling(
+  options: ClaudeSessionModelOption[],
+  option: ClaudeSessionModelOption,
+) {
+  const family = modelFamily(optionHaystack(option));
+  if (!family) {
+    return null;
+  }
+  const version = optionVersion(option);
+  return options.find((candidate) => (
+    candidate.value !== option.value
+    && !isOneMillionContextOption(candidate)
+    && modelFamily(optionHaystack(candidate)) === family
+    && optionVersion(candidate) === version
+  )) ?? null;
 }
 
 export function resolveClaudeSessionModel(input: {
@@ -124,73 +176,102 @@ export function resolveClaudeSessionModel(input: {
 }): ClaudeSessionModelOutcome {
   const options = input.options.filter((option) => typeof option?.value === "string" && option.value.trim() !== "");
   if (options.length === 0) {
-    return { status: "keep" };
+    // No list to resolve against — the adapter never told us what it offers, so
+    // there is nothing to verify and nothing to pin.
+    return { status: "keep", value: null, reason: "requested" };
   }
 
   const requested = input.requested?.trim() || null;
   const current = input.current?.trim() || null;
+  const currentOption = current ? findByValue(options, current) : null;
   const wantsOneMillion = requested !== null && isOneMillionContextModel(requested);
 
   const settle = (
     option: ClaudeSessionModelOption | null,
     reason: ClaudeSessionModelReason,
   ): ClaudeSessionModelOutcome => {
-    if (!option || option.value === current) {
-      return { status: "keep" };
+    if (!option) {
+      return { status: "keep", value: current, reason };
+    }
+    if (option.value === current) {
+      // Already there. Still report *why* this value is the right one, so the
+      // launch can record the model it confirmed rather than the one it asked
+      // for — that gap is how a session shows up in the database as Fable and
+      // in its own transcript as Opus.
+      return { status: "keep", value: option.value, reason };
     }
     return { status: "pin", value: option.value, reason };
   };
 
   if (!requested) {
-    // Nothing to pin, so only step in when the model the adapter settled on is
-    // one the subscription cannot pay for.
-    return current && isOneMillionContextModel(current)
-      ? settle(bestStandardContextOption(options), "avoid_1m_default")
-      : { status: "keep" };
+    // Nothing was asked for, so there is no mandate to change the model the
+    // user's own `/model` selected — only to spare them a usage-credit failure
+    // when the identical model is also listed at standard context. Staying in
+    // the family matters just as much here: silently moving an unrequested
+    // Opus session onto Sonnet is the same substitution this module exists to
+    // prevent, and with nothing requested there is nothing to justify it.
+    if (!currentOption || !isOneMillionContextOption(currentOption)) {
+      return { status: "keep", value: current, reason: "requested" };
+    }
+    const sibling = standardContextSibling(options, currentOption);
+    return sibling
+      ? settle(sibling, "avoid_1m_default")
+      : { status: "keep", value: current, reason: "one_million_only" };
   }
 
   const exact = findByValue(options, requested);
-  if (exact && (wantsOneMillion || !isOneMillionContextModel(exact.value))) {
+  if (exact && (wantsOneMillion || !isOneMillionContextOption(exact))) {
     return settle(exact, "requested");
   }
 
-  // No usable exact hit: stay inside the requested family (opus stays opus)
-  // instead of dropping to an unrelated model.
   const family = modelFamily(requested);
   const familyMatches = family ? options.filter((option) => optionHaystack(option).includes(family)) : [];
-  const candidates = wantsOneMillion
-    ? familyMatches
-    : familyMatches.filter((option) => !isOneMillionContextModel(option.value));
-  const familyChoice = candidates.find((option) => option.value.trim().toLowerCase() === family) ?? candidates[0] ?? null;
-  if (familyChoice) {
-    if (exact) {
-      // The exact hit existed but was 1M-only; the family fallback is a
-      // deliberate context-size substitution, not a version substitution.
-      return settle(familyChoice, "standard_context_fallback");
-    }
-
-    // Staying in the family is only correct if it is also the same version.
-    // `opus` is an alias whose meaning moves with the CLI build, so matching
-    // "claude-opus-5" against it can silently run Opus 4.8.
-    const requestedVersion = versionFromModelText(requested);
-    const offeredVersion = optionVersion(familyChoice);
-    if (requestedVersion && offeredVersion && offeredVersion !== requestedVersion) {
-      return {
-        status: "unavailable",
-        requested,
-        requestedVersion,
-        offeredVersion,
-        available: options.map((option) => option.value),
-      };
-    }
-
-    return settle(
-      familyChoice,
-      requestedVersion && !offeredVersion ? "family_alias_unverified" : "requested",
-    );
+  if (familyMatches.length === 0) {
+    // The requested family simply is not on offer. This is the one case we
+    // refuse: any pick from here would be a different product.
+    return {
+      status: "unavailable",
+      requested,
+      requestedFamily: family,
+      available: options.map((option) => option.value),
+    };
   }
 
-  // The requested family is either unavailable or 1M-only (Fable ships as
-  // `claude-fable-5[1m]`), so fall back to something that actually runs.
-  return settle(bestStandardContextOption(options), "standard_context_fallback");
+  // Version first. Narrow to the entries that actually run the version that was
+  // asked for, and only widen to the rest of the family when that version is
+  // not on offer at all. Doing this the other way round — filtering by context
+  // size first — is what answers an Opus 5 request with Opus 4.8 whenever 4.8
+  // happens to be the non-`[1m]` entry.
+  const requestedVersion = versionFromModelText(requested);
+  const versionMatches = requestedVersion
+    ? familyMatches.filter((option) => optionVersion(option) === requestedVersion)
+    : [];
+  const pool = versionMatches.length > 0 ? versionMatches : familyMatches;
+
+  // Only now does context size get a say, and only to choose between listings
+  // of the same model.
+  const standardInPool = pool.filter((option) => !isOneMillionContextOption(option));
+  const preferred = wantsOneMillion || standardInPool.length === 0 ? pool : standardInPool;
+  const choice = preferred.find((option) => option.value.trim().toLowerCase() === family) ?? preferred[0]!;
+
+  const offeredVersion = optionVersion(choice);
+  const reason: ClaudeSessionModelReason =
+    requestedVersion && offeredVersion && offeredVersion !== requestedVersion
+      // A lower (or simply different) version of the right family. `opus` is an
+      // alias whose meaning moves with the CLI build, so this is reported
+      // rather than passed off as the requested model.
+      ? "version_substituted"
+      : requestedVersion && !offeredVersion
+        ? "family_alias_unverified"
+        : exact && choice.value !== exact.value
+          // The requested value exists but only at 1M; this is the same model
+          // listed at standard context, not a different model.
+          ? "standard_context_fallback"
+          : !wantsOneMillion && isOneMillionContextOption(choice)
+            // The right model, available only as `[1m]`. Run it — the caller
+            // asked for a model, not a context size.
+            ? "one_million_only"
+            : "requested";
+
+  return settle(choice, reason);
 }

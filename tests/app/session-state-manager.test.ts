@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { SessionStateManager } from "@/app/home/SessionStateManager";
-import type { EventStreamState } from "@/app/home/types";
+import { SessionStateManager } from "@/interface/home/SessionStateManager";
+import type { EventStreamState } from "@/interface/home/types";
 
 function baseState(): EventStreamState {
   return {

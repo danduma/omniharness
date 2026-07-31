@@ -17,12 +17,13 @@ import {
   LLM_PROVIDER_OPTIONS,
   LLM_THINKING_EFFORT_OPTIONS,
   type LlmProviderId,
-} from "@/app/home/constants";
-import type { LlmFieldPrefix } from "@/app/home/types";
+} from "@/interface/home/constants";
+import type { LlmFieldPrefix } from "@/interface/home/types";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { StateManager } from "@/lib/state-manager";
 import { shallowEqualRecord, useManagerSelector } from "@/lib/use-manager-snapshot";
 import { cn } from "@/lib/utils";
+import { useRuntimeAPIs } from "@/runtime-api/provider";
 
 interface ModelProfileFormProps {
   prefix: LlmFieldPrefix;
@@ -97,6 +98,7 @@ export function ModelProfileForm({
   autoFillDefaultModel = true,
 }: ModelProfileFormProps) {
   useI18nSnapshot();
+  const runtimeApis = useRuntimeAPIs();
   const providerKey = `${prefix}_PROVIDER`;
   const modelKey = `${prefix}_MODEL`;
   const baseUrlKey = `${prefix}_BASE_URL`;
@@ -126,12 +128,11 @@ export function ModelProfileForm({
 
   useEffect(() => {
     if (prefix === "SUPERVISOR_LLM") {
-      fetch("/api/codex-auth/status")
-        .then((res) => res.json())
-        .then((status: CodexStatus) => modelProfileUiManager.setCodexStatus(prefix, status))
+      runtimeApis.accounts.codexStatus()
+        .then((status) => modelProfileUiManager.setCodexStatus(prefix, status as CodexStatus))
         .catch(() => modelProfileUiManager.setCodexStatus(prefix, { available: false }));
     }
-  }, [prefix]);
+  }, [prefix, runtimeApis.accounts]);
 
   const catalog = useMemo(() => LLM_PROVIDER_MODEL_CATALOG[provider] ?? [], [provider]);
   const modelOptions: SelectOption[] = useMemo(() => {

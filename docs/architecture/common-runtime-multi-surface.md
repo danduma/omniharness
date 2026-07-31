@@ -14,9 +14,9 @@ This follows the useful OpenChamber pattern:
 - a shared React renderer owns UI behavior,
 - each shell supplies transport and native capabilities only.
 
-## Implemented Slice
+## Implemented architecture
 
-The first slice now includes:
+The split now includes:
 
 - `src/runtime/index.ts`: runtime lifecycle handle with named events for start,
   stop, and start failure.
@@ -28,20 +28,27 @@ The first slice now includes:
 - `src/runtime/http/server.ts`: local Node HTTP server plus
   `startOmniServer(...)` runtime-backed handle. It can also serve staged
   renderer assets for shell packaging.
-- `src/runtime-api/types.ts`: first `RuntimeAPIs` contract.
+- `src/runtime-api/types.ts`: transport-neutral `RuntimeAPIs` contract covering
+  auth, runs, conversations, workers, files, git, planning, settings,
+  accounts, notifications, terminals, bootstrap, and events.
 - `src/runtime-api/web.ts`: browser adapter over HTTP and EventSource.
-- `src/runtime-api/electron.ts`: Electron adapter that reuses the web HTTP/SSE
-  adapter and adds preload-mediated native capabilities.
+- `src/runtime-api/electron.ts`: validated Electron IPC adapter; runner
+  networking and bearer credentials remain in the main process.
+- `src/runtime-api/capacitor.ts`: validated iOS/Android plugin adapter; runner
+  networking, SSE, TLS pins, and credentials remain native.
 - `src/runtime-api/vscode.ts`: VS Code webview adapter over `postMessage`.
 - `src/runtime-api/provider.tsx`: React provider for injecting runtime APIs.
 - `src/ui/OmniApp.tsx`: renderer root wrapping the existing Home app.
 - `src/ui/render-web.tsx`: embeddable React renderer entry used by packaged
   shell builds.
-- `apps/electron`: tested Electron shell contract. The main process starts the
-  shared runtime in-process, serves staged renderer assets from the runtime
-  origin, and gates native commands through preload/main-process allowlists.
-- `apps/vscode`: VS Code proof extension with HTTP proxying, SSE proxying,
-  conversation list/start controls, and editor open-file/open-diff actions.
+- `apps/electron`: pure remote client. It serves packaged assets from
+  `app://omniharness`, blocks renderer networking, and owns all runner
+  HTTP/SSE, credential, and TLS operations.
+- `apps/mobile`: Capacitor iOS/Android clients with URLSession/OkHttp streams,
+  Keychain/Android-Keystore sessions, per-profile pinning, lifecycle cursor
+  recovery, links, and local notifications.
+- `apps/vscode`: remote extension with profile-scoped HTTP/SSE in the extension
+  host, `SecretStorage` sessions, and editor actions.
 - `src/runtime/http/routes`: migrated portable route handlers for bootstrap,
   auth/session/login/logout/pairing, settings, accounts, agents, model
   discovery, notifications, plans, project memory, planning review/promote,
@@ -53,11 +60,12 @@ The first slice now includes:
 
 ## Surface Responsibilities
 
-Web/Next:
+Web/PWA:
 
-- builds SSR bootstrap through `buildHomeBootstrap`,
-- renders `OmniApp`,
-- keeps compatibility route files while routes migrate behind portable handlers.
+- loads the Vite static interface served by a runner,
+- receives escaped request bootstrap JSON injected into the HTML template,
+- uses same-origin cookies for the serving runner and PKCE-approved bearer
+  sessions for additional runners.
 
 Standalone runtime server:
 
@@ -67,23 +75,27 @@ Standalone runtime server:
 
 VS Code:
 
-- connects to a configured Omni server, defaulting to `http://localhost:3035`,
-- proxies HTTP through the extension host,
-- proxies SSE frames through `sse:open`/`sse:close`,
+- stores multiple runner profiles in `globalState`,
+- owns profile-scoped HTTP and SSE in the extension host,
+- keeps bearer material in `SecretStorage`,
 - exposes editor capabilities through typed bridge messages.
 
-Electron/native:
+Electron:
 
-- starts `startOmniServer(...)` in-process through the Electron shell contract,
-- passes `apps/electron/dist/renderer` as the static asset directory,
-- loads the shared renderer from the runtime loopback origin,
-- keeps native commands in preload/main-process adapters and validates the
-  sender origin against the runtime origin,
-- can still load a configurable renderer URL in development when
-  `OMNI_ELECTRON_RENDERER_URL` is set.
+- never imports or starts runner code,
+- loads the shared renderer from `app://omniharness`,
+- blocks renderer HTTP/SSE and injects sessions only in main-process requests,
+- stores credentials with `safeStorage` and pins per profile/origin.
 
-The packaged Electron build no longer depends on a separately running Next
-dev/prod server for UI assets.
+iOS/Android:
+
+- load the same `dist/interface` artifact through Capacitor,
+- own URLSession/OkHttp requests and streams in native plugins,
+- store bearer sessions in Keychain/Android Keystore,
+- persist cursors on suspension and reconnect/resync on resume.
+
+All profile-aware clients keep one main stream per authenticated runner while
+their process is active. Only the active runner owns visible terminal streams.
 
 ## Route Inventory And Migration Order
 
@@ -156,43 +168,17 @@ with low-risk read paths, then mutation paths, then lifecycle/streaming paths:
 
 ## Direct Frontend Fetch/SSE Owners
 
-The current renderer still contains direct fetch/SSE usage inside existing home
-managers and hooks. New shell-aware work should add methods to `RuntimeAPIs`
-first, then have managers consume those methods through `RuntimeApiProvider`.
+The checked-in
+`docs/architecture/runtime-api-migration-inventory.md` is the source of truth
+for every remaining compatibility caller and its target domain method.
+`RuntimeAPIs` now has one injectable request/stream boundary for the full
+domain surface, including abort propagation, redirect refusal, normalized
+errors, multipart upload, binary responses, and browser or validated-host SSE.
 
-The first proven `RuntimeAPIs` slice covers:
-
-- bootstrap,
-- event streaming and event-log fetch,
-- conversation create/send,
-- worker entries,
-- settings load/save,
-- Electron native open-external/folder/notification commands,
-- editor open-file/open-diff.
-
-Current direct browser fetch/SSE owners still to migrate behind `RuntimeAPIs`:
-
-- `src/app/home/useHomeQueries.ts`: auth session, settings, agent catalog, and
-  project-file queries.
-- `src/app/home/useHomeMutations.ts`: attachments, auth login/logout/pair
-  redeem, settings, run mutations, conversations, messages, queued messages,
-  planning review/promote, and agent history.
-- `src/app/home/LiveEventConnectionManager.ts`: `/api/events` SSE plus
-  persisted snapshot polling.
-- `src/app/home/WorkerEntriesManager.ts`: worker entry stream fetches.
-- `src/app/home/GitWorkspaceManager.ts`: git workspace status/mutation.
-- `src/app/home/ProjectMemoryPanelManager.ts`: project memory list/read/write.
-- `src/app/home/ConversationNotificationManager.ts`: notification subscribe,
-  permission, and unsubscribe requests.
-- `src/components/PairDeviceDialog.tsx`: pair-token creation/status polling.
-- `src/components/FileAttachmentPickerDialog.tsx`,
-  `src/components/FolderPickerDialog.tsx`, `src/components/home/FileViewerPanel.tsx`,
-  and `src/app/home/ComposerContainer.tsx`: filesystem and file-content
-  requests.
-- `src/components/settings/ModelProfileForm.tsx`: Codex auth status fetch.
-
-These are compatibility callers. New shell-aware work should extend
-`RuntimeAPIs` before adding more direct fetches.
+Existing home Managers and hooks are migrated in Task 12. Until that migration
+finishes, new interface work must not add direct `fetch`, `EventSource`,
+absolute API construction, Electron IPC, or VS Code messages. It must extend a
+typed domain adapter first.
 
 ## Large File Split Risks
 

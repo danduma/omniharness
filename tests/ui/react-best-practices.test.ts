@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
-const FRONTEND_ROOTS = ["src/app", "src/components"];
+const FRONTEND_ROOTS = ["apps/interface/src", "src/components", "src/interface", "src/ui"];
 const FRONTEND_EXTENSIONS = new Set([".ts", ".tsx"]);
 
 function walkFiles(dir: string): string[] {

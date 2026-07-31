@@ -1,6 +1,6 @@
 import { Check, X } from "lucide-react";
-import { WORKER_OPTIONS } from "@/app/home/constants";
-import type { WorkerType } from "@/app/home/types";
+import { WORKER_OPTIONS } from "@/interface/home/constants";
+import type { WorkerType } from "@/interface/home/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";

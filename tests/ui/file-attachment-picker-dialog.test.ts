@@ -3,7 +3,7 @@ import path from "path";
 import { test, expect } from "vitest";
 
 const managerSource = fs.readFileSync(
-  path.resolve(process.cwd(), "src/app/home/HomeUiStateManager.ts"),
+  path.resolve(process.cwd(), "src/interface/home/HomeUiStateManager.ts"),
   "utf8"
 );
 const composerSource = fs.readFileSync(
@@ -11,8 +11,8 @@ const composerSource = fs.readFileSync(
   "utf8"
 );
 const homeSource = [
-  "src/app/home/HomeApp.tsx",
-  "src/app/home/useHomeMutations.ts",
+  "src/interface/home/HomeApp.tsx",
+  "src/interface/home/useHomeMutations.ts",
 ].map((p) => fs.readFileSync(path.resolve(process.cwd(), p), "utf8")).join("\n");
 
 test("native chat attachment flow is managed by HomeUiStateManager", () => {

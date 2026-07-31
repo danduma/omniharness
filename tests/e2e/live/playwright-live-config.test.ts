@@ -14,7 +14,7 @@ describe("live Playwright configuration", () => {
     expect(liveConfig.fullyParallel).toBe(false);
     expect(liveConfig.outputDir).toBe("test-results/live");
     expect(liveConfig.use).toMatchObject({
-      baseURL: "http://127.0.0.1:3035",
+      baseURL: "http://127.0.0.1:3050",
       trace: "retain-on-failure",
       screenshot: "only-on-failure",
     });

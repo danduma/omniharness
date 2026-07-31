@@ -9,8 +9,8 @@ import {
   getConversationTextSizeStyle,
   getTerminalTextSizeStyle,
   getUiTextSizeStyle,
-} from "@/app/home/AppearancePreferencesManager";
-import { SettingsDraftManager } from "@/app/home/SettingsDraftManager";
+} from "@/interface/home/AppearancePreferencesManager";
+import { SettingsDraftManager } from "@/interface/home/SettingsDraftManager";
 
 function installLocalStorage() {
   const values = new Map<string, string>();

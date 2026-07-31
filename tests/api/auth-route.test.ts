@@ -1,12 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { NextRequest } from "next/server";
 import { db } from "@/server/db";
 import { authEvents, authPairTokens, authSessions } from "@/server/db/schema";
-import { GET as getSessionRoute, DELETE as deleteSessionRoute } from "@/app/api/auth/session/route";
-import { POST as loginRoute } from "@/app/api/auth/login/route";
-import { POST as logoutRoute } from "@/app/api/auth/logout/route";
+import {
+  authLoginRoute as loginRoute,
+  authLogoutRoute as logoutRoute,
+  authSessionDeleteRoute as deleteSessionRoute,
+  authSessionGetRoute as getSessionRoute,
+} from "@/../tests/helpers/runtime-routes";
 import { resetLoginRateLimitsForTests } from "@/server/auth/rate-limit";
 import { hashPasswordForTests } from "@/server/auth/password";
+import {
+  __resetNamedEventsForTests,
+  getEventCursor,
+  getNamedEventsSince,
+} from "@/server/events/named-events";
+import { createAuthSession, getSessionById } from "@/server/auth/session";
 
 function readCookie(response: Response) {
   return response.headers.get("set-cookie")?.split(";")[0] ?? "";
@@ -26,6 +34,7 @@ describe("auth routes", () => {
     await db.delete(authPairTokens);
     await db.delete(authSessions);
     resetLoginRateLimitsForTests();
+    __resetNamedEventsForTests();
   });
 
   afterEach(() => {
@@ -37,14 +46,14 @@ describe("auth routes", () => {
   });
 
   it("reports unauthenticated state before login and authenticated state after login", async () => {
-    const beforeResponse = await getSessionRoute(new NextRequest("http://localhost/api/auth/session"));
+    const beforeResponse = await getSessionRoute(new Request("http://localhost/api/auth/session"));
     expect(beforeResponse.status).toBe(200);
     await expect(beforeResponse.json()).resolves.toEqual(expect.objectContaining({
       enabled: true,
       authenticated: false,
     }));
 
-    const loginResponse = await loginRoute(new NextRequest("http://localhost/api/auth/login", {
+    const loginResponse = await loginRoute(new Request("http://localhost/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ password: "swordfish" }),
       headers: {
@@ -57,7 +66,7 @@ describe("auth routes", () => {
     const cookie = readCookie(loginResponse);
     expect(cookie).toContain("omni_session=");
 
-    const afterResponse = await getSessionRoute(new NextRequest("http://localhost/api/auth/session", {
+    const afterResponse = await getSessionRoute(new Request("http://localhost/api/auth/session", {
       headers: {
         cookie,
       },
@@ -76,7 +85,7 @@ describe("auth routes", () => {
   it("reports the configured public origin for frontend pairing links", async () => {
     process.env.OMNIHARNESS_PUBLIC_ORIGIN = "https://pair.example.test/";
 
-    const response = await getSessionRoute(new NextRequest("http://localhost/api/auth/session"));
+    const response = await getSessionRoute(new Request("http://localhost/api/auth/session"));
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual(expect.objectContaining({
@@ -85,7 +94,7 @@ describe("auth routes", () => {
   });
 
   it("logs out the current session and clears the cookie", async () => {
-    const loginResponse = await loginRoute(new NextRequest("http://localhost/api/auth/login", {
+    const loginResponse = await loginRoute(new Request("http://localhost/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ password: "swordfish" }),
       headers: {
@@ -95,7 +104,7 @@ describe("auth routes", () => {
     }));
     const cookie = readCookie(loginResponse);
 
-    const logoutResponse = await logoutRoute(new NextRequest("http://localhost/api/auth/logout", {
+    const logoutResponse = await logoutRoute(new Request("http://localhost/api/auth/logout", {
       method: "POST",
       headers: {
         cookie,
@@ -106,7 +115,7 @@ describe("auth routes", () => {
     expect(logoutResponse.status).toBe(200);
     expect(logoutResponse.headers.get("set-cookie")).toContain("omni_session=");
 
-    const afterResponse = await getSessionRoute(new NextRequest("http://localhost/api/auth/session", {
+    const afterResponse = await getSessionRoute(new Request("http://localhost/api/auth/session", {
       headers: {
         cookie,
       },
@@ -117,7 +126,7 @@ describe("auth routes", () => {
   });
 
   it("can revoke all sessions through the session endpoint", async () => {
-    const loginResponse = await loginRoute(new NextRequest("http://localhost/api/auth/login", {
+    const loginResponse = await loginRoute(new Request("http://localhost/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ password: "swordfish" }),
       headers: {
@@ -127,7 +136,7 @@ describe("auth routes", () => {
     }));
     const cookie = readCookie(loginResponse);
 
-    const revokeResponse = await deleteSessionRoute(new NextRequest("http://localhost/api/auth/session", {
+    const revokeResponse = await deleteSessionRoute(new Request("http://localhost/api/auth/session", {
       method: "DELETE",
       headers: {
         cookie,
@@ -142,12 +151,65 @@ describe("auth routes", () => {
     expect(sessions.every((session) => session.revokedAt)).toBe(true);
   });
 
+  it("lists browser bearer sessions and immediately revokes a selected session", async () => {
+    const origin = "https://interface.example.test";
+    const admin = await createAuthSession({
+      label: "Interface",
+      authMethod: "password_login",
+      transport: "bearer",
+      clientKind: "browser",
+      boundOrigin: origin,
+    });
+    const target = await createAuthSession({
+      label: "Phone",
+      authMethod: "password_login",
+      transport: "bearer",
+      clientKind: "native",
+    });
+    const headers = {
+      authorization: `Bearer ${admin.tokenValue}`,
+      origin,
+    };
+    const listResponse = await getSessionRoute(new Request(
+      "https://runner.example.test/api/auth/session",
+      { headers },
+    ));
+    expect(listResponse.status).toBe(200);
+    await expect(listResponse.json()).resolves.toEqual(expect.objectContaining({
+      authenticated: true,
+      currentSession: expect.objectContaining({ id: admin.sessionId }),
+      sessions: expect.arrayContaining([
+        expect.objectContaining({ id: target.sessionId }),
+      ]),
+    }));
+
+    const cursor = getEventCursor();
+    const revokeResponse = await deleteSessionRoute(new Request(
+      "https://runner.example.test/api/auth/session",
+      {
+        method: "DELETE",
+        headers: {
+          ...headers,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ sessionId: target.sessionId }),
+      },
+    ));
+    expect(revokeResponse.status).toBe(200);
+    await expect(getSessionById(target.sessionId, { touch: false })).resolves.toBeNull();
+    expect(getNamedEventsSince(cursor).events.map((entry) => entry.event)).toContainEqual({
+      kind: "auth.session_revoked",
+      sessionId: target.sessionId,
+      reason: "revoked",
+    });
+  });
+
   it("reports a configuration error whenever auth credentials are not configured", async () => {
     setNodeEnv("test");
     delete process.env.OMNIHARNESS_AUTH_PASSWORD;
     delete process.env.OMNIHARNESS_AUTH_PASSWORD_HASH;
 
-    const sessionResponse = await getSessionRoute(new NextRequest("http://localhost/api/auth/session"));
+    const sessionResponse = await getSessionRoute(new Request("http://localhost/api/auth/session"));
     expect(sessionResponse.status).toBe(200);
     await expect(sessionResponse.json()).resolves.toEqual(expect.objectContaining({
       enabled: true,
@@ -155,7 +217,7 @@ describe("auth routes", () => {
       configurationError: expect.stringContaining("OMNIHARNESS_AUTH_PASSWORD"),
     }));
 
-    const loginResponse = await loginRoute(new NextRequest("http://localhost/api/auth/login", {
+    const loginResponse = await loginRoute(new Request("http://localhost/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ password: "anything" }),
       headers: {
@@ -178,7 +240,7 @@ describe("auth routes", () => {
     delete process.env.OMNIHARNESS_AUTH_PASSWORD;
     process.env.OMNIHARNESS_AUTH_PASSWORD_HASH = "v=19$m=19456,t=2,p=1$bad";
 
-    const loginResponse = await loginRoute(new NextRequest("http://localhost/api/auth/login", {
+    const loginResponse = await loginRoute(new Request("http://localhost/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ password: "anything" }),
       headers: {
@@ -201,7 +263,7 @@ describe("auth routes", () => {
     delete process.env.OMNIHARNESS_AUTH_PASSWORD;
     process.env.OMNIHARNESS_AUTH_PASSWORD_HASH = (await hashPasswordForTests("escaped-secret")).replace(/\$/g, "\\$");
 
-    const loginResponse = await loginRoute(new NextRequest("http://localhost/api/auth/login", {
+    const loginResponse = await loginRoute(new Request("http://localhost/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ password: "escaped-secret" }),
       headers: {
@@ -215,7 +277,7 @@ describe("auth routes", () => {
 
   it("locks out repeated failed password attempts and does not verify the password during lockout", async () => {
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      const response = await loginRoute(new NextRequest("http://localhost/api/auth/login", {
+      const response = await loginRoute(new Request("http://localhost/api/auth/login", {
         method: "POST",
         body: JSON.stringify({ password: "wrong-password" }),
         headers: {
@@ -227,7 +289,7 @@ describe("auth routes", () => {
       expect(response.status).toBe(401);
     }
 
-    const lockedResponse = await loginRoute(new NextRequest("http://localhost/api/auth/login", {
+    const lockedResponse = await loginRoute(new Request("http://localhost/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ password: "swordfish" }),
       headers: {
@@ -247,7 +309,8 @@ describe("auth routes", () => {
   });
 
   it("logs successful password logins with request metadata", async () => {
-    const loginResponse = await loginRoute(new NextRequest("http://localhost/api/auth/login", {
+    process.env.OMNIHARNESS_TRUSTED_PROXIES = "localhost";
+    const loginResponse = await loginRoute(new Request("http://localhost/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ password: "swordfish", label: "Desktop" }),
       headers: {
@@ -255,6 +318,7 @@ describe("auth routes", () => {
         "content-type": "application/json",
         "user-agent": "Vitest Browser",
         "x-forwarded-for": "198.51.100.24",
+        "x-forwarded-proto": "https",
       },
     }));
 
@@ -270,5 +334,6 @@ describe("auth routes", () => {
       ipAddress: "198.51.100.24",
       userAgent: "Vitest Browser",
     }));
+    delete process.env.OMNIHARNESS_TRUSTED_PROXIES;
   });
 });

@@ -16,7 +16,7 @@ import {
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
-import type { PendingWorkerElicitation } from "@/app/home/worker-elicitations";
+import type { PendingWorkerElicitation } from "@/interface/home/worker-elicitations";
 
 export type ElicitationResponseInput = {
   workerId: string;

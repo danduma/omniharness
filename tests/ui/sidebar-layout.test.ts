@@ -9,25 +9,24 @@ import {
   shouldConversationKeepFollowingLatest,
   shouldConversationRetryInitialLatestPosition,
   shouldConversationShowOutputBelow,
-} from "@/app/home/useRunSelectionEffects";
+} from "@/interface/home/useRunSelectionEffects";
 
 const readSource = (relativePath: string) => fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 const pageSource = [
-  "src/app/page.tsx",
-  "src/app/home/HomeApp.tsx",
-  "src/app/home/SideWindowManager.ts",
-  "src/app/home/HomeUiStateManager.ts",
-  "src/app/home/constants.ts",
-  "src/app/home/types.ts",
-  "src/app/home/useAppErrors.ts",
-  "src/app/home/useConversationExecutionStatus.ts",
-  "src/app/home/useHomeLifecycle.ts",
-  "src/app/home/useRunSelectionEffects.ts",
-  "src/app/home/useHomeMutations.ts",
-  "src/app/home/useConversationActions.ts",
-  "src/app/home/useHomeViewModel.ts",
-  "src/app/home/ComposerContainer.tsx",
-  "src/app/home/utils.ts",
+  "src/interface/home/HomeApp.tsx",
+  "src/interface/home/SideWindowManager.ts",
+  "src/interface/home/HomeUiStateManager.ts",
+  "src/interface/home/constants.ts",
+  "src/interface/home/types.ts",
+  "src/interface/home/useAppErrors.ts",
+  "src/interface/home/useConversationExecutionStatus.ts",
+  "src/interface/home/useHomeLifecycle.ts",
+  "src/interface/home/useRunSelectionEffects.ts",
+  "src/interface/home/useHomeMutations.ts",
+  "src/interface/home/useConversationActions.ts",
+  "src/interface/home/useHomeViewModel.ts",
+  "src/interface/home/ComposerContainer.tsx",
+  "src/interface/home/utils.ts",
   "src/components/home/ConversationComposer.tsx",
   "src/components/home/ConversationMain.tsx",
   "src/components/home/ConversationSidebar.tsx",
@@ -138,7 +137,7 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(workersSidebarSource).toContain('supervisorInterventions={supervisorInterventions}');
   expect(workersSidebarSource).toContain("buildWorkerTerminalUserMessages");
   expect(workerCardSource).toContain("<Terminal");
-  expect(workerCardSource).toContain('import { useWorkerStream } from "@/app/home/WorkerEntriesManager";');
+  expect(workerCardSource).toContain('import { useWorkerStream } from "@/interface/home/WorkerEntriesManager";');
   expect(workerCardSource).toContain("const open = isFocused || (openByWorkerId[workerId] ?? defaultOpen);");
   expect(workerCardSource).toContain("const workerStream = useWorkerStream(open ? workerId : null);");
   expect(workerCardSource).toContain("const unifiedTerminalEntries = useMemo");
@@ -532,7 +531,7 @@ test("conversation output version ignores state refreshes without new rendered o
 test("conversation has a floating latest-output indicator above the composer", () => {
   const conversationMainSource = fs.readFileSync(path.resolve(process.cwd(), "src/components/home/ConversationMain.tsx"), "utf8");
   const managerSource = fs.readFileSync(path.resolve(process.cwd(), "src/components/component-state-managers.ts"), "utf8");
-  const runSelectionEffectsSource = fs.readFileSync(path.resolve(process.cwd(), "src/app/home/useRunSelectionEffects.ts"), "utf8");
+  const runSelectionEffectsSource = fs.readFileSync(path.resolve(process.cwd(), "src/interface/home/useRunSelectionEffects.ts"), "utf8");
 
   expect(managerSource).toContain("hasOutputBelow: boolean;");
   expect(managerSource).toContain("setHasOutputBelow");
@@ -692,7 +691,7 @@ test("direct conversations render the user transcript next to the worker surface
 
 test("settings entry opens the reorganized settings dialog", () => {
   expect(pageSource).toContain('activeSettingsTab: "general"');
-  expect(pageSource).toContain('export type SettingsTab = "general" | "models" | "credentials" | "agents" | "runtime" | "memory"');
+  expect(readSource("src/shared/home-types.ts")).toContain('export type SettingsTab = "general" | "models" | "credentials" | "agents" | "runtime" | "memory"');
   expect(pageSource).toContain('import("@/components/home/SettingsDialog")');
   expect(pageSource).toContain("settingsDraftManager");
 });

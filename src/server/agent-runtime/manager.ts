@@ -1791,13 +1791,16 @@ export class AgentRuntimeManager {
         current: sessionConfigValue(sessionConfigOptions, "model"),
       });
       if (modelResolution.status === "unavailable") {
-        // Refuse rather than run the wrong version. A worker the user launched
-        // as Opus 5 that quietly executes on Opus 4.8 is worse than a failed
-        // launch: every answer it gives is attributed to a model that never ran.
-        const message = `Requested model "${modelResolution.requested}" (version ${modelResolution.requestedVersion}) is not offered by this Claude CLI; the closest option runs version ${modelResolution.offeredVersion}. Available: ${modelResolution.available.join(", ")}`;
+        // Refuse rather than run a different product. A worker the user
+        // launched as Fable that quietly executes on Opus is worse than a
+        // failed launch: every answer it gives is attributed to a model that
+        // never ran, and the cost lands on the wrong line too.
+        const family = modelResolution.requestedFamily;
+        const message = `Requested model "${modelResolution.requested}" is not offered by this Claude CLI`
+          + `${family ? ` — it lists no ${family} option` : ""}. Available: ${modelResolution.available.join(", ")}`;
         emitNamedEvent({
           kind: "error.surfaced",
-          code: "worker.model.version_unavailable",
+          code: "worker.model.family_unavailable",
           message,
           surface: "toast",
           workerId: name,
@@ -1805,6 +1808,7 @@ export class AgentRuntimeManager {
         });
         throw new RuntimeHttpError(409, message);
       }
+      let modelConfigReadBack = false;
       if (modelResolution.status === "pin") {
         try {
           const result = await connection.setSessionConfigOption({
@@ -1815,8 +1819,13 @@ export class AgentRuntimeManager {
           const resultRecord = asRecord(result);
           if (Array.isArray(resultRecord?.configOptions)) {
             sessionConfigOptions = resultRecord.configOptions;
+            modelConfigReadBack = true;
           }
-          pinnedModel = sessionConfigValue(sessionConfigOptions, "model") ?? modelResolution.value;
+          // Only the refreshed config is a witness to what the pin landed on.
+          // The pre-pin snapshot still reports the model we just moved off, and
+          // it is non-null, so `?? modelResolution.value` would never save us.
+          pinnedModel = (modelConfigReadBack ? sessionConfigValue(sessionConfigOptions, "model") : null)
+            ?? modelResolution.value;
           emitNamedEvent({
             kind: "worker.model_pinned",
             workerId: name,
@@ -1825,6 +1834,11 @@ export class AgentRuntimeManager {
             reason: modelResolution.reason,
           });
         } catch (modelError: unknown) {
+          // The pin never landed, so the session is still on whatever it had.
+          // Record that, not the model we failed to move it to and not the one
+          // that was requested — a failed pin is exactly when the worker row is
+          // most tempted to claim a model that never ran.
+          pinnedModel = sessionConfigValue(sessionConfigOptions, "model");
           process.stderr.write(`[${name}] could not pin Claude model to "${modelResolution.value}": ${describeUnknownError(modelError)}\n`);
           emitNamedEvent({
             kind: "worker.model_pin_failed",
@@ -1834,6 +1848,33 @@ export class AgentRuntimeManager {
             reason: describeUnknownError(modelError),
           });
         }
+      }
+      if (modelResolution.status === "keep") {
+        // Not a no-op worth staying quiet about. `keep` means the session was
+        // already on the model we resolved to, which may be a substitution
+        // (a lower version, or a `[1m]`-only family) that the launch still has
+        // to record. Leaving `pinnedModel` null here is what let
+        // `effectiveModel` fall back to the *requested* string and write a
+        // model that never ran into the worker row.
+        pinnedModel = modelResolution.value ?? sessionConfigValue(sessionConfigOptions, "model");
+        emitNamedEvent({
+          kind: "worker.model_kept",
+          workerId: name,
+          requestedModel,
+          selectedModel: pinnedModel ?? "",
+          reason: modelResolution.reason,
+        });
+      }
+      // Whatever happened above, the session's own config is the only witness
+      // to what will actually run. Never let the requested model stand in for
+      // it — but only trust the config we are actually holding. A pin that
+      // succeeded while its response omitted `configOptions` leaves
+      // `sessionConfigOptions` on the *pre-pin* snapshot, and reading that back
+      // would record the model we just moved off. In that case the value we
+      // sent is the better witness, and the pin/failure branches above have
+      // already set it.
+      if (modelResolution.status !== "pin" || modelConfigReadBack) {
+        pinnedModel = sessionConfigValue(sessionConfigOptions, "model") ?? pinnedModel;
       }
     }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldOpenMobileSideWindow } from "@/app/home/side-window-viewport";
+import { shouldOpenMobileSideWindow } from "@/interface/home/side-window-viewport";
 
 describe("shouldOpenMobileSideWindow", () => {
   it("uses the desktop rail at lg viewports", () => {

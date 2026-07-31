@@ -1,10 +1,19 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "http";
-import { readFile, stat } from "fs/promises";
 import type { AddressInfo } from "net";
-import path from "path";
 import type { RuntimeSurface } from "@/server/events/named-events";
+import { emitNamedEvent } from "@/server/events/named-events";
 import type { OmniRuntime } from "@/runtime";
 import type { OmniHttpRegistry } from "./registry";
+import { OpenResponseStreams, writeFetchResponse } from "./stream-response";
+import {
+  prepareStaticInterface,
+  type StaticBootstrapBuilder,
+} from "./static-files";
+import type { InterfaceSecurityMode } from "./security-headers";
+import {
+  associateRequestNetworkIdentity,
+  resolveRequestNetworkIdentity,
+} from "@/server/auth/trusted-proxy";
 
 export interface StartOmniHttpServerOptions {
   host?: string;
@@ -12,11 +21,15 @@ export interface StartOmniHttpServerOptions {
   surface?: RuntimeSurface;
   registry: OmniHttpRegistry;
   staticDir?: string | null;
+  staticDirExplicit?: boolean;
+  staticMode?: InterfaceSecurityMode;
+  buildStaticBootstrap?: StaticBootstrapBuilder;
 }
 
 export interface OmniHttpServerHandle {
   origin: string;
   httpServer: Server;
+  staticUiEnabled: boolean;
   getPort(): number;
   stop(): Promise<void>;
 }
@@ -50,7 +63,12 @@ function requestUrl(request: IncomingMessage, host: string, port: number) {
   return `http://${authority}${rawUrl}`;
 }
 
-async function toFetchRequest(request: IncomingMessage, host: string, port: number) {
+async function toFetchRequest(
+  request: IncomingMessage,
+  host: string,
+  port: number,
+  signal: AbortSignal,
+) {
   const headers = new Headers();
   for (const [key, value] of Object.entries(request.headers)) {
     if (Array.isArray(value)) {
@@ -66,93 +84,58 @@ async function toFetchRequest(request: IncomingMessage, host: string, port: numb
     : await readRequestBody(request);
   const body = requestBody ? new Uint8Array(requestBody) : undefined;
 
-  return new Request(requestUrl(request, host, port), { method, headers, body });
-}
-
-async function writeFetchResponse(response: ServerResponse, fetchResponse: Response) {
-  response.statusCode = fetchResponse.status;
-  fetchResponse.headers.forEach((value, key) => {
-    response.setHeader(key, value);
+  return new Request(requestUrl(request, host, port), {
+    method,
+    headers,
+    body,
+    signal,
   });
-  const body = Buffer.from(await fetchResponse.arrayBuffer());
-  response.end(body);
-}
-
-const MIME_TYPES: Record<string, string> = {
-  ".css": "text/css; charset=utf-8",
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".map": "application/json; charset=utf-8",
-  ".png": "image/png",
-  ".svg": "image/svg+xml",
-  ".webmanifest": "application/manifest+json; charset=utf-8",
-};
-
-async function tryServeStatic(
-  request: IncomingMessage,
-  response: ServerResponse,
-  staticDir: string | null | undefined,
-) {
-  if (!staticDir || request.method !== "GET") {
-    return false;
-  }
-
-  const rawUrl = request.url || "/";
-  const pathname = new URL(rawUrl, "http://runtime.local").pathname;
-  if (pathname.startsWith("/api/")) {
-    return false;
-  }
-
-  const decodedPath = decodeURIComponent(pathname);
-  const relativePath = decodedPath === "/" ? "index.html" : decodedPath.replace(/^\/+/, "");
-  const root = path.resolve(staticDir);
-  const candidate = path.resolve(root, relativePath);
-  if (candidate !== root && !candidate.startsWith(`${root}${path.sep}`)) {
-    response.statusCode = 403;
-    response.end("Forbidden");
-    return true;
-  }
-
-  const fallback = path.join(root, "index.html");
-  let filePath = candidate;
-  try {
-    const fileStat = await stat(filePath);
-    if (fileStat.isDirectory()) {
-      filePath = path.join(filePath, "index.html");
-    }
-  } catch {
-    filePath = fallback;
-  }
-
-  try {
-    const body = await readFile(filePath);
-    response.statusCode = 200;
-    response.setHeader("content-type", MIME_TYPES[path.extname(filePath)] ?? "application/octet-stream");
-    response.end(body);
-  } catch {
-    response.statusCode = 404;
-    response.end("Not found");
-  }
-
-  return true;
 }
 
 export async function startOmniHttpServer(options: StartOmniHttpServerOptions): Promise<OmniHttpServerHandle> {
   const host = options.host ?? "127.0.0.1";
   const requestedPort = options.port ?? 0;
   const surface = options.surface ?? "web";
+  const openStreams = new OpenResponseStreams();
+  const staticInterface = await prepareStaticInterface({
+    staticDir: options.staticDir ?? null,
+    explicit: options.staticDirExplicit ?? false,
+    mode: options.staticMode ?? "web",
+    buildBootstrap: options.buildStaticBootstrap,
+  });
 
   let activePort = requestedPort;
   const server = createServer((request, response) => {
+    const requestAbort = new AbortController();
+    const abortRequest = () => requestAbort.abort();
+    request.once("aborted", abortRequest);
+    response.once("close", abortRequest);
     void (async () => {
-      if (await tryServeStatic(request, response, options.staticDir)) {
+      const fetchRequest = await toFetchRequest(
+        request,
+        host,
+        activePort,
+        requestAbort.signal,
+      );
+      associateRequestNetworkIdentity(fetchRequest, resolveRequestNetworkIdentity({
+        url: fetchRequest.url,
+        headers: fetchRequest.headers,
+        socketAddress: request.socket.remoteAddress ?? null,
+        socketEncrypted: Boolean(
+          (request.socket as typeof request.socket & { encrypted?: boolean }).encrypted,
+        ),
+      }));
+      const staticResponse = await staticInterface.handle(fetchRequest);
+      if (staticResponse) {
+        await writeFetchResponse(request, response, staticResponse, openStreams);
         return;
       }
-      const fetchRequest = await toFetchRequest(request, host, activePort);
       const fetchResponse = await options.registry.handle(fetchRequest, { surface });
-      await writeFetchResponse(response, fetchResponse);
+      await writeFetchResponse(request, response, fetchResponse, openStreams);
     })().catch((error) => {
+      if (response.destroyed || response.writableEnded) {
+        return;
+      }
       response.statusCode = 500;
       response.setHeader("content-type", "application/json");
       response.end(JSON.stringify({
@@ -162,6 +145,9 @@ export async function startOmniHttpServer(options: StartOmniHttpServerOptions): 
           surface,
         },
       }));
+    }).finally(() => {
+      request.off("aborted", abortRequest);
+      response.off("close", abortRequest);
     });
   });
 
@@ -174,16 +160,39 @@ export async function startOmniHttpServer(options: StartOmniHttpServerOptions): 
     });
   });
 
+  let stopPromise: Promise<void> | null = null;
   return {
     origin: `http://${host}:${activePort}`,
     httpServer: server,
+    staticUiEnabled: staticInterface.enabled,
     getPort: () => activePort,
-    stop: () => new Promise<void>((resolve, reject) => {
-      server.close((error) => {
-        if (error) reject(error);
-        else resolve();
+    stop: () => {
+      if (stopPromise) {
+        return stopPromise;
+      }
+      const flushWindowMs = 500;
+      emitNamedEvent({
+        kind: "runner.stopping",
+        surface,
+        reason: "shutdown",
+        flushWindowMs,
       });
-    }),
+      stopPromise = new Promise<void>((resolve, reject) => {
+        const flushTimer = setTimeout(() => {
+          void openStreams.cancelAll("runner stopping").finally(() => {
+            server.closeAllConnections();
+          });
+        }, flushWindowMs);
+        flushTimer.unref();
+        server.close((error) => {
+          clearTimeout(flushTimer);
+          if (error) reject(error);
+          else resolve();
+        });
+        server.closeIdleConnections();
+      });
+      return stopPromise;
+    },
   };
 }
 

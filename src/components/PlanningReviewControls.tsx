@@ -5,11 +5,11 @@ import React from "react";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
-import { planningReviewPreferencesManager, planningReviewPreferencesSetters } from "@/app/home/PlanningReviewPreferencesManager";
+import { planningReviewPreferencesManager, planningReviewPreferencesSetters } from "@/interface/home/PlanningReviewPreferencesManager";
 import { Button } from "./ui/button";
-import { type PlanningReviewRunRecord, type PlanningReviewRoundRecord, type PlanningReviewFindingRecord } from "@/app/home/types";
+import { type PlanningReviewRunRecord, type PlanningReviewRoundRecord, type PlanningReviewFindingRecord } from "@/interface/home/types";
 import { ChevronDown, ChevronUp, Play, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
-import { type PlanningReviewAgentSelection } from "@/server/planning/review-preferences";
+import { type PlanningReviewAgentSelection } from "@/shared/planning-review";
 
 interface PlanningReviewControlsProps {
   isReviewing: boolean;

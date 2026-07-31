@@ -7,7 +7,7 @@ describe("live browser authentication", () => {
       OMNIHARNESS_LIVE_E2E: "1",
       OMNIHARNESS_LIVE_E2E_PASSWORD: "runtime-only",
     })).toEqual({
-      baseURL: "http://127.0.0.1:3035",
+      baseURL: "http://127.0.0.1:3050",
       password: "runtime-only",
       reuseAuthenticatedState: false,
     });
@@ -18,7 +18,7 @@ describe("live browser authentication", () => {
       OMNIHARNESS_LIVE_E2E: "1",
       OMNIHARNESS_LIVE_E2E_AUTHENTICATED: "1",
     })).toEqual({
-      baseURL: "http://127.0.0.1:3035",
+      baseURL: "http://127.0.0.1:3050",
       password: null,
       reuseAuthenticatedState: true,
     });

@@ -1,6 +1,7 @@
 import { build } from "esbuild";
 import { statSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -43,6 +44,11 @@ const aliasPlugin = {
 };
 
 await mkdir(path.join(appRoot, "dist"), { recursive: true });
+execFileSync("pnpm", ["build:interface:packaged"], {
+  cwd: repoRoot,
+  env: process.env,
+  stdio: "inherit",
+});
 
 await build({
   entryPoints: [path.join(appRoot, "main.ts")],
@@ -68,34 +74,3 @@ await build({
   sourcemap: true,
   logLevel: "info",
 });
-
-const rendererOutdir = path.join(appRoot, "dist", "renderer");
-await mkdir(rendererOutdir, { recursive: true });
-
-await build({
-  entryPoints: [path.join(repoRoot, "src", "ui", "render-web.tsx")],
-  outfile: path.join(rendererOutdir, "renderer.js"),
-  bundle: true,
-  platform: "browser",
-  format: "iife",
-  target: "es2020",
-  jsx: "automatic",
-  plugins: [aliasPlugin],
-  sourcemap: true,
-  logLevel: "info",
-});
-
-await writeFile(path.join(rendererOutdir, "index.html"), `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;">
-    <title>OmniHarness</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script src="/renderer.js"></script>
-  </body>
-</html>
-`, "utf8");

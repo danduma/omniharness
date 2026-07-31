@@ -9,13 +9,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/server/db";
 import { executionEvents, recoveryIncidents } from "@/server/db/schema";
 
-import * as eventsRoute from "@/app/api/events/route";
+import { eventsRouteModule as eventsRoute } from "@/../tests/helpers/runtime-routes";
 
 import { startLifecycleHarness, type LifecycleServer } from "../../harness/server";
 import { LifecycleClient } from "../../harness/client";
 import { Chaos, NO_CHAOS } from "../../harness/chaos";
 import { clearLifecycleSchema, seedDirectRun } from "../../harness/fixtures";
 import { __resetNamedEventsForTests, emitNamedEvent } from "@/server/events/named-events";
+import { compareEventStreamIds } from "@/shared/runtime";
 
 let server: LifecycleServer;
 let client: LifecycleClient;
@@ -63,9 +64,9 @@ describe("lifecycle — worker failover transcript", () => {
     const started = client.events.filterByEvent("worker.failover_started")[0]!;
     const handoff = client.events.filterByEvent("worker.handoff_emitted")[0]!;
     const spawnIn = client.events.filterByEvent("worker.spawned")[1]!;
-    expect(Number(started.id)).toBeLessThan(Number(handoff.id));
-    expect(Number(handoff.id)).toBeLessThan(Number(spawnIn.id));
-    expect(Number(spawnIn.id)).toBeLessThan(Number(completed.id));
+    expect(compareEventStreamIds(started.id!, handoff.id!)).toBe(-1);
+    expect(compareEventStreamIds(handoff.id!, spawnIn.id!)).toBe(-1);
+    expect(compareEventStreamIds(spawnIn.id!, completed.id!)).toBe(-1);
   });
 
   it("replays failover events on reconnect with Last-Event-ID", async () => {
@@ -88,7 +89,7 @@ describe("lifecycle — worker failover transcript", () => {
       baseUrl: server.baseUrl,
       chaos: new Chaos(1, NO_CHAOS),
     });
-    await client.subscribe({ runId, resumeFrom: String(startedEntry.id) });
+    await client.subscribe({ runId, resumeFrom: startedEntry.streamId });
 
     emitNamedEvent({
       kind: "worker.failover_completed",
@@ -99,7 +100,7 @@ describe("lifecycle — worker failover transcript", () => {
     });
 
     const completed = await client.waitFor("worker.failover_completed", { timeoutMs: 10_000 });
-    expect(Number(completed.id)).toBeGreaterThan(startedEntry.id);
+    expect(compareEventStreamIds(completed.id!, startedEntry.streamId)).toBe(1);
   });
 
   it("emits worker.failover_failed and an error.surfaced when failover gives up", async () => {

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useFrozenRecentOrder } from "@/app/home/useFrozenRecentOrder";
-import type { SidebarGroup } from "@/app/home/types";
+import { useFrozenRecentOrder } from "@/interface/home/useFrozenRecentOrder";
+import type { SidebarGroup } from "@/interface/home/types";
 
 const refSlots: Array<{ current: unknown }> = [];
 let refIndex = 0;

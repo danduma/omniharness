@@ -13,7 +13,6 @@ import {
 import { setProjectGitWorkspaceDefaultTarget } from "@/server/projects/config";
 import { forkRunIntoWorktree } from "@/server/runs/recovery";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 type GitOperation =
   | "status"
@@ -113,7 +112,7 @@ export const handleGitRequest: OmniHttpHandler = async (request) => {
 
     const body = await request.json() as Record<string, unknown>;
     operation = parseOperation(body.operation);
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Git workspace",
       action: ACTION_LABELS[operation],
       enforceSameOrigin: operation !== "status",

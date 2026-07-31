@@ -1,8 +1,27 @@
 import type { EventStreamHandlers, RuntimeAPIs, RuntimeApiError, RuntimeSubscription } from "./types";
+import {
+  normalizeRuntimeStreamEvent,
+} from "./stream";
+import {
+  normalizeRuntimeHttpError,
+  parseRuntimeBody,
+  type RuntimeDomainRequestOptions,
+} from "./request";
+import { createRuntimeDomains } from "./domains";
 
 export type VSCodeRuntimeBridgeRequest = {
   id: string;
-  type: "api:proxy" | "sse:open" | "sse:close" | "vscode:openFile" | "vscode:openExternal" | "vscode:openDiff";
+  type:
+    | "api:proxy"
+    | "sse:open"
+    | "sse:close"
+    | "vscode:openFile"
+    | "vscode:openExternal"
+    | "vscode:notify"
+    | "vscode:openDiff"
+    | "vscode:login"
+    | "vscode:profiles"
+    | "vscode:identity";
   payload?: unknown;
 };
 
@@ -22,43 +41,17 @@ export interface VSCodeRuntimeApiTransport {
 export interface VSCodeRuntimeApiOptions {
   transport: VSCodeRuntimeApiTransport;
   timeoutMs?: number;
+  profileId?: string;
 }
 
 type ProxyResponse = {
   status: number;
   headers?: Record<string, string>;
   bodyText?: string;
+  bodyBytes?: number[];
 };
 
 let requestSeq = 0;
-
-function buildQuery(params: Record<string, string | null | undefined>) {
-  const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value != null && value !== "") {
-      search.set(key, value);
-    }
-  }
-  const value = search.toString();
-  return value ? `?${value}` : "";
-}
-
-function parseBody(bodyText: string | undefined) {
-  if (!bodyText) return null;
-  return JSON.parse(bodyText) as unknown;
-}
-
-function normalizeHttpError(response: ProxyResponse, body: unknown): RuntimeApiError {
-  const payload = body && typeof body === "object" && "error" in body
-    ? (body as { error?: { code?: unknown; message?: unknown; details?: unknown } }).error
-    : null;
-  return {
-    code: typeof payload?.code === "string" ? payload.code : `runtime.http_${response.status}`,
-    message: typeof payload?.message === "string" ? payload.message : `Runtime request failed with HTTP ${response.status}.`,
-    details: payload?.details,
-    surface: "vscode",
-  };
-}
 
 function normalizeBridgeError(error: unknown): RuntimeApiError {
   if (error && typeof error === "object" && "message" in error) {
@@ -77,6 +70,7 @@ function normalizeBridgeError(error: unknown): RuntimeApiError {
 
 export function createVSCodeRuntimeAPIs(options: VSCodeRuntimeApiOptions): RuntimeAPIs {
   const timeoutMs = options.timeoutMs ?? 30_000;
+  const profileId = options.profileId;
 
   function requestBridge(message: Omit<VSCodeRuntimeBridgeRequest, "id">): Promise<unknown> {
     const id = String(++requestSeq);
@@ -124,114 +118,147 @@ export function createVSCodeRuntimeAPIs(options: VSCodeRuntimeApiOptions): Runti
     });
   }
 
-  async function request(method: string, path: string, body?: unknown) {
-    const headers: Record<string, string> = {};
+  async function request(
+    method: string,
+    path: string,
+    options: RuntimeDomainRequestOptions = {},
+  ) {
+    if (options.signal?.aborted) {
+      throw options.signal.reason ?? new DOMException("Aborted", "AbortError");
+    }
+    const headers: Record<string, string> = { ...options.headers };
     let bodyText: string | undefined;
-    if (body !== undefined) {
-      headers["content-type"] = "application/json";
-      bodyText = JSON.stringify(body);
+    let formData: Array<
+      | { name: string; value: string }
+      | { name: string; file: { name: string; type: string; bytes: number[] } }
+    > | undefined;
+    if (options.body !== undefined) {
+      if (options.body instanceof FormData) {
+        formData = await Promise.all(Array.from(options.body.entries()).map(async ([name, value]) => {
+          if (typeof value === "string") {
+            return { name, value };
+          }
+          return {
+            name,
+            file: {
+              name: value.name,
+              type: value.type,
+              bytes: Array.from(new Uint8Array(await value.arrayBuffer())),
+            },
+          };
+        }));
+      } else {
+        headers["content-type"] = "application/json";
+        bodyText = JSON.stringify(options.body);
+      }
     }
-    const proxyResponse = await requestBridge({
+    const abort = new Promise<never>((_, reject) => {
+      options.signal?.addEventListener("abort", () => {
+        reject(options.signal?.reason ?? new DOMException("Aborted", "AbortError"));
+      }, { once: true });
+    });
+    const bridgeRequest = requestBridge({
       type: "api:proxy",
-      payload: { method, path, headers, bodyText },
-    }) as ProxyResponse;
-    const parsed = parseBody(proxyResponse.bodyText);
+      payload: {
+        profileId,
+        method,
+        path,
+        headers,
+        bodyText,
+        formData,
+        responseType: options.responseType,
+      },
+    }) as Promise<ProxyResponse>;
+    const proxyResponse = options.signal
+      ? await Promise.race([bridgeRequest, abort])
+      : await bridgeRequest;
+    const parsed = options.responseType === "blob"
+      ? new Blob([new Uint8Array(proxyResponse.bodyBytes ?? [])], {
+          type: proxyResponse.headers?.["content-type"] ?? "application/octet-stream",
+        })
+      : options.responseType === "arrayBuffer"
+        ? Uint8Array.from(proxyResponse.bodyBytes ?? []).buffer
+        : parseRuntimeBody(proxyResponse.bodyText);
     if (proxyResponse.status < 200 || proxyResponse.status >= 300) {
-      throw normalizeHttpError(proxyResponse, parsed);
+      throw normalizeRuntimeHttpError({
+        status: proxyResponse.status,
+        body: parsed,
+        surface: "vscode",
+      });
     }
-    return parsed;
+    return options.includeResponseMetadata
+      ? { data: parsed, headers: proxyResponse.headers ?? {} }
+      : parsed;
   }
 
-  function post(path: string, body: unknown) {
-    return request("POST", path, body);
-  }
+  const domains = createRuntimeDomains({
+    request,
+    openEvents(path, input, handlers: EventStreamHandlers): RuntimeSubscription {
+      const id = String(++requestSeq);
+      const unsubscribe = options.transport.addMessageListener((rawMessage) => {
+        const message = rawMessage as Partial<VSCodeRuntimeBridgeResponse>;
+        if (message.id !== id) {
+          return;
+        }
+        if (message.type === "sse:event" && message.success) {
+          const frame = message.data as {
+            id?: unknown;
+            event?: unknown;
+            payload?: unknown;
+          };
+          if (typeof frame.event === "string") {
+            handlers.onEvent(normalizeRuntimeStreamEvent({
+              type: frame.event,
+              data: JSON.stringify(frame.payload ?? null),
+              lastEventId: typeof frame.id === "string" ? frame.id : undefined,
+            }));
+          }
+          return;
+        }
+        if (message.success === false) {
+          handlers.onError?.(message.error ?? {
+            code: "runtime.events_failed",
+            message: "VS Code event stream failed.",
+            surface: "vscode",
+          });
+        }
+      });
+      options.transport.postMessage({
+        id,
+        type: "sse:open",
+        payload: {
+          profileId,
+          path,
+          lastEventId: input.lastEventId ?? null,
+        },
+      });
+      return {
+        close() {
+          unsubscribe();
+          options.transport.postMessage({
+            id: `${id}:close`,
+            type: "sse:close",
+            payload: { id },
+          });
+        },
+      };
+    },
+  });
 
   return {
     runtime: {
       surface: "vscode",
       label: "VS Code",
-      supportsNativeNotifications: false,
+      supportsNativeNotifications: true,
       supportsEditorActions: true,
     },
-    bootstrap: {
-      load(input) {
-        return request("GET", `/api/runtime/bootstrap${buildQuery({
-          run: input.selectedRunId ?? null,
-          project: input.draftProjectPath ?? null,
-          pair: input.pairToken ?? null,
-        })}`);
-      },
-    },
-    events: {
-      open(input, handlers: EventStreamHandlers): RuntimeSubscription {
-        const id = String(++requestSeq);
-        const unsubscribe = options.transport.addMessageListener((rawMessage) => {
-          const message = rawMessage as Partial<VSCodeRuntimeBridgeResponse>;
-          if (message.id !== id) {
-            return;
-          }
-          if (message.type === "sse:event" && message.success) {
-            handlers.onEvent(message.data);
-            return;
-          }
-          if (message.success === false) {
-            handlers.onError?.(message.error ?? {
-              code: "runtime.events_failed",
-              message: "VS Code event stream failed.",
-              surface: "vscode",
-            });
-          }
-        });
-        options.transport.postMessage({
-          id,
-          type: "sse:open",
-          payload: {
-            runId: input.runId ?? null,
-            lastEventId: input.lastEventId ?? null,
-          },
-        });
-        return {
-          close() {
-            unsubscribe();
-            options.transport.postMessage({
-              id: `${id}:close`,
-              type: "sse:close",
-              payload: { id },
-            });
-          },
-        };
-      },
-      fetchLog(input) {
-        return request("GET", `/api/events/log${buildQuery({ since: input.since, runId: input.runId })}`);
-      },
-    },
-    conversations: {
-      create(input) {
-        return post("/api/conversations", input);
-      },
-      sendMessage(input) {
-        return post("/api/messages", input);
-      },
-    },
-    workers: {
-      listEntries(input) {
-        return request("GET", `/api/workers/${encodeURIComponent(input.workerId)}/entries${buildQuery({
-          runId: input.runId,
-          afterSeq: input.afterSeq == null ? null : String(input.afterSeq),
-        })}`);
-      },
-    },
-    settings: {
-      load() {
-        return request("GET", "/api/settings");
-      },
-      save(input) {
-        return post("/api/settings", input);
-      },
-    },
+    ...domains,
     native: {
       openExternal(input) {
         return requestBridge({ type: "vscode:openExternal", payload: input }) as Promise<{ ok: true }>;
+      },
+      notify(input) {
+        return requestBridge({ type: "vscode:notify", payload: input }) as Promise<{ ok: boolean }>;
       },
     },
     editor: {

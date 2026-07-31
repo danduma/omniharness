@@ -4,16 +4,16 @@ import { test, expect } from "vitest";
 
 const readSource = (relativePath: string) => fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 const pageSource = [
-  "src/app/page.tsx",
-  "src/app/home/HomeApp.tsx",
-  "src/app/home/useAppErrors.ts",
-  "src/app/home/useConversationExecutionStatus.ts",
-  "src/app/home/useHomeLifecycle.ts",
-  "src/app/home/useHomeMutations.ts",
-  "src/app/home/useConversationActions.ts",
-  "src/app/home/useHomeViewModel.ts",
-  "src/app/home/LiveEventConnectionManager.ts",
-  "src/app/home/utils.ts",
+  "src/interface/home/HomeApp.tsx",
+  "src/interface/home/useAppErrors.ts",
+  "src/interface/home/useConversationExecutionStatus.ts",
+  "src/interface/home/useHomeLifecycle.ts",
+  "src/interface/home/useHomeMutations.ts",
+  "src/interface/home/mutations/optimistic-state.ts",
+  "src/interface/home/useConversationActions.ts",
+  "src/interface/home/useHomeViewModel.ts",
+  "src/interface/home/LiveEventConnectionManager.ts",
+  "src/interface/home/utils.ts",
   "src/lib/conversation-visuals.ts",
   "src/lib/commit-workflow.ts",
   "src/components/home/ConversationMain.tsx",
@@ -23,13 +23,17 @@ const pageSource = [
   "src/components/home/SettingsDialog.tsx",
 ].map(readSource).join("\n");
 const homeAppSource = [
-  "src/app/home/HomeApp.tsx",
-  "src/app/home/useHomeMutations.ts",
-  "src/app/home/useConversationActions.ts",
-  "src/app/home/useHomeViewModel.ts",
+  "src/interface/home/HomeApp.tsx",
+  "src/interface/home/useHomeMutations.ts",
+  "src/interface/home/useConversationActions.ts",
+  "src/interface/home/useHomeViewModel.ts",
 ].map(readSource).join("\n");
 const markdownContentSource = readSource("src/components/MarkdownContent.tsx");
-const terminalSource = readSource("src/components/Terminal.tsx");
+const terminalSource = [
+  "src/components/Terminal.tsx",
+  "src/components/terminal/UserMessageAttachments.tsx",
+  "src/components/terminal/scroll-state.ts",
+].map(readSource).join("\n");
 
 test("conversations do not dump the agent command catalog into the transcript", () => {
   const conversationMainSource = readSource("src/components/home/ConversationMain.tsx");
@@ -43,14 +47,14 @@ test("conversation rows expose rename and delete actions", () => {
   expect(pageSource).toContain('Delete');
   expect(pageSource).not.toContain('Rename conversation');
   expect(pageSource).not.toContain('Delete conversation');
-  expect(pageSource).toContain('requestJson(`/api/runs/${runId}`');
+  expect(pageSource).toContain("runtimeApis.runs.remove({");
 });
 
 test("conversation rows expose a move-to-project dialog action", () => {
   const sidebarSource = readSource("src/components/home/ConversationSidebar.tsx");
-  const uiStateSource = readSource("src/app/home/HomeUiStateManager.ts");
-  const actionsSource = readSource("src/app/home/useConversationActions.ts");
-  const mutationsSource = readSource("src/app/home/useHomeMutations.ts");
+  const uiStateSource = readSource("src/interface/home/HomeUiStateManager.ts");
+  const actionsSource = readSource("src/interface/home/useConversationActions.ts");
+  const mutationsSource = readSource("src/interface/home/useHomeMutations.ts");
   const localeSource = readSource("shared/locales/en.json");
 
   expect(sidebarSource).toContain("FolderInput");
@@ -70,7 +74,7 @@ test("conversation rows expose a move-to-project dialog action", () => {
   expect(actionsSource).toContain("handleStartMovingRun");
   expect(actionsSource).toContain("handleConfirmMoveRunToProject");
   expect(mutationsSource).toContain("const moveRunToProject = useMutation({");
-  expect(mutationsSource).toContain('body: JSON.stringify({ projectPath })');
+  expect(mutationsSource).toContain("patch: { projectPath }");
   expect(localeSource).toContain('"conversation.sidebar.moveToProject": "Move to Project"');
 });
 
@@ -98,8 +102,7 @@ test("conversation rows expose archive in the overflow menu and commit rows expo
   expect(sidebarSource).toContain("{canArchiveConversation ? (");
   expect(sidebarSource).not.toContain('{isCommitConversation ? (\n                                    <DropdownMenuItem');
   expect(homeAppSource).toContain("const archiveRun = useMutation({");
-  expect(homeAppSource).toContain('body: JSON.stringify({ action: "archive" })');
-  expect(homeAppSource).toContain('action: "Archive"');
+  expect(homeAppSource).toContain('body: { action: "archive" }');
   expect(homeAppSource).toContain("archiveRun: actions.handleArchiveRun");
 });
 
@@ -185,7 +188,7 @@ test("project menus expose an auto commit action that starts a commit conversati
 test("deleting a conversation removes it optimistically before the request resolves", () => {
   const deleteMutationIndex = pageSource.indexOf("const deleteRun = useMutation({");
   const onMutateIndex = pageSource.indexOf("onMutate:", deleteMutationIndex);
-  const requestIndex = pageSource.indexOf('requestJson(`/api/runs/${runId}`', deleteMutationIndex);
+  const requestIndex = pageSource.indexOf("runtimeApis.runs.remove({", deleteMutationIndex);
   const optimisticUpdateIndex = pageSource.indexOf("removeRunFromHomeState(current, variables.runId)", onMutateIndex);
   const rollbackIndex = pageSource.indexOf("previousState", optimisticUpdateIndex);
 
@@ -200,7 +203,7 @@ test("deleting a conversation removes it optimistically before the request resol
 test("stopping a conversation updates local worker state before the request resolves", () => {
   const stopWorkerMutationIndex = pageSource.indexOf("const stopWorker = useMutation({");
   const stopWorkerOnMutateIndex = pageSource.indexOf("onMutate:", stopWorkerMutationIndex);
-  const stopWorkerRequestIndex = pageSource.indexOf('body: JSON.stringify({ action: "stop_worker", workerId })', stopWorkerMutationIndex);
+  const stopWorkerRequestIndex = pageSource.indexOf('body: { action: "stop_worker", workerId }', stopWorkerMutationIndex);
   const stopWorkerOptimisticIndex = pageSource.indexOf("applyStopWorkerOptimisticUpdate(current, runId, workerId)", stopWorkerOnMutateIndex);
   const stopSupervisorMutationIndex = pageSource.indexOf("const stopSupervisor = useMutation({");
   const stopSupervisorOptimisticIndex = pageSource.indexOf("applyStopSupervisorOptimisticUpdate(current, runId)", stopSupervisorMutationIndex);
@@ -220,7 +223,7 @@ test("direct control user messages expose retry, edit, and fork recovery control
   expect(pageSource).toContain("const canRecoverUserMessage = isDirectConversation || isImplementationConversation;");
   expect(pageSource).toContain("getUserMessageActions={getUserMessageActions}");
   expect(pageSource).toContain("actions={userMessageActions}");
-  expect(pageSource).toContain('body: JSON.stringify({ action, targetMessageId, content, gitWorkspaceLaunch, manualRecovery })');
+  expect(pageSource).toContain('body: { action, targetMessageId, content, gitWorkspaceLaunch, manualRecovery }');
   expect(pageSource).toContain('manualRecovery: true');
 });
 
@@ -287,7 +290,9 @@ test("direct-control terminal user messages render attachment metadata", () => {
   expect(terminalSource).toContain('content: entry.entry.text,');
   expect(terminalSource).toContain('createdAt: authoritativeTimestamp,');
   expect(terminalSource).toContain('activity.attachments.length > 0');
-  expect(terminalSource).toContain('attachmentImagePreviewManager.open({ url, name: attachment.name, size: attachment.size })');
+  expect(terminalSource).toContain("attachmentImagePreviewManager.open({");
+  expect(terminalSource).toContain("name: attachment.name,");
+  expect(terminalSource).toContain("size: attachment.size,");
   expect(terminalSource).toContain('title={`Preview ${attachment.name}`}');
   expect(terminalSource).toContain('{formatBytes(attachment.size)}');
 });
@@ -334,7 +339,7 @@ test("direct conversations gate legacy user fallback on authoritative stream loa
 });
 
 test("attachment image previews use a global full-screen dialog", () => {
-  const homeSource = readSource("src/app/home/HomeApp.tsx");
+  const homeSource = readSource("src/interface/home/HomeApp.tsx");
   const dialogSource = readSource("src/components/AttachmentImagePreviewDialog.tsx");
   const managerSource = readSource("src/components/component-state-managers.ts");
 
@@ -400,8 +405,8 @@ test("clarification requests stay in the normal supervisor conversation", () => 
 
 test("preflight implementation confirmations expose remembered quick actions", () => {
   const conversationMainSource = readSource("src/components/home/ConversationMain.tsx");
-  const homeAppSource = readSource("src/app/home/HomeApp.tsx");
-  const managerSource = readSource("src/app/home/PreflightConfirmationActionsManager.ts");
+  const homeAppSource = readSource("src/interface/home/HomeApp.tsx");
+  const managerSource = readSource("src/interface/home/PreflightConfirmationActionsManager.ts");
   const localeSource = readSource("shared/locales/en.json");
 
   expect(conversationMainSource).toContain("isPreflightConfirmationMessage");
@@ -438,7 +443,7 @@ test("conversation error notices render below the thread content", () => {
 });
 
 test("send queued now failures do not leak into every conversation notice stack", () => {
-  const useAppErrorsSource = readSource("src/app/home/useAppErrors.ts");
+  const useAppErrorsSource = readSource("src/interface/home/useAppErrors.ts");
 
   expect(homeAppSource).not.toContain("sendQueuedMessageNowError: sendQueuedMessageNow.error");
   expect(useAppErrorsSource).not.toContain("sendQueuedMessageNowError");
@@ -446,14 +451,14 @@ test("send queued now failures do not leak into every conversation notice stack"
 });
 
 test("send queued now hides accepted direct messages from the queued drawer", () => {
-  const queuedMutationsSource = readSource("src/app/home/useQueuedMessageMutations.ts");
+  const queuedMutationsSource = readSource("src/interface/home/useQueuedMessageMutations.ts");
 
   expect(queuedMutationsSource).toContain('if (data.message && data.queuedMessage?.status === "delivering")');
   expect(queuedMutationsSource).toContain("busyMessageQueueManager.hideQueuedMessage(variables.messageId);");
 });
 
 test("editing or cancelling a queued message removes it optimistically and rolls back on failure", () => {
-  const queuedMutationsSource = readSource("src/app/home/useQueuedMessageMutations.ts");
+  const queuedMutationsSource = readSource("src/interface/home/useQueuedMessageMutations.ts");
   const cancelQueuedMessageIndex = queuedMutationsSource.indexOf("const cancelQueuedMessage = useMutation({");
   const onMutateIndex = queuedMutationsSource.indexOf("onMutate: ({ messageId }) => {", cancelQueuedMessageIndex);
   const hideIndex = queuedMutationsSource.indexOf("busyMessageQueueManager.hideQueuedMessage(messageId);", onMutateIndex);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import * as accountLabels from "@/app/home/account-labels";
-import type { AccountRecord } from "@/app/home/types";
+import * as accountLabels from "@/interface/home/account-labels";
+import type { AccountRecord } from "@/interface/home/types";
 
 function account(input: Partial<AccountRecord>): AccountRecord {
   return {

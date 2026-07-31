@@ -63,11 +63,11 @@ const quotaTypeBlockingSource = fs.readFileSync(
   "utf8",
 );
 const recoveryUtilsSource = fs.readFileSync(
-  path.resolve(process.cwd(), "src/app/home/recovery-utils.ts"),
+  path.resolve(process.cwd(), "src/interface/home/recovery-utils.ts"),
   "utf8",
 );
 const snapshotCacheManagerSource = fs.readFileSync(
-  path.resolve(process.cwd(), "src/app/home/EventStreamSnapshotCacheManager.ts"),
+  path.resolve(process.cwd(), "src/interface/home/EventStreamSnapshotCacheManager.ts"),
   "utf8",
 );
 

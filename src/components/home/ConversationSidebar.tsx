@@ -1,8 +1,8 @@
 import type React from "react";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { Archive, Bug, ChevronDown, Folder, FolderInput, FolderPlus, GitCommitHorizontal, GripVertical, ListChevronsDownUp, LoaderCircle, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Sun, Trash2, TriangleAlert, Wand2 } from "lucide-react";
-import type { ConversationSidebarTab } from "@/app/home/types";
-import type { ProjectDropPlacement } from "@/app/home/utils";
+import type { ConversationSidebarTab } from "@/interface/home/types";
+import type { ProjectDropPlacement } from "@/interface/home/utils";
 import { Button } from "@/components/ui/button";
 import { requestBugDropOpen } from "@/components/BugDropBootstrap";
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
@@ -13,7 +13,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { OmniHarnessMark } from "@/components/OmniHarnessMark";
 import { CliBrandIcon } from "@/components/cli-brand-icons";
-import { PRODUCT_NAME, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "@/app/home/constants";
+import { PRODUCT_NAME, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "@/interface/home/constants";
 import { getRunLatestUnreadTimestamp, isRunUnread } from "@/lib/conversation-state";
 import { getConversationVisualKind, type ConversationVisualKind } from "@/lib/conversation-visuals";
 import type { ManualCommitAction } from "@/lib/commit-workflow";
@@ -21,7 +21,7 @@ import { t, useI18nSnapshot } from "@/lib/i18n";
 import { isArchivableRunStatus, isTerminalRunStatus, normalizeRunStatus } from "@/lib/run-status";
 import { cn } from "@/lib/utils";
 import { StateManager } from "@/lib/state-manager";
-import type { SidebarGroup, SidebarRun } from "@/app/home/types";
+import type { SidebarGroup, SidebarRun } from "@/interface/home/types";
 
 class ConversationSidebarHydrationManager extends StateManager<boolean> {
   constructor() {

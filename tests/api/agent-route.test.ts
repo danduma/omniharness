@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import { db } from "@/server/db";
 import { plans, runs, workers } from "@/server/db/schema";
@@ -18,7 +17,7 @@ vi.mock("@/server/bridge-client", async () => {
   };
 });
 
-import { GET } from "@/app/api/agents/[name]/route";
+import { agentDetailRoute as GET } from "@/../tests/helpers/runtime-routes";
 
 describe("GET /api/agents/[name]", () => {
   beforeEach(() => {
@@ -125,7 +124,7 @@ describe("GET /api/agents/[name]", () => {
       ],
     });
 
-    const response = await GET(new NextRequest(`http://localhost/api/agents/${workerId}?history=full`), {
+    const response = await GET(new Request(`http://localhost/api/agents/${workerId}?history=full`), {
       params: Promise.resolve({ name: workerId }),
     });
 
@@ -220,7 +219,7 @@ describe("GET /api/agents/[name]", () => {
       ],
     });
 
-    const response = await GET(new NextRequest(`http://localhost/api/agents/${workerId}?history=full`), {
+    const response = await GET(new Request(`http://localhost/api/agents/${workerId}?history=full`), {
       params: Promise.resolve({ name: workerId }),
     });
     const payload = await response.json();
@@ -282,7 +281,7 @@ describe("GET /api/agents/[name]", () => {
 
     mockGetAgent.mockRejectedValue(new Error("Get agent failed: 404 not_found"));
 
-    const response = await GET(new NextRequest(`http://localhost/api/agents/${workerId}`), {
+    const response = await GET(new Request(`http://localhost/api/agents/${workerId}`), {
       params: Promise.resolve({ name: workerId }),
     });
 

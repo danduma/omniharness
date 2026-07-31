@@ -7,7 +7,6 @@ import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { db } from "@/server/db";
 import { messages } from "@/server/db/schema";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 export const handleRunAnswerRequest: OmniHttpHandler = async (request, context) => {
   try {
@@ -18,7 +17,7 @@ export const handleRunAnswerRequest: OmniHttpHandler = async (request, context) 
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Clarifications",
       action: "Answer clarification",
       enforceSameOrigin: true,

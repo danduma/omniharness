@@ -1,6 +1,6 @@
 import { ChevronDown, ShieldCheck } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import type { RecoveryIncidentRecord } from "@/app/home/types";
+import type { RecoveryIncidentRecord } from "@/interface/home/types";
 import { conversationMainManager } from "@/components/component-state-managers";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { cn } from "@/lib/utils";

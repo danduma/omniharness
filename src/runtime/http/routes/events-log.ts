@@ -8,6 +8,7 @@
  */
 import { getNamedEventsSince } from "@/server/events/named-events";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
+import { parseEventStreamId } from "@/shared/runtime";
 
 export const handleEventsLogRequest: OmniHttpHandler = (request) => {
   if (request.method !== "GET") {
@@ -25,13 +26,16 @@ export const handleEventsLogRequest: OmniHttpHandler = (request) => {
   const sinceRaw = url.searchParams.get("since");
   const runIdRaw = url.searchParams.get("runId");
 
-  let lastEventId: number | null = null;
+  let lastEventId: number | string | null = null;
   if (sinceRaw !== null && sinceRaw.trim() !== "") {
-    const parsed = Number.parseInt(sinceRaw, 10);
-    if (!Number.isFinite(parsed) || parsed < 0) {
+    const trimmed = sinceRaw.trim();
+    if (parseEventStreamId(trimmed)) {
+      lastEventId = trimmed;
+    } else if (/^\d+$/.test(trimmed) && Number.isSafeInteger(Number(trimmed))) {
+      lastEventId = Number(trimmed);
+    } else {
       return Response.json({ error: "invalid_since" }, { status: 400 });
     }
-    lastEventId = parsed;
   }
 
   const result = getNamedEventsSince(lastEventId, {
@@ -40,9 +44,10 @@ export const handleEventsLogRequest: OmniHttpHandler = (request) => {
 
   return Response.json({
     resyncRequired: result.resyncRequired,
-    lastEventId: result.lastEventId,
+    resyncReason: result.resyncReason,
+    lastEventId: result.lastStreamId,
     events: result.events.map((entry) => ({
-      id: entry.id,
+      id: entry.streamId,
       emittedAt: entry.emittedAt,
       runId: entry.runId,
       event: entry.event,

@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
-const FRONTEND_ROOTS = ["src/app", "src/components"];
+const FRONTEND_ROOTS = ["apps/interface/src", "src/components", "src/interface", "src/ui"];
 const FRONTEND_EXTENSIONS = new Set([".ts", ".tsx"]);
 
 // Technical constants that are correctly hardcoded and NOT user-visible
@@ -55,9 +55,9 @@ const ARIA_ALLOWLIST = new Set([
 // - Server-only code (no UI)
 // - Already migrated to t() but not yet covered
 const FILE_ALLOWLIST = new Set([
-  "src/app/home/constants.ts",
-  "src/app/home/types.ts",
-  "src/app/home/utils.ts",
+  "src/interface/home/constants.ts",
+  "src/interface/home/types.ts",
+  "src/interface/home/utils.ts",
   "src/components/ui",
 ]);
 

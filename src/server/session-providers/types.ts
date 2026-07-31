@@ -1,5 +1,5 @@
 import type { ChatAttachment } from "@/lib/chat-attachments";
-import type { BusyMessageAction } from "@/app/home/busy-message-behavior";
+import type { BusyMessageAction } from "@/interface/home/busy-message-behavior";
 
 export type SessionType = "omni" | "process";
 

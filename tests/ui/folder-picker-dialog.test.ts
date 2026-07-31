@@ -20,7 +20,6 @@ test("folder picker does not render a dedicated up button in the header", () => 
 });
 
 test("folder picker renders filesystem errors in the dialog instead of failing silently", () => {
-  expect(dialogSource).toContain('action: "Browse directories"');
   expect(dialogSource).toContain("normalizeAppError(error).message");
   expect(dialogSource).toContain('t("folder.picker.errorTitle")');
 });
@@ -28,6 +27,6 @@ test("folder picker renders filesystem errors in the dialog instead of failing s
 test("folder picker relies on the query lifecycle instead of manually refetching", () => {
   expect(dialogSource).not.toContain("useEffect");
   expect(dialogSource).not.toContain("refetch");
-  expect(dialogSource).toContain("queryFn: async ({ signal }) => {");
-  expect(dialogSource).toContain("}>(url, { signal }, {");
+  expect(dialogSource).toContain("queryFn: ({ signal }) => (");
+  expect(dialogSource).toContain("runtimeApis.files.browse({ path: currentPath }, { signal })");
 });

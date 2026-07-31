@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { HomeUiStateManager } from "@/app/home/HomeUiStateManager";
-import { PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "@/app/home/constants";
+import { HomeUiStateManager } from "@/interface/home/HomeUiStateManager";
+import { PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "@/interface/home/constants";
 
 describe("HomeUiStateManager", () => {
   it("tracks project session reveal counts without persisting them as collapsed state", () => {

@@ -3,7 +3,6 @@ import os from "os";
 import path from "path";
 import { randomUUID } from "crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
@@ -32,22 +31,25 @@ vi.mock("@/server/supervisor/resume", () => ({
   resumeSupervisorRun: mockResumeSupervisorRun,
 }));
 
-import { GET as getAccounts } from "@/app/api/accounts/route";
-import { GET as browseDirectories } from "@/app/api/fs/route";
-import { GET as getProjectFiles } from "@/app/api/fs/files/route";
-import { GET as getMessages } from "@/app/api/messages/route";
-import { GET as getPlans } from "@/app/api/plans/route";
-import { GET as getProjectMemory, POST as updateProjectMemory } from "@/app/api/projects/memory/route";
-import { POST as resumeRun } from "@/app/api/runs/[id]/resume/route";
+import {
+  readAccountsRoute as getAccounts,
+  readFilesystemRoute as browseDirectories,
+  readMessagesRoute as getMessages,
+  readPlansRoute as getPlans,
+  readProjectFilesRoute as getProjectFiles,
+  readProjectMemoryRoute as getProjectMemory,
+  runResumeRoute as resumeRun,
+  updateProjectMemoryRoute as updateProjectMemory,
+} from "@/../tests/helpers/runtime-routes";
 
 const tempPaths: string[] = [];
 
 function getRequest(url: string) {
-  return new NextRequest(url, { method: "GET" });
+  return new Request(url, { method: "GET" });
 }
 
 function postRequest(url: string, body: unknown) {
-  return new NextRequest(url, {
+  return new Request(url, {
     method: "POST",
     headers: { origin: "http://localhost" },
     body: JSON.stringify(body),

@@ -24,7 +24,6 @@ function readExternalClaudeSessionId(value: unknown): string | null {
   throw Object.assign(new Error("Invalid external session id."), { status: 400 });
 }
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 function readGitWorkspaceTarget(value: unknown): GitWorkspaceTarget | null {
   if (!value || typeof value !== "object") {
@@ -130,7 +129,7 @@ export const handleConversationsRequest: OmniHttpHandler = async (request) => {
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Conversations",
       action: "Start a conversation",
       enforceSameOrigin: true,

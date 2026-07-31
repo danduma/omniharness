@@ -1,5 +1,4 @@
 import { SquareTerminal } from "lucide-react";
-import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 type CliBrandIconProps = {
@@ -52,13 +51,11 @@ function CodexGlyph({ className }: { className?: string }) {
 function OpenCodeGlyph({ className }: { className?: string }) {
   return (
     <span className={cn("relative inline-flex shrink-0 items-center justify-center overflow-hidden", className)}>
-      <Image
+      <img
         src={OPENCODE_ICON_SRC}
         alt=""
         aria-hidden="true"
-        fill
-        sizes="14px"
-        className="object-cover"
+        className="absolute inset-0 h-full w-full object-cover"
       />
     </span>
   );

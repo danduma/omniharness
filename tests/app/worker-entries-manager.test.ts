@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { WorkerEntry } from "@/server/workers/entries-types";
-import { EMPTY_WORKER_STREAM_STATE, WorkerEntriesManager, coalesceWorkerEntriesById } from "@/app/home/WorkerEntriesManager";
+import { EMPTY_WORKER_STREAM_STATE, WorkerEntriesManager, coalesceWorkerEntriesById } from "@/interface/home/WorkerEntriesManager";
 
 describe("coalesceWorkerEntriesById", () => {
   function asst(seq: number, text: string, id = "msg", timestamp = "2026-01-01T00:00:00.000Z"): WorkerEntry {
@@ -92,13 +92,13 @@ function entry(seq: number, overrides: Partial<WorkerEntry> = {}): WorkerEntry {
 
 function buildManager(responses: Array<{ entries: WorkerEntry[]; latestSeq: number }>) {
   let call = 0;
-  const requestJson = vi.fn(async () => {
+  const listEntries = vi.fn(async () => {
     const response = responses[call] ?? responses[responses.length - 1];
     call += 1;
     return response;
   });
-  const manager = new WorkerEntriesManager({ requestJson: requestJson as unknown as never });
-  return { manager, requestJson };
+  const manager = new WorkerEntriesManager({ listEntries });
+  return { manager, requestJson: listEntries };
 }
 
 function memoryStorage(): Pick<Storage, "getItem" | "setItem" | "removeItem"> {
@@ -159,7 +159,7 @@ describe("WorkerEntriesManager", () => {
 
     const requestJson = vi.fn(async () => ({ entries: [entry(2), entry(3)], latestSeq: 3 }));
     const second = new WorkerEntriesManager({
-      requestJson: requestJson as unknown as never,
+      listEntries: requestJson,
       storage,
     });
 
@@ -170,11 +170,7 @@ describe("WorkerEntriesManager", () => {
     expect(second.isLoaded("w1")).toBe(false);
 
     await second.ensureLoaded("w1");
-    expect(requestJson).toHaveBeenCalledWith(
-      "/api/workers/w1/entries?limit=100",
-      undefined,
-      expect.objectContaining({ action: "Load worker stream tail" }),
-    );
+    expect(requestJson).toHaveBeenCalledWith({ workerId: "w1", limit: 100 });
     expect(second.getState("w1").entries.map((item) => item.seq)).toEqual([2, 3]);
     expect(second.isLoaded("w1")).toBe(true);
   });
@@ -186,7 +182,7 @@ describe("WorkerEntriesManager", () => {
 
     const requestJson = vi.fn(async () => ({ entries: [], latestSeq: 0 }));
     const second = new WorkerEntriesManager({
-      requestJson: requestJson as unknown as never,
+      listEntries: requestJson,
       storage,
     });
 
@@ -202,7 +198,7 @@ describe("WorkerEntriesManager", () => {
     });
 
     const third = new WorkerEntriesManager({
-      requestJson: requestJson as unknown as never,
+      listEntries: requestJson,
       storage,
     });
     expect(third.getState("w1").entries).toEqual([]);
@@ -218,11 +214,7 @@ describe("WorkerEntriesManager", () => {
 
     expect(manager.getState("w1").entries.map((e) => e.seq)).toEqual([1, 2, 3]);
     expect(manager.getState("w1").latestContiguousSeq).toBe(3);
-    expect(requestJson).toHaveBeenCalledWith(
-      "/api/workers/w1/entries?afterSeq=2",
-      undefined,
-      expect.objectContaining({ source: "Worker entries" }),
-    );
+    expect(requestJson).toHaveBeenCalledWith({ workerId: "w1", afterSeq: 2 });
   });
 
   it("refresh revalidates a loaded empty worker stream and pulls later disk output", async () => {
@@ -243,11 +235,7 @@ describe("WorkerEntriesManager", () => {
 
     expect(manager.getState("w1").entries.map((e) => e.seq)).toEqual([1, 2]);
     expect(manager.getState("w1").latestKnownSeq).toBe(2);
-    expect(requestJson).toHaveBeenLastCalledWith(
-      "/api/workers/w1/entries?afterSeq=0",
-      undefined,
-      expect.objectContaining({ source: "Worker entries" }),
-    );
+    expect(requestJson).toHaveBeenLastCalledWith({ workerId: "w1", afterSeq: 0 });
   });
 
   it("ensureLoaded fills the entries prefix and marks loaded", async () => {
@@ -294,11 +282,7 @@ describe("WorkerEntriesManager", () => {
     const state = manager.getState("w1");
     expect(state.entries.map((e) => e.seq)).toEqual([1, 2]);
     expect(state.latestContiguousSeq).toBe(2);
-    expect(requestJson).toHaveBeenLastCalledWith(
-      "/api/workers/w1/entries?afterSeq=1",
-      undefined,
-      expect.objectContaining({ source: "Worker entries" }),
-    );
+    expect(requestJson).toHaveBeenLastCalledWith({ workerId: "w1", afterSeq: 1 });
   });
 
   it("recovers from a seq gap by chaining a second fetch", async () => {
@@ -342,14 +326,10 @@ describe("WorkerEntriesManager", () => {
       .fn()
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
-    const manager = new WorkerEntriesManager({ requestJson: requestJson as unknown as never });
+    const manager = new WorkerEntriesManager({ listEntries: requestJson });
 
     const initialLoad = manager.ensureLoaded("w1");
-    expect(requestJson).toHaveBeenCalledWith(
-      "/api/workers/w1/entries?limit=100",
-      undefined,
-      expect.objectContaining({ source: "Worker entries" }),
-    );
+    expect(requestJson).toHaveBeenCalledWith({ workerId: "w1", limit: 100 });
 
     manager.onWakeUp({ workerId: "w1", seq: 2 });
     first.resolve({ entries: [], latestSeq: 0 });
@@ -359,11 +339,7 @@ describe("WorkerEntriesManager", () => {
     expect(requestJson).toHaveBeenCalledTimes(2);
     // After the empty tail load, a wake-up triggered forward extension
     // from latestContiguousSeq=0.
-    expect(requestJson).toHaveBeenLastCalledWith(
-      "/api/workers/w1/entries?afterSeq=0",
-      undefined,
-      expect.objectContaining({ source: "Worker entries" }),
-    );
+    expect(requestJson).toHaveBeenLastCalledWith({ workerId: "w1", afterSeq: 0 });
 
     second.resolve({ entries: [entry(1), entry(2)], latestSeq: 2 });
     for (let i = 0; i < 50 && !manager.isLoaded("w1"); i += 1) {
@@ -384,25 +360,17 @@ describe("WorkerEntriesManager", () => {
       .fn()
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
-    const manager = new WorkerEntriesManager({ requestJson: requestJson as unknown as never });
+    const manager = new WorkerEntriesManager({ listEntries: requestJson });
 
     manager.onWakeUp({ workerId: "w1", seq: 2 });
-    expect(requestJson).toHaveBeenCalledWith(
-      "/api/workers/w1/entries?afterSeq=0",
-      undefined,
-      expect.objectContaining({ source: "Worker entries" }),
-    );
+    expect(requestJson).toHaveBeenCalledWith({ workerId: "w1", afterSeq: 0 });
 
     manager.onWakeUp({ workerId: "w1", seq: 1 });
     first.resolve({ entries: [entry(2)], latestSeq: 2 });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(requestJson).toHaveBeenCalledTimes(2);
-    expect(requestJson).toHaveBeenLastCalledWith(
-      "/api/workers/w1/entries?afterSeq=0",
-      undefined,
-      expect.objectContaining({ source: "Worker entries" }),
-    );
+    expect(requestJson).toHaveBeenLastCalledWith({ workerId: "w1", afterSeq: 0 });
 
     second.resolve({ entries: [entry(1), entry(2)], latestSeq: 2 });
     for (let i = 0; i < 50 && !manager.isLoaded("w1"); i += 1) {
@@ -440,11 +408,7 @@ describe("WorkerEntriesManager", () => {
     expect(state.entries.map((e) => e.seq)).toEqual([1, 2]);
     expect(state.latestContiguousSeq).toBe(2);
     expect(state.latestKnownSeq).toBe(2);
-    expect(requestJson).toHaveBeenCalledWith(
-      "/api/workers/w1/entries?afterSeq=0",
-      undefined,
-      expect.objectContaining({ source: "Worker entries" }),
-    );
+    expect(requestJson).toHaveBeenCalledWith({ workerId: "w1", afterSeq: 0 });
   });
 
   it("uses selected-run snapshot seq hints even before the terminal subscribes", async () => {
@@ -456,11 +420,7 @@ describe("WorkerEntriesManager", () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     expect(manager.getState("w1").entries.map((e) => e.seq)).toEqual([1]);
-    expect(requestJson).toHaveBeenCalledWith(
-      "/api/workers/w1/entries?afterSeq=0",
-      undefined,
-      expect.objectContaining({ source: "Worker entries" }),
-    );
+    expect(requestJson).toHaveBeenCalledWith({ workerId: "w1", afterSeq: 0 });
   });
 
   it("onStreamResync refetches every tracked worker from its current cursor", async () => {

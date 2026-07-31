@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
-import { POST } from "@/app/api/llm-models/route";
+import { llmModelsRoute as POST } from "@/../tests/helpers/runtime-routes";
 
 describe("POST /api/llm-models", () => {
   afterEach(() => {
@@ -11,7 +10,7 @@ describe("POST /api/llm-models", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    const response = await POST(new NextRequest("http://localhost/api/llm-models", {
+    const response = await POST(new Request("http://localhost/api/llm-models", {
       method: "POST",
       body: JSON.stringify({
         provider: "gemini",
@@ -28,7 +27,7 @@ describe("POST /api/llm-models", () => {
   });
 
   it("rejects unsupported providers", async () => {
-    const response = await POST(new NextRequest("http://localhost/api/llm-models", {
+    const response = await POST(new Request("http://localhost/api/llm-models", {
       method: "POST",
       body: JSON.stringify({
         provider: "openai",

@@ -7,9 +7,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { pairDeviceManager, type PairingState } from "@/components/component-state-managers";
-import { requestJson } from "@/lib/app-errors";
 import { createLocalPairingDraft } from "@/lib/local-pairing-token";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import { useRuntimeAPIs } from "@/runtime-api/provider";
 
 type PairCreateResponse = {
   pairingId: string;
@@ -65,6 +65,7 @@ export function PairDeviceDialog({
   publicOrigin = null,
   availabilityError = null,
 }: PairDeviceDialogProps) {
+  const runtimeApis = useRuntimeAPIs();
   const {
     pairing,
     pairingStatus,
@@ -135,19 +136,10 @@ export function PairDeviceDialog({
         isActivating: true,
       });
 
-      const data = await requestJson<PairCreateResponse>("/api/auth/pair", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+      const data = await runtimeApis.auth.createPair({
           targetRunId: selectedRunId,
           pairToken: draft.pairToken,
-        }),
-      }, {
-        source: "Auth",
-        action: "Create pairing QR",
-      });
+      }) as PairCreateResponse;
 
       pairDeviceManager.patch((current) => {
         const currentPairing = current.pairing as PairCreateResponse | null;
@@ -168,7 +160,7 @@ export function PairDeviceDialog({
         isActivating: false,
       });
     }
-  }, [publicOrigin, selectedRunId]);
+  }, [publicOrigin, runtimeApis.auth, selectedRunId]);
 
   const refreshPairing = useCallback(() => {
     void createPairing();
@@ -205,10 +197,9 @@ export function PairDeviceDialog({
     const interval = window.setInterval(async () => {
       const pollRequestId = pairDeviceManager.beginStatusPoll(pairing.pairingId);
       try {
-        const data = await requestJson<PairStatusResponse>(`/api/auth/pair?id=${encodeURIComponent(pairing.pairingId)}`, undefined, {
-          source: "Auth",
-          action: "Load pairing status",
-        });
+        const data = await runtimeApis.auth.getPair({
+          id: pairing.pairingId,
+        }) as PairStatusResponse;
 
         pairDeviceManager.patchIfCurrentStatusPoll(pairing.pairingId, pollRequestId, {
           pairingStatus: data.pairing.status,
@@ -221,7 +212,7 @@ export function PairDeviceDialog({
     }, 2000);
 
     return () => window.clearInterval(interval);
-  }, [error, isActivating, open, pairing?.pairingId, pairingStatus]);
+  }, [error, isActivating, open, pairing?.pairingId, pairingStatus, runtimeApis.auth]);
 
   useEffect(() => {
     if (!open) {
@@ -284,7 +275,6 @@ export function PairDeviceDialog({
             ) : qrDataUrl ? (
               <div className="space-y-3">
                 <div className="flex justify-center rounded-lg border border-foreground/10 bg-[oklch(0.995_0.004_155)] p-3 shadow-sm">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={qrDataUrl} alt="Pair device QR code" className="aspect-square w-full max-w-[280px]" />
                 </div>
               </div>

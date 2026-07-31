@@ -1,6 +1,8 @@
 const SERVICE_WORKER_URL = "/sw.js";
 const DEV_CACHE_PREFIX = "omniharness-";
 
+declare const __OMNI_PWA_BUILD__: boolean;
+
 function isLocalhost(hostname: string) {
   return (
     hostname === "localhost" ||
@@ -25,7 +27,11 @@ export async function registerServiceWorker(options: { allowDevelopment?: boolea
     return null;
   }
 
-  if (process.env.NODE_ENV !== "production" && !options.allowDevelopment) {
+  const productionPwaBuild = (
+    typeof __OMNI_PWA_BUILD__ !== "undefined"
+    && __OMNI_PWA_BUILD__
+  );
+  if (!productionPwaBuild && !options.allowDevelopment) {
     await unregisterDevelopmentServiceWorkers();
     return null;
   }

@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
@@ -10,7 +9,11 @@ import {
   settings,
 } from "@/server/db/schema";
 import { createAuthSession } from "@/server/auth/session";
-import { DELETE, GET, POST } from "@/app/api/notifications/route";
+import {
+  notificationsDeleteRoute as DELETE,
+  notificationsGetRoute as GET,
+  notificationsPostRoute as POST,
+} from "@/../tests/helpers/runtime-routes";
 
 describe("/api/notifications", () => {
   beforeEach(async () => {
@@ -35,11 +38,11 @@ describe("/api/notifications", () => {
       headers.set("origin", "http://localhost");
     }
     const { signal, ...requestInit } = init;
-    const nextRequestInit: ConstructorParameters<typeof NextRequest>[1] = { ...requestInit, headers };
+    const nextRequestInit: ConstructorParameters<typeof Request>[1] = { ...requestInit, headers };
     if (signal) {
       nextRequestInit.signal = signal;
     }
-    return new NextRequest(url, nextRequestInit);
+    return new Request(url, nextRequestInit);
   }
 
   it("returns a stable VAPID public key for browser push subscription", async () => {

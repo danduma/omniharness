@@ -8,6 +8,8 @@ import { waitForEventStreamNotification } from "@/server/events/live-updates";
 import { getAgent, type AgentRecord } from "@/server/bridge-client";
 import { createOmniRuntime } from "@/runtime";
 import { OmniCliUsageError, omniCliUsage, parseOmniCliArgs, type OmniCliOptions } from "./options";
+import { resolveRemoteRunnerToken } from "./credentials";
+import { createRemoteConversation } from "./remote-runner";
 
 type WritableStreamLike = Pick<NodeJS.WritableStream, "write">;
 
@@ -163,6 +165,38 @@ export async function runOmniCli(argv: string[], io: OmniCliIo = process) {
       return error.message ? 1 : 0;
     }
     throw error;
+  }
+
+  if (options.runnerUrl) {
+    const credential = await resolveRemoteRunnerToken({
+      env: process.env,
+      tokenFile: options.tokenFile,
+      tokenStdin: options.tokenStdin,
+      legacyToken: options.legacyToken,
+    });
+    if (credential.warning) {
+      writeLine(io.stderr, credential.warning);
+    }
+    const created = await createRemoteConversation({
+      runnerUrl: options.runnerUrl,
+      token: credential.token,
+      options,
+    });
+    if (options.json) {
+      writeLine(io.stdout, JSON.stringify(created, null, 2));
+    } else {
+      writeLine(io.stdout, `Started ${created.mode ?? options.mode} conversation ${created.runId}`);
+      if (created.planId) {
+        writeLine(io.stdout, `Plan ${created.planId}`);
+      }
+      if (options.watch) {
+        writeLine(
+          io.stdout,
+          `Remote conversation started. Open ${new URL(`/session/${created.runId}`, options.runnerUrl).toString()} to follow it.`,
+        );
+      }
+    }
+    return 0;
   }
 
   const runtime = createOmniRuntime({

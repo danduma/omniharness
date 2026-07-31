@@ -53,7 +53,6 @@ import { getSessionProvider } from "@/server/session-providers/registry";
 import { stopLiveProcessForDelete } from "@/server/session-providers/process-store";
 import type { OmniHttpHandler, OmniRequestContext } from "@/runtime/http/registry";
 import { startSlowProbe } from "@/server/slow-probe";
-import { toNextRequest } from "./next-request";
 import {
   completeConversationDeletion,
   requestConversationDeletion,
@@ -359,7 +358,7 @@ export const handleRunPatchRequest: OmniHttpHandler = async (request, context) =
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Runs",
       action: "Update",
       enforceSameOrigin: true,
@@ -480,7 +479,7 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Runs",
       action: "Recover conversation",
       enforceSameOrigin: true,
@@ -775,7 +774,7 @@ export const handleRunDeleteRequest: OmniHttpHandler = async (request, context) 
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Runs",
       action: "Delete",
       enforceSameOrigin: true,

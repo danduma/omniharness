@@ -26,21 +26,31 @@ export type VSCodeBridgeResponse =
     };
 
 export interface VSCodeBridgeContext {
-  serverUrl: string;
+  serverUrl?: string;
   fetchImpl?: typeof fetch;
   sessionCookie?: string | null;
+  bearerToken?: string | null;
+  resolveProfile?: (profileId: string | null) => Promise<{
+    serverUrl: string;
+    bearerToken: string | null;
+  } | null>;
   postMessage?: (message: VSCodeBridgeResponse) => void;
   sseStreams?: Map<string, AbortController>;
 }
 
 type ApiProxyPayload = {
+  profileId?: unknown;
   method?: unknown;
   path?: unknown;
   headers?: unknown;
   bodyText?: unknown;
+  formData?: unknown;
+  responseType?: unknown;
 };
 
 type SseOpenPayload = {
+  profileId?: unknown;
+  path?: unknown;
   runId?: unknown;
   lastEventId?: unknown;
 };
@@ -91,11 +101,33 @@ function normalizeHeaders(headers: unknown): Record<string, string> {
     return {};
   }
   return Object.fromEntries(Object.entries(headers).flatMap(([key, value]) => {
-    if (typeof value !== "string") {
+    if (
+      typeof value !== "string"
+      || ["authorization", "cookie", "origin", "host"].includes(key.toLowerCase())
+    ) {
       return [];
     }
     return [[key, value]];
   }));
+}
+
+async function resolveConnection(
+  profileId: unknown,
+  context: VSCodeBridgeContext,
+) {
+  const id = typeof profileId === "string" && profileId.trim()
+    ? profileId.trim()
+    : null;
+  if (context.resolveProfile) {
+    const profile = await context.resolveProfile(id);
+    if (!profile) throw new Error("VS Code runner profile was not found.");
+    return profile;
+  }
+  if (!context.serverUrl) throw new Error("OmniHarness server URL is required.");
+  return {
+    serverUrl: context.serverUrl,
+    bearerToken: context.bearerToken ?? null,
+  };
 }
 
 function buildQuery(params: Record<string, string | null>) {
@@ -201,16 +233,55 @@ async function handleApiProxy(
     const payload = (request.payload ?? {}) as ApiProxyPayload;
     const method = normalizeApiMethod(payload.method);
     const path = normalizeApiPath(payload.path);
-    const serverUrl = normalizeServerUrl(context.serverUrl);
+    const connection = await resolveConnection(payload.profileId, context);
+    const serverUrl = normalizeServerUrl(connection.serverUrl);
     const headers = normalizeHeaders(payload.headers);
-    if (context.sessionCookie && !headers.cookie) {
+    if (connection.bearerToken) {
+      headers.authorization = `Bearer ${connection.bearerToken}`;
+    } else if (context.sessionCookie && !headers.cookie) {
       headers.cookie = context.sessionCookie;
+    }
+    let body: BodyInit | undefined;
+    if (Array.isArray(payload.formData)) {
+      const multipart = new FormData();
+      for (const rawEntry of payload.formData) {
+        if (!rawEntry || typeof rawEntry !== "object" || typeof (rawEntry as { name?: unknown }).name !== "string") {
+          throw new Error("Invalid multipart bridge entry.");
+        }
+        const entry = rawEntry as {
+          name: string;
+          value?: unknown;
+          file?: { name?: unknown; type?: unknown; bytes?: unknown };
+        };
+        if (typeof entry.value === "string") {
+          multipart.append(entry.name, entry.value);
+          continue;
+        }
+        if (
+          !entry.file
+          || typeof entry.file.name !== "string"
+          || typeof entry.file.type !== "string"
+          || !Array.isArray(entry.file.bytes)
+        ) {
+          throw new Error("Invalid multipart bridge file.");
+        }
+        multipart.append(
+          entry.name,
+          new Blob([Uint8Array.from(entry.file.bytes)], { type: entry.file.type }),
+          entry.file.name,
+        );
+      }
+      delete headers["content-type"];
+      body = multipart;
+    } else if (typeof payload.bodyText === "string") {
+      body = payload.bodyText;
     }
     const response = await (context.fetchImpl ?? fetch)(`${serverUrl}${path}`, {
       method,
       headers,
-      body: typeof payload.bodyText === "string" ? payload.bodyText : undefined,
+      body,
     });
+    const binary = payload.responseType === "blob" || payload.responseType === "arrayBuffer";
 
     return {
       id: request.id,
@@ -219,7 +290,10 @@ async function handleApiProxy(
       data: {
         status: response.status,
         headers: Object.fromEntries(response.headers.entries()),
-        bodyText: await response.text(),
+        bodyText: binary ? undefined : await response.text(),
+        bodyBytes: binary
+          ? Array.from(new Uint8Array(await response.arrayBuffer()))
+          : undefined,
       },
     };
   } catch (error) {
@@ -240,18 +314,29 @@ async function handleSseOpen(
       throw new Error("SSE proxy requires a postMessage callback.");
     }
     const payload = (request.payload ?? {}) as SseOpenPayload;
-    const runId = typeof payload.runId === "string" && payload.runId.trim() ? payload.runId.trim() : null;
+    const runId = typeof payload.runId === "string" && payload.runId.trim()
+      ? payload.runId.trim()
+      : null;
+    const legacyRequest = payload.path === undefined;
+    const path = legacyRequest
+      ? `/api/events${buildQuery({ runId })}`
+      : normalizeApiPath(payload.path);
     const lastEventId = typeof payload.lastEventId === "string" && payload.lastEventId.trim() ? payload.lastEventId.trim() : null;
+    const connection = await resolveConnection(payload.profileId, context);
     const controller = new AbortController();
     context.sseStreams?.set(request.id, controller);
 
     const headers: Record<string, string> = { accept: "text/event-stream" };
-    if (context.sessionCookie) {
+    if (connection.bearerToken) {
+      headers.authorization = `Bearer ${connection.bearerToken}`;
+    } else if (context.sessionCookie) {
       headers.cookie = context.sessionCookie;
     }
 
     const response = await (context.fetchImpl ?? fetch)(
-      `${normalizeServerUrl(context.serverUrl)}/api/events${buildQuery({ runId, lastEventId })}`,
+      `${normalizeServerUrl(connection.serverUrl)}${path}${lastEventId
+        ? `${path.includes("?") ? "&" : "?"}${legacyRequest ? "lastEventId" : "cursor"}=${encodeURIComponent(lastEventId)}`
+        : ""}`,
       {
         method: "GET",
         headers,

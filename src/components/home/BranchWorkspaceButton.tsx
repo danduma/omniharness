@@ -24,7 +24,7 @@ import { shallowEqualRecord, useManagerSelector } from "@/lib/use-manager-snapsh
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { GitBranchSummary, GitWorkspaceSnapshot, GitWorkspaceTarget, GitWorktreeSummary } from "@/lib/git-workspace";
-import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "@/app/home/GitWorkspaceManager";
+import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "@/interface/home/GitWorkspaceManager";
 
 interface BranchWorkspaceButtonProps {
   projectPath: string | null;

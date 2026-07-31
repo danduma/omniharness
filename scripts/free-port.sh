@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-DEFAULT_PORTS=(3050 3035 7800)
+DEFAULT_PORTS=(3050 5173 7800)
 
 if [ "$#" -gt 0 ]; then
   PORTS=("$@")

@@ -7,6 +7,26 @@ documents the May 2026 reload/worker-streaming latency incident and the
 resource-ownership rules for keeping page bootstrap, SSE, and worker stream
 paths responsive while agents are running.
 
+## Multi-runner client lifecycle
+
+Each saved runner profile owns one `RunnerConnection` state machine and at most
+one main event stream. A registry starts every profile connection, not only the
+visible one. Switching the visible workspace changes active managers/query
+caches and terminal ownership without closing inactive main streams.
+
+Every bootstrap, snapshot, frame, retry, timer, and mutation checks profile and
+learned runner identity before applying state. Stored cursors include the
+runner's stream epoch. `runner.stopping`, `auth.session_revoked`, and
+`stream.resync_required` are typed terminal/control outcomes, not generic
+network failures.
+
+Electron, VS Code, and Capacitor host bridges have bounded stream delivery and
+must cancel upstream work on overflow. Mobile suspension persists cursors,
+closes streams, and reconnects on resume; it must not claim background
+delivery. Platform lifecycle contract tests live under `tests/electron`,
+`tests/vscode`, `tests/mobile`, and `tests/runtime-api`; real two-runner and
+eight-runner journeys live under `tests/e2e`.
+
 ## Interactive protocol invariant
 
 An advertised interactive agent capability is operational only when the complete user journey is implemented: receive the request, append it to the unified worker stream, render an actionable control in the main conversation, submit the exact protocol response, and append a terminal outcome before resolving the agent request. Side-panel-only controls do not satisfy this invariant. Every form shape and permission option emitted by a supported adapter must be covered by a finite wire-to-UI regression matrix.

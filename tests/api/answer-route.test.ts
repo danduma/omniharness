@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
@@ -13,7 +12,7 @@ vi.mock("@/server/supervisor/start", () => ({
   startSupervisorRun: mockStartSupervisorRun,
 }));
 
-import { POST } from "@/app/api/runs/[id]/answer/route";
+import { runAnswerRoute as POST } from "@/../tests/helpers/runtime-routes";
 
 describe("POST /api/runs/[id]/answer", () => {
   it("stores the answer, marks the clarification answered, and resumes the run", async () => {
@@ -48,7 +47,7 @@ describe("POST /api/runs/[id]/answer", () => {
       updatedAt: new Date(),
     });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}/answer`, {
+    const request = new Request(`http://localhost/api/runs/${runId}/answer`, {
       method: "POST",
       body: JSON.stringify({
         clarificationId,

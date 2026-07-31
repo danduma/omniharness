@@ -24,8 +24,8 @@ import {
   workers,
 } from "@/server/db/schema";
 
-import * as eventsRoute from "@/app/api/events/route";
-import * as reviewRoute from "@/app/api/planning/[id]/review/route";
+import { eventsRouteModule as eventsRoute } from "@/../tests/helpers/runtime-routes";
+import { planningReviewRouteModule as reviewRoute } from "@/../tests/helpers/runtime-routes";
 
 import { startLifecycleHarness, type LifecycleServer } from "../harness/server";
 import { LifecycleClient } from "../harness/client";
@@ -179,7 +179,7 @@ describe("lifecycle harness — plan improvement", () => {
     server.simulateRestart();
     await client.subscribe({ runId: RUN_ID, resumeFrom: resumeId });
     const resync = await client.waitFor("stream.resync_required", { timeoutMs: 10_000 });
-    expect(resync.payload).toMatchObject({ reason: "id_out_of_buffer" });
+    expect(resync.payload).toMatchObject({ reason: "cursor_evicted" });
 
     // The DB still holds the review run row — restart preserves persisted state.
     const reviewRows = (await db.select().from(planningReviewRuns)).filter(

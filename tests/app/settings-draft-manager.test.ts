@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SettingsDraftManager } from "@/app/home/SettingsDraftManager";
+import { SettingsDraftManager } from "@/interface/home/SettingsDraftManager";
 
 describe("SettingsDraftManager", () => {
   it("hydrates loaded server values into both baseline and draft", () => {

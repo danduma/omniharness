@@ -1,7 +1,7 @@
 import { ArrowUp, LoaderCircle, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { QueuedConversationMessageRecord } from "@/app/home/types";
+import type { QueuedConversationMessageRecord } from "@/interface/home/types";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 
 export function QueuedMessageDrawer({

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
+import { useRuntimeAPIs } from "@/runtime-api/provider";
 
 interface InteractiveTerminalProps {
   /** Conversation (run) id whose working directory the shell opens in. */
@@ -12,33 +13,31 @@ interface InteractiveTerminalProps {
 /**
  * A real interactive terminal backed by a server-side pty.
  *
- * Output streams in over SSE (`/api/terminals/:id/stream`); keystrokes and
+ * Output streams through the typed terminal API; keystrokes and
  * resizes are POSTed back (`/input`, `/resize`). The pty is created on mount
  * and killed (`DELETE`) on unmount. xterm touches `window`, so it is loaded
  * lazily inside the effect to stay SSR-safe.
  */
 export function InteractiveTerminal({ conversationId, className }: InteractiveTerminalProps) {
+  const runtimeApis = useRuntimeAPIs();
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let disposed = false;
     let terminalId: string | null = null;
-    let eventSource: EventSource | null = null;
+    let eventStream: { close(): void } | null = null;
     let resizeObserver: ResizeObserver | null = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let term: any = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let fitAddon: any = null;
 
-    const post = (path: string, body: unknown) =>
-      fetch(`/api/terminals/${terminalId}${path}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(body),
-      }).catch(() => {
+    const post = (operation: "input" | "resize", body: unknown) => {
+      if (!terminalId) {
+        return Promise.resolve();
+      }
+      return runtimeApis.terminals[operation]({ terminalId, body }).catch(() => {
         // best-effort; the stream will surface a closed pty
       });
+    };
 
     // Coalescing input pump: send the first keystroke immediately, and batch
     // anything typed during the in-flight round trip into the next POST. This
@@ -53,7 +52,7 @@ export function InteractiveTerminal({ conversationId, className }: InteractiveTe
       inputInFlight = true;
       const data = pendingInput;
       pendingInput = "";
-      void post("/input", { data }).finally(() => {
+      void post("input", { data }).finally(() => {
         inputInFlight = false;
         if (pendingInput !== "") {
           flushInput();
@@ -91,14 +90,11 @@ export function InteractiveTerminal({ conversationId, className }: InteractiveTe
         // container not laid out yet
       }
 
-      const created = await fetch("/api/terminals", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ conversationId, cols: term.cols, rows: term.rows }),
-      })
-        .then((res) => (res.ok ? res.json() : null))
-        .catch(() => null);
+      const created = await runtimeApis.terminals.create({
+        conversationId,
+        cols: term.cols,
+        rows: term.rows,
+      }).catch(() => null) as { terminalId?: string } | null;
 
       if (disposed || !created?.terminalId) {
         if (!created?.terminalId) {
@@ -107,27 +103,30 @@ export function InteractiveTerminal({ conversationId, className }: InteractiveTe
         return;
       }
       terminalId = created.terminalId;
+      const activeTerminalId = terminalId;
 
       term.onData((data: string) => {
         pendingInput += data;
         flushInput();
       });
       term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
-        void post("/resize", { cols, rows });
+        void post("resize", { cols, rows });
       });
 
-      eventSource = new EventSource(`/api/terminals/${terminalId}/stream`);
-      eventSource.addEventListener("data", (event) => {
-        try {
-          term?.write(JSON.parse((event as MessageEvent).data));
-        } catch {
-          // malformed frame; skip
+      eventStream = runtimeApis.terminals.openStream({ terminalId: activeTerminalId }, {
+        onEvent: (event) => {
+          if (!event || typeof event !== "object") {
+            return;
+          }
+          const streamEvent = event as { kind?: string; payload?: unknown };
+          if (streamEvent.kind === "data" && typeof streamEvent.payload === "string") {
+            term?.write(streamEvent.payload);
+          } else if (streamEvent.kind === "exit") {
+            term?.write("\r\n\x1b[90m[process exited]\x1b[0m\r\n");
+            eventStream?.close();
+            eventStream = null;
+          }
         }
-      });
-      eventSource.addEventListener("exit", () => {
-        term?.write("\r\n\x1b[90m[process exited]\x1b[0m\r\n");
-        eventSource?.close();
-        eventSource = null;
       });
 
       resizeObserver = new ResizeObserver(() => {
@@ -144,17 +143,13 @@ export function InteractiveTerminal({ conversationId, className }: InteractiveTe
     return () => {
       disposed = true;
       resizeObserver?.disconnect();
-      eventSource?.close();
+      eventStream?.close();
       if (terminalId) {
-        fetch(`/api/terminals/${terminalId}`, {
-          method: "DELETE",
-          credentials: "include",
-          keepalive: true,
-        }).catch(() => {});
+        void runtimeApis.terminals.close({ terminalId }).catch(() => {});
       }
       term?.dispose();
     };
-  }, [conversationId]);
+  }, [conversationId, runtimeApis.terminals]);
 
   return <div ref={containerRef} className={className} style={{ width: "100%", height: "100%" }} />;
 }

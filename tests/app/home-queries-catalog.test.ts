@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldEnableWorkerCatalogQuery } from "@/app/home/useHomeQueries";
+import { shouldEnableWorkerCatalogQuery } from "@/interface/home/useHomeQueries";
 
 describe("shouldEnableWorkerCatalogQuery", () => {
   it("does not load worker catalog just because the app is unlocked", () => {

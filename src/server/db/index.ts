@@ -4,15 +4,15 @@ import * as schema from './schema';
 import { getAppDataPath } from '@/server/app-root';
 
 const dbPath = getAppDataPath('sqlite.db');
-const DB_SCHEMA_VERSION = 4;
-type DbClient = ReturnType<typeof createClient>;
+const DB_SCHEMA_VERSION = 5;
+export type DbClient = ReturnType<typeof createClient>;
 
 async function tableColumns(client: DbClient, table: string): Promise<Set<string>> {
   const result = await client.execute(`PRAGMA table_info(${table})`);
   return new Set(result.rows.map((row) => String((row as Record<string, unknown>).name)));
 }
 
-async function initializeSchema(client: DbClient) {
+export async function initializeDatabaseSchema(client: DbClient) {
 await client.execute('PRAGMA busy_timeout = 15000');
 const versionResult = await client.execute('PRAGMA user_version');
 const currentSchemaVersion = Number((versionResult.rows[0] as Record<string, unknown> | undefined)?.user_version ?? 0);
@@ -298,6 +298,9 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   label text,
   user_agent text,
   auth_method text NOT NULL,
+  transport text NOT NULL DEFAULT 'cookie',
+  bound_origin text,
+  client_kind text NOT NULL DEFAULT 'browser',
   created_by_session_id text,
   last_seen_at integer NOT NULL,
   expires_at integer NOT NULL,
@@ -769,6 +772,24 @@ if (!accountColumnNames.has("updated_at")) {
   await client.execute("ALTER TABLE accounts ADD COLUMN updated_at integer;");
 }
 
+const authSessionColumnNames = await tableColumns(client, "auth_sessions");
+
+if (!authSessionColumnNames.has("transport")) {
+  await client.execute(
+    "ALTER TABLE auth_sessions ADD COLUMN transport text NOT NULL DEFAULT 'cookie';",
+  );
+}
+
+if (!authSessionColumnNames.has("bound_origin")) {
+  await client.execute("ALTER TABLE auth_sessions ADD COLUMN bound_origin text;");
+}
+
+if (!authSessionColumnNames.has("client_kind")) {
+  await client.execute(
+    "ALTER TABLE auth_sessions ADD COLUMN client_kind text NOT NULL DEFAULT 'browser';",
+  );
+}
+
 // ── v1 → v2: append-only artifact storage ──────────────────────────
 // Add the new metadata columns on each domain table that gains an
 // artifact stream. ALTER ADD COLUMN is safe with default NULL.
@@ -944,7 +965,7 @@ COMMIT;
 function createDbState() {
   const client = createClient({ url: `file:${dbPath}` });
   const schemaInitStart = Date.now();
-  const dbReady = initializeSchema(client).then(() => {
+  const dbReady = initializeDatabaseSchema(client).then(() => {
     console.log(`[db] schema ready in ${Date.now() - schemaInitStart}ms`);
   });
   const db = drizzle(client, { schema });

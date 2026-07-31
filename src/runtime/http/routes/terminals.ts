@@ -15,7 +15,13 @@ import { requireApiSession } from "@/server/auth/guards";
 import { getTerminalManager } from "@/server/terminal/terminal-manager";
 import { resolveConversationCwd } from "@/server/terminal/cwd";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
+import { createBoundedByteStream } from "@/runtime/http/bounded-byte-stream";
+import { emitNamedEvent } from "@/server/events/named-events";
+import {
+  attachStreamTicketCors,
+  redeemStreamTicketRequest,
+} from "@/server/auth/stream-tickets";
+import { subscribeAuthSessionRevocations } from "@/server/auth/session-revocation";
 
 const AUTH_SOURCE = "Terminal";
 
@@ -39,7 +45,7 @@ export const handleTerminalCreateRequest: OmniHttpHandler = async (request) => {
   if (request.method !== "POST") {
     return methodNotAllowed("POST");
   }
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: AUTH_SOURCE,
     action: "Open terminal",
     enforceSameOrigin: true,
@@ -67,10 +73,17 @@ export const handleTerminalStreamRequest: OmniHttpHandler = async (request, cont
   if (request.method !== "GET") {
     return methodNotAllowed("GET");
   }
-  const auth = await requireApiSession(toNextRequest(request), {
-    source: AUTH_SOURCE,
-    action: "Stream terminal",
-  });
+  const path = new URL(request.url).pathname;
+  const ticketAuth = await redeemStreamTicketRequest(request, path);
+  if (ticketAuth?.response) {
+    return ticketAuth.response;
+  }
+  const auth = ticketAuth
+    ? { session: null, response: null }
+    : await requireApiSession(request, {
+      source: AUTH_SOURCE,
+      action: "Stream terminal",
+    });
   if (auth.response) {
     return auth.response;
   }
@@ -89,75 +102,100 @@ export const handleTerminalStreamRequest: OmniHttpHandler = async (request, cont
 
   const encoder = new TextEncoder();
   let unsubscribe: (() => void) | null = null;
+  let unsubscribeRevocation: (() => void) | null = null;
+  let lastSeq = fromSeq;
+  const authenticatedSessionId = ticketAuth?.session?.id ?? auth.session?.id ?? null;
 
-  const stream = new ReadableStream({
+  const stream = createBoundedByteStream({
     start(controller) {
       const enqueue = (text: string) => {
-        try {
-          controller.enqueue(encoder.encode(text));
-        } catch {
-          // stream closed
-        }
+        return controller.enqueue(encoder.encode(text));
       };
 
+      enqueue(`id: ${fromSeq}\nevent: connected\ndata: {}\n\n`);
       unsubscribe = manager.subscribe(id, fromSeq, {
         onChunk: (chunk) => {
+          lastSeq = chunk.seq;
           enqueue(`id: ${chunk.seq}\nevent: data\ndata: ${JSON.stringify(chunk.data)}\n\n`);
         },
         onExit: (exit) => {
-          enqueue(`event: exit\ndata: ${JSON.stringify(exit)}\n\n`);
-          try {
-            controller.close();
-          } catch {
-            // already closed
-          }
+          lastSeq += 1;
+          enqueue(`id: ${lastSeq}\nevent: exit\ndata: ${JSON.stringify(exit)}\n\n`);
+          controller.close();
         },
       });
-
-      if (!unsubscribe) {
-        enqueue(`event: exit\ndata: ${JSON.stringify({ exitCode: -1 })}\n\n`);
-        try {
-          controller.close();
-        } catch {
-          // already closed
-        }
-        return;
+      if (authenticatedSessionId) {
+        unsubscribeRevocation = subscribeAuthSessionRevocations((revocation) => {
+          if (
+            revocation.sessionIds === null
+            || revocation.sessionIds.has(authenticatedSessionId)
+          ) {
+            unsubscribe?.();
+            unsubscribe = null;
+            unsubscribeRevocation?.();
+            unsubscribeRevocation = null;
+            controller.close();
+          }
+        });
       }
 
-      // Prime the connection so the client's onopen fires promptly.
-      enqueue(": connected\n\n");
+      if (!unsubscribe) {
+        lastSeq += 1;
+        enqueue(`id: ${lastSeq}\nevent: exit\ndata: ${JSON.stringify({ exitCode: -1 })}\n\n`);
+        controller.close();
+        return;
+      }
 
       request.signal.addEventListener("abort", () => {
         unsubscribe?.();
         unsubscribe = null;
-        try {
-          controller.close();
-        } catch {
-          // already closed
-        }
+        unsubscribeRevocation?.();
+        unsubscribeRevocation = null;
+        controller.close();
       });
     },
     cancel() {
       unsubscribe?.();
       unsubscribe = null;
+      unsubscribeRevocation?.();
+      unsubscribeRevocation = null;
+    },
+    onOverflow(overflow) {
+      unsubscribe?.();
+      unsubscribe = null;
+      unsubscribeRevocation?.();
+      unsubscribeRevocation = null;
+      emitNamedEvent({
+        kind: "stream.subscriber_overflow",
+        stream: "terminal",
+        surface: context.surface,
+        terminalId: id,
+        ...overflow,
+      });
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "stream.subscriber_overflow",
+        message: "A slow terminal-stream subscriber exceeded its bounded queue and was disconnected.",
+        surface: "log",
+      });
     },
   });
 
-  return new Response(stream, {
+  return attachStreamTicketCors(new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
     },
-  });
+  }), ticketAuth?.origin ?? null);
 };
 
 export const handleTerminalInputRequest: OmniHttpHandler = async (request, context) => {
   if (request.method !== "POST") {
     return methodNotAllowed("POST");
   }
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: AUTH_SOURCE,
     action: "Send terminal input",
     enforceSameOrigin: true,
@@ -186,7 +224,7 @@ export const handleTerminalResizeRequest: OmniHttpHandler = async (request, cont
   if (request.method !== "POST") {
     return methodNotAllowed("POST");
   }
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: AUTH_SOURCE,
     action: "Resize terminal",
     enforceSameOrigin: true,
@@ -216,7 +254,7 @@ export const handleTerminalDeleteRequest: OmniHttpHandler = async (request, cont
   if (request.method !== "DELETE") {
     return methodNotAllowed("DELETE");
   }
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: AUTH_SOURCE,
     action: "Close terminal",
     enforceSameOrigin: true,

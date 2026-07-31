@@ -55,6 +55,13 @@ Rules:
 
 - Default to `useManagerSelector(manager, (s) => slice)` with a tuple/object selector that returns stable identity where possible.
 - Use the optional equality function for record/set selections.
+- Shared `useSyncExternalStore` wrappers must return the manager's immutable
+  initial state from `getServerSnapshot`. Never return browser-hydrated current
+  state there: server and first client markup must match.
+- Cache selector-derived server snapshots. Returning a fresh object from
+  `getServerSnapshot` can cause hydration warnings or an infinite render loop.
+- Read localStorage and other browser persistence only after mount, then notify
+  subscribers so React performs a normal client update.
 - Reserve `useManagerSnapshot(manager)` for:
   - the manager's owning container (where the entire state is needed for layout wiring).
   - tests and devtools.

@@ -1,7 +1,6 @@
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 const LOCAL_MODEL_CATALOG = {
   gemini: [
@@ -18,7 +17,7 @@ export const handleLlmModelsRequest: OmniHttpHandler = async (request) => {
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "LLM Settings",
       action: "Fetch available models",
       enforceSameOrigin: true,

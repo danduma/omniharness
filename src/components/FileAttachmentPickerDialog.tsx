@@ -7,10 +7,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
-import { normalizeAppError, requestJson } from "@/lib/app-errors";
+import { normalizeAppError } from "@/lib/app-errors";
 import { fileAttachmentPickerManager } from "@/components/component-state-managers";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { t, useI18nSnapshot } from "@/lib/i18n";
+import { useRuntimeAPIs } from "@/runtime-api/provider";
 
 export interface AttachmentItem {
   kind: "file";
@@ -40,17 +41,14 @@ export function FileAttachmentPickerDialog({
   onSelect: (attachments: AttachmentItem[]) => void;
 }) {
   useI18nSnapshot();
+  const runtimeApis = useRuntimeAPIs();
   const { search, selectedFiles } = useManagerSnapshot(fileAttachmentPickerManager);
 
   const { data, error } = useQuery<ProjectFilesResponse>({
     queryKey: ["attachable-files", rootPath],
-    queryFn: async () => {
-      const url = rootPath ? `/api/fs/files?root=${encodeURIComponent(rootPath)}` : "/api/fs/files";
-      return requestJson<ProjectFilesResponse>(url, undefined, {
-        source: "Filesystem",
-        action: "Load attachable files",
-      });
-    },
+    queryFn: () => runtimeApis.files.list({
+      root: rootPath ?? "",
+    }) as Promise<ProjectFilesResponse>,
     enabled: open,
     staleTime: 60_000,
   });

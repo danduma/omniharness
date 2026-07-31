@@ -19,7 +19,7 @@ export function resolveLiveAuthConfiguration(
     throw new Error("Headless live journeys require a runtime password or explicitly authenticated browser state.");
   }
   const baseURL = assertLoopbackUrl(
-    env.OMNIHARNESS_LIVE_E2E_BASE_URL?.trim() || "http://127.0.0.1:3035",
+    env.OMNIHARNESS_LIVE_E2E_BASE_URL?.trim() || "http://127.0.0.1:3050",
   ).origin;
   return { baseURL, password: password || null, reuseAuthenticatedState };
 }

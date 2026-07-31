@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import fs from "fs";
 import { db } from "@/server/db";
@@ -31,7 +30,7 @@ vi.mock("@/server/conversation-title", () => ({
   queueConversationTitleGeneration: mockQueueConversationTitleGeneration,
 }));
 
-import { POST } from "@/app/api/supervisor/route";
+import { supervisorRoute as POST } from "@/../tests/helpers/runtime-routes";
 
 describe("POST /api/supervisor", () => {
   const createdFiles: string[] = [];
@@ -57,7 +56,7 @@ describe("POST /api/supervisor", () => {
 
   it("accepts arbitrary command text by materializing an ad hoc plan", async () => {
     const command = "add a new smoke test for the login flow";
-    const request = new NextRequest("http://localhost/api/supervisor", {
+    const request = new Request("http://localhost/api/supervisor", {
       method: "POST",
       body: JSON.stringify({ command }),
     });
@@ -86,7 +85,7 @@ describe("POST /api/supervisor", () => {
   });
 
   it("returns a structured frontend-safe error when the command is empty", async () => {
-    const request = new NextRequest("http://localhost/api/supervisor", {
+    const request = new Request("http://localhost/api/supervisor", {
       method: "POST",
       body: JSON.stringify({ command: "   " }),
     });
@@ -104,7 +103,7 @@ describe("POST /api/supervisor", () => {
 
   it("treats a bare path string as text instead of resolving it as a plan path", async () => {
     const command = "vibes/test-plan.md";
-    const request = new NextRequest("http://localhost/api/supervisor", {
+    const request = new Request("http://localhost/api/supervisor", {
       method: "POST",
       body: JSON.stringify({ command }),
     });
@@ -129,7 +128,7 @@ describe("POST /api/supervisor", () => {
   it("stores the selected project path on the run for folder grouping", async () => {
     const command = "fix the search layout";
     const projectPath = "/Users/masterman/NLP/wikinuxt";
-    const request = new NextRequest("http://localhost/api/supervisor", {
+    const request = new Request("http://localhost/api/supervisor", {
       method: "POST",
       body: JSON.stringify({ command, projectPath }),
     });
@@ -147,7 +146,7 @@ describe("POST /api/supervisor", () => {
 
   it("persists preferred and allowed worker types on the run", async () => {
     const command = "fix the search layout";
-    const request = new NextRequest("http://localhost/api/supervisor", {
+    const request = new Request("http://localhost/api/supervisor", {
       method: "POST",
       body: JSON.stringify({
         command,
@@ -172,7 +171,7 @@ describe("POST /api/supervisor", () => {
 
   it("supports auto worker selection by persisting only the allowed worker pool", async () => {
     const command = "inspect the repo";
-    const request = new NextRequest("http://localhost/api/supervisor", {
+    const request = new Request("http://localhost/api/supervisor", {
       method: "POST",
       body: JSON.stringify({
         command,
@@ -195,7 +194,7 @@ describe("POST /api/supervisor", () => {
 
   it("accepts optional attachment metadata alongside text input", async () => {
     const command = "inspect the attached screenshot and notes";
-    const request = new NextRequest("http://localhost/api/supervisor", {
+    const request = new Request("http://localhost/api/supervisor", {
       method: "POST",
       body: JSON.stringify({
         command,
@@ -229,7 +228,7 @@ describe("POST /api/supervisor", () => {
       }, 0);
     });
 
-    const request = new NextRequest("http://localhost/api/supervisor", {
+    const request = new Request("http://localhost/api/supervisor", {
       method: "POST",
       body: JSON.stringify({ command: "retry the failing run" }),
     });

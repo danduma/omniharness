@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import fs from "fs";
@@ -26,7 +25,11 @@ import {
   workerCredentialAllocations,
   workerTokenUsage,
 } from "@/server/db/schema";
-import { PATCH, DELETE, POST } from "@/app/api/runs/[id]/route";
+import {
+  runDeleteRoute as DELETE,
+  runPatchRoute as PATCH,
+  runPostRoute as POST,
+} from "@/../tests/helpers/runtime-routes";
 import {
   isConversationDeletionRequested,
   trackConversationBackgroundTask,
@@ -152,7 +155,7 @@ describe("PATCH /api/runs/[id]", () => {
       updatedAt: new Date(),
     });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "PATCH",
       body: JSON.stringify({ title: "Fix mobile header" }),
     });
@@ -198,7 +201,7 @@ describe("PATCH /api/runs/[id]", () => {
       },
     });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "PATCH",
       body: JSON.stringify({ projectPath: "/workspace/new-project" }),
     });
@@ -253,7 +256,7 @@ describe("PATCH /api/runs/[id]", () => {
       },
     });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "PATCH",
       body: JSON.stringify({ projectPath: "/workspace/new-project" }),
     });
@@ -298,7 +301,7 @@ describe("POST /api/runs/[id]", () => {
       createdAt: messageAt,
     });
 
-    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "mark_read" }),
     }), { params: Promise.resolve({ id: runId }) });
@@ -339,7 +342,7 @@ describe("POST /api/runs/[id]", () => {
       updatedAt: awaitingAt,
     });
 
-    const markRead = () => POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const markRead = () => POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "mark_read" }),
     }), { params: Promise.resolve({ id: runId }) });
@@ -382,7 +385,7 @@ describe("POST /api/runs/[id]", () => {
       createdAt: new Date(),
     });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "archive" }),
     });
@@ -418,7 +421,7 @@ describe("POST /api/runs/[id]", () => {
       updatedAt: now,
     });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "archive" }),
     });
@@ -489,7 +492,7 @@ describe("POST /api/runs/[id]", () => {
       updatedAt: now,
     });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "stop_supervisor" }),
     });
@@ -554,7 +557,7 @@ describe("POST /api/runs/[id]", () => {
       updatedAt: now,
     });
 
-    const firstResponse = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const firstResponse = await POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "stop_supervisor" }),
     }), { params: Promise.resolve({ id: runId }) });
@@ -564,7 +567,7 @@ describe("POST /api/runs/[id]", () => {
     mockStopRunObserver.mockClear();
     mockCancelSupervisorWake.mockClear();
 
-    const secondResponse = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const secondResponse = await POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "stop_supervisor" }),
     }), { params: Promise.resolve({ id: runId }) });
@@ -637,7 +640,7 @@ describe("POST /api/runs/[id]", () => {
       updatedAt: now,
     });
 
-    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "stop_supervisor" }),
     }), { params: Promise.resolve({ id: runId }) });
@@ -719,7 +722,7 @@ describe("POST /api/runs/[id]", () => {
       updatedAt: now,
     });
 
-    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "stop_worker", workerId }),
     }), { params: Promise.resolve({ id: runId }) });
@@ -786,7 +789,7 @@ describe("POST /api/runs/[id]", () => {
       },
     ]);
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "stop_worker", workerId: targetWorkerId }),
     });
@@ -846,7 +849,7 @@ describe("POST /api/runs/[id]", () => {
       updatedAt: now,
     });
 
-    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "stop_worker", workerId: targetWorkerId }),
     }), { params: Promise.resolve({ id: runId }) });
@@ -938,7 +941,7 @@ describe("POST /api/runs/[id]", () => {
       },
     ]);
 
-    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "stop_supervisor" }),
     }), { params: Promise.resolve({ id: runId }) });
@@ -997,7 +1000,7 @@ describe("POST /api/runs/[id]", () => {
       updatedAt: now,
     });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "stop_worker", workerId: targetWorkerId }),
     });
@@ -1086,7 +1089,7 @@ describe("POST /api/runs/[id]", () => {
       },
     ]);
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "stop_worker", workerId: targetWorkerId }),
     });
@@ -1170,7 +1173,7 @@ describe("POST /api/runs/[id]", () => {
       updatedAt: now,
     });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({
         action: "stop_worker_terminal",
@@ -1234,7 +1237,7 @@ describe("POST /api/runs/[id]", () => {
       updatedAt: now,
     });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({
         action: "stop_worker_terminal",
@@ -1298,7 +1301,7 @@ describe("POST /api/runs/[id]", () => {
       updatedAt: now,
     });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({
         action: "stop_worker_terminal",
@@ -1401,7 +1404,7 @@ describe("POST /api/runs/[id]", () => {
       updatedAt: new Date(),
     });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
     });
@@ -1463,7 +1466,7 @@ describe("POST /api/runs/[id]", () => {
       createdAt: now,
     });
 
-    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
     }), { params: Promise.resolve({ id: runId }) });
@@ -1521,7 +1524,7 @@ describe("POST /api/runs/[id]", () => {
       },
     ]);
 
-    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "retry", targetMessageId: userMessageId, manualRecovery: true }),
     }), { params: Promise.resolve({ id: runId }) });
@@ -1656,7 +1659,7 @@ describe("POST /api/runs/[id]", () => {
       state: "idle",
     });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "retry", targetMessageId: rerunMessageId }),
     });
@@ -1794,7 +1797,7 @@ describe("POST /api/runs/[id]", () => {
       state: "idle",
     });
 
-    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "retry", targetMessageId }),
     }), { params: Promise.resolve({ id: runId }) });
@@ -1883,7 +1886,7 @@ describe("POST /api/runs/[id]", () => {
       createdAt: new Date("2026-05-24T18:57:46Z"),
     });
 
-    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({
         action: "edit",
@@ -2008,7 +2011,7 @@ describe("POST /api/runs/[id]", () => {
       state: "idle",
     });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
     });
@@ -2114,7 +2117,7 @@ describe("POST /api/runs/[id]", () => {
       stopReason: null,
     });
 
-    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
     }), { params: Promise.resolve({ id: runId }) });
@@ -2215,7 +2218,7 @@ describe("POST /api/runs/[id]", () => {
         { data: { errorKind: "rate_limit" } },
       ));
 
-      const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+      const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
         method: "POST",
         body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
       }), { params: Promise.resolve({ id: runId }) });
@@ -2325,7 +2328,7 @@ describe("POST /api/runs/[id]", () => {
     });
     mockGetAgent.mockRejectedValueOnce(new Error("Agent already ended"));
 
-    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
     }), { params: Promise.resolve({ id: runId }) });
@@ -2432,7 +2435,7 @@ describe("POST /api/runs/[id]", () => {
       state: "idle",
     });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
     });
@@ -2554,7 +2557,7 @@ describe("POST /api/runs/[id]", () => {
       state: "idle",
     });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
     });
@@ -2633,7 +2636,7 @@ describe("POST /api/runs/[id]", () => {
       },
     ]);
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "edit", targetMessageId: userMessageId, content: "new prompt" }),
     });
@@ -2708,7 +2711,7 @@ describe("POST /api/runs/[id]", () => {
       createdAt: new Date("2026-04-21T10:00:00Z"),
     });
 
-    const responsePromise = POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const responsePromise = POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "edit", targetMessageId: userMessageId, content: "new prompt" }),
     }), { params: Promise.resolve({ id: runId }) });
@@ -2793,7 +2796,7 @@ describe("POST /api/runs/[id]", () => {
       createdAt: new Date("2026-04-21T10:00:00Z"),
     });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({ action: "fork", targetMessageId: userMessageId, content: "forked prompt" }),
     });
@@ -2920,7 +2923,7 @@ describe("POST /api/runs/[id]", () => {
       },
     });
 
-    const response = await POST(new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
       body: JSON.stringify({
         action: "fork",
@@ -3101,7 +3104,7 @@ describe("DELETE /api/runs/[id]", () => {
     });
     trackConversationBackgroundTask(backgroundTurn, { runId });
 
-    const request = new NextRequest(`http://localhost/api/runs/${runId}`, {
+    const request = new Request(`http://localhost/api/runs/${runId}`, {
       method: "DELETE",
     });
 

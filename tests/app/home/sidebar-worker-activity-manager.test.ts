@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { SidebarWorkerActivityManager } from "@/app/home/SidebarWorkerActivityManager";
+import { SidebarWorkerActivityManager } from "@/interface/home/SidebarWorkerActivityManager";
 
 describe("SidebarWorkerActivityManager", () => {
   let manager: SidebarWorkerActivityManager;

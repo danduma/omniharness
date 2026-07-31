@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import zlib from "node:zlib";
 
 const listenHost = process.env.OMNIHARNESS_DEV_PROXY_HOST?.trim() || "127.0.0.1";
-const listenPort = Number(process.env.OMNIHARNESS_DEV_PROXY_PORT || "3035");
+const listenPort = Number(process.env.OMNIHARNESS_DEV_PROXY_PORT || "3051");
 const target = new URL(process.env.OMNIHARNESS_DEV_PROXY_TARGET || "http://127.0.0.1:3050");
 const targetClient = target.protocol === "https:" ? https : http;
 const scriptPath = fileURLToPath(import.meta.url);

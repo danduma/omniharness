@@ -4,7 +4,7 @@ import { handleVSCodeBridgeMessage } from "@/vscode-extension/bridge";
 describe("handleVSCodeBridgeMessage", () => {
   it("proxies API requests to the configured Omni runtime", async () => {
     const fetchImpl: typeof fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(url)).toBe("http://127.0.0.1:3035/api/auth/session");
+      expect(String(url)).toBe("http://127.0.0.1:3050/api/auth/session");
       expect(init?.method).toBe("GET");
       return new Response(JSON.stringify({ authenticated: true }), {
         status: 200,
@@ -22,7 +22,7 @@ describe("handleVSCodeBridgeMessage", () => {
         },
       },
       {
-        serverUrl: "http://127.0.0.1:3035/",
+        serverUrl: "http://127.0.0.1:3050/",
         fetchImpl,
       },
     );
@@ -39,10 +39,42 @@ describe("handleVSCodeBridgeMessage", () => {
     });
   });
 
+  it("resolves a profile-scoped bearer in the extension host without accepting renderer credentials", async () => {
+    const fetchImpl: typeof fetch = vi.fn(async (_url, init) => {
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer host-secret",
+      );
+      expect(new Headers(init?.headers).get("cookie")).toBeNull();
+      return Response.json({ ok: true });
+    });
+    await handleVSCodeBridgeMessage({
+      id: "profile-request",
+      type: "api:proxy",
+      payload: {
+        profileId: "runner-2",
+        method: "GET",
+        path: "/api/settings",
+        headers: {
+          authorization: "Bearer renderer-injected",
+          cookie: "omni_session=renderer-injected",
+        },
+      },
+    }, {
+      fetchImpl,
+      resolveProfile: async (profileId) => profileId === "runner-2"
+        ? {
+            serverUrl: "https://runner.example",
+            bearerToken: "host-secret",
+          }
+        : null,
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
   it("rejects unknown bridge messages with a typed error", async () => {
     const response = await handleVSCodeBridgeMessage(
       { id: "2", type: "unknown" },
-      { serverUrl: "http://127.0.0.1:3035" },
+      { serverUrl: "http://127.0.0.1:3050" },
     );
 
     expect(response).toEqual({
@@ -70,7 +102,7 @@ describe("handleVSCodeBridgeMessage", () => {
         },
       },
       {
-        serverUrl: "http://127.0.0.1:3035",
+        serverUrl: "http://127.0.0.1:3050",
         fetchImpl,
       },
     );
@@ -84,7 +116,7 @@ describe("handleVSCodeBridgeMessage", () => {
         },
       },
       {
-        serverUrl: "http://127.0.0.1:3035",
+        serverUrl: "http://127.0.0.1:3050",
         fetchImpl,
       },
     );
@@ -114,7 +146,7 @@ describe("handleVSCodeBridgeMessage", () => {
     const posted: unknown[] = [];
     const encoder = new TextEncoder();
     const fetchImpl: typeof fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(url)).toBe("http://127.0.0.1:3035/api/events?runId=run-1&lastEventId=7");
+      expect(String(url)).toBe("http://127.0.0.1:3050/api/events?runId=run-1&lastEventId=7");
       expect(init?.headers).toMatchObject({ accept: "text/event-stream" });
       return new Response(new ReadableStream({
         start(controller) {
@@ -137,7 +169,7 @@ describe("handleVSCodeBridgeMessage", () => {
         },
       },
       {
-        serverUrl: "http://127.0.0.1:3035",
+        serverUrl: "http://127.0.0.1:3050",
         fetchImpl,
         postMessage: (message) => posted.push(message),
         sseStreams: new Map(),

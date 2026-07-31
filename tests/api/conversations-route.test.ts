@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import { db } from "@/server/db";
 import { eq } from "drizzle-orm";
@@ -33,6 +32,7 @@ const {
   mockNotifyEventStreamSubscribers,
   mockValidateWorkspaceTarget,
   mockCreateBranchWorktree,
+  mockLoadExternalClaudeSession,
 } = vi.hoisted(() => ({
   mockStartSupervisorRun: vi.fn(),
   mockQueueConversationTitleGeneration: vi.fn().mockResolvedValue(undefined),
@@ -40,6 +40,7 @@ const {
   mockNotifyEventStreamSubscribers: vi.fn(),
   mockValidateWorkspaceTarget: vi.fn(),
   mockCreateBranchWorktree: vi.fn(),
+  mockLoadExternalClaudeSession: vi.fn(),
   mockSpawnAgent: vi.fn().mockResolvedValue({
     name: "worker-1",
     type: "codex",
@@ -99,6 +100,14 @@ vi.mock("@/server/events/live-updates", () => ({
   notifyEventStreamSubscribers: mockNotifyEventStreamSubscribers,
 }));
 
+vi.mock("@/server/external-sessions/discovery", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/external-sessions/discovery")>();
+  return {
+    ...actual,
+    loadExternalClaudeSession: mockLoadExternalClaudeSession,
+  };
+});
+
 vi.mock("@/server/git/workspaces", () => ({
   validateWorkspaceTarget: mockValidateWorkspaceTarget,
   createBranchWorktree: mockCreateBranchWorktree,
@@ -115,7 +124,7 @@ vi.mock("@/server/git/workspaces", () => ({
   },
 }));
 
-import { POST } from "@/app/api/conversations/route";
+import { conversationsRoute as POST } from "@/../tests/helpers/runtime-routes";
 
 function delay(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -196,6 +205,8 @@ describe("POST /api/conversations", () => {
     mockNotifyEventStreamSubscribers.mockClear();
     mockValidateWorkspaceTarget.mockReset();
     mockCreateBranchWorktree.mockReset();
+    mockLoadExternalClaudeSession.mockReset();
+    mockLoadExternalClaudeSession.mockResolvedValue(null);
     __resetOutputStoreCachesForTests();
     __resetNamedEventsForTests();
     __resetWorkerTurnChainsForTests();
@@ -240,7 +251,7 @@ describe("POST /api/conversations", () => {
     });
 
     try {
-      const response = await POST(new NextRequest("http://localhost/api/conversations", {
+      const response = await POST(new Request("http://localhost/api/conversations", {
         method: "POST",
         body: JSON.stringify({
           mode: "direct",
@@ -302,7 +313,7 @@ describe("POST /api/conversations", () => {
       stopReason: null,
     });
 
-    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+    const response = await POST(new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -335,7 +346,7 @@ describe("POST /api/conversations", () => {
     mockAskAgent.mockReturnValueOnce(initialAsk.promise);
     const requestedRunId = "a11ce0000001";
 
-    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+    const response = await POST(new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -373,7 +384,7 @@ describe("POST /api/conversations", () => {
       { key: GIT_PUSH_ON_COMMIT_SETTING, value: "true", updatedAt: now },
     ]);
 
-    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+    const response = await POST(new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -412,7 +423,7 @@ describe("POST /api/conversations", () => {
       stopReason: null,
     });
 
-    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+    const response = await POST(new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -465,7 +476,7 @@ describe("POST /api/conversations", () => {
       stopReason: null,
     });
 
-    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+    const response = await POST(new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -524,7 +535,7 @@ describe("POST /api/conversations", () => {
       }),
     });
 
-    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+    const response = await POST(new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "implementation",
@@ -565,7 +576,7 @@ describe("POST /api/conversations", () => {
   });
 
   it("starts an implementation conversation and wakes the supervisor", async () => {
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "implementation",
@@ -607,7 +618,7 @@ describe("POST /api/conversations", () => {
 
   it("honors a requested run id for immediate client-side session routing", async () => {
     const requestedRunId = "abc123abc123";
-    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+    const response = await POST(new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -629,7 +640,7 @@ describe("POST /api/conversations", () => {
 
   it("persists and returns a new implementation conversation before supervisor startup completes", async () => {
     mockEnsureSupervisorRuntimeStarted.mockImplementationOnce(() => new Promise(() => {}));
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "implementation",
@@ -673,7 +684,7 @@ describe("POST /api/conversations", () => {
       "",
       "The generated title can replace this later.",
     ].join("\n");
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "implementation",
@@ -696,7 +707,7 @@ describe("POST /api/conversations", () => {
   });
 
   it("stores the app root as the project path when no project is selected", async () => {
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "implementation",
@@ -718,7 +729,7 @@ describe("POST /api/conversations", () => {
   });
 
   it("starts a planning conversation with one direct worker and no supervisor", async () => {
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "planning",
@@ -777,7 +788,7 @@ describe("POST /api/conversations", () => {
       stopReason: "end_turn",
     });
 
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "planning",
@@ -827,7 +838,7 @@ describe("POST /api/conversations", () => {
   it("does not mark a new planning conversation failed when the first planner turn is already busy", async () => {
     mockAskAgent.mockRejectedValueOnce(new Error("Ask failed: Agent is busy: planner-worker"));
 
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "planning",
@@ -860,7 +871,7 @@ describe("POST /api/conversations", () => {
   it("marks a planning conversation failed and emits a surfaced error when initial spawn rejects", async () => {
     mockSpawnAgent.mockRejectedValueOnce(new Error("planner bridge unreachable"));
 
-    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+    const response = await POST(new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "planning",
@@ -914,7 +925,7 @@ describe("POST /api/conversations", () => {
       },
     ));
 
-    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+    const response = await POST(new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -940,7 +951,7 @@ describe("POST /api/conversations", () => {
   });
 
   it("starts a direct conversation with one direct worker and no supervisor", async () => {
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -970,6 +981,34 @@ describe("POST /api/conversations", () => {
 
   it("resumes an external Claude session as a direct Claude worker when the picker omits mode", async () => {
     const externalClaudeSessionId = "12345678-1234-4234-9234-123456789abc";
+    mockLoadExternalClaudeSession.mockResolvedValueOnce({
+      sessionId: externalClaudeSessionId,
+      projectDir: "-workspace-app",
+      projectPath: "/workspace/app",
+      sessionFilePath: "/home/test/.claude/projects/-workspace-app/session.jsonl",
+      lastModified: new Date("2026-07-30T22:04:48.026Z"),
+      title: "Claude Desktop bug investigation",
+      recentOutput: "I found the cause.",
+      messageCount: 1,
+      entries: [
+        {
+          id: "external-claude:user-1",
+          type: "user_input",
+          text: "Why is resume broken?",
+          timestamp: "2026-07-30T22:00:00.000Z",
+          authorRole: "user",
+          channel: "stdin",
+        },
+        {
+          id: "external-claude:assistant-1",
+          type: "message",
+          text: "I found the cause.",
+          timestamp: "2026-07-30T22:01:00.000Z",
+          authorRole: "assistant",
+          channel: "agent",
+        },
+      ],
+    });
     mockSpawnAgent.mockResolvedValueOnce({
       name: "worker-1",
       type: "claude",
@@ -983,7 +1022,7 @@ describe("POST /api/conversations", () => {
       stopReason: null,
     });
 
-    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+    const response = await POST(new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         externalClaudeSessionId,
@@ -996,6 +1035,8 @@ describe("POST /api/conversations", () => {
     const payload = await response.json();
 
     expect(payload.run.mode).toBe("direct");
+    expect(payload.run.title).toBe("Claude Desktop bug investigation");
+    expect(mockLoadExternalClaudeSession).toHaveBeenCalledWith(externalClaudeSessionId);
     expect(mockEnsureSupervisorRuntimeStarted).not.toHaveBeenCalled();
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
     await waitFor(() => mockSpawnAgent.mock.calls.length, (count) => count > 0);
@@ -1011,11 +1052,35 @@ describe("POST /api/conversations", () => {
       (worker) => worker?.status === "awaiting_user",
     );
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
+    const importedEntries = (await readWorkerOutputEntries(payload.runId, createdWorker!.id))
+      .filter((entry) => entry.raw && (entry.raw as { source?: string }).source === "external_claude");
     expect(createdWorker).toEqual(expect.objectContaining({
       type: "claude",
       bridgeSessionId: "resumed-external-session",
     }));
     expect(storedMessages).toHaveLength(0);
+    expect(importedEntries).toEqual([
+      expect.objectContaining({
+        id: "external-claude:user-1",
+        type: "user_input",
+        text: "Why is resume broken?",
+        authorRole: "user",
+      }),
+      expect.objectContaining({
+        id: "external-claude:assistant-1",
+        type: "message",
+        text: "I found the cause.",
+        authorRole: "assistant",
+      }),
+    ]);
+    expect(getNamedEventsSince(0).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "external_session.imported",
+      runId: payload.runId,
+      workerId: createdWorker!.id,
+      provider: "claude",
+      sessionId: externalClaudeSessionId,
+      entryCount: 2,
+    }));
   });
 
   it("resumes an external Gemini session as a direct Gemini worker when the picker specifies preferredWorkerType as gemini", async () => {
@@ -1033,7 +1098,7 @@ describe("POST /api/conversations", () => {
       stopReason: null,
     });
 
-    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+    const response = await POST(new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         externalClaudeSessionId: externalGeminiSessionId,
@@ -1074,7 +1139,7 @@ describe("POST /api/conversations", () => {
       "session ef25debddace keeps showing a spinner even tho it finishd",
       "and we can see that on clicking on it to load it",
     ].join(" ");
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -1109,7 +1174,7 @@ describe("POST /api/conversations", () => {
       },
     ]);
 
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -1154,7 +1219,7 @@ describe("POST /api/conversations", () => {
       resolveSpawnRef[0] = resolve;
     }));
 
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -1202,7 +1267,7 @@ describe("POST /api/conversations", () => {
   it("marks a direct conversation failed and emits a surfaced error when initial spawn rejects", async () => {
     mockSpawnAgent.mockRejectedValueOnce(new Error("bridge unreachable"));
 
-    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+    const response = await POST(new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -1253,7 +1318,7 @@ describe("POST /api/conversations", () => {
       resolveStartupRef[0] = resolve;
     }));
 
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -1281,7 +1346,7 @@ describe("POST /api/conversations", () => {
   });
 
   it("keeps project auto-commit conversations titled Commit", async () => {
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "commit",
@@ -1329,7 +1394,7 @@ describe("POST /api/conversations", () => {
       stopReason: "end_turn",
     });
 
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -1408,7 +1473,7 @@ describe("POST /api/conversations", () => {
       stopReason: "end_turn",
     });
 
-    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+    const response = await POST(new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -1469,7 +1534,7 @@ describe("POST /api/conversations", () => {
       stopReason: "end_turn",
     });
 
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -1525,7 +1590,7 @@ describe("POST /api/conversations", () => {
       updatedAt: new Date(),
     });
 
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -1562,7 +1627,7 @@ describe("POST /api/conversations", () => {
   it("does not mark a new direct conversation failed when the first worker turn is already busy", async () => {
     mockAskAgent.mockRejectedValueOnce(new Error("Ask failed: Agent is busy: direct-worker"));
 
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -1626,7 +1691,7 @@ describe("POST /api/conversations", () => {
       stopReason: "end_turn",
     });
 
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -1667,7 +1732,7 @@ describe("POST /api/conversations", () => {
       storagePath: "attachments/upload-1/attachment-1-screen.png",
     };
 
-    const request = new NextRequest("http://localhost/api/conversations", {
+    const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",
@@ -1707,7 +1772,7 @@ describe("POST /api/conversations", () => {
     const spawn = deferred<Awaited<ReturnType<typeof mockSpawnAgent>>>();
     mockSpawnAgent.mockReturnValueOnce(spawn.promise);
 
-    const response = await POST(new NextRequest("http://localhost/api/conversations", {
+    const response = await POST(new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
         mode: "direct",

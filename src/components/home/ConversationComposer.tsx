@@ -1,4 +1,3 @@
-import Image from "next/image";
 import { memo, useRef } from "react";
 import type React from "react";
 import { ArrowUp, FileText, LoaderCircle, Plus, SlidersHorizontal, Square, X } from "lucide-react";
@@ -6,14 +5,14 @@ import { Button } from "@/components/ui/button";
 import { ComposerModelPicker } from "@/components/composer/ComposerModelPicker";
 import { ComposerSelect } from "@/components/composer/ComposerSelect";
 import { ConversationModePicker, type ConversationModeOption } from "@/components/ConversationModePicker";
-import type { ComposerMode } from "@/app/home/types";
+import type { ComposerMode } from "@/interface/home/types";
 import { QueuedMessageDrawer } from "./QueuedMessageDrawer";
 import { BranchWorkspaceButton } from "./BranchWorkspaceButton";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { EFFORT_OPTIONS } from "@/app/home/constants";
-import { isManualStopCommand, resolveBusyMessageActionForSubmitAction, type BusyComposerBehavior, type BusyMessageAction } from "@/app/home/busy-message-behavior";
-import { getComposerSubmitShortcutLabel, isAppleComposerShortcutPlatform, shouldInterruptQueuedMessageKeyDown, shouldSubmitComposerKeyDown, shouldUseAlternateComposerSubmitKeyDown } from "@/app/home/composer-keyboard";
-import type { ComposerWorkerOption, QueuedConversationMessageRecord, WorkerModelOption } from "@/app/home/types";
+import { EFFORT_OPTIONS } from "@/interface/home/constants";
+import { isManualStopCommand, resolveBusyMessageActionForSubmitAction, type BusyComposerBehavior, type BusyMessageAction } from "@/interface/home/busy-message-behavior";
+import { getComposerSubmitShortcutLabel, isAppleComposerShortcutPlatform, shouldInterruptQueuedMessageKeyDown, shouldSubmitComposerKeyDown, shouldUseAlternateComposerSubmitKeyDown } from "@/interface/home/composer-keyboard";
+import type { ComposerWorkerOption, QueuedConversationMessageRecord, WorkerModelOption } from "@/interface/home/types";
 import { formatBytes, type PendingChatAttachment } from "@/lib/chat-attachments";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { StateManager } from "@/lib/state-manager";
@@ -407,12 +406,11 @@ function ConversationComposerInner({
                 )}
               >
                 {attachment.kind === "image" && attachment.previewUrl ? (
-                  <Image
+                  <img
                     src={attachment.previewUrl}
                     alt=""
                     width={40}
                     height={40}
-                    unoptimized
                     className="h-10 w-10 rounded-xl object-cover"
                   />
                 ) : null}

@@ -59,4 +59,50 @@ describe("runOmniCli", () => {
       }),
     ]);
   });
+
+  it("creates a conversation on a remote runner using OMNI_TOKEN without starting a local runtime", async () => {
+    const originalToken = process.env.OMNI_TOKEN;
+    process.env.OMNI_TOKEN = "remote-secret";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      runId: "run-remote",
+      planId: "plan-remote",
+      mode: "direct",
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    const io = createIo();
+
+    try {
+      const exitCode = await runOmniCli([
+        "--runner",
+        "https://runner.example.test",
+        "--no-watch",
+        "inspect remotely",
+      ], io);
+
+      expect(exitCode).toBe(0);
+      expect(createConversationMock).not.toHaveBeenCalled();
+      expect(ensureSupervisorRuntimeStartedMock).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledWith(
+        new URL("https://runner.example.test/api/conversations"),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            authorization: "Bearer remote-secret",
+          }),
+        }),
+      );
+      expect(io.stdout.text).toContain("run-remote");
+      expect(io.stdout.text).not.toContain("remote-secret");
+      expect(io.stderr.text).not.toContain("remote-secret");
+    } finally {
+      fetchMock.mockRestore();
+      if (originalToken === undefined) {
+        delete process.env.OMNI_TOKEN;
+      } else {
+        process.env.OMNI_TOKEN = originalToken;
+      }
+    }
+  });
 });

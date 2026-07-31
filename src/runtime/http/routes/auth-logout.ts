@@ -3,12 +3,11 @@ import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { getSessionFromRequest, revokeSession } from "@/server/auth/session";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 import { clearSessionCookie } from "./cookies";
 
 export const handleAuthLogoutRequest: OmniHttpHandler = async (request) => {
   try {
-    const nextRequest = toNextRequest(request);
+    const nextRequest = request;
     const auth = await requireApiSession(nextRequest, {
       source: "Auth",
       action: "Log out",

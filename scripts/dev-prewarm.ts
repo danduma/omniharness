@@ -48,8 +48,11 @@ export function resolveDevPrewarmPaths(env: Partial<NodeJS.ProcessEnv> = process
   ]);
 }
 
-export function isNextDevReadyLine(line: string) {
-  return /(?:^|\s)(?:✓|✔)?\s*Ready in\s+\d/i.test(line);
+export function isDevServerReadyLine(line: string) {
+  return (
+    /(?:^|\s)(?:✓|✔)?\s*ready in\s+\d/i.test(line)
+    || /"event":"runner\.ready"/.test(line)
+  );
 }
 
 export function resolveDevPrewarmBaseUrl(webHost: string, webPort: string) {

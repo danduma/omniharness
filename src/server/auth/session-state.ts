@@ -6,7 +6,7 @@ import {
   isAuthEnabled,
 } from "@/server/auth/config";
 import type { ActiveAuthSession } from "@/server/auth/session";
-import type { AuthSessionResponse, AuthSessionRecord } from "@/app/home/types";
+import type { AuthSessionResponse, AuthSessionRecord } from "@/shared/home-types";
 
 function serializeSession(session: ActiveAuthSession): AuthSessionRecord {
   return {
@@ -76,7 +76,8 @@ export async function buildAuthSessionState(args: {
   }
 
   const cookie = getCookieValue(args.headers.get("cookie"), AUTH_SESSION_COOKIE);
-  if (!cookie) {
+  const bearer = args.headers.get("authorization")?.trim() ?? "";
+  if (!cookie && !bearer) {
     return {
       enabled: true,
       authenticated: false,
@@ -87,9 +88,17 @@ export async function buildAuthSessionState(args: {
     };
   }
 
-  const { getSessionFromTokenValue, listActiveSessions } = await import("@/server/auth/session");
-  const session = await getSessionFromTokenValue(cookie);
-  if (!session) {
+  const [{ requireApiSession }, { listActiveSessions }] = await Promise.all([
+    import("@/server/auth/guards"),
+    import("@/server/auth/session"),
+  ]);
+  const auth = await requireApiSession(new Request(args.url, {
+    headers: args.headers,
+  }), {
+    source: "Auth",
+    action: "Load bootstrap session state",
+  });
+  if (auth.response || !auth.session) {
     return {
       enabled: true,
       authenticated: false,
@@ -104,7 +113,7 @@ export async function buildAuthSessionState(args: {
   return {
     enabled: true,
     authenticated: true,
-    currentSession: serializeSession(session),
+    currentSession: serializeSession(auth.session),
     sessions: sessions.map(serializeSession),
     configurationError: null,
     publicOrigin,

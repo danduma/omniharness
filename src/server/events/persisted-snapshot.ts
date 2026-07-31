@@ -18,11 +18,11 @@ import { listExecutionEventsForSnapshot } from "@/server/events/execution-event-
 import { listSupervisorInterventionsForSnapshot } from "@/server/supervisor/intervention-store";
 import { serializeMessageRecord } from "@/server/conversations/message-records";
 import { isTerminalRunStatus } from "@/lib/run-status";
-import type { EventStreamState } from "@/app/home/types";
+import type { EventStreamState } from "@/shared/home-types";
 import { normalizeChatAttachments } from "@/lib/chat-attachments";
 import { readWorkerLatestSeq } from "@/server/workers/output-store";
-import type { BusyMessageAction } from "@/app/home/busy-message-behavior";
-import type { RunMode } from "@/app/home/types";
+import type { BusyMessageAction } from "@/interface/home/busy-message-behavior";
+import type { RunMode } from "@/interface/home/types";
 import { withEventPayloadChecksum } from "@/server/events/payload-checksum";
 import { buildAwaitingUserQuestionInvariantErrors } from "@/server/events/lifecycle-invariants";
 import { serializeSessionRecord } from "@/server/session-providers/session-records";

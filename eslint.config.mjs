@@ -1,17 +1,17 @@
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import { FlatCompat } from "@eslint/eslintrc";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-});
+import tseslint from "typescript-eslint";
 
 const eslintConfig = [
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
+    files: ["**/*.{ts,tsx}"],
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: {
+        ecmaFeatures: { jsx: true },
+      },
+    },
+    plugins: {
+      "@typescript-eslint": tseslint.plugin,
+    },
     rules: {
       "@typescript-eslint/no-unused-vars": [
         "warn",
@@ -26,6 +26,34 @@ const eslintConfig = [
     },
   },
   {
+    files: [
+      "src/components/**/*.{ts,tsx}",
+      "src/interface/**/*.{ts,tsx}",
+      "src/lib/**/*.{ts,tsx}",
+      "src/runtime-api/**/*.{ts,tsx}",
+      "src/ui/**/*.{ts,tsx}",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: [
+                "@/server",
+                "@/server/**",
+                "@/runtime",
+                "@/runtime/**",
+                "**/*.server",
+              ],
+              message: "Interface code must depend on shared contracts or RuntimeAPIs, not runner modules.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ["tests/**/*.ts", "tests/**/*.tsx"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
@@ -34,12 +62,15 @@ const eslintConfig = [
   {
     ignores: [
       "node_modules/**",
-      ".next/**",
       "out/**",
       "build/**",
+      "dist/**",
+      "apps/mobile/ios/App/Pods/**",
+      "apps/mobile/ios/DerivedData/**",
+      "apps/mobile/android/.gradle/**",
+      "apps/mobile/android/**/build/**",
       "apps/vscode/dist/**",
       "apps/electron/dist/**",
-      "next-env.d.ts",
       ".agents/**",
       ".claude/**",
       ".omniharness/**",

@@ -2,7 +2,6 @@ import { z } from "zod";
 import { getClaudeModelGatewayService } from "@/server/integrations/claude-model-gateway";
 import { requireApiSession } from "@/server/auth/guards";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 type GatewayService = Pick<ReturnType<typeof getClaudeModelGatewayService>,
   "inspect" | "install" | "start" | "stop" | "connect" | "refreshModels">;
@@ -24,7 +23,7 @@ export function createClaudeModelGatewayHandler(service: GatewayService): OmniHt
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Claude model gateway",
       action: request.method === "GET" ? "Inspect gateway" : "Control gateway",
       enforceSameOrigin: request.method === "POST",

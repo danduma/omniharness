@@ -46,7 +46,7 @@ export function isProcessAlive(pid: number) {
 }
 
 export function isBridgeStarterCommand(command: string) {
-  return /(^|\s)(\S+\/)?scripts\/(dev|agent-runtime)\.ts(\s|$)/.test(command);
+  return /(^|\s)(\S+\/)?scripts\/(dev|runner|agent-runtime)\.ts(\s|$)/.test(command);
 }
 
 export function isBridgeStarterProcessAlive(pid: number) {

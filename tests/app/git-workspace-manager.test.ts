@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GitWorkspaceManager } from "@/app/home/GitWorkspaceManager";
+import { GitWorkspaceManager } from "@/interface/home/GitWorkspaceManager";
 import type { GitWorkspaceSnapshot, GitWorkspaceTarget } from "@/lib/git-workspace";
 
 const CACHE_STORAGE_KEY = "omni-git-workspace-cache:v1";

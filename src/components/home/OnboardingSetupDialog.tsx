@@ -1,7 +1,7 @@
 import { CheckCircle2, CircleAlert, RefreshCw, Settings, Terminal as TerminalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import type { WorkerAvailability } from "@/app/home/types";
+import type { WorkerAvailability } from "@/interface/home/types";
 import { cn } from "@/lib/utils";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { getWorkerAvailabilityMessage, getWorkerSetupCommand } from "@/components/settings/worker-availability-copy";

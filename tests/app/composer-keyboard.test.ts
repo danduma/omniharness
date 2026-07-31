@@ -3,7 +3,7 @@ import {
   getComposerSubmitShortcutLabel,
   shouldSubmitComposerKeyDown,
   shouldUseAlternateComposerSubmitKeyDown,
-} from "@/app/home/composer-keyboard";
+} from "@/interface/home/composer-keyboard";
 
 describe("shouldSubmitComposerKeyDown", () => {
   it("does not submit plain Enter on mobile viewports", () => {

@@ -4,7 +4,6 @@ import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { isPathInside, listProjectFiles, readProjectTextFile } from "@/server/fs/files";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 
 function getAllowedRoot() {
   return path.resolve(process.cwd(), "..");
@@ -25,7 +24,7 @@ export const handleBrowseFilesystemRequest: OmniHttpHandler = async (request) =>
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Filesystem",
       action: "Browse directories",
     });
@@ -70,7 +69,7 @@ export const handleProjectFilesRequest: OmniHttpHandler = async (request) => {
       });
     }
 
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Filesystem",
       action: "Load project files",
     });

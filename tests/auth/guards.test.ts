@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { NextRequest } from "next/server";
 import { isSameOriginRequest } from "@/server/auth/guards";
 
 describe("auth origin guard", () => {
   it("accepts localhost browser requests when the server is bound to 0.0.0.0", () => {
-    const request = new NextRequest("http://0.0.0.0:3050/api/auth/login", {
+    const request = new Request("http://0.0.0.0:3050/api/auth/login", {
       method: "POST",
       headers: {
         host: "localhost:3050",
@@ -16,7 +15,8 @@ describe("auth origin guard", () => {
   });
 
   it("accepts forwarded public origins from a tunnel or reverse proxy", () => {
-    const request = new NextRequest("http://0.0.0.0:3050/api/auth/login", {
+    process.env.OMNIHARNESS_TRUSTED_PROXIES = "0.0.0.0";
+    const request = new Request("http://0.0.0.0:3050/api/auth/login", {
       method: "POST",
       headers: {
         host: "localhost:3050",
@@ -27,10 +27,11 @@ describe("auth origin guard", () => {
     });
 
     expect(isSameOriginRequest(request)).toBe(true);
+    delete process.env.OMNIHARNESS_TRUSTED_PROXIES;
   });
 
   it("rejects requests from a different browser origin", () => {
-    const request = new NextRequest("http://0.0.0.0:3050/api/auth/login", {
+    const request = new Request("http://0.0.0.0:3050/api/auth/login", {
       method: "POST",
       headers: {
         host: "localhost:3050",

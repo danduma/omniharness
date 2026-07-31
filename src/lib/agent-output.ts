@@ -1,4 +1,4 @@
-import type { WorkerEntryChannel, WorkerEntryType } from "@/server/workers/entries-types";
+import type { WorkerEntryChannel, WorkerEntryType } from "@/shared/worker-entries";
 
 export interface AgentOutputEntry {
   id: string;

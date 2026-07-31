@@ -2,11 +2,10 @@ import { useMemo } from "react";
 import { StateManager } from "@/lib/state-manager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { ArrowDown, ArrowUp, Plus, Power, RefreshCw, Trash2, X } from "lucide-react";
-import { WORKER_OPTIONS } from "@/app/home/constants";
-import type { AccountRecord, WorkerAvailability, WorkerModelCatalog, WorkerType } from "@/app/home/types";
-import { buildInlineError, parseBooleanSetting, parseWorkerType, parseWorkerTypes } from "@/app/home/utils";
+import { WORKER_OPTIONS } from "@/interface/home/constants";
+import type { AccountRecord, WorkerAvailability, WorkerModelCatalog, WorkerType } from "@/interface/home/types";
+import { buildInlineError, parseBooleanSetting, parseWorkerType, parseWorkerTypes } from "@/interface/home/utils";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
-import { requestJson } from "@/lib/app-errors";
 import { cn } from "@/lib/utils";
 import { ErrorNotice } from "@/components/home/ErrorNotice";
 import { Button } from "@/components/ui/button";
@@ -15,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { getWorkerAvailabilityMessage } from "./worker-availability-copy";
 import { ClaudeModelGatewaySettings } from "./ClaudeModelGatewaySettings";
+import { useRuntimeAPIs } from "@/runtime-api/provider";
 
 interface AgentsSettingsPanelProps {
   settings: Record<string, string>;
@@ -53,6 +53,7 @@ export function AgentsSettingsPanel({
   settingsDirtyKeys,
 }: AgentsSettingsPanelProps) {
   useI18nSnapshot();
+  const runtimeApis = useRuntimeAPIs();
   const manager = useMemo(() => new StateManager({
     accountActionError: null as unknown,
     pendingAccountAction: null as string | null,
@@ -147,10 +148,7 @@ export function AgentsSettingsPanel({
   };
 
   const createLocalAccount = (worker: WorkerAvailability) => runAccountAction(`create:${worker.type}`, async () => {
-    const nextAccount = await requestJson<AccountRecord>("/api/accounts", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const nextAccount = await runtimeApis.accounts.create({
         id: `local-session-${worker.type}`,
         cliType: worker.type,
         provider: workerProvider(worker.type),
@@ -158,47 +156,31 @@ export function AgentsSettingsPanel({
         label: t("settings.agents.localAccountLabel", { worker: worker.label }),
         authMode: "local_session",
         authRef: `local:${worker.type}`,
-      }),
-    }, {
-      source: t("settings.agents.accountActionErrorSource"),
-      action: t("settings.agents.createAccountAction"),
-    });
+    }) as AccountRecord;
     onAccountsChanged([...accounts.filter((account) => account.id !== nextAccount.id), nextAccount]);
   });
 
   const setAccountEnabled = (account: AccountRecord, enabled: boolean) => runAccountAction(`enabled:${account.id}`, async () => {
-    const nextAccount = await requestJson<AccountRecord>(`/api/accounts/${encodeURIComponent(account.id)}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled }),
-    }, {
-      source: t("settings.agents.accountActionErrorSource"),
-      action: t("settings.agents.updateAccountAction"),
-    });
+    const nextAccount = await runtimeApis.accounts.update({
+      accountId: account.id,
+      body: { enabled },
+    }) as AccountRecord;
     onAccountsChanged(accounts.map((item) => (item.id === nextAccount.id ? nextAccount : item)));
   });
 
   const deleteAccount = (account: AccountRecord) => {
     void runAccountAction(`delete:${account.id}`, async () => {
-      await requestJson<{ ok: true; accountId: string }>(`/api/accounts/${encodeURIComponent(account.id)}`, {
-        method: "DELETE",
-      }, {
-        source: t("settings.agents.accountActionErrorSource"),
-        action: t("settings.agents.deleteAccountAction"),
+      await runtimeApis.accounts.remove({
+        accountId: account.id,
       });
       onAccountsChanged(accounts.filter((item) => item.id !== account.id));
     }).finally(() => manager.setKey("confirmingDeleteAccountId", null));
   };
 
   const refreshAccountStatus = (account: AccountRecord) => runAccountAction(`status:${account.id}`, async () => {
-    const nextAccount = await requestJson<AccountRecord>(`/api/accounts/${encodeURIComponent(account.id)}/status`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ status: account.status ?? "unknown" }),
-    }, {
-      source: t("settings.agents.accountActionErrorSource"),
-      action: t("settings.agents.refreshAccountStatusAction"),
-    });
+    const nextAccount = await runtimeApis.accounts.refreshStatus({
+      accountId: account.id,
+    }) as AccountRecord;
     onAccountsChanged(accounts.map((item) => (item.id === nextAccount.id ? nextAccount : item)));
   });
 

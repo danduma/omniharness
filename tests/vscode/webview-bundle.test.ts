@@ -27,7 +27,10 @@ describe("VS Code webview bundle shape", () => {
     const webviewSource = readSource("apps/vscode/webview/main.tsx");
 
     expect(webviewSource).toContain("createVSCodeRuntimeAPIs");
-    expect(webviewSource).toContain("apis.conversations.create");
+    expect(webviewSource).toContain("?.conversations.create");
     expect(webviewSource).toContain("apis.events.open");
+    expect(webviewSource).toContain("auth.revokeSession");
+    expect(webviewSource).toContain("vscode:identity");
+    expect(webviewSource).toContain("profileStatuses");
   });
 });

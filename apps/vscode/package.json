@@ -59,13 +59,8 @@
       "properties": {
         "omniHarness.serverUrl": {
           "type": "string",
-          "default": "http://localhost:3035",
-          "description": "OmniHarness server URL. Use http://localhost:3035 for the normal local app, or http://localhost:3050 for the raw Next dev server."
-        },
-        "omniHarness.sessionCookie": {
-          "type": "string",
-          "default": "",
-          "description": "Optional omni_session cookie value for password-protected OmniHarness instances."
+          "default": "http://localhost:3050",
+          "description": "OmniHarness runner URL. Use http://localhost:3050 for the normal local runner."
         }
       }
     }

@@ -33,16 +33,16 @@ afterEach(() => {
 
 describe("live journey safety", () => {
   it.each([
-    "http://localhost:3035",
-    "http://127.0.0.1:3035",
-    "http://[::1]:3035",
+    "http://localhost:3050",
+    "http://127.0.0.1:3050",
+    "http://[::1]:3050",
   ])("allows loopback target %s", (target) => {
     expect(assertLoopbackUrl(target).origin).toBe(new URL(target).origin);
   });
 
   it.each([
     "https://example.com",
-    "http://192.168.1.10:3035",
+    "http://192.168.1.10:3050",
     "file:///tmp/omniharness",
   ])("rejects non-loopback target %s", (target) => {
     expect(() => assertLoopbackUrl(target)).toThrow(/loopback/i);

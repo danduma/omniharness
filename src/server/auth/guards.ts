@@ -1,7 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
 import { buildAppError } from "@/server/api-errors";
 import { AUTH_SESSION_COOKIE, getAuthConfigurationError, isAuthEnabled, isAutomationAuthBypassEnabled } from "@/server/auth/config";
 import type { ActiveAuthSession } from "@/server/auth/session";
+import {
+  getRequestNetworkIdentity,
+  isSecureOrLoopbackRequest,
+} from "@/server/auth/trusted-proxy";
+import { subscribeAuthSessionRevocations } from "@/server/auth/session-revocation";
 
 const API_SESSION_CACHE_TTL_MS = 10_000;
 const API_SESSION_CACHE_MAX_ENTRIES = 128;
@@ -51,8 +55,25 @@ export function __resetApiSessionCacheForTests() {
   processAuthGuards.__omniHarnessApiSessionCache?.clear();
 }
 
+export function invalidateApiSessionCache(sessionIds: ReadonlySet<string> | null = null) {
+  const cache = apiSessionCache();
+  if (sessionIds === null) {
+    cache.clear();
+    return;
+  }
+  for (const [key, entry] of cache) {
+    if (sessionIds.has(entry.session.id)) {
+      cache.delete(key);
+    }
+  }
+}
+
+subscribeAuthSessionRevocations((revocation) => {
+  invalidateApiSessionCache(revocation.sessionIds);
+});
+
 function jsonError(status: number, source: string, action: string, message: string) {
-  return NextResponse.json({
+  return Response.json({
     error: buildAppError(message, { status, source, action }),
   }, { status });
 }
@@ -61,7 +82,7 @@ export function isSafeMethod(method: string) {
   return method === "GET" || method === "HEAD" || method === "OPTIONS";
 }
 
-export function isSameOriginRequest(request: NextRequest) {
+export function isSameOriginRequest(request: Request) {
   const origin = request.headers.get("origin")?.trim();
   if (!origin) {
     return true;
@@ -75,23 +96,12 @@ export function isSameOriginRequest(request: NextRequest) {
   }
 
   const requestUrl = new URL(request.url);
-  const allowedOrigins = new Set([requestUrl.origin]);
-  const host = firstHeaderValue(request.headers.get("x-forwarded-host")) || request.headers.get("host")?.trim();
-  const protocol = firstHeaderValue(request.headers.get("x-forwarded-proto")) || requestUrl.protocol.replace(/:$/, "");
-
-  if (host) {
-    allowedOrigins.add(`${protocol}://${host}`);
-  }
-
-  return allowedOrigins.has(parsedOrigin);
-}
-
-function firstHeaderValue(value: string | null) {
-  return value?.split(",")[0]?.trim() || null;
+  const identity = getRequestNetworkIdentity(request);
+  return parsedOrigin === requestUrl.origin || parsedOrigin === identity.publicOrigin;
 }
 
 export async function requireApiSession(
-  request: NextRequest | undefined,
+  request: Request | undefined,
   options: {
     action: string;
     source?: string;
@@ -117,40 +127,107 @@ export async function requireApiSession(
     };
   }
 
-  if (isAutomationAuthBypassEnabled() && !request.cookies.get(AUTH_SESSION_COOKIE)) {
+  const cookie = getSessionCookieValue(request);
+  const bearer = getBearerTokenValue(request);
+  if (isAutomationAuthBypassEnabled() && !cookie && !bearer) {
     return { session: null, response: null };
   }
 
-  if (options.enforceSameOrigin && !isSameOriginRequest(request)) {
+  if (cookie && bearer) {
+    return {
+      session: null,
+      response: jsonError(401, options.source ?? "Auth", options.action, "Use exactly one session transport."),
+    };
+  }
+
+  if (options.enforceSameOrigin && !bearer && !isSameOriginRequest(request)) {
     return {
       session: null,
       response: jsonError(403, options.source ?? "Auth", options.action, "Cross-site request rejected."),
     };
   }
 
-  const cookie = request.cookies.get(AUTH_SESSION_COOKIE)?.value ?? null;
-  if (!cookie) {
+  const credential = bearer ?? cookie;
+  if (!credential) {
     return {
       session: null,
       response: jsonError(401, options.source ?? "Auth", options.action, "Authentication required."),
     };
   }
 
-  const cached = apiSessionCache().get(cookie);
+  const cacheKey = `${bearer ? "bearer" : "cookie"}:${credential}`;
+  const cached = apiSessionCache().get(cacheKey);
   if (cached && cached.expiresAtMs > Date.now()) {
-    return { session: cached.session, response: null };
+    const rejection = validateSessionTransport(request, cached.session, Boolean(bearer));
+    return rejection
+      ? { session: null, response: rejection }
+      : { session: cached.session, response: null };
   }
 
-  const { getSessionFromRequest } = await import("@/server/auth/session");
-  const session = await getSessionFromRequest(request);
+  const { getSessionFromTokenValue } = await import("@/server/auth/session");
+  const session = await getSessionFromTokenValue(credential);
   if (!session) {
-    apiSessionCache().delete(cookie);
+    apiSessionCache().delete(cacheKey);
     return {
       session: null,
       response: jsonError(401, options.source ?? "Auth", options.action, "Authentication required."),
     };
   }
 
-  setCachedApiSession(cookie, session);
+  const rejection = validateSessionTransport(request, session, Boolean(bearer));
+  if (rejection) {
+    return { session: null, response: rejection };
+  }
+
+  setCachedApiSession(cacheKey, session);
   return { session, response: null };
+}
+
+function getBearerTokenValue(request: Request) {
+  const authorization = request.headers.get("authorization")?.trim() ?? "";
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
+function validateSessionTransport(
+  request: Request,
+  session: ActiveAuthSession,
+  usedBearer: boolean,
+) {
+  const expectedTransport = usedBearer ? "bearer" : "cookie";
+  if (session.transport !== expectedTransport) {
+    return jsonError(401, "Auth", "Validate session", "Authentication required.");
+  }
+  if (!usedBearer) {
+    return null;
+  }
+  if (!isSecureOrLoopbackRequest(getRequestNetworkIdentity(request))) {
+    return jsonError(403, "Auth", "Validate session", "Bearer sessions require HTTPS for non-loopback clients.");
+  }
+
+  const origin = request.headers.get("origin")?.trim() ?? null;
+  if (session.clientKind === "native") {
+    return origin
+      ? jsonError(403, "Auth", "Validate session", "Native sessions cannot be used by browser-origin requests.")
+      : null;
+  }
+  if (!origin || origin === "null" || origin !== session.boundOrigin) {
+    return jsonError(403, "Auth", "Validate session", "Bearer session origin rejected.");
+  }
+  return null;
+}
+
+function getSessionCookieValue(request: Request) {
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  for (const part of cookieHeader.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator < 0) {
+      continue;
+    }
+    const name = part.slice(0, separator).trim();
+    if (name === AUTH_SESSION_COOKIE) {
+      return decodeURIComponent(part.slice(separator + 1).trim());
+    }
+  }
+  return null;
 }

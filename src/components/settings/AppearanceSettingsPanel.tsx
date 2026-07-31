@@ -4,7 +4,7 @@ import {
   TERMINAL_TEXT_SIZE_LEVELS,
   UI_TEXT_SIZE_LEVELS,
   type AppearanceTextSizeLevel,
-} from "@/app/home/AppearancePreferencesManager";
+} from "@/interface/home/AppearancePreferencesManager";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { cn } from "@/lib/utils";

@@ -3,7 +3,6 @@ import { messages } from "@/server/db/schema";
 import { requireApiSession } from "@/server/auth/guards";
 import { serializeMessageRecord } from "@/server/conversations/message-records";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 import { asc } from "drizzle-orm";
 
 export const handleMessagesRequest: OmniHttpHandler = async (request) => {
@@ -14,7 +13,7 @@ export const handleMessagesRequest: OmniHttpHandler = async (request) => {
     });
   }
 
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Messages",
     action: "Load messages",
   });

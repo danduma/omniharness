@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
@@ -27,8 +26,10 @@ vi.mock("@/server/supervisor/start", () => ({
   startSupervisorRun: vi.fn(),
 }));
 
-import { GET } from "@/app/api/events/route";
-import { GET as GET_WORKER_ENTRIES } from "@/app/api/workers/[workerId]/entries/route";
+import {
+  eventsRoute as GET,
+  workerEntriesRoute as GET_WORKER_ENTRIES,
+} from "@/../tests/helpers/runtime-routes";
 
 const LOAD_BUDGET_MS = 5_000;
 
@@ -129,7 +130,7 @@ async function cleanupFixture(fixture: Fixture) {
 async function loadSnapshot(runId: string) {
   const start = Date.now();
   const response = await GET(
-    new NextRequest(`http://localhost/api/events?snapshot=1&runId=${runId}`),
+    new Request(`http://localhost/api/events?snapshot=1&runId=${runId}`),
   );
   const payload = (await response.json()) as {
     runs: Array<{ id: string }>;
@@ -148,7 +149,7 @@ async function loadWorkerEntries(workerId: string) {
   // we guard against is now: can the client get entries from
   // /api/workers/:workerId/entries promptly.
   const response = await GET_WORKER_ENTRIES(
-    new NextRequest(`http://localhost/api/workers/${workerId}/entries?afterSeq=0`),
+    new Request(`http://localhost/api/workers/${workerId}/entries?afterSeq=0`),
     { params: Promise.resolve({ workerId }) },
   );
   const payload = (await response.json()) as {

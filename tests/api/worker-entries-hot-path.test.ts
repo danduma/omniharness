@@ -1,7 +1,6 @@
 import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
-import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getAppDataPath } from "@/server/app-root";
 
@@ -20,7 +19,12 @@ vi.mock("@/server/db/schema", () => {
   throw new Error("worker entries hot path imported @/server/db/schema");
 });
 
-import { GET } from "@/app/api/workers/[workerId]/entries/route";
+import { handleWorkerEntriesRequest } from "@/runtime/http/routes/worker-entries";
+
+const GET = (request: Request, context: { params: Promise<Record<string, string>> }) =>
+  context.params.then((params) =>
+    handleWorkerEntriesRequest(request, { surface: "test", params }),
+  );
 
 async function writeWorkerJsonl(runId: string, workerId: string) {
   const dir = getAppDataPath("run-data", runId);
@@ -47,7 +51,7 @@ describe("worker entries hot path", () => {
 
     const workerId = `${randomUUID()}-worker-1`;
     const response = await GET(
-      new NextRequest(`http://localhost/api/workers/${workerId}/entries?afterSeq=0`),
+      new Request(`http://localhost/api/workers/${workerId}/entries?afterSeq=0`),
       { params: Promise.resolve({ workerId }) },
     );
 
@@ -64,7 +68,7 @@ describe("worker entries hot path", () => {
       await writeWorkerJsonl(runId, workerId);
 
       const response = await GET(
-        new NextRequest(`http://localhost/api/workers/${workerId}/entries?afterSeq=0`),
+        new Request(`http://localhost/api/workers/${workerId}/entries?afterSeq=0`),
         { params: Promise.resolve({ workerId }) },
       );
       const payload = await response.json() as { entries: Array<{ seq: number; text: string }>; latestSeq: number };

@@ -1,6 +1,9 @@
 # OmniHarness
 
-OmniHarness is a local control plane for supervising ACP-backed coding agents from a web UI, CLI, or another ACP client. It runs a Next.js app plus an in-repo agent runtime that owns Codex, Claude, Gemini, OpenCode, and other Agent Client Protocol workers.
+OmniHarness is a local control plane for supervising ACP-backed coding agents.
+One logical headless runner owns SQLite, auth, supervision, PTYs, and agent
+processes; the shared Vite interface runs in the web/PWA, Electron, iOS,
+Android, and VS Code and can stay connected to multiple runners.
 
 Use it when you want one durable place to start coding-agent runs, watch worker output, recover conversations, inspect execution events, and keep local agent processes behind a clear supervisory layer.
 
@@ -13,6 +16,8 @@ Use it when you want one durable place to start coding-agent runs, watch worker 
 - **ACP server mode:** expose OmniHarness itself as an ACP agent over stdio for compatible clients.
 - **Managed agent environment:** spawn workers with a practical `PATH` even when the app starts from a GUI, editor, or service manager.
 - **Phone-friendly local UI:** run the web app as a local PWA for supervising work away from the terminal.
+- **Multi-runner clients:** save any number of authenticated runners, keep their
+  event streams live, and switch the visible workspace without reconnecting.
 
 ## Project Status
 
@@ -57,11 +62,34 @@ The launcher opens [http://localhost:3050](http://localhost:3050) when the local
 server is ready. Set `OMNIHARNESS_OPEN_BROWSER=0` if you do not want it to open a
 browser automatically.
 
-`./omniharness` installs dependencies when needed, builds the production server
-when needed, then starts both pieces OmniHarness needs:
+`./omniharness` installs dependencies when needed, builds the static interface
+when needed, then starts the two processes in one logical runner deployment:
 
-- the Next.js web UI on `http://localhost:3050`
-- the in-repo agent runtime on `http://127.0.0.1:7800`
+- the API/SSE server and static interface on `http://localhost:3050`
+- the co-located ACP bridge on `http://127.0.0.1:7800`
+
+Start the runner directly with `pnpm runner`. Use `--no-static` for a supported
+API-only deployment, or `--static-dir <path>` for an explicit interface
+artifact.
+
+## Clients and deployment
+
+The browser/PWA is served by any runner with `dist/interface`. The other hosts
+are remote clients and never embed or start a runner:
+
+```bash
+pnpm electron:build
+pnpm electron:package:local
+pnpm vscode:build
+pnpm vscode:package
+pnpm mobile:sync
+```
+
+Operational and security details:
+
+- [Runner deployment, data roots, proxies, backup, and smoke checks](docs/deployment/runner-operations.md)
+- [Authentication, sessions, credential storage, identity, and TLS](docs/security/authentication-and-tls.md)
+- [Desktop/editor migration, mobile/PWA limits, and v1 non-goals](docs/platforms/client-migration-and-limits.md)
 
 ### Windows Quick Start
 
@@ -335,11 +363,17 @@ a non-Docker adapter.
 
 ## Development
 
-Override runtime settings with environment variables:
+Run the runner and Vite interface together:
 
 ```bash
-OMNIHARNESS_RUNTIME_DIR=/path/to/omniharness pnpm dev
-OMNIHARNESS_BRIDGE_URL=http://127.0.0.1:7801 pnpm dev
+pnpm dev
+```
+
+Or run them independently:
+
+```bash
+pnpm runner --host 127.0.0.1 --port 3050
+pnpm dev:interface
 ```
 
 Run checks before opening a pull request:
@@ -468,7 +502,7 @@ The command must print JSON:
 - **Windows Corepack `EPERM` under `C:\Program Files\nodejs`:** install pnpm into the user npm prefix with the PowerShell commands in Windows Quick Start, then open a new shell or update `$env:Path` for the current one.
 - **Windows install fails with `'cp' is not recognized` while building `@danduma/i18n`:** update to a checkout that pins `@danduma/i18n` to the Windows-compatible commit in `package.json`, then rerun `pnpm install`.
 - **`ERR_PNPM_IGNORED_BUILDS` mentions `node-pty`:** current checkouts allow the `node-pty` build in `pnpm-workspace.yaml`. If you are upgrading an older checkout, make sure `allowBuilds.node-pty` is `true`, then rerun `pnpm install`; use `pnpm approve-builds node-pty` only if pnpm still reports the build as pending approval.
-- **Windows startup fails with `spawn pnpm ENOENT` or `spawn EINVAL`:** update to a checkout that runs pnpm through the Windows command shell from the start scripts. As a temporary workaround, start the runtime and web server from separate PowerShell windows with `pnpm exec tsx scripts/agent-runtime.ts` and `pnpm exec next start -H 0.0.0.0 -p 3050`.
+- **Windows startup fails with `spawn pnpm ENOENT` or `spawn EINVAL`:** update to a checkout that runs pnpm through the Windows command shell from the start scripts. As a temporary workaround, start `pnpm runner` and `pnpm dev:interface` from separate PowerShell windows.
 - **No supported worker appears:** install or log into at least one supported agent CLI, then run `scripts/install-agent-acp.sh --dry-run` and inspect `curl http://127.0.0.1:7800/doctor`.
 - **Port already in use:** stop the previous OmniHarness process, or set `PORT` and `OMNIHARNESS_AGENT_RUNTIME_PORT` before starting.
 - **`http://HOST:3050` times out from another machine:** confirm OmniHarness is listening on `0.0.0.0`, then allow inbound TCP traffic to that port in Windows Firewall and any hosting-provider firewall. Local `http://localhost:3050` can work even when external access is blocked.
@@ -476,9 +510,11 @@ The command must print JSON:
 
 ## Repository Layout
 
-- `src/app` - Next.js app routes and UI surfaces
-- `src/server` - local agent runtime clients, supervisors, persistence, auth, and API support
-- `src/lib` - shared client/server utilities and run-state helpers
+- `src/server` and `src/runtime` - runner, persistence, auth, lifecycle, and HTTP/SSE
+- `src/interface`, `src/ui`, and `src/components` - shared React interface
+- `src/runtime-api` - transport-neutral runner API and platform adapters
+- `src/shared` - pure contracts shared across the runner/interface boundary
+- `apps/interface`, `apps/electron`, `apps/mobile`, `apps/vscode` - platform hosts
 - `scripts` - development, setup, runtime, and maintenance scripts
 - `tests` - Vitest and Playwright coverage
 - `docs/superpowers` - design notes, specs, and implementation plans used by the project

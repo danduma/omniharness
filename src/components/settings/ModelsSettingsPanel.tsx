@@ -1,11 +1,11 @@
 import type React from "react";
-import type { LlmProfileTab } from "@/app/home/types";
+import type { LlmProfileTab } from "@/interface/home/types";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { ModelProfileForm } from "./ModelProfileForm";
-import { parseBooleanSetting } from "@/app/home/utils";
+import { parseBooleanSetting } from "@/interface/home/utils";
 
 interface ModelsSettingsPanelProps {
   activeLlmProfileTab: LlmProfileTab;

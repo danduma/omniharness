@@ -16,7 +16,6 @@ import {
   runAccountInventoryMigration,
 } from "@/server/accounts/migration";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { toNextRequest } from "./next-request";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { errorResponse } from "@/server/api-errors";
@@ -121,7 +120,7 @@ function emitAccountDeleteFailure(input: {
 }
 
 async function getAccounts(request: Request) {
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Accounts",
     action: "Load accounts",
   });
@@ -135,7 +134,7 @@ async function getAccounts(request: Request) {
 }
 
 async function postAccount(request: Request) {
-  const auth = await requireApiSession(toNextRequest(request), {
+  const auth = await requireApiSession(request, {
     source: "Accounts",
     action: "Create account",
     enforceSameOrigin: true,
@@ -211,7 +210,7 @@ export const handleAccountDetailRequest: OmniHttpHandler = async (request, conte
     if (isDelete) {
       failedAccountId = pathAccountId(request, context.params);
     }
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Accounts",
       action: isDelete ? "Delete account" : "Update account",
       enforceSameOrigin: true,
@@ -370,7 +369,7 @@ export const handleAccountDetailRequest: OmniHttpHandler = async (request, conte
 
 export const handleAccountStatusRequest: OmniHttpHandler = async (request, context) => {
   try {
-    const auth = await requireApiSession(toNextRequest(request), {
+    const auth = await requireApiSession(request, {
       source: "Accounts",
       action: "Refresh account status",
       enforceSameOrigin: true,

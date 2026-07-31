@@ -4,6 +4,7 @@ export type VSCodeWebviewHtmlOptions = {
   nonce: string;
   serverUrl: string;
   workspacePath: string | null;
+  profiles?: unknown;
 };
 
 function safeJson(value: unknown) {
@@ -16,6 +17,7 @@ export function renderVSCodeWebviewHtml({
   nonce,
   serverUrl,
   workspacePath,
+  profiles,
 }: VSCodeWebviewHtmlOptions) {
   return `<!doctype html>
 <html lang="en">
@@ -62,7 +64,7 @@ export function renderVSCodeWebviewHtml({
     .omni-run-title { font-weight: 600; }
   </style>
   <script nonce="${nonce}">
-    window.__OMNI_VSCODE_BOOTSTRAP__ = ${safeJson({ serverUrl, workspacePath })};
+    window.__OMNI_VSCODE_BOOTSTRAP__ = ${safeJson({ serverUrl, workspacePath, profiles })};
   </script>
 </head>
 <body>

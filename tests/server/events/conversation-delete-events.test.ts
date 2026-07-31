@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
 
 import { db } from "@/server/db";
 import { plans, runs } from "@/server/db/schema";
-import { DELETE } from "@/app/api/runs/[id]/route";
+import { runDeleteRoute as DELETE } from "@/../tests/helpers/runtime-routes";
 import {
   __getRingForTests,
   __resetNamedEventsForTests,
@@ -46,7 +45,7 @@ async function seed() {
 }
 
 function deleteReq(id: string) {
-  return new NextRequest(new URL(`/api/runs/${id}`, "http://localhost").toString(), {
+  return new Request(new URL(`/api/runs/${id}`, "http://localhost").toString(), {
     method: "DELETE",
   });
 }

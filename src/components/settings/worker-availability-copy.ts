@@ -1,4 +1,4 @@
-import type { WorkerAvailability } from "@/app/home/types";
+import type { WorkerAvailability } from "@/interface/home/types";
 import { t } from "@/lib/i18n";
 
 export function getWorkerSetupCommand(worker: WorkerAvailability) {
