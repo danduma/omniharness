@@ -98,6 +98,11 @@ process.stdin.on('data', (chunk) => {
         codexManagedConfigPath: process.env.CODEX_MANAGED_CONFIG_PATH || null,
         applyPatchPath,
         path: process.env.PATH || null,
+        runnerControlEnv: {
+          OMNIHARNESS_ROOT: process.env.OMNIHARNESS_ROOT || null,
+          OMNIHARNESS_INSTANCE: process.env.OMNIHARNESS_INSTANCE || null,
+          OMNIHARNESS_BRIDGE_URL: process.env.OMNIHARNESS_BRIDGE_URL || null,
+        },
         selectedEnv: {
           ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || null,
           ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN || null,
@@ -881,6 +886,12 @@ exec /bin/sh "$@"
 
     const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
     const sessionNew = events.find((event) => event.method === "session/new");
+    const initialize = events.find((event) => event.method === "initialize");
+    expect(initialize.runnerControlEnv).toEqual({
+      OMNIHARNESS_ROOT: null,
+      OMNIHARNESS_INSTANCE: null,
+      OMNIHARNESS_BRIDGE_URL: null,
+    });
     expect(sessionNew.params.mcpServers).toEqual([
       {
         type: "stdio",

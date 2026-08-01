@@ -235,6 +235,182 @@ function renderInlineMarkdown(
   return nodes;
 }
 
+type MarkdownListMarker = {
+  indent: number;
+  ordered: boolean;
+  ordinal: number | null;
+  content: string;
+};
+
+type MarkdownListTextBlock = {
+  type: "text";
+  lines: string[];
+};
+
+type MarkdownListBlock = MarkdownListTextBlock | {
+  type: "list";
+  list: MarkdownList;
+};
+
+type MarkdownList = {
+  ordered: boolean;
+  start: number | null;
+  items: MarkdownListBlock[][];
+};
+
+function indentationWidth(value: string): number {
+  let width = 0;
+  for (const character of value) {
+    width += character === "\t" ? 4 - (width % 4) : 1;
+  }
+  return width;
+}
+
+function parseListMarker(line: string): MarkdownListMarker | null {
+  const match = line.match(/^([ \t]*)(?:(\d+)\.|([-*]))[ \t]+(.+)$/);
+  if (!match) return null;
+
+  return {
+    indent: indentationWidth(match[1]),
+    ordered: Boolean(match[2]),
+    ordinal: match[2] ? Number(match[2]) : null,
+    content: match[4],
+  };
+}
+
+function appendListText(blocks: MarkdownListBlock[], text: string) {
+  const lastBlock = blocks.at(-1);
+  if (lastBlock?.type === "text") {
+    lastBlock.lines.push(text);
+    return;
+  }
+  blocks.push({ type: "text", lines: [text] });
+}
+
+function nextNonBlankLine(lines: string[], start: number): number {
+  let index = start;
+  while (index < lines.length && !lines[index].trim()) index += 1;
+  return index;
+}
+
+function parseMarkdownList(
+  lines: string[],
+  startIndex: number,
+  baseIndent: number,
+  ordered: boolean,
+): { list: MarkdownList; nextIndex: number } {
+  const firstMarker = parseListMarker(lines[startIndex]);
+  const list: MarkdownList = {
+    ordered,
+    start: ordered ? firstMarker?.ordinal ?? 1 : null,
+    items: [],
+  };
+  let index = startIndex;
+
+  while (index < lines.length) {
+    const marker = parseListMarker(lines[index]);
+    if (!marker || marker.indent !== baseIndent || marker.ordered !== ordered) break;
+
+    const blocks: MarkdownListBlock[] = [];
+    appendListText(blocks, marker.content);
+    index += 1;
+
+    while (index < lines.length) {
+      if (!lines[index].trim()) {
+        const nextIndex = nextNonBlankLine(lines, index + 1);
+        if (nextIndex >= lines.length) {
+          index = nextIndex;
+          break;
+        }
+
+        const nextMarker = parseListMarker(lines[nextIndex]);
+        const nextIndent = indentationWidth(lines[nextIndex].match(/^[ \t]*/)?.[0] ?? "");
+        if (
+          (nextMarker && nextMarker.indent >= baseIndent)
+          || (!nextMarker && nextIndent > baseIndent)
+        ) {
+          index = nextIndex;
+          if (nextMarker?.indent === baseIndent && nextMarker.ordered === ordered) break;
+          continue;
+        }
+
+        index = nextIndex;
+        break;
+      }
+
+      const nextMarker = parseListMarker(lines[index]);
+      if (nextMarker) {
+        if (nextMarker.indent === baseIndent && nextMarker.ordered === ordered) break;
+        if (nextMarker.indent > baseIndent) {
+          const nested = parseMarkdownList(lines, index, nextMarker.indent, nextMarker.ordered);
+          blocks.push({ type: "list", list: nested.list });
+          index = nested.nextIndex;
+          continue;
+        }
+        break;
+      }
+
+      const lineIndent = indentationWidth(lines[index].match(/^[ \t]*/)?.[0] ?? "");
+      if (lineIndent <= baseIndent) break;
+      appendListText(blocks, lines[index].trim());
+      index += 1;
+    }
+
+    list.items.push(blocks);
+  }
+
+  return { list, nextIndex: index };
+}
+
+function renderMarkdownList(
+  list: MarkdownList,
+  keyPrefix: string,
+  inheritTextColor: boolean,
+  projectRoot?: string | null,
+  onOpenProjectFile?: (file: ProjectFileReference) => void,
+  nested = false,
+): React.ReactElement {
+  const ListTag = list.ordered ? "ol" : "ul";
+  return (
+    <ListTag
+      key={keyPrefix}
+      start={list.ordered && list.start !== 1 ? list.start ?? undefined : undefined}
+      className={cn(
+        "space-y-1 pl-5",
+        list.ordered ? "list-decimal" : "list-disc",
+        nested && "mt-1",
+      )}
+    >
+      {list.items.map((blocks, itemIndex) => (
+        <li key={`${keyPrefix}-item-${itemIndex}`} className="pl-1">
+          {blocks.map((block, blockIndex) => (
+            block.type === "text"
+              ? (
+                  <React.Fragment key={`${keyPrefix}-text-${itemIndex}-${blockIndex}`}>
+                    {renderInlineMarkdown(
+                      block.lines.join(" "),
+                      `${keyPrefix}-text-${itemIndex}-${blockIndex}`,
+                      inheritTextColor,
+                      projectRoot,
+                      onOpenProjectFile,
+                    )}
+                  </React.Fragment>
+                )
+              : renderMarkdownList(
+                  block.list,
+                  `${keyPrefix}-nested-${itemIndex}-${blockIndex}`,
+                  inheritTextColor,
+                  projectRoot,
+                  onOpenProjectFile,
+                  true,
+                )
+          ))}
+        </li>
+      ))}
+    </ListTag>
+  );
+}
+
 export function MarkdownContent({ content, className, inheritTextColor = false, projectRoot, onOpenProjectFile }: MarkdownContentProps) {
   const lines = content.replace(/\r\n/g, "\n").split("\n");
   const blocks: React.ReactNode[] = [];
@@ -414,35 +590,18 @@ export function MarkdownContent({ content, className, inheritTextColor = false, 
       continue;
     }
 
-    const listMatch = line.match(/^\s*[-*]\s+(.+)$/);
-    const orderedListMatch = line.match(/^\s*\d+\.\s+(.+)$/);
-    if (listMatch || orderedListMatch) {
+    const listMarker = parseListMarker(line);
+    if (listMarker) {
       const start = index;
-      const ordered = Boolean(orderedListMatch);
-      const items: string[] = [];
-
-      while (index < lines.length) {
-        const itemMatch = ordered ? lines[index].match(/^\s*\d+\.\s+(.+)$/) : lines[index].match(/^\s*[-*]\s+(.+)$/);
-        if (!itemMatch) {
-          break;
-        }
-        items.push(itemMatch[1]);
-        index += 1;
-      }
-
-      const ListTag = ordered ? "ol" : "ul";
-      blocks.push(
-        <ListTag
-          key={`list-${start}`}
-          className={cn("space-y-1 pl-5", ordered ? "list-decimal" : "list-disc")}
-        >
-          {items.map((item, itemIndex) => (
-            <li key={`${start}-${itemIndex}`} className="pl-1">
-              {renderInlineMarkdown(item, `list-${start}-${itemIndex}`, inheritTextColor, projectRoot, onOpenProjectFile)}
-            </li>
-          ))}
-        </ListTag>,
-      );
+      const parsed = parseMarkdownList(lines, start, listMarker.indent, listMarker.ordered);
+      blocks.push(renderMarkdownList(
+        parsed.list,
+        `list-${start}`,
+        inheritTextColor,
+        projectRoot,
+        onOpenProjectFile,
+      ));
+      index = parsed.nextIndex;
       continue;
     }
 

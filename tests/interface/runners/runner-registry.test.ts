@@ -25,6 +25,7 @@ function profile(id: string): RunnerProfile {
 
 class FakeConnection extends StateManager<RunnerConnectionSnapshot> {
   start = vi.fn(async () => {});
+  retry = vi.fn(async () => {});
   stop = vi.fn();
   updateProfile = vi.fn();
   setActive = vi.fn((active: boolean) => {
@@ -160,5 +161,33 @@ describe("RunnerRegistry", () => {
     expect(created).toHaveLength(2);
     expect(created[0]?.stop).toHaveBeenCalledOnce();
     expect(registry.getConnection("one")).toBe(created[1]);
+  });
+
+  it("retries only connections that can recover after the app resumes", async () => {
+    const connections = new Map<string, FakeConnection>();
+    const registry = new RunnerRegistry({
+      profileStore: profileStore([
+        profile("online"),
+        profile("degraded"),
+        profile("offline"),
+        profile("auth"),
+      ]),
+      connectionFactory: (item) => {
+        const connection = new FakeConnection(item.id, []);
+        connections.set(item.id, connection);
+        return connection as unknown as RunnerConnection;
+      },
+    });
+    await registry.start();
+    connections.get("degraded")?.patch({ status: "degraded" });
+    connections.get("offline")?.patch({ status: "offline" });
+    connections.get("auth")?.patch({ status: "needs-reauth" });
+
+    registry.retryRecoverableConnections();
+
+    expect(connections.get("degraded")?.retry).toHaveBeenCalledOnce();
+    expect(connections.get("offline")?.retry).toHaveBeenCalledOnce();
+    expect(connections.get("online")?.retry).not.toHaveBeenCalled();
+    expect(connections.get("auth")?.retry).not.toHaveBeenCalled();
   });
 });

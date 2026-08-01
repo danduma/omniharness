@@ -1,13 +1,14 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { execFileSync } from "child_process";
 import { tmpdir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   NATIVE_CODEX_APPLICATION_CANDIDATES,
   buildManagedPath,
   createToolDiagnostics,
   resolveCommand,
+  stripRunnerControlEnv,
   withCodexStandardTooling,
 } from "@/server/agent-runtime/tool-env";
 
@@ -31,6 +32,15 @@ afterEach(() => {
 });
 
 describe("agent runtime tool environment diagnostics", () => {
+  it("does not pass the runner's live data root to agent processes", () => {
+    expect(stripRunnerControlEnv({
+      PATH: "/usr/bin",
+      OMNIHARNESS_ROOT: "/srv/omniharness/live",
+      OMNIHARNESS_INSTANCE: "production",
+      OMNIHARNESS_BRIDGE_URL: "http://127.0.0.1:7800",
+    })).toEqual({ PATH: "/usr/bin" });
+  });
+
   it("finds the native Codex binary bundled with the ChatGPT app", () => {
     expect(NATIVE_CODEX_APPLICATION_CANDIDATES).toContain("/Applications/ChatGPT.app/Contents/Resources/codex");
   });
@@ -149,5 +159,77 @@ describe("agent runtime tool environment diagnostics", () => {
     expect(contents).toContain("web_search_request = true");
     expect(contents).toContain("apply_patch_freeform = true");
     expect(contents).toContain("unified_exec = true");
+  });
+
+  it("sanitizes current model metadata for a legacy Codex ACP runner", () => {
+    const binDir = createTempDir("omni-tool-env-codex-bin-");
+    const codexPath = join(binDir, "codex");
+    const rawCatalog = JSON.stringify({
+      models: [{
+        slug: "gpt-5.6-sol",
+        display_name: "GPT-5.6-Sol",
+        supported_reasoning_levels: [
+          { effort: "low", description: "Low" },
+          { effort: "xhigh", description: "Extra high" },
+          { effort: "max", description: "Maximum" },
+          { effort: "ultra", description: "Automatic delegation" },
+        ],
+      }],
+    });
+    writeFileSync(
+      codexPath,
+      `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(rawCatalog)});\n`,
+      { mode: 0o755 },
+    );
+
+    const env: Record<string, string | undefined> = withCodexStandardTooling({
+      HOME: createTempDir("omni-tool-env-home-"),
+      PATH: `${binDir}:${dirname(process.execPath)}`,
+      OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+    });
+
+    const managedConfig = readFileSync(env.CODEX_MANAGED_CONFIG_PATH || "", "utf8");
+    const catalogPathLiteral = managedConfig.match(/^model_catalog_json = (".+")$/m)?.[1];
+    expect(catalogPathLiteral).toBeDefined();
+    const catalog = JSON.parse(readFileSync(JSON.parse(catalogPathLiteral || '""'), "utf8"));
+    expect(catalog.models[0].slug).toBe("gpt-5.6-sol");
+    expect(catalog.models[0].supported_reasoning_levels.map((level: { effort: string }) => level.effort)).toEqual([
+      "low",
+      "xhigh",
+    ]);
+    expect(catalog.models[0].supports_reasoning_summaries).toBe(true);
+  });
+
+  it("preserves every reasoning level for the maintained Codex ACP runner", () => {
+    const binDir = createTempDir("omni-tool-env-current-acp-");
+    const rawCatalog = JSON.stringify({
+      models: [{
+        slug: "gpt-5.6-sol",
+        supported_reasoning_levels: [
+          { effort: "low" },
+          { effort: "xhigh" },
+          { effort: "max" },
+          { effort: "ultra" },
+        ],
+      }],
+    });
+    writeFileSync(join(binDir, "codex"), `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(rawCatalog)});\n`, { mode: 0o755 });
+    writeFileSync(join(binDir, "codex-acp"), "#!/bin/sh\necho '@agentclientprotocol/codex-acp 1.1.7'\n", { mode: 0o755 });
+
+    const env: Record<string, string | undefined> = withCodexStandardTooling({
+      HOME: createTempDir("omni-tool-env-home-"),
+      PATH: `${binDir}:${dirname(process.execPath)}`,
+      OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+    });
+
+    const managedConfig = readFileSync(env.CODEX_MANAGED_CONFIG_PATH || "", "utf8");
+    const catalogPathLiteral = managedConfig.match(/^model_catalog_json = (".+")$/m)?.[1];
+    const catalog = JSON.parse(readFileSync(JSON.parse(catalogPathLiteral || '""'), "utf8"));
+    expect(catalog.models[0].supported_reasoning_levels.map((level: { effort: string }) => level.effort)).toEqual([
+      "low",
+      "xhigh",
+      "max",
+      "ultra",
+    ]);
   });
 });

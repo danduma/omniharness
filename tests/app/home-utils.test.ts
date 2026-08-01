@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildOptimisticCreatedConversationSnapshot, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseBrowserConversationRoute, parseCollapsedProjectPaths, reorderExplicitProjectPaths, shouldClearMissingSelectedRunFromAuthoritativeSnapshot, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowLatestRecoveryAction, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/interface/home/utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildOptimisticCreatedConversationSnapshot, buildOptimisticSentConversationMessage, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseBrowserConversationRoute, parseCollapsedProjectPaths, reorderExplicitProjectPaths, resolveComposerModelValue, resolveOptimisticSentConversationMessage, resolveSavedComposerModel, resolveSelectedWorkerModel, shouldClearMissingSelectedRunFromAuthoritativeSnapshot, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowLatestRecoveryAction, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/interface/home/utils";
 import type { EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord, SupervisorInterventionRecord } from "@/interface/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 
@@ -1484,5 +1484,100 @@ describe("home utils", () => {
       expect.objectContaining({ key: "workerCwd", label: "Worker cwd", value: "." }),
       expect.objectContaining({ key: "resolvedWorkerCwd", label: "Resolved cwd", value: "/workspace/app" }),
     ]);
+  });
+});
+
+describe("optimistic sent conversation messages", () => {
+  const emptyState = (): EventStreamState => ({
+    messages: [],
+    runs: [buildRun({ id: "run-1", status: "running" })],
+    plans: [],
+    accounts: [],
+    agents: [],
+    workers: [],
+    planItems: [],
+    clarifications: [],
+    executionEvents: [],
+    supervisorInterventions: [],
+  });
+
+  it("builds a user message row that renders through the direct conversation path", () => {
+    const optimistic = buildOptimisticSentConversationMessage({
+      runId: "run-1",
+      content: "hello there",
+      attachments: [{ id: "a1", kind: "image", name: "shot.png", mimeType: "image/png", size: 10 }],
+    });
+
+    expect(optimistic.id.startsWith("optimistic-")).toBe(true);
+    expect(optimistic).toMatchObject({
+      runId: "run-1",
+      role: "user",
+      content: "hello there",
+    });
+    expect(optimistic.attachments).toHaveLength(1);
+    expect(Number.isNaN(Date.parse(optimistic.createdAt))).toBe(false);
+  });
+
+  it("swaps the optimistic row for the server message in place", () => {
+    const optimistic = buildOptimisticSentConversationMessage({ runId: "run-1", content: "hello" });
+    const withOptimistic = appendSentConversationMessageSnapshot(emptyState(), optimistic);
+    const serverMessage: MessageRecord = {
+      id: "message-1",
+      runId: "run-1",
+      role: "user",
+      content: "hello",
+      createdAt: "2026-08-01T10:00:01.000Z",
+    };
+
+    const resolved = resolveOptimisticSentConversationMessage(withOptimistic, optimistic.id, serverMessage);
+
+    expect(resolved.messages.map((message) => message.id)).toEqual(["message-1"]);
+  });
+
+  it("removes the optimistic row when the server produced no message row", () => {
+    const optimistic = buildOptimisticSentConversationMessage({ runId: "run-1", content: "hello" });
+    const withOptimistic = appendSentConversationMessageSnapshot(emptyState(), optimistic);
+
+    const resolved = resolveOptimisticSentConversationMessage(withOptimistic, optimistic.id, null);
+
+    expect(resolved.messages).toEqual([]);
+  });
+
+  it("does not duplicate a server message the snapshot already contains", () => {
+    const optimistic = buildOptimisticSentConversationMessage({ runId: "run-1", content: "hello" });
+    const serverMessage: MessageRecord = {
+      id: "message-1",
+      runId: "run-1",
+      role: "user",
+      content: "hello",
+      createdAt: "2026-08-01T10:00:01.000Z",
+    };
+    const state = appendSentConversationMessageSnapshot(
+      appendSentConversationMessageSnapshot(emptyState(), optimistic),
+      serverMessage,
+    );
+
+    const resolved = resolveOptimisticSentConversationMessage(state, optimistic.id, serverMessage);
+
+    expect(resolved.messages.map((message) => message.id)).toEqual(["message-1"]);
+  });
+});
+
+describe("worker model normalization", () => {
+  it("maps the GPT-5.6 family between Codex and OpenCode ids", () => {
+    expect(resolveSelectedWorkerModel("opencode", "gpt-5.6-sol")).toBe("openai/gpt-5.6-sol");
+    expect(resolveSelectedWorkerModel("opencode", "GPT-5.6 Terra")).toBe("openai/gpt-5.6-terra");
+    expect(resolveSelectedWorkerModel("codex", "openai/gpt-5.6-luna")).toBe("gpt-5.6-luna");
+  });
+
+  it("restores GPT-5.6 selections using the provider's id shape", () => {
+    expect(resolveComposerModelValue("gpt-5.6-sol")).toBe("gpt-5.6-sol");
+    expect(resolveComposerModelValue("openai/gpt-5.6-sol")).toBe("openai/gpt-5.6-sol");
+  });
+
+  it("migrates only the superseded default while preserving explicit saved choices", () => {
+    expect(resolveSavedComposerModel("claude-opus-5")).toBe("gpt-5.6-sol");
+    expect(resolveSavedComposerModel("gpt-5.4")).toBe("gpt-5.4");
+    expect(resolveSavedComposerModel("  ")).toBe("");
   });
 });

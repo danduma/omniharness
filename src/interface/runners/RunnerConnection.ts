@@ -415,6 +415,7 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
       onOpen: () => {
         if (!this.isCurrent(generation)) return;
         this.retryAttempt = 0;
+        this.clearRetry();
         if (this.getSnapshot().status !== "runner-stopping") {
           this.patch({ status: "online", retryAt: null, lastError: null });
         }
@@ -426,6 +427,13 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
       },
       onError: (error) => {
         if (this.isCurrent(generation)) {
+          if (error.code === "runtime.events_reconnecting") {
+            if (this.getSnapshot().status !== "runner-stopping") {
+              this.patch({ status: "degraded", lastError: error, retryAt: null });
+              this.scheduleReconnect();
+            }
+            return;
+          }
           this.handleConnectionError(error);
         }
       },

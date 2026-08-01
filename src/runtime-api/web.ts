@@ -15,6 +15,7 @@ export interface WebRuntimeApiOptions {
 
 type RuntimeEventSource = {
   close(): void;
+  readyState?: number;
   onopen?: (() => void) | null;
   addEventListener(type: string, listener: (event: RuntimeStreamEvent) => void): void;
 };
@@ -99,7 +100,19 @@ export function createWebRuntimeAPIs(options: WebRuntimeApiOptions = {}): Runtim
         nextSource.addEventListener("runner.renamed", emit);
         nextSource.addEventListener("runner.rekeyed", emit);
         nextSource.addEventListener("error", () => {
+          if (closed || source !== nextSource) {
+            return;
+          }
+          if (nextSource.readyState !== 2) {
+            handlers.onError?.({
+              code: "runtime.events_reconnecting",
+              message: "Event stream is reconnecting.",
+              surface: "web",
+            });
+            return;
+          }
           nextSource.close();
+          source = null;
           handlers.onError?.({
             code: "runtime.events_failed",
             message: "Event stream failed.",

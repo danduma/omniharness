@@ -255,6 +255,11 @@ test("terminal surfaces fetch failures in the frontend instead of silently dropp
   expect(terminalSource).not.toContain("normalizeAppError(error).message");
 });
 
+test("native conversation scrolling requests older history from the actual viewport", () => {
+  expect(terminalSource).toContain('variant === "native"\n        && hasMoreHistory\n        && shouldTerminalRequestMoreHistory(scrollContainer)');
+  expect(terminalSource).toContain('scrollContainer.addEventListener("scroll", handleScroll, { passive: true });');
+});
+
 test("terminal only follows live output while the viewport is already near the bottom", () => {
   expect(terminalScrollSource).toContain("const TERMINAL_BOTTOM_THRESHOLD_PX = 1");
   expect(terminalSource).not.toContain("shouldForceFollowPendingAssistant");

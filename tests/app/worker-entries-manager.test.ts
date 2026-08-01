@@ -450,3 +450,52 @@ describe("WorkerEntriesManager", () => {
     expect(states.at(-1)).toBe(1);
   });
 });
+
+describe("WorkerEntriesManager.hasEverLoaded", () => {
+  it("latches true across wake-up catch-up fetches", async () => {
+    const gate = deferred<{ entries: WorkerEntry[]; latestSeq: number }>();
+    let call = 0;
+    const listEntries = vi.fn(() => {
+      call += 1;
+      if (call === 1) {
+        return Promise.resolve({ entries: [entry(1)], latestSeq: 1 });
+      }
+      return gate.promise;
+    });
+    const manager = new WorkerEntriesManager({ listEntries });
+
+    expect(manager.hasEverLoaded("w1")).toBe(false);
+    await manager.ensureLoaded("w1");
+    expect(manager.isLoaded("w1")).toBe(true);
+    expect(manager.hasEverLoaded("w1")).toBe(true);
+
+    // A wake-up hint advances latestKnownSeq and starts a catch-up fetch;
+    // isLoaded drops until the gap closes, but hasEverLoaded must not.
+    manager.onWakeUp({ workerId: "w1", seq: 2 });
+    expect(manager.isLoaded("w1")).toBe(false);
+    expect(manager.hasEverLoaded("w1")).toBe(true);
+
+    gate.resolve({ entries: [entry(2)], latestSeq: 2 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(manager.isLoaded("w1")).toBe(true);
+    expect(manager.hasEverLoaded("w1")).toBe(true);
+  });
+
+  it("stays false for cache-hydrated entries until the tail is validated", async () => {
+    const storage = memoryStorage();
+    storage.setItem("omni-worker-entries-cache:v1", JSON.stringify({
+      version: 1,
+      workers: { w1: { updatedAt: 1, entries: [entry(1)] } },
+    }));
+    const manager = new WorkerEntriesManager({
+      listEntries: vi.fn(async () => ({ entries: [entry(1)], latestSeq: 1 })),
+      storage,
+    });
+
+    expect(manager.getState("w1").needsTailValidation).toBe(true);
+    expect(manager.hasEverLoaded("w1")).toBe(false);
+
+    await manager.ensureLoaded("w1");
+    expect(manager.hasEverLoaded("w1")).toBe(true);
+  });
+});

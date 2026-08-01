@@ -20,7 +20,7 @@ import { sanitizeAcpStream } from "./acp-stream-sanitizer";
 import { applyCodexBridgeEnv, buildCodexConfigArgs, shouldSetRequestedMode } from "./codex";
 import { buildGeminiArgs, isFullAccessAgentMode, resolveFullGeminiUuid } from "./gemini";
 import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
-import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, withCodexStandardTooling, withManagedPath } from "./tool-env";
+import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, stripRunnerControlEnv, withCodexStandardTooling, withManagedPath } from "./tool-env";
 import {
   appendBoundedText,
   appendMessageChunk,
@@ -1628,6 +1628,7 @@ export class AgentRuntimeManager {
       applyClaudeKeychainOAuthToken(finalEnv);
     }
     if (gatewayOverlay) Object.assign(finalEnv, gatewayOverlay);
+    const agentProcessEnv = stripRunnerControlEnv(finalEnv);
 
     const requestedMode = input.mode || configuredAgent?.mode;
     const defaultCommand = input.command || configuredAgent?.command || type;
@@ -1650,7 +1651,7 @@ export class AgentRuntimeManager {
           mode: requestedMode ?? null,
           mcpServers,
           skillRoots,
-          envFingerprint: computeEnvFingerprint(finalEnv as NodeJS.ProcessEnv),
+          envFingerprint: computeEnvFingerprint(agentProcessEnv as NodeJS.ProcessEnv),
         })
       : null;
     const pooledMember = poolKey ? this.workerPool.checkout(poolKey) : null;
@@ -1705,7 +1706,7 @@ export class AgentRuntimeManager {
             cwd,
             command: expandHomePath(candidate.command, finalEnv),
             args: candidate.args,
-            env: finalEnv as NodeJS.ProcessEnv,
+            env: agentProcessEnv as NodeJS.ProcessEnv,
             startupTimeoutMs: readPositiveInteger(
               baseEnv.OMNIHARNESS_AGENT_STARTUP_TIMEOUT_MS,
               DEFAULT_AGENT_STARTUP_TIMEOUT_MS,
@@ -2368,6 +2369,7 @@ export class AgentRuntimeManager {
       applyClaudeKeychainOAuthToken(finalEnv);
     }
     if (gatewayOverlay) Object.assign(finalEnv, gatewayOverlay);
+    const agentProcessEnv = stripRunnerControlEnv(finalEnv);
 
     const requestedMode = input.mode || configuredAgent?.mode || null;
     const poolKey = computeWorkerPoolKey({
@@ -2377,7 +2379,7 @@ export class AgentRuntimeManager {
       mode: requestedMode,
       mcpServers,
       skillRoots,
-      envFingerprint: computeEnvFingerprint(finalEnv as NodeJS.ProcessEnv),
+      envFingerprint: computeEnvFingerprint(agentProcessEnv as NodeJS.ProcessEnv),
     });
 
     const candidate = defaultCommandFor(type, requestedModel, requestedMode);
@@ -2404,7 +2406,7 @@ export class AgentRuntimeManager {
         cwd,
         command: expandHomePath(candidate.command, finalEnv),
         args: candidate.args,
-        env: finalEnv as NodeJS.ProcessEnv,
+        env: agentProcessEnv as NodeJS.ProcessEnv,
         startupTimeoutMs: readPositiveInteger(
           baseEnv.OMNIHARNESS_AGENT_STARTUP_TIMEOUT_MS,
           DEFAULT_AGENT_STARTUP_TIMEOUT_MS,

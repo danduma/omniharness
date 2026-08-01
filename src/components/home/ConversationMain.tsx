@@ -624,6 +624,10 @@ interface ConversationMainProps {
   appErrors: AppErrorDescriptor[];
   conversationFailure: NoticeDescriptor | null;
   directConversationMessages: TerminalUserMessage[];
+  /** Ids of messages this client sent itself — rendered past the stream fallback gate. */
+  locallySentUserMessageIds?: ReadonlySet<string>;
+  /** Ids of optimistic messages whose send request is still in flight. */
+  sendingUserMessageIds?: ReadonlySet<string>;
   expandedDirectMessageIds: Set<string>;
   toggleDirectMessageExpansion: (messageId: string) => void;
   primaryConversationAgent: AgentSnapshot | null;
@@ -780,6 +784,8 @@ export function ConversationMain({
   appErrors,
   conversationFailure,
   directConversationMessages,
+  locallySentUserMessageIds,
+  sendingUserMessageIds,
   expandedDirectMessageIds,
   toggleDirectMessageExpansion,
   primaryConversationAgent,
@@ -902,10 +908,16 @@ export function ConversationMain({
     ];
   }, [directWorkerStream.entries, primaryConversationAgent?.pendingElicitations]);
   const isUsingConversationTranscriptEntries = conversationTranscript.entries.length > 0;
+  // Latched (`hasEverLoaded` / `hasLoadedOnce`), not momentary (`isLoaded`):
+  // isLoaded flips false on every appended entry and every 2s transcript
+  // poll, and each flip removed fallback-rendered user bubbles from the
+  // transcript — the just-sent message visibly blinked in and out until its
+  // stream entry arrived. The gate only exists to keep stale historical
+  // rows from rendering before the stream's *first* load.
   const allowDirectUserMessageFallback = Boolean(
     !unifiedWorkerStreamEnabled
-      || directWorkerStream.isLoaded
-      || conversationTranscript.isLoaded,
+      || directWorkerStream.hasEverLoaded
+      || conversationTranscript.hasLoadedOnce,
   );
   const directConversationLoadState = deriveConversationLoadState({
     snapshotLoaded: isSelectedConversationPreviewAvailable,
@@ -1083,6 +1095,8 @@ export function ConversationMain({
                 }
                 multiWorkerOrdering={conversationRanOnMultipleWorkers}
                 allowUserMessageFallback={allowDirectUserMessageFallback}
+                ungatedUserMessageIds={locallySentUserMessageIds}
+                sendingUserMessageIds={sendingUserMessageIds}
                 getUserMessageActions={getUserMessageActions}
                 editingUserMessageId={editingMessageId}
                 editingUserMessageValue={editingMessageValue}

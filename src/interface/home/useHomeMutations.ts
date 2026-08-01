@@ -22,8 +22,10 @@ import {
   appendCreatedConversationSnapshot,
   appendSentConversationMessageSnapshot,
   buildOptimisticCreatedConversationSnapshot,
+  buildOptimisticSentConversationMessage,
   buildInlineError,
   removeRunFromHomeState,
+  resolveOptimisticSentConversationMessage,
   resolveSelectedWorkerModel,
   type CreatedConversationSnapshot,
 } from "./utils";
@@ -79,6 +81,14 @@ export interface UseHomeMutationsParams {
   pendingDeletedRunIdsRef: React.RefObject<Set<string>>;
   pendingCreatedConversationSnapshotsRef: React.RefObject<Map<string, CreatedConversationSnapshot>>;
   pendingSentConversationMessagesRef: React.RefObject<Map<string, MessageRecord>>;
+  /**
+   * Ids of user messages this client sent itself. Threaded to the Terminal
+   * as `ungatedUserMessageIds` so a just-sent bubble bypasses the stream
+   * fallback gate and never flickers while the stream catches up.
+   */
+  locallySentMessageIdsRef: React.RefObject<Set<string>>;
+  /** Ids of optimistic user messages whose send request is still in flight. */
+  sendingMessageIdsRef: React.RefObject<Set<string>>;
   loadingWorkerHistoryIdsRef: React.RefObject<Set<string>>;
   scrollConversationToBottom: () => void;
   sessionQueryRefetch: () => Promise<unknown>;
@@ -99,6 +109,8 @@ export function useHomeMutations({
   pendingDeletedRunIdsRef,
   pendingCreatedConversationSnapshotsRef,
   pendingSentConversationMessagesRef,
+  locallySentMessageIdsRef,
+  sendingMessageIdsRef,
   loadingWorkerHistoryIdsRef,
   scrollConversationToBottom,
   sessionQueryRefetch,
@@ -120,6 +132,7 @@ export function useHomeMutations({
     setApiKeys,
     setShowSettings,
     setMobileNavOpen,
+    setAttachments,
     clearAttachments,
   } = homeUiSetters;
   const preferredWorkerAccountId = selectedWorkerAccountId === "auto" ? null : selectedWorkerAccountId;
@@ -528,10 +541,47 @@ export function useHomeMutations({
   });
 
   const sendConversationMessage = useMutation({
-    onMutate: () => ({
-      commandAtStart: homeUiStateManager.getSnapshot().command,
-      attachmentsAtStart: homeUiStateManager.getSnapshot().attachments,
-    }),
+    // The user's bubble must exist continuously from the moment they hit
+    // send: optimistic row now, swapped for the server's row on success,
+    // removed (with the draft restored) on error. Appearing only on POST
+    // success made the bubble pop in late and flicker.
+    onMutate: (payload: {
+      runId: string;
+      content: string;
+      attachments: PendingChatAttachment[];
+      busyAction?: BusyMessageAction;
+    }) => {
+      const snapshot = homeUiStateManager.getSnapshot();
+      const optimisticMessage = buildOptimisticSentConversationMessage({
+        runId: payload.runId,
+        content: payload.content,
+        attachments: payload.attachments.map(({ id, kind, name, mimeType, size, previewUrl }) => (
+          { id, kind, name, mimeType, size, previewUrl }
+        )),
+      });
+      pendingSentConversationMessagesRef.current.set(optimisticMessage.id, optimisticMessage);
+      locallySentMessageIdsRef.current.add(optimisticMessage.id);
+      sendingMessageIdsRef.current.add(optimisticMessage.id);
+      setState((current) => appendSentConversationMessageSnapshot(current, optimisticMessage));
+      const ownsSideEffects = ownsConversationSideEffects({
+        runId: payload.runId,
+        currentSelectedRunId: snapshot.selectedRunId,
+      });
+      const composerCleared = ownsSideEffects && snapshot.command === payload.content;
+      if (composerCleared) {
+        setCommand("");
+        clearAttachments();
+      }
+      if (ownsSideEffects) {
+        scrollConversationToBottom();
+      }
+      return {
+        commandAtStart: snapshot.command,
+        attachmentsAtStart: snapshot.attachments,
+        optimisticMessageId: optimisticMessage.id,
+        composerCleared,
+      };
+    },
     mutationFn: async (payload: {
       runId: string;
       content: string;
@@ -566,8 +616,14 @@ export function useHomeMutations({
       }>;
     },
     onSuccess: (data, variables, context) => {
+      if (context) {
+        pendingSentConversationMessagesRef.current.delete(context.optimisticMessageId);
+        locallySentMessageIdsRef.current.delete(context.optimisticMessageId);
+        sendingMessageIdsRef.current.delete(context.optimisticMessageId);
+      }
       if (data.message) {
         pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
+        locallySentMessageIdsRef.current.add(data.message.id);
       }
       if (data.queuedMessage) {
         if (variables.busyAction === "steer" && data.message) {
@@ -576,13 +632,17 @@ export function useHomeMutations({
           busyMessageQueueManager.upsertQueuedMessage(data.queuedMessage);
         }
       }
-      setState((current) => appendSentConversationMessageSnapshot(current, data.message));
+      setState((current) => (
+        context
+          ? resolveOptimisticSentConversationMessage(current, context.optimisticMessageId, data.message)
+          : appendSentConversationMessageSnapshot(current, data.message)
+      ));
       const snapshot = homeUiStateManager.getSnapshot();
       const ownsSideEffects = ownsConversationSideEffects({
         runId: variables.runId,
         currentSelectedRunId: snapshot.selectedRunId,
       });
-      if (ownsSideEffects && context && shouldClearSubmittedComposer({
+      if (ownsSideEffects && context && !context.composerCleared && shouldClearSubmittedComposer({
         submittedContent: variables.content,
         commandAtStart: context.commandAtStart,
         currentCommand: snapshot.command,
@@ -596,11 +656,36 @@ export function useHomeMutations({
         scrollConversationToBottom();
       }
     },
+    onError: (_error, variables, context) => {
+      if (!context) {
+        return;
+      }
+      pendingSentConversationMessagesRef.current.delete(context.optimisticMessageId);
+      locallySentMessageIdsRef.current.delete(context.optimisticMessageId);
+      sendingMessageIdsRef.current.delete(context.optimisticMessageId);
+      setState((current) => resolveOptimisticSentConversationMessage(current, context.optimisticMessageId, null));
+      // Restore the draft we cleared optimistically, unless the user has
+      // already typed or attached something new.
+      const snapshot = homeUiStateManager.getSnapshot();
+      if (
+        context.composerCleared
+        && ownsConversationSideEffects({
+          runId: variables.runId,
+          currentSelectedRunId: snapshot.selectedRunId,
+        })
+        && !snapshot.command.trim()
+        && snapshot.attachments.length === 0
+      ) {
+        setCommand(context.commandAtStart);
+        setAttachments(context.attachmentsAtStart);
+      }
+    },
   });
 
   const { cancelQueuedMessage, sendQueuedMessageNow, interruptQueuedMessage } = useQueuedMessageMutations({
     setState,
     pendingSentConversationMessagesRef,
+    locallySentMessageIdsRef,
     scrollConversationToBottom,
   });
 
@@ -613,6 +698,7 @@ export function useHomeMutations({
     onSuccess: (data, variables) => {
       if (data.message) {
         pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
+        locallySentMessageIdsRef.current.add(data.message.id);
       }
       setState((current) => appendSentConversationMessageSnapshot(current, data.message));
       if (ownsConversationSideEffects({

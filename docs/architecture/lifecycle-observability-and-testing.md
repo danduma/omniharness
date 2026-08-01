@@ -282,6 +282,13 @@ A separate Node process. A temporary `OMNI_HOME`. A fresh sqlite. A dedicated
 port. No collision with the real dev server. Tear it all down on exit.
 Scenarios can run in parallel because each one owns its own server.
 
+This isolation must not trust inherited runner environment. Agents spawned by
+OmniHarness may inherit server control variables, so Vitest always replaces
+`OMNIHARNESS_ROOT` with a newly created temporary root. Database startup in a
+recognized test process refuses any non-temporary root, and ACP agent children
+must not receive `OMNIHARNESS_ROOT`, `OMNIHARNESS_INSTANCE`, bridge addresses,
+or runner addresses. A test failure is always preferable to opening live data.
+
 ### Rule 8: snapshot bootstrap, event tail thereafter
 
 Every harness client starts by calling `GET /api/events?snapshot=1` for state

@@ -345,6 +345,11 @@ export function HomeApp({
   const pendingDeletedRunIdsRef = useRef<Set<string>>(new Set());
   const pendingCreatedConversationSnapshotsRef = useRef<Map<string, CreatedConversationSnapshot>>(new Map());
   const pendingSentConversationMessagesRef = useRef<Map<string, MessageRecord>>(new Map());
+  // Messages this client sent itself (session scoped). The Terminal renders
+  // them past the stream fallback gate so a just-sent bubble never flickers
+  // while the worker stream catches up.
+  const locallySentMessageIdsRef = useRef<Set<string>>(new Set());
+  const sendingMessageIdsRef = useRef<Set<string>>(new Set());
   const loadingWorkerHistoryIdsRef = useRef<Set<string>>(new Set());
   const autoResumeStateRef = useRef<Map<string, { failureKey: string; targetMessageId: string; attempts: number; timerId: ReturnType<typeof setTimeout> | null }>>(new Map());
   const autoResumeRuntimeFactsRef = useRef({
@@ -610,6 +615,8 @@ export function HomeApp({
     pendingDeletedRunIdsRef,
     pendingCreatedConversationSnapshotsRef,
     pendingSentConversationMessagesRef,
+    locallySentMessageIdsRef,
+    sendingMessageIdsRef,
     loadingWorkerHistoryIdsRef,
     scrollConversationToBottom,
     sessionQueryRefetch: sessionQuery.refetch,
@@ -1380,6 +1387,8 @@ export function HomeApp({
           appErrors={appErrors}
           conversationFailure={conversationFailure}
           directConversationMessages={directConversationMessages}
+          locallySentUserMessageIds={locallySentMessageIdsRef.current}
+          sendingUserMessageIds={sendingMessageIdsRef.current}
           expandedDirectMessageIds={expandedDirectMessageIds}
           toggleDirectMessageExpansion={actions.toggleDirectMessageExpansion}
           primaryConversationAgent={vm.primaryConversationAgent}

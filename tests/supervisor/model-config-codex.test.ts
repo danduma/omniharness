@@ -18,7 +18,7 @@ describe("model-config-codex", () => {
       const config = getSupervisorModelConfig(env);
       
       expect(config.provider).toBe("codex");
-      expect(config.model).toBe("gpt-5.4");
+      expect(config.model).toBe("gpt-5.6-sol");
     });
 
     it("falls back to secondary if codex credentials are missing", () => {

@@ -23,6 +23,14 @@ output, queued send-now persistence, duplicate first messages, and stuck
 "Thinking..." states, are documented in
 `docs/architecture/direct-control-session-regressions.md`.
 
+Frontend transcript pagination starts with a bounded tail page and loads older
+pages when the reader reaches the top. The history trigger must listen on the
+element that actually owns `scrollTop`. In native conversation mode that is the
+outer Radix scroll-area viewport, not the inner `Terminal` content element.
+Tests for native scrolling must assert the handler is attached to the resolved
+viewport; testing the page manager alone does not prove that users can request
+the preceding page.
+
 Frontend loading and stale-cache regressions involving sessions
 `7ebf2bc8e556` and `17a194b3c1c1` are documented in
 `docs/architecture/state-staleness-and-session-lifecycle-lessons.md`. That
@@ -186,10 +194,27 @@ per-worker state. The contract is:
 The Terminal renders either entries (when provided) or the legacy
 `agent` + `userMessages` props (before cutover). When `entries` is provided,
 the worker stream is the transcript authority. Legacy `userMessages` rows may
-be used only as a gated fallback for stale historical data after
-`WorkerEntriesManager.isLoaded(workerId)` is true; before that point, rendering
+be used only as a gated fallback for stale historical data after the stream's
+**first** validated load (`WorkerEntriesManager.hasEverLoaded(workerId)` /
+`ConversationTranscriptState.hasLoadedOnce`); before that point, rendering
 fallback rows can create a false chronology while the contiguous stream is
 still arriving.
+
+The gate must be latched on first load, not on momentary `isLoaded`:
+`isLoaded` flips false on every appended entry (wake-up → catch-up fetch)
+and on every transcript poll, and gating fallback rows on it made the
+just-sent user bubble blink in and out of the transcript until its
+`user_input` entry arrived. Two related rules, both covered by
+`tests/ui/terminal-user-message-persistence.test.ts`:
+
+- Messages this client sent itself bypass the gate entirely (the
+  Terminal's `ungatedUserMessageIds` prop) — a locally sent message can
+  never be stale history.
+- The user's bubble exists continuously from the send click: an
+  optimistic row is appended in `sendConversationMessage.onMutate`,
+  swapped in place for the server row on success, and removed (with the
+  composer draft restored) on error. See
+  `docs/superpowers/learnings/2026-08-01-render-gates-must-latch-not-track-momentary-load-state.md`.
 
 ## Dual-write feature flag
 

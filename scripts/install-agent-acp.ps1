@@ -1,10 +1,11 @@
 param(
-  [ValidateSet("auto", "binary", "cargo")]
+  [ValidateSet("auto", "npm", "binary", "cargo")]
   [string]$CodexAcp = $(if ($env:OMNIHARNESS_CODEX_ACP_INSTALL) { $env:OMNIHARNESS_CODEX_ACP_INSTALL } else { "auto" }),
   [string]$ReleaseRepo = $(if ($env:OMNIHARNESS_CODEX_ACP_RELEASE_REPO) { $env:OMNIHARNESS_CODEX_ACP_RELEASE_REPO } else { "danduma/omniharness" }),
   [string]$ReleaseTag = $(if ($env:OMNIHARNESS_CODEX_ACP_RELEASE_TAG) { $env:OMNIHARNESS_CODEX_ACP_RELEASE_TAG } else { "codex-acp-latest" }),
   [string]$DownloadBaseUrl = $env:OMNIHARNESS_CODEX_ACP_DOWNLOAD_BASE_URL,
   [string]$InstallDir = $env:OMNIHARNESS_CODEX_ACP_INSTALL_DIR,
+  [string]$NpmRoot = $env:OMNIHARNESS_CODEX_ACP_NPM_ROOT,
   [switch]$EnsureOnly,
   [switch]$DryRun,
   [switch]$AddToPath
@@ -22,6 +23,14 @@ if (-not $InstallDir) {
     $InstallDir = Join-Path $env:LOCALAPPDATA "OmniHarness\bin"
   } else {
     $InstallDir = Join-Path $HOME ".omniharness\bin"
+  }
+}
+
+if (-not $NpmRoot) {
+  if ($env:LOCALAPPDATA) {
+    $NpmRoot = Join-Path $env:LOCALAPPDATA "OmniHarness\codex-acp"
+  } else {
+    $NpmRoot = Join-Path $HOME ".omniharness\codex-acp"
   }
 }
 
@@ -93,6 +102,50 @@ function Install-CodexAcpCargo {
   Write-Host "  -> installed codex-acp with Cargo"
 }
 
+function Get-InstalledNpmVersion {
+  param([string]$PackageName)
+  $packageJson = Join-Path $NpmRoot "node_modules\$PackageName\package.json"
+  if (-not (Test-Path -LiteralPath $packageJson -PathType Leaf)) {
+    return $null
+  }
+  return (Get-Content -Raw -LiteralPath $packageJson | ConvertFrom-Json).version
+}
+
+function Test-CodexAcpNpmOutdated {
+  $installedAcp = Get-InstalledNpmVersion "@agentclientprotocol\codex-acp"
+  $installedCodex = Get-InstalledNpmVersion "@openai\codex"
+  if (-not $installedAcp -or -not $installedCodex) {
+    return $true
+  }
+  try {
+    $latestAcp = (npm view "@agentclientprotocol/codex-acp" version --silent).Trim()
+    $latestCodex = (npm view "@openai/codex" version --silent).Trim()
+    return $installedAcp -ne $latestAcp -or $installedCodex -ne $latestCodex
+  } catch {
+    return $false
+  }
+}
+
+function Install-CodexAcpNpm {
+  $launcherSource = Join-Path $PSScriptRoot "codex-acp-launcher.cmd"
+  $launcherPath = Join-Path $InstallDir "codex-acp.cmd"
+  if ($DryRun) {
+    Write-Host "  -> would install the latest official Codex ACP adapter and Codex CLI at $NpmRoot"
+    Write-Host "  -> would install its launcher at $launcherPath"
+    return
+  }
+  if (-not (Test-Command "npm") -or -not (Test-Command "node")) {
+    throw "The official Codex ACP install requires npm and node on PATH."
+  }
+  if (-not (Test-Path -LiteralPath $launcherSource -PathType Leaf)) {
+    throw "Missing Codex ACP launcher: $launcherSource"
+  }
+  New-Item -ItemType Directory -Force -Path $NpmRoot, $InstallDir | Out-Null
+  npm install --prefix $NpmRoot "@agentclientprotocol/codex-acp@latest" "@openai/codex@latest"
+  Copy-Item -LiteralPath $launcherSource -Destination $launcherPath -Force
+  Write-Host "  -> installed official codex-acp $(Get-InstalledNpmVersion '@agentclientprotocol\codex-acp') with Codex $(Get-InstalledNpmVersion '@openai\codex')"
+}
+
 function Add-InstallDirToUserPath {
   $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
   $parts = @()
@@ -125,26 +178,33 @@ if (Test-Command "codex") {
 
 if ((Test-Command "codex-acp") -or (Test-Command "codex-acp.exe")) {
   if ($EnsureOnly) {
-    Write-Host "  -> codex-acp already installed"
+    if (($CodexAcp -eq "auto" -or $CodexAcp -eq "npm") -and (Test-CodexAcpNpmOutdated)) {
+      Write-Host "  -> managed codex-acp or Codex CLI is outdated; refreshing both"
+      Install-CodexAcpNpm
+    } else {
+      Write-Host "  -> codex-acp already installed and current"
+    }
   } else {
-    Write-Host "  -> codex-acp already installed; refreshing from the prebuilt release"
+    Write-Host "  -> codex-acp already installed; refreshing the requested install"
     switch ($CodexAcp) {
       "cargo" { Install-CodexAcpCargo }
-      default { Install-CodexAcpBinary }
+      "binary" { Install-CodexAcpBinary }
+      default { Install-CodexAcpNpm }
     }
   }
 } else {
   switch ($CodexAcp) {
     "cargo" { Install-CodexAcpCargo }
+    "binary" { Install-CodexAcpBinary }
     default {
       try {
-        Install-CodexAcpBinary
+        Install-CodexAcpNpm
       } catch {
-        if ($CodexAcp -eq "binary") {
+        if ($CodexAcp -eq "npm") {
           throw
         }
         Write-Warning $_
-        Install-CodexAcpCargo
+        Install-CodexAcpBinary
       }
     }
   }

@@ -5,6 +5,8 @@ set -euo pipefail
 DRY_RUN=0
 ENSURE_ONLY=0
 CODEX_ACP_INSTALL_MODE="${OMNIHARNESS_CODEX_ACP_INSTALL:-auto}"
+CODEX_ACP_NPM_PACKAGE="${OMNIHARNESS_CODEX_ACP_NPM_PACKAGE:-@agentclientprotocol/codex-acp}"
+CODEX_ACP_NPM_ROOT="${OMNIHARNESS_CODEX_ACP_NPM_ROOT:-}"
 CODEX_ACP_RELEASE_REPO="${OMNIHARNESS_CODEX_ACP_RELEASE_REPO:-danduma/omniharness}"
 CODEX_ACP_RELEASE_TAG="${OMNIHARNESS_CODEX_ACP_RELEASE_TAG:-codex-acp-latest}"
 CODEX_ACP_DOWNLOAD_BASE_URL="${OMNIHARNESS_CODEX_ACP_DOWNLOAD_BASE_URL:-https://github.com/$CODEX_ACP_RELEASE_REPO/releases/download/$CODEX_ACP_RELEASE_TAG}"
@@ -15,6 +17,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [ -z "$CODEX_ACP_WRAPPER_DIR" ] && [ -n "${HOME:-}" ]; then
   CODEX_ACP_WRAPPER_DIR="$HOME/.local/bin"
+fi
+
+if [ -z "$CODEX_ACP_NPM_ROOT" ] && [ -n "${HOME:-}" ]; then
+  CODEX_ACP_NPM_ROOT="$HOME/.local/share/omniharness/codex-acp"
 fi
 
 if [ -z "$DOCKER_BIN" ]; then
@@ -40,18 +46,18 @@ for arg in "$@"; do
       ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: scripts/install-agent-acp.sh [--dry-run] [--ensure-only] [--codex-acp=auto|binary|cargo|docker]" >&2
+      echo "Usage: scripts/install-agent-acp.sh [--dry-run] [--ensure-only] [--codex-acp=auto|npm|binary|cargo|docker]" >&2
       exit 1
       ;;
   esac
 done
 
 case "$CODEX_ACP_INSTALL_MODE" in
-  auto|binary|cargo|docker)
+  auto|npm|binary|cargo|docker)
     ;;
   *)
     echo "Invalid Codex ACP install mode: $CODEX_ACP_INSTALL_MODE" >&2
-    echo "Use --codex-acp=auto, --codex-acp=binary, --codex-acp=cargo, or --codex-acp=docker." >&2
+    echo "Use --codex-acp=auto, --codex-acp=npm, --codex-acp=binary, --codex-acp=cargo, or --codex-acp=docker." >&2
     exit 1
     ;;
 esac
@@ -123,6 +129,71 @@ run_install_npm() {
 
   echo "  -> failed to install \`$package_name\` with npm" >&2
   return 1
+}
+
+installed_npm_package_version() {
+  local package_name="$1"
+  local package_json
+  [ -n "$CODEX_ACP_NPM_ROOT" ] || return 1
+  package_json="$CODEX_ACP_NPM_ROOT/node_modules/$package_name/package.json"
+  [ -f "$package_json" ] || return 1
+  node -e 'process.stdout.write(require(process.argv[1]).version)' "$package_json" 2>/dev/null
+}
+
+latest_npm_package_version() {
+  local package_name="$1"
+  have_command npm || return 1
+  npm view "$package_name" version --silent 2>/dev/null
+}
+
+managed_codex_acp_npm_is_outdated() {
+  local installed_acp
+  local installed_codex
+  local latest_acp
+  local latest_codex
+  installed_acp="$(installed_npm_package_version "$CODEX_ACP_NPM_PACKAGE" || true)"
+  installed_codex="$(installed_npm_package_version "@openai/codex" || true)"
+  latest_acp="$(latest_npm_package_version "$CODEX_ACP_NPM_PACKAGE" || true)"
+  latest_codex="$(latest_npm_package_version "@openai/codex" || true)"
+  [ -n "$installed_acp" ] && [ -n "$installed_codex" ] || return 0
+  [ -n "$latest_acp" ] && [ -n "$latest_codex" ] || return 1
+  [ "$installed_acp" != "$latest_acp" ] || [ "$installed_codex" != "$latest_codex" ]
+}
+
+run_install_codex_acp_npm() {
+  local install_path
+  local launcher_path="$ROOT_DIR/scripts/codex-acp-launcher.sh"
+
+  if [ -z "$CODEX_ACP_NPM_ROOT" ] || [ -z "$CODEX_ACP_WRAPPER_DIR" ]; then
+    echo "  -> cannot install current \`codex-acp\`: HOME is not set and managed install paths were not provided" >&2
+    return 1
+  fi
+  if ! have_command npm || ! have_command node; then
+    echo "  -> cannot install current \`codex-acp\`: npm and node are required" >&2
+    return 1
+  fi
+  if [ ! -f "$launcher_path" ]; then
+    echo "  -> cannot install current \`codex-acp\`: missing $launcher_path" >&2
+    return 1
+  fi
+
+  install_path="$CODEX_ACP_WRAPPER_DIR/codex-acp"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "  -> would install the latest official \`$CODEX_ACP_NPM_PACKAGE\` and \`@openai/codex\` at $CODEX_ACP_NPM_ROOT"
+    echo "  -> would install its launcher at $install_path"
+    return 0
+  fi
+
+  mkdir -p "$CODEX_ACP_NPM_ROOT" "$CODEX_ACP_WRAPPER_DIR"
+  echo "  -> installing the latest official Codex ACP adapter and Codex CLI"
+  npm install --prefix "$CODEX_ACP_NPM_ROOT" "$CODEX_ACP_NPM_PACKAGE@latest" "@openai/codex@latest"
+  install -m 0755 "$launcher_path" "$install_path"
+  local acp_version
+  local codex_version
+  acp_version="$(installed_npm_package_version "$CODEX_ACP_NPM_PACKAGE" || echo unknown)"
+  codex_version="$(installed_npm_package_version "@openai/codex" || echo unknown)"
+  echo "  -> installed \`$CODEX_ACP_NPM_PACKAGE\` $acp_version with Codex $codex_version"
+  echo "  -> installed \`codex-acp\` launcher at $install_path"
 }
 
 run_install_cargo_git() {
@@ -209,6 +280,64 @@ codex_acp_asset_name() {
   esac
 }
 
+sha256_file() {
+  local file_path="$1"
+  if have_command shasum; then
+    shasum -a 256 "$file_path" | awk '{print $1}'
+    return 0
+  fi
+  if have_command sha256sum; then
+    sha256sum "$file_path" | awk '{print $1}'
+    return 0
+  fi
+  return 1
+}
+
+remote_codex_acp_checksum() {
+  local target="$1"
+  local asset_name
+  local checksum_url
+  local checksum_line
+  local checksum
+
+  asset_name="$(codex_acp_asset_name "$target")"
+  checksum_url="$CODEX_ACP_DOWNLOAD_BASE_URL/$asset_name.sha256"
+  if have_command curl; then
+    checksum_line="$(curl -fsL "$checksum_url" 2>/dev/null || true)"
+  elif have_command wget; then
+    checksum_line="$(wget -qO- "$checksum_url" 2>/dev/null || true)"
+  else
+    return 1
+  fi
+  checksum="${checksum_line%%[[:space:]]*}"
+  case "$checksum" in
+    (*[!0-9a-fA-F]*|"") return 1 ;;
+  esac
+  [ "${#checksum}" -eq 64 ] || return 1
+  echo "$checksum" | tr '[:upper:]' '[:lower:]'
+}
+
+managed_codex_acp_path() {
+  local target="$1"
+  local binary_name
+  binary_name="$(codex_acp_binary_name "$target")"
+  [ -n "$CODEX_ACP_WRAPPER_DIR" ] || return 1
+  echo "$CODEX_ACP_WRAPPER_DIR/$binary_name"
+}
+
+managed_codex_acp_is_outdated() {
+  local target="$1"
+  local install_path="$2"
+  local expected_checksum
+  local actual_checksum
+
+  expected_checksum="$(remote_codex_acp_checksum "$target" || true)"
+  [ -n "$expected_checksum" ] || return 1
+  actual_checksum="$(sha256_file "$install_path" 2>/dev/null || true)"
+  [ -n "$actual_checksum" ] || return 1
+  [ "$actual_checksum" != "$expected_checksum" ]
+}
+
 # Locate an existing codex-acp on PATH or in well-known install dirs. The restart
 # controller (and other launchers) can run with a minimal PATH that omits
 # ~/.cargo/bin, so a source-built codex-acp would otherwise look "missing" and get
@@ -249,6 +378,11 @@ run_install_codex_acp_binary() {
   local install_path
   local binary_name
   local tmp_path
+  local expected_checksum
+  local actual_checksum
+  local build_metadata_url
+  local build_metadata_path
+  local tmp_build_metadata_path
 
   if ! target="$(codex_acp_target)"; then
     echo "  -> cannot install prebuilt \`codex-acp\`: unsupported platform $(uname -s)/$(uname -m)" >&2
@@ -258,6 +392,7 @@ run_install_codex_acp_binary() {
   asset_name="$(codex_acp_asset_name "$target")"
   binary_name="$(codex_acp_binary_name "$target")"
   download_url="$CODEX_ACP_DOWNLOAD_BASE_URL/$asset_name"
+  build_metadata_url="$CODEX_ACP_DOWNLOAD_BASE_URL/$asset_name.build.json"
 
   if [ -z "$CODEX_ACP_WRAPPER_DIR" ]; then
     echo "  -> cannot install prebuilt \`codex-acp\`: HOME is not set and OMNIHARNESS_CODEX_ACP_INSTALL_DIR was not provided" >&2
@@ -286,8 +421,28 @@ run_install_codex_acp_binary() {
     wget -O "$tmp_path" "$download_url"
   fi
 
+  expected_checksum="$(remote_codex_acp_checksum "$target" || true)"
+  if [ -n "$expected_checksum" ]; then
+    actual_checksum="$(sha256_file "$tmp_path")"
+    if [ "$actual_checksum" != "$expected_checksum" ]; then
+      echo "  -> downloaded \`codex-acp\` checksum did not match the rolling release" >&2
+      return 1
+    fi
+  fi
+
   chmod +x "$tmp_path"
   mv "$tmp_path" "$install_path"
+  build_metadata_path="$install_path.build.json"
+  tmp_build_metadata_path="$build_metadata_path.tmp"
+  if have_command curl; then
+    if curl -fsL "$build_metadata_url" -o "$tmp_build_metadata_path" 2>/dev/null; then
+      mv "$tmp_build_metadata_path" "$build_metadata_path"
+    fi
+  elif have_command wget; then
+    if wget -qO "$tmp_build_metadata_path" "$build_metadata_url" 2>/dev/null; then
+      mv "$tmp_build_metadata_path" "$build_metadata_path"
+    fi
+  fi
   echo "  -> installed prebuilt \`codex-acp\` at $install_path"
 }
 
@@ -464,6 +619,9 @@ run_install_codex_acp_docker() {
 
 install_codex_acp() {
   case "$CODEX_ACP_INSTALL_MODE" in
+    npm)
+      run_install_codex_acp_npm
+      ;;
     binary)
       run_install_codex_acp_binary
       ;;
@@ -474,13 +632,11 @@ install_codex_acp() {
       run_install_cargo_git "codex-acp" "https://github.com/danduma/codex-acp.git" "main"
       ;;
     auto)
-      if run_install_codex_acp_binary; then
+      if run_install_codex_acp_npm; then
         return 0
       fi
-      if have_command "$DOCKER_BIN" && run_install_codex_acp_docker; then
-        return 0
-      fi
-      run_install_cargo_git "codex-acp" "https://github.com/danduma/codex-acp.git" "main"
+      echo "  -> official npm install failed; trying the legacy prebuilt adapter" >&2
+      run_install_codex_acp_binary
       ;;
   esac
 }
@@ -501,11 +657,26 @@ if have_command codex; then
     if [ "$CODEX_ACP_INSTALL_MODE" = "docker" ]; then
       echo "  -> \`codex-acp\` already installed; refreshing Docker-backed \`codex-acp\` wrapper"
       try_install install_codex_acp
+    elif [ "$CODEX_ACP_INSTALL_MODE" = "npm" ]; then
+      echo "  -> refreshing the official Codex ACP adapter and Codex CLI"
+      try_install run_install_codex_acp_npm
     elif [ "$ENSURE_ONLY" -eq 1 ] || [ "$CODEX_ACP_INSTALL_MODE" = "auto" ]; then
-      # Default/auto + ensure-only: never overwrite an existing install (it may be
-      # a source build). Only an explicit --codex-acp=binary|cargo reinstalls.
-      echo "  -> \`codex-acp\` already installed at $(codex_acp_location); leaving it as-is"
-      echo "     (reinstall explicitly with: scripts/install-agent-acp.sh --codex-acp=binary | --codex-acp=cargo)"
+      existing_codex_acp="$(codex_acp_location)"
+      managed_path="$CODEX_ACP_WRAPPER_DIR/codex-acp"
+      if [ "$existing_codex_acp" = "$managed_path" ]; then
+        if [ ! -f "$CODEX_ACP_NPM_ROOT/node_modules/$CODEX_ACP_NPM_PACKAGE/package.json" ]; then
+          echo "  -> migrating the managed legacy \`codex-acp\` to the maintained official adapter"
+          try_install run_install_codex_acp_npm
+        elif managed_codex_acp_npm_is_outdated; then
+          echo "  -> managed \`codex-acp\` or Codex CLI is outdated; refreshing both"
+          try_install run_install_codex_acp_npm
+        else
+          echo "  -> official \`codex-acp\` and Codex CLI are current"
+        fi
+      else
+        echo "  -> \`codex-acp\` already installed at $existing_codex_acp; leaving it as-is"
+        echo "     (official managed installs roll forward automatically; migrate with: scripts/install-agent-acp.sh --codex-acp=npm)"
+      fi
     else
       if [ "$CODEX_ACP_INSTALL_MODE" = "cargo" ]; then
         echo "  -> \`codex-acp\` already installed; reinstalling from the OmniHarness fork"
@@ -519,7 +690,10 @@ if have_command codex; then
   fi
 else
   echo "codex: not detected"
-  if [ "$CODEX_ACP_INSTALL_MODE" = "docker" ]; then
+  if [ "$CODEX_ACP_INSTALL_MODE" = "auto" ] || [ "$CODEX_ACP_INSTALL_MODE" = "npm" ]; then
+    echo "  -> installing the official ACP package; it includes the Codex CLI"
+    try_install run_install_codex_acp_npm
+  elif [ "$CODEX_ACP_INSTALL_MODE" = "docker" ]; then
     echo "  -> installing Docker-backed \`codex-acp\`; the Docker image supplies Codex CLI"
     try_install install_codex_acp
   fi

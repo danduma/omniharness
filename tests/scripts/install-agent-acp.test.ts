@@ -77,7 +77,7 @@ fi
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("codex: detected");
-    expect(result.stdout).toContain("would install prebuilt `codex-acp` from `https://github.com/danduma/omniharness/releases/download/codex-acp-latest/codex-acp-darwin-arm64`");
+    expect(result.stdout).toContain("would install the latest official `@agentclientprotocol/codex-acp` and `@openai/codex`");
     expect(result.stdout).toContain("claude: detected");
     expect(result.stdout).toContain("would install `@agentclientprotocol/claude-agent-acp`");
     expect(result.stdout).toContain("gemini: detected");
@@ -245,6 +245,95 @@ fi
     expect(result.stdout).toContain("leaving it as-is");
     expect(result.stdout).not.toContain("downloading prebuilt");
     expect(fs.existsSync(curlLogPath)).toBe(false);
+  });
+
+  it("migrates a managed legacy Codex ACP adapter to the rolling official install", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
+    const binDir = path.join(tempDir, "bin");
+    const homeDir = path.join(tempDir, "home");
+    const managedBinDir = path.join(homeDir, ".local", "bin");
+    const npmLogPath = path.join(tempDir, "npm.log");
+    tempDirs.push(tempDir);
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.mkdirSync(managedBinDir, { recursive: true });
+
+    createFakeBin("codex", binDir);
+    writeExecutable(path.join(managedBinDir, "codex-acp"), "#!/bin/sh\necho stale-codex-acp\n");
+    createFakeBin("npm", binDir, `#!/bin/sh
+echo "$@" >> "${npmLogPath}"
+exit 0
+`);
+    createFakeBin("node", binDir);
+    createFakeBin("uname", binDir, `#!/bin/sh
+if [ "$1" = "-s" ]; then
+  echo "Darwin"
+elif [ "$1" = "-m" ]; then
+  echo "arm64"
+else
+  echo "Darwin"
+fi
+`);
+
+    const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh", "--ensure-only"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        CARGO_HOME: path.join(homeDir, ".cargo"),
+        PATH: `${managedBinDir}:${binDir}:/usr/bin:/bin`,
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("migrating the managed legacy `codex-acp` to the maintained official adapter");
+    expect(fs.readFileSync(path.join(managedBinDir, "codex-acp"), "utf8")).toContain("@agentclientprotocol/codex-acp/dist/index.js");
+    expect(fs.readFileSync(npmLogPath, "utf8")).toContain("install --prefix");
+    expect(fs.readFileSync(npmLogPath, "utf8")).toContain("@openai/codex@latest");
+  });
+
+  it("rolls both the official adapter and Codex CLI forward when either package changes", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
+    const binDir = path.join(tempDir, "bin");
+    const homeDir = path.join(tempDir, "home");
+    const managedBinDir = path.join(homeDir, ".local", "bin");
+    const npmRoot = path.join(homeDir, ".local", "share", "omniharness", "codex-acp");
+    const npmLogPath = path.join(tempDir, "npm.log");
+    tempDirs.push(tempDir);
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.mkdirSync(managedBinDir, { recursive: true });
+    fs.mkdirSync(path.join(npmRoot, "node_modules", "@agentclientprotocol", "codex-acp"), { recursive: true });
+    fs.mkdirSync(path.join(npmRoot, "node_modules", "@openai", "codex"), { recursive: true });
+
+    createFakeBin("codex", binDir);
+    writeExecutable(path.join(managedBinDir, "codex-acp"), "#!/bin/sh\nexit 0\n");
+    fs.writeFileSync(path.join(npmRoot, "node_modules", "@agentclientprotocol", "codex-acp", "package.json"), JSON.stringify({ version: "1.1.6" }));
+    fs.writeFileSync(path.join(npmRoot, "node_modules", "@openai", "codex", "package.json"), JSON.stringify({ version: "0.145.0" }));
+    createFakeBin("npm", binDir, `#!/bin/sh
+echo "$@" >> "${npmLogPath}"
+if [ "$1" = "view" ]; then
+  case "$2" in
+    @agentclientprotocol/codex-acp) echo 1.1.7 ;;
+    @openai/codex) echo 0.146.0 ;;
+  esac
+fi
+exit 0
+`);
+
+    const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh", "--ensure-only"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        CARGO_HOME: path.join(homeDir, ".cargo"),
+        PATH: `${managedBinDir}:${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("managed `codex-acp` or Codex CLI is outdated; refreshing both");
+    expect(fs.readFileSync(npmLogPath, "utf8")).toContain("@agentclientprotocol/codex-acp@latest @openai/codex@latest");
   });
 
   it("reinstalls an existing Codex ACP adapter when binary mode is explicit", () => {

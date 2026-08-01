@@ -253,6 +253,39 @@ describe("RunnerConnection", () => {
     expect(calculateRunnerReconnectDelay(20, 1)).toBe(300_000);
   });
 
+  it("gives EventSource time to reconnect before falling back to a fresh connection", async () => {
+    let handlers: RunnerStreamHandlers | null = null;
+    const schedule = vi.fn(() => 1);
+    const cancelSchedule = vi.fn();
+    const transport = runtime({
+      onOpen: (next) => {
+        handlers = next;
+        next.onOpen?.();
+      },
+    });
+    const connection = new RunnerConnection({
+      profile: profile(),
+      runtimeFactory: async () => transport.api,
+      persistence: persistence(),
+      schedule,
+      cancelSchedule,
+    });
+
+    await connection.start();
+    handlers!.onError!({
+      code: "runtime.events_reconnecting",
+      message: "Event stream is reconnecting.",
+    });
+
+    expect(connection.getSnapshot().status).toBe("degraded");
+    expect(transport.closeMain).not.toHaveBeenCalled();
+    expect(schedule).toHaveBeenCalledOnce();
+
+    handlers!.onOpen!();
+    expect(connection.getSnapshot().status).toBe("online");
+    expect(cancelSchedule).toHaveBeenCalledWith(1);
+  });
+
   it("surfaces runner stopping frames without reconnecting", async () => {
     let handlers: RunnerStreamHandlers | null = null;
     const transport = runtime({ onOpen: (next) => { handlers = next; } });

@@ -52,6 +52,16 @@ interface TerminalProps {
    */
   multiWorkerOrdering?: boolean;
   allowUserMessageFallback?: boolean;
+  /**
+   * Ids of user messages this client sent itself (this session). They bypass
+   * `allowUserMessageFallback`: the gate protects against *stale historical*
+   * `messages` rows rendering ahead of unloaded stream content, which cannot
+   * apply to a message the user just typed here. Without this, the just-sent
+   * bubble vanishes every time the gate closes during stream catch-up.
+   */
+  ungatedUserMessageIds?: ReadonlySet<string>;
+  /** Ids of user messages whose send request is still in flight. */
+  sendingUserMessageIds?: ReadonlySet<string>;
   getUserMessageActions?: (message: TerminalUserMessage) => TerminalUserMessageAction[];
   editingUserMessageId?: string | null;
   editingUserMessageValue?: string;
@@ -120,6 +130,7 @@ export type TerminalActivityItem = AgentActivityItem | {
   timestamp: string;
   attachments: ChatAttachment[];
   actions: TerminalUserMessageAction[];
+  sending?: boolean;
 } | {
   id: string;
   kind: "pending_assistant";
@@ -1815,11 +1826,12 @@ function ActivityRow({
             onSave={onSaveEditedUserMessage}
           />
         ) : (
-          <div className={cn(
+          <div data-sending={activity.sending ? "true" : undefined} className={cn(
             "max-w-[min(72ch,calc(100%-1rem))] rounded-[1.55rem] bg-[#f3f3f3] px-5 py-3.5 text-[#202124] dark:bg-[#3a3a3a] dark:text-[#d8d8d8] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:max-w-[min(78ch,calc(100%-1.5rem))]",
             conversationMessageTextSize
               ? "text-sm leading-6"
               : "text-[length:var(--terminal-message-size)] leading-[1.55]",
+            activity.sending && "opacity-70",
           )}>
             {activity.text ? <p className="max-w-none whitespace-pre-wrap">{activity.text}</p> : null}
             {activity.attachments.length > 0 ? <UserMessageAttachments attachments={activity.attachments} /> : null}
@@ -2051,6 +2063,8 @@ export function Terminal({
   entries,
   multiWorkerOrdering,
   allowUserMessageFallback = false,
+  ungatedUserMessageIds,
+  sendingUserMessageIds,
   getUserMessageActions,
   editingUserMessageId = null,
   editingUserMessageValue = "",
@@ -2174,7 +2188,8 @@ export function Terminal({
         ...(visibleEntries ?? [])
           .filter((entry) => entry.type === "user_input" || entry.type === "supervisor_input" || entry.type === "user_message_chunk")
           .map((entry) => ({ source: "stream" as const, entry })),
-        ...(canPlaceFallbackUserMessages ? userMessages : [])
+        ...userMessages
+          .filter((message) => canPlaceFallbackUserMessages || ungatedUserMessageIds?.has(message.id))
           .filter((message) => !(entries ?? []).some((entry) => workerEntryMatchesUserMessage(entry, message)))
           .map((message) => ({ source: "fallback" as const, message })),
       ]
@@ -2198,6 +2213,7 @@ export function Terminal({
               attachments: entry.message.attachments ?? [],
               streamSeq: messageSeq,
               actions: getUserMessageActions?.(entry.message) ?? [],
+              sending: sendingUserMessageIds?.has(entry.message.id) ?? false,
             };
           }
 
@@ -2250,6 +2266,7 @@ export function Terminal({
         timestamp: message.createdAt,
         attachments: message.attachments ?? [],
         actions: getUserMessageActions?.(message) ?? [],
+        sending: sendingUserMessageIds?.has(message.id) ?? false,
       }));
     // One message id must render exactly once. A rewind (retry / edit)
     // re-delivers the same message on a new worker, so the same id can exist on
@@ -2292,7 +2309,7 @@ export function Terminal({
       return activityKindOrder(a) - activityKindOrder(b) || a.id.localeCompare(b.id);
     });
     return summarizeWorkBlocks ? summarizeWorkIntervals(sorted) : sorted;
-  }, [agent, allowUserMessageFallback, entries, getUserMessageActions, multiWorkerOrdering, pendingAssistantStatus, showPendingAssistantIndicator, summarizeWorkBlocks, userMessages]);
+  }, [agent, allowUserMessageFallback, entries, getUserMessageActions, multiWorkerOrdering, pendingAssistantStatus, sendingUserMessageIds, showPendingAssistantIndicator, summarizeWorkBlocks, ungatedUserMessageIds, userMessages]);
   const filteredActivity = useMemo(
     () => activityFilter ? activity.filter(activityFilter) : activity,
     [activity, activityFilter],
@@ -2328,10 +2345,21 @@ export function Terminal({
       previousScrollTopRef.current = scrollContainer.scrollTop;
     };
 
+    const handleScroll = () => {
+      updateFollowState();
+      if (
+        variant === "native"
+        && hasMoreHistory
+        && shouldTerminalRequestMoreHistory(scrollContainer)
+      ) {
+        onRequestMoreHistory?.();
+      }
+    };
+
     updateFollowState();
-    scrollContainer.addEventListener("scroll", updateFollowState, { passive: true });
-    return () => scrollContainer.removeEventListener("scroll", updateFollowState);
-  }, [variant]);
+    scrollContainer.addEventListener("scroll", handleScroll, { passive: true });
+    return () => scrollContainer.removeEventListener("scroll", handleScroll);
+  }, [hasMoreHistory, onRequestMoreHistory, variant]);
 
   useLayoutEffect(() => {
     const container = scrollContainerRef.current;

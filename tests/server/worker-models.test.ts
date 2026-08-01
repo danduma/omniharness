@@ -64,6 +64,43 @@ describe("worker model catalog", () => {
     ]);
   });
 
+  it("orders Codex models by capability priority with GPT-5.6 Sol first", async () => {
+    const catalog = await buildWorkerModelCatalog({
+      runCommand: async (command, args) => {
+        if (command === "codex" && args.join(" ") === "debug models") {
+          return JSON.stringify({
+            models: [
+              { slug: "gpt-5.5", display_name: "GPT-5.5", priority: 7, visibility: "list" },
+              { slug: "codex-auto-review", display_name: "Codex Auto Review", priority: 0, visibility: "hide" },
+              { slug: "gpt-5.6-luna", display_name: "GPT-5.6-Luna", priority: 3, visibility: "list" },
+              { slug: "gpt-5.6-sol", display_name: "GPT-5.6-Sol", priority: 1, visibility: "list" },
+              { slug: "gpt-5.6-terra", display_name: "GPT-5.6-Terra", priority: 2, visibility: "list" },
+            ],
+          });
+        }
+        return "";
+      },
+    });
+
+    expect(catalog.codex.slice(0, 4)).toEqual([
+      { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+      { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+      { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
+      { value: "gpt-5.5", label: "GPT-5.5" },
+    ]);
+    expect(catalog.codex.some((model) => model.value === "codex-auto-review")).toBe(false);
+  });
+
+  it("uses GPT-5.6 Sol as the first Codex fallback when discovery is unavailable", async () => {
+    const catalog = await buildWorkerModelCatalog({ runCommand: async () => "" });
+
+    expect(catalog.codex.slice(0, 3)).toEqual([
+      { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+      { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+      { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
+    ]);
+  });
+
   it("offers Claude Opus 5 as the default Claude Code model", async () => {
     const catalog = await buildWorkerModelCatalog({
       runCommand: async () => "",

@@ -46,6 +46,32 @@ type RunnerRegistryContextValue = {
 const RunnerRegistryContext = createContext<RunnerRegistryContextValue | null>(null);
 const fallbackQueryClient = new QueryClient();
 
+type BrowserEventTarget = Pick<EventTarget, "addEventListener" | "removeEventListener">;
+
+export function installRunnerBrowserLifecycleRecovery(options: {
+  registry: Pick<RunnerRegistry, "retryRecoverableConnections">;
+  windowTarget: BrowserEventTarget;
+  documentTarget: BrowserEventTarget;
+  isVisible: () => boolean;
+}) {
+  const retry = () => {
+    options.registry.retryRecoverableConnections();
+  };
+  const retryWhenVisible = () => {
+    if (options.isVisible()) {
+      retry();
+    }
+  };
+  options.windowTarget.addEventListener("pageshow", retry);
+  options.windowTarget.addEventListener("online", retry);
+  options.documentTarget.addEventListener("visibilitychange", retryWhenVisible);
+  return () => {
+    options.windowTarget.removeEventListener("pageshow", retry);
+    options.windowTarget.removeEventListener("online", retry);
+    options.documentTarget.removeEventListener("visibilitychange", retryWhenVisible);
+  };
+}
+
 function adaptRuntime(runtime: RuntimeAPIs): RunnerConnectionRuntime {
   return {
     apis: runtime,
@@ -254,6 +280,13 @@ export function RunnerRegistryProvider({
     observe();
     return registry.subscribe(observe);
   }, [registry]);
+
+  useEffect(() => installRunnerBrowserLifecycleRecovery({
+    registry,
+    windowTarget: window,
+    documentTarget: document,
+    isVisible: () => document.visibilityState === "visible",
+  }), [registry]);
 
   return (
     <RunnerRegistryContext.Provider value={{
