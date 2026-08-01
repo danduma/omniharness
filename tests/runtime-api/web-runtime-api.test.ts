@@ -39,6 +39,7 @@ describe("createWebRuntimeAPIs", () => {
   it("opens an SSE subscription with resume parameters and cancellable handlers", () => {
     const instances: Array<{
       url: string;
+      readyState: number;
       listeners: Record<string, Array<(event: { data: string; type: string }) => void>>;
       closed: boolean;
       close(): void;
@@ -47,6 +48,7 @@ describe("createWebRuntimeAPIs", () => {
 
     class FakeEventSource {
       readonly listeners: Record<string, Array<(event: { data: string; type: string }) => void>> = {};
+      readyState = 0;
       closed = false;
 
       constructor(readonly url: string) {
@@ -89,6 +91,15 @@ describe("createWebRuntimeAPIs", () => {
       data: "{\"kind\":\"runner.rekeyed\",\"runnerInstanceId\":\"runner-2\"}",
     });
     instances[0]?.listeners.error?.[0]?.({ type: "error", data: "" });
+    expect(instances[0]?.closed).toBe(false);
+    expect(errors).toEqual([{
+      code: "runtime.events_reconnecting",
+      message: "Event stream is reconnecting.",
+      surface: "web",
+    }]);
+
+    instances[0]!.readyState = 2;
+    instances[0]?.listeners.error?.[0]?.({ type: "error", data: "" });
     subscription.close();
 
     expect(seen).toEqual([
@@ -96,7 +107,10 @@ describe("createWebRuntimeAPIs", () => {
       { kind: "stream.resync_required", reason: "cursor_evicted" },
       { kind: "runner.rekeyed", runnerInstanceId: "runner-2" },
     ]);
-    expect(errors).toEqual([{ code: "runtime.events_failed", message: "Event stream failed.", surface: "web" }]);
+    expect(errors).toEqual([
+      { code: "runtime.events_reconnecting", message: "Event stream is reconnecting.", surface: "web" },
+      { code: "runtime.events_failed", message: "Event stream failed.", surface: "web" },
+    ]);
     expect(instances[0]?.closed).toBe(true);
   });
 
@@ -108,6 +122,7 @@ describe("createWebRuntimeAPIs", () => {
     }> = [];
     class FakeEventSource {
       closed = false;
+      readyState = 2;
       onopen: (() => void) | null = null;
       readonly listeners: Record<string, Array<(event: { data: string; type: string }) => void>> = {};
       constructor(url: string) {

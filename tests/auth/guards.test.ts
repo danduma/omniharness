@@ -30,6 +30,22 @@ describe("auth origin guard", () => {
     delete process.env.OMNIHARNESS_TRUSTED_PROXIES;
   });
 
+  it("accepts the configured HTTPS public origin behind an untrusted loopback tunnel", () => {
+    process.env.OMNIHARNESS_PUBLIC_ORIGIN = "https://server.example.test/";
+    const request = new Request("http://server.example.test/api/auth/login", {
+      method: "POST",
+      headers: {
+        host: "server.example.test",
+        origin: "https://server.example.test",
+        "x-forwarded-host": "server.example.test",
+        "x-forwarded-proto": "https",
+      },
+    });
+
+    expect(isSameOriginRequest(request)).toBe(true);
+    delete process.env.OMNIHARNESS_PUBLIC_ORIGIN;
+  });
+
   it("rejects requests from a different browser origin", () => {
     const request = new Request("http://0.0.0.0:3050/api/auth/login", {
       method: "POST",

@@ -332,10 +332,17 @@ test("direct conversations gate legacy user fallback on authoritative stream loa
   const conversationMainSource = readSource("src/components/home/ConversationMain.tsx");
 
   expect(conversationMainSource).toContain("const allowDirectUserMessageFallback = Boolean(");
-  expect(conversationMainSource).toContain("directWorkerStream.isLoaded");
-  expect(conversationMainSource).toContain("conversationTranscript.isLoaded");
+  // The gate must be latched (first successful load), not momentary:
+  // `isLoaded` flips false on every appended entry / transcript poll, and
+  // gating on it made just-sent user bubbles blink in and out of the
+  // transcript while the stream caught up.
+  expect(conversationMainSource).toContain("directWorkerStream.hasEverLoaded");
+  expect(conversationMainSource).toContain("conversationTranscript.hasLoadedOnce");
   expect(conversationMainSource).toContain("allowUserMessageFallback={allowDirectUserMessageFallback}");
   expect(conversationMainSource).not.toContain("\n                allowUserMessageFallback\n");
+  // Locally sent messages bypass the gate entirely so the just-sent bubble
+  // survives even before the first stream load completes.
+  expect(conversationMainSource).toContain("ungatedUserMessageIds={locallySentUserMessageIds}");
 });
 
 test("attachment image previews use a global full-screen dialog", () => {

@@ -1,5 +1,11 @@
 import { buildAppError } from "@/server/api-errors";
-import { AUTH_SESSION_COOKIE, getAuthConfigurationError, isAuthEnabled, isAutomationAuthBypassEnabled } from "@/server/auth/config";
+import {
+  AUTH_SESSION_COOKIE,
+  getAuthConfigurationError,
+  getPublicOriginFromUrl,
+  isAuthEnabled,
+  isAutomationAuthBypassEnabled,
+} from "@/server/auth/config";
 import type { ActiveAuthSession } from "@/server/auth/session";
 import {
   getRequestNetworkIdentity,
@@ -97,7 +103,10 @@ export function isSameOriginRequest(request: Request) {
 
   const requestUrl = new URL(request.url);
   const identity = getRequestNetworkIdentity(request);
-  return parsedOrigin === requestUrl.origin || parsedOrigin === identity.publicOrigin;
+  const configuredPublicOrigin = new URL(getPublicOriginFromUrl(request.url)).origin;
+  return parsedOrigin === requestUrl.origin
+    || parsedOrigin === identity.publicOrigin
+    || parsedOrigin === configuredPublicOrigin;
 }
 
 export async function requireApiSession(

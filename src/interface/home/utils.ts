@@ -1,4 +1,5 @@
 import { type AppErrorDescriptor, normalizeAppError } from "@/lib/app-errors";
+import type { ChatAttachment } from "@/lib/chat-attachments";
 import { formatHumanDuration, type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { isTerminalRunStatus } from "@/lib/run-status";
 import { getLatestUnresolvedWorkerStuckEvent } from "@/lib/worker-stuck-events";
@@ -188,6 +189,50 @@ function reviveRunForSentMessage(run: RunRecord, message: MessageRecord): RunRec
     lastError: null,
     updatedAt: message.createdAt,
   };
+}
+
+/**
+ * A user message rendered from the moment the send button is pressed,
+ * before the server has acknowledged it. Swapped for the server's row via
+ * `resolveOptimisticSentConversationMessage` when the POST settles. The
+ * bubble must exist continuously from click to delivery — appearing only
+ * on POST success made it pop in late and flicker (see the send-time
+ * bubble regression tests).
+ */
+export function buildOptimisticSentConversationMessage(args: {
+  runId: string;
+  content: string;
+  attachments?: ChatAttachment[];
+}): MessageRecord {
+  const id = typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? `optimistic-${crypto.randomUUID()}`
+    : `optimistic-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return {
+    id,
+    runId: args.runId,
+    role: "user",
+    kind: null,
+    content: args.content,
+    attachments: args.attachments ?? [],
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Remove the optimistic row and, when the server produced a message row,
+ * append it in its place. Passing `null` (send failed, or the message was
+ * queued without a row) just removes the optimistic bubble.
+ */
+export function resolveOptimisticSentConversationMessage(
+  current: EventStreamState,
+  optimisticMessageId: string,
+  message: MessageRecord | null | undefined,
+): EventStreamState {
+  const messages = (current.messages || []).filter((existing) => existing.id !== optimisticMessageId);
+  const next = messages.length === (current.messages || []).length
+    ? current
+    : { ...current, messages };
+  return message ? appendSentConversationMessageSnapshot(next, message) : next;
 }
 
 export function mergePendingSentConversationMessages(
@@ -1420,7 +1465,15 @@ export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel
   }
 
   const normalizedLower = normalized.toLowerCase();
+  const openAiDisplayAliases: Record<string, string> = {
+    "gpt-5.6 sol": "gpt-5.6-sol",
+    "gpt-5.6 terra": "gpt-5.6-terra",
+    "gpt-5.6 luna": "gpt-5.6-luna",
+  };
+  const openAiModel = openAiDisplayAliases[normalizedLower]
+    ?? normalizedLower.replace(/^openai\//, "");
   if (workerType === "opencode") {
+    if (/^gpt-5\.6-(sol|terra|luna)$/.test(openAiModel)) return `openai/${openAiModel}`;
     if (selectedModel === "GPT-5.4" || normalizedLower === "gpt-5.4") return "openai/gpt-5.4";
     if (selectedModel === "GPT-5.4 Mini" || normalizedLower === "gpt-5.4-mini") return "openai/gpt-5.4-mini";
     if (selectedModel === "GPT-5.3 Codex" || normalizedLower === "gpt-5.3-codex") return "openai/gpt-5.3-codex";
@@ -1429,6 +1482,7 @@ export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel
   }
 
   if (workerType === "codex") {
+    if (/^gpt-5\.6-(sol|terra|luna)$/.test(openAiModel)) return openAiModel;
     if (selectedModel === "GPT-5.4" || normalizedLower === "openai/gpt-5.4") return "gpt-5.4";
     if (selectedModel === "GPT-5.4 Mini" || normalizedLower === "openai/gpt-5.4-mini") return "gpt-5.4-mini";
     if (selectedModel === "GPT-5.3 Codex" || normalizedLower === "openai/gpt-5.3-codex") return "gpt-5.3-codex";
@@ -1459,6 +1513,11 @@ export function resolveComposerModelValue(preferredModel: string | null | undefi
   }
 
   return preferredModel.trim();
+}
+
+export function resolveSavedComposerModel(savedModel: string | null | undefined) {
+  const normalized = savedModel?.trim() || "";
+  return normalized === "claude-opus-5" ? "gpt-5.6-sol" : normalized;
 }
 
 export function getWorkerModelOptions(catalog: Partial<WorkerModelCatalog> | undefined, workerType: WorkerType) {

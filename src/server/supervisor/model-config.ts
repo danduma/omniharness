@@ -48,7 +48,7 @@ function fallbackApiKeySetting(provider: string) {
 function defaultModelForProvider(provider: string) {
   if (provider === DEFAULT_PROVIDER) return DEFAULT_MODEL;
   if (provider === DEFAULT_FALLBACK_PROVIDER) return DEFAULT_FALLBACK_MODEL;
-  if (provider === "codex") return "gpt-5.4";
+  if (provider === "codex") return "gpt-5.6-sol";
   if (provider === "anthropic") return "claude-opus-4-8";
   if (provider === "openrouter") return "anthropic/claude-opus-4-8";
   return "";
@@ -83,7 +83,7 @@ export function getSupervisorModelConfig(env: EnvLike, source?: "primary" | "fal
 
   const primaryConfig: ModelConfig = {
     provider: primaryProvider,
-    model: env.SUPERVISOR_LLM_MODEL?.trim() || (primaryProvider === "codex" ? "gpt-5.4" : DEFAULT_MODEL),
+    model: env.SUPERVISOR_LLM_MODEL?.trim() || (primaryProvider === "codex" ? "gpt-5.6-sol" : DEFAULT_MODEL),
     apiKey: env.SUPERVISOR_LLM_API_KEY?.trim() || fallbackApiKey(primaryProvider, env),
     baseURL: env.SUPERVISOR_LLM_BASE_URL?.trim() || undefined,
     source: "primary",

@@ -145,6 +145,9 @@ export const DEFAULT_ALLOWED_WORKER_TYPES = JSON.stringify(WORKER_OPTIONS.map((o
 DEFAULT_SERVER_SETTINGS.WORKER_ALLOWED_TYPES = DEFAULT_ALLOWED_WORKER_TYPES;
 export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
   codex: [
+    { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+    { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+    { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
     { value: "gpt-5.5", label: "GPT-5.5" },
     { value: "gpt-5.4", label: "GPT-5.4" },
     { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
@@ -167,6 +170,9 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
     { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
   ],
   opencode: [
+    { value: "openai/gpt-5.6-sol", label: "GPT-5.6 Sol" },
+    { value: "openai/gpt-5.6-terra", label: "GPT-5.6 Terra" },
+    { value: "openai/gpt-5.6-luna", label: "GPT-5.6 Luna" },
     { value: "openai/gpt-5.5", label: "GPT-5.5" },
     { value: "openai/gpt-5.4", label: "GPT-5.4" },
     { value: "openai/gpt-5.4-mini", label: "GPT-5.4 Mini" },
@@ -213,14 +219,20 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
     { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
   ],
   openai: [
+    { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+    { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+    { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
     { value: "gpt-5.5", label: "GPT-5.5" },
     { value: "gpt-5.4", label: "GPT-5.4" },
     { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
   ],
   codex: [
-    { value: "gpt-5.4", label: "GPT-5.4" },
+    { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+    { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+    { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
     { value: "gpt-5.5", label: "GPT-5.5" },
+    { value: "gpt-5.4", label: "GPT-5.4" },
     { value: "o3-mini", label: "o3-mini" },
   ],
   openrouter: [
@@ -238,8 +250,8 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
 export const LLM_DEFAULT_MODEL: Record<LlmProviderId, string> = {
   gemini: "gemini-3.5-flash",
   anthropic: "claude-opus-4-8",
-  openai: "gpt-5.5",
-  codex: "gpt-5.4",
+  openai: "gpt-5.6-sol",
+  codex: "gpt-5.6-sol",
   openrouter: "anthropic/claude-opus-4-8",
   "openai-compatible": "",
 };

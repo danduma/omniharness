@@ -145,7 +145,7 @@ const initialHomeUiState: HomeUiState = {
   selectedConversationMode: "direct",
   selectedCliAgent: "auto",
   selectedWorkerAccountId: "auto",
-  selectedModel: "claude-opus-5",
+  selectedModel: "gpt-5.6-sol",
   selectedEffort: "High",
   hydratedRunSelectionId: null,
   attachments: [],

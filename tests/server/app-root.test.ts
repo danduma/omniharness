@@ -21,4 +21,11 @@ describe("app root helpers", () => {
       "/tmp/omniharness-test-root/vibes/ad-hoc/plan.md",
     );
   });
+
+  it("refuses to expose a live repository root to a Vitest process", async () => {
+    process.env.OMNIHARNESS_ROOT = process.cwd();
+    const mod = await import("@/server/app-root");
+
+    expect(() => mod.getAppRoot()).toThrow(/refusing to use non-temporary app data root/i);
+  });
 });

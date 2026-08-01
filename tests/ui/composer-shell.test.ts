@@ -32,7 +32,7 @@ const globalsSource = fs.readFileSync(path.resolve(process.cwd(), "src/interface
 
 test("composer uses a filled textarea shell with inline cli agent, model, and effort controls", () => {
   expect(pageSource).toContain('selectedCliAgent: "auto"');
-  expect(pageSource).toContain('selectedModel: "claude-opus-5"');
+  expect(pageSource).toContain('selectedModel: "gpt-5.6-sol"');
   expect(pageSource).toContain('selectedEffort: "High"');
   expect(pageSource).toContain('themeMode === "night"');
   expect(pageSource).toContain('rounded-[2rem] border border-[#dededd] bg-[#fdfdfc]');
@@ -60,6 +60,7 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain("const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {");
   expect(pageSource).toContain('workerModels?: Partial<WorkerModelCatalog>');
   expect(pageSource).toContain('const EFFORT_OPTIONS = ["Low", "Medium", "High", "Extra High", "Max"]');
+  expect(pageSource).toContain('codex: "gpt-5.6-sol"');
   expect(pageSource).toContain('bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary/[0.45]');
   expect(pageSource).toContain('placeholder:text-[#c4c4c2]');
 });
@@ -77,6 +78,7 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(composerSelectSource).toContain("options.map");
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)');
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)');
+  expect(pageSource).toContain('const savedModel = resolveSavedComposerModel(savedModelValue)');
   expect(pageSource).toContain('if (savedModel) {\n      setSelectedModel(savedModel);\n    }');
   expect(pageSource).toContain('window.localStorage.getItem(getEffortStorageKey(savedWorker, savedModel))');
   expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_WORKER_STORAGE_KEY, selectedCliAgent)');

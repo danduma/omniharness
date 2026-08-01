@@ -69,3 +69,34 @@ describe("ConversationTranscriptManager", () => {
     });
   });
 });
+
+describe("ConversationTranscriptManager.hasLoadedOnce", () => {
+  it("stays true while a refresh is in flight", async () => {
+    const tailToken = token("tail");
+    let resolveRefresh!: (value: unknown) => void;
+    const transcript = vi
+      .fn()
+      .mockResolvedValueOnce({
+        entries: [entry(1)],
+        latestToken: tailToken,
+        hasOlder: false,
+        workerIds: ["w1"],
+      })
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveRefresh = resolve;
+      }));
+    const manager = new ConversationTranscriptManager({ transcript });
+
+    expect(manager.getState("run-1").hasLoadedOnce).toBe(false);
+    await manager.ensureLoaded("run-1");
+    expect(manager.getState("run-1")).toMatchObject({ status: "loaded", hasLoadedOnce: true });
+
+    const refresh = manager.refresh("run-1");
+    expect(manager.getState("run-1").status).toBe("loading");
+    expect(manager.getState("run-1").hasLoadedOnce).toBe(true);
+
+    resolveRefresh({ entries: [], latestToken: tailToken, workerIds: ["w1"] });
+    await refresh;
+    expect(manager.getState("run-1").hasLoadedOnce).toBe(true);
+  });
+});

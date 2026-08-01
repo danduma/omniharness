@@ -19,7 +19,7 @@ import { conversationNotificationManager } from "./ConversationNotificationManag
 import { claudeModelGatewayManager } from "./ClaudeModelGatewayManager";
 import { LiveEventConnectionManager, LiveEventCursorManager } from "./LiveEventConnectionManager";
 import type { ComposerWorkerOption, EventStreamState } from "./types";
-import { buildConversationPath, buildInlineError, parseBrowserConversationRoute, parseCollapsedProjectPaths } from "./utils";
+import { buildConversationPath, buildInlineError, parseBrowserConversationRoute, parseCollapsedProjectPaths, resolveSavedComposerModel } from "./utils";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
 import type { RunnerConnection } from "@/interface/runners/RunnerConnection";
 
@@ -229,7 +229,8 @@ export function useHomeLifecycle({
     const route = parseBrowserConversationRoute(window.location);
     const savedMode = window.localStorage.getItem(COMPOSER_MODE_STORAGE_KEY)?.trim() || "";
     const savedWorker = window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)?.trim() || "";
-    const savedModel = window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)?.trim() || "";
+    const savedModelValue = window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY);
+    const savedModel = resolveSavedComposerModel(savedModelValue);
     const savedEffort = window.localStorage.getItem(getEffortStorageKey(savedWorker, savedModel))?.trim() || "";
 
     setPairTokenFromUrl(route.pairTokenFromUrl);

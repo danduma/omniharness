@@ -1,0 +1,10 @@
+# Test Processes Must Not Inherit Live Data Roots
+
+**Date:** 2026-08-01
+**Context:** OmniHarness runner, ACP agent environment, and Vitest database isolation
+**Symptom:** Real projects disappeared from the sidebar, surviving conversations moved under “Other sessions,” and automated-test titles such as “Source run” appeared as conversations.
+**Root Cause:** The runner exported its live `OMNIHARNESS_ROOT` to the managed ACP bridge, which passed that environment into agent processes. `tests/setup.ts` only created a temporary root when `OMNIHARNESS_ROOT` was absent. When an OmniHarness-managed agent ran Vitest in the OmniHarness repository, test cleanup trusted the inherited live root and deleted production rows before inserting fixtures into the same database.
+**Fix:** Recovered the pre-incident project setting and conversation graph from SQLite free pages and surviving worker streams; made Vitest replace every inherited root; made test-time app-root resolution reject non-temporary data roots; stripped runner data-root, instance, bridge, and runner-address variables from every spawned and prewarmed ACP agent environment.
+**Verification:** Ran the regression tests with `OMNIHARNESS_ROOT` deliberately set to the live repository; verified the setup replaces it, app-root access refuses it, and a real fake-ACP child observes null runner-control variables. Verified the restored live database with `PRAGMA integrity_check`, `PRAGMA foreign_key_check`, the 14-project setting, 98 recovered runs, and zero `/workspace/*` fixture runs.
+**Prevention:** Never use “only set a test root when absent” for test isolation. Test processes must replace inherited storage authority, storage open must fail closed, and child agents must not inherit server-only control variables.
+**Skill/Doc Updates:** Updated `docs/architecture/lifecycle-observability-and-testing.md` because this is a project-wide test-harness invariant. No general agent skill changed; the executable environment boundaries and regression tests are the authoritative prevention mechanism for this repository.

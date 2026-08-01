@@ -228,6 +228,7 @@ export class WorkerEntriesManager {
   private readonly listenersByWorker = new Map<string, Set<Listener>>();
   private readonly inFlightByWorker = new Map<string, Promise<void>>();
   private readonly wakeVersionByWorker = new Map<string, number>();
+  private readonly everLoadedWorkers = new Set<string>();
   private listEntries: RuntimeAPIs["workers"]["listEntries"] | null;
   private readonly storage: WorkerEntryStorage | null;
   private readonly storageKey: string;
@@ -298,6 +299,25 @@ export class WorkerEntriesManager {
       && state.latestContiguousSeq === state.latestKnownSeq
       && !state.needsTailValidation
     );
+  }
+
+  /**
+   * Latched variant of `isLoaded`: once a worker's stream has completed a
+   * validated load, this stays true through wake-up catch-up fetches and
+   * refresh cycles. `isLoaded` flips false on every appended entry until the
+   * gap is fetched, which makes it unusable as a render gate — anything
+   * conditioned on it flickers while the worker streams output.
+   */
+  hasEverLoaded(workerId: string): boolean {
+    if (this.everLoadedWorkers.has(workerId)) {
+      return true;
+    }
+    const state = this.stateByWorker.get(workerId);
+    if (state && state.status === "loaded" && !state.needsTailValidation) {
+      this.everLoadedWorkers.add(workerId);
+      return true;
+    }
+    return false;
   }
 
   subscribe(workerId: string, listener: Listener): () => void {
@@ -431,6 +451,7 @@ export class WorkerEntriesManager {
     this.listenersByWorker.clear();
     this.inFlightByWorker.clear();
     this.wakeVersionByWorker.clear();
+    this.everLoadedWorkers.clear();
   }
 
   private markWake(workerId: string): void {
@@ -634,6 +655,9 @@ export class WorkerEntriesManager {
 
   private updateState(workerId: string, next: WorkerStreamState): void {
     this.stateByWorker.set(workerId, next);
+    if (next.status === "loaded" && !next.needsTailValidation) {
+      this.everLoadedWorkers.add(workerId);
+    }
     if (next.status === "loaded") {
       this.rememberState(workerId, next.entries);
     }
@@ -804,6 +828,7 @@ export function useWorkerStream(
     state,
     entries,
     isLoaded: workerId ? workerEntriesManager.isLoaded(workerId) : false,
+    hasEverLoaded: workerId ? workerEntriesManager.hasEverLoaded(workerId) : false,
     hasOlder: state.hasOlder,
     loadOlder,
   };

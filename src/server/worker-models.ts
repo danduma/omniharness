@@ -29,6 +29,9 @@ type WorkerModelCatalogManagerOptions = {
 
 const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
   codex: [
+    { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+    { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+    { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
     { value: "gpt-5.5", label: "GPT-5.5" },
     { value: "gpt-5.4", label: "GPT-5.4" },
     { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
@@ -51,6 +54,9 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
     { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
   ],
   opencode: [
+    { value: "openai/gpt-5.6-sol", label: "GPT-5.6 Sol" },
+    { value: "openai/gpt-5.6-terra", label: "GPT-5.6 Terra" },
+    { value: "openai/gpt-5.6-luna", label: "GPT-5.6 Luna" },
     { value: "openai/gpt-5.5", label: "GPT-5.5" },
     { value: "openai/gpt-5.4", label: "GPT-5.4" },
     { value: "openai/gpt-5.4-mini", label: "GPT-5.4 Mini" },
@@ -88,6 +94,16 @@ function labelFromModelId(id: string) {
 }
 
 function normalizeLabel(id: string, label?: string) {
+  const bareId = id.includes("/") ? id.split("/").at(-1) ?? id : id;
+  const gpt56Labels: Record<string, string> = {
+    "gpt-5.6-sol": "GPT-5.6 Sol",
+    "gpt-5.6-terra": "GPT-5.6 Terra",
+    "gpt-5.6-luna": "GPT-5.6 Luna",
+  };
+  if (gpt56Labels[bareId]) {
+    return gpt56Labels[bareId];
+  }
+
   if (!label?.trim()) {
     return labelFromModelId(id);
   }
@@ -202,11 +218,12 @@ function parseCodexModels(output: string) {
       slug?: unknown;
       display_name?: unknown;
       visibility?: unknown;
+      priority?: unknown;
     }>;
   };
 
   return (parsed.models ?? [])
-    .filter((model) => model.visibility !== "hidden")
+    .filter((model) => model.visibility !== "hidden" && model.visibility !== "hide")
     .map((model) => {
       const value = typeof model.slug === "string" ? model.slug.trim() : "";
       if (!value) {
@@ -216,9 +233,11 @@ function parseCodexModels(output: string) {
       return {
         value,
         label: normalizeLabel(value, typeof model.display_name === "string" ? model.display_name : undefined),
+        priority: typeof model.priority === "number" ? model.priority : Number.MAX_SAFE_INTEGER,
       };
     })
-    .filter((model): model is WorkerModelOption => model !== null);
+    .filter((model): model is WorkerModelOption & { priority: number } => model !== null)
+    .sort((left, right) => left.priority - right.priority);
 }
 
 function parseOpenCodeModels(output: string) {
@@ -303,7 +322,7 @@ export class WorkerModelCatalogManager {
     ]);
 
     if (codexResult.status === "fulfilled") {
-      baseCatalog.codex = mergeModelOptions(HARDCODED_WORKER_MODELS.codex, codexResult.value);
+      baseCatalog.codex = mergeModelOptions(codexResult.value, HARDCODED_WORKER_MODELS.codex);
     }
 
     if (openCodeResult.status === "fulfilled") {

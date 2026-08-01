@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import React from "react";
 import { MarkdownContent } from "@/components/MarkdownContent";
+
+type InspectableReactElement = React.ReactElement<{ children?: React.ReactNode }>;
 
 // Helper to inspect the rendered virtual DOM tree of a React element
 function findReactNodes(node: any, predicate: (n: any) => boolean): any[] {
@@ -47,6 +48,37 @@ describe("MarkdownContent - Horizontal Rule rendering", () => {
 
     expect(pNodes.length).toBe(2);
     expect(hrNodes.length).toBe(1);
+  });
+});
+
+describe("MarkdownContent - List rendering", () => {
+  it("keeps loose ordered items in one sequence and nests indented bullets under their parent item", () => {
+    const content = [
+      "1. First step",
+      "",
+      "1. Second step",
+      "",
+      "1. Third step:",
+      "",
+      "   - First detail",
+      "   - Second detail",
+      "",
+      "1. Fourth step",
+    ].join("\n");
+
+    const tree = MarkdownContent({ content });
+    const topLevelChildren = React.Children.toArray(tree.props.children) as InspectableReactElement[];
+    const orderedLists = topLevelChildren.filter((node) => node.type === "ol");
+
+    expect(orderedLists).toHaveLength(1);
+
+    const orderedItems = React.Children.toArray(orderedLists[0].props.children) as InspectableReactElement[];
+    expect(orderedItems).toHaveLength(4);
+
+    const nestedLists = React.Children.toArray(orderedItems[2].props.children)
+      .filter((node): node is InspectableReactElement => React.isValidElement(node) && node.type === "ul");
+    expect(nestedLists).toHaveLength(1);
+    expect(React.Children.count(nestedLists[0].props.children)).toBe(2);
   });
 });
 

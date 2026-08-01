@@ -26,6 +26,12 @@ export interface ConversationTranscriptState {
   status: "idle" | "loading" | "loaded" | "error";
   lastError: string | null;
   workerIds: string[];
+  /**
+   * Latched: true once this run's transcript has loaded at least once.
+   * `status` cycles back through "loading" on every poll refresh, so
+   * render gates must use this instead of `status === "loaded"`.
+   */
+  hasLoadedOnce: boolean;
 }
 
 interface TranscriptFetchResponse {
@@ -46,6 +52,7 @@ const EMPTY: ConversationTranscriptState = Object.freeze({
   status: "idle",
   lastError: null,
   workerIds: [],
+  hasLoadedOnce: false,
 });
 
 export const EMPTY_CONVERSATION_TRANSCRIPT_STATE = EMPTY;
@@ -151,6 +158,7 @@ export class ConversationTranscriptManager {
           workerIds: response.workerIds,
           status: "loaded",
           lastError: null,
+          hasLoadedOnce: true,
         };
         this.updateState(runId, next);
       },
@@ -181,6 +189,7 @@ export class ConversationTranscriptManager {
           workerIds: response.workerIds,
           status: "loaded",
           lastError: null,
+          hasLoadedOnce: true,
         };
         this.updateState(runId, next);
       },
@@ -211,6 +220,7 @@ export class ConversationTranscriptManager {
           workerIds: response.workerIds,
           status: "loaded",
           lastError: null,
+          hasLoadedOnce: true,
         };
         this.updateState(runId, next);
       },
@@ -282,6 +292,7 @@ export function useConversationTranscript(
     state,
     entries,
     isLoaded: state.status === "loaded",
+    hasLoadedOnce: state.hasLoadedOnce,
     hasOlder: state.hasOlder,
     loadOlder,
     workerIds: state.workerIds,

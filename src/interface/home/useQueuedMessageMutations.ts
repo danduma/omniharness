@@ -24,12 +24,14 @@ type QueuedMessageMutationResponse = {
 export interface UseQueuedMessageMutationsParams {
   setState: React.Dispatch<React.SetStateAction<EventStreamState>>;
   pendingSentConversationMessagesRef: React.RefObject<Map<string, MessageRecord>>;
+  locallySentMessageIdsRef: React.RefObject<Set<string>>;
   scrollConversationToBottom: () => void;
 }
 
 export function useQueuedMessageMutations({
   setState,
   pendingSentConversationMessagesRef,
+  locallySentMessageIdsRef,
   scrollConversationToBottom,
 }: UseQueuedMessageMutationsParams) {
   const runtimeApis = useRuntimeAPIs();
@@ -73,6 +75,7 @@ export function useQueuedMessageMutations({
       });
       if (data.message) {
         pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
+        locallySentMessageIdsRef.current.add(data.message.id);
         setState((current) => appendSentConversationMessageSnapshot(current, data.message));
         if (ownsSideEffects) {
           scrollConversationToBottom();
@@ -139,6 +142,7 @@ export function useQueuedMessageMutations({
 
       if (data.message) {
         pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
+        locallySentMessageIdsRef.current.add(data.message.id);
         setState((current) => appendSentConversationMessageSnapshot(current, data.message));
       }
       if (data.queuedMessage) {

@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdtempSync,
   openSync,
+  readFileSync,
   readSync,
   symlinkSync,
   writeFileSync,
@@ -118,6 +119,16 @@ const DEFAULT_STRUCTURED_TOOLS = [
 const codexArgv0ShimDirs = new Map<string, string>();
 const codexManagedConfigPaths = new Map<string, string>();
 const loginShellPathCache = new Map<string, { path: string | null; refreshing: boolean }>();
+const RUNNER_CONTROL_ENV_KEYS = [
+  "OMNIHARNESS_ROOT",
+  "OMNIHARNESS_INSTANCE",
+  "OMNIHARNESS_BRIDGE_URL",
+  "OMNIHARNESS_AGENT_RUNTIME_HOST",
+  "OMNIHARNESS_AGENT_RUNTIME_PORT",
+  "OMNIHARNESS_RUNNER_HOST",
+  "OMNIHARNESS_RUNNER_PORT",
+  "OMNIHARNESS_STATIC_DIR",
+] as const;
 
 const CODEX_STANDARD_TOOL_CONFIG = `[features]
 apply_patch_freeform = true
@@ -128,6 +139,82 @@ shell_tool = true
 parallel = true
 remote_models = true
 `;
+const LEGACY_CODEX_ACP_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
+
+type CodexModelCatalog = {
+  models: Array<Record<string, unknown>>;
+};
+
+function parseStableCodexVersion(value: unknown): number | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const match = value.match(/(?:rust-v|^)(\d+)\.(\d+)\.(\d+)/);
+  if (!match) {
+    return null;
+  }
+  return Number(match[1]) * 1_000_000 + Number(match[2]) * 1_000 + Number(match[3]);
+}
+
+function codexAcpSupportsCurrentCatalog(env: EnvLike) {
+  const codexAcpPath = resolveCommand("codex-acp", { env });
+  if (!codexAcpPath) {
+    return false;
+  }
+
+  try {
+    const build = JSON.parse(readFileSync(`${codexAcpPath}.build.json`, "utf8")) as { codex_ref?: unknown };
+    return (parseStableCodexVersion(build.codex_ref) ?? 0) >= parseStableCodexVersion("rust-v0.144.0")!;
+  } catch {
+    try {
+      const version = execFileSync(codexAcpPath, ["--version"], {
+        env: env as NodeJS.ProcessEnv,
+        encoding: "utf8",
+        timeout: 3_000,
+      });
+      return version.includes("@agentclientprotocol/codex-acp");
+    } catch {
+      return false;
+    }
+  }
+}
+
+function prepareCodexModelCatalogForAcp(rawCatalog: string, supportsCurrentCatalog: boolean): CodexModelCatalog {
+  const parsed = JSON.parse(rawCatalog) as Partial<CodexModelCatalog>;
+  if (!Array.isArray(parsed.models) || parsed.models.length === 0) {
+    throw new Error("Codex returned an empty model catalog");
+  }
+
+  if (supportsCurrentCatalog) {
+    return { models: parsed.models };
+  }
+
+  return {
+    models: parsed.models.map((model) => {
+      const supportedReasoningLevels = Array.isArray(model.supported_reasoning_levels)
+        ? model.supported_reasoning_levels.filter((level) => (
+          typeof level === "object"
+          && level !== null
+          && LEGACY_CODEX_ACP_REASONING_EFFORTS.has(String((level as { effort?: unknown }).effort ?? ""))
+        ))
+        : [];
+      const defaultReasoningLevel = LEGACY_CODEX_ACP_REASONING_EFFORTS.has(String(model.default_reasoning_level ?? ""))
+        ? model.default_reasoning_level
+        : supportedReasoningLevels.at(-1) && typeof supportedReasoningLevels.at(-1) === "object"
+          ? (supportedReasoningLevels.at(-1) as { effort?: unknown }).effort
+          : undefined;
+
+      return {
+        ...model,
+        supported_reasoning_levels: supportedReasoningLevels,
+        ...(defaultReasoningLevel ? { default_reasoning_level: defaultReasoningLevel } : {}),
+        supports_reasoning_summaries: typeof model.supports_reasoning_summaries === "boolean"
+          ? model.supports_reasoning_summaries
+          : supportedReasoningLevels.length > 0,
+      };
+    }),
+  };
+}
 
 function splitPath(value: string | undefined): string[] {
   return (value || "")
@@ -324,7 +411,13 @@ export function createCodexManagedToolConfigPath(env: EnvLike = process.env): st
     return null;
   }
 
-  const cacheKey = env.CODEX_MANAGED_CONFIG_PATH || "omniharness-default";
+  const codexCommand = resolveCommand("codex", { env });
+  const cacheKey = [
+    env.CODEX_MANAGED_CONFIG_PATH || "omniharness-default",
+    env.HOME || homedir(),
+    env.CODEX_HOME || "",
+    codexCommand || "",
+  ].join("\0");
   const existing = codexManagedConfigPaths.get(cacheKey);
   if (existing && existsSync(existing)) {
     return existing;
@@ -333,7 +426,26 @@ export function createCodexManagedToolConfigPath(env: EnvLike = process.env): st
   try {
     const dir = mkdtempSync(join(tmpdir(), "omniharness-codex-config-"));
     const configPath = join(dir, "managed_config.toml");
-    writeFileSync(configPath, CODEX_STANDARD_TOOL_CONFIG, "utf8");
+    let modelCatalogConfig = "";
+    if (codexCommand) {
+      try {
+        const commandEnv = { ...env };
+        delete commandEnv.CODEX_MANAGED_CONFIG_PATH;
+        const rawCatalog = execFileSync(codexCommand, ["debug", "models"], {
+          env: commandEnv as NodeJS.ProcessEnv,
+          encoding: "utf8",
+          timeout: 10_000,
+          maxBuffer: 8 * 1024 * 1024,
+        });
+        const catalog = prepareCodexModelCatalogForAcp(rawCatalog, codexAcpSupportsCurrentCatalog(env));
+        const catalogPath = join(dir, "model_catalog.json");
+        writeFileSync(catalogPath, `${JSON.stringify(catalog)}\n`, "utf8");
+        modelCatalogConfig = `model_catalog_json = ${JSON.stringify(catalogPath)}\n\n`;
+      } catch (error) {
+        console.warn("OmniHarness could not load current Codex model details for the ACP runner.", error);
+      }
+    }
+    writeFileSync(configPath, `${modelCatalogConfig}${CODEX_STANDARD_TOOL_CONFIG}`, "utf8");
     codexManagedConfigPaths.set(cacheKey, configPath);
     return configPath;
   } catch {
@@ -456,6 +568,14 @@ export function withManagedPath<T extends EnvLike>(env: T, cwd?: string, options
     ...env,
     PATH: buildManagedPath({ cwd, env, loginShellPathMode: options.loginShellPathMode }),
   };
+}
+
+export function stripRunnerControlEnv<T extends EnvLike>(env: T): T {
+  const sanitized = { ...env };
+  for (const key of RUNNER_CONTROL_ENV_KEYS) {
+    delete sanitized[key];
+  }
+  return sanitized;
 }
 
 export function withCodexStandardTooling<T extends EnvLike>(env: T): T {
