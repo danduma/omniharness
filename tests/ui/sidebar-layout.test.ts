@@ -93,6 +93,15 @@ test("the server password field is available in both web and native edit dialogs
   expect(runnerControlsSource).toContain('password: draft.password');
 });
 
+test("Connect uses the submitted password for native and current-server edits", () => {
+  const runnerControlsSource = readSource("src/interface/runners/RunnerControls.tsx");
+
+  expect(runnerControlsSource).not.toContain("previous?.savedPassword !== draft.password");
+  expect(runnerControlsSource).toContain("if (profile.isSameOrigin) {");
+  expect(runnerControlsSource).toContain("await runtime.auth.login({");
+  expect(runnerControlsSource).toContain("await connection.retry();");
+});
+
 test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('data-project-path={group.path}');
   expect(pageSource).toContain('data-conversation-run-id={run.id}');

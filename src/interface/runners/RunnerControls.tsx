@@ -117,9 +117,24 @@ function ConnectedRunnerControls({
 
   const authorizeProfile = useCallback(async (profileId: string, password = "") => {
     const profile = context.profileStore.getProfile(profileId);
-    if (!profile || profile.isSameOrigin) return;
+    if (!profile) return;
     context.uiManager.setBusy(true);
     try {
+      if (profile.isSameOrigin) {
+        const connection = context.registry.getConnection(profileId);
+        const runtime = connection?.getRuntimeAPIs();
+        if (!connection || !runtime) {
+          throw { code: "runner.error.generic" };
+        }
+        await runtime.auth.login({
+          password,
+          label: t("runner.authorization.clientLabel"),
+        });
+        await connection.retry();
+        context.registry.switchActive(profileId);
+        context.uiManager.close();
+        return;
+      }
       if (context.credentialStore.authorizeNative) {
         const handle = await context.credentialStore.authorizeNative({
           profileId,
@@ -186,11 +201,10 @@ function ConnectedRunnerControls({
           baseUrl: draft.baseUrl,
           password: draft.password,
         });
-        if (previous?.baseUrl !== profile.baseUrl || (
-          nativeAuthorization
-          && draft.password
-          && previous?.savedPassword !== draft.password
-        )) {
+        if (
+          previous?.baseUrl !== profile.baseUrl
+          || (draft.password && (profile.isSameOrigin || nativeAuthorization))
+        ) {
           await authorizeProfile(profile.id, draft.password);
         } else {
           context.uiManager.close();

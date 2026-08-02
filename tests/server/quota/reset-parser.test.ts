@@ -104,6 +104,38 @@ describe("quota reset parser", () => {
     expect(info.retryAfterMs).toBe(40 * 60_000);
   });
 
+  it("keeps the named reset date in Claude limit text", () => {
+    const localNow = new Date(2026, 7, 2, 19, 34, 0, 0);
+    const info = parseQuotaResetText(
+      "You've hit your limit · resets Aug 3 at 8pm (Europe/Madrid)",
+      { now: localNow },
+    );
+
+    expect(info).toMatchObject({
+      isQuotaError: true,
+      source: "absolute-timestamp",
+      confidence: "medium",
+    });
+    expect(info.resetAt?.getFullYear()).toBe(2026);
+    expect(info.resetAt?.getMonth()).toBe(7);
+    expect(info.resetAt?.getDate()).toBe(3);
+    expect(info.resetAt?.getHours()).toBe(20);
+  });
+
+  it("does not treat a partial weekly usage notice as quota exhaustion", () => {
+    const localNow = new Date(2026, 7, 2, 19, 34, 0, 0);
+    const info = parseQuotaResetText(
+      "You've used 76% of your weekly limit · resets Aug 3 at 8pm (Europe/Madrid)",
+      { now: localNow },
+    );
+
+    expect(info).toMatchObject({
+      isQuotaError: false,
+      resetAt: null,
+      retryAfterMs: null,
+    });
+  });
+
   it("classifies quota text without reset as unschedulable", () => {
     const info = parseQuotaResetText("quota exceeded for this account", { now });
 

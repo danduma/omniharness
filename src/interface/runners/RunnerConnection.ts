@@ -126,7 +126,12 @@ function normalizeRuntimeError(error: unknown): RuntimeApiError {
 
 function statusForError(error: RuntimeApiError): RunnerConnectionStatus {
   const code = error.code.toLowerCase();
-  if (code.includes("401") || code.includes("unauthorized") || code.includes("auth")) {
+  if (
+    code.includes("401")
+    || code.includes("unauthorized")
+    || code.includes("auth")
+    || code.includes("login")
+  ) {
     return "needs-reauth";
   }
   if (code.includes("tls") || code.includes("certificate")) {
@@ -321,25 +326,47 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
     try {
       this.profile = this.persistence.getProfile(this.profile.id) ?? this.profile;
       const runtime = await this.runtimeFactory(this.profile);
-      const payload = await runtime.bootstrap.load({});
-      if (!this.isCurrent(generation)) return;
-      if (!isBootstrapPayload(payload)) {
-        throw {
-          code: "runtime.bootstrap_invalid",
-          message: "Server bootstrap response is invalid.",
-        };
-      }
-      const compatibility = assessApiCompatibility(payload.runner);
-      if (!compatibility.compatible) {
-        this.patch({
-          status: "incompatible",
-          observedRunnerInstanceId: payload.runner.runnerInstanceId,
-          lastError: {
-            code: "runtime.incompatible",
-            message: "Server API revisions are incompatible.",
-          },
+      const loadCompatibleBootstrap = async () => {
+        const candidate = await runtime.bootstrap.load({});
+        if (!this.isCurrent(generation)) return null;
+        if (!isBootstrapPayload(candidate)) {
+          throw {
+            code: "runtime.bootstrap_invalid",
+            message: "Server bootstrap response is invalid.",
+          };
+        }
+        const compatibility = assessApiCompatibility(candidate.runner);
+        if (!compatibility.compatible) {
+          this.patch({
+            status: "incompatible",
+            observedRunnerInstanceId: candidate.runner.runnerInstanceId,
+            lastError: {
+              code: "runtime.incompatible",
+              message: "Server API revisions are incompatible.",
+            },
+          });
+          return null;
+        }
+        return candidate;
+      };
+
+      let payload = await loadCompatibleBootstrap();
+      if (!payload) return;
+      const session = payload.initialQueries?.session;
+      if (
+        this.profile.isSameOrigin
+        && this.profile.savedPassword
+        && session?.enabled
+        && !session.authenticated
+        && runtime.apis
+      ) {
+        await runtime.apis.auth.login({
+          password: this.profile.savedPassword,
+          label: "Browser session",
         });
-        return;
+        if (!this.isCurrent(generation)) return;
+        payload = await loadCompatibleBootstrap();
+        if (!payload) return;
       }
       const identity = await this.persistence.learnIdentity(
         this.profile.id,
@@ -382,8 +409,8 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
         retryAt: null,
       });
       this.onIdentity?.(this);
-      const session = payload.initialQueries?.session;
-      if (session?.enabled && !session.authenticated) {
+      const authenticatedSession = payload.initialQueries?.session;
+      if (authenticatedSession?.enabled && !authenticatedSession.authenticated) {
         this.patch({
           status: "needs-reauth",
           lastError: {

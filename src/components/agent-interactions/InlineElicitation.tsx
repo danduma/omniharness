@@ -55,9 +55,19 @@ export function InlineElicitation({
   useI18nSnapshot();
   useManagerSnapshot(workerCardManager);
   const fields = parseElicitationFields(elicitation.requestedSchema);
+  const questionFields = fields.filter((field) => /^question_\d+$/.test(field.name));
+  const usesQuestionTabs = questionFields.length > 1;
   const isUrl = elicitation.mode === "url" && Boolean(elicitation.url);
   const safeUrl = isUrl && /^https?:\/\//i.test(elicitation.url ?? "") ? elicitation.url : null;
   const prefix = requestDraftPrefix(workerId, elicitation);
+  const activeQuestionDraftKey = `${prefix}active-question`;
+  const storedActiveQuestion = workerCardManager.readElicitationDraft(activeQuestionDraftKey);
+  const activeQuestion = questionFields.find((field) => field.name === storedActiveQuestion)
+    ?? questionFields[0]
+    ?? null;
+  const visibleFields = usesQuestionTabs
+    ? fields.filter((field) => !/^question_\d+$/.test(field.name) || field.name === activeQuestion?.name)
+    : fields;
   const values = Object.fromEntries(fields.map((field) => {
     if (field.kind === "multi_select") {
       const defaults = Array.isArray(field.defaultValue) ? field.defaultValue : [];
@@ -118,13 +128,65 @@ export function InlineElicitation({
           {t("worker.elicitation.openLink")}
         </a>
       ) : null}
-      <div className="mt-4 space-y-4">
-        {fields.map((field) => {
+      {usesQuestionTabs ? (
+        <div
+          role="tablist"
+          aria-label={t("worker.elicitation.title")}
+          className="mt-4 flex flex-wrap gap-x-1 border-b border-border"
+        >
+          {questionFields.map((field, index) => {
+            const selected = field.name === activeQuestion?.name;
+            const tabId = `${prefix}${field.name}:tab`;
+            return (
+              <button
+                key={field.name}
+                id={tabId}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                tabIndex={selected ? 0 : -1}
+                disabled={disabled}
+                onClick={() => workerCardManager.setElicitationDraft(activeQuestionDraftKey, field.name)}
+                onKeyDown={(event) => {
+                  const direction = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+                  const targetIndex = event.key === "Home"
+                    ? 0
+                    : event.key === "End"
+                      ? questionFields.length - 1
+                      : direction
+                        ? (index + direction + questionFields.length) % questionFields.length
+                        : -1;
+                  const target = questionFields[targetIndex];
+                  if (!target) return;
+                  event.preventDefault();
+                  workerCardManager.setElicitationDraft(activeQuestionDraftKey, target.name);
+                  document.getElementById(`${prefix}${target.name}:tab`)?.focus();
+                }}
+                className={cn(
+                  "border-b-2 px-3 pb-2 pt-1 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50",
+                  selected
+                    ? "border-sky-500 text-foreground"
+                    : "border-transparent text-muted-foreground hover:border-border hover:text-foreground",
+                )}
+              >
+                {field.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      <div
+        role={usesQuestionTabs ? "tabpanel" : undefined}
+        aria-labelledby={usesQuestionTabs && activeQuestion ? `${prefix}${activeQuestion.name}:tab` : undefined}
+        className="mt-4 space-y-4"
+      >
+        {visibleFields.map((field) => {
           const draftKey = `${prefix}${field.name}`;
           const value = values[field.name];
+          const isTabbedQuestion = usesQuestionTabs && /^question_\d+$/.test(field.name);
           return (
             <fieldset key={field.name} className="space-y-2">
-              <legend className="text-sm font-medium text-foreground">{field.label}</legend>
+              <legend className={cn("text-sm font-medium text-foreground", isTabbedQuestion && "sr-only")}>{field.label}</legend>
               {field.description ? (
                 <p className="text-xs leading-5 text-muted-foreground">{field.description}</p>
               ) : null}

@@ -69,6 +69,32 @@ test.afterAll(async () => {
   runners = [];
 });
 
+test("automatically unlocks the current server with its saved password after reload", async ({
+  page,
+}) => {
+  const [first] = runners;
+  await page.addInitScript(() => {
+    window.localStorage.setItem("omni.onboarding.seen", "1");
+  });
+  await page.goto(first.origin);
+  await expect(page.locator("#omni-password")).toBeVisible();
+
+  await page.locator("#runner-switcher").click();
+  await page.getByRole("menuitem", { name: /Edit connection/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit server" });
+  await dialog.locator("#runner-password").fill(first.options.password);
+  await dialog.getByRole("button", { name: "Connect", exact: true }).click();
+
+  await expect(page.locator("#omni-password")).not.toBeVisible({ timeout: 30_000 });
+  await expect(page.locator("#runner-switcher")).toHaveAccessibleName(/Online/);
+
+  await page.context().clearCookies();
+  await page.reload();
+
+  await expect(page.locator("#omni-password")).not.toBeVisible({ timeout: 30_000 });
+  await expect(page.locator("#runner-switcher")).toHaveAccessibleName(/Online/);
+});
+
 test("connects two real packaged runners, switches workspaces, revokes, reauthorizes, and recovers after restart", async ({
   page,
 }) => {
