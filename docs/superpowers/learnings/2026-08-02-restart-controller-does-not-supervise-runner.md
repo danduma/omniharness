@@ -1,0 +1,10 @@
+# Restart Control Is Not Process Supervision
+
+**Date:** 2026-08-02
+**Context:** OmniHarness production runner, public tunnel, and remote restart controller
+**Symptom:** The public OmniHarness address returned HTTP 502 and the interface did not load, while the restart controller itself remained available.
+**Root Cause:** No process was listening on the managed runner or bridge ports. The runner had served requests normally and then disappeared without an application exception or controlled-shutdown entry. Its PID and runner lock records were stale. The restart controller reports and restarts processes on request, but it does not supervise a child after startup or automatically recover an unexpected exit. The external reason that terminated the child was not present in the application log or macOS crash reports.
+**Fix:** The existing production runner was restarted through the authorized restart controller, which cleared stale process ownership, started the runner and bridge again, and restored the public tunnel target.
+**Verification:** Local checks returned HTTP 200 from `/` and `/api/runtime/bootstrap`; the bridge health endpoint returned HTTP 200; the public address returned HTTP 200 from `/` and `/api/runtime/bootstrap`; named events showed `runner.started` followed by `runner.bridge_ready`; and the managed listener remained present on port 3050 during the final stability check.
+**Prevention:** Do not treat a live restart controller as proof that the managed runner is live. Outage checks must inspect the managed ports and both local and public endpoints. A future reliability change should make the controller record child exit status and either supervise production with bounded restart backoff or delegate production ownership to a service manager that does.
+**Skill/Doc Updates:** No general skill update was needed because the existing debugging and control-plane guidance already requires checking every component boundary and making lifecycle decisions observable. This note records the OmniHarness-specific gap for a future supervision change.

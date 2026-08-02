@@ -33,6 +33,7 @@ export type NormalizeQuotaResumeOptions = {
 const QUOTA_LANGUAGE_PATTERN = /\b(?:quota|credit|credits|usage limit|subscription limit|billing limit|resource exhausted|insufficient quota|rate limit(?:ed)?|too many requests)\b/i;
 const RESET_LANGUAGE_PATTERN = /\b(?:retry-after|retry after|try again|reset|resets|available|until|after)\b/i;
 const GENERIC_OVERLOAD_PATTERN = /\b(?:overloaded|busy|temporar(?:y|ily)|service unavailable|server error|capacity|traffic)\b/i;
+const USAGE_PROGRESS_PATTERN = /\b(?:you(?:'|’)ve\s+)?used\s+(\d{1,3}(?:\.\d+)?)%\s+of\s+(?:your\s+)?(?:(?:weekly|session|usage|subscription|billing)\s+)?limit\b/i;
 const CLOCK_SKEW_MS = 60_000;
 
 function nowDate(value: Date | number | undefined) {
@@ -166,6 +167,49 @@ function parseAbsoluteTimestamp(text: string): { resetAt: Date; confidence: Quot
   return null;
 }
 
+function parseNamedMonthDateTime(text: string, now: Date): { resetAt: Date; confidence: QuotaResetConfidence } | null {
+  const match = text.match(
+    /\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2})(?:,?\s+(\d{4}))?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\b/i,
+  );
+  if (!match) {
+    return null;
+  }
+
+  const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  const month = monthNames.indexOf(match[1].slice(0, 3).toLowerCase());
+  const day = Number(match[2]);
+  const explicitYear = match[3] ? Number(match[3]) : null;
+  let hour = Number(match[4]);
+  const minute = Number(match[5] ?? "0");
+  const marker = match[6].toUpperCase();
+  if (month < 0 || day < 1 || day > 31 || hour < 1 || hour > 12 || minute < 0 || minute > 59) {
+    return null;
+  }
+
+  if (marker === "PM" && hour !== 12) {
+    hour += 12;
+  } else if (marker === "AM" && hour === 12) {
+    hour = 0;
+  }
+
+  let year = explicitYear ?? now.getFullYear();
+  let resetAt = new Date(year, month, day, hour, minute, 0, 0);
+  if (
+    resetAt.getMonth() !== month
+    || resetAt.getDate() !== day
+    || resetAt.getHours() !== hour
+    || resetAt.getMinutes() !== minute
+  ) {
+    return null;
+  }
+  if (explicitYear === null && resetAt.getTime() < now.getTime() - CLOCK_SKEW_MS) {
+    year += 1;
+    resetAt = new Date(year, month, day, hour, minute, 0, 0);
+  }
+
+  return { resetAt, confidence: "medium" };
+}
+
 function parseRelativeDuration(text: string): { resetAt: Date; retryAfterMs: number } | null {
   const relativePhrases = [
     /\b(?:try again|retry|reset|resets|available)?\s*(?:in|after)\s+((?:(?:\d+(?:\.\d+)?)\s*(?:days?|d|hours?|hrs?|hr|h|minutes?|mins?|min|m|seconds?|secs?|sec|s)\s*){1,4})\b/i,
@@ -242,6 +286,11 @@ function parseTimeOfDay(text: string, now: Date): Date | null {
 }
 
 function looksLikeQuota(text: string, hasResetSignal: boolean) {
+  const usageProgress = text.match(USAGE_PROGRESS_PATTERN);
+  if (usageProgress && Number(usageProgress[1]) < 100) {
+    return false;
+  }
+
   if (QUOTA_LANGUAGE_PATTERN.test(text)) {
     if (/\b429\b/.test(text) && GENERIC_OVERLOAD_PATTERN.test(text) && !RESET_LANGUAGE_PATTERN.test(text)) {
       return false;
@@ -259,7 +308,7 @@ export function parseQuotaResetText(text: string, options: QuotaResetParseOption
     return baseInfo({ isQuotaError: false, rawText, provider: options.provider });
   }
 
-  const absolute = parseAbsoluteTimestamp(rawText);
+  const absolute = parseAbsoluteTimestamp(rawText) ?? parseNamedMonthDateTime(rawText, now);
   const relative = parseRelativeDurationAt(rawText, now);
   const timeOnly = parseTimeOfDay(rawText, now);
   const hasResetSignal = Boolean(absolute || relative || timeOnly);

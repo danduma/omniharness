@@ -734,5 +734,8 @@
   "runner.error.invalidUrl": "Enter a valid HTTP or HTTPS server address.",
   "runner.error.sessions": "Server sessions could not be loaded or changed.",
   "notifications.push.runnerNeedsInput": "{runner} needs input",
-  "notifications.push.runnerComplete": "{runner}: conversation complete"
+  "notifications.push.runnerComplete": "{runner}: conversation complete",
+  "runtime.model.verifyUnavailable": "Cannot verify that Claude activated requested model \"{model}\" because this CLI session exposes no model status.",
+  "runtime.model.mismatch": "Requested model \"{requested}\", but Claude reported \"{reported}\" after startup. The launch was stopped instead of translating the request through Claude's model menu.",
+  "runtime.model.noneReported": "no model"
 }

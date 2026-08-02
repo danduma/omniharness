@@ -1,14 +1,18 @@
 /**
  * Claude session model pinning.
  *
+ * Explicit model selections no longer depend on this menu resolver. The agent
+ * runtime passes the exact model id through `ANTHROPIC_MODEL` before startup
+ * and requires Claude's reported current model to equal that id. This resolver
+ * remains for unrequested sessions and as a fail-closed model-option contract.
+ *
  * The Claude ACP adapter picks the session model itself when nothing pins it:
  * `ANTHROPIC_MODEL` first, then `settings.model` from the CLI config dir, then
  * the first entry of the account's model list. OmniHarness worker launches used
  * to fall through all three, so a worker launched as "Claude Opus 5" actually
  * ran on whatever the user's global `/model` last selected.
  *
- * This resolver maps the model OmniHarness asked for onto one of the values the
- * adapter actually offers. One rule dominates every other:
+ * When resolving adapter options, one rule dominates every other:
  *
  *   **Never leave the requested family.**
  *
@@ -17,12 +21,12 @@
  * every layer — the transcript, the cost, the answers themselves. Refuse
  * instead: a failed launch is recoverable, a silent family swap is not.
  *
- * Inside the family, take the closest thing on offer rather than refusing:
+ * Inside the family, require the requested version rather than guessing:
  *
  *  1. the requested **version**, in whichever context size the adapter has it.
  *     If the only Opus 5 is `claude-opus-5[1m]`, that is Opus 5 — run it;
- *  2. only when that version is not offered at all, a lower version of the
- *     same family, which is a substitution the caller can live with.
+ *  2. if that version is not offered at all, refuse the launch. Opus 4.8 is
+ *     not Opus 5, even though both belong to the Opus family.
  *
  * Context size is an implementation detail the caller should never have to
  * think about. When one model is listed both ways, prefer the standard-context
@@ -48,16 +52,8 @@ export type ClaudeSessionModelReason =
   | "standard_context_fallback"
   /** Same family, but the adapter offers it only as a `[1m]` variant. */
   | "one_million_only"
-  /** Same family, different version — the closest the adapter actually offers. */
-  | "version_substituted"
   /** Nothing was requested and the adapter's own default was a 1M variant. */
-  | "avoid_1m_default"
-  /**
-   * The request named a version but the adapter's matching option advertises no
-   * version at all, so we pinned the family alias without being able to prove it
-   * is the version that was asked for.
-   */
-  | "family_alias_unverified";
+  | "avoid_1m_default";
 
 export type ClaudeSessionModelResolution = {
   value: string;
@@ -69,16 +65,13 @@ export type ClaudeSessionModelOutcome =
   | { status: "pin"; value: string; reason: ClaudeSessionModelReason }
   /** The session is already on an acceptable model; change nothing. */
   | { status: "keep"; value: string | null; reason: ClaudeSessionModelReason }
-  /**
-   * The requested *family* is not on offer at all. This is the only refusal:
-   * every other gap is closed inside the family. Substituting a different
-   * family is never correct — a run launched as Fable that quietly executes on
-   * Opus is mislabelled everywhere it is later read.
-   */
+  /** The requested family or exact version is not available. */
   | {
     status: "unavailable";
+    reason: "family_unavailable" | "version_unavailable";
     requested: string;
     requestedFamily: string | null;
+    requestedVersion: string | null;
     available: string[];
   };
 
@@ -134,11 +127,17 @@ function versionFromModelText(value: string): string | null {
 function optionVersion(option: ClaudeSessionModelOption): string | null {
   return versionFromModelText(option.value)
     ?? versionFromModelText(option.name ?? "")
-    ?? versionFromModelText(option.description ?? "");
+    ?? versionFromModelText(optionDescriptionIdentity(option));
 }
 
-function optionHaystack(option: ClaudeSessionModelOption) {
-  return `${option.value} ${option.name ?? ""} ${option.description ?? ""}`.toLowerCase();
+function optionDescriptionIdentity(option: ClaudeSessionModelOption) {
+  return (option.description ?? "").split(/\s+(?:·|•|—|–|\|)\s+/, 1)[0] ?? "";
+}
+
+function optionFamily(option: ClaudeSessionModelOption) {
+  return modelFamily(option.value)
+    ?? modelFamily(option.name ?? "")
+    ?? modelFamily(optionDescriptionIdentity(option));
 }
 
 function findByValue(options: ClaudeSessionModelOption[], value: string) {
@@ -156,7 +155,7 @@ function standardContextSibling(
   options: ClaudeSessionModelOption[],
   option: ClaudeSessionModelOption,
 ) {
-  const family = modelFamily(optionHaystack(option));
+  const family = optionFamily(option);
   if (!family) {
     return null;
   }
@@ -164,7 +163,7 @@ function standardContextSibling(
   return options.find((candidate) => (
     candidate.value !== option.value
     && !isOneMillionContextOption(candidate)
-    && modelFamily(optionHaystack(candidate)) === family
+    && optionFamily(candidate) === family
     && optionVersion(candidate) === version
   )) ?? null;
 }
@@ -225,14 +224,32 @@ export function resolveClaudeSessionModel(input: {
   }
 
   const family = modelFamily(requested);
-  const familyMatches = family ? options.filter((option) => optionHaystack(option).includes(family)) : [];
+  const requestedVersion = versionFromModelText(requested);
+  const currentMatchesRequest = Boolean(
+    current
+    && family
+    && modelFamily(current) === family
+    && (!requestedVersion || versionFromModelText(current) === requestedVersion)
+    && (!wantsOneMillion || isOneMillionContextModel(current)),
+  );
+  if (currentMatchesRequest && current) {
+    return {
+      status: "keep",
+      value: current,
+      reason: !wantsOneMillion && isOneMillionContextModel(current) ? "one_million_only" : "requested",
+    };
+  }
+
+  const familyMatches = family ? options.filter((option) => optionFamily(option) === family) : [];
   if (familyMatches.length === 0) {
     // The requested family simply is not on offer. This is the one case we
     // refuse: any pick from here would be a different product.
     return {
       status: "unavailable",
+      reason: "family_unavailable",
       requested,
       requestedFamily: family,
+      requestedVersion,
       available: options.map((option) => option.value),
     };
   }
@@ -242,11 +259,20 @@ export function resolveClaudeSessionModel(input: {
   // not on offer at all. Doing this the other way round — filtering by context
   // size first — is what answers an Opus 5 request with Opus 4.8 whenever 4.8
   // happens to be the non-`[1m]` entry.
-  const requestedVersion = versionFromModelText(requested);
   const versionMatches = requestedVersion
     ? familyMatches.filter((option) => optionVersion(option) === requestedVersion)
     : [];
-  const pool = versionMatches.length > 0 ? versionMatches : familyMatches;
+  if (requestedVersion && versionMatches.length === 0) {
+    return {
+      status: "unavailable",
+      reason: "version_unavailable",
+      requested,
+      requestedFamily: family,
+      requestedVersion,
+      available: options.map((option) => option.value),
+    };
+  }
+  const pool = requestedVersion ? versionMatches : familyMatches;
 
   // Only now does context size get a say, and only to choose between listings
   // of the same model.
@@ -254,24 +280,16 @@ export function resolveClaudeSessionModel(input: {
   const preferred = wantsOneMillion || standardInPool.length === 0 ? pool : standardInPool;
   const choice = preferred.find((option) => option.value.trim().toLowerCase() === family) ?? preferred[0]!;
 
-  const offeredVersion = optionVersion(choice);
   const reason: ClaudeSessionModelReason =
-    requestedVersion && offeredVersion && offeredVersion !== requestedVersion
-      // A lower (or simply different) version of the right family. `opus` is an
-      // alias whose meaning moves with the CLI build, so this is reported
-      // rather than passed off as the requested model.
-      ? "version_substituted"
-      : requestedVersion && !offeredVersion
-        ? "family_alias_unverified"
-        : exact && choice.value !== exact.value
+    exact && choice.value !== exact.value
           // The requested value exists but only at 1M; this is the same model
           // listed at standard context, not a different model.
-          ? "standard_context_fallback"
-          : !wantsOneMillion && isOneMillionContextOption(choice)
-            // The right model, available only as `[1m]`. Run it — the caller
-            // asked for a model, not a context size.
-            ? "one_million_only"
-            : "requested";
+      ? "standard_context_fallback"
+      : !wantsOneMillion && isOneMillionContextOption(choice)
+        // The right model, available only as `[1m]`. Run it — the caller
+        // asked for a model, not a context size.
+        ? "one_million_only"
+        : "requested";
 
   return settle(choice, reason);
 }

@@ -66,8 +66,13 @@ import {
 } from "./resource-admission";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { validateClaudeGatewayRuntimeRequest } from "@/lib/claude-model-gateway";
-import { resolveClaudeSessionModel, type ClaudeSessionModelOption } from "@/lib/claude-session-model";
+import {
+  resolveClaudeSessionModel,
+  type ClaudeSessionModelOption,
+  type ClaudeSessionModelOutcome,
+} from "@/lib/claude-session-model";
 import type { ResolvedAccountCredentials } from "@/server/accounts/account-resolver";
+import { t } from "@/lib/i18n-core";
 
 const MAX_STDERR_LINES = 50;
 const ENDPOINT_TIMEOUT_MS = 750;
@@ -1628,6 +1633,9 @@ export class AgentRuntimeManager {
       applyClaudeKeychainOAuthToken(finalEnv);
     }
     if (gatewayOverlay) Object.assign(finalEnv, gatewayOverlay);
+    if (type === "claude" && requestedModel && !gatewayOverlay) {
+      finalEnv.ANTHROPIC_MODEL = requestedModel;
+    }
     const agentProcessEnv = stripRunnerControlEnv(finalEnv);
 
     const requestedMode = input.mode || configuredAgent?.mode;
@@ -1765,43 +1773,69 @@ export class AgentRuntimeManager {
       ? sessionRecord.configOptions
       : [];
 
-    // Pin the model before effort: the adapter recomputes the effort options
-    // whenever the model changes. Without this the session silently inherits
-    // the user's global `/model` selection (including 1M-context variants that
-    // fail every turn with "Usage credits required for 1M context") and the
-    // model chosen in OmniHarness is never applied at all.
+    // Explicit selections were already passed to the process through
+    // ANTHROPIC_MODEL. Verify that exact value before applying effort. Only
+    // sessions with no explicit selection may use the adapter's model menu.
     let pinnedModel: string | null = null;
     const modelConfig = findSessionConfigOption(sessionConfigOptions, "model");
     const modelConfigId = asNonEmptyString(modelConfig?.id);
     if (connection && type === "claude" && !gatewayOverlay && !modelConfigId && requestedModel) {
-      // No model config option means there is no way to honour the request.
-      // Say so — otherwise the run is recorded against a model it never used.
+      // ANTHROPIC_MODEL carries the exact request into the process, but without
+      // a model config response there is no independent proof of what started.
+      // Fail closed instead of recording our own request as observed reality.
+      const message = t("runtime.model.verifyUnavailable", { model: requestedModel });
       emitNamedEvent({
         kind: "error.surfaced",
         code: "worker.model.pin_unsupported",
-        message: `This Claude CLI session exposes no model option, so the requested model "${requestedModel}" could not be applied; the worker runs on the CLI default.`,
+        message,
         surface: "toast",
         workerId: name,
         cause: null,
       });
+      throw new RuntimeHttpError(409, message);
     }
     if (connection && type === "claude" && !gatewayOverlay && modelConfigId) {
-      const modelResolution = resolveClaudeSessionModel({
-        options: sessionConfigChoices(modelConfig),
-        requested: requestedModel,
-        current: sessionConfigValue(sessionConfigOptions, "model"),
-      });
+      const reportedModel = sessionConfigValue(sessionConfigOptions, "model");
+      let modelResolution: ClaudeSessionModelOutcome;
+      if (requestedModel) {
+        if (reportedModel !== requestedModel) {
+          const message = t("runtime.model.mismatch", {
+            requested: requestedModel,
+            reported: reportedModel ?? t("runtime.model.noneReported"),
+          });
+          emitNamedEvent({
+            kind: "error.surfaced",
+            code: "worker.model.version_unavailable",
+            message,
+            surface: "toast",
+            workerId: name,
+            cause: null,
+          });
+          throw new RuntimeHttpError(409, message);
+        }
+        modelResolution = { status: "keep", value: reportedModel, reason: "requested" };
+      } else {
+        modelResolution = resolveClaudeSessionModel({
+          options: sessionConfigChoices(modelConfig),
+          requested: null,
+          current: reportedModel,
+        });
+      }
       if (modelResolution.status === "unavailable") {
         // Refuse rather than run a different product. A worker the user
         // launched as Fable that quietly executes on Opus is worse than a
         // failed launch: every answer it gives is attributed to a model that
         // never ran, and the cost lands on the wrong line too.
         const family = modelResolution.requestedFamily;
-        const message = `Requested model "${modelResolution.requested}" is not offered by this Claude CLI`
-          + `${family ? ` — it lists no ${family} option` : ""}. Available: ${modelResolution.available.join(", ")}`;
+        const version = modelResolution.requestedVersion;
+        const versionUnavailable = modelResolution.reason === "version_unavailable";
+        const message = versionUnavailable
+          ? `Requested model "${modelResolution.requested}" uses ${family ?? "an unknown family"} version ${version ?? "unknown"}, which this Claude CLI did not activate. Available: ${modelResolution.available.join(", ")}`
+          : `Requested model "${modelResolution.requested}" is not offered by this Claude CLI`
+            + `${family ? ` — it lists no ${family} option` : ""}. Available: ${modelResolution.available.join(", ")}`;
         emitNamedEvent({
           kind: "error.surfaced",
-          code: "worker.model.family_unavailable",
+          code: versionUnavailable ? "worker.model.version_unavailable" : "worker.model.family_unavailable",
           message,
           surface: "toast",
           workerId: name,
@@ -2369,6 +2403,9 @@ export class AgentRuntimeManager {
       applyClaudeKeychainOAuthToken(finalEnv);
     }
     if (gatewayOverlay) Object.assign(finalEnv, gatewayOverlay);
+    if (type === "claude" && requestedModel && !gatewayOverlay) {
+      finalEnv.ANTHROPIC_MODEL = requestedModel;
+    }
     const agentProcessEnv = stripRunnerControlEnv(finalEnv);
 
     const requestedMode = input.mode || configuredAgent?.mode || null;

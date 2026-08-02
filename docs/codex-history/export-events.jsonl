@@ -492,3 +492,12 @@
 {"at":"2026-08-01T10:00:18.787Z","type":"archive.conversation.written","provider":"codex","threadId":"019fbc58-e4ac-74d2-af66-dd93fc525f3e","parts":1,"redactions":7,"malformedLines":0}
 {"at":"2026-08-01T10:00:18.797Z","type":"archive.conversation.unchanged","count":29}
 {"at":"2026-08-01T10:00:18.799Z","type":"archive.export.completed","conversations":123,"failed":0}
+{"at":"2026-08-01T22:00:20.955Z","type":"archive.export.started","projectRoot":"/Users/masterman/NLP/omniharness"}
+{"at":"2026-08-01T22:00:20.974Z","type":"archive.conversation.written","provider":"codex","threadId":"019fa4c7-3e4e-7b93-b9cd-4fc6d5cb5277","parts":1,"redactions":4,"malformedLines":0}
+{"at":"2026-08-01T22:00:20.986Z","type":"archive.conversation.written","provider":"codex","threadId":"019fbde8-d758-7321-9cf4-ab89c3b41c9e","parts":1,"redactions":0,"malformedLines":0}
+{"at":"2026-08-01T22:00:21.024Z","type":"archive.conversation.written","provider":"codex","threadId":"019fbde9-624e-7d73-8e21-39a063a927f1","parts":1,"redactions":46,"malformedLines":0}
+{"at":"2026-08-01T22:00:21.025Z","type":"archive.conversation.unchanged","count":33}
+{"at":"2026-08-01T22:00:21.025Z","type":"archive.export.completed","conversations":125,"failed":0}
+{"at":"2026-08-02T10:00:18.066Z","type":"archive.export.started","projectRoot":"/Users/masterman/NLP/omniharness"}
+{"at":"2026-08-02T10:00:18.125Z","type":"archive.conversation.unchanged","count":36}
+{"at":"2026-08-02T10:00:18.126Z","type":"archive.export.completed","conversations":125,"failed":0}

@@ -65,8 +65,10 @@ describe("claude session model pinning", () => {
         current: "default",
       })).toEqual({
         status: "unavailable",
+        reason: "family_unavailable",
         requested: "claude-fable-5",
         requestedFamily: "fable",
+        requestedVersion: "5",
         available: ["default", "haiku"],
       });
     });
@@ -81,9 +83,32 @@ describe("claude session model pinning", () => {
       // "standard_context_fallback". Staying on 1M Fable is the correct answer.
       expect(outcome).toEqual({ status: "keep", value: "claude-fable-5[1m]", reason: "one_million_only" });
     });
+
+    it("does not treat a Fable comparison to Opus as an Opus model", () => {
+      expect(resolveClaudeSessionModel({
+        options: RUN_594224_OPTIONS,
+        requested: "claude-opus-5",
+        current: "claude-fable-5[1m]",
+      })).toEqual({
+        status: "unavailable",
+        reason: "version_unavailable",
+        requested: "claude-opus-5",
+        requestedFamily: "opus",
+        requestedVersion: "5",
+        available: ["default", "claude-fable-5[1m]", "sonnet", "haiku"],
+      });
+    });
   });
 
   describe("the requested version wins over context size", () => {
+    it("keeps an exact startup model even when the adapter omits it from the menu", () => {
+      expect(resolveClaudeSessionModel({
+        options: RUN_594224_OPTIONS,
+        requested: "claude-opus-5",
+        current: "claude-opus-5",
+      })).toEqual({ status: "keep", value: "claude-opus-5", reason: "requested" });
+    });
+
     it("runs the 1M-only Opus 5 rather than the standard-context Opus 4.8", () => {
       // The whole point. Filtering by context size first picks `opus` (4.8)
       // because it is the non-[1m] entry — delivering the wrong model to avoid
@@ -111,20 +136,32 @@ describe("claude session model pinning", () => {
       })).toEqual({ status: "pin", value: "claude-opus-5", reason: "requested" });
     });
 
-    it("falls to a lower version only when the requested one is absent", () => {
-      // No Opus 5 on offer at all, so Opus 4.8 is the closest honest answer —
-      // and it is reported as a substitution rather than passed off.
+    it("refuses to substitute a different version", () => {
       expect(resolveClaudeSessionModel({
         options: SUBSCRIPTION_OPTIONS,
         requested: "claude-opus-5",
         current: "default",
-      })).toEqual({ status: "pin", value: "opus", reason: "version_substituted" });
+      })).toEqual({
+        status: "unavailable",
+        reason: "version_unavailable",
+        requested: "claude-opus-5",
+        requestedFamily: "opus",
+        requestedVersion: "5",
+        available: ["default", "claude-fable-5[1m]", "opus", "haiku"],
+      });
 
       expect(resolveClaudeSessionModel({
         options: SUBSCRIPTION_OPTIONS,
         requested: "claude-sonnet-5",
         current: "opus",
-      })).toEqual({ status: "pin", value: "default", reason: "version_substituted" });
+      })).toEqual({
+        status: "unavailable",
+        reason: "version_unavailable",
+        requested: "claude-sonnet-5",
+        requestedFamily: "sonnet",
+        requestedVersion: "5",
+        available: ["default", "claude-fable-5[1m]", "opus", "haiku"],
+      });
     });
 
     it("pins the family alias when the requested version does match it", () => {
@@ -143,7 +180,7 @@ describe("claude session model pinning", () => {
       })).toEqual({ status: "pin", value: "opus", reason: "requested" });
     });
 
-    it("flags a family alias whose version cannot be verified", () => {
+    it("refuses a family alias whose version cannot be verified", () => {
       expect(resolveClaudeSessionModel({
         options: [
           { value: "default", name: "Default", description: "Efficient for routine tasks" },
@@ -151,7 +188,14 @@ describe("claude session model pinning", () => {
         ],
         requested: "claude-opus-5",
         current: "default",
-      })).toEqual({ status: "pin", value: "opus", reason: "family_alias_unverified" });
+      })).toEqual({
+        status: "unavailable",
+        reason: "version_unavailable",
+        requested: "claude-opus-5",
+        requestedFamily: "opus",
+        requestedVersion: "5",
+        available: ["default", "opus"],
+      });
     });
 
     it("honors an explicit 1M request", () => {

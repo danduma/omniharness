@@ -9,6 +9,7 @@ import {
 } from "@/interface/runners/RunnerConnection";
 import type { RunnerIdentityLearningResult } from "@/interface/runners/RunnerProfile";
 import type { RunnerProfile } from "@/interface/runners/RunnerProfile";
+import type { RuntimeAPIs } from "@/runtime-api/types";
 
 function profile(overrides: Partial<RunnerProfile> = {}): RunnerProfile {
   return {
@@ -47,6 +48,7 @@ function bootstrap(overrides: Record<string, unknown> = {}) {
 
 function runtime(options: {
   bootstrap?: () => Promise<unknown>;
+  apis?: RuntimeAPIs;
   onOpen?: (handlers: {
     onOpen?(): void;
     onEvent?(event: unknown): void;
@@ -56,6 +58,7 @@ function runtime(options: {
   const closeMain = vi.fn();
   const closeTerminal = vi.fn();
   const api: RunnerConnectionRuntime = {
+    ...(options.apis ? { apis: options.apis } : {}),
     bootstrap: {
       load: options.bootstrap ?? (async () => bootstrap()),
     },
@@ -155,6 +158,77 @@ describe("RunnerConnection", () => {
 
     await connection.start();
     expect(connection.getSnapshot().status).toBe(status);
+  });
+
+  it("automatically unlocks its same-origin server with the saved password", async () => {
+    let authenticated = false;
+    const login = vi.fn(async () => {
+      authenticated = true;
+      return { ok: true as const };
+    });
+    const loadBootstrap = vi.fn(async () => bootstrap({
+      initialQueries: {
+        session: { enabled: true, authenticated },
+      },
+    }));
+    const savedProfile = profile({
+      savedPassword: "saved-password",
+      authTransport: "cookie",
+      credentialRef: null,
+      isSameOrigin: true,
+    });
+    const connection = new RunnerConnection({
+      profile: savedProfile,
+      runtimeFactory: async () => runtime({
+        apis: { auth: { login } } as unknown as RuntimeAPIs,
+        bootstrap: loadBootstrap,
+      }).api,
+      persistence: persistence(savedProfile),
+    });
+
+    await connection.start();
+
+    expect(login).toHaveBeenCalledOnce();
+    expect(login).toHaveBeenCalledWith({
+      password: "saved-password",
+      label: "Browser session",
+    });
+    expect(loadBootstrap).toHaveBeenCalledTimes(2);
+    expect(connection.getSnapshot().status).toBe("online");
+  });
+
+  it("stops automatic login after one rejected saved-password attempt", async () => {
+    const login = vi.fn(async () => {
+      throw { code: "runtime.login_failed", message: "Incorrect password." };
+    });
+    const loadBootstrap = vi.fn(async () => bootstrap({
+      initialQueries: {
+        session: { enabled: true, authenticated: false },
+      },
+    }));
+    const savedProfile = profile({
+      savedPassword: "stale-password",
+      authTransport: "cookie",
+      credentialRef: null,
+      isSameOrigin: true,
+    });
+    const connection = new RunnerConnection({
+      profile: savedProfile,
+      runtimeFactory: async () => runtime({
+        apis: { auth: { login } } as unknown as RuntimeAPIs,
+        bootstrap: loadBootstrap,
+      }).api,
+      persistence: persistence(savedProfile),
+    });
+
+    await connection.start();
+
+    expect(login).toHaveBeenCalledOnce();
+    expect(loadBootstrap).toHaveBeenCalledOnce();
+    expect(connection.getSnapshot()).toEqual(expect.objectContaining({
+      status: "needs-reauth",
+      lastError: expect.objectContaining({ code: "runtime.login_failed" }),
+    }));
   });
 
   it("blocks an incompatible revision and an unexpected trusted identity", async () => {
