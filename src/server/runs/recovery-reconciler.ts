@@ -1,6 +1,6 @@
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { asc, eq } from "drizzle-orm";
-import { spawnAgent, type AgentRecord } from "@/server/bridge-client";
+import { askAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { executionEvents, messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -9,7 +9,18 @@ import { normalizeRunStatus } from "@/server/runs/status";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
-import { resolveDirectRunStatusFromWorkerOutput } from "@/server/conversations/direct-run-status";
+import {
+  resolveDirectRunStatusFromWorkerOutput,
+  updateDirectRunStatusFromWorkerOutput,
+} from "@/server/conversations/direct-run-status";
+import { buildDirectWorkerPrompt } from "@/server/conversations/direct-worker-prompt";
+import {
+  isWorkerTurnSupersededError,
+  runWorkerTurn,
+  trackConversationBackgroundTask,
+} from "@/server/conversations/worker-turn-gate";
+import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
+import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { writeWorkerOutputEntries } from "@/server/workers/output-store";
 import {
   markRecoveryIncidentFailed,
@@ -30,6 +41,161 @@ import { restartImplementationRunFromLatestCheckpoint, setRunNeedsRecovery } fro
 
 function isCorruptResumeFileError(value: string | null | undefined) {
   return /failed to load resumed session data from file/i.test(value ?? "");
+}
+
+const INTERRUPTED_DIRECT_TURN_PROMPT = buildDirectWorkerPrompt([
+  "The OmniHarness runner restarted while you were working.",
+  "Resume the interrupted task now and continue any implementation, edits, tests, or other workspace changes already authorized by the user's latest request.",
+  "Do not stop merely to report the restart, repeat work that is already complete, or wait for another user message.",
+].join(" "));
+
+function normalizedAgentState(value: string | null | undefined) {
+  return (value ?? "").trim().toLowerCase().split(":")[0]?.trim() ?? "";
+}
+
+function recoveredDirectTurnNeedsPrompt(
+  run: typeof runs.$inferSelect,
+  resumed: AgentRecord,
+) {
+  if (run.mode !== "direct" && run.mode !== "commit") {
+    return false;
+  }
+  if (normalizeRunStatus(run.status) === "awaiting_user") {
+    return false;
+  }
+  if ((resumed.stopReason ?? "").trim()) {
+    return false;
+  }
+  if (resolveDirectRunStatusFromWorkerOutput({
+    workerStatus: resumed.state,
+    renderedOutput: resumed.renderedOutput,
+    currentText: resumed.currentText,
+    lastText: resumed.lastText,
+    outputEntries: resumed.outputEntries,
+    pendingPermissions: resumed.pendingPermissions,
+    pendingElicitations: resumed.pendingElicitations,
+  }) === "awaiting_user") {
+    return false;
+  }
+  return !["working", "running", "busy", "starting", "pending", "recovering"]
+    .includes(normalizedAgentState(resumed.state));
+}
+
+async function finishRecoveredDirectTurn(args: {
+  run: typeof runs.$inferSelect;
+  worker: typeof workers.$inferSelect;
+  resumed: AgentRecord;
+  incidentId: string;
+}) {
+  emitNamedEvent({
+    kind: "worker.recovery_continuation_started",
+    runId: args.run.id,
+    workerId: args.worker.id,
+  });
+  await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "recovery_continuation_started", {
+    summary: `Continuing the interrupted turn for ${args.worker.id}.`,
+    incidentId: args.incidentId,
+  });
+
+  try {
+    const response = await askAgent(args.worker.id, INTERRUPTED_DIRECT_TURN_PROMPT);
+    const snapshot = await getAgent(args.worker.id).catch(() => null);
+    if (snapshot) {
+      await persistWorkerSnapshot(args.worker.id, snapshot);
+    }
+    await appendAskResponseFallbackEntry({
+      runId: args.run.id,
+      workerId: args.worker.id,
+      responseText: response.response,
+      snapshot,
+    });
+
+    const finalWorkerStatus = snapshot?.state ?? response.state ?? "idle";
+    await db.update(workers).set({
+      status: finalWorkerStatus,
+      updatedAt: new Date(),
+    }).where(eq(workers.id, args.worker.id));
+    await updateDirectRunStatusFromWorkerOutput({
+      runId: args.run.id,
+      workerId: args.worker.id,
+      workerStatus: finalWorkerStatus,
+      responseText: response.response,
+      renderedOutput: snapshot?.renderedOutput,
+      currentText: snapshot?.currentText,
+      lastText: snapshot?.lastText,
+      outputEntries: snapshot?.outputEntries,
+      pendingPermissions: snapshot?.pendingPermissions,
+      pendingElicitations: snapshot?.pendingElicitations,
+    });
+    emitNamedEvent({
+      kind: "worker.recovery_continuation_completed",
+      runId: args.run.id,
+      workerId: args.worker.id,
+    });
+    await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "recovery_continuation_completed", {
+      summary: `Completed the recovered turn for ${args.worker.id}.`,
+      incidentId: args.incidentId,
+      workerState: finalWorkerStatus,
+    });
+    // The incident was already resolved when the session came back; the
+    // continuation only reopens it if it fails outright.
+  } catch (error) {
+    if (isWorkerTurnSupersededError(error)) {
+      emitNamedEvent({
+        kind: "worker.recovery_continuation_superseded",
+        runId: args.run.id,
+        workerId: args.worker.id,
+      });
+      await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "recovery_continuation_superseded", {
+        summary: `Stopped the automatic continuation for ${args.worker.id} because a newer turn took over.`,
+        incidentId: args.incidentId,
+      });
+      return;
+    }
+    const reason = error instanceof Error ? error.message : String(error);
+    if (/\bagent is busy\b/i.test(reason)) {
+      await db.update(workers).set({
+        status: "working",
+        updatedAt: new Date(),
+      }).where(eq(workers.id, args.worker.id));
+      emitNamedEvent({
+        kind: "worker.recovery_continuation_completed",
+        runId: args.run.id,
+        workerId: args.worker.id,
+      });
+      return;
+    }
+
+    await setRunNeedsRecovery({ runId: args.run.id, reason });
+    await db.update(workers).set({
+      status: "error",
+      currentText: "",
+      updatedAt: new Date(),
+    }).where(eq(workers.id, args.worker.id));
+    await markRecoveryIncidentNeedsUser({
+      incidentId: args.incidentId,
+      runId: args.run.id,
+      workerId: args.worker.id,
+      reason,
+      details: { continuationFailed: true },
+    });
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "worker.resume.failed",
+      message: reason,
+      surface: "banner",
+      runId: args.run.id,
+      workerId: args.worker.id,
+      cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+    });
+    await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "recovery_continuation_failed", {
+      summary: `Could not continue the interrupted turn for ${args.worker.id}.`,
+      incidentId: args.incidentId,
+      reason,
+    });
+  } finally {
+    notifyEventStreamSubscribers();
+  }
 }
 
 function incidentKindForState(state: RecoveryState): RecoveryIncidentKind {
@@ -222,7 +388,10 @@ async function resumeSavedWorkerSession(args: {
     }) as AgentRecord;
     recreatedFromMissingSession = true;
   }
-  const nextRunStatus = args.run.mode === "direct" || args.run.mode === "commit"
+  const continueInterruptedDirectTurn = recoveredDirectTurnNeedsPrompt(args.run, resumed);
+  const nextRunStatus = continueInterruptedDirectTurn
+    ? "running"
+    : args.run.mode === "direct" || args.run.mode === "commit"
     ? resolveDirectRunStatusFromWorkerOutput({
       workerStatus: resumed.state,
       renderedOutput: resumed.renderedOutput,
@@ -239,7 +408,7 @@ async function resumeSavedWorkerSession(args: {
   }
 
   await db.update(workers).set({
-    status: resumed.state,
+    status: continueInterruptedDirectTurn ? "working" : resumed.state,
     currentText: resumed.currentText,
     lastText: resumed.lastText,
     bridgeSessionId: resumed.sessionId ?? (recreatedFromMissingSession ? null : sessionId),
@@ -265,6 +434,13 @@ async function resumeSavedWorkerSession(args: {
     lastError: null,
     updatedAt: new Date(),
   }).where(eq(runs.id, args.run.id));
+  // The incident is "this worker's session was lost". Restoring it is done the
+  // moment the resumed agent is persisted. Any continuation turn that follows is
+  // ordinary work — the worker row already says `working` and the run says
+  // `running`, which is what the normal progress UI is for. Holding the incident
+  // open until that turn ends left the recovery banner claiming OmniHarness was
+  // still restoring the session for as long as the agent kept working, which
+  // reads as a hung backend.
   await markRecoveryIncidentResolved({
     incidentId: args.incidentId,
     runId: args.run.id,
@@ -272,9 +448,23 @@ async function resumeSavedWorkerSession(args: {
     summary: `Resumed ${args.worker.id} from saved session.`,
     details: {
       sessionId,
-      workerState: resumed.state,
+      workerState: continueInterruptedDirectTurn ? "working" : resumed.state,
+      ...(continueInterruptedDirectTurn ? { continuationPending: true } : {}),
     },
   });
+  if (continueInterruptedDirectTurn) {
+    const continuation = runWorkerTurn(args.worker.id, () => finishRecoveredDirectTurn({
+      run: args.run,
+      worker: args.worker,
+      resumed,
+      incidentId: args.incidentId,
+    }));
+    trackConversationBackgroundTask(continuation, { runId: args.run.id }).catch((error) => {
+      process.stderr.write(
+        `[recovery] interrupted turn continuation failed for ${args.worker.id}: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+    });
+  }
   return { action: "resume_session" as const, runId: args.run.id, workerId: args.worker.id };
 }
 

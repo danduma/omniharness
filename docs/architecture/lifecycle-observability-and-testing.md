@@ -36,6 +36,18 @@ Related: `docs/architecture/timing-determinism-audit.md` records the May 20,
 pretending to be authoritative, stale async callbacks, timer-owned actions,
 timestamp-only ordering, and silent wake/lease contention.
 
+## Interrupted-turn recovery invariant
+
+Reattaching a provider session restores conversation context; it does not prove
+that the interrupted turn is running again. If a persisted active direct worker
+is missing after a runner restart and the reattached runtime comes back idle
+without a terminal stop reason or pending user input, recovery must explicitly
+send a continuation prompt, keep the run `running`, and persist the eventual
+turn result. The continuation runs as an owned background conversation task so
+snapshot bootstrap does not block on the agent turn. A newer user turn may
+supersede it, but that decision must resolve the recovery incident and emit a
+named event.
+
 ## Why this document exists
 
 Over a single afternoon we hit three production-class bugs that the existing test

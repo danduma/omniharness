@@ -271,22 +271,57 @@ function activityTimestampMs(timestamp: string) {
   return Number.isFinite(value) ? value : 0;
 }
 
-function inferFallbackUserMessageSeq(createdAt: string, entries: WorkerEntry[]) {
-  const messageTime = activityTimestampMs(createdAt);
-  if (entries.length === 0) {
-    return undefined;
-  }
-
+/**
+ * Position the `messages`-table rows the loaded stream window has no entry for.
+ *
+ * The stream's `seq` is the only ordering authority in this transcript, and a
+ * database row carries none, so it has to borrow one from the entry it
+ * precedes. The whole batch is placed in one pass: placing each row on its own
+ * gave every row that anchored to the same entry the identical fractional seq,
+ * so a window that postdated several messages stacked all of them into a
+ * single block instead of leaving them in send order.
+ *
+ * Each anchor's rows are spread across the open interval `(anchor - 1, anchor)`,
+ * which is empty of real entries by construction — integer seqs are unique.
+ */
+function assignFallbackUserMessageSeqs(
+  messages: ReadonlyArray<TerminalUserMessage>,
+  entries: WorkerEntry[],
+): Map<string, number> {
+  const placements = new Map<string, number>();
   const orderedEntries = entries
     .filter((entry) => typeof entry.seq === "number")
     .sort((left, right) => left.seq - right.seq);
-  const nextEntry = orderedEntries.find((entry) => activityTimestampMs(entry.timestamp) >= messageTime);
-  if (nextEntry) {
-    return nextEntry.seq - 0.001;
+  const latestSeq = orderedEntries.at(-1)?.seq;
+  if (typeof latestSeq !== "number") {
+    return placements;
   }
 
-  const latestSeq = orderedEntries.at(-1)?.seq;
-  return typeof latestSeq === "number" ? latestSeq + 0.001 : undefined;
+  const byAnchor = new Map<number, TerminalUserMessage[]>();
+  for (const message of messages) {
+    const messageTime = activityTimestampMs(message.createdAt);
+    const nextEntry = orderedEntries.find((entry) => activityTimestampMs(entry.timestamp) >= messageTime);
+    // No entry is newer than the message: it belongs after everything loaded.
+    const anchor = nextEntry ? nextEntry.seq : latestSeq + 1;
+    const bucket = byAnchor.get(anchor);
+    if (bucket) {
+      bucket.push(message);
+    } else {
+      byAnchor.set(anchor, [message]);
+    }
+  }
+
+  for (const [anchor, bucket] of byAnchor) {
+    const ordered = [...bucket].sort((left, right) => (
+      activityTimestampMs(left.createdAt) - activityTimestampMs(right.createdAt)
+      || left.id.localeCompare(right.id)
+    ));
+    const step = 1 / (ordered.length + 1);
+    ordered.forEach((message, index) => {
+      placements.set(message.id, anchor - 1 + step * (index + 1));
+    });
+  }
+  return placements;
 }
 
 function normalizeUserMessageText(text: string | null | undefined) {
@@ -378,6 +413,75 @@ function activityStreamSeq(
     }
   }
   return seqByActivityId.get(activity.id) ?? null;
+}
+
+/**
+ * Give every activity item one scalar order key, resolved before any
+ * comparison happens.
+ *
+ * The comparator used to decide per *pair* whether seq or timestamp applied,
+ * falling back to timestamp whenever either side had no seq. That is not a
+ * total order: with items A(seq 1, late), B(no seq, mid) and C(seq 5, early),
+ * A sorts before C by seq, C before B by timestamp, and B before A by
+ * timestamp — a cycle, so the result depended on which pairs `sort` happened
+ * to compare. Items that carry a seq keep it; items that do not borrow one
+ * from the seq-carrying item they precede, the same rule fallback user
+ * messages are placed by, so the whole list is ordered by a single quantity.
+ */
+function assignActivityOrderKeys(
+  items: ReadonlyArray<TerminalActivityItemWithOrder>,
+  seqByActivityId: Map<string, number>,
+): Map<string, number> {
+  const resolved = items.map((item) => ({ item, seq: activityStreamSeq(item, seqByActivityId) }));
+  const anchors = resolved
+    .filter((candidate): candidate is { item: TerminalActivityItemWithOrder; seq: number } => (
+      candidate.seq !== null
+    ))
+    .sort((left, right) => left.seq - right.seq);
+
+  const orderKeys = new Map<string, number>();
+  for (const { item, seq } of resolved) {
+    if (seq !== null) {
+      orderKeys.set(item.id, seq);
+    }
+  }
+  if (anchors.length === 0) {
+    // Nothing carries a seq (legacy `agent` rendering): timestamps order the
+    // list on their own.
+    for (const { item } of resolved) {
+      orderKeys.set(item.id, activityTimestampMs(item.timestamp));
+    }
+    return orderKeys;
+  }
+
+  const latestAnchorSeq = anchors.at(-1)!.seq;
+  const byAnchor = new Map<number, TerminalActivityItemWithOrder[]>();
+  for (const { item, seq } of resolved) {
+    if (seq !== null) {
+      continue;
+    }
+    const itemTime = activityTimestampMs(item.timestamp);
+    const nextAnchor = anchors.find((anchor) => activityTimestampMs(anchor.item.timestamp) >= itemTime);
+    const anchorSeq = nextAnchor ? nextAnchor.seq : latestAnchorSeq + 1;
+    const bucket = byAnchor.get(anchorSeq);
+    if (bucket) {
+      bucket.push(item);
+    } else {
+      byAnchor.set(anchorSeq, [item]);
+    }
+  }
+
+  for (const [anchorSeq, bucket] of byAnchor) {
+    const ordered = [...bucket].sort((left, right) => (
+      activityTimestampMs(left.timestamp) - activityTimestampMs(right.timestamp)
+      || left.id.localeCompare(right.id)
+    ));
+    const step = 1 / (ordered.length + 1);
+    ordered.forEach((item, index) => {
+      orderKeys.set(item.id, anchorSeq - 1 + step * (index + 1));
+    });
+  }
+  return orderKeys;
 }
 
 function shouldRenderUnifiedStreamEntry(entry: WorkerEntry) {
@@ -2183,27 +2287,55 @@ export function Terminal({
     }
     const isMultiWorkerOrdering = multiWorkerOrdering ?? workerIdsInEntries.size > 1;
     const canPlaceFallbackUserMessages = usingUnifiedStream && allowUserMessageFallback;
+    // The loaded window is a bounded tail page whenever `hasMoreHistory` is
+    // set, and the "already in the stream?" test below can only see the page
+    // we hold. A row older than the oldest loaded entry already exists as a
+    // `user_input` entry in a page nobody has fetched, so that test says
+    // "missing" and the row gets re-injected here with no seq of its own —
+    // landing next to whatever entry the window happens to start with. Every
+    // such row anchors to that same entry, which is how a whole conversation's
+    // user messages ended up stacked above the agent output instead of
+    // interleaved with it. They stay hidden until their page loads and brings
+    // the real entry, carrying the real seq, with it.
+    const oldestLoadedEntryMs = (entries ?? []).reduce((oldest, entry) => {
+      const value = activityTimestampMs(entry.timestamp);
+      if (value <= 0) {
+        return oldest;
+      }
+      return oldest === 0 ? value : Math.min(oldest, value);
+    }, 0);
+    const isPlaceableFallbackMessage = (message: TerminalUserMessage) => {
+      // A message this client just sent cannot be hiding in an older page.
+      if (ungatedUserMessageIds?.has(message.id)) {
+        return true;
+      }
+      if (!canPlaceFallbackUserMessages) {
+        return false;
+      }
+      if (!hasMoreHistory || oldestLoadedEntryMs === 0) {
+        return true;
+      }
+      return activityTimestampMs(message.createdAt) >= oldestLoadedEntryMs;
+    };
+    const fallbackUserMessages = userMessages
+      .filter(isPlaceableFallbackMessage)
+      .filter((message) => !(entries ?? []).some((entry) => workerEntryMatchesUserMessage(entry, message)));
+    // Across workers the seqs come from different counters, so a borrowed one
+    // would sort this message against an unrelated sequence. Leave it out and
+    // let the timestamp place it.
+    const fallbackUserMessageSeqs = isMultiWorkerOrdering
+      ? new Map<string, number>()
+      : assignFallbackUserMessageSeqs(fallbackUserMessages, entries ?? []);
     const userActivity: TerminalActivityItemWithOrder[] = usingUnifiedStream
       ? [
         ...(visibleEntries ?? [])
           .filter((entry) => entry.type === "user_input" || entry.type === "supervisor_input" || entry.type === "user_message_chunk")
           .map((entry) => ({ source: "stream" as const, entry })),
-        ...userMessages
-          .filter((message) => canPlaceFallbackUserMessages || ungatedUserMessageIds?.has(message.id))
-          .filter((message) => !(entries ?? []).some((entry) => workerEntryMatchesUserMessage(entry, message)))
-          .map((message) => ({ source: "fallback" as const, message })),
+        ...fallbackUserMessages.map((message) => ({ source: "fallback" as const, message })),
       ]
         .map((entry) => {
           if (entry.source === "fallback") {
-            // A message the stream has no entry for is placed by guessing a
-            // fractional seq next to the entry it precedes. That guess only
-            // means something while one worker's numbering orders the list;
-            // across workers the seqs come from different counters, so a
-            // borrowed one would sort this message against an unrelated
-            // sequence. Leave it out and let the timestamp place it.
-            const messageSeq = isMultiWorkerOrdering
-              ? undefined
-              : inferFallbackUserMessageSeq(entry.message.createdAt, entries ?? []);
+            const messageSeq = fallbackUserMessageSeqs.get(entry.message.id);
             return {
               id: `user:${entry.message.id}`,
               kind: "user_message" as const,
@@ -2288,19 +2420,25 @@ export function Terminal({
         }]
       : [];
 
-    const sorted = [...dedupedUserActivity, ...agentActivity, ...pendingAssistantActivity].sort((a, b) => {
-      if (isMultiWorkerOrdering) {
+    const renderable = [...dedupedUserActivity, ...agentActivity, ...pendingAssistantActivity];
+    // Every item is reduced to fixed scalars before a single comparison runs,
+    // so the ordering is a total order and cannot depend on the pairs `sort`
+    // visits. `seq` is the authority for a conversation that ran on one
+    // worker; across workers the counters are unrelated, so timestamps lead
+    // and the borrowed seq only separates items that share one.
+    const orderKeys = usingUnifiedStream
+      ? assignActivityOrderKeys(renderable, seqByActivityId)
+      : new Map<string, number>();
+    const sorted = renderable.sort((a, b) => {
+      if (isMultiWorkerOrdering || !usingUnifiedStream) {
         const timeDelta = activityTimestampMs(a.timestamp) - activityTimestampMs(b.timestamp);
         if (timeDelta !== 0) {
           return timeDelta;
         }
       }
-      if (usingUnifiedStream) {
-        const leftSeq = activityStreamSeq(a, seqByActivityId);
-        const rightSeq = activityStreamSeq(b, seqByActivityId);
-        if (leftSeq !== null && rightSeq !== null) {
-          return leftSeq - rightSeq;
-        }
+      const seqDelta = (orderKeys.get(a.id) ?? 0) - (orderKeys.get(b.id) ?? 0);
+      if (seqDelta !== 0) {
+        return seqDelta;
       }
       const timeDelta = activityTimestampMs(a.timestamp) - activityTimestampMs(b.timestamp);
       if (timeDelta !== 0) {
@@ -2309,7 +2447,7 @@ export function Terminal({
       return activityKindOrder(a) - activityKindOrder(b) || a.id.localeCompare(b.id);
     });
     return summarizeWorkBlocks ? summarizeWorkIntervals(sorted) : sorted;
-  }, [agent, allowUserMessageFallback, entries, getUserMessageActions, multiWorkerOrdering, pendingAssistantStatus, sendingUserMessageIds, showPendingAssistantIndicator, summarizeWorkBlocks, ungatedUserMessageIds, userMessages]);
+  }, [agent, allowUserMessageFallback, entries, getUserMessageActions, hasMoreHistory, multiWorkerOrdering, pendingAssistantStatus, sendingUserMessageIds, showPendingAssistantIndicator, summarizeWorkBlocks, ungatedUserMessageIds, userMessages]);
   const filteredActivity = useMemo(
     () => activityFilter ? activity.filter(activityFilter) : activity,
     [activity, activityFilter],

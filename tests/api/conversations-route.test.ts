@@ -1756,15 +1756,13 @@ describe("POST /api/conversations", () => {
       () => Promise.resolve(mockAskAgent.mock.calls),
       (calls) => calls.length > 0,
     );
-    // The image must reach the worker as a real image content block. It used to
-    // be handed over as a UUID path in the prompt text for the worker to read
-    // back — one mistyped hex digit and the worker answered questions about a
-    // screenshot it never saw.
+    // The worker needs both the real image content block for visual context and
+    // the saved path for tasks that create files from the original upload.
     expect(mockAskAgent.mock.calls[0]?.[2]).toEqual([
       { path: getAppDataPath("attachments/upload-1/attachment-1-screen.png"), mimeType: "image/png" },
     ]);
     expect(mockAskAgent.mock.calls[0]?.[1]).toContain("Attached images (included directly in this message):");
-    expect(mockAskAgent.mock.calls[0]?.[1]).not.toContain(getAppDataPath("attachments/upload-1/attachment-1-screen.png"));
+    expect(mockAskAgent.mock.calls[0]?.[1]).toContain(getAppDataPath("attachments/upload-1/attachment-1-screen.png"));
     expect(mockAskAgent.mock.calls[0]?.[1]).not.toContain("view_image");
   });
 

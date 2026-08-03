@@ -15,6 +15,7 @@ import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
+import { closeStaleHumanInputEntries } from "@/server/workers/human-input-entries";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { runWorkerTurn } from "./worker-turn-gate";
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
@@ -132,6 +133,16 @@ async function queuedMessageStatus(messageId: string) {
 
 export function isAgentNotFoundError(error: unknown) {
   return /\bagent not found\b/i.test(errorMessage(error));
+}
+
+/**
+ * The runtime holds a pending elicitation only in memory. A runner restart, a
+ * worker respawn, or the agent simply moving on drops it while the durable
+ * stream still advertises the question, so a queued answer can be routed at an
+ * elicitation that no longer exists. The runtime answers `no_pending_elicitations`.
+ */
+export function isElicitationNoLongerPendingError(error: unknown) {
+  return /\bno_pending_elicitations\b/i.test(errorMessage(error));
 }
 
 export function isEmptyQueuedWorkerOutputError(error: unknown): error is EmptyQueuedWorkerOutputError {
@@ -321,10 +332,28 @@ async function answerPendingWorkerElicitation(args: {
     return false;
   }
 
-  await respondElicitation(args.worker.id, {
-    action: "accept",
-    content: elicitationAnswerContent(args.content, elicitation.requestedSchema),
-  });
+  try {
+    await respondElicitation(args.worker.id, {
+      action: "accept",
+      content: elicitationAnswerContent(args.content, elicitation.requestedSchema),
+    });
+  } catch (error) {
+    if (!isElicitationNoLongerPendingError(error)) {
+      throw error;
+    }
+    // The question is gone, but the user's answer is not. Close the stale
+    // stream row so the card stops advertising an open question, then report
+    // "not delivered as an elicitation" so the caller falls through to normal
+    // prompt delivery. Rethrowing here would fail the queued row and silently
+    // discard everything the user typed.
+    await closeStaleHumanInputEntries({
+      workerId: args.worker.id,
+      kind: "elicitation",
+      requestId: elicitation.requestId,
+      reason: "the worker stopped waiting for an answer",
+    });
+    return false;
+  }
   await db.update(workers).set({
     status: "working",
     updatedAt: args.deliveredAt,

@@ -5,12 +5,16 @@ import { db } from "@/server/db";
 import { executionEvents, messages, plans, queuedConversationMessages, recoveryIncidents, runs, settings, workers } from "@/server/db/schema";
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 
-const { mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
+const { mockAskAgent, mockGetAgent, mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
+  mockAskAgent: vi.fn(),
+  mockGetAgent: vi.fn(),
   mockSpawnAgent: vi.fn(),
   mockStartSupervisorRun: vi.fn(),
 }));
 
 vi.mock("@/server/bridge-client", () => ({
+  askAgent: mockAskAgent,
+  getAgent: mockGetAgent,
   spawnAgent: mockSpawnAgent,
 }));
 
@@ -19,6 +23,7 @@ vi.mock("@/server/supervisor/start", () => ({
 }));
 
 import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
+import { waitForConversationBackgroundTasksForTests } from "@/server/conversations/worker-turn-gate";
 
 async function createImplementationRun() {
   const planId = randomUUID();
@@ -115,6 +120,8 @@ async function createDirectRun() {
 describe("reconcileRunRecovery", () => {
   beforeEach(async () => {
     __resetNamedEventsForTests();
+    mockAskAgent.mockReset();
+    mockGetAgent.mockReset();
     mockSpawnAgent.mockReset();
     mockStartSupervisorRun.mockReset();
     await db.delete(recoveryIncidents);
@@ -285,14 +292,41 @@ describe("reconcileRunRecovery", () => {
       stderrBuffer: [],
       stopReason: null,
     });
+    mockAskAgent.mockResolvedValue({
+      state: "idle",
+      response: "Finished the interrupted work.",
+    });
+    mockGetAgent.mockResolvedValue({
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "session-direct-2",
+      sessionMode: "full-access",
+      lastText: "Finished the interrupted work.",
+      currentText: "",
+      outputEntries: [{
+        id: "recovered-response",
+        type: "message",
+        text: "Finished the interrupted work.",
+        timestamp: new Date(2).toISOString(),
+      }],
+      stderrBuffer: [],
+      stopReason: "end_turn",
+    });
 
     const result = await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+    await waitForConversationBackgroundTasksForTests();
 
     expect(result.action).toBe("resume_session");
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
       name: workerId,
       resumeSessionId: "session-direct-1",
     }));
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      workerId,
+      expect.stringContaining("Resume the interrupted task now"),
+    );
     const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
@@ -305,6 +339,87 @@ describe("reconcileRunRecovery", () => {
       status: "resolved",
       queuedMessageId: "queue-direct-1",
     });
+  });
+
+  it("resolves the incident as soon as the session is back, not when the continuation turn ends", async () => {
+    // The incident drives the "Recovering worker" banner. Holding it open for
+    // the whole continuation turn made a healthy multi-minute turn look like a
+    // backend that was still failing to restore the session.
+    const { runId, workerId } = await createDirectRun();
+    let releaseAsk: (value: { state: string; response: string }) => void = () => {};
+    const askInFlight = new Promise<{ state: string; response: string }>((resolve) => {
+      releaseAsk = resolve;
+    });
+    const resumedSnapshot = {
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "session-direct-2",
+      sessionMode: "full-access",
+      lastText: "",
+      currentText: "",
+      stderrBuffer: [],
+      stopReason: null,
+    };
+    mockSpawnAgent.mockResolvedValue(resumedSnapshot);
+    mockAskAgent.mockReturnValue(askInFlight);
+    mockGetAgent.mockResolvedValue({
+      ...resumedSnapshot,
+      lastText: "Finished the interrupted work.",
+      outputEntries: [{
+        id: "recovered-response",
+        type: "message",
+        text: "Finished the interrupted work.",
+        timestamp: new Date(2).toISOString(),
+      }],
+      stopReason: "end_turn",
+    });
+
+    await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+
+    const duringContinuation = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
+    expect(mockAskAgent).toHaveBeenCalled();
+    expect(duringContinuation?.status).toBe("resolved");
+    expect(duringContinuation?.resolvedAt).not.toBeNull();
+    // The turn itself is still running, and ordinary progress UI covers that.
+    const workerDuringContinuation = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(workerDuringContinuation?.status).toBe("working");
+
+    releaseAsk({ state: "idle", response: "Finished the interrupted work." });
+    await waitForConversationBackgroundTasksForTests();
+
+    const afterContinuation = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
+    expect(afterContinuation?.status).toBe("resolved");
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(worker?.status).toBe("idle");
+  });
+
+  it("reopens a resolved incident when the continuation turn fails outright", async () => {
+    const { runId, workerId } = await createDirectRun();
+    mockSpawnAgent.mockResolvedValue({
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "session-direct-2",
+      sessionMode: "full-access",
+      lastText: "",
+      currentText: "",
+      stderrBuffer: [],
+      stopReason: null,
+    });
+    mockAskAgent.mockRejectedValue(new Error("Ask failed: Internal error: worker exploded"));
+    mockGetAgent.mockResolvedValue(null);
+
+    await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+    await waitForConversationBackgroundTasksForTests();
+
+    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
+    expect(incident?.status).toBe("needs_user");
+    // A reopened incident must not still carry a resolution stamp.
+    expect(incident?.resolvedAt).toBeNull();
+    expect(incident?.lastError).toContain("worker exploded");
   });
 
   it("restarts implementation runs from the latest checkpoint when no saved session exists", async () => {

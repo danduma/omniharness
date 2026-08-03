@@ -5,6 +5,14 @@ export interface AppErrorDescriptor {
   suggestion?: string;
   details?: string[];
   status?: number;
+  /**
+   * Conversation this error belongs to. A scoped error is only rendered while
+   * that conversation is selected; leaving it unset marks the error as
+   * app-global (settings, auth, filesystem) and shows it everywhere. Without
+   * this, a failure in one session followed the user into every other session
+   * for the rest of the page's life.
+   */
+  runId?: string | null;
 }
 
 export class AppRequestError extends Error {
@@ -32,7 +40,9 @@ export function normalizeAppError(
   fallback: Partial<AppErrorDescriptor> = {},
 ): AppErrorDescriptor {
   if (value instanceof AppRequestError) {
-    return value.descriptor;
+    return value.descriptor.runId === undefined && fallback.runId !== undefined
+      ? { ...value.descriptor, runId: fallback.runId }
+      : value.descriptor;
   }
 
   if (value instanceof Error) {
@@ -43,6 +53,7 @@ export function normalizeAppError(
       suggestion: fallback.suggestion,
       details: fallback.details,
       status: fallback.status,
+      runId: fallback.runId,
     };
   }
 
@@ -56,6 +67,7 @@ export function normalizeAppError(
         suggestion: asString(record.suggestion) || fallback.suggestion,
         details: asDetails(record.details).length > 0 ? asDetails(record.details) : fallback.details,
         status: typeof record.status === "number" ? record.status : fallback.status,
+        runId: fallback.runId,
       };
     }
 
@@ -73,6 +85,7 @@ export function normalizeAppError(
         suggestion: asString(record.suggestion) || fallback.suggestion,
         details: details.length > 0 ? details : fallback.details,
         status: typeof record.status === "number" ? record.status : fallback.status,
+        runId: fallback.runId,
       };
     }
   }
@@ -85,6 +98,7 @@ export function normalizeAppError(
       suggestion: fallback.suggestion,
       details: fallback.details,
       status: fallback.status,
+      runId: fallback.runId,
     };
   }
 
@@ -95,6 +109,7 @@ export function normalizeAppError(
     suggestion: fallback.suggestion,
     details: fallback.details,
     status: fallback.status,
+    runId: fallback.runId,
   };
 }
 
@@ -126,12 +141,21 @@ export async function parseErrorResponse(
 
 export function appErrorKey(error: AppErrorDescriptor) {
   return [
+    error.runId || "",
     error.source || "",
     error.action || "",
     error.message,
     error.suggestion || "",
     ...(error.details ?? []),
   ].join("|");
+}
+
+/**
+ * An error is visible only in the conversation it came from. Errors with no
+ * `runId` are app-global and always visible.
+ */
+export function isAppErrorInScope(error: AppErrorDescriptor, selectedRunId: string | null) {
+  return !error.runId || error.runId === selectedRunId;
 }
 
 export function mergeAppErrors(current: AppErrorDescriptor[], incoming: AppErrorDescriptor[]) {

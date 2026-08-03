@@ -254,6 +254,9 @@ export type WorkerEvent =
   | { kind: "worker.terminal"; runId: string; workerId: string; status: string }
   | { kind: "worker.reattached"; runId: string; workerId: string }
   | { kind: "worker.recreated"; runId: string; workerId: string }
+  | { kind: "worker.recovery_continuation_started"; runId: string; workerId: string }
+  | { kind: "worker.recovery_continuation_completed"; runId: string; workerId: string }
+  | { kind: "worker.recovery_continuation_superseded"; runId: string; workerId: string }
   | { kind: "worker.delete_race_cancelled"; runId: string; workerId: string }
   | { kind: "worker.session_metadata_repaired"; runId: string; workerId: string }
   // A retry/edit rewound the conversation past output this worker already
