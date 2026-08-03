@@ -5,6 +5,7 @@ import { db } from "@/server/db";
 import { clarifications, conversationReadMarkers, creditEvents, executionEvents, messages, planItems, planningReviewFindings, planningReviewRounds, planningReviewRuns, plans, processSessions, queuedConversationMessages, recoveryIncidents, runs, settings, supervisorInterventions, supervisorScheduledWakes, workerAssignments, workerCounters, workers } from "@/server/db/schema";
 import { getEventStreamNotificationVersion } from "@/server/events/live-updates";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
+import { waitForConversationBackgroundTasksForTests } from "@/server/conversations/worker-turn-gate";
 
 const { mockAskAgent, mockGetAgent, mockRespondElicitation, mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
   mockAskAgent: vi.fn(),
@@ -124,6 +125,7 @@ describe("syncConversationSessions", () => {
     });
 
     await syncConversationSessions([], { selectedRunId: runId });
+    await waitForConversationBackgroundTasksForTests();
 
     const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
@@ -143,6 +145,10 @@ describe("syncConversationSessions", () => {
       mode: "full-access",
       resumeSessionId: "session-direct",
     }));
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      workerId,
+      expect.stringContaining("Resume the interrupted task now"),
+    );
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
   });
 
@@ -426,6 +432,7 @@ describe("syncConversationSessions", () => {
     });
 
     await syncConversationSessions([], { selectedRunId: runId });
+    await waitForConversationBackgroundTasksForTests();
 
     const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const activeWorker = await db.select().from(workers).where(eq(workers.id, activeWorkerId)).get();
@@ -443,6 +450,10 @@ describe("syncConversationSessions", () => {
       name: activeWorkerId,
       resumeSessionId: "active-session",
     }));
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      activeWorkerId,
+      expect.stringContaining("Resume the interrupted task now"),
+    );
   });
 
   it("does not infer awaiting_user from idle direct worker prose", async () => {
@@ -1096,7 +1107,7 @@ describe("syncConversationSessions", () => {
     ]));
   });
 
-  it("does not append a queued answer when a stale elicitation snapshot is already answered", async () => {
+  it("redelivers a queued answer as a normal prompt when the elicitation is already gone", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = `${runId}-worker-1`;
@@ -1188,15 +1199,24 @@ describe("syncConversationSessions", () => {
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
     const entries = await readWorkerOutputEntries(runId, workerId);
 
-    expect(mockAskAgent).not.toHaveBeenCalled();
     expect(mockRespondElicitation).toHaveBeenCalledWith(workerId, {
       action: "accept",
       content: { customAnswer: "answer the pending direct question" },
     });
-    expect(queued?.status).toBe("failed");
-    expect(queued?.lastError).toContain("no_pending_elicitations");
-    expect(storedMessages).toHaveLength(0);
-    expect(entries.filter((entry) => entry.type === "user_input")).toHaveLength(0);
+    // The elicitation is gone, but the user's answer must not be. Losing it
+    // here is silent data loss: the row goes to `failed` and the text the user
+    // typed never reaches the worker by any route.
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      workerId,
+      expect.stringContaining("answer the pending direct question"),
+    );
+    expect(queued?.status).toBe("delivered");
+    expect(queued?.lastError).toBeNull();
+    expect(storedMessages).toHaveLength(1);
+    expect(entries.filter((entry) => entry.type === "user_input")).toHaveLength(1);
+    // The stale stream row is closed too, so the answered card stops coming
+    // back on the next poll.
+    expect(entries.filter((entry) => entry.type === "elicitation" && entry.status === "cancelled")).toHaveLength(1);
   });
 
   it("keeps a direct run running after an elicitation is answered while the worker continues", async () => {

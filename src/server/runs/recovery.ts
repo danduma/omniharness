@@ -25,7 +25,12 @@ import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { getAppDataPath } from "@/server/app-root";
 import { buildPlannerSystemPrompt } from "@/server/prompts";
-import { appendAttachmentContext, parseChatAttachmentsJson } from "@/lib/chat-attachments";
+import {
+  appendAttachmentContext,
+  parseChatAttachmentsJson,
+  resolveImageAttachments,
+  type ChatAttachment,
+} from "@/lib/chat-attachments";
 import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/supervisor/worker-types";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { findWorkerEntrySeqById, readWorkerLatestSeq, readWorkerOutputEntries } from "@/server/workers/output-store";
@@ -212,7 +217,10 @@ function buildDirectMessagePrompt(
   const withAttachments = appendAttachmentContext(
     content,
     parseChatAttachmentsJson(message.attachmentsJson),
-    { resolvePath: (storagePath) => getAppDataPath(storagePath) },
+    {
+      resolvePath: (storagePath) => getAppDataPath(storagePath),
+      imagesInlined: true,
+    },
   );
   return buildDirectWorkerPrompt(mode, withAttachments, projectRoot);
 }
@@ -252,7 +260,12 @@ function buildEmptyWorkerOutputMessage(snapshot: AgentRecord | null, responseSta
   return `Agent stopped without producing output. Final state: ${responseState || "unknown"}.`;
 }
 
-async function startDirectRerun(run: typeof runs.$inferSelect, content: string, userInputId?: string) {
+async function startDirectRerun(
+  run: typeof runs.$inferSelect,
+  content: string,
+  userInputId?: string,
+  attachments: ChatAttachment[] = [],
+) {
   const { workerId, workerNumber } = await allocateWorkerIdentity(run.id);
   const cwd = run.projectPath || process.cwd();
   const allowedWorkerTypes = parseAllowedWorkerTypes(run.allowedWorkerTypes);
@@ -326,6 +339,12 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string, 
       workerId,
       text: content,
       deliveredAt: new Date(),
+      attachments: attachments.map((attachment) => ({
+        id: attachment.id,
+        filename: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.size,
+      })),
     });
     if (userInputId) {
       // The message now exists on this worker, so the copy the rewound worker
@@ -339,7 +358,15 @@ async function startDirectRerun(run: typeof runs.$inferSelect, content: string, 
     }
     let response;
     try {
-      response = await askAgent(workerId, buildDirectWorkerPrompt(run.mode, content, cwd));
+      const workerContent = appendAttachmentContext(content, attachments, {
+        resolvePath: (storagePath) => getAppDataPath(storagePath),
+        imagesInlined: true,
+      });
+      const workerPrompt = buildDirectWorkerPrompt(run.mode, workerContent, cwd);
+      const imageAttachments = resolveImageAttachments(attachments, getAppDataPath);
+      response = imageAttachments.length
+        ? await askAgent(workerId, workerPrompt, imageAttachments)
+        : await askAgent(workerId, workerPrompt);
     } catch (error) {
       const quotaResult = await handleDirectWorkerAskQuotaError({
         runId: run.id,
@@ -778,7 +805,11 @@ async function resumeDirectRunFromSavedSession(
 
   let response;
   try {
-    response = await askAgent(worker.id, replayPrompt ?? buildDirectMessagePrompt(run.mode, targetMessage, content, worker.cwd));
+    const retryPrompt = replayPrompt ?? buildDirectMessagePrompt(run.mode, targetMessage, content, worker.cwd);
+    const retryImages = resolveImageAttachments(parseChatAttachmentsJson(targetMessage.attachmentsJson), getAppDataPath);
+    response = retryImages.length
+      ? await askAgent(worker.id, retryPrompt, retryImages)
+      : await askAgent(worker.id, retryPrompt);
   } catch (error) {
     if (isAgentBusyError(error)) {
       let busySnapshot: AgentRecord | null = null;
@@ -1024,6 +1055,7 @@ export async function recoverRun(args: RecoverRunArgs) {
   if (run.mode !== "direct" && run.mode !== "commit") {
     throw new Error("Recovery actions are only available in direct control conversations");
   }
+  const targetAttachments = parseChatAttachmentsJson(targetMessage.attachmentsJson);
 
   if (args.action === "retry") {
     const resumed = await resumeDirectRunFromSavedSession(run, targetMessage, nextContent);
@@ -1108,6 +1140,7 @@ export async function recoverRun(args: RecoverRunArgs) {
           role: message.role,
           kind: message.id === args.targetMessageId ? "checkpoint" : message.kind,
           content: message.id === args.targetMessageId ? nextContent : message.content,
+          attachmentsJson: message.attachmentsJson,
           createdAt: now,
         });
       }
@@ -1136,7 +1169,7 @@ export async function recoverRun(args: RecoverRunArgs) {
         throw new Error("Forked run not found");
       }
 
-      await startDirectRerun(newRun, nextContent, forkTargetMessageId);
+      await startDirectRerun(newRun, nextContent, forkTargetMessageId, targetAttachments);
       return {
         runId: newRunId,
         ...(workspaceResult && runWorkspaceSnapshot
@@ -1197,7 +1230,7 @@ export async function recoverRun(args: RecoverRunArgs) {
     updatedAt: new Date(),
   }).where(eq(runs.id, args.runId));
 
-  await startDirectRerun(run, nextContent, args.targetMessageId);
+  await startDirectRerun(run, nextContent, args.targetMessageId, targetAttachments);
 
   return { runId: args.runId };
 }

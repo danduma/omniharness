@@ -26,10 +26,10 @@ const file: ChatAttachment = {
 };
 
 describe("chat attachment prompt context", () => {
-  it("does not hand an inlined image to the worker as a path to retype", () => {
-    // Regression: the prompt used to carry the image's absolute path, built
-    // from two UUIDs. A worker transcribing that path mistyped one hex digit,
-    // got "File does not exist", and answered as though no screenshot existed.
+  it("gives an inlined image a disk path for file-producing work", () => {
+    // Regression: Claude could see an inlined image, but without the saved
+    // path it searched unrelated temp directories when asked to turn the
+    // image into project assets. Keep the pixels and the usable path together.
     const context = appendAttachmentContext("what is wrong here?", [image], {
       resolvePath,
       imagesInlined: true,
@@ -37,7 +37,7 @@ describe("chat attachment prompt context", () => {
 
     expect(context).toContain("Attached images (included directly in this message):");
     expect(context).toContain("screen.png");
-    expect(context).not.toContain("/data/attachments/08ac7677/78d6923a-image.png");
+    expect(context).toContain("path: /data/attachments/08ac7677/78d6923a-image.png");
   });
 
   it("never advertises view_image, which only exists on codex workers", () => {
@@ -63,7 +63,7 @@ describe("chat attachment prompt context", () => {
 
     expect(context).toContain("Attached files available to inspect:");
     expect(context).toContain("path: /data/attachments/08ac7677/notes.md");
-    expect(context).not.toContain("path: /data/attachments/08ac7677/78d6923a-image.png");
+    expect(context).toContain("path: /data/attachments/08ac7677/78d6923a-image.png");
   });
 
   it("returns the bare message when there is nothing attached", () => {

@@ -51,10 +51,18 @@ const RETRYABLE_MESSAGE_PATTERNS = [
   /\bsocket hang up\b/i,
   /\bother side closed\b/i,
 ];
+// An ACP adapter reports a dead credential as a JSON-RPC internal error, which
+// the bridge surfaces as HTTP 500 — a retryable status. Without these patterns a
+// revoked OAuth token looks transient, so recovery spins on it indefinitely and
+// the user is never told to re-authenticate.
 const PERMANENT_MESSAGE_PATTERNS = [
   /\bworker binary is not installed\b/i,
   /\bAPI key not valid\b/i,
   /\bauthentication required\b/i,
+  /\bfailed to authenticate\b/i,
+  /\bauthentication[ _]failed\b/i,
+  /\b(?:access |refresh )?token (?:has been |was )?revoked\b/i,
+  /\binvalid[ _]api[ _]key\b/i,
   /\bbilling required\b/i,
   /\bcap_exceeded\b/i,
   /\binsufficient quota\b/i,

@@ -38,6 +38,25 @@ note covers the fallback rule for legacy `messages` rows: use them only after
 the relevant worker stream is loaded, and never let them render ahead of
 unknown stream content.
 
+"The stream is loaded" is not the same as "the stream covers this row."
+Transcripts load a bounded tail page, so a `messages` row whose `user_input`
+entry lives in an unfetched older page looks absent from the stream and gets
+re-injected as a fallback bubble — with no `seq` of its own, anchored to
+whichever entry the window happens to start with. Every such row anchors to
+that same entry, which in session `73fe3ee52059` stacked an entire
+conversation's user messages into one block above the agent output. A row is
+only placeable when its absence is provable: it is newer than the oldest
+loaded entry, the whole history is loaded (`hasMoreHistory` is false), or this
+client sent it itself. Otherwise it waits for its page.
+
+Ordering is decided by one scalar key per item, computed before any comparison
+(`assignActivityOrderKeys` in `src/components/Terminal.tsx`). Do not write a
+comparator that chooses between `seq` and timestamp per pair: with a mix of
+items that do and do not carry a `seq` that relation is not transitive, and
+the rendered order becomes a function of which pairs `sort` visited. `seq` is
+the authority within one worker; across workers the counters are unrelated, so
+timestamps lead and the borrowed key only separates items that share one.
+
 Related incident note: `docs/architecture/supervisor-worker-switching-incident.md`
 documents a transcript-ordering regression where a supervisor-spawned worker
 streamed bridge output before the server appended the initial

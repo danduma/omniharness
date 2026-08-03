@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
+import { getAppDataPath } from "@/server/app-root";
 import {
   clarifications,
   executionEvents,
@@ -519,6 +520,66 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(JSON.parse(storedMessages[0]?.attachmentsJson || "[]")).toEqual([attachment]);
     expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("path: "));
     expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("attachment-2-notes.pdf"));
+  });
+
+  it("gives a direct worker both image pixels and the saved image path", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const attachment = {
+      id: "attachment-image-follow-up",
+      kind: "image",
+      name: "logo.png",
+      mimeType: "image/png",
+      size: 294718,
+      storagePath: "attachments/upload-image/attachment-image-logo.png",
+    };
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct.md",
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "awaiting_user",
+      projectPath: "/workspace/app",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const response = await POST(new Request(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        content: "Use this image for the app assets",
+        attachments: [attachment],
+      }),
+    }), { params: Promise.resolve({ id: runId }) });
+
+    expect(response.status).toBe(200);
+    await waitForConversationBackgroundTasksForTests();
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      workerId,
+      expect.stringContaining(`path: ${getAppDataPath(attachment.storagePath)}`),
+      [{ path: getAppDataPath(attachment.storagePath), mimeType: "image/png" }],
+    );
   });
 
   it("stores implementation follow-ups and wakes the supervisor instead of messaging a worker directly", async () => {

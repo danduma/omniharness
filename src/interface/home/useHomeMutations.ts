@@ -830,25 +830,22 @@ export function useHomeMutations({
           ? { requestId, action, content: content ?? {} }
           : { requestId, action },
       }) as Promise<{ ok: true }>,
-    onError: (error, _variables, context) => {
-      const alreadyResolved = isAlreadyResolvedHumanInputError(error);
-      if (!alreadyResolved && context?.previousState) {
+    onError: (error, variables, context) => {
+      // The worker moved on before the answer landed. Nothing failed and there
+      // is nothing for the user to do — the optimistic update already cleared
+      // the prompt — so this is not surfaced at all.
+      if (isAlreadyResolvedHumanInputError(error)) {
+        return;
+      }
+      if (context?.previousState) {
         setState(context.previousState);
       }
-      const descriptor = buildInlineError(error, {
-        source: "Agent runtime",
-        action: "Respond to worker question",
-      });
       setRuntimeErrors((current) => mergeAppErrors(current, [
-        alreadyResolved
-          ? {
-              ...descriptor,
-              source: "Agent runtime",
-              action: "Respond to worker question",
-              message: "This question is no longer open — the worker stopped waiting for an answer.",
-              suggestion: "Send your answer as a normal message instead.",
-            }
-          : descriptor,
+        buildInlineError(error, {
+          source: "Agent runtime",
+          action: "Respond to worker question",
+          runId: runIdForWorker(variables.workerId),
+        }),
       ]));
     },
   });
@@ -871,14 +868,16 @@ export function useHomeMutations({
           ? { requestId, decision, optionId }
           : { requestId, decision },
       }) as Promise<{ ok: true }>,
-    onError: (error, _variables, context) => {
+    onError: (error, variables, context) => {
       const alreadyResolved = isAlreadyResolvedHumanInputError(error);
       if (!alreadyResolved && context?.previousState) {
         setState(context.previousState);
       }
+      const runId = runIdForWorker(variables.workerId);
       const descriptor = buildInlineError(error, {
         source: "Agent runtime",
         action: "Respond to permission request",
+        runId,
       });
       setRuntimeErrors((current) => mergeAppErrors(current, [
         alreadyResolved
@@ -888,6 +887,7 @@ export function useHomeMutations({
               action: "Respond to permission request",
               message: "This permission request is no longer open — the worker stopped waiting for a decision.",
               suggestion: "The tool call it was guarding did not run. Ask the worker to retry it if you still want it.",
+              runId,
             }
           : descriptor,
       ]));

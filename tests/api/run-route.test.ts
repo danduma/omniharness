@@ -1699,11 +1699,11 @@ describe("POST /api/runs/[id]", () => {
     const adHocAbsolutePath = getAppDataPath(adHocRelativePath);
     const attachment = {
       id: "attachment-retry",
-      kind: "file",
-      name: "260524-1226-platter-core-recommendations.md",
-      mimeType: "text/markdown",
+      kind: "image",
+      name: "app-icon.png",
+      mimeType: "image/png",
       size: 9754,
-      storagePath: "attachments/retry/260524-1226-platter-core-recommendations.md",
+      storagePath: "attachments/retry/app-icon.png",
     };
 
     fs.mkdirSync(path.dirname(adHocAbsolutePath), { recursive: true });
@@ -1814,9 +1814,9 @@ describe("POST /api/runs/[id]", () => {
     expect(mockAskAgent).toHaveBeenCalledWith(
       latestWorkerId,
       expect.stringContaining("here, this one"),
+      [{ path: getAppDataPath(attachment.storagePath), mimeType: "image/png" }],
     );
-    expect(mockAskAgent.mock.calls[0]?.[1]).toContain("path:");
-    expect(mockAskAgent.mock.calls[0]?.[1]).toContain(attachment.storagePath);
+    expect(mockAskAgent.mock.calls[0]?.[1]).toContain(`path: ${getAppDataPath(attachment.storagePath)}`);
 
     const storedWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
     const updatedWorker = await db.select().from(workers).where(eq(workers.id, latestWorkerId)).get();
@@ -2258,6 +2258,14 @@ describe("POST /api/runs/[id]", () => {
     const oldWorkerId = `${runId}-worker-1`;
     const newWorkerId = `${runId}-worker-2`;
     const userMessageId = randomUUID();
+    const attachment = {
+      id: "attachment-fresh-retry",
+      kind: "image",
+      name: "app-icon.png",
+      mimeType: "image/png",
+      size: 9754,
+      storagePath: "attachments/retry/fresh-app-icon.png",
+    };
     const adHocRelativePath = path.join("vibes", "ad-hoc", `${randomUUID()}.md`);
     const adHocAbsolutePath = getAppDataPath(adHocRelativePath);
 
@@ -2306,6 +2314,7 @@ describe("POST /api/runs/[id]", () => {
       role: "user",
       kind: "checkpoint",
       content: "continue without the missing ACP session",
+      attachmentsJson: JSON.stringify([attachment]),
       createdAt: new Date("2026-05-24T18:57:46Z"),
     });
 
@@ -2341,7 +2350,11 @@ describe("POST /api/runs/[id]", () => {
       cwd: "/workspace/app",
     }));
     expect(mockSpawnAgent.mock.calls[0]?.[0]).not.toHaveProperty("resumeSessionId");
-    expect(mockAskAgent).toHaveBeenCalledWith(newWorkerId, "continue without the missing ACP session");
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      newWorkerId,
+      expect.stringContaining(`path: ${getAppDataPath(attachment.storagePath)}`),
+      [{ path: getAppDataPath(attachment.storagePath), mimeType: "image/png" }],
+    );
 
     const workersAfter = await db.select().from(workers).where(eq(workers.runId, runId));
     const oldWorker = workersAfter.find((worker) => worker.id === oldWorkerId);

@@ -128,9 +128,9 @@ export interface AttachmentContextOptions {
   resolvePath?: (storagePath: string) => string;
   // True when the caller also delivers image attachments as real image
   // content blocks on the same prompt (see `resolveImageAttachments`).
-  // The worker then already has the pixels and must not be told to go
-  // read the image off disk — asking it to retype a UUID path is how
-  // images silently went missing.
+  // The worker receives both the pixels for visual understanding and the
+  // saved path for work that needs the original file (for example, turning
+  // an uploaded logo into project assets).
   imagesInlined?: boolean;
 }
 
@@ -155,9 +155,7 @@ export function formatAttachmentContext(
       `- ${attachment.name}`,
       `mime: ${attachment.mimeType || "unknown"}`,
       `size: ${formatBytes(attachment.size)}`,
-      // Inlined images are already in the prompt; a path would only invite
-      // a redundant (and easily mistyped) disk read.
-      ...(inlineImages ? [] : [`path: ${resolvePath(attachment.storagePath!)}`]),
+      `path: ${resolvePath(attachment.storagePath!)}`,
     ].join(" | "));
     sections.push(
       inlineImages

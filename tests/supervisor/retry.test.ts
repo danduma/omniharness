@@ -69,6 +69,41 @@ describe("isTransientSupervisorError", () => {
     expect(isTransientSupervisorError(quotaError)).toBe(false);
   });
 
+  it("does not retry dead credentials the ACP adapter reports as internal errors", () => {
+    // The adapter answers a revoked token with a JSON-RPC internal error, which
+    // the bridge surfaces as HTTP 500 — a retryable status. Classifying that as
+    // transient made recovery spin on it instead of telling the user to
+    // re-authenticate.
+    const revoked = Object.assign(
+      new Error("Ask failed: Internal error: Failed to authenticate. API Error: 401 OAuth access token has been revoked."),
+      { status: 500 },
+    );
+    const refreshRevoked = Object.assign(
+      new Error("Ask failed: Internal error: refresh token was revoked"),
+      { status: 500 },
+    );
+    const authFailed = Object.assign(
+      new Error("Spawn failed: authentication_failed"),
+      { status: 500 },
+    );
+    const invalidKey = Object.assign(
+      new Error("Ask failed: Internal error: invalid_api_key"),
+      { status: 500 },
+    );
+
+    expect(isTransientSupervisorError(revoked)).toBe(false);
+    expect(isTransientSupervisorError(refreshRevoked)).toBe(false);
+    expect(isTransientSupervisorError(authFailed)).toBe(false);
+    expect(isTransientSupervisorError(invalidKey)).toBe(false);
+  });
+
+  it("still retries rate limits that mention authentication-adjacent wording", () => {
+    expect(isTransientSupervisorError(Object.assign(
+      new Error("Ask failed: API Error: 429 rate limit reached for this account"),
+      { status: 429 },
+    ))).toBe(true);
+  });
+
   it("honors an explicit retryable override on wrapped errors", () => {
     expect(isTransientSupervisorError(Object.assign(new Error("Spawn failed: failed to start agent"), {
       status: 500,

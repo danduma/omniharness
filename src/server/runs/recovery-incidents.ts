@@ -193,6 +193,10 @@ export async function markRecoveryIncidentNeedsUser(args: {
     lastError: args.reason,
     details: serializeDetails(args.details),
     updatedAt: now,
+    // A resumed session can still fail later — during the continuation turn that
+    // follows recovery, for instance. Clear the resolution stamp so a reopened
+    // incident does not read as both resolved and blocked on the user.
+    resolvedAt: null,
   }).where(eq(recoveryIncidents.id, args.incidentId));
   if (alreadyNeedsUser && existing?.lastError === args.reason) {
     return;

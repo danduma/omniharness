@@ -423,16 +423,28 @@ function updateContextUsage(record: AgentRecord, patch: Partial<NonNullable<Agen
   };
 }
 
+/**
+ * Per-turn usage from a prompt response. Its `totalTokens` is a cumulative spend
+ * counter for the whole session, not the live context size — a long session
+ * reports millions against a 200k window. `contextUsage.totalTokens` means
+ * "tokens currently in context" and drives `fullnessPercent`, so letting prompt
+ * usage write it pinned every long-running agent to 100% full forever.
+ *
+ * Only `session/update` usage (`used`/`size`, via `applySessionUsageUpdate`)
+ * measures the live window, and it is the sole source of `maxTokens`. So once a
+ * window is known, leave the context fields to it and record spend only.
+ */
 function applyPromptUsage(record: AgentRecord, usage: unknown) {
   const payload = asRecord(usage);
   if (!payload) {
     return;
   }
 
+  const hasSessionReportedWindow = finiteNumber(record.contextUsage?.maxTokens) !== null;
   updateContextUsage(record, {
     inputTokens: finiteNumber(payload.inputTokens),
     outputTokens: finiteNumber(payload.outputTokens),
-    totalTokens: finiteNumber(payload.totalTokens),
+    ...(hasSessionReportedWindow ? {} : { totalTokens: finiteNumber(payload.totalTokens) }),
   });
 }
 
