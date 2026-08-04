@@ -4,7 +4,7 @@ import { formatHumanDuration, type ConversationWorkerRecord } from "@/lib/conver
 import { isTerminalRunStatus } from "@/lib/run-status";
 import { getLatestUnresolvedWorkerStuckEvent } from "@/lib/worker-stuck-events";
 import { RUN_PATH_PATTERN, WORKER_OPTIONS, FALLBACK_WORKER_MODEL_OPTIONS } from "./constants";
-import type { AgentSnapshot, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, PlanItemRecord, PlanRecord, RunRecord, SupervisorInterventionRecord, WorkerModelCatalog, WorkerType } from "./types";
+import type { AgentSnapshot, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, PlanItemRecord, PlanRecord, QueuedConversationMessageRecord, RunRecord, SupervisorInterventionRecord, WorkerModelCatalog, WorkerType } from "./types";
 import { t } from "@/lib/i18n";
 
 export { getLatestUnresolvedWorkerStuckEvent };
@@ -192,21 +192,81 @@ function reviveRunForSentMessage(run: RunRecord, message: MessageRecord): RunRec
 }
 
 /**
+ * Id for a message about to be sent. Generated at the call site rather than
+ * inside the mutation so the same value reaches both the optimistic render
+ * (`onMutate`) and the request body (`mutationFn`) — React Query gives the
+ * two no shared channel.
+ */
+export function createSentConversationMessageId() {
+  return randomMessageUuid();
+}
+
+function randomMessageUuid() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  // Same shape as randomUUID so the server accepts it as a client message id.
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (character) => {
+    const value = Math.floor(Math.random() * 16);
+    return (character === "x" ? value : (value & 0x3) | 0x8).toString(16);
+  });
+}
+
+/**
+ * The queue row for a message sent while the worker is busy, rendered from
+ * the moment the user hits send.
+ *
+ * `busyAction: "queue"` always produces a queued row server-side and never a
+ * delivered message, so predicting it cannot be wrong. Rendering an optimistic
+ * *sent bubble* instead put the message in the transcript for the length of
+ * the round trip before it jumped into the queue.
+ *
+ * `action` is left as "queue" even though a supervised run records the row as
+ * "steer": nothing renders the field, and the server row replaces this one
+ * wholesale on the same id.
+ */
+export function buildOptimisticQueuedConversationMessage(args: {
+  runId: string;
+  content: string;
+  targetWorkerId?: string | null;
+  attachments?: ChatAttachment[];
+  id?: string;
+}): QueuedConversationMessageRecord {
+  const createdAt = new Date().toISOString();
+  return {
+    id: args.id ?? randomMessageUuid(),
+    runId: args.runId,
+    targetWorkerId: args.targetWorkerId ?? null,
+    action: "queue",
+    content: args.content,
+    status: "pending",
+    lastError: null,
+    attachments: args.attachments ?? [],
+    createdAt,
+    updatedAt: createdAt,
+    deliveredAt: null,
+  };
+}
+
+/**
  * A user message rendered from the moment the send button is pressed,
- * before the server has acknowledged it. Swapped for the server's row via
- * `resolveOptimisticSentConversationMessage` when the POST settles. The
- * bubble must exist continuously from click to delivery — appearing only
- * on POST success made it pop in late and flicker (see the send-time
- * bubble regression tests).
+ * before the server has acknowledged it. The bubble must exist continuously
+ * from click to delivery — appearing only on POST success made it pop in
+ * late and flicker (see the send-time bubble regression tests).
+ *
+ * The id is a plain uuid rather than a recognisably-optimistic one because
+ * it is sent as `clientMessageId` and adopted verbatim as the persisted row
+ * id. Optimistic row, server row and worker stream entry then share one id,
+ * so the bubble keeps a single React key for its whole life instead of
+ * remounting on each handoff.
  */
 export function buildOptimisticSentConversationMessage(args: {
   runId: string;
   content: string;
   attachments?: ChatAttachment[];
+  id?: string;
 }): MessageRecord {
-  const id = typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? `optimistic-${crypto.randomUUID()}`
-    : `optimistic-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const id = args.id ?? randomMessageUuid();
   return {
     id,
     runId: args.runId,
@@ -235,34 +295,54 @@ export function resolveOptimisticSentConversationMessage(
   return message ? appendSentConversationMessageSnapshot(next, message) : next;
 }
 
+/**
+ * Re-inject rows this client sent that the incoming frame does not carry yet,
+ * and report which pending rows the caller can now stop shadowing.
+ *
+ * Pure: it reports settled ids rather than deleting from the caller's map, so
+ * the pending set can live in a manager instead of a mutable ref.
+ */
 export function mergePendingSentConversationMessages(
   incomingState: EventStreamState,
-  pendingMessages: Map<string, MessageRecord>,
-): EventStreamState {
+  pendingMessages: ReadonlyMap<string, MessageRecord>,
+  inFlightMessageIds: ReadonlySet<string> = new Set(),
+): { state: EventStreamState; settledMessageIds: string[] } {
   if (pendingMessages.size === 0) {
-    return incomingState;
+    return { state: incomingState, settledMessageIds: [] };
   }
 
   const serverMessageIds = new Set((incomingState.messages || []).map((message) => message.id));
   const incomingRunsById = new Map((incomingState.runs || []).map((run) => [run.id, run]));
+  const settledMessageIds: string[] = [];
   let nextState = incomingState;
 
-  for (const [messageId, message] of Array.from(pendingMessages.entries())) {
+  for (const [messageId, message] of pendingMessages) {
     if (serverMessageIds.has(messageId)) {
-      pendingMessages.delete(messageId);
+      settledMessageIds.push(messageId);
+      continue;
+    }
+
+    // A send still in flight cannot be stale by construction, whatever the
+    // run looks like. Applying the staleness check to it compared the
+    // browser's `createdAt` against the runner's `updatedAt`: whenever the
+    // runner clock ran ahead the just-sent bubble was dropped on the next
+    // frame and only came back when the POST returned, which is the
+    // send-time flicker.
+    if (inFlightMessageIds.has(messageId)) {
+      nextState = appendSentConversationMessageSnapshot(nextState, message);
       continue;
     }
 
     const incomingRun = incomingRunsById.get(message.runId);
     if (incomingRun && !shouldReviveRunForSentMessage(incomingRun, message)) {
-      pendingMessages.delete(messageId);
+      settledMessageIds.push(messageId);
       continue;
     }
 
     nextState = appendSentConversationMessageSnapshot(nextState, message);
   }
 
-  return nextState;
+  return { state: nextState, settledMessageIds };
 }
 
 export type CreatedConversationSnapshot = {

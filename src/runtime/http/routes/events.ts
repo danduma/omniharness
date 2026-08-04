@@ -162,7 +162,12 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}, prob
       ? db.select().from(queuedConversationMessages)
         .where(and(
           eq(queuedConversationMessages.runId, selectedRunId),
-          inArray(queuedConversationMessages.status, ["pending", "delivering"]),
+          // Only `pending` is still queued. `delivering` means the message has
+          // been handed to the worker — it is already in the transcript, so
+          // listing it here showed a sent message sitting in the queue for the
+          // whole turn. A dispatch that fails is put back to `pending` and
+          // reappears here, which is the honest signal.
+          eq(queuedConversationMessages.status, "pending"),
         ))
         .orderBy(desc(queuedConversationMessages.createdAt), desc(queuedConversationMessages.id))
       : [],
@@ -946,23 +951,37 @@ export const handleEventsRequest: OmniHttpHandler = async (request, context) => 
       }
 
       let notificationVersionAtStart = getEventStreamNotificationVersion();
+      // The persisted payload carries no live agent state: every agent in
+      // it is `bridgeMissing` with empty `pendingElicitations`/
+      // `pendingPermissions`. That is an acceptable first paint (better
+      // than a blank screen while the bridge fetch lands), but replaying it
+      // on every loop iteration makes live-only UI flicker — an open
+      // elicitation form vanished for the whole runtime-payload build and
+      // reappeared for the moment the enriched frame was current. Once the
+      // client has seen live agent state, always wait for the enriched
+      // payload instead of regressing to the degraded one.
+      let hasDeliveredRuntimePayload = false;
       while (!streamClosed) {
         try {
           notificationVersionAtStart = getEventStreamNotificationVersion();
           drainBufferedEvents();
           const runtimePayloadPromise = buildSharedRuntimeEnrichedEventPayload(eventPayloadOptions);
-          const runtimePayload = await Promise.race([
-            runtimePayloadPromise,
-            delay(RUNTIME_AGENT_GRACE_MS).then(() => null),
-          ]);
+          const runtimePayload = hasDeliveredRuntimePayload
+            ? await runtimePayloadPromise
+            : await Promise.race([
+              runtimePayloadPromise,
+              delay(RUNTIME_AGENT_GRACE_MS).then(() => null),
+            ]);
 
           if (runtimePayload) {
             sendUpdateIfChanged(runtimePayload);
+            hasDeliveredRuntimePayload = true;
           } else {
             sendUpdateIfChanged(await buildSharedPersistedEventPayload(eventPayloadOptions));
             const enrichedPayload = await runtimePayloadPromise;
             if (!streamClosed) {
               sendUpdateIfChanged(enrichedPayload);
+              hasDeliveredRuntimePayload = true;
             }
           }
           // Named events emitted during snapshot construction must be

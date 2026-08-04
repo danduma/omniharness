@@ -6,6 +6,7 @@ import {
   resolveDirectControlPendingAssistantStatus,
   resolvePendingConversationWorkerId,
   shouldShowDirectControlPendingAssistant,
+  shouldShowDirectControlWorkingIndicator,
 } from "@/interface/home/direct-control-activity";
 
 describe("shouldShowDirectControlPendingAssistant", () => {
@@ -218,5 +219,72 @@ describe("shouldShowDirectControlPendingAssistant", () => {
       isImplementationConversation: false,
       selectedWorkerIds: ["run-a-worker-1"],
     })).toBe("run-a-worker-1");
+  });
+});
+
+describe("shouldShowDirectControlWorkingIndicator", () => {
+  it("keeps Working hidden while an elicitation card only the worker-entry stream knows about is on screen", () => {
+    // Replays the flicker: the live agent snapshot momentarily carries no
+    // pending elicitation (degraded frame / raced runtime fetch) so the
+    // upstream resolver says "working", but the card is still rendered from
+    // prompts derived from the durable worker entries. Showing the row here
+    // pushed the whole form down the page for a frame.
+    const pendingAssistantVisible = shouldShowDirectControlPendingAssistant({
+      isDirectConversation: true,
+      pendingConversationWorkerId: null,
+      busyConversationWorkerId: "run-1-worker-1",
+      selectedRunStatus: "running",
+      workerStatuses: ["working"],
+      agentStates: ["working"],
+      hasAgentCurrentText: false,
+      hasPendingHumanInput: false,
+    });
+    expect(pendingAssistantVisible).toBe(true);
+
+    expect(shouldShowDirectControlWorkingIndicator({
+      pendingAssistantVisible,
+      primaryConversationWorkerId: "run-1-worker-1",
+      renderedElicitationCount: 1,
+      renderedPermissionCount: 0,
+    })).toBe(false);
+  });
+
+  it("keeps Working hidden while a permission card is on screen", () => {
+    expect(shouldShowDirectControlWorkingIndicator({
+      pendingAssistantVisible: true,
+      primaryConversationWorkerId: "run-1-worker-1",
+      renderedElicitationCount: 0,
+      renderedPermissionCount: 1,
+    })).toBe(false);
+  });
+
+  it("shows Working once the answered prompt stops rendering", () => {
+    expect(shouldShowDirectControlWorkingIndicator({
+      pendingAssistantVisible: true,
+      primaryConversationWorkerId: "run-1-worker-1",
+      renderedElicitationCount: 0,
+      renderedPermissionCount: 0,
+    })).toBe(true);
+  });
+
+  it("does not resurrect Working from prompt counts when the upstream status is already hidden", () => {
+    expect(shouldShowDirectControlWorkingIndicator({
+      pendingAssistantVisible: false,
+      primaryConversationWorkerId: "run-1-worker-1",
+      renderedElicitationCount: 0,
+      renderedPermissionCount: 0,
+    })).toBe(false);
+  });
+
+  it("ignores prompt counts with no worker to render them against", () => {
+    // Mirrors the render guard: both cards are gated on
+    // `primaryConversationWorkerId`, so a stale count without a worker must
+    // not suppress the row.
+    expect(shouldShowDirectControlWorkingIndicator({
+      pendingAssistantVisible: true,
+      primaryConversationWorkerId: null,
+      renderedElicitationCount: 1,
+      renderedPermissionCount: 1,
+    })).toBe(true);
   });
 });

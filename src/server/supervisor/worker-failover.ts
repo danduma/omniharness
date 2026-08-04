@@ -364,7 +364,7 @@ export async function attemptWorkerFailover(
         runId: args.runId,
         workerId: newWorkerId,
         explicitAccountId: run?.preferredWorkerAccountId ?? null,
-        strategy: run?.preferredWorkerAccountId ? "manual" : "priority",
+        strategy: run?.preferredWorkerAccountId ? "manual" : "subscription_then_api",
         env: compactEnv(args.env),
       });
       const workerAccountId = accountAllocation?.account?.id ?? null;

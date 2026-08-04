@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { askAgent, getAgent, respondElicitation } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { messages, queuedConversationMessages, runs, supervisorInterventions, workers } from "@/server/db/schema";
@@ -447,9 +447,65 @@ export async function listPendingQueuedConversationMessages(runId: string) {
     .where(eq(queuedConversationMessages.runId, runId))
     .orderBy(asc(queuedConversationMessages.createdAt), asc(queuedConversationMessages.id));
 
+  // `delivering` has left the queue: the message is with the worker and already
+  // shown in the transcript. Failed dispatches return to `pending`.
   return records
-    .filter((record) => record.status === "pending" || record.status === "delivering")
+    .filter((record) => record.status === "pending")
     .map(serializeQueuedConversationMessage);
+}
+
+/**
+ * `delivering` means "an in-process delivery owns this row". No such delivery
+ * survives a process restart, so any row still marked `delivering` at boot is
+ * orphaned: its owner died mid-flight. Left alone it dangles forever — and
+ * since `delivering` rows are no longer listed as queued, it would dangle
+ * invisibly. Reclaim them as `pending` so the user's message comes back.
+ */
+export async function reclaimOrphanedDeliveringMessages() {
+  const orphaned = await db
+    .select({ id: queuedConversationMessages.id, runId: queuedConversationMessages.runId })
+    .from(queuedConversationMessages)
+    .where(eq(queuedConversationMessages.status, "delivering"));
+  if (orphaned.length === 0) {
+    return 0;
+  }
+
+  const now = new Date();
+  await db.update(queuedConversationMessages).set({
+    status: "pending",
+    lastError: null,
+    updatedAt: now,
+    deliveredAt: null,
+  }).where(inArray(queuedConversationMessages.id, orphaned.map((record) => record.id)));
+
+  for (const record of orphaned) {
+    await insertQueueExecutionEvent(record.runId, "queued_message_reclaimed", {
+      summary: "Requeued a message whose delivery was interrupted by a restart.",
+      queuedMessageId: record.id,
+    });
+  }
+  notifyEventStreamSubscribers();
+  return orphaned.length;
+}
+
+const CLIENT_MESSAGE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Falls back to a fresh uuid when the client id is unusable — malformed, or
+ * already taken by an earlier queue row — so a resend degrades to a duplicate
+ * row rather than a primary-key failure that would lose the user's text.
+ */
+async function resolveQueuedConversationMessageId(clientMessageId: string | null | undefined) {
+  const candidate = typeof clientMessageId === "string" ? clientMessageId.trim().toLowerCase() : "";
+  if (!CLIENT_MESSAGE_ID_PATTERN.test(candidate)) {
+    return randomUUID();
+  }
+  const existing = await db
+    .select({ id: queuedConversationMessages.id })
+    .from(queuedConversationMessages)
+    .where(eq(queuedConversationMessages.id, candidate))
+    .get();
+  return existing ? randomUUID() : candidate;
 }
 
 export async function createQueuedConversationMessage({
@@ -458,12 +514,19 @@ export async function createQueuedConversationMessage({
   action,
   content,
   attachments = [],
+  clientMessageId = null,
 }: {
   runId: string;
   targetWorkerId?: string | null;
   action: BusyMessageAction;
   content: string;
   attachments?: ChatAttachment[];
+  /**
+   * Id the sending client already rendered its queue row under. Adopting it
+   * keeps that row and this one the same row, so the queue entry does not
+   * blink out and back when the event stream catches up.
+   */
+  clientMessageId?: string | null;
 }) {
   const trimmedContent = content.trim();
   const normalizedAttachments = normalizeChatAttachments(attachments);
@@ -473,7 +536,7 @@ export async function createQueuedConversationMessage({
 
   const now = await nextQueuedMessageCreatedAt(runId);
   const record = {
-    id: randomUUID(),
+    id: await resolveQueuedConversationMessageId(clientMessageId),
     runId,
     targetWorkerId,
     action,
@@ -1152,8 +1215,11 @@ export async function drainQueuedWorkerMessages({
     });
     const startedAt = new Date();
 
+    // Keyed by the queue row id, matching the send-now path: the stream entry
+    // is anchored before the ask, so a deferred retry must land on the same id
+    // for `appendUserInputOnDelivery` to dedup instead of double-appending.
     const userMessage = {
-      id: randomUUID(),
+      id: record.id,
       runId,
       role: "user" as const,
       kind: "checkpoint" as const,
@@ -1178,6 +1244,50 @@ export async function drainQueuedWorkerMessages({
       lastError: null,
       updatedAt: startedAt,
     }).where(eq(runs.id, runId));
+
+    // A pending elicitation belongs to the turn that is already running. Do
+    // not queue its answer behind that same turn: the turn cannot finish until
+    // the answer arrives, so acquiring the per-worker turn gate here creates a
+    // self-deadlock and leaves the queue row in `delivering` forever.
+    if (selectPendingWorkerElicitation(snapshot ?? null)) {
+      const deliveredAt = new Date();
+      const answered = await answerPendingWorkerElicitation({
+        run,
+        worker,
+        snapshot: snapshot ?? null,
+        content: record.content,
+        deliveredAt,
+      });
+      if (answered) {
+        await appendUserInputOnDelivery({
+          id: userMessage.id,
+          runId,
+          workerId,
+          text: record.content,
+          deliveredAt,
+          attachments: normalizedAttachments.map((attachment) => ({
+            id: attachment.id,
+            filename: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.size,
+          })),
+        });
+        await db.insert(messages).values(userMessage);
+        await db.update(queuedConversationMessages).set({
+          status: "delivered",
+          lastError: null,
+          updatedAt: deliveredAt,
+          deliveredAt,
+        }).where(eq(queuedConversationMessages.id, record.id));
+        await insertQueueExecutionEvent(runId, "queued_message_delivered", {
+          summary: `Delivered queued answer to ${workerId}'s pending question.`,
+          queuedMessageId: record.id,
+          delivery: "elicitation",
+        }, workerId);
+        deliveredCount += 1;
+        continue;
+      }
+    }
 
     try {
       await runWorkerTurn(workerId, async () => {
@@ -1222,14 +1332,15 @@ export async function drainQueuedWorkerMessages({
           return;
         }
 
-        // Background drain, not a user-initiated send: record the message only
-        // once the ask has actually landed. A busy worker leaves the row
-        // pending for a later drain, and pre-appending here would show the user
-        // a message that was never delivered — and re-show it on every retry.
-        const drainImages = resolveImageAttachments(normalizedAttachments, getAppDataPath);
-        const response = drainImages.length
-          ? await askAgent(workerId, workerPromptForRun(run, workerContent), drainImages)
-          : await askAgent(workerId, workerPromptForRun(run, workerContent));
+        // Anchor the user's message before the ask. The turn can block for its
+        // whole duration — indefinitely, if the agent raises an elicitation
+        // mid-turn — and appending only after `askAgent` resolves left the
+        // prompt, the streamed output and the question itself invisible for
+        // that entire window: the conversation looked finished while the
+        // status said working. The queue row is already claimed `delivering`
+        // above, so no concurrent drain can re-enter this record, and the
+        // entry id is the queue row id, so a deferred retry dedups rather
+        // than appending the prompt twice.
         await appendUserInputOnDelivery({
           id: userMessage.id,
           runId,
@@ -1243,6 +1354,12 @@ export async function drainQueuedWorkerMessages({
             sizeBytes: attachment.size,
           })),
         });
+        notifyEventStreamSubscribers();
+
+        const drainImages = resolveImageAttachments(normalizedAttachments, getAppDataPath);
+        const response = drainImages.length
+          ? await askAgent(workerId, workerPromptForRun(run, workerContent), drainImages)
+          : await askAgent(workerId, workerPromptForRun(run, workerContent));
         await db.insert(messages).values(userMessage);
         await persistDeliveredWorkerResponse({
           run,

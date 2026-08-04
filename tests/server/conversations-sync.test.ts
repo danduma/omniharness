@@ -30,10 +30,27 @@ vi.mock("@/server/bridge-client", async (importOriginal) => {
   };
 });
 
-import { syncConversationSessions } from "@/server/conversations/sync";
+import { syncConversationSessions as syncConversationSessionsUnsettled } from "@/server/conversations/sync";
+
+/**
+ * Queue drains run as background tasks: the drain executes a full worker turn,
+ * and awaiting one inline would park the serialized sync chain for its whole
+ * duration (a deadlock when the turn blocks on a mid-turn elicitation). Tests
+ * assert on drain effects, so settle the background work before returning.
+ */
+async function syncConversationSessions(
+  ...args: Parameters<typeof syncConversationSessionsUnsettled>
+) {
+  const result = await syncConversationSessionsUnsettled(...args);
+  await waitForConversationBackgroundTasksForTests();
+  return result;
+}
 
 describe("syncConversationSessions", () => {
   beforeEach(async () => {
+    // Never let a straggling drain from the previous test observe (or mutate)
+    // the next test's fixtures.
+    await waitForConversationBackgroundTasksForTests();
     mockAskAgent.mockReset();
     mockAskAgent.mockResolvedValue({
       response: "Queued continue delivered.",
@@ -1105,6 +1122,118 @@ describe("syncConversationSessions", () => {
         detailsPreview: expect.stringContaining("\"reason\":\"pending_elicitation\""),
       }),
     ]));
+  });
+
+  it("does not park the sync pass on a queued turn that blocks mid-delivery", async () => {
+    // Regression: the drain was awaited inline, so a delivered turn held the
+    // serialized sync chain for its whole duration. When the agent raised an
+    // elicitation mid-turn that deadlocked — `askAgent` cannot resolve until
+    // the question is answered, and the question only reaches the client
+    // through the snapshot writes of the sync pass that is stuck waiting on
+    // that same turn. The conversation froze with no prompt, no output and no
+    // question, while the worker sat at `working` forever.
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-blocking-drain.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "awaiting_user",
+      title: "Direct blocking drain",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "idle",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "Done with the previous turn.",
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(queuedConversationMessages).values({
+      id: "queued-blocking-turn",
+      runId,
+      targetWorkerId: workerId,
+      action: "queue",
+      status: "pending",
+      content: "handle the follow-up",
+      attachmentsJson: "[]",
+      createdAt: new Date(now.getTime() + 1),
+      updatedAt: new Date(now.getTime() + 1),
+    });
+
+    // A turn that never resolves on its own, standing in for one blocked on a
+    // mid-turn elicitation.
+    let releaseAsk: (value: { response: string; state: string }) => void = () => {};
+    mockAskAgent.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseAsk = resolve;
+    }));
+
+    // The assertion is that this resolves at all: if the drain is awaited
+    // inline the sync pass never returns and the test times out.
+    await syncConversationSessionsUnsettled([
+      {
+        name: workerId,
+        type: "claude",
+        cwd: process.cwd(),
+        state: "idle",
+        sessionId: "blocking-session",
+        sessionMode: "full-access",
+        currentText: "",
+        lastText: "Done with the previous turn.",
+        renderedOutput: "Done with the previous turn.",
+        outputEntries: [
+          {
+            id: "previous-turn",
+            type: "message",
+            text: "Done with the previous turn.",
+            status: "completed",
+            timestamp: new Date(now.getTime() + 2).toISOString(),
+          },
+        ],
+        pendingElicitations: [],
+        stderrBuffer: [],
+        stopReason: "end_turn",
+      },
+    ], { selectedRunId: runId });
+
+    // Sync returned while the turn is still running; the delivery continues on
+    // a background task.
+    await vi.waitFor(() => expect(mockAskAgent).toHaveBeenCalledTimes(1));
+
+    // The prompt is anchored while the turn is still in flight, so the user
+    // can see what the worker was handed instead of a bare spinner.
+    const entriesDuringTurn = await readWorkerOutputEntries(runId, workerId);
+    expect(entriesDuringTurn.filter((entry) => entry.type === "user_input")).toEqual([
+      expect.objectContaining({ text: "handle the follow-up" }),
+    ]);
+
+    releaseAsk({ response: "Follow-up handled.", state: "idle" });
+    await waitForConversationBackgroundTasksForTests();
+
+    const queued = await db
+      .select()
+      .from(queuedConversationMessages)
+      .where(eq(queuedConversationMessages.id, "queued-blocking-turn"))
+      .get();
+    expect(queued?.status).toBe("delivered");
   });
 
   it("redelivers a queued answer as a normal prompt when the elicitation is already gone", async () => {

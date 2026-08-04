@@ -6,7 +6,6 @@ import { Terminal, TerminalTextSizeControl, type AgentTerminalPayload, type Term
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useWorkerStream } from "@/interface/home/WorkerEntriesManager";
-import { derivePendingElicitationsFromWorkerEntries } from "@/interface/home/worker-elicitations";
 import { workerCardManager } from "@/components/component-state-managers";
 import { sideWindowManager } from "@/interface/home/SideWindowManager";
 import type { AgentOutputEntry } from "@/lib/agent-output";
@@ -666,20 +665,10 @@ export function WorkerCard({
       ? unifiedTerminalEntries.filter(isWorkerCardBridgeEntry)
       : agent.outputEntries
   ), [agent.outputEntries, unifiedTerminalEntries]);
-  const streamPendingElicitations = useMemo(
-    () => derivePendingElicitationsFromWorkerEntries(unifiedTerminalEntries ?? []),
-    [unifiedTerminalEntries],
-  );
-  const effectivePendingElicitations = useMemo(() => {
-    if (streamPendingElicitations.length === 0) {
-      return pendingElicitations;
-    }
-    const liveRequestIds = new Set(pendingElicitations.map((elicitation) => elicitation.requestId));
-    return [
-      ...pendingElicitations,
-      ...streamPendingElicitations.filter((elicitation) => !liveRequestIds.has(elicitation.requestId)),
-    ];
-  }, [pendingElicitations, streamPendingElicitations]);
+  // The transcript records that a question once existed; it cannot prove the
+  // runtime still owns the request. Only runtime-confirmed requests are safe
+  // to render as actionable controls.
+  const effectivePendingElicitations = pendingElicitations;
   const terminalProcesses = useMemo(() => deriveVisibleWorkerTerminalProcesses(processEntries, agent.state), [agent.state, processEntries]);
   const hasActiveTerminalProcesses = terminalProcesses.some((process) => process.active);
   const showHeaderStopWorker = showStopWorker && !hasActiveTerminalProcesses;

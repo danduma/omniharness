@@ -746,6 +746,96 @@ describe("GET /api/events", () => {
     }));
   });
 
+  // The persisted payload has no live agent record, so its empty
+  // pendingElicitations/pendingPermissions mean "runtime unreachable", not
+  // "nothing pending". Replaying it every loop iteration made an open
+  // elicitation form flicker: visible only while the enriched frame was the
+  // most recent one, gone for the whole multi-second runtime rebuild after.
+  it("does not regress to a degraded persisted frame after live agent state has streamed", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/no-degraded-replay.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "No degraded replay",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const liveAgent = {
+      name: workerId,
+      type: "codex",
+      cwd: "/workspace/app",
+      state: "working",
+      pendingElicitations: [{
+        requestId: 7,
+        requestedAt: now.toISOString(),
+        message: "Pick an option",
+        requestedSchema: { type: "object", properties: {} },
+      }],
+    };
+
+    let bridgeCalls = 0;
+    global.fetch = vi.fn(() => {
+      bridgeCalls += 1;
+      // First build answers immediately so the client gets live state; every
+      // later build hangs, standing in for a slow runtime-enriched rebuild.
+      return bridgeCalls === 1
+        ? Promise.resolve(new Response(JSON.stringify([liveAgent])))
+        : new Promise<Response>(() => {});
+    }) as unknown as typeof fetch;
+
+    const controller = new AbortController();
+    const response = await GET(new Request(`http://localhost/api/events?runId=${runId}`, {
+      signal: controller.signal,
+    }));
+    const reader = response.body!.getReader();
+
+    try {
+      const live = await readUntilUpdateFrame(reader, 4_000, (frame) => (
+        Array.isArray(frame.agents) && (frame.agents as any[]).some((agent) => agent.name === workerId)
+      ));
+      expect(live.agents[0].pendingElicitations.map((item: { requestId: number }) => item.requestId)).toEqual([7]);
+
+      // Force another loop iteration while the runtime rebuild is stuck.
+      notifyEventStreamSubscribers();
+
+      await expect(
+        readUntilUpdateFrame(reader, 1_200, (frame) => (
+          Array.isArray(frame.agents) && (frame.agents as any[]).some((agent) => agent.name === workerId)
+        )),
+      ).rejects.toThrow(/Timed out/);
+    } finally {
+      controller.abort();
+      reader.releaseLock();
+    }
+  });
+
   it.skip("keeps completed terminal lifecycle entries in compact selected-run snapshots", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

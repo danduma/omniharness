@@ -129,6 +129,38 @@ export function shouldShowDirectControlPendingAssistant(args: Parameters<typeof 
   return resolveDirectControlPendingAssistantStatus(args) !== null;
 }
 
+/**
+ * Final say on the "Working…" row, applied where the prompt cards actually
+ * render. `resolveDirectControlPendingAssistantStatus` suppresses the row via
+ * `hasPendingHumanInput`, but it only sees the live agent snapshot, whereas the
+ * elicitation card renders from a union of that snapshot and prompts derived
+ * from the durable worker-entry stream. Any frame that lost the live pending
+ * request — a degraded/persisted SSE frame, or a runtime fetch that raced the
+ * poll — left the card on screen (worker entries still carry it) while the
+ * indicator flipped back on, so "Working…" blinked in and out on every frame
+ * and shoved the whole form down the page mid-answer.
+ *
+ * A rendered prompt means the turn is parked on the user, and the indicator is
+ * a placeholder for assistant output that has not arrived yet, so the two can
+ * never legitimately be true at once. Deciding that from the same counts that
+ * gate the cards keeps them consistent no matter which source flickers.
+ */
+export function shouldShowDirectControlWorkingIndicator(args: {
+  pendingAssistantVisible: boolean;
+  primaryConversationWorkerId: string | null | undefined;
+  renderedElicitationCount: number;
+  renderedPermissionCount: number;
+}) {
+  if (!args.pendingAssistantVisible) {
+    return false;
+  }
+
+  const hasRenderedPrompt = Boolean(args.primaryConversationWorkerId)
+    && (args.renderedElicitationCount > 0 || args.renderedPermissionCount > 0);
+
+  return !hasRenderedPrompt;
+}
+
 export function isMutationPendingForSelectedRun(args: {
   isPending: boolean;
   mutationRunId: string | null | undefined;

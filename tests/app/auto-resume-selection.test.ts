@@ -168,6 +168,24 @@ describe("auto-resume selection guards", () => {
     }
   });
 
+  it("does not auto-resume dead credentials however the adapter words them", () => {
+    // Reopening a run re-arms auto-resume. These accounts can never answer, so
+    // firing again just replays the same failure every time the user looks at
+    // the conversation.
+    for (const failureKey of [
+      ":Internal error: Failed to authenticate. API Error: 403 Account suspended",
+      ":Internal error: Failed to authenticate. API Error: 401 OAuth access token has been revoked.",
+      ":Spawn failed: authentication_failed",
+    ]) {
+      expect(isPermanentAutoResumeFailure(failureKey)).toBe(true);
+    }
+  });
+
+  it("still auto-resumes transient connection failures", () => {
+    expect(isPermanentAutoResumeFailure(":Ask failed: read ECONNRESET")).toBe(false);
+    expect(isPermanentAutoResumeFailure(":Ask failed: API Error: 429 rate limit reached")).toBe(false);
+  });
+
   it("does not auto-resume resource admission failures", () => {
     expect(isPermanentAutoResumeFailure(
       ":Cannot spawn worker because system resources are low (disk free 6912 MB, below 8192 MB). Free disk space before retrying.",

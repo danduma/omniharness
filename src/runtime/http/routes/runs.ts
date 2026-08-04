@@ -54,6 +54,8 @@ import { stopLiveProcessForDelete } from "@/server/session-providers/process-sto
 import type { OmniHttpHandler, OmniRequestContext } from "@/runtime/http/registry";
 import { startSlowProbe } from "@/server/slow-probe";
 import {
+  abortWorkerTurn,
+  advanceWorkerTurnGeneration,
   completeConversationDeletion,
   requestConversationDeletion,
   waitForConversationBackgroundTasks,
@@ -211,16 +213,23 @@ async function insertExecutionEvent(
 }
 
 async function cancelWorker(worker: typeof workers.$inferSelect) {
+  // Stop is authoritative the moment it is pressed. Abort the running turn
+  // locally first — that tears down the in-flight request without waiting on an
+  // agent that may never answer — then advance the turn fence so any late write
+  // from the dead turn is rejected instead of resurrecting `working` state.
+  abortWorkerTurn(worker.id, "user stop");
   void cancelAgent(worker.id).catch(() => {
     // best effort: the bridge process may already be gone or wedged
   });
 
   const previousStatus = worker.status;
-  await db.update(workers).set({
+  await advanceWorkerTurnGeneration(worker.id, {
     status: "cancelled",
-    currentText: "",
-    lastText: worker.currentText || worker.lastText,
+    clearCurrentText: true,
     updatedAt: new Date(),
+  });
+  await db.update(workers).set({
+    lastText: worker.currentText || worker.lastText,
   }).where(eq(workers.id, worker.id));
 
   // Stop endpoints went through this helper but never emitted named
@@ -809,6 +818,13 @@ export const handleRunDeleteRequest: OmniHttpHandler = async (request, context) 
       await stopLiveProcessForDelete(runId);
     }
 
+    // Abort every live turn locally before asking the agents to stop. This is
+    // what makes the wait below bounded: an aborted turn's request tears down
+    // immediately, so `waitForConversationBackgroundTasks` settles instead of
+    // blocking on an agent that may never acknowledge its cancel.
+    for (const worker of runWorkers) {
+      abortWorkerTurn(worker.id, "conversation delete");
+    }
     for (const worker of runWorkers) {
       try {
         await cancelAgent(worker.id);

@@ -172,6 +172,56 @@ function mergeScopedMessages(current: EventStreamState, incoming: EventStreamSta
   };
 }
 
+/**
+ * `bridgeMissing` agent snapshots are built without any live agent record,
+ * so their `pendingPermissions`/`pendingElicitations` are hardcoded empty —
+ * they mean "we could not reach the runtime", NOT "nothing is pending".
+ * Letting them overwrite live values tore an open permission prompt or
+ * elicitation form off the screen mid-answer whenever a degraded frame
+ * landed between two live ones. A request may only be cleared by a frame
+ * that actually talked to the runtime.
+ */
+function mergeDegradedAgentHumanInput(current: EventStreamState, incoming: EventStreamState) {
+  const incomingAgents = incoming.agents ?? [];
+  if (incomingAgents.length === 0 || !current.agents?.length) {
+    return incoming;
+  }
+
+  const currentAgentsByName = new Map(current.agents.map((agent) => [agent.name, agent]));
+  let changed = false;
+  const mergedAgents = incomingAgents.map((incomingAgent) => {
+    if (!incomingAgent.bridgeMissing) {
+      return incomingAgent;
+    }
+
+    // Deliberately not gated on `currentAgent.bridgeMissing`: a run of
+    // consecutive degraded frames must keep carrying the request forward, or
+    // the second one re-opens the exact flicker the first one avoided. The
+    // only things that may clear a pending request are a frame that reached
+    // the runtime and the local optimistic update the answer path applies
+    // (which goes through updateLocal, bypassing this merge).
+    const currentAgent = currentAgentsByName.get(incomingAgent.name);
+    if (!currentAgent) {
+      return incomingAgent;
+    }
+
+    const pendingPermissions = currentAgent.pendingPermissions ?? [];
+    const pendingElicitations = currentAgent.pendingElicitations ?? [];
+    if (pendingPermissions.length === 0 && pendingElicitations.length === 0) {
+      return incomingAgent;
+    }
+
+    changed = true;
+    return {
+      ...incomingAgent,
+      pendingPermissions,
+      pendingElicitations,
+    };
+  });
+
+  return changed ? { ...incoming, agents: mergedAgents } : incoming;
+}
+
 function mergeScopedCachedState(current: EventStreamState, cached: EventStreamState): EventStreamState {
   // hydrateFromCacheScope swaps scopes (e.g. on session switch). The cached
   // payload for the newly-selected scope only contains data that was
@@ -310,8 +360,9 @@ export class EventStreamStateManager {
     const incomingWithRuns = mergeScopedRuns(this.state, incoming, {
       serverAuthoritative: snapshotSource === "server",
     });
+    const incomingWithAgents = mergeDegradedAgentHumanInput(this.state, incomingWithRuns);
     const nextState = {
-      ...mergeScopedMessages(this.state, incomingWithRuns),
+      ...mergeScopedMessages(this.state, incomingWithAgents),
       snapshotSource,
     };
 

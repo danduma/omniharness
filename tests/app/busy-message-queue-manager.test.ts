@@ -131,3 +131,65 @@ describe("BusyMessageQueueManager", () => {
     expect(manager.getQueuedMessagesForRun("run-a")).toEqual([]);
   });
 });
+
+describe("BusyMessageQueueManager optimistic queue sends", () => {
+  it("shows the row from the moment the user sends, without a transcript detour", () => {
+    const manager = new BusyMessageQueueManager();
+    const optimistic = buildQueuedMessage({ id: "client-generated-id", runId: "run-a" });
+
+    manager.beginQueueSend(optimistic);
+
+    expect(manager.getQueuedMessagesForRun("run-a").map((message) => message.id)).toEqual(["client-generated-id"]);
+  });
+
+  it("keeps the row through an event frame that lands before the POST returns", () => {
+    // The server cannot know about the row yet, so its absence from the frame
+    // is not a cancellation. Dropping it here made the queue entry blink out
+    // and back in.
+    const manager = new BusyMessageQueueManager();
+    manager.beginQueueSend(buildQueuedMessage({ id: "client-generated-id", runId: "run-a" }));
+
+    manager.setQueuedMessages([], true);
+
+    expect(manager.getQueuedMessagesForRun("run-a").map((message) => message.id)).toEqual(["client-generated-id"]);
+  });
+
+  it("swaps in place when the server adopts the client id", () => {
+    const manager = new BusyMessageQueueManager();
+    manager.beginQueueSend(buildQueuedMessage({ id: "client-generated-id", runId: "run-a" }));
+
+    manager.settleQueueSend("client-generated-id", buildQueuedMessage({
+      id: "client-generated-id",
+      runId: "run-a",
+      content: "queued text",
+      updatedAt: "2026-05-25T00:00:01.000Z",
+    }));
+
+    expect(manager.getQueuedMessagesForRun("run-a").map((message) => message.id)).toEqual(["client-generated-id"]);
+    expect(manager.getQueuedMessagesForRun("run-a")[0]?.updatedAt).toBe("2026-05-25T00:00:01.000Z");
+
+    // No longer in flight: a later frame that drops it is now authoritative.
+    manager.setQueuedMessages([], true);
+    expect(manager.getQueuedMessagesForRun("run-a")).toEqual([]);
+  });
+
+  it("drops the optimistic row when the server mints its own id instead", () => {
+    const manager = new BusyMessageQueueManager();
+    manager.beginQueueSend(buildQueuedMessage({ id: "client-generated-id", runId: "run-a" }));
+
+    manager.settleQueueSend("client-generated-id", buildQueuedMessage({ id: "server-id", runId: "run-a" }));
+
+    expect(manager.getQueuedMessagesForRun("run-a").map((message) => message.id)).toEqual(["server-id"]);
+  });
+
+  it("removes the row when the send fails", () => {
+    const manager = new BusyMessageQueueManager();
+    manager.beginQueueSend(buildQueuedMessage({ id: "client-generated-id", runId: "run-a" }));
+
+    manager.failQueueSend("client-generated-id");
+
+    expect(manager.getQueuedMessagesForRun("run-a")).toEqual([]);
+    manager.setQueuedMessages([], true);
+    expect(manager.getQueuedMessagesForRun("run-a")).toEqual([]);
+  });
+});

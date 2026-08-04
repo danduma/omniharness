@@ -24,7 +24,9 @@ import {
   persistDeliveredWorkerResponse,
 } from "./queued-messages";
 import {
+  abortWorkerTurn,
   advanceWorkerTurnGeneration,
+  isWorkerTurnAbortedError,
   isWorkerTurnSupersededError,
   isWorkerTurnGenerationCurrent,
   runWorkerTurn,
@@ -184,44 +186,31 @@ async function interruptAndDeliver(args: {
     throw refusal(409, "No active worker is available to interrupt");
   }
 
-  // Cancel the current worker turn (and any pending permissions).
+  // Steer is cancel-and-replace, and it must be instant. Two rules make it so:
+  //
+  //   1. The local abort is authoritative. Tripping the running turn's signal
+  //      tears down its in-flight request here and now; it needs no cooperation
+  //      from an agent that may be wedged.
+  //   2. `session/cancel` is best-effort. It tells the agent to stop the work it
+  //      is doing, which is worth sending, but awaiting it put a possibly
+  //      unbounded round trip on the user's critical path — a wedged adapter
+  //      used to block the steer button indefinitely, and a failed cancel
+  //      refused the steer outright with a 502.
   const cancelStartedAt = Date.now();
-  try {
-    await cancelAgentTurn(worker.id);
-  } catch (error) {
-    emitNamedEvent({
-      kind: "queue.interrupt_delivery_failed",
+  const abortedLiveTurn = abortWorkerTurn(worker.id, "user steer");
+  void Promise.resolve(cancelAgentTurn(worker.id)).catch((error) => {
+    void recordExecutionEvent({
       runId,
       workerId: worker.id,
-      queuedMessageId: record.id,
-      reason: "cancel_failed",
-      deferred: false,
-      totalInterruptLatencyMs: Date.now() - requestedAt,
-      source,
-    });
-    emitNamedEvent({
-      kind: "error.surfaced",
-      code: "queue.interrupt.cancel_failed",
-      message: `Could not interrupt the active turn: ${errorMessage(error)}`,
-      surface: "toast",
-      runId,
-      workerId: worker.id,
-    });
-    await recordExecutionEvent({
-      runId,
-      workerId: worker.id,
-      eventType: "queued_message_interrupt_failed",
+      eventType: "queued_message_interrupt_cancel_best_effort_failed",
       details: {
-        summary: `Failed to cancel the active turn for ${worker.id}.`,
+        summary: `Agent-side cancel for ${worker.id} failed after the turn was already aborted locally.`,
         queuedMessageId: record.id,
         error: errorMessage(error),
         source,
       },
-    });
-    // Keep the queued row pending so user intent is not lost.
-    notifyEventStreamSubscribers();
-    throw refusal(502, `Could not interrupt the active turn: ${errorMessage(error)}`);
-  }
+    }).catch(() => undefined);
+  });
   const cancelDurationMs = Date.now() - cancelStartedAt;
 
   // Advance the fence and reset persisted worker state into a delivery-safe
@@ -249,6 +238,7 @@ async function interruptAndDeliver(args: {
       summary: `Interrupted the active turn for ${worker.id}.`,
       queuedMessageId: record.id,
       cancelDurationMs,
+      abortedLiveTurn,
       source,
     },
   });
@@ -356,14 +346,59 @@ async function deliverInterruptedQueuedMessage(args: {
   const { run, worker, record, userMessage, workerContent, attachments, generation, source, requestedAt } = args;
   const runId = run.id;
 
-  // A stale terminal write must never overwrite a newer interrupt delivery or a
-  // row the user cancelled mid-flight. Every terminal mutation re-checks both.
-  const isStillCurrent = async () => {
+  /**
+   * A stale terminal write must never overwrite a newer interrupt delivery or a
+   * row the user cancelled mid-flight, so every terminal mutation re-checks the
+   * row status and the turn fence.
+   *
+   * Bailing out used to just `return`, which left the row in `delivering`
+   * forever — a state nothing else ever resolves. So a superseded delivery is
+   * released here instead:
+   *
+   * - `appended: false` — nothing was written yet, so the row goes back to
+   *   `pending`: the message is still queued, visible, and retryable.
+   * - `appended: true` — the message is already in the transcript and its id is
+   *   the primary key of the `messages` row, so re-delivering it would collide.
+   *   The row is closed as delivered and the supersede is recorded.
+   */
+  const releaseSupersededRow = async (appended: boolean) => {
+    if (await queuedRowStatus(record.id) !== "delivering") {
+      return;
+    }
+    const now = new Date();
+    await db.update(queuedConversationMessages).set({
+      status: appended ? "delivered" : "pending",
+      lastError: null,
+      updatedAt: now,
+      ...(appended ? { deliveredAt: now } : {}),
+    }).where(eq(queuedConversationMessages.id, record.id));
+    await recordExecutionEvent({
+      runId,
+      workerId: worker.id,
+      eventType: "queued_message_interrupt_superseded",
+      details: {
+        summary: appended
+          ? `A newer turn took over after ${worker.id} already received this message.`
+          : `Requeued the message for ${worker.id} because a newer turn took over before it was sent.`,
+        queuedMessageId: record.id,
+        appendedToTranscript: appended,
+        source,
+      },
+    });
+  };
+
+  const isStillCurrent = async (appended = false) => {
     if (await queuedRowStatus(record.id) !== "delivering") {
       return false;
     }
-    return isWorkerTurnGenerationCurrent(worker.id, generation);
+    if (await isWorkerTurnGenerationCurrent(worker.id, generation)) {
+      return true;
+    }
+    await releaseSupersededRow(appended);
+    return false;
   };
+
+  let appendedToTranscript = false;
 
   try {
     await runWorkerTurn(worker.id, async () => {
@@ -392,9 +427,10 @@ async function deliverInterruptedQueuedMessage(args: {
         })),
       });
       await db.insert(messages).values(userMessage);
+      appendedToTranscript = true;
       notifyEventStreamSubscribers();
 
-      if (!(await isStillCurrent())) {
+      if (!(await isStillCurrent(true))) {
         notifyEventStreamSubscribers();
         return;
       }
@@ -410,7 +446,7 @@ async function deliverInterruptedQueuedMessage(args: {
 
       // Before any terminal persistence, confirm a newer interrupt has not
       // superseded this delivery and the row was not cancelled.
-      if (!(await isStillCurrent())) {
+      if (!(await isStillCurrent(true))) {
         notifyEventStreamSubscribers();
         return;
       }
@@ -423,7 +459,7 @@ async function deliverInterruptedQueuedMessage(args: {
         userInputEntryId: userMessage.id,
       });
 
-      if (!(await isStillCurrent())) {
+      if (!(await isStillCurrent(true))) {
         notifyEventStreamSubscribers();
         return;
       }
@@ -455,7 +491,11 @@ async function deliverInterruptedQueuedMessage(args: {
       notifyEventStreamSubscribers();
     });
   } catch (error) {
-    if (isWorkerTurnSupersededError(error)) {
+    // A superseded turn lost a race; an aborted turn was stopped on purpose.
+    // Neither is a delivery failure, and reporting them as one puts a red error
+    // on the conversation every time the user presses stop or steers again.
+    if (isWorkerTurnSupersededError(error) || isWorkerTurnAbortedError(error)) {
+      await releaseSupersededRow(appendedToTranscript);
       notifyEventStreamSubscribers();
       return;
     }

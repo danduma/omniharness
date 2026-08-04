@@ -1,10 +1,11 @@
 import { useMemo } from "react";
-import { type AppErrorDescriptor, mergeAppErrors } from "@/lib/app-errors";
+import { type AppErrorDescriptor, isAppErrorInScope, mergeAppErrors } from "@/lib/app-errors";
 import type { EventStreamState } from "./types";
 import { buildInlineError } from "./utils";
 
 interface UseAppErrorsProps {
   state: EventStreamState;
+  selectedRunId: string | null;
   runtimeErrors: AppErrorDescriptor[];
   projectFilesError: unknown;
   settingsError: unknown;
@@ -28,6 +29,7 @@ function isUnsupportedRecoverRunError(error: unknown) {
 
 export function useAppErrors({
   state,
+  selectedRunId,
   runtimeErrors,
   projectFilesError,
   settingsError,
@@ -148,8 +150,12 @@ export function useAppErrors({
       }));
     }
 
-    return mergeAppErrors([], errors);
+    // A conversation's failure belongs to that conversation. Errors tagged
+    // with a `runId` are dropped everywhere else instead of trailing the user
+    // through every session they open afterwards.
+    return mergeAppErrors([], errors).filter((error) => isAppErrorInScope(error, selectedRunId));
   }, [
+    selectedRunId,
     autoCommitChatError,
     autoCommitProjectError,
     archiveRunError,

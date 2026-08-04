@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { executionEvents, messages, plans, queuedConversationMessages, recoveryIncidents, runs, settings, workers } from "@/server/db/schema";
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
+import { readWorkerOutputEntries, writeWorkerOutputEntries } from "@/server/workers/output-store";
 
 const { mockAskAgent, mockGetAgent, mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
   mockAskAgent: vi.fn(),
@@ -341,6 +342,83 @@ describe("reconcileRunRecovery", () => {
     });
   });
 
+  it("retires a dead question when the resumed runtime owns a different question", async () => {
+    const { runId, workerId } = await createDirectRun();
+    const staleRequestId = 1785761272281;
+    const liveRequestId = 1785790676826;
+    await writeWorkerOutputEntries(runId, workerId, [{
+      id: "question-before-runner-crash",
+      type: "elicitation",
+      text: "Please answer the original questions.",
+      status: "pending",
+      timestamp: new Date(1).toISOString(),
+      raw: {
+        requestId: staleRequestId,
+        sessionId: "session-direct-1",
+        toolCallId: "ask-before-crash",
+        mode: "form",
+        requestedSchema: { type: "object", properties: {} },
+      },
+    }]);
+
+    const liveQuestionEntry = {
+      id: "question-after-runner-restart",
+      type: "elicitation" as const,
+      text: "Please answer the replacement questions.",
+      status: "pending",
+      timestamp: new Date(2).toISOString(),
+      raw: {
+        requestId: liveRequestId,
+        sessionId: "session-direct-2",
+        toolCallId: "ask-after-restart",
+        mode: "form",
+        requestedSchema: { type: "object", properties: {} },
+      },
+    };
+    mockSpawnAgent.mockResolvedValue({
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "working",
+      sessionId: "session-direct-2",
+      sessionMode: "full-access",
+      lastText: "Please answer the replacement questions.",
+      currentText: "Please answer the replacement questions.",
+      outputEntries: [liveQuestionEntry],
+      pendingElicitations: [{
+        requestId: liveRequestId,
+        requestedAt: liveQuestionEntry.timestamp,
+        sessionId: "session-direct-2",
+        toolCallId: "ask-after-restart",
+        mode: "form",
+        requestedSchema: { type: "object", properties: {} },
+      }],
+      pendingPermissions: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    const result = await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+    const entries = await readWorkerOutputEntries(runId, workerId);
+    const latestStatusByRequestId = new Map<number, string>();
+    for (const entry of entries) {
+      if (entry.type !== "elicitation" || typeof entry.raw !== "object" || entry.raw === null) continue;
+      const requestId = (entry.raw as { requestId?: unknown }).requestId;
+      if (typeof requestId === "number") latestStatusByRequestId.set(requestId, entry.status ?? "pending");
+    }
+
+    expect(result.action).toBe("resume_session");
+    expect(latestStatusByRequestId.get(staleRequestId)).toBe("cancelled");
+    expect(latestStatusByRequestId.get(liveRequestId)).toBe("pending");
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "worker.human_input_reconciled",
+      runId,
+      workerId,
+      interaction: "elicitation",
+      closedRequestIds: [staleRequestId],
+    }));
+  });
+
   it("resolves the incident as soon as the session is back, not when the continuation turn ends", async () => {
     // The incident drives the "Recovering worker" banner. Holding it open for
     // the whole continuation turn made a healthy multi-minute turn look like a
@@ -377,6 +455,11 @@ describe("reconcileRunRecovery", () => {
     });
 
     await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+    // The continuation runs as a background task; let it reach the ask it is
+    // about to block on, without letting that ask settle.
+    for (let tick = 0; tick < 50 && mockAskAgent.mock.calls.length === 0; tick += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
 
     const duringContinuation = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
     expect(mockAskAgent).toHaveBeenCalled();

@@ -61,6 +61,7 @@ export const handleConversationMessagesRequest: OmniHttpHandler = async (request
     const body = await request.json();
     probe.mark("body");
     const content = String(body?.content ?? "").trim();
+    const clientMessageId = typeof body?.clientMessageId === "string" ? body.clientMessageId : null;
     const attachments = normalizeChatAttachments(body?.attachments);
     const busyAction = parseBusyMessageAction(body?.busyAction);
     const preferredWorkerType = typeof body?.preferredWorkerType === "string" ? body.preferredWorkerType : null;
@@ -93,6 +94,7 @@ export const handleConversationMessagesRequest: OmniHttpHandler = async (request
       const result = await sendConversationMessage({
         runId,
         content,
+        clientMessageId,
         attachments,
         busyAction,
         preferredWorkerType,

@@ -22,6 +22,8 @@ test("HomeApp defines handleReload callback clearing localStorage snapshot and w
   // Verify handleReload is defined in HomeApp
   expect(appSource).toContain("const handleReload = useCallback(() => {");
   expect(appSource).toContain('window.localStorage.removeItem("omni-event-stream-snapshot-cache:v1")');
+  expect(appSource).toContain('window.localStorage.removeItem("omni-worker-entries-cache:v2")');
+  // The retired v1 key is still cleared so upgrading clients reclaim the space.
   expect(appSource).toContain('window.localStorage.removeItem("omni-worker-entries-cache:v1")');
   expect(appSource).toContain("window.location.reload()");
 

@@ -52,6 +52,7 @@ import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
 import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
 import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
+import { reconcileRecoveredHumanInputEntries } from "@/server/workers/human-input-entries";
 
 export type RecoveryAction = "retry" | "edit" | "fork";
 
@@ -759,6 +760,13 @@ async function resumeDirectRunFromSavedSession(
       transcriptReplay: Boolean(replayPrompt),
     },
     createdAt: resumedAt,
+  });
+  await reconcileRecoveredHumanInputEntries({
+    runId: run.id,
+    workerId: worker.id,
+    activeElicitationRequestIds: (resumedWorker.pendingElicitations ?? []).map((entry) => entry.requestId),
+    activePermissionRequestIds: (resumedWorker.pendingPermissions ?? []).map((entry) => entry.requestId),
+    reason: "the worker was resumed for a retry and the recovered runtime no longer owns this request",
   });
   emitNamedEvent({
     kind: recreatedFromRejectedEmptySession || replayPrompt ? "worker.recreated" : "worker.reattached",

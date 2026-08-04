@@ -15,6 +15,7 @@ import { isRecoverableConnectionSupervisorError, isTransientSupervisorError } fr
 import { readWorkerOutputEntries, writeWorkerOutputEntries } from "@/server/workers/output-store";
 import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
 import { drainQueuedWorkerMessages } from "./queued-messages";
+import { trackConversationBackgroundTask } from "./worker-turn-gate";
 import {
   resolveDirectRunStatusFromWorkerOutput,
   updateDirectRunStatusFromWorkerOutput,
@@ -323,31 +324,46 @@ async function drainQueuedWorkerMessagesWithObservation(args: {
     return 0;
   }
 
-  const deliveredCount = await drainQueuedWorkerMessages({
-    runId: args.runId,
-    workerId: args.workerId,
-    snapshot,
-  });
-  emitNamedEvent({
-    kind: "queue.drain_finished",
-    runId: args.runId,
-    workerId: args.workerId,
-    source: args.source,
-    pendingCount,
-    deliveredCount,
-  });
-  await recordExecutionEvent({
-    runId: args.runId,
-    workerId: args.workerId,
-    eventType: "queue_drain_finished",
-    details: {
-      summary: `Queue drain finished for ${args.workerId}: delivered ${deliveredCount} of ${pendingCount}.`,
+  // Deliver on a background task rather than inline. Sync passes are
+  // serialized through `liveSyncQueue`, and the drain runs a full worker turn:
+  // awaiting it here parked the entire sync chain for the length of the turn.
+  // When the agent raised an elicitation mid-turn that became a deadlock — the
+  // turn cannot finish until the question is answered, and the question is
+  // only surfaced by the snapshot writes in the very sync pass that is stuck
+  // waiting for the turn. Claiming is atomic (`status = 'pending'` guard), and
+  // an in-flight delivery leaves `pendingCount` at 0, so overlapping passes
+  // return above instead of double-delivering.
+  const delivery = trackConversationBackgroundTask((async () => {
+    const deliveredCount = await drainQueuedWorkerMessages({
+      runId: args.runId,
+      workerId: args.workerId,
+      snapshot,
+    });
+    emitNamedEvent({
+      kind: "queue.drain_finished",
+      runId: args.runId,
+      workerId: args.workerId,
       source: args.source,
       pendingCount,
       deliveredCount,
-    },
+    });
+    await recordExecutionEvent({
+      runId: args.runId,
+      workerId: args.workerId,
+      eventType: "queue_drain_finished",
+      details: {
+        summary: `Queue drain finished for ${args.workerId}: delivered ${deliveredCount} of ${pendingCount}.`,
+        source: args.source,
+        pendingCount,
+        deliveredCount,
+      },
+    });
+    return deliveredCount;
+  })(), { runId: args.runId });
+  delivery.catch((error) => {
+    console.error(`Queued message drain failed for ${args.workerId}:`, error);
   });
-  return deliveredCount;
+  return 0;
 }
 
 function isRecoverableMissingDirectWorkerStatus(status: string) {

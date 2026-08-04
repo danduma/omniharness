@@ -31,12 +31,13 @@ import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "@/interface/home/GitWorkspaceManager";
 import { preflightConfirmationActionsManager } from "@/interface/home/PreflightConfirmationActionsManager";
 import { useWorkerStream } from "@/interface/home/WorkerEntriesManager";
-import { derivePendingElicitationsFromWorkerEntries } from "@/interface/home/worker-elicitations";
+import { shouldShowDirectControlWorkingIndicator } from "@/interface/home/direct-control-activity";
 import { InlineElicitation, type ElicitationResponseInput } from "@/components/agent-interactions/InlineElicitation";
 import { InlinePermission, type PermissionResponseInput } from "@/components/agent-interactions/InlinePermission";
 import { useConversationTranscript } from "@/interface/home/ConversationTranscriptManager";
 import { isTerminalRunStatus } from "@/lib/run-status";
 import { deriveConversationLoadState, resolveDirectWorkerStreamRefreshInterval, selectDirectConversationEntries, shouldShowDirectConversationLoading } from "@/interface/home/direct-worker-stream-loading";
+import type { SupersededSeqRange } from "@/lib/superseded-entries";
 import { type PlanningReviewAgentSelection } from "@/shared/planning-review";
 import { WORKER_TYPE_LABELS, type SupportedWorkerType } from "@/shared/worker-types";
 import type { WorkerEntry } from "@/shared/worker-entries";
@@ -892,21 +893,51 @@ export function ConversationMain({
   const conversationRanOnMultipleWorkers = conversationTranscript.workerIds.length > 0
     ? conversationTranscript.workerIds.length > 1
     : undefined;
-  const conversationEntries = selectDirectConversationEntries({
-    transcriptEntries: conversationTranscript.entries,
-    directWorkerEntries: directWorkerStream.entries,
-    supersededSeqRanges: primaryConversationAgent?.supersededSeqRanges,
-    workerOrder: conversationTranscript.workerIds,
+  // The server re-parses `supersededSeqRanges` into a fresh array on every
+  // snapshot, so depending on it by identity would invalidate the merge below
+  // on every frame even though its contents almost never change. The list is
+  // tiny (usually empty), so round-tripping it is far cheaper than the rebuild
+  // it prevents.
+  const supersededSeqRangesKey = JSON.stringify(primaryConversationAgent?.supersededSeqRanges ?? []);
+  const supersededSeqRanges = useMemo(
+    () => JSON.parse(supersededSeqRangesKey) as SupersededSeqRange[],
+    [supersededSeqRangesKey],
+  );
+  // Memoized because this array is the `entries` prop Terminal keys its
+  // activity derivation on. Rebuilding it every render handed Terminal a new
+  // reference each time, so the activity rebuild — measured at ~3ms for a
+  // 2k-entry conversation, and several times that on a phone — re-ran on every
+  // SSE frame while an agent was streaming, for an identical result.
+  const conversationEntries = useMemo(
+    () => selectDirectConversationEntries({
+      transcriptEntries: conversationTranscript.entries,
+      directWorkerEntries: directWorkerStream.entries,
+      supersededSeqRanges,
+      workerOrder: conversationTranscript.workerIds,
+    }),
+    [
+      conversationTranscript.entries,
+      conversationTranscript.workerIds,
+      directWorkerStream.entries,
+      supersededSeqRanges,
+    ],
+  );
+  // Only the runtime owns a promise that can consume an answer. Stream rows
+  // are durable history and may outlive that promise across a runner crash;
+  // rendering them as forms makes a dead question look actionable.
+  const pendingElicitations = primaryConversationAgent?.pendingElicitations ?? [];
+  // Gated here rather than upstream because this is the only place that knows
+  // what the prompt cards below the Terminal are actually rendering: the
+  // elicitation card also draws on `directWorkerStream.entries`, which the
+  // upstream resolver never sees. Note the refresh-interval calls above
+  // deliberately keep using the ungated prop — polling cadence should follow
+  // "is the worker busy", not "is a card on screen".
+  const showPendingAssistantIndicator = shouldShowDirectControlWorkingIndicator({
+    pendingAssistantVisible: showDirectControlWorkingIndicator,
+    primaryConversationWorkerId,
+    renderedElicitationCount: pendingElicitations.length,
+    renderedPermissionCount: primaryConversationAgent?.pendingPermissions?.length ?? 0,
   });
-  const pendingElicitations = useMemo(() => {
-    const live = primaryConversationAgent?.pendingElicitations ?? [];
-    const liveIds = new Set(live.map((item) => item.requestId));
-    return [
-      ...live,
-      ...derivePendingElicitationsFromWorkerEntries(directWorkerStream.entries)
-        .filter((item) => !liveIds.has(item.requestId)),
-    ];
-  }, [directWorkerStream.entries, primaryConversationAgent?.pendingElicitations]);
   const isUsingConversationTranscriptEntries = conversationTranscript.entries.length > 0;
   // Latched (`hasEverLoaded` / `hasLoadedOnce`), not momentary (`isLoaded`):
   // isLoaded flips false on every appended entry and every 2s transcript
@@ -1107,7 +1138,7 @@ export function ConversationMain({
                 variant="native"
                 textSizeScope="conversation"
                 conversationMessageTextSize
-                showPendingAssistantIndicator={showDirectControlWorkingIndicator}
+                showPendingAssistantIndicator={showPendingAssistantIndicator}
                 pendingAssistantStatus={directControlPendingAssistantStatus ?? undefined}
                 isLoading={isHydratingConversations || isDirectWorkerStreamLoading}
                 projectRoot={projectRoot}
