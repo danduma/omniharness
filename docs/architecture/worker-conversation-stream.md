@@ -29,7 +29,10 @@ element that actually owns `scrollTop`. In native conversation mode that is the
 outer Radix scroll-area viewport, not the inner `Terminal` content element.
 Tests for native scrolling must assert the handler is attached to the resolved
 viewport; testing the page manager alone does not prove that users can request
-the preceding page.
+the preceding page. Reaching the top is also a boundary condition: an upward
+wheel or trackpad gesture at `scrollTop = 0` cannot change `scrollTop`, so the
+browser may emit no `scroll` event. The viewport must handle that upward wheel
+gesture directly and request the preceding page.
 
 Frontend loading and stale-cache regressions involving sessions
 `7ebf2bc8e556` and `17a194b3c1c1` are documented in
@@ -101,6 +104,16 @@ the file:
 
 Use `isBridgeOutputEntry(entry)` / `isServerProducedEntry(entry)` to
 discriminate; never branch ad-hoc on `entry.type`.
+
+Assistant `message` text is durable conversation content and must never be
+head- or tail-truncated in the bridge's live `outputEntries` view. The snapshot
+poller persists that live view into this stream, and the frontend coalesces
+streaming revisions by id using the latest revision. A bounded latest revision
+therefore destroys whichever side was removed even when `workers.last_text` or
+the raw runtime archive still has the complete answer. Bounds are appropriate
+for tool diagnostics, raw payloads, and thought previews; they are not
+appropriate for user-visible assistant answers. The long-message regression
+test lives in `tests/server/agent-runtime/output-store.test.ts`.
 
 ## Seq invariants
 

@@ -112,11 +112,21 @@ export function coalesceWorkerEntriesById(
 
 type WorkerEntryStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
-const DEFAULT_STORAGE_KEY = "omni-worker-entries-cache:v1";
+// v2: transcript recovery renumbered seqs and changed entry ids on repaired
+// worker streams. This cache merges with server data by entry id, so a v1
+// cache keeps rendering stale pre-repair entries (raw streaming fragments)
+// alongside the fixed ones — a transcript shredded mid-word. Bumping the key
+// retires those caches instead of requiring users to clear storage by hand.
+const DEFAULT_STORAGE_KEY = "omni-worker-entries-cache:v2";
 const DEFAULT_MAX_WORKERS = 16;
 const DEFAULT_MAX_SERIALIZED_BYTES = 4_000_000;
 const DEFAULT_TAIL_LIMIT = 100;
 const DEFAULT_OLDER_LIMIT = 100;
+// Entries are remembered on every append and every stream poll. Serializing
+// the whole cache envelope synchronously on each one is main-thread work that
+// competes with keystrokes, so the write is coalesced onto a trailing timer
+// while reads stay served from the in-memory envelope.
+const DEFAULT_FLUSH_INTERVAL_MS = 1_000;
 
 interface CachedWorkerStream {
   updatedAt: number;
@@ -157,6 +167,7 @@ export interface WorkerEntriesManagerOptions {
   maxWorkers?: number;
   maxSerializedBytes?: number;
   now?: () => number;
+  flushIntervalMs?: number;
 }
 
 function latestSeq(entries: WorkerEntry[]) {
@@ -235,14 +246,25 @@ export class WorkerEntriesManager {
   private readonly maxWorkers: number;
   private readonly maxSerializedBytes: number;
   private readonly now: () => number;
+  private readonly flushIntervalMs: number;
+  private envelope: WorkerEntriesCacheEnvelope | null = null;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: WorkerEntriesManagerOptions = {}) {
+    const usesDefaultStorage = options.storage === undefined;
     this.listEntries = options.listEntries ?? null;
-    this.storage = options.storage === undefined ? defaultStorage() : options.storage;
+    this.storage = usesDefaultStorage ? defaultStorage() : options.storage ?? null;
     this.storageKey = options.storageKey ?? DEFAULT_STORAGE_KEY;
     this.maxWorkers = options.maxWorkers ?? DEFAULT_MAX_WORKERS;
     this.maxSerializedBytes = options.maxSerializedBytes ?? DEFAULT_MAX_SERIALIZED_BYTES;
     this.now = options.now ?? Date.now;
+    this.flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
+
+    if (usesDefaultStorage && this.storage && typeof window !== "undefined") {
+      const flushNow = () => this.flushCache();
+      window.addEventListener("pagehide", flushNow);
+      window.addEventListener("visibilitychange", flushNow);
+    }
   }
 
   configure(listEntries: RuntimeAPIs["workers"]["listEntries"]) {
@@ -452,6 +474,11 @@ export class WorkerEntriesManager {
     this.inFlightByWorker.clear();
     this.wakeVersionByWorker.clear();
     this.everLoadedWorkers.clear();
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    this.envelope = null;
   }
 
   private markWake(workerId: string): void {
@@ -636,7 +663,12 @@ export class WorkerEntriesManager {
       : merged[0]?.seq ?? 0;
     const next: WorkerStreamState = {
       ...previous,
-      entries: merged,
+      // Reuse the previous array when the poll appended nothing. The spread
+      // above always allocates, so an idle validation poll used to hand every
+      // subscriber a brand-new `entries` identity and invalidate each memo
+      // derived from it — the transcript merge and Terminal's activity
+      // rebuild both re-ran for a byte-identical result.
+      entries: merged.length > previous.entries.length ? merged : previous.entries,
       lowestSeq: nextLowest,
       latestContiguousSeq: nextContiguous,
       latestKnownSeq: nextKnown,
@@ -694,28 +726,45 @@ export class WorkerEntriesManager {
     const currentEnvelope = this.readEnvelope();
     if (entries.length === 0) {
       const { [workerId]: _removed, ...workers } = currentEnvelope.workers;
-      try {
-        this.storage.setItem(this.storageKey, JSON.stringify({
-          ...currentEnvelope,
-          workers,
-        }));
-      } catch {
-        // localStorage is a preview cache only; live server state remains authoritative.
-      }
+      this.envelope = { ...currentEnvelope, workers };
+      this.scheduleFlush();
       return;
     }
 
-    const envelope = this.pruneEnvelope({
+    this.envelope = this.pruneEnvelope({
       ...currentEnvelope,
       workers: {
         ...currentEnvelope.workers,
         [workerId]: {
           updatedAt: this.now(),
-          entries: entries.map(compactEntryForCache),
+          entries,
         },
       },
     });
-    const serialized = JSON.stringify(envelope);
+    this.scheduleFlush();
+  }
+
+  /** Write the pending cache envelope to storage now. */
+  flushCache(): void {
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+
+    const envelope = this.envelope;
+    if (!this.storage || !envelope) {
+      return;
+    }
+
+    const serialized = JSON.stringify({
+      version: 1,
+      workers: Object.fromEntries(
+        Object.entries(envelope.workers).map(([id, cached]) => [id, {
+          updatedAt: cached.updatedAt,
+          entries: cached.entries.map(compactEntryForCache),
+        }]),
+      ),
+    } satisfies WorkerEntriesCacheEnvelope);
     if (serialized.length > this.maxSerializedBytes) {
       return;
     }
@@ -727,32 +776,57 @@ export class WorkerEntriesManager {
     }
   }
 
+  private scheduleFlush(): void {
+    if (this.flushTimer !== null) {
+      return;
+    }
+
+    if (this.flushIntervalMs <= 0) {
+      this.flushCache();
+      return;
+    }
+
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      this.flushCache();
+    }, this.flushIntervalMs);
+    (this.flushTimer as { unref?: () => void }).unref?.();
+  }
+
   private readEnvelope(): WorkerEntriesCacheEnvelope {
     if (!this.storage) {
       return emptyEnvelope();
     }
 
+    if (this.envelope) {
+      return this.envelope;
+    }
+
     try {
       const raw = this.storage.getItem(this.storageKey);
       if (!raw) {
-        return emptyEnvelope();
+        this.envelope = emptyEnvelope();
+        return this.envelope;
       }
 
       const parsed = JSON.parse(raw) as Partial<WorkerEntriesCacheEnvelope>;
       if (parsed.version !== 1 || typeof parsed.workers !== "object" || parsed.workers === null) {
-        return emptyEnvelope();
+        this.envelope = emptyEnvelope();
+        return this.envelope;
       }
-      return {
+      this.envelope = {
         version: 1,
         workers: parsed.workers as Record<string, CachedWorkerStream>,
       };
+      return this.envelope;
     } catch {
       try {
         this.storage.removeItem(this.storageKey);
       } catch {
         // Ignore cleanup failures.
       }
-      return emptyEnvelope();
+      this.envelope = emptyEnvelope();
+      return this.envelope;
     }
   }
 

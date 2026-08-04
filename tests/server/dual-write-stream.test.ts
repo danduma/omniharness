@@ -166,7 +166,7 @@ describe("unified worker stream — dual-write on delivery", () => {
     expect((userInputs[0] as any).authorRole).toBe("user");
   });
 
-  it("queued worker delivery that fails busy appends zero user_input entries", async () => {
+  it("anchors a busy-deferred queued delivery once and does not duplicate it on retry", async () => {
     const runId = await createDirectRun();
     const workerId = await insertActiveWorker(runId);
     await createQueuedConversationMessage({
@@ -178,12 +178,24 @@ describe("unified worker stream — dual-write on delivery", () => {
     });
     mockAskAgent.mockRejectedValueOnce(new Error(`Ask failed: Agent is busy: ${workerId}`));
 
-    const delivered = await drainQueuedWorkerMessages({ runId, workerId });
-    expect(delivered).toBe(0);
+    // The prompt is anchored before the ask, because the ask can block for the
+    // entire turn — indefinitely, when the agent raises an elicitation
+    // mid-turn — and a conversation that shows neither the prompt nor the
+    // output while reporting `working` reads as a hung session. A busy
+    // deferral therefore leaves the anchor behind and returns the row to
+    // `pending` for a later drain.
+    expect(await drainQueuedWorkerMessages({ runId, workerId })).toBe(0);
+    const afterDefer = (await readWorkerOutputEntries(runId, workerId))
+      .filter((entry) => (entry as any).type === "user_input");
+    expect(afterDefer).toHaveLength(1);
+    expect((afterDefer[0] as any).text).toBe("Try again later.");
 
-    const entries = await readWorkerOutputEntries(runId, workerId);
-    const userInputs = entries.filter((entry) => (entry as any).type === "user_input");
-    expect(userInputs).toHaveLength(0);
+    // The retry anchors under the same queue row id, so the append dedups
+    // rather than showing the user their message twice.
+    expect(await drainQueuedWorkerMessages({ runId, workerId })).toBe(1);
+    const afterRetry = (await readWorkerOutputEntries(runId, workerId))
+      .filter((entry) => (entry as any).type === "user_input");
+    expect(afterRetry).toHaveLength(1);
   });
 
   it("implementation steering delivery appends user_input exactly once", async () => {

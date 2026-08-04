@@ -221,6 +221,62 @@ process.stdin.on('data', (chunk) => {
 });
 `;
 
+// Reports context the way a real adapter does over a long session: the
+// per-turn `usage.totalTokens` accumulates spend across every turn and quickly
+// exceeds the window, while `usage_update` keeps measuring the live context.
+const fakeCumulativeUsageAgentScript = `#!/usr/bin/env node
+process.stdin.setEncoding('utf8');
+let buffer = '';
+let turns = 0;
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + '\\n');
+}
+
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\\r?\\n/g);
+  buffer = lines.pop() ?? '';
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === 'initialize') {
+      write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+    }
+    if (message.method === 'session/new') {
+      write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-usage' } });
+    }
+    if (message.method === 'session/prompt') {
+      turns += 1;
+      write({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: message.params.sessionId,
+          update: { sessionUpdate: 'usage_update', used: 20000 * turns, size: 200000 },
+        },
+      });
+      write({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: message.params.sessionId,
+          update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'turn ' + turns } },
+        },
+      });
+      write({
+        jsonrpc: '2.0',
+        id: message.id,
+        result: {
+          stopReason: 'end_turn',
+          usage: { inputTokens: 1200, outputTokens: 3400, totalTokens: 5000000 * turns },
+        },
+      });
+    }
+  }
+});
+`;
+
 const fakeExitAfterSessionAgentScript = `#!/usr/bin/env node
 process.stdin.setEncoding('utf8');
 let buffer = '';
@@ -908,6 +964,55 @@ exec /bin/sh "$@"
     const stopResponse = await fetch(`${baseUrl}/agents/worker-1`, { method: "DELETE" });
     expect(stopResponse.status).toBe(200);
     expect(readdirSync(join(projectDir, ".agents", "skills")).some((entry) => entry.includes("reviewer"))).toBe(false);
+  }, 120_000);
+
+  it("keeps the context meter on the live window when per-turn usage reports cumulative spend", async () => {
+    // Regression: prompt-response `usage.totalTokens` is a session spend
+    // counter, not context size. Writing it into contextUsage.totalTokens
+    // pinned every long-running agent to 100% full after a couple of turns.
+    const projectDir = createTempDir("omni-runtime-usage-project-");
+    const binDir = createTempDir("omni-runtime-usage-bin-");
+    const fakeAgent = createExecutable(binDir, "fake-usage-agent", fakeCumulativeUsageAgentScript);
+    const server = createAgentRuntimeServer({
+      env: {
+        ...process.env,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const spawnResponse = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "custom",
+        command: fakeAgent,
+        cwd: projectDir,
+        name: "usage-worker",
+      }),
+    });
+    expect(spawnResponse.status).toBe(201);
+
+    for (const prompt of ["first", "second"]) {
+      const askResponse = await fetch(`${baseUrl}/agents/usage-worker/ask`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      expect(askResponse.status).toBe(200);
+      await askResponse.json();
+    }
+
+    const agentJson = await (await fetch(`${baseUrl}/agents/usage-worker`)).json();
+    expect(agentJson.contextUsage).toMatchObject({
+      inputTokens: 1200,
+      outputTokens: 3400,
+      totalTokens: 40000,
+      maxTokens: 200000,
+      fullnessPercent: 20,
+    });
   }, 120_000);
 
   it("starts Claude ACP workers with summarized thinking display enabled", async () => {

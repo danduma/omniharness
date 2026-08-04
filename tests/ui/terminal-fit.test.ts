@@ -6,6 +6,8 @@ import {
   shouldTerminalConnectorExtend,
   shouldTerminalFollowLatest,
   shouldTerminalKeepFollowingLatest,
+  resolveTerminalPrependedScrollTop,
+  shouldTerminalRequestMoreHistoryFromWheel,
   shouldTerminalResetInitialPosition,
 } from "@/components/Terminal";
 
@@ -208,14 +210,17 @@ test("terminal can use conversation text sizing separately from terminal output 
   expect(globalCssSource).toContain(".omni-app-text-scale .omni-conversation-text-scale .text-base");
 });
 
-test("UI text size also scales compact icon button tap targets", () => {
-  expect(globalCssSource).toContain("--omni-mobile-ui-control-boost: 2px");
-  expect(globalCssSource).toContain(".omni-app-text-scale .h-6.w-6");
-  expect(globalCssSource).toContain("width: var(--omni-ui-control-xs-size)");
-  expect(globalCssSource).toContain(".omni-app-text-scale .h-6.w-6 > svg");
-  expect(globalCssSource).toContain("width: var(--omni-ui-icon-sm-size)");
+test("UI text size scales control tap targets through the Tailwind spacing scale", () => {
+  expect(terminalPreferenceSource).toContain('"--spacing": `calc(0.25rem * ${textSize.uiScale})`');
+  expect(terminalPreferenceSource).toContain('"--omni-ui-scale": textSize.uiScale');
   expect(homeAppSource).toContain('body.classList.add("omni-app-text-scale")');
   expect(homeAppSource).toContain("body.style.setProperty(property, String(value))");
+});
+
+test("composer input text follows the conversation text size", () => {
+  expect(globalCssSource).toContain("font-size: var(--omni-composer-font-size, 15px)");
+  expect(globalCssSource).toContain("line-height: var(--omni-composer-line-height, 20px)");
+  expect(terminalPreferenceSource).toContain('"--omni-composer-font-size"');
 });
 
 test("terminal aligns timeline markers with row text and connects the rail", () => {
@@ -258,6 +263,13 @@ test("terminal surfaces fetch failures in the frontend instead of silently dropp
 test("native conversation scrolling requests older history from the actual viewport", () => {
   expect(terminalSource).toContain('variant === "native"\n        && hasMoreHistory\n        && shouldTerminalRequestMoreHistory(scrollContainer)');
   expect(terminalSource).toContain('scrollContainer.addEventListener("scroll", handleScroll, { passive: true });');
+});
+
+test("an upward wheel gesture at the top requests older history even when scrollTop cannot change", () => {
+  expect(shouldTerminalRequestMoreHistoryFromWheel({ scrollTop: 0 }, -24)).toBe(true);
+  expect(shouldTerminalRequestMoreHistoryFromWheel({ scrollTop: 12 }, -24)).toBe(false);
+  expect(shouldTerminalRequestMoreHistoryFromWheel({ scrollTop: 0 }, 24)).toBe(false);
+  expect(terminalSource).toContain('scrollContainer.addEventListener("wheel", handleWheel, { passive: true });');
 });
 
 test("terminal only follows live output while the viewport is already near the bottom", () => {
@@ -324,4 +336,75 @@ test("terminal activity version ignores pending assistant timestamp churn", () =
   ])).not.toBe(getTerminalActivityVersion([
     { id: "message-1", kind: "message", text: "hello again", timestamp: "2026-05-09T00:00:00.000Z" },
   ]));
+});
+
+test("prepended history pays for its own height so the top boundary stops re-triggering", () => {
+  // Reading at the top boundary, then a 900px page of older rows arrives above
+  // the viewport. Without the shift the reader stays at scrollTop 0 — still on
+  // the trigger — and the next page loads immediately, and the next, until the
+  // whole transcript is in memory.
+  expect(resolveTerminalPrependedScrollTop({
+    previousFirstActivityId: "entry-20",
+    nextFirstActivityId: "entry-1",
+    isPreviousFirstActivityStillRendered: true,
+    previousScrollHeight: 1000,
+    nextScrollHeight: 1900,
+    scrollTop: 0,
+  })).toBe(900);
+
+  // Mid-transcript reading position is preserved the same way.
+  expect(resolveTerminalPrependedScrollTop({
+    previousFirstActivityId: "entry-20",
+    nextFirstActivityId: "entry-1",
+    isPreviousFirstActivityStillRendered: true,
+    previousScrollHeight: 1000,
+    nextScrollHeight: 1900,
+    scrollTop: 120,
+  })).toBe(1020);
+
+  // A different first row whose predecessor is gone is a replaced transcript —
+  // switching conversations, or a rewind dropping rows — not a prepend.
+  expect(resolveTerminalPrependedScrollTop({
+    previousFirstActivityId: "entry-20",
+    nextFirstActivityId: "entry-90",
+    isPreviousFirstActivityStillRendered: false,
+    previousScrollHeight: 1000,
+    nextScrollHeight: 1900,
+    scrollTop: 0,
+  })).toBeNull();
+
+  // First render has nothing to anchor to.
+  expect(resolveTerminalPrependedScrollTop({
+    previousFirstActivityId: null,
+    nextFirstActivityId: "entry-20",
+    isPreviousFirstActivityStillRendered: false,
+    previousScrollHeight: 0,
+    nextScrollHeight: 1900,
+    scrollTop: 0,
+  })).toBeNull();
+
+  // Same first row: appended output at the bottom must not move the reader.
+  expect(resolveTerminalPrependedScrollTop({
+    previousFirstActivityId: "entry-20",
+    nextFirstActivityId: "entry-20",
+    isPreviousFirstActivityStillRendered: true,
+    previousScrollHeight: 1000,
+    nextScrollHeight: 1900,
+    scrollTop: 0,
+  })).toBeNull();
+
+  // Content that shrank cannot have been prepended.
+  expect(resolveTerminalPrependedScrollTop({
+    previousFirstActivityId: "entry-20",
+    nextFirstActivityId: "entry-1",
+    isPreviousFirstActivityStillRendered: true,
+    previousScrollHeight: 1900,
+    nextScrollHeight: 1000,
+    scrollTop: 400,
+  })).toBeNull();
+
+  // The correction has to land before paint, ahead of the follow-latest pass.
+  expect(terminalSource).toContain("resolveTerminalPrependedScrollTop({");
+  expect(terminalSource).toContain("container.scrollTop = anchoredScrollTop;");
+  expect(terminalSource).toContain("previousScrollHeightRef.current = container?.scrollHeight ?? 0;");
 });

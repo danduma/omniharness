@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
-import { appendFileSync, closeSync, createReadStream, existsSync, mkdirSync, openSync, readSync, rmSync, statSync } from "fs";
-import { dirname, join } from "path";
+import { appendFileSync, closeSync, createReadStream, existsSync, mkdirSync, openSync, readdirSync, readSync, renameSync, rmSync, statSync } from "fs";
+import { basename, dirname, join } from "path";
 import { createInterface } from "readline";
 import type { AgentRecord, OutputArchivePage, OutputArchiveStats, OutputEntry } from "./types";
 
@@ -132,7 +132,12 @@ function createArchiveEntry(input: OutputEntryInput): OutputEntry {
 function toLiveEntry(entry: OutputEntry): OutputEntry {
   return {
     ...entry,
-    text: truncateString(entry.text, LIVE_OUTPUT_ENTRY_TEXT_CHARS),
+    // Assistant messages are conversation content, not disposable runtime
+    // diagnostics. They must remain complete so the unified worker stream can
+    // persist the whole answer instead of a suffix-only live snapshot.
+    text: entry.type === "message"
+      ? entry.text
+      : truncateString(entry.text, LIVE_OUTPUT_ENTRY_TEXT_CHARS),
     raw: compactRawValue(entry.raw, LIVE_RAW_STRING_CHARS),
   };
 }
@@ -153,6 +158,28 @@ function parseOutputLine(line: string): OutputEntry | null {
   return null;
 }
 
+const ROTATED_ARCHIVE_KEEP = 3;
+
+/**
+ * Keep the most recent `ROTATED_ARCHIVE_KEEP` rotations of an archive and drop
+ * older ones, so preserving history for recovery cannot grow unbounded.
+ */
+function pruneRotatedArchives(filePath: string) {
+  const dir = dirname(filePath);
+  const prefix = `${basename(filePath)}.`;
+  let rotated: string[];
+  try {
+    rotated = readdirSync(dir).filter((name) => name.startsWith(prefix) && name.endsWith(".prev"));
+  } catch {
+    return;
+  }
+  // Names embed an ISO timestamp, so lexicographic order is chronological.
+  rotated.sort();
+  for (const name of rotated.slice(0, Math.max(0, rotated.length - ROTATED_ARCHIVE_KEEP))) {
+    rmSync(join(dir, name), { force: true });
+  }
+}
+
 export class AgentOutputArchive {
   private totalEntries = 0;
   private byteSize = 0;
@@ -163,8 +190,19 @@ export class AgentOutputArchive {
     input: { truncate?: boolean } = {},
   ) {
     mkdirSync(dirname(filePath), { recursive: true });
-    if (input.truncate) {
-      rmSync(filePath, { force: true });
+    if (input.truncate && existsSync(filePath)) {
+      // This archive is the last line of defence for a transcript: when a
+      // worker stream file loses its head, `readAllPersistedEntries` recovers
+      // from here. Deleting it on a non-resume start made that loss permanent,
+      // so rotate the previous archive aside instead of destroying it.
+      try {
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        renameSync(filePath, `${filePath}.${stamp}.prev`);
+        pruneRotatedArchives(filePath);
+      } catch {
+        // Rotation failed — we still must not append onto a stale archive.
+        rmSync(filePath, { force: true });
+      }
     }
     if (existsSync(filePath)) {
       this.rebuildStats();
@@ -282,6 +320,37 @@ export function appendOutputEntry(record: AgentRecord, input: OutputEntryInput) 
   pruneLiveEntries(record);
 }
 
+/**
+ * Reassemble raw archive records into the entries the worker stream stores.
+ *
+ * The archive keeps every streaming chunk as its own record; the worker stream
+ * keeps the assembled message. This is the read-side inverse of
+ * `appendMessageChunk` below — same rule: consecutive same-type
+ * `message`/`thought` chunks join, any other record type ends the run.
+ *
+ * Used when recovering a transcript whose stream file lost its head; replaying
+ * the archive without it produces a transcript shredded mid-word.
+ */
+export function reassembleArchivedEntries<T extends { type?: string; text?: string }>(entries: T[]): T[] {
+  const out: T[] = [];
+  let active: T | null = null;
+  for (const entry of entries) {
+    if (entry.type === "message" || entry.type === "thought") {
+      if (active && active.type === entry.type) {
+        active.text = `${active.text ?? ""}${entry.text ?? ""}`;
+        continue;
+      }
+      const started = { ...entry };
+      out.push(started);
+      active = started;
+      continue;
+    }
+    out.push({ ...entry });
+    active = null;
+  }
+  return out;
+}
+
 export function appendMessageChunk(record: AgentRecord, text: string, type: "message" | "thought") {
   const archiveEntry = record.outputArchive.append({ type, text });
   const activeEntry = record.activeOutputEntryId
@@ -292,7 +361,7 @@ export function appendMessageChunk(record: AgentRecord, text: string, type: "mes
     if (type === "thought") {
       activeEntry.text = appendBoundedThoughts(activeEntry.text, text, LIVE_OUTPUT_ENTRY_TEXT_CHARS);
     } else {
-      activeEntry.text = appendBoundedText(activeEntry.text, text, LIVE_OUTPUT_ENTRY_TEXT_CHARS);
+      activeEntry.text += text;
     }
     return;
   }

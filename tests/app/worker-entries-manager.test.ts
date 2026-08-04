@@ -156,6 +156,9 @@ describe("WorkerEntriesManager", () => {
     const storage = memoryStorage();
     const first = new WorkerEntriesManager({ storage });
     first.getState("w1", [entry(1), entry(2)]);
+    // Cache writes are coalesced onto a trailing timer so they cannot block
+    // the main thread on every appended entry; a reload flushes via pagehide.
+    first.flushCache();
 
     const requestJson = vi.fn(async () => ({ entries: [entry(2), entry(3)], latestSeq: 3 }));
     const second = new WorkerEntriesManager({
@@ -179,6 +182,7 @@ describe("WorkerEntriesManager", () => {
     const storage = memoryStorage();
     const first = new WorkerEntriesManager({ storage });
     first.getState("w1", [entry(1), entry(2)]);
+    first.flushCache();
 
     const requestJson = vi.fn(async () => ({ entries: [], latestSeq: 0 }));
     const second = new WorkerEntriesManager({
@@ -197,6 +201,7 @@ describe("WorkerEntriesManager", () => {
       status: "loaded",
     });
 
+    second.flushCache();
     const third = new WorkerEntriesManager({
       listEntries: requestJson,
       storage,
@@ -215,6 +220,31 @@ describe("WorkerEntriesManager", () => {
     expect(manager.getState("w1").entries.map((e) => e.seq)).toEqual([1, 2, 3]);
     expect(manager.getState("w1").latestContiguousSeq).toBe(3);
     expect(requestJson).toHaveBeenCalledWith({ workerId: "w1", afterSeq: 2 });
+  });
+
+  it("keeps the entries array identity when a poll appends nothing", async () => {
+    // Consumers memoize off this array: ConversationMain's transcript merge
+    // and, through it, Terminal's activity rebuild (~3ms on a 2k-entry
+    // conversation, several times that on a phone). Handing back a fresh
+    // array for a byte-identical result re-ran both on every idle poll.
+    const { manager } = buildManager([{ entries: [], latestSeq: 2 }]);
+    manager.getState("w1", [entry(1), entry(2)]);
+    const beforeEntries = manager.getState("w1").entries;
+
+    await manager.refresh("w1");
+
+    expect(manager.getState("w1").entries).toBe(beforeEntries);
+  });
+
+  it("publishes a new entries array when a poll actually appends", async () => {
+    const { manager } = buildManager([{ entries: [entry(3)], latestSeq: 3 }]);
+    manager.getState("w1", [entry(1), entry(2)]);
+    const beforeEntries = manager.getState("w1").entries;
+
+    await manager.refresh("w1");
+
+    expect(manager.getState("w1").entries).not.toBe(beforeEntries);
+    expect(manager.getState("w1").entries.map((e) => e.seq)).toEqual([1, 2, 3]);
   });
 
   it("refresh revalidates a loaded empty worker stream and pulls later disk output", async () => {
@@ -483,7 +513,7 @@ describe("WorkerEntriesManager.hasEverLoaded", () => {
 
   it("stays false for cache-hydrated entries until the tail is validated", async () => {
     const storage = memoryStorage();
-    storage.setItem("omni-worker-entries-cache:v1", JSON.stringify({
+    storage.setItem("omni-worker-entries-cache:v2", JSON.stringify({
       version: 1,
       workers: { w1: { updatedAt: 1, entries: [entry(1)] } },
     }));

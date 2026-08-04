@@ -23,11 +23,13 @@ import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { UserMessageAttachments } from "@/components/terminal/UserMessageAttachments";
 import {
+  resolveTerminalPrependedScrollTop,
   shouldTerminalKeepFollowingLatest,
   shouldTerminalResetInitialPosition,
 } from "@/components/terminal/scroll-state";
 
 export {
+  resolveTerminalPrependedScrollTop,
   shouldTerminalFollowLatest,
   shouldTerminalKeepFollowingLatest,
   shouldTerminalResetInitialPosition,
@@ -225,6 +227,13 @@ function shouldTerminalRequestMoreHistory(
   metrics: Pick<HTMLDivElement, "scrollTop">,
 ) {
   return metrics.scrollTop <= TERMINAL_TOP_THRESHOLD_PX;
+}
+
+export function shouldTerminalRequestMoreHistoryFromWheel(
+  metrics: Pick<HTMLDivElement, "scrollTop">,
+  deltaY: number,
+) {
+  return deltaY < 0 && shouldTerminalRequestMoreHistory(metrics);
 }
 
 function getTerminalScrollElement(container: HTMLDivElement, variant: "terminal" | "native") {
@@ -2186,7 +2195,7 @@ export function Terminal({
   showPendingAssistantIndicator = false,
   pendingAssistantStatus = "thinking",
   activityFilter,
-  thoughtsDefaultOpen = false,
+  thoughtsDefaultOpen: thoughtsDefaultOpenProp = false,
   toolGroupsDefaultOpen = false,
   emptyState,
   isLoading = false,
@@ -2204,7 +2213,11 @@ export function Terminal({
   const previousScrollAnchorKeyRef = useRef<string | null>(null);
   const hasPositionedFirstActivityRef = useRef(false);
   const firstActivityIdRef = useRef<string | null>(null);
-  const { conversationTextSize, terminalTextSize } = useManagerSnapshot(appearancePreferencesManager);
+  // `scrollHeight` as of the last commit, so a prepend can be measured by how
+  // much taller the content got.
+  const previousScrollHeightRef = useRef(0);
+  const { conversationTextSize, terminalTextSize, alwaysExpandThoughts } = useManagerSnapshot(appearancePreferencesManager);
+  const thoughtsDefaultOpen = thoughtsDefaultOpenProp || alwaysExpandThoughts;
 
   const activity = useMemo(() => {
     // When the unified worker stream provides actual `entries`, the legacy
@@ -2494,9 +2507,22 @@ export function Terminal({
       }
     };
 
+    const handleWheel = (event: WheelEvent) => {
+      if (
+        hasMoreHistory
+        && shouldTerminalRequestMoreHistoryFromWheel(scrollContainer, event.deltaY)
+      ) {
+        onRequestMoreHistory?.();
+      }
+    };
+
     updateFollowState();
     scrollContainer.addEventListener("scroll", handleScroll, { passive: true });
-    return () => scrollContainer.removeEventListener("scroll", handleScroll);
+    scrollContainer.addEventListener("wheel", handleWheel, { passive: true });
+    return () => {
+      scrollContainer.removeEventListener("scroll", handleScroll);
+      scrollContainer.removeEventListener("wheel", handleWheel);
+    };
   }, [hasMoreHistory, onRequestMoreHistory, variant]);
 
   useLayoutEffect(() => {
@@ -2512,6 +2538,27 @@ export function Terminal({
     previousActivityVersionRef.current = activityVersion;
     const previousFirstActivityId = firstActivityIdRef.current;
     const firstActivityId = filteredActivity[0]?.id ?? null;
+
+    // Before anything else, and before paint: a page of older history that
+    // arrived above the viewport has to be paid for in `scrollTop`, or the
+    // reader stays pinned at the top boundary and the next page is requested
+    // immediately — repeating until the whole transcript has loaded.
+    if (container && !scrollAnchorChanged && previousFirstActivityId !== firstActivityId) {
+      const anchoredScrollTop = resolveTerminalPrependedScrollTop({
+        previousFirstActivityId,
+        nextFirstActivityId: firstActivityId,
+        isPreviousFirstActivityStillRendered: filteredActivity.some((item) => item.id === previousFirstActivityId),
+        previousScrollHeight: previousScrollHeightRef.current,
+        nextScrollHeight: container.scrollHeight,
+        scrollTop: container.scrollTop,
+      });
+      if (anchoredScrollTop !== null) {
+        container.scrollTop = anchoredScrollTop;
+        previousScrollTopRef.current = anchoredScrollTop;
+      }
+    }
+    previousScrollHeightRef.current = container?.scrollHeight ?? 0;
+
     if (shouldTerminalResetInitialPosition({
       previousFirstActivityId,
       nextFirstActivityId: firstActivityId,

@@ -141,6 +141,28 @@ describe("agent runtime output store", () => {
   });
 
   describe("appendMessageChunk", () => {
+    it("keeps the beginning of a long assistant message", () => {
+      const dataDir = makeTempRoot();
+      const outputArchive = openAgentOutputArchive({ dataDir, name: "long-message-worker" });
+      const record = {
+        outputArchive,
+        outputEntries: [],
+        activeOutputEntryId: null,
+      } as unknown as AgentRecord;
+      const completeMessage = [
+        "The audit is done. Here's the full picture.\n\n",
+        "middle".repeat(1_250),
+        "\n\nOne coordination note: preserve the entire answer.",
+      ].join("");
+
+      for (let offset = 0; offset < completeMessage.length; offset += 127) {
+        appendMessageChunk(record, completeMessage.slice(offset, offset + 127), "message");
+      }
+
+      expect(completeMessage.length).toBeGreaterThan(5_000);
+      expect(record.outputEntries[0]?.text).toBe(completeMessage);
+    });
+
     it("uses appendBoundedThoughts for type 'thought'", () => {
       const dataDir = makeTempRoot();
       const outputArchive = openAgentOutputArchive({ dataDir, name: "thought-worker" });
