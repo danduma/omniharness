@@ -31,7 +31,10 @@ export type ApiContractChangeClassification =
 
 export const ROUTE_CONTRACT_DECLARATION = {
   fixtureSchemaVersion: 1,
-  fingerprint: "fnv1a32:05be65bf",
+  // Bumped by adding POST /api/runner/restart. Purely additive under the
+  // existing `runner_administration` capability, so the revision window is
+  // unchanged: an older client simply never calls the new route.
+  fingerprint: "fnv1a32:e6778bd5",
   classification: "additive-capability",
   capability: "runner_administration",
   apiRevision: 1,

@@ -115,6 +115,9 @@ export function createRuntimeDomains({
       rekey(input = {}, options) {
         return post("/api/runner/rekey", input, options);
       },
+      restart(input = {}, options) {
+        return post("/api/runner/restart", input, options);
+      },
     },
     runs: {
       get(input, options) {

@@ -35,11 +35,12 @@
     "GET /api/settings",
     "GET /api/terminals/:id/stream",
     "GET /api/workers/:workerId/entries",
+    "OPTIONS /api/auth/browser-authorization/exchange",
     "OPTIONS /api/integrations/claude-model-gateway",
     "PATCH /api/accounts/:id",
     "PATCH /api/conversations/:id/queued-messages/:messageId",
-    "PATCH /api/runs/:id",
     "PATCH /api/runner",
+    "PATCH /api/runs/:id",
     "POST /api/accounts",
     "POST /api/accounts/:id/status",
     "POST /api/agents/:name/acp",
@@ -66,6 +67,7 @@
     "POST /api/planning/:id/review",
     "POST /api/projects/memory",
     "POST /api/runner/rekey",
+    "POST /api/runner/restart",
     "POST /api/runs/:id",
     "POST /api/runs/:id/answer",
     "POST /api/runs/:id/resume",
@@ -73,7 +75,6 @@
     "POST /api/supervisor",
     "POST /api/terminals",
     "POST /api/terminals/:id/input",
-    "POST /api/terminals/:id/resize",
-    "OPTIONS /api/auth/browser-authorization/exchange"
+    "POST /api/terminals/:id/resize"
   ]
 }

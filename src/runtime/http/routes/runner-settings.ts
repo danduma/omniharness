@@ -6,6 +6,7 @@ import {
   renameRunner,
 } from "@/server/runner/identity";
 import { emitNamedEvent } from "@/server/events/named-events";
+import { requestRunnerRestart } from "@/server/runner/restart-request";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 
 function methodNotAllowed(allow: string) {
@@ -116,4 +117,53 @@ export const handleRunnerRekeyRequest: OmniHttpHandler = async (request) => {
     runner: next,
     previousRunnerInstanceId: current.runnerInstanceId,
   });
+};
+
+export const handleRunnerRestartRequest: OmniHttpHandler = async (request) => {
+  if (request.method !== "POST") {
+    return methodNotAllowed("POST");
+  }
+  // Same-origin only, like rekey: restarting kills every in-flight worker turn
+  // on this machine, so it is not something a bearer token from elsewhere gets
+  // to trigger.
+  const auth = await requireApiSession(request, {
+    source: "Server",
+    action: "Restart server",
+    enforceSameOrigin: true,
+  });
+  if (auth.response) {
+    return auth.response;
+  }
+
+  const outcome = await requestRunnerRestart();
+  if (!outcome.ok) {
+    await insertAuthEvent({
+      eventType: "runner.restart_failed",
+      sessionId: auth.session?.id ?? null,
+      details: { code: outcome.code, message: outcome.message },
+    });
+    return Response.json({
+      error: { code: `runner.restart.${outcome.code}`, message: outcome.message },
+    }, { status: outcome.code === "control_unavailable" ? 503 : 502 });
+  }
+
+  await insertAuthEvent({
+    eventType: "runner.restart_requested",
+    sessionId: auth.session?.id ?? null,
+    details: { pid: outcome.pid, mode: outcome.mode },
+  });
+  emitNamedEvent({
+    kind: "error.surfaced",
+    code: "runner.restarting",
+    message: "Restarting the server. Active worker turns will be interrupted and recovered.",
+    surface: "toast",
+  });
+  // 202: the control server has accepted the job. This runner is about to be
+  // killed, so the response goes out before the process actually dies.
+  return Response.json({
+    ok: true,
+    pid: outcome.pid,
+    mode: outcome.mode,
+    startedAt: outcome.startedAt,
+  }, { status: 202 });
 };

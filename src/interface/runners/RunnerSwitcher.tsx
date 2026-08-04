@@ -135,5 +135,6 @@ export function runnerDialogTitleKey(dialog: RunnerUiDialog) {
     rename: "runner.rename.title",
     tls: "runner.tls.title",
     identity: "runner.identity.title",
+    restart: "runner.restart.title",
   } satisfies Record<RunnerUiDialog, string>)[dialog];
 }

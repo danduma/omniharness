@@ -8,6 +8,7 @@ import {
   KeyRound,
   MoreHorizontal,
   Plus,
+  RotateCcw,
   Server,
   ShieldCheck,
   Trash2,
@@ -122,15 +123,13 @@ function ConnectedRunnerControls({
     try {
       if (profile.isSameOrigin) {
         const connection = context.registry.getConnection(profileId);
-        const runtime = connection?.getRuntimeAPIs();
-        if (!connection || !runtime) {
+        if (!connection) {
           throw { code: "runner.error.generic" };
         }
-        await runtime.auth.login({
+        await connection.authenticateWithPassword({
           password,
           label: t("runner.authorization.clientLabel"),
         });
-        await connection.retry();
         context.registry.switchActive(profileId);
         context.uiManager.close();
         return;
@@ -248,6 +247,11 @@ function ConnectedRunnerControls({
     try {
       if (draft.dialog === "forget") {
         await context.profileStore.forgetProfile(draft.profileId);
+      } else if (draft.dialog === "restart") {
+        // The runner cannot restart itself, so this asks the restart-control
+        // service to do it. The response lands before the process dies; the
+        // connection then drops and the registry reconnects on its own.
+        await runtime?.runner.restart();
       } else if (draft.dialog === "rename") {
         await runtime?.runner.rename({ name: draft.label });
         await context.profileStore.editProfile(draft.profileId, {
@@ -387,6 +391,14 @@ function ConnectedRunnerControls({
             <UserRoundCog />
             {t("runner.action.sessions")}
           </DropdownMenuItem>
+          {activeProfile.isSameOrigin ? (
+            <DropdownMenuItem
+              onClick={() => context.uiManager.openRestart(active.profileId, menuFocusId)}
+            >
+              <RotateCcw />
+              {t("runner.action.restart")}
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem
             onClick={() => context.uiManager.openRename(
               active.profileId,
@@ -595,7 +607,7 @@ function RunnerDialog({
             </Button>
           ) : ui.dialog === "sessions" ? null : (
             <Button
-              variant={ui.dialog === "forget" ? "destructive" : "default"}
+              variant={ui.dialog === "forget" || ui.dialog === "restart" ? "destructive" : "default"}
               onClick={ui.dialog === "closed" ? onAuthorize : onConfirm}
               disabled={ui.busy}
             >

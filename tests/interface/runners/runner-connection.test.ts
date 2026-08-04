@@ -197,6 +197,121 @@ describe("RunnerConnection", () => {
     expect(connection.getSnapshot().status).toBe("online");
   });
 
+  it("authenticates while its runtime is still starting, then reconnects", async () => {
+    let authenticated = false;
+    const login = vi.fn(async () => {
+      authenticated = true;
+      return { ok: true as const };
+    });
+    const loadBootstrap = vi.fn(async () => bootstrap({
+      initialQueries: {
+        session: { enabled: true, authenticated },
+      },
+    }));
+    const sameOriginProfile = profile({
+      savedPassword: null,
+      authTransport: "cookie",
+      credentialRef: null,
+      isSameOrigin: true,
+    });
+    const connection = new RunnerConnection({
+      profile: sameOriginProfile,
+      runtimeFactory: async () => runtime({
+        apis: { auth: { login } } as unknown as RuntimeAPIs,
+        bootstrap: loadBootstrap,
+      }).api,
+      persistence: persistence(sameOriginProfile),
+    });
+
+    expect(connection.getRuntimeAPIs()).toBeNull();
+
+    await connection.authenticateWithPassword({
+      password: "correct-password",
+      label: "Browser session",
+    });
+
+    expect(login).toHaveBeenCalledOnce();
+    expect(login).toHaveBeenCalledWith({
+      password: "correct-password",
+      label: "Browser session",
+    });
+    expect(connection.getSnapshot().status).toBe("online");
+  });
+
+  it("keeps explicit authentication authoritative over a scheduled offline retry", async () => {
+    let runtimeCall = 0;
+    let authenticated = false;
+    const retrySchedule: { callback: (() => void) | null } = { callback: null };
+    let releaseLogin!: () => void;
+    let markLoginStarted!: () => void;
+    const loginGate = new Promise<void>((resolve) => { releaseLogin = resolve; });
+    const loginStarted = new Promise<void>((resolve) => { markLoginStarted = resolve; });
+    const sameOriginProfile = profile({
+      savedPassword: null,
+      authTransport: "cookie",
+      credentialRef: null,
+      isSameOrigin: true,
+    });
+    const connection = new RunnerConnection({
+      profile: sameOriginProfile,
+      runtimeFactory: async () => {
+        runtimeCall += 1;
+        if (runtimeCall === 1) {
+          return runtime({
+            bootstrap: async () => {
+              throw { code: "runtime.connection_failed", message: "Offline" };
+            },
+          }).api;
+        }
+        if (runtimeCall === 2) {
+          return runtime({
+            apis: {
+              auth: {
+                login: async () => {
+                  markLoginStarted();
+                  await loginGate;
+                  authenticated = true;
+                  return { ok: true as const };
+                },
+              },
+            } as unknown as RuntimeAPIs,
+            bootstrap: async () => bootstrap(),
+          }).api;
+        }
+        return runtime({
+          bootstrap: async () => bootstrap({
+            initialQueries: {
+              session: { enabled: true, authenticated },
+            },
+          }),
+        }).api;
+      },
+      persistence: persistence(sameOriginProfile),
+      schedule: (callback) => {
+        retrySchedule.callback = callback;
+        return 1;
+      },
+      cancelSchedule: () => {
+        retrySchedule.callback = null;
+      },
+    });
+
+    await connection.start();
+    expect(connection.getSnapshot().status).toBe("offline");
+
+    const authorization = connection.authenticateWithPassword({
+      password: "correct-password",
+      label: "Browser session",
+    });
+    await loginStarted;
+    retrySchedule.callback?.();
+    await Promise.resolve();
+    releaseLogin();
+
+    await expect(authorization).resolves.toBeUndefined();
+    expect(connection.getSnapshot().status).toBe("online");
+  });
+
   it("stops automatic login after one rejected saved-password attempt", async () => {
     const login = vi.fn(async () => {
       throw { code: "runtime.login_failed", message: "Incorrect password." };

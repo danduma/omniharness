@@ -98,8 +98,7 @@ test("Connect uses the submitted password for native and current-server edits", 
 
   expect(runnerControlsSource).not.toContain("previous?.savedPassword !== draft.password");
   expect(runnerControlsSource).toContain("if (profile.isSameOrigin) {");
-  expect(runnerControlsSource).toContain("await runtime.auth.login({");
-  expect(runnerControlsSource).toContain("await connection.retry();");
+  expect(runnerControlsSource).toContain("await connection.authenticateWithPassword({");
 });
 
 test("desktop conversation rail constrains overflowing run content", () => {

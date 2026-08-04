@@ -12,7 +12,8 @@ export type RunnerUiDialog =
   | "sessions"
   | "rename"
   | "tls"
-  | "identity";
+  | "identity"
+  | "restart";
 
 export type RunnerUiSnapshot = {
   dialog: RunnerUiDialog;
@@ -130,6 +131,10 @@ export class RunnerUiManager extends StateManager<RunnerUiSnapshot> {
 
   openForget(profileId: string, returnFocusId: string) {
     this.openProfileDialog("forget", profileId, returnFocusId);
+  }
+
+  openRestart(profileId: string, returnFocusId: string) {
+    this.openProfileDialog("restart", profileId, returnFocusId);
   }
 
   openSessions(profileId: string, returnFocusId: string) {
