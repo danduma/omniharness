@@ -22,6 +22,7 @@ import {
 import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { writeWorkerOutputEntries } from "@/server/workers/output-store";
+import { reconcileRecoveredHumanInputEntries } from "@/server/workers/human-input-entries";
 import {
   markRecoveryIncidentFailed,
   markRecoveryIncidentNeedsUser,
@@ -406,6 +407,13 @@ async function resumeSavedWorkerSession(args: {
   if (resumed.outputEntries) {
     await writeWorkerOutputEntries(args.run.id, args.worker.id, resumed.outputEntries);
   }
+  await reconcileRecoveredHumanInputEntries({
+    runId: args.run.id,
+    workerId: args.worker.id,
+    activeElicitationRequestIds: (resumed.pendingElicitations ?? []).map((entry) => entry.requestId),
+    activePermissionRequestIds: (resumed.pendingPermissions ?? []).map((entry) => entry.requestId),
+    reason: "the runner restarted and the recovered runtime no longer owns this request",
+  });
 
   await db.update(workers).set({
     status: continueInterruptedDirectTurn ? "working" : resumed.state,

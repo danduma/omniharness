@@ -12,6 +12,11 @@ type BusyMessageQueueState = {
   interruptingMessageIds: Set<string>;
   locallyHiddenMessageIds: Set<string>;
   serverAbsentMessageUpdatedAtById: Map<string, number>;
+  // Rows this client queued whose POST has not returned. The server cannot
+  // have them yet, so "absent from the server list" must not be read as
+  // "cancelled" for these — otherwise the row the user just queued blinks out
+  // on the next event frame and back in when the POST lands.
+  pendingQueuedMessageIds: Set<string>;
 };
 
 const initialBusyMessageQueueState: BusyMessageQueueState = {
@@ -20,6 +25,7 @@ const initialBusyMessageQueueState: BusyMessageQueueState = {
   interruptingMessageIds: new Set(),
   locallyHiddenMessageIds: new Set(),
   serverAbsentMessageUpdatedAtById: new Map(),
+  pendingQueuedMessageIds: new Set(),
 };
 
 function isActiveQueuedMessage(message: QueuedConversationMessageRecord) {
@@ -117,9 +123,20 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
         (message) => !isStaleServerAbsentActiveMessage(message, current.serverAbsentMessageUpdatedAtById),
       );
       const incomingIds = new Set(incomingMessages.map((message) => message.id));
+      // A row whose POST is still in flight is not "gone from the server", it
+      // has not reached the server yet. Leave it out of the absence
+      // bookkeeping entirely so it is neither dropped now nor rejected as
+      // stale when the real row arrives.
       const newlyAbsentActiveIds = current.queuedMessages
-        .filter((message) => isActiveQueuedMessage(message) && !incomingIds.has(message.id))
+        .filter((message) => (
+          isActiveQueuedMessage(message)
+          && !incomingIds.has(message.id)
+          && !current.pendingQueuedMessageIds.has(message.id)
+        ))
         .map((message) => [message.id, timestampMs(message.updatedAt)] as const);
+      const retainedPendingMessages = current.queuedMessages.filter((message) => (
+        current.pendingQueuedMessageIds.has(message.id) && !incomingIds.has(message.id)
+      ));
       // Server rows are authoritative: clear optimistic interrupt/cancel flags
       // for any row that has left a pending/delivering state.
       const settledIds = new Set(
@@ -150,7 +167,10 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
       for (const message of incomingMessages) {
         serverAbsentMessageUpdatedAtById.delete(message.id);
       }
-      const queuedMessages = incomingMessages.filter((message) => !current.locallyHiddenMessageIds.has(message.id));
+      const queuedMessages = [
+        ...incomingMessages.filter((message) => !current.locallyHiddenMessageIds.has(message.id)),
+        ...retainedPendingMessages,
+      ].sort(compareOldestByCreatedAtThenId);
       const cancellingMessageIds = clearSettled(current.cancellingMessageIds);
       const interruptingMessageIds = clearSettled(current.interruptingMessageIds);
       if (
@@ -217,6 +237,57 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
         ...current,
         queuedMessages: next,
         serverAbsentMessageUpdatedAtById,
+      };
+    });
+  }
+
+  /**
+   * Show a row in the queue from the moment the user hits send, rather than
+   * after the POST returns. A message sent with `busyAction: "queue"` is
+   * always queued server-side, so the prediction cannot be wrong — and
+   * rendering it as a sent bubble in the meantime made it appear in the
+   * transcript for the length of the round trip before jumping to the queue.
+   */
+  beginQueueSend(message: QueuedConversationMessageRecord) {
+    this.patch((current) => {
+      const pendingQueuedMessageIds = new Set(current.pendingQueuedMessageIds);
+      pendingQueuedMessageIds.add(message.id);
+      const serverAbsentMessageUpdatedAtById = new Map(current.serverAbsentMessageUpdatedAtById);
+      serverAbsentMessageUpdatedAtById.delete(message.id);
+      return {
+        queuedMessages: [...current.queuedMessages, message].sort(compareOldestByCreatedAtThenId),
+        pendingQueuedMessageIds,
+        serverAbsentMessageUpdatedAtById,
+      };
+    });
+  }
+
+  /**
+   * The POST returned. The server row normally carries the id the optimistic
+   * row already used, so this is an in-place swap; a server that minted its
+   * own id instead drops the optimistic row and takes the returned one.
+   */
+  settleQueueSend(pendingMessageId: string, message: QueuedConversationMessageRecord | null | undefined) {
+    this.patch((current) => {
+      const pendingQueuedMessageIds = new Set(current.pendingQueuedMessageIds);
+      pendingQueuedMessageIds.delete(pendingMessageId);
+      const queuedMessages = message && message.id !== pendingMessageId
+        ? current.queuedMessages.filter((entry) => entry.id !== pendingMessageId)
+        : current.queuedMessages;
+      return { pendingQueuedMessageIds, queuedMessages };
+    });
+    if (message) {
+      this.upsertQueuedMessage(message);
+    }
+  }
+
+  failQueueSend(pendingMessageId: string) {
+    this.patch((current) => {
+      const pendingQueuedMessageIds = new Set(current.pendingQueuedMessageIds);
+      pendingQueuedMessageIds.delete(pendingMessageId);
+      return {
+        pendingQueuedMessageIds,
+        queuedMessages: current.queuedMessages.filter((entry) => entry.id !== pendingMessageId),
       };
     });
   }

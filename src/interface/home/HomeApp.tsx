@@ -33,6 +33,7 @@ import {
 } from "./direct-control-activity";
 import { cancelInactiveAutoResumeTimers, isPermanentAutoResumeFailure, shouldFireAutoResumeTimer } from "./auto-resume-selection";
 import { EventStreamStateManager } from "./EventStreamStateManager";
+import { sentConversationMessagesManager } from "./SentConversationMessagesManager";
 import {
   homeUiSetters,
   homeUiStateManager,
@@ -44,6 +45,7 @@ import { preflightConfirmationActionsManager } from "./PreflightConfirmationActi
 import {
   filterOptimisticallyDeletedRuns,
   createClientRunId,
+  createSentConversationMessageId,
   mergePendingCreatedConversationSnapshots,
   mergePendingSentConversationMessages,
   parseBrowserConversationRoute,
@@ -60,7 +62,7 @@ import { useHomeLifecycle } from "./useHomeLifecycle";
 import { shallowEqualRecord, useManagerSelector, useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { useRunRecoveryState } from "./useRunRecoveryState";
 import { useRunSelectionEffects } from "./useRunSelectionEffects";
-import type { ConversationSidebarTab, EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord, SidebarGroup } from "./types";
+import type { ConversationSidebarTab, EventStreamState, ExecutionEventRecord, RunRecord, SidebarGroup } from "./types";
 import type { HomeBootstrapPayload } from "@/shared/bootstrap";
 import { useHomeQueries } from "./useHomeQueries";
 import { useHomeViewModel } from "./useHomeViewModel";
@@ -142,6 +144,24 @@ function hasRecoverErrorClearingEvent(events: ExecutionEventRecord[], submittedA
     const eventTime = eventCreatedAtMs(event);
     return eventTime !== null && eventTime >= submittedAtMs;
   });
+}
+
+/**
+ * React Query holds the last mutation error until the mutation is reset, so an
+ * error raised while viewing run A is still `mutation.error` after the user has
+ * moved to run B. Conversation-scoped failures belong to their own
+ * conversation only: mismatch → suppress. Mutations with no run in their
+ * variables (settings, project-wide commits) stay app-global.
+ */
+function scopedMutationError(
+  error: unknown,
+  variablesRunId: string | null | undefined,
+  selectedRunId: string | null,
+) {
+  if (!error) {
+    return null;
+  }
+  return !variablesRunId || variablesRunId === selectedRunId ? error : null;
 }
 
 function shouldShowRecoverRunError(args: {
@@ -344,12 +364,6 @@ export function HomeApp({
   const commandInputRef = useRef<HTMLTextAreaElement>(null);
   const pendingDeletedRunIdsRef = useRef<Set<string>>(new Set());
   const pendingCreatedConversationSnapshotsRef = useRef<Map<string, CreatedConversationSnapshot>>(new Map());
-  const pendingSentConversationMessagesRef = useRef<Map<string, MessageRecord>>(new Map());
-  // Messages this client sent itself (session scoped). The Terminal renders
-  // them past the stream fallback gate so a just-sent bubble never flickers
-  // while the worker stream catches up.
-  const locallySentMessageIdsRef = useRef<Set<string>>(new Set());
-  const sendingMessageIdsRef = useRef<Set<string>>(new Set());
   const loadingWorkerHistoryIdsRef = useRef<Set<string>>(new Set());
   const autoResumeStateRef = useRef<Map<string, { failureKey: string; targetMessageId: string; attempts: number; timerId: ReturnType<typeof setTimeout> | null }>>(new Map());
   const autoResumeRuntimeFactsRef = useRef({
@@ -394,6 +408,20 @@ export function HomeApp({
   );
   const settingsDraft = useManagerSnapshot(settingsDraftManager);
 
+  // Derived once per real change: the snapshot only takes a new identity when
+  // an entry is added or removed, so `Terminal`'s activity memo is not
+  // invalidated on every render — and, unlike the mutable Sets these replaced,
+  // it *is* invalidated when one actually changes.
+  const sentConversationMessages = useManagerSnapshot(sentConversationMessagesManager);
+  const locallySentUserMessageIds = useMemo(
+    () => sentConversationMessagesManager.getLocallySentMessageIds(),
+    [sentConversationMessages],
+  );
+  const sendingUserMessageIds = useMemo(
+    () => sentConversationMessagesManager.getInFlightMessageIds(),
+    [sentConversationMessages],
+  );
+
   const scrollConversationToBottom = useCallback(() => {
     requestAnimationFrame(() => {
       const vp = scrollRef.current?.querySelector(
@@ -411,7 +439,13 @@ export function HomeApp({
   // Filter event stream state
   const filterEventStreamState = useCallback((incoming: EventStreamState) => {
     let next = mergePendingCreatedConversationSnapshots(incoming, pendingCreatedConversationSnapshotsRef.current);
-    next = mergePendingSentConversationMessages(next, pendingSentConversationMessagesRef.current);
+    const sentMerge = mergePendingSentConversationMessages(
+      next,
+      sentConversationMessagesManager.getPendingMessages(),
+      sentConversationMessagesManager.getInFlightMessageIds(),
+    );
+    next = sentMerge.state;
+    sentConversationMessagesManager.acknowledge(sentMerge.settledMessageIds);
     const pendingDeleted = pendingDeletedRunIdsRef.current;
     const reconcile = (s: EventStreamState) => { busyMessageQueueManager.setQueuedMessages(s.queuedMessages || []); return s; };
     if (pendingDeleted.size === 0) return reconcile(next);
@@ -614,9 +648,6 @@ export function HomeApp({
     renamingRunId,
     pendingDeletedRunIdsRef,
     pendingCreatedConversationSnapshotsRef,
-    pendingSentConversationMessagesRef,
-    locallySentMessageIdsRef,
-    sendingMessageIdsRef,
     loadingWorkerHistoryIdsRef,
     scrollConversationToBottom,
     sessionQueryRefetch: sessionQuery.refetch,
@@ -998,14 +1029,27 @@ export function HomeApp({
 
   const appErrors = useAppErrors({
     state,
+    selectedRunId,
     runtimeErrors,
     projectFilesError: projectFilesQuery.error,
     settingsError: settingsQuery.error,
     commitWorkflowSettingsError: commitWorkflowSettings.error,
     runCommandError: runCommand.error,
-    sendConversationMessageError: sendConversationMessage.error,
-    cancelQueuedMessageError: cancelQueuedMessage.error,
-    autoCommitChatError: autoCommitChat.error,
+    sendConversationMessageError: scopedMutationError(
+      sendConversationMessage.error,
+      sendConversationMessage.variables?.runId,
+      selectedRunId,
+    ),
+    cancelQueuedMessageError: scopedMutationError(
+      cancelQueuedMessage.error,
+      cancelQueuedMessage.variables?.runId,
+      selectedRunId,
+    ),
+    autoCommitChatError: scopedMutationError(
+      autoCommitChat.error,
+      autoCommitChat.variables?.runId,
+      selectedRunId,
+    ),
     autoCommitProjectError: autoCommitProject.error,
     // Scope `recoverRun` error display to the run it was triggered for.
     // React Query keeps the last mutation error around until reset, so
@@ -1024,11 +1068,20 @@ export function HomeApp({
     })
       ? recoverRun.error
       : null,
-    renameRunError: renameRun.error,
-    archiveRunError: archiveRun.error,
-    deleteRunError: deleteRun.error,
-    stopSupervisorError: stopSupervisor.error,
-    stopWorkerError: stopWorker.error ?? stopWorkerTerminalProcess.error,
+    renameRunError: scopedMutationError(renameRun.error, renameRun.variables?.runId, selectedRunId),
+    archiveRunError: scopedMutationError(archiveRun.error, archiveRun.variables?.runId, selectedRunId),
+    deleteRunError: scopedMutationError(deleteRun.error, deleteRun.variables?.runId, selectedRunId),
+    stopSupervisorError: scopedMutationError(
+      stopSupervisor.error,
+      stopSupervisor.variables?.runId,
+      selectedRunId,
+    ),
+    stopWorkerError: scopedMutationError(stopWorker.error, stopWorker.variables?.runId, selectedRunId)
+      ?? scopedMutationError(
+        stopWorkerTerminalProcess.error,
+        stopWorkerTerminalProcess.variables?.runId,
+        selectedRunId,
+      ),
   });
 
   // Composer state
@@ -1158,7 +1211,7 @@ export function HomeApp({
   }, [interruptQueuedMessageMutate, selectedRunId]);
 
   const handleComposerSendConversationMessage = useCallback((content: string, attachments: PendingChatAttachment[], busyAction?: BusyMessageAction) => {
-    if (selectedRunId) sendConversationMessageMutate({ runId: selectedRunId, content, attachments, busyAction });
+    if (selectedRunId) sendConversationMessageMutate({ runId: selectedRunId, content, clientMessageId: createSentConversationMessageId(), attachments, busyAction });
   }, [selectedRunId, sendConversationMessageMutate]);
 
   const handleComposerRunCommand = useCallback((content: string, attachments: PendingChatAttachment[]) => {
@@ -1170,6 +1223,8 @@ export function HomeApp({
   const handleReload = useCallback(() => {
     try {
       window.localStorage.removeItem("omni-event-stream-snapshot-cache:v1");
+      window.localStorage.removeItem("omni-worker-entries-cache:v2");
+      // Retired key — still cleared so upgrading clients reclaim the space.
       window.localStorage.removeItem("omni-worker-entries-cache:v1");
     } catch {
       // ignore
@@ -1387,8 +1442,8 @@ export function HomeApp({
           appErrors={appErrors}
           conversationFailure={conversationFailure}
           directConversationMessages={directConversationMessages}
-          locallySentUserMessageIds={locallySentMessageIdsRef.current}
-          sendingUserMessageIds={sendingMessageIdsRef.current}
+          locallySentUserMessageIds={locallySentUserMessageIds}
+          sendingUserMessageIds={sendingUserMessageIds}
           expandedDirectMessageIds={expandedDirectMessageIds}
           toggleDirectMessageExpansion={actions.toggleDirectMessageExpansion}
           primaryConversationAgent={vm.primaryConversationAgent}
@@ -1430,7 +1485,7 @@ export function HomeApp({
           handleSaveEditedMessage={(messageId) => actions.handleSaveEditedMessage(messageId, editingMessageValue)}
           handlePreflightConfirmationAnswer={(content) => {
             if (selectedRunId) {
-              sendConversationMessage.mutate({ runId: selectedRunId, content, attachments: [] });
+              sendConversationMessage.mutate({ runId: selectedRunId, content, clientMessageId: createSentConversationMessageId(), attachments: [] });
             }
           }}
           isPreflightConfirmationAnswering={isSendingSelectedConversationMessage}

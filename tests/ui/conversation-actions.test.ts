@@ -42,6 +42,20 @@ test("conversations do not dump the agent command catalog into the transcript", 
   expect(conversationMainSource).not.toContain('item.type === "available_commands"');
 });
 
+test("only runtime-owned questions render as actionable forms", () => {
+  const conversationMainSource = readSource("src/components/home/ConversationMain.tsx");
+  const workerCardSource = readSource("src/components/WorkerCard.tsx");
+
+  expect(conversationMainSource).toContain(
+    "const pendingElicitations = primaryConversationAgent?.pendingElicitations ?? [];",
+  );
+  expect(conversationMainSource).not.toContain(
+    "derivePendingElicitationsFromWorkerEntries(directWorkerStream.entries)",
+  );
+  expect(workerCardSource).toContain("const effectivePendingElicitations = pendingElicitations;");
+  expect(workerCardSource).not.toContain("...streamPendingElicitations.filter");
+});
+
 test("conversation rows expose rename and delete actions", () => {
   expect(pageSource).toContain('Rename');
   expect(pageSource).toContain('Delete');
@@ -147,7 +161,7 @@ test("top bar conversation title is plain text until explicitly edited", () => {
   const homeHeaderSource = readSource("src/components/home/HomeHeader.tsx");
 
   expect(homeHeaderSource).toContain("Pencil");
-  expect(homeHeaderSource).toContain("isEditingTitle ? (");
+  expect(homeHeaderSource).toContain("isEditingTitleInline ? (");
   expect(homeHeaderSource).toContain('aria-label="Conversation title"');
   expect(homeHeaderSource).toContain('aria-label="Edit conversation title"');
   expect(homeHeaderSource).toContain('className="hidden');
@@ -156,6 +170,32 @@ test("top bar conversation title is plain text until explicitly edited", () => {
   expect(homeHeaderSource).toContain('onClick={beginTopBarTitleEdit}');
   expect(homeHeaderSource).not.toContain("readOnly={!isEditingTitle}");
   expect(homeHeaderSource).not.toContain("titleInputValue");
+});
+
+test("compact layouts rename the conversation in a dialog and drop the duplicated workspace labels", () => {
+  const homeHeaderSource = readSource("src/components/home/HomeHeader.tsx");
+
+  expect(homeHeaderSource).toContain("useIsCompactLayout");
+  expect(homeHeaderSource).toContain("const isEditingTitleInDialog = isEditingTitle && isCompactLayout");
+  expect(homeHeaderSource).toContain("open={isEditingTitleInDialog}");
+  expect(homeHeaderSource).toContain('t("session.rename.title")');
+  expect(homeHeaderSource).toContain('t("session.rename.field")');
+  expect(homeHeaderSource).toContain('className="hidden max-w-[10rem] shrink-0 truncate font-mono text-[10px] text-muted-foreground lg:inline"');
+});
+
+test("the run branch shows in the commit menus instead of the top bar", () => {
+  const homeHeaderSource = readSource("src/components/home/HomeHeader.tsx");
+  const titleRow = homeHeaderSource.slice(
+    homeHeaderSource.indexOf("aria-label=\"Root repository folder\""),
+    homeHeaderSource.indexOf("t(\"session.menu.label\")"),
+  );
+
+  expect(titleRow).not.toContain("<RunWorkspaceBadge");
+  expect(homeHeaderSource).toContain("const runWorkspace = resolveRunWorkspace(selectedRun, activeConversationCwd)");
+  // Once in the commit dropdown (sm and up), once in the session menu that
+  // carries the commit actions on phones.
+  expect(homeHeaderSource.match(/<RunWorkspaceBadge run=\{selectedRun\} fallbackPath=\{activeConversationCwd\} \/>/g)).toHaveLength(2);
+  expect(homeHeaderSource).toContain('<DropdownMenuLabel className="font-normal sm:hidden">');
 });
 
 test("user-initiated conversation sends reveal the appended turn", () => {
@@ -422,7 +462,7 @@ test("preflight implementation confirmations expose remembered quick actions", (
   expect(conversationMainSource).toContain("preflightConfirmationActionsManager.rememberMessage(msg.id)");
   expect(conversationMainSource).toContain("handlePreflightConfirmationAnswer");
   expect(homeAppSource).toContain("preflightConfirmationActionsManager.hydrateFromBrowser()");
-  expect(homeAppSource).toContain("sendConversationMessage.mutate({ runId: selectedRunId, content, attachments: [] })");
+  expect(homeAppSource).toContain("sendConversationMessage.mutate({ runId: selectedRunId, content, clientMessageId: createSentConversationMessageId(), attachments: [] })");
   expect(managerSource).toContain("omni.preflight-confirmation-actions.handled");
   expect(localeSource).toContain('"conversation.preflightConfirmation.yes": "Yes, implement it"');
   expect(localeSource).toContain('"conversation.preflightConfirmation.no": "No, let me clarify"');
@@ -491,8 +531,13 @@ test("direct control conversations show a tiny animated working indicator while 
   expect(terminalSource).toContain("text-[calc(var(--terminal-message-size)+1px)]");
   expect(pageSource).toContain("showDirectControlWorkingIndicator={showDirectControlWorkingIndicator}");
   expect(pageSource).toContain("directControlPendingAssistantStatus={directControlPendingAssistantStatus}");
-  expect(pageSource).toContain("showPendingAssistantIndicator={showDirectControlWorkingIndicator}");
+  expect(pageSource).toContain("showPendingAssistantIndicator={showPendingAssistantIndicator}");
   expect(pageSource).toContain("pendingAssistantStatus={directControlPendingAssistantStatus ?? undefined}");
+  // The row is re-gated at the render site so it can never sit above an open
+  // elicitation/permission card and shove it down the page for a frame.
+  expect(pageSource).toContain("const showPendingAssistantIndicator = shouldShowDirectControlWorkingIndicator({");
+  expect(pageSource).toContain("renderedElicitationCount: pendingElicitations.length,");
+  expect(pageSource).toContain("renderedPermissionCount: primaryConversationAgent?.pendingPermissions?.length ?? 0,");
   expect(pageSource).toContain("const hasBusyConversation = isSupervisorRunning || Boolean(stoppableConversationWorkerId);");
   expect(pageSource).toContain("const directControlPendingAssistantStatus = resolveDirectControlPendingAssistantStatus({");
   expect(pageSource).toContain("const showDirectControlWorkingIndicator = directControlPendingAssistantStatus !== null && !isSelectedRunQuotaWaiting;");

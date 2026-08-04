@@ -23,6 +23,7 @@ import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent, type SupervisorStopReason } from "@/server/events/named-events";
 import { notifyRunLifecycleEventBestEffort } from "@/server/notifications/triggers";
 import { deriveWorkerTerminalProcesses } from "@/lib/worker-terminal-processes";
+import { reconcileRecoveredHumanInputEntries } from "@/server/workers/human-input-entries";
 
 const OBSERVER_INTERVAL_MS = 5_000;
 const IDLE_THRESHOLD_MS = 30_000;
@@ -890,6 +891,13 @@ async function reviveWorkerFromSavedSession(args: {
     bridgeSessionMode: resumedWorker.sessionMode ?? sessionMode ?? null,
     updatedAt: new Date(args.now),
   }).where(eq(workers.id, args.worker.id));
+  await reconcileRecoveredHumanInputEntries({
+    runId: args.run.id,
+    workerId: args.worker.id,
+    activeElicitationRequestIds: (resumedWorker.pendingElicitations ?? []).map((entry) => entry.requestId),
+    activePermissionRequestIds: (resumedWorker.pendingPermissions ?? []).map((entry) => entry.requestId),
+    reason: "the worker was reattached and the recovered runtime no longer owns this request",
+  });
   emitNamedEvent({
     kind: recreatedFromMissingSession ? "worker.recreated" : "worker.reattached",
     runId: args.run.id,

@@ -44,8 +44,13 @@ export function cancelInactiveAutoResumeTimers<TEntry extends { timerId: ReturnT
   return cancelled;
 }
 
+// Match how adapters actually word a dead credential, not just the tidy forms.
+// "Failed to authenticate. API Error: 403 Account suspended" matched none of the
+// original patterns ("auth failed" is the reverse word order), so opening a
+// permanently-dead session re-fired auto-resume against an account that can
+// never answer.
 export function isPermanentAutoResumeFailure(failureKey: string | null | undefined) {
-  return /\b(?:api key|authentication required|auth(?:entication)? failed|billing required|api billing|cap_exceeded|insufficient quota|resource exhausted|system resources are low|worker\.spawn\.resource_exhausted)\b/i.test(failureKey ?? "");
+  return /\b(?:api key|authentication required|auth(?:entication)? failed|failed to auth(?:enticate)?|authentication_failed|account suspended|account (?:is )?(?:disabled|banned)|(?:access |refresh )?token (?:has been |was )?revoked|billing required|api billing|cap_exceeded|insufficient quota|resource exhausted|system resources are low|worker\.spawn\.resource_exhausted)\b/i.test(failureKey ?? "");
 }
 
 export function shouldFireAutoResumeTimer<TEntry extends {

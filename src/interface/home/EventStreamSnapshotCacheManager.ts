@@ -4,6 +4,13 @@ const DEFAULT_STORAGE_KEY = "omni-event-stream-snapshot-cache:v1";
 const DEFAULT_MAX_SNAPSHOTS = 8;
 const DEFAULT_MAX_SERIALIZED_BYTES = 4_000_000;
 const GLOBAL_SCOPE_KEY = "__global__";
+// The event stream pushes a fresh snapshot for every agent output change,
+// which on a chatty run is many frames per second. Serializing and writing
+// the whole multi-megabyte envelope on each one blocked the main thread long
+// enough to drop keystrokes in the composer — the worse the agent's output
+// rate, the worse the typing lag, on any session. Reads are served from the
+// in-memory envelope; the storage write is coalesced onto a trailing timer.
+const DEFAULT_FLUSH_INTERVAL_MS = 1_000;
 
 type SnapshotStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -23,6 +30,7 @@ interface EventStreamSnapshotCacheManagerOptions {
   maxSnapshots?: number;
   maxSerializedBytes?: number;
   now?: () => number;
+  flushIntervalMs?: number;
 }
 
 function getDefaultStorage(): SnapshotStorage | null {
@@ -89,13 +97,27 @@ export class EventStreamSnapshotCacheManager {
   private readonly maxSnapshots: number;
   private readonly maxSerializedBytes: number;
   private readonly now: () => number;
+  private readonly flushIntervalMs: number;
+  private envelope: SnapshotEnvelope | null = null;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: EventStreamSnapshotCacheManagerOptions = {}) {
-    this.storage = options.storage === undefined ? getDefaultStorage() : options.storage;
+    const usesDefaultStorage = options.storage === undefined;
+    this.storage = usesDefaultStorage ? getDefaultStorage() : options.storage ?? null;
     this.storageKey = options.storageKey ?? DEFAULT_STORAGE_KEY;
     this.maxSnapshots = options.maxSnapshots ?? DEFAULT_MAX_SNAPSHOTS;
     this.maxSerializedBytes = options.maxSerializedBytes ?? DEFAULT_MAX_SERIALIZED_BYTES;
     this.now = options.now ?? Date.now;
+    this.flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
+
+    // A coalesced write must not lose the last snapshot when the tab is
+    // backgrounded or killed — on mobile PWAs `pagehide` is frequently the
+    // only teardown signal that fires.
+    if (usesDefaultStorage && this.storage && typeof window !== "undefined") {
+      const flushNow = () => this.flush();
+      window.addEventListener("pagehide", flushNow);
+      window.addEventListener("visibilitychange", flushNow);
+    }
   }
 
   hydrateState(initialState: EventStreamState, scope: string | null | undefined = null) {
@@ -138,24 +160,53 @@ export class EventStreamSnapshotCacheManager {
     };
   }
 
+  /**
+   * O(1) on the hot path: the envelope is mutated in memory and the
+   * expensive part (compaction, serialization, the synchronous storage
+   * write) is deferred to a single trailing flush. Reads go through the same
+   * in-memory envelope, so a `rememberState` is observable immediately.
+   */
   rememberState(state: EventStreamState, scope: string | null | undefined = null) {
     if (!this.storage) {
       return;
     }
 
     const currentEnvelope = this.readEnvelope();
-    const envelope = this.pruneEnvelope({
+    this.envelope = this.pruneEnvelope({
       ...currentEnvelope,
       snapshots: {
         ...currentEnvelope.snapshots,
         [scopeKey(scope)]: {
           updatedAt: this.now(),
-          state: compactStateForCache(state),
+          state,
         },
       },
     });
 
-    const serialized = JSON.stringify(envelope);
+    this.scheduleFlush();
+  }
+
+  /** Write the pending envelope to storage now, cancelling any scheduled flush. */
+  flush() {
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+
+    const envelope = this.envelope;
+    if (!this.storage || !envelope) {
+      return;
+    }
+
+    const serialized = JSON.stringify({
+      version: 1,
+      snapshots: Object.fromEntries(
+        Object.entries(envelope.snapshots).map(([key, snapshot]) => [key, {
+          updatedAt: snapshot.updatedAt,
+          state: compactStateForCache(snapshot.state),
+        }]),
+      ),
+    } satisfies SnapshotEnvelope);
     if (serialized.length > this.maxSerializedBytes) {
       return;
     }
@@ -167,33 +218,59 @@ export class EventStreamSnapshotCacheManager {
     }
   }
 
+  private scheduleFlush() {
+    if (this.flushTimer !== null) {
+      return;
+    }
+
+    if (this.flushIntervalMs <= 0) {
+      this.flush();
+      return;
+    }
+
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      this.flush();
+    }, this.flushIntervalMs);
+    // Never hold the process open for a preview cache.
+    (this.flushTimer as { unref?: () => void }).unref?.();
+  }
+
   private readEnvelope(): SnapshotEnvelope {
     if (!this.storage) {
       return emptyEnvelope();
     }
 
+    if (this.envelope) {
+      return this.envelope;
+    }
+
     try {
       const raw = this.storage.getItem(this.storageKey);
       if (!raw) {
-        return emptyEnvelope();
+        this.envelope = emptyEnvelope();
+        return this.envelope;
       }
 
       const parsed = JSON.parse(raw) as Partial<SnapshotEnvelope>;
       if (parsed.version !== 1 || typeof parsed.snapshots !== "object" || parsed.snapshots === null) {
-        return emptyEnvelope();
+        this.envelope = emptyEnvelope();
+        return this.envelope;
       }
 
-      return {
+      this.envelope = {
         version: 1,
         snapshots: parsed.snapshots as Record<string, CachedSnapshot>,
       };
+      return this.envelope;
     } catch {
       try {
         this.storage.removeItem(this.storageKey);
       } catch {
         // Ignore cleanup failures.
       }
-      return emptyEnvelope();
+      this.envelope = emptyEnvelope();
+      return this.envelope;
     }
   }
 

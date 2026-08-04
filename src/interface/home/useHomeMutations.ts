@@ -13,6 +13,7 @@ import { useQueuedMessageMutations } from "./useQueuedMessageMutations";
 import { uploadPendingChatAttachments } from "./upload-attachments";
 import { shouldSelectRecoveredRunAfterSuccess } from "./auto-resume-selection";
 import { homeUiSetters, homeUiStateManager } from "./HomeUiStateManager";
+import { sentConversationMessagesManager } from "./SentConversationMessagesManager";
 import { appearancePreferencesManager } from "./AppearancePreferencesManager";
 import { settingsDraftManager } from "./SettingsDraftManager";
 import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "./GitWorkspaceManager";
@@ -22,6 +23,7 @@ import {
   appendCreatedConversationSnapshot,
   appendSentConversationMessageSnapshot,
   buildOptimisticCreatedConversationSnapshot,
+  buildOptimisticQueuedConversationMessage,
   buildOptimisticSentConversationMessage,
   buildInlineError,
   removeRunFromHomeState,
@@ -80,15 +82,6 @@ export interface UseHomeMutationsParams {
   renamingRunId: string | null;
   pendingDeletedRunIdsRef: React.RefObject<Set<string>>;
   pendingCreatedConversationSnapshotsRef: React.RefObject<Map<string, CreatedConversationSnapshot>>;
-  pendingSentConversationMessagesRef: React.RefObject<Map<string, MessageRecord>>;
-  /**
-   * Ids of user messages this client sent itself. Threaded to the Terminal
-   * as `ungatedUserMessageIds` so a just-sent bubble bypasses the stream
-   * fallback gate and never flickers while the stream catches up.
-   */
-  locallySentMessageIdsRef: React.RefObject<Set<string>>;
-  /** Ids of optimistic user messages whose send request is still in flight. */
-  sendingMessageIdsRef: React.RefObject<Set<string>>;
   loadingWorkerHistoryIdsRef: React.RefObject<Set<string>>;
   scrollConversationToBottom: () => void;
   sessionQueryRefetch: () => Promise<unknown>;
@@ -108,9 +101,6 @@ export function useHomeMutations({
   renamingRunId,
   pendingDeletedRunIdsRef,
   pendingCreatedConversationSnapshotsRef,
-  pendingSentConversationMessagesRef,
-  locallySentMessageIdsRef,
-  sendingMessageIdsRef,
   loadingWorkerHistoryIdsRef,
   scrollConversationToBottom,
   sessionQueryRefetch,
@@ -136,6 +126,11 @@ export function useHomeMutations({
     clearAttachments,
   } = homeUiSetters;
   const preferredWorkerAccountId = selectedWorkerAccountId === "auto" ? null : selectedWorkerAccountId;
+
+  // Worker-scoped failures still belong to a conversation, so resolve the
+  // owning run to keep the error out of every other session's banner.
+  const runIdForWorker = (workerId: string) =>
+    (state.workers || []).find((worker) => worker.id === workerId)?.runId ?? null;
 
   const loginMutation = useMutation({
     mutationFn: async (password: string) => runtimeApis.auth.login({
@@ -548,21 +543,38 @@ export function useHomeMutations({
     onMutate: (payload: {
       runId: string;
       content: string;
+      clientMessageId: string;
       attachments: PendingChatAttachment[];
       busyAction?: BusyMessageAction;
     }) => {
       const snapshot = homeUiStateManager.getSnapshot();
-      const optimisticMessage = buildOptimisticSentConversationMessage({
-        runId: payload.runId,
-        content: payload.content,
-        attachments: payload.attachments.map(({ id, kind, name, mimeType, size, previewUrl }) => (
-          { id, kind, name, mimeType, size, previewUrl }
-        )),
-      });
-      pendingSentConversationMessagesRef.current.set(optimisticMessage.id, optimisticMessage);
-      locallySentMessageIdsRef.current.add(optimisticMessage.id);
-      sendingMessageIdsRef.current.add(optimisticMessage.id);
-      setState((current) => appendSentConversationMessageSnapshot(current, optimisticMessage));
+      const attachments = payload.attachments.map(({ id, kind, name, mimeType, size, previewUrl }) => (
+        { id, kind, name, mimeType, size, previewUrl }
+      ));
+      // `busyAction: "queue"` is always queued server-side and never delivered
+      // as a message, so it goes straight to the queue. Rendering it as a sent
+      // bubble first put it in the transcript for the round trip and then
+      // moved it to the queue.
+      const isQueuedSend = payload.busyAction === "queue";
+      const optimisticMessage = isQueuedSend
+        ? null
+        : buildOptimisticSentConversationMessage({
+          id: payload.clientMessageId,
+          runId: payload.runId,
+          content: payload.content,
+          attachments,
+        });
+      if (optimisticMessage) {
+        sentConversationMessagesManager.beginSend(optimisticMessage);
+        setState((current) => appendSentConversationMessageSnapshot(current, optimisticMessage));
+      } else {
+        busyMessageQueueManager.beginQueueSend(buildOptimisticQueuedConversationMessage({
+          id: payload.clientMessageId,
+          runId: payload.runId,
+          content: payload.content,
+          attachments,
+        }));
+      }
       const ownsSideEffects = ownsConversationSideEffects({
         runId: payload.runId,
         currentSelectedRunId: snapshot.selectedRunId,
@@ -572,19 +584,23 @@ export function useHomeMutations({
         setCommand("");
         clearAttachments();
       }
-      if (ownsSideEffects) {
+      // A queued row lands in the composer drawer, not the transcript, so
+      // there is nothing below to scroll to.
+      if (ownsSideEffects && optimisticMessage) {
         scrollConversationToBottom();
       }
       return {
         commandAtStart: snapshot.command,
         attachmentsAtStart: snapshot.attachments,
-        optimisticMessageId: optimisticMessage.id,
+        optimisticMessageId: optimisticMessage?.id ?? null,
+        optimisticQueuedMessageId: isQueuedSend ? payload.clientMessageId : null,
         composerCleared,
       };
     },
     mutationFn: async (payload: {
       runId: string;
       content: string;
+      clientMessageId: string;
       attachments: PendingChatAttachment[];
       busyAction?: BusyMessageAction;
     }) => {
@@ -601,6 +617,9 @@ export function useHomeMutations({
         runId: payload.runId,
         body: {
           content: payload.content,
+          // Adopted verbatim as the persisted row id, so the bubble keeps one
+          // React key from optimistic render through worker stream delivery.
+          clientMessageId: payload.clientMessageId,
           attachments: uploadedAttachments,
           busyAction: payload.busyAction,
           preferredWorkerType: selectedWorkerType,
@@ -616,16 +635,12 @@ export function useHomeMutations({
       }>;
     },
     onSuccess: (data, variables, context) => {
-      if (context) {
-        pendingSentConversationMessagesRef.current.delete(context.optimisticMessageId);
-        locallySentMessageIdsRef.current.delete(context.optimisticMessageId);
-        sendingMessageIdsRef.current.delete(context.optimisticMessageId);
+      if (context?.optimisticMessageId) {
+        sentConversationMessagesManager.settleSend(context.optimisticMessageId, data.message);
       }
-      if (data.message) {
-        pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
-        locallySentMessageIdsRef.current.add(data.message.id);
-      }
-      if (data.queuedMessage) {
+      if (context?.optimisticQueuedMessageId) {
+        busyMessageQueueManager.settleQueueSend(context.optimisticQueuedMessageId, data.queuedMessage);
+      } else if (data.queuedMessage) {
         if (variables.busyAction === "steer" && data.message) {
           busyMessageQueueManager.hideQueuedMessage(data.queuedMessage.id);
         } else {
@@ -633,7 +648,7 @@ export function useHomeMutations({
         }
       }
       setState((current) => (
-        context
+        context?.optimisticMessageId
           ? resolveOptimisticSentConversationMessage(current, context.optimisticMessageId, data.message)
           : appendSentConversationMessageSnapshot(current, data.message)
       ));
@@ -660,10 +675,13 @@ export function useHomeMutations({
       if (!context) {
         return;
       }
-      pendingSentConversationMessagesRef.current.delete(context.optimisticMessageId);
-      locallySentMessageIdsRef.current.delete(context.optimisticMessageId);
-      sendingMessageIdsRef.current.delete(context.optimisticMessageId);
-      setState((current) => resolveOptimisticSentConversationMessage(current, context.optimisticMessageId, null));
+      if (context.optimisticQueuedMessageId) {
+        busyMessageQueueManager.failQueueSend(context.optimisticQueuedMessageId);
+      }
+      if (context.optimisticMessageId) {
+        sentConversationMessagesManager.failSend(context.optimisticMessageId);
+        setState((current) => resolveOptimisticSentConversationMessage(current, context.optimisticMessageId!, null));
+      }
       // Restore the draft we cleared optimistically, unless the user has
       // already typed or attached something new.
       const snapshot = homeUiStateManager.getSnapshot();
@@ -684,8 +702,6 @@ export function useHomeMutations({
 
   const { cancelQueuedMessage, sendQueuedMessageNow, interruptQueuedMessage } = useQueuedMessageMutations({
     setState,
-    pendingSentConversationMessagesRef,
-    locallySentMessageIdsRef,
     scrollConversationToBottom,
   });
 
@@ -697,8 +713,7 @@ export function useHomeMutations({
       }) as Promise<{ ok: true; message?: MessageRecord }>,
     onSuccess: (data, variables) => {
       if (data.message) {
-        pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
-        locallySentMessageIdsRef.current.add(data.message.id);
+        sentConversationMessagesManager.trackDeliveredMessage(data.message);
       }
       setState((current) => appendSentConversationMessageSnapshot(current, data.message));
       if (ownsConversationSideEffects({
@@ -953,6 +968,7 @@ export function useHomeMutations({
           source: "Agent runtime",
           action: "Load worker history",
           suggestion: "The live stream can continue, but older worker output could not be hydrated. Try again after the agent runtime responds.",
+          runId: runIdForWorker(normalizedWorkerId),
         }),
       ]));
     } finally {

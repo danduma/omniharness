@@ -928,17 +928,17 @@ describe("home utils", () => {
 
     const preserved = mergePendingSentConversationMessages(staleState, pendingMessages);
 
-    expect(preserved.messages).toEqual([message]);
-    expect(preserved.runs[0]?.status).toBe("running");
-    expect(pendingMessages.has(message.id)).toBe(true);
+    expect(preserved.state.messages).toEqual([message]);
+    expect(preserved.state.runs[0]?.status).toBe("running");
+    expect(preserved.settledMessageIds).toEqual([]);
 
     const caughtUp = mergePendingSentConversationMessages({
       ...staleState,
       messages: [message],
     }, pendingMessages);
 
-    expect(caughtUp.messages).toEqual([message]);
-    expect(pendingMessages.has(message.id)).toBe(false);
+    expect(caughtUp.state.messages).toEqual([message]);
+    expect(caughtUp.settledMessageIds).toEqual([message.id]);
   });
 
   it("drops stale pending sent messages instead of resurrecting a server-terminal sidebar row", () => {
@@ -971,9 +971,50 @@ describe("home utils", () => {
 
     const preserved = mergePendingSentConversationMessages(terminalServerState, pendingMessages);
 
-    expect(preserved.messages).toEqual([]);
-    expect(preserved.runs[0]?.status).toBe("done");
-    expect(pendingMessages.has(message.id)).toBe(false);
+    expect(preserved.state.messages).toEqual([]);
+    expect(preserved.state.runs[0]?.status).toBe("done");
+    expect(preserved.settledMessageIds).toEqual([message.id]);
+  });
+
+  it("keeps an in-flight sent message even when the run looks terminal and newer", () => {
+    // The runner clock can run ahead of the browser clock, which made the
+    // staleness check reject a message the user had just sent: the bubble
+    // vanished on the next frame and only returned when the POST resolved.
+    const message = {
+      id: "message-1",
+      runId: "run-1",
+      role: "user",
+      kind: "checkpoint",
+      content: "Just sent this",
+      createdAt: "2026-04-27T00:01:00.000Z",
+    };
+    const pendingMessages = new Map([[message.id, message]]);
+    const skewedServerState: EventStreamState = {
+      messages: [],
+      runs: [buildRun({
+        id: "run-1",
+        status: "done",
+        updatedAt: "2026-04-27T00:02:00.000Z",
+      })],
+      plans: [],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+      messageScope: { runIds: ["run-1"], complete: true },
+    };
+
+    const preserved = mergePendingSentConversationMessages(
+      skewedServerState,
+      pendingMessages,
+      new Set([message.id]),
+    );
+
+    expect(preserved.state.messages).toEqual([message]);
+    expect(preserved.settledMessageIds).toEqual([]);
   });
 
   it("optimistically appends a newly created conversation with its sidebar records", () => {
@@ -1508,7 +1549,10 @@ describe("optimistic sent conversation messages", () => {
       attachments: [{ id: "a1", kind: "image", name: "shot.png", mimeType: "image/png", size: 10 }],
     });
 
-    expect(optimistic.id.startsWith("optimistic-")).toBe(true);
+    // A plain uuid, not a recognisably-optimistic id: it is sent as
+    // `clientMessageId` and adopted verbatim as the persisted row id, so the
+    // bubble keeps one React key from send through delivery.
+    expect(optimistic.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(optimistic).toMatchObject({
       runId: "run-1",
       role: "user",

@@ -9,17 +9,19 @@ import {
   writeWorkerOutputEntries,
 } from "@/server/workers/output-store";
 
-const { mockAskAgent, mockGetAgent } = vi.hoisted(() => ({
+const { mockAskAgent, mockGetAgent, mockRespondElicitation } = vi.hoisted(() => ({
   mockAskAgent: vi.fn().mockResolvedValue({
     response: "Worker received the queued note.",
     state: "idle",
   }),
   mockGetAgent: vi.fn(),
+  mockRespondElicitation: vi.fn(),
 }));
 
 vi.mock("@/server/bridge-client", () => ({
   askAgent: mockAskAgent,
   getAgent: mockGetAgent,
+  respondElicitation: mockRespondElicitation,
 }));
 
 import {
@@ -29,7 +31,11 @@ import {
   drainQueuedWorkerMessages,
   sendQueuedConversationMessageNow,
 } from "@/server/conversations/queued-messages";
-import { __resetWorkerTurnChainsForTests } from "@/server/conversations/worker-turn-gate";
+import {
+  __resetWorkerTurnChainsForTests,
+  abortWorkerTurn,
+  runWorkerTurn,
+} from "@/server/conversations/worker-turn-gate";
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -100,6 +106,8 @@ describe("queued conversation messages", () => {
       stderrBuffer: [],
       stopReason: null,
     });
+    mockRespondElicitation.mockReset();
+    mockRespondElicitation.mockResolvedValue({ ok: true });
     __resetWorkerTurnChainsForTests();
     __resetOutputStoreCachesForTests();
     await db.delete(executionEvents);
@@ -327,6 +335,87 @@ describe("queued conversation messages", () => {
     ]));
     const storedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     expect(storedRun).toMatchObject({ status: "done" });
+  });
+
+  it("answers a live worker question without waiting for the active turn to end", async () => {
+    const runId = await createRun("direct");
+    const workerId = randomUUID();
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "Should I fix it?",
+      lastText: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const queued = await createQueuedConversationMessage({
+      runId,
+      targetWorkerId: workerId,
+      action: "queue",
+      content: "yes fix",
+      attachments: [],
+    });
+    const activeTurn = runWorkerTurn(workerId, (signal) => new Promise<void>((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }));
+    const activeTurnSettled = activeTurn.catch(() => undefined);
+    await delay(10);
+
+    const drain = drainQueuedWorkerMessages({
+      runId,
+      workerId,
+      snapshot: {
+        name: workerId,
+        type: "claude",
+        cwd: "/workspace/app",
+        state: "working",
+        sessionId: "live-question-session",
+        sessionMode: "full-access",
+        outputEntries: [],
+        pendingElicitations: [{
+          requestId: 42,
+          requestedAt: new Date().toISOString(),
+          sessionId: "live-question-session",
+          toolCallId: "question-tool",
+          message: "Should I fix it?",
+          requestedSchema: {
+            type: "object",
+            properties: { customAnswer: { type: "string" } },
+            required: ["customAnswer"],
+          },
+        }],
+        renderedOutput: "Should I fix it?",
+        lastText: "",
+        currentText: "Should I fix it?",
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    });
+    const result = await Promise.race([
+      drain.then((count) => ({ kind: "drained" as const, count })),
+      delay(80).then(() => ({ kind: "timeout" as const, count: 0 })),
+    ]);
+
+    abortWorkerTurn(workerId, "test cleanup");
+    await activeTurnSettled;
+    await drain;
+
+    expect(result).toEqual({ kind: "drained", count: 1 });
+    expect(mockRespondElicitation).toHaveBeenCalledWith(workerId, {
+      action: "accept",
+      content: { customAnswer: "yes fix" },
+    });
+    const stored = await db
+      .select()
+      .from(queuedConversationMessages)
+      .where(eq(queuedConversationMessages.id, queued.id))
+      .get();
+    expect(stored?.status).toBe("delivered");
   });
 
   it("keeps direct worker queue messages out of the conversation until delivery succeeds", async () => {

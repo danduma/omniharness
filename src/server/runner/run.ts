@@ -5,6 +5,7 @@ import {
   ensureClaudeModelGatewayStartedAtBoot,
   getClaudeModelGatewayService,
 } from "@/server/integrations/claude-model-gateway";
+import { reclaimOrphanedDeliveringMessages } from "@/server/conversations/queued-messages";
 import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
 import { getTerminalManager } from "@/server/terminal/terminal-manager";
 import { createOmniRuntime } from "@/runtime";
@@ -96,6 +97,12 @@ export async function startRunnerProcess(
 
   try {
     await dbReady;
+    // Deliveries do not survive a restart; reclaim any row their death orphaned.
+    await reclaimOrphanedDeliveringMessages().catch((error) => {
+      process.stderr.write(
+        `[runner] failed to reclaim orphaned queued messages: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+    });
     await ensureSupervisorRuntimeStarted();
     await ensureClaudeModelGatewayStartedAtBoot();
     await bridge.start();

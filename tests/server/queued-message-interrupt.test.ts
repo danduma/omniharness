@@ -22,6 +22,8 @@ vi.mock("@/server/bridge-client", () => ({
 
 import {
   createQueuedConversationMessage,
+  listPendingQueuedConversationMessages,
+  reclaimOrphanedDeliveringMessages,
 } from "@/server/conversations/queued-messages";
 import {
   interruptAndSendNextQueuedConversationMessage,
@@ -30,6 +32,7 @@ import {
 } from "@/server/conversations/queued-message-interrupt";
 import {
   __resetWorkerTurnChainsForTests,
+  currentWorkerTurnSignal,
   waitForConversationBackgroundTasksForTests,
 } from "@/server/conversations/worker-turn-gate";
 
@@ -172,18 +175,23 @@ describe("queued conversation message interrupt", () => {
     expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("Stop and run the linter."));
   });
 
-  it("keeps the queued message pending when cancelling the turn fails", async () => {
+  it("still steers when the agent-side cancel fails", async () => {
+    // Steer is cancel-and-replace and must be instant. The local abort already
+    // ended the turn, so `session/cancel` is only a courtesy to the agent —
+    // refusing the user's steer because that courtesy failed (the old 502) made
+    // a wedged or unreachable agent able to veto stopping it.
     const runId = await createRun("direct");
     const workerId = await createBusyWorker(runId);
     const queued = await createQueuedConversationMessage({ runId, targetWorkerId: workerId, action: "queue", content: "Try again", attachments: [] });
     mockCancelAgentTurn.mockRejectedValueOnce(new Error("Cancel turn failed: bridge unreachable"));
 
-    await expect(interruptAndSendQueuedConversationMessageNow({ runId, messageId: queued.id })).rejects.toThrow(/interrupt the active turn/i);
+    const result = await interruptAndSendQueuedConversationMessageNow({ runId, messageId: queued.id });
     await waitForConversationBackgroundTasksForTests();
 
+    expect(result.ok).toBe(true);
     const stored = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queued.id)).get();
-    expect(stored?.status).toBe("pending");
-    expect(mockAskAgent).not.toHaveBeenCalled();
+    expect(stored?.status).toBe("delivered");
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("Try again"));
   });
 
   it("keeps the queued message pending when the worker is still busy after cancel", async () => {
@@ -230,12 +238,107 @@ describe("queued conversation message interrupt", () => {
     const storedSecond = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, second.queuedMessage.id)).get();
     expect(storedSecond?.status).toBe("delivered");
 
-    // The stale first delivery must not have flipped to delivered after the
-    // fence advanced past its captured generation.
+    // The stale turn must not persist its late response over the newer one.
+    // That guard runs before `persistDeliveredWorkerResponse`, so the late
+    // output never reaches the transcript.
+    const entries = await readWorkerOutputEntries(runId, workerId);
+    expect(entries.some((entry) => entry.text.includes("Late output from the interrupted turn."))).toBe(false);
+
+    // Its queue row must still end up terminal. Bailing out used to leave it in
+    // `delivering` forever, which no longer merely looks untidy: `delivering`
+    // rows are not listed as queued, so a dangling row is a message that
+    // vanished from the queue without ever resolving.
     const storedFirst = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, first.id)).get();
-    expect(storedFirst?.status).not.toBe("delivered");
+    expect(storedFirst?.status).not.toBe("delivering");
+    expect(await listPendingQueuedConversationMessages(runId)).toHaveLength(0);
+    const supersededEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(supersededEvents.some((event) => event.eventType === "queued_message_interrupt_superseded")).toBe(true);
 
     const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     expect(worker?.turnGeneration).toBe(2);
+  });
+
+  it("releases a delivery row when a newer steer aborts its worker turn", async () => {
+    const runId = await createRun("direct");
+    const workerId = await createBusyWorker(runId);
+    const first = await createQueuedConversationMessage({
+      runId,
+      targetWorkerId: workerId,
+      action: "queue",
+      content: "First interrupt",
+      attachments: [],
+    });
+    mockAskAgent.mockImplementationOnce(() => {
+      const signal = currentWorkerTurnSignal();
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    });
+
+    await interruptAndSendQueuedConversationMessageNow({ runId, messageId: first.id });
+    await delay(20);
+    const second = await interruptWithDraftMessage({
+      runId,
+      content: "Second interrupt",
+      attachments: [],
+    });
+    await waitForConversationBackgroundTasksForTests();
+
+    const storedFirst = await db
+      .select()
+      .from(queuedConversationMessages)
+      .where(eq(queuedConversationMessages.id, first.id))
+      .get();
+    const storedSecond = await db
+      .select()
+      .from(queuedConversationMessages)
+      .where(eq(queuedConversationMessages.id, second.queuedMessage.id))
+      .get();
+
+    expect(storedFirst?.status).not.toBe("delivering");
+    expect(storedSecond?.status).toBe("delivered");
+  });
+
+  it("removes a message from the queue as soon as it is dispatched", async () => {
+    // The row goes to `delivered` only after the agent's whole turn ends, so a
+    // force-sent message used to sit in the queue for the entire turn even
+    // though it was already in the transcript.
+    const runId = await createRun("direct");
+    const workerId = await createBusyWorker(runId);
+    const queued = await createQueuedConversationMessage({ runId, targetWorkerId: workerId, action: "queue", content: "Send this now", attachments: [] });
+    const inFlight = deferred<{ response: string; state: string }>();
+    mockAskAgent.mockReturnValueOnce(inFlight.promise);
+
+    await interruptAndSendQueuedConversationMessageNow({ runId, messageId: queued.id });
+    await delay(20);
+
+    // Turn still running, but the message has left the queue.
+    const stored = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queued.id)).get();
+    expect(stored?.status).toBe("delivering");
+    expect(await listPendingQueuedConversationMessages(runId)).toHaveLength(0);
+
+    inFlight.resolve({ response: "done", state: "idle" });
+    await waitForConversationBackgroundTasksForTests();
+    const settled = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queued.id)).get();
+    expect(settled?.status).toBe("delivered");
+    expect(await listPendingQueuedConversationMessages(runId)).toHaveLength(0);
+  });
+
+  it("reclaims a delivery orphaned by a restart instead of dangling forever", async () => {
+    const runId = await createRun("direct");
+    const workerId = await createBusyWorker(runId);
+    const queued = await createQueuedConversationMessage({ runId, targetWorkerId: workerId, action: "queue", content: "Orphan me", attachments: [] });
+    // A process death mid-delivery leaves exactly this row shape behind.
+    await db.update(queuedConversationMessages)
+      .set({ status: "delivering" })
+      .where(eq(queuedConversationMessages.id, queued.id));
+    expect(await listPendingQueuedConversationMessages(runId)).toHaveLength(0);
+
+    const reclaimed = await reclaimOrphanedDeliveringMessages();
+
+    expect(reclaimed).toBe(1);
+    const stored = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queued.id)).get();
+    expect(stored?.status).toBe("pending");
+    expect(await listPendingQueuedConversationMessages(runId)).toHaveLength(1);
   });
 });

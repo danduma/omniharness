@@ -25,7 +25,7 @@ import { createQueuedConversationMessage, type BusyMessageAction } from "./queue
 import { interruptWithDraftMessage } from "./queued-message-interrupt";
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
-import { isWorkerTurnSupersededError, runConversationMutation, runWorkerTurn, trackConversationBackgroundTask } from "./worker-turn-gate";
+import { isWorkerTurnAbortedError, isWorkerTurnSupersededError, runConversationMutation, runWorkerTurn, trackConversationBackgroundTask } from "./worker-turn-gate";
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
 import { isManualStopCommand } from "@/interface/home/busy-message-behavior";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -35,6 +35,7 @@ import { stopRunObserver } from "@/server/supervisor/observer";
 import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
 import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
 import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
+import { reconcileRecoveredHumanInputEntries } from "@/server/workers/human-input-entries";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
@@ -157,6 +158,7 @@ async function answerDirectWorkerElicitation(args: {
   workerText: string;
   attachments: ChatAttachment[];
   attachmentsJson: string | null;
+  messageId: string;
 }) {
   const snapshot = await Promise.resolve(getAgent(args.worker.id)).catch(() => null);
   const elicitation = snapshot?.pendingElicitations?.[0] ?? null;
@@ -166,7 +168,7 @@ async function answerDirectWorkerElicitation(args: {
 
   const createdAt = new Date();
   const userMessage = {
-    id: randomUUID(),
+    id: args.messageId,
     runId: args.run.id,
     role: "user",
     kind: "checkpoint",
@@ -494,6 +496,13 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
       transcriptReplay: transcriptReplayRequired,
     },
   });
+  await reconcileRecoveredHumanInputEntries({
+    runId: run.id,
+    workerId: worker.id,
+    activeElicitationRequestIds: (resumedWorker.pendingElicitations ?? []).map((entry) => entry.requestId),
+    activePermissionRequestIds: (resumedWorker.pendingPermissions ?? []).map((entry) => entry.requestId),
+    reason: "the worker was resumed for a follow-up and the recovered runtime no longer owns this request",
+  });
   emitNamedEvent({
     kind: recreatedFromRejectedEmptySession || transcriptReplayRequired ? "worker.recreated" : "worker.reattached",
     runId: run.id,
@@ -700,7 +709,9 @@ async function continueWorkerConversation({
 
     notifyEventStreamSubscribers();
   } catch (error) {
-    if (isWorkerTurnSupersededError(error)) {
+    // A stop or steer aborted this turn deliberately. Marking the worker
+    // `error` and failing the run here would turn every stop into a red banner.
+    if (isWorkerTurnSupersededError(error) || isWorkerTurnAbortedError(error)) {
       notifyEventStreamSubscribers();
       return;
     }
@@ -744,6 +755,13 @@ async function continueWorkerConversation({
 type SendConversationMessageArgs = {
   runId: string;
   content: string;
+  /**
+   * Id the sending client already rendered its own bubble under. Adopting it
+   * as the row id means the optimistic row and the persisted row are the same
+   * row, so the bubble never changes React key between send and delivery.
+   * Rejected unless it is a plain UUID, and ignored when absent.
+   */
+  clientMessageId?: string | null;
   attachments?: ChatAttachment[];
   busyAction?: BusyMessageAction | null;
   preferredWorkerType?: string | null;
@@ -752,6 +770,27 @@ type SendConversationMessageArgs = {
   preferredWorkerAccountId?: string | null;
   allowedWorkerTypes?: string[] | string | null;
 };
+
+const CLIENT_MESSAGE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A send writes at most one user row — the elicitation-answer, supervised and
+ * direct branches are mutually exclusive — so one id covers all three.
+ *
+ * Falls back to a fresh uuid rather than failing the send when the client id
+ * is unusable: malformed, or already taken. The taken case is a resend after
+ * a partial failure (the row landed, a later step threw); minting a new id
+ * degrades that to a duplicate row instead of a primary-key 500 that would
+ * lose the user's text entirely.
+ */
+export async function resolveUserMessageId(clientMessageId: string | null | undefined) {
+  const candidate = typeof clientMessageId === "string" ? clientMessageId.trim().toLowerCase() : "";
+  if (!CLIENT_MESSAGE_ID_PATTERN.test(candidate)) {
+    return randomUUID();
+  }
+  const existing = await db.select({ id: messages.id }).from(messages).where(eq(messages.id, candidate)).get();
+  return existing ? randomUUID() : candidate;
+}
 
 function parseExplicitWorkerType(value: string | null | undefined) {
   if (!value?.trim()) {
@@ -972,6 +1011,7 @@ export async function sendConversationMessage(args: SendConversationMessageArgs)
 async function sendConversationMessageUnlocked({
   runId,
   content,
+  clientMessageId = null,
   attachments = [],
   busyAction = null,
   preferredWorkerType = null,
@@ -981,6 +1021,7 @@ async function sendConversationMessageUnlocked({
   allowedWorkerTypes = null,
 }: SendConversationMessageArgs) {
   const trimmedContent = content.trim();
+  const userMessageId = await resolveUserMessageId(clientMessageId);
   const normalizedAttachments = normalizeChatAttachments(attachments);
   const attachmentsJson = serializeChatAttachments(normalizedAttachments);
   const workerContent = appendAttachmentContext(trimmedContent, normalizedAttachments, {
@@ -1033,6 +1074,7 @@ async function sendConversationMessageUnlocked({
       action: "steer",
       content: trimmedContent,
       attachments: normalizedAttachments,
+      clientMessageId,
     });
     startSupervisorRun(runId);
     return { ok: true, queuedMessage };
@@ -1053,6 +1095,7 @@ async function sendConversationMessageUnlocked({
       action: "queue",
       content: trimmedContent,
       attachments: normalizedAttachments,
+      clientMessageId,
     });
     return { ok: true, queuedMessage };
   }
@@ -1066,7 +1109,7 @@ async function sendConversationMessageUnlocked({
       .get();
     const createdAt = new Date();
     const message = {
-      id: randomUUID(),
+      id: userMessageId,
       runId,
       role: "user",
       kind: pendingClarification ? "clarification_answer" : "checkpoint",
@@ -1118,6 +1161,7 @@ async function sendConversationMessageUnlocked({
       workerText: workerContent,
       attachments: normalizedAttachments,
       attachmentsJson,
+      messageId: userMessageId,
     });
     if (elicitationAnswer) {
       await retireMatchingQueuedDirectAnswers({
@@ -1147,7 +1191,7 @@ async function sendConversationMessageUnlocked({
 
   const userMessageCreatedAt = new Date();
   const userMessage = {
-    id: randomUUID(),
+    id: userMessageId,
     runId,
     role: "user",
     kind: "checkpoint",

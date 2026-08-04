@@ -66,6 +66,16 @@ function hasAvailableAutomaticCredential(account: AccountRow, env: EnvLike | und
     const envKey = envKeyFromAuthRef(account.authRef);
     return Boolean(envKey && env?.[envKey]?.trim());
   }
+  // Pre-inventory API rows carry an env/setting key in `authRef` without
+  // declaring `api_key` auth. They used to be treated as always usable, so an
+  // API account whose key was never configured (or since removed) could still
+  // win automatic allocation and hand the worker an empty credential — the
+  // launch then dies upstream as a 502 instead of falling through to the next
+  // account.
+  if (account.authMode === "legacy_ref" && account.type === "api") {
+    const envKey = envKeyFromAuthRef(account.authRef);
+    return Boolean(envKey && env?.[envKey]?.trim());
+  }
   return true;
 }
 

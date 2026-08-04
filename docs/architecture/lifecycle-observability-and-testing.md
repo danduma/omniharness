@@ -31,6 +31,13 @@ eight-runner journeys live under `tests/e2e`.
 
 An advertised interactive agent capability is operational only when the complete user journey is implemented: receive the request, append it to the unified worker stream, render an actionable control in the main conversation, submit the exact protocol response, and append a terminal outcome before resolving the agent request. Side-panel-only controls do not satisfy this invariant. Every form shape and permission option emitted by a supported adapter must be covered by a finite wire-to-UI regression matrix.
 
+Actionability comes only from the live runtime's `pendingElicitations` and
+`pendingPermissions`; an open worker-stream row proves only that a request
+existed. After reattach or recreation, compare the durable open rows with the
+runtime-owned request ids and append terminal `cancelled` rows for any orphaned
+requests before publishing the recovered worker. The UI may render the stream
+rows as history, but must never turn them back into response controls.
+
 Related: `docs/architecture/timing-determinism-audit.md` records the May 20,
 2026 audit of race-prone frontend and control-plane patterns: cached snapshots
 pretending to be authoritative, stale async callbacks, timer-owned actions,
@@ -47,6 +54,15 @@ turn result. The continuation runs as an owned background conversation task so
 snapshot bootstrap does not block on the agent turn. A newer user turn may
 supersede it, but that decision must resolve the recovery incident and emit a
 named event.
+
+An intentional stop or steer abort is a successful ownership handoff, not a
+worker failure. Older initial-turn handlers must recognize the abort and must
+not emit `run_failed` or overwrite the replacement turn's status. Every queue
+row claimed by the interrupted delivery must leave `delivering`: close it as
+delivered if its exact message id reached the transcript, otherwise return it
+to pending. An elicitation answer resumes the turn that already owns the live
+question, so it must never wait behind that same turn's per-worker gate; doing
+so is a self-deadlock because the turn cannot finish until the answer arrives.
 
 ## Why this document exists
 
@@ -624,7 +640,7 @@ preserves binaries, configuration, logs, and provider credentials.
 | `plan-review-blocked` | Leftover-state throws → 409 + named events on the wire |
 | `delete-conversation-fk` | FK fail → 409 + named events, not a raw 500 |
 | `recovery-exhaustion` | Cap reached → `recovery.gave_up` + `error.surfaced` in order |
-| `worker-reattach` | Observer's revive branch emits `worker.reattached` |
+| `worker-reattach` | Observer revival closes orphaned human-input requests, emits `worker.human_input_reconciled`, then emits `worker.reattached` |
 | `session-types` | Direct / planning / implementation conversation creation |
 | `conversation-continuation` | Mid-conversation SSE drop + reconnect; nothing lost |
 | `plan-improvement-flow` | Review start + worker spawn + restart-resync end-to-end |

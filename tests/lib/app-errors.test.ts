@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { AppRequestError, normalizeAppError, parseErrorResponse } from "@/lib/app-errors";
+import {
+  AppRequestError,
+  appErrorKey,
+  isAppErrorInScope,
+  mergeAppErrors,
+  normalizeAppError,
+  parseErrorResponse,
+} from "@/lib/app-errors";
 
 describe("app error helpers", () => {
   it("normalizes structured error payloads from API responses", async () => {
@@ -44,5 +51,42 @@ describe("app error helpers", () => {
       details: undefined,
       status: 500,
     });
+  });
+
+  it("carries the conversation scope through normalization", () => {
+    expect(normalizeAppError(new Error("Stop worker failed"), {
+      source: "Runs",
+      action: "Stop worker",
+      runId: "b5fef7f771eb",
+    }).runId).toBe("b5fef7f771eb");
+
+    const structured = new AppRequestError({ message: "Already stopped" });
+    expect(normalizeAppError(structured, { runId: "b5fef7f771eb" }).runId).toBe("b5fef7f771eb");
+  });
+});
+
+describe("conversation-scoped error visibility", () => {
+  const scopedToA = { message: "Send failed", source: "Conversations", runId: "run-a" };
+  const scopedToB = { message: "Send failed", source: "Conversations", runId: "run-b" };
+  const global = { message: "Load saved settings failed", source: "Settings" };
+
+  it("hides a conversation's error in every other conversation", () => {
+    expect(isAppErrorInScope(scopedToA, "run-a")).toBe(true);
+    expect(isAppErrorInScope(scopedToA, "run-b")).toBe(false);
+    expect(isAppErrorInScope(scopedToA, null)).toBe(false);
+  });
+
+  it("keeps unscoped app-level errors visible everywhere", () => {
+    expect(isAppErrorInScope(global, "run-a")).toBe(true);
+    expect(isAppErrorInScope(global, null)).toBe(true);
+  });
+
+  it("does not collapse identical messages raised in different conversations", () => {
+    // Without runId in the key these dedupe to one descriptor, which would then
+    // render under whichever run happened to win.
+    expect(appErrorKey(scopedToA)).not.toBe(appErrorKey(scopedToB));
+    const merged = mergeAppErrors([], [scopedToA, scopedToB]);
+    expect(merged).toHaveLength(2);
+    expect(merged.filter((error) => isAppErrorInScope(error, "run-a"))).toEqual([scopedToA]);
   });
 });

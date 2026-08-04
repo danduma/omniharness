@@ -56,6 +56,10 @@ const RETRYABLE_MESSAGE_PATTERNS = [
 // revoked OAuth token looks transient, so recovery spins on it indefinitely and
 // the user is never told to re-authenticate.
 const PERMANENT_MESSAGE_PATTERNS = [
+  // A user stop or steer aborted this turn. Retrying it would resurrect exactly
+  // the work the user just cancelled.
+  /\bworker turn aborted\b/i,
+  /\bthis operation was aborted\b/i,
   /\bworker binary is not installed\b/i,
   /\bAPI key not valid\b/i,
   /\bauthentication required\b/i,

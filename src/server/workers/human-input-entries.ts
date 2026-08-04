@@ -24,11 +24,17 @@ import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { workers } from "@/server/db/schema";
+import { emitNamedEvent } from "@/server/events/named-events";
 import type { AgentOutputEntry } from "@/lib/agent-output";
 import type { WorkerEntry } from "@/server/workers/entries-types";
 import { readWorkerOutputEntries, writeWorkerOutputEntries } from "@/server/workers/output-store";
 
 export type HumanInputKind = "elicitation" | "permission";
+
+type ReconcileHumanInputResult = {
+  closedElicitationRequestIds: number[];
+  closedPermissionRequestIds: number[];
+};
 
 const TERMINAL_STATUSES = new Set([
   "answered",
@@ -69,6 +75,87 @@ function openRequestIds(entries: readonly WorkerEntry[], kind: HumanInputKind) {
     openById.set(requestId, isOpen(entry));
   }
   return [...openById.entries()].filter(([, open]) => open).map(([requestId]) => requestId);
+}
+
+/**
+ * Retire durable requests that a freshly recovered runtime does not own.
+ *
+ * The runtime's pending arrays are authoritative because they represent the
+ * live promises that can still consume a response. The worker stream is
+ * history. A runner crash can leave a `pending` stream row behind after that
+ * promise is gone, so recovery must append a terminal row before the UI can
+ * mistake the historical request for an actionable one.
+ */
+export async function reconcileRecoveredHumanInputEntries(args: {
+  runId: string;
+  workerId: string;
+  activeElicitationRequestIds: readonly number[];
+  activePermissionRequestIds: readonly number[];
+  reason?: string;
+}): Promise<ReconcileHumanInputResult> {
+  const entries = await readWorkerOutputEntries(args.runId, args.workerId);
+  const activeElicitationIds = new Set(args.activeElicitationRequestIds);
+  const activePermissionIds = new Set(args.activePermissionRequestIds);
+  const staleElicitationIds = openRequestIds(entries, "elicitation")
+    .filter((requestId) => !activeElicitationIds.has(requestId));
+  const stalePermissionIds = openRequestIds(entries, "permission")
+    .filter((requestId) => !activePermissionIds.has(requestId));
+  const reason = args.reason?.trim() || "the recovered runtime no longer owns this request";
+  const timestamp = new Date().toISOString();
+
+  const terminalEntries: AgentOutputEntry[] = [
+    ...staleElicitationIds.map((requestId): AgentOutputEntry => ({
+      id: randomUUID(),
+      type: "elicitation",
+      status: "cancelled",
+      text: `Question cancelled for request ${requestId}: ${reason}`,
+      timestamp,
+      authorRole: "system",
+      channel: "system",
+      raw: { requestId, action: "cancel", reconciled: true, reason },
+    })),
+    ...stalePermissionIds.map((requestId): AgentOutputEntry => ({
+      id: randomUUID(),
+      type: "permission",
+      status: "cancelled",
+      text: `Permission cancelled for request ${requestId}: ${reason}`,
+      timestamp,
+      authorRole: "system",
+      channel: "system",
+      raw: { requestId, decision: "cancel", reconciled: true, reason },
+    })),
+  ];
+
+  if (terminalEntries.length > 0) {
+    await writeWorkerOutputEntries(args.runId, args.workerId, terminalEntries);
+  }
+  if (staleElicitationIds.length > 0) {
+    emitNamedEvent({
+      kind: "worker.human_input_reconciled",
+      runId: args.runId,
+      workerId: args.workerId,
+      interaction: "elicitation",
+      closedRequestIds: staleElicitationIds,
+      activeRequestIds: [...args.activeElicitationRequestIds],
+      reason,
+    });
+  }
+  if (stalePermissionIds.length > 0) {
+    emitNamedEvent({
+      kind: "worker.human_input_reconciled",
+      runId: args.runId,
+      workerId: args.workerId,
+      interaction: "permission",
+      closedRequestIds: stalePermissionIds,
+      activeRequestIds: [...args.activePermissionRequestIds],
+      reason,
+    });
+  }
+
+  return {
+    closedElicitationRequestIds: staleElicitationIds,
+    closedPermissionRequestIds: stalePermissionIds,
+  };
 }
 
 /**

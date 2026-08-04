@@ -207,6 +207,63 @@ describe("account allocator", () => {
     expect(allocation.account?.id).toBe(fallback);
   });
 
+  it("prefers a subscription over a higher-priority API account under subscription_then_api", async () => {
+    const workerType = `claude-${randomUUID()}`;
+    const subscriptionId = await insertAccount({
+      cliType: workerType,
+      provider: "anthropic",
+      type: "subscription",
+      authMode: "local_session",
+      authRef: "local-session:claude",
+      priority: 0,
+    });
+    await insertAccount({
+      cliType: workerType,
+      provider: "anthropic",
+      type: "api",
+      authMode: "api_key",
+      authRef: "setting:ANTHROPIC_API_KEY",
+      priority: 10,
+    });
+
+    const allocation = await allocateWorkerAccount({
+      workerType,
+      env: { ANTHROPIC_API_KEY: "runtime-key" },
+      strategy: "subscription_then_api",
+    });
+
+    expect(allocation.account?.id).toBe(subscriptionId);
+    expect(allocation.reason).toContain("subscription");
+  });
+
+  it("skips legacy API accounts whose configured key is missing", async () => {
+    const workerType = `claude-${randomUUID()}`;
+    const subscriptionId = await insertAccount({
+      cliType: workerType,
+      provider: "anthropic",
+      type: "subscription",
+      authMode: "local_session",
+      authRef: "local-session:claude",
+      priority: 0,
+    });
+    await insertAccount({
+      cliType: workerType,
+      provider: "anthropic",
+      type: "api",
+      authMode: "legacy_ref",
+      authRef: "ANTHROPIC_API_KEY",
+      priority: 10,
+    });
+
+    const allocation = await allocateWorkerAccount({
+      workerType,
+      env: {},
+      strategy: "priority",
+    });
+
+    expect(allocation.account?.id).toBe(subscriptionId);
+  });
+
   it("falls back to legacy runtime behavior when no account inventory exists", async () => {
     const allocation = await allocateWorkerAccount({ workerType: `missing-${randomUUID()}` });
 

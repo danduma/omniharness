@@ -652,4 +652,80 @@ describe("EventStreamStateManager", () => {
     expect(manager.getSnapshot().messages).toEqual([]);
     expect(manager.getSnapshot().snapshotSource).toBe("server");
   });
+
+  // The SSE loop can emit a persisted-only frame when the runtime-enriched
+  // payload is slow to build. Those frames have no live agent record at all,
+  // so their empty pendingElicitations/pendingPermissions are "unknown", not
+  // "resolved". Letting them through made an open elicitation form flash on
+  // and off for as long as an agent kept producing output.
+  const agentWithElicitation = (bridgeMissing: boolean) => ({
+    name: "worker-a",
+    state: "working",
+    lastText: "",
+    currentText: "",
+    bridgeMissing,
+    pendingElicitations: bridgeMissing ? [] : [{
+      requestId: 7,
+      requestedAt: new Date(0).toISOString(),
+      message: "Pick an option",
+    }],
+    pendingPermissions: [],
+  });
+
+  it("keeps a pending elicitation when a bridge-missing snapshot cannot see the runtime", () => {
+    const manager = new EventStreamStateManager({
+      ...state("run-a", "conversation", "sha256:a"),
+      agents: [agentWithElicitation(false)] as any,
+    }, { snapshotCache: new EventStreamSnapshotCacheManager({ storage: null }) });
+
+    manager.updateFromServer({
+      ...state("run-a", "conversation", "sha256:a"),
+      agents: [agentWithElicitation(true)] as any,
+    });
+
+    expect(manager.getSnapshot().agents[0]?.pendingElicitations?.map((item) => item.requestId)).toEqual([7]);
+
+    // A run of degraded frames must keep carrying the request forward — if
+    // only the first one preserved it, the second re-opens the same flicker.
+    manager.updateFromServer({
+      ...state("run-a", "conversation", "sha256:a"),
+      agents: [agentWithElicitation(true)] as any,
+    });
+
+    expect(manager.getSnapshot().agents[0]?.pendingElicitations?.map((item) => item.requestId)).toEqual([7]);
+  });
+
+  it("does not resurrect an elicitation the answer path optimistically cleared", () => {
+    const manager = new EventStreamStateManager({
+      ...state("run-a", "conversation", "sha256:a"),
+      agents: [agentWithElicitation(false)] as any,
+    }, { snapshotCache: new EventStreamSnapshotCacheManager({ storage: null }) });
+
+    // The answer mutation clears optimistically through updateLocal.
+    manager.updateLocal((current) => ({
+      ...current,
+      agents: current.agents.map((agent) => ({ ...agent, pendingElicitations: [] })),
+    }));
+
+    manager.updateFromServer({
+      ...state("run-a", "conversation", "sha256:a"),
+      agents: [agentWithElicitation(true)] as any,
+    });
+
+    expect(manager.getSnapshot().agents[0]?.pendingElicitations).toEqual([]);
+  });
+
+  it("clears a pending elicitation when a live snapshot reports it resolved", () => {
+    const manager = new EventStreamStateManager({
+      ...state("run-a", "conversation", "sha256:a"),
+      agents: [agentWithElicitation(false)] as any,
+    }, { snapshotCache: new EventStreamSnapshotCacheManager({ storage: null }) });
+
+    manager.updateFromServer({
+      ...state("run-a", "conversation", "sha256:a"),
+      agents: [{ ...agentWithElicitation(false), pendingElicitations: [] }] as any,
+    });
+
+    expect(manager.getSnapshot().agents[0]?.pendingElicitations).toEqual([]);
+  });
 });

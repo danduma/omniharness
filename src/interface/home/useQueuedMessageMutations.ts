@@ -6,6 +6,7 @@ import type { PendingChatAttachment } from "@/lib/chat-attachments";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
 import { homeUiSetters, homeUiStateManager } from "./HomeUiStateManager";
+import { sentConversationMessagesManager } from "./SentConversationMessagesManager";
 import { uploadPendingChatAttachments } from "./upload-attachments";
 import { appendSentConversationMessageSnapshot } from "./utils";
 import { ownsConversationSideEffects } from "./useHomeMutations";
@@ -23,15 +24,11 @@ type QueuedMessageMutationResponse = {
 
 export interface UseQueuedMessageMutationsParams {
   setState: React.Dispatch<React.SetStateAction<EventStreamState>>;
-  pendingSentConversationMessagesRef: React.RefObject<Map<string, MessageRecord>>;
-  locallySentMessageIdsRef: React.RefObject<Set<string>>;
   scrollConversationToBottom: () => void;
 }
 
 export function useQueuedMessageMutations({
   setState,
-  pendingSentConversationMessagesRef,
-  locallySentMessageIdsRef,
   scrollConversationToBottom,
 }: UseQueuedMessageMutationsParams) {
   const runtimeApis = useRuntimeAPIs();
@@ -74,8 +71,7 @@ export function useQueuedMessageMutations({
         currentSelectedRunId: homeUiStateManager.getSnapshot().selectedRunId,
       });
       if (data.message) {
-        pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
-        locallySentMessageIdsRef.current.add(data.message.id);
+        sentConversationMessagesManager.trackDeliveredMessage(data.message);
         setState((current) => appendSentConversationMessageSnapshot(current, data.message));
         if (ownsSideEffects) {
           scrollConversationToBottom();
@@ -141,8 +137,7 @@ export function useQueuedMessageMutations({
       });
 
       if (data.message) {
-        pendingSentConversationMessagesRef.current.set(data.message.id, data.message);
-        locallySentMessageIdsRef.current.add(data.message.id);
+        sentConversationMessagesManager.trackDeliveredMessage(data.message);
         setState((current) => appendSentConversationMessageSnapshot(current, data.message));
       }
       if (data.queuedMessage) {

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/server/db";
 import { workers } from "@/server/db/schema";
@@ -30,8 +31,83 @@ function runOnChain<T>(
   });
 }
 
-export function runWorkerTurn<T>(workerId: string, task: () => Promise<T>): Promise<T> {
-  return runOnChain(workerTurnChains, workerId, task);
+/**
+ * Stop and steer must be instant. Before this existed, neither could actually
+ * end a running turn: `askAgent` read its SSE stream to completion with no
+ * abort path, so a cancel only *asked* the adapter to stop and then waited for
+ * it, and the next turn sat behind the dead one on the FIFO chain.
+ *
+ * Every turn now runs with an AbortSignal published on this async-local store,
+ * so anything the turn calls — however deeply nested — can pick it up without
+ * threading a parameter through every call site. `abortWorkerTurn` trips it
+ * synchronously, which tears down the in-flight fetch locally rather than
+ * negotiating with an agent that may be wedged.
+ */
+const workerTurnSignals = new AsyncLocalStorage<AbortSignal>();
+const workerTurnAborts = new Map<string, AbortController>();
+
+export class WorkerTurnAbortedError extends Error {
+  readonly workerId: string;
+
+  constructor(workerId: string, reason?: string) {
+    super(`Worker turn aborted for ${workerId}${reason ? `: ${reason}` : ""}`);
+    this.name = "WorkerTurnAbortedError";
+    this.workerId = workerId;
+  }
+}
+
+export function isWorkerTurnAbortedError(error: unknown): boolean {
+  if (error instanceof WorkerTurnAbortedError) {
+    return true;
+  }
+  const name = (error as { name?: unknown } | null)?.name;
+  if (name === "AbortError" || name === "WorkerTurnAbortedError") {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /\bworker turn aborted\b|\bthis operation was aborted\b/i.test(message);
+}
+
+/** The AbortSignal of the turn running on this async context, if any. */
+export function currentWorkerTurnSignal(): AbortSignal | undefined {
+  return workerTurnSignals.getStore();
+}
+
+export function runWorkerTurn<T>(workerId: string, task: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  return runOnChain(workerTurnChains, workerId, async () => {
+    const controller = new AbortController();
+    workerTurnAborts.set(workerId, controller);
+    try {
+      return await workerTurnSignals.run(controller.signal, () => task(controller.signal));
+    } finally {
+      if (workerTurnAborts.get(workerId) === controller) {
+        workerTurnAborts.delete(workerId);
+      }
+    }
+  });
+}
+
+/**
+ * Trip the running turn's signal for `workerId`. Synchronous and local: it does
+ * not talk to the agent runtime, so a wedged adapter cannot delay it. Returns
+ * false when there was no live turn to abort.
+ */
+export function abortWorkerTurn(workerId: string, reason?: string): boolean {
+  const controller = workerTurnAborts.get(workerId);
+  if (!controller || controller.signal.aborted) {
+    return false;
+  }
+  controller.abort(new WorkerTurnAbortedError(workerId, reason));
+  return true;
+}
+
+export function hasLiveWorkerTurn(workerId: string): boolean {
+  const controller = workerTurnAborts.get(workerId);
+  return Boolean(controller && !controller.signal.aborted);
+}
+
+export function __resetWorkerTurnAbortsForTests() {
+  workerTurnAborts.clear();
 }
 
 /**

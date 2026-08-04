@@ -19,6 +19,7 @@ import { LifecycleClient } from "../harness/client";
 import { Chaos, NO_CHAOS } from "../harness/chaos";
 import { clearLifecycleSchema, seedDirectRun } from "../harness/fixtures";
 import { __resetNamedEventsForTests } from "@/server/events/named-events";
+import { readWorkerOutputEntries, writeWorkerOutputEntries } from "@/server/workers/output-store";
 
 vi.mock("@/server/bridge-client", () => ({
   // The observer queries the bridge for each worker. We simulate a
@@ -34,6 +35,7 @@ vi.mock("@/server/bridge-client", () => ({
     sessionId: "session-resumed",
     sessionMode: null,
     pendingPermissions: [],
+    pendingElicitations: [],
     outputEntries: [],
     stderrBuffer: [],
     stopReason: null,
@@ -98,6 +100,14 @@ describe("lifecycle harness — worker reattach via observer", () => {
       createdAt: now,
       updatedAt: now,
     });
+    await writeWorkerOutputEntries(runId, "w-reattach", [{
+      id: "question-owned-by-dead-runtime",
+      type: "elicitation",
+      status: "pending",
+      text: "Please answer the question from before the restart.",
+      timestamp: now.toISOString(),
+      raw: { requestId: 41, sessionId: "saved-session-xyz" },
+    }]);
 
     await client.bootstrapSnapshot(runId);
     await client.subscribe({ runId });
@@ -114,5 +124,21 @@ describe("lifecycle harness — worker reattach via observer", () => {
       runId,
       workerId: "w-reattach",
     });
+    const reconciliationFrame = await client.waitFor("worker.human_input_reconciled", { timeoutMs: 10_000 });
+    expect(reconciliationFrame.payload).toMatchObject({
+      kind: "worker.human_input_reconciled",
+      runId,
+      workerId: "w-reattach",
+      interaction: "elicitation",
+      closedRequestIds: [41],
+    });
+    const entries = await readWorkerOutputEntries(runId, "w-reattach");
+    expect(entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "elicitation",
+        status: "cancelled",
+        raw: expect.objectContaining({ requestId: 41 }),
+      }),
+    ]));
   });
 });

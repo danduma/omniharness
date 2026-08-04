@@ -32,6 +32,7 @@ import { captureGitBaseline } from "@/server/git/auto-commit";
 import { serializeMessageRecord } from "./message-records";
 import {
   isConversationDeletionRequested,
+  isWorkerTurnAbortedError,
   isWorkerTurnSupersededError,
   runWorkerTurn,
   trackConversationBackgroundTask,
@@ -535,7 +536,7 @@ async function runInitialWorkerTurn(args: {
 
     notifyEventStreamSubscribers();
   } catch (error) {
-    if (isWorkerTurnSupersededError(error)) {
+    if (isWorkerTurnSupersededError(error) || isWorkerTurnAbortedError(error)) {
       notifyEventStreamSubscribers();
       return;
     }
@@ -691,7 +692,7 @@ async function startDirectWorkerConversation(args: {
       imageAttachments: args.imageAttachments,
     }));
   } catch (error) {
-    if (isAgentBusyError(error)) {
+    if (isWorkerTurnAbortedError(error) || isAgentBusyError(error)) {
       return;
     }
 
@@ -924,7 +925,7 @@ export async function createConversation(args: {
           runId,
           workerId,
           explicitAccountId: args.preferredWorkerAccountId?.trim() || null,
-          strategy: args.preferredWorkerAccountId?.trim() ? "manual" : "priority",
+          strategy: args.preferredWorkerAccountId?.trim() ? "manual" : "subscription_then_api",
           env: allocationEnvParams,
         });
       const workerAccountId = accountAllocation?.account?.id ?? null;
@@ -1041,7 +1042,7 @@ export async function createConversation(args: {
               imageAttachments: workerImageAttachments,
             }));
           } catch (error) {
-            if (isAgentBusyError(error)) {
+            if (isWorkerTurnAbortedError(error) || isAgentBusyError(error)) {
               return;
             }
             console.error(`Initial planning conversation turn failed:`, error);

@@ -53,6 +53,7 @@ export type SurfacedErrorCode =
   | "runtime.settings_apply_failed"
   | "runtime.start_failed"
   | "runner.bridge_start_failed"
+  | "runner.restarting"
   | "runner.start_failed"
   | "stream.subscriber_overflow"
   | "acp.method.failed"
@@ -257,6 +258,15 @@ export type WorkerEvent =
   | { kind: "worker.recovery_continuation_started"; runId: string; workerId: string }
   | { kind: "worker.recovery_continuation_completed"; runId: string; workerId: string }
   | { kind: "worker.recovery_continuation_superseded"; runId: string; workerId: string }
+  | {
+      kind: "worker.human_input_reconciled";
+      runId: string;
+      workerId: string;
+      interaction: "permission" | "elicitation";
+      closedRequestIds: number[];
+      activeRequestIds: number[];
+      reason: string;
+    }
   | { kind: "worker.delete_race_cancelled"; runId: string; workerId: string }
   | { kind: "worker.session_metadata_repaired"; runId: string; workerId: string }
   // A retry/edit rewound the conversation past output this worker already
@@ -301,6 +311,22 @@ export type WorkerEvent =
   // GET /api/workers/:workerId/entries?afterSeq=. See
   // docs/architecture/worker-conversation-stream.md.
   | { kind: "worker.entry_appended"; runId: string; workerId: string; seq: number }
+  // Emitted when a write would have resumed numbering above a transcript head
+  // that is not on disk. `healed` means the head was recovered from a fallback
+  // source; `unrecoverable` means it is gone and the cursor was reset to 0.
+  | {
+      kind: "worker.stream_head_healed";
+      runId: string;
+      workerId: string;
+      expectedLatestSeq: number;
+      recoveredEntries: number;
+    }
+  | {
+      kind: "worker.stream_head_unrecoverable";
+      runId: string;
+      workerId: string;
+      expectedLatestSeq: number;
+    }
   | {
       kind: "worker.failover_started";
       runId: string;
